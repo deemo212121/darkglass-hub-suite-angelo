@@ -428,7 +428,7 @@ export async function getTechAutoMileageTotals(periodStart: string, periodEnd: s
   if (!periodStart || !periodEnd) return totals;
   const { data, error } = await supabase
     .from("mileage_entries")
-    .select("profile_id, total_mileage, payroll_excluded")
+    .select("profile_id, work_date, total_mileage, payroll_excluded")
     .not("profile_id", "is", null)
     .gte("work_date", periodStart)
     .lte("work_date", periodEnd);
@@ -436,10 +436,19 @@ export async function getTechAutoMileageTotals(periodStart: string, periodEnd: s
     console.error("getTechAutoMileageTotals error:", error.message);
     return totals;
   }
+  // Every ticket a technician had on one day shares that day's SAME route
+  // total (see syncMileageFromTickets) — sum per (profile, day) FIRST, one
+  // day's mileage counted once, before adding days together, or a
+  // multi-ticket day would be double/triple-counted here.
+  const perDay = new Map<string, number>();
   for (const row of (data ?? []) as any[]) {
     if (row.payroll_excluded) continue;
-    const profileId = row.profile_id as string;
-    totals.set(profileId, (totals.get(profileId) ?? 0) + (Number(row.total_mileage) || 0));
+    const key = `${row.profile_id}|${row.work_date}`;
+    perDay.set(key, Number(row.total_mileage) || 0);
+  }
+  for (const [key, dayMiles] of perDay) {
+    const profileId = key.slice(0, key.indexOf("|"));
+    totals.set(profileId, (totals.get(profileId) ?? 0) + dayMiles);
   }
   return totals;
 }

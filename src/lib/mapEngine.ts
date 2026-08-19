@@ -522,6 +522,17 @@ async function computeOfficeDistanceMilesGoogle(
  * showing null. Returns null when the ticket/office can't be resolved at
  * all, or the map provider isn't loaded yet.
  */
+function destinationCandidatesFor(ticket: MileageTicketInput): string[] {
+  return [
+    [ticket.address, ticket.city, ticket.state, ticket.zip, "USA"].filter(Boolean).join(", "),
+    [ticket.city, ticket.state, ticket.zip, "USA"].filter(Boolean).join(", "),
+    [ticket.zip, "USA"].filter(Boolean).join(", "),
+    [ticket.city, ticket.state, "USA"].filter(Boolean).join(", "),
+  ]
+    .map((s) => s.trim())
+    .filter((s) => s && s !== "USA");
+}
+
 export async function computeOfficeDistanceMiles(
   ticket: MileageTicketInput,
   mapProvider: "google" | "leaflet" | null,
@@ -531,19 +542,163 @@ export async function computeOfficeDistanceMiles(
   const office = overrideOrigin ? null : getOfficeCoordinates(ticket.location || ticket.city || "");
   if (!overrideOrigin && !office) return null;
 
-  const destinationCandidates = [
-    [ticket.address, ticket.city, ticket.state, ticket.zip, "USA"].filter(Boolean).join(", "),
-    [ticket.city, ticket.state, ticket.zip, "USA"].filter(Boolean).join(", "),
-    [ticket.zip, "USA"].filter(Boolean).join(", "),
-    [ticket.city, ticket.state, "USA"].filter(Boolean).join(", "),
-  ]
-    .map((s) => s.trim())
-    .filter((s) => s && s !== "USA");
+  const destinationCandidates = destinationCandidatesFor(ticket);
   if (destinationCandidates.length === 0) return null;
 
   return mapProvider === "leaflet"
     ? computeOfficeDistanceMilesLeaflet(overrideOrigin, office, destinationCandidates)
     : computeOfficeDistanceMilesGoogle(overrideOrigin, office, destinationCandidates);
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Full-day route mileage ("branch -> stop 1 -> stop 2 -> ... -> stop N ->
+// home address, or back to the branch if none on file") — what payroll
+// actually pays for is the technician's real drive that day, not each
+// ticket's own independent distance from the branch. Used by
+// syncMileageFromTickets (mileage.ts), which groups a technician's tickets
+// by work date and sorts them into visit order before calling this.
+// ─────────────────────────────────────────────────────────────────────────
+
+async function distanceMatrixLeg(
+  service: any,
+  maps: any,
+  origin: any,
+  destinationCandidates: string[],
+): Promise<{ miles: number; destination: string } | null> {
+  for (const candidate of destinationCandidates) {
+    const miles = await new Promise<number | null>((resolve) => {
+      service.getDistanceMatrix(
+        {
+          origins: [origin],
+          destinations: [candidate],
+          travelMode: maps.TravelMode.DRIVING,
+          unitSystem: maps.UnitSystem.IMPERIAL,
+        },
+        (response: any, status: string) => {
+          const element = response?.rows?.[0]?.elements?.[0];
+          if (status === "OK" && element?.status === "OK" && element.distance?.value != null) {
+            resolve(element.distance.value / 1609.344);
+          } else {
+            resolve(null);
+          }
+        },
+      );
+    });
+    if (miles != null) return { miles, destination: candidate };
+  }
+  return null;
+}
+
+async function computeDailyRouteMilesGoogle(
+  overrideOrigin: string | null,
+  office: LatLng | null,
+  stopCandidates: string[][],
+  homeCandidates: string[],
+): Promise<number | null> {
+  const apiKey = GOOGLE_MAPS_API_KEY;
+  if (!apiKey) return null;
+  await loadGoogleMapsScript();
+  const maps = (window as any).google?.maps;
+  if (!maps) return null;
+  const service = new maps.DistanceMatrixService();
+  const startPoint = overrideOrigin ?? new maps.LatLng(office!.lat, office!.lng);
+
+  let currentOrigin: any = startPoint;
+  let total = 0;
+  let anyLegSucceeded = false;
+  for (const candidates of stopCandidates) {
+    const leg = await distanceMatrixLeg(service, maps, currentOrigin, candidates);
+    if (!leg) continue; // stop couldn't be resolved — skip it, keep the route going from the last good point
+    total += leg.miles;
+    currentOrigin = leg.destination;
+    anyLegSucceeded = true;
+  }
+  if (!anyLegSucceeded) return null;
+
+  // Final leg home — or back to the starting point if no home address is on file.
+  const homeLeg = homeCandidates.length > 0 ? await distanceMatrixLeg(service, maps, currentOrigin, homeCandidates) : null;
+  if (homeLeg) {
+    total += homeLeg.miles;
+  } else if (homeCandidates.length === 0) {
+    const backLeg = await new Promise<number | null>((resolve) => {
+      service.getDistanceMatrix(
+        { origins: [currentOrigin], destinations: [startPoint], travelMode: maps.TravelMode.DRIVING, unitSystem: maps.UnitSystem.IMPERIAL },
+        (response: any, status: string) => {
+          const element = response?.rows?.[0]?.elements?.[0];
+          if (status === "OK" && element?.status === "OK" && element.distance?.value != null) resolve(element.distance.value / 1609.344);
+          else resolve(null);
+        },
+      );
+    });
+    if (backLeg != null) total += backLeg;
+  }
+  return total;
+}
+
+async function computeDailyRouteMilesLeaflet(
+  overrideOrigin: string | null,
+  office: LatLng | null,
+  stopCandidates: string[][],
+  homeCandidates: string[],
+): Promise<number | null> {
+  const geocode = makeGeocoder("leaflet");
+  const originPt = overrideOrigin ? await geocode(overrideOrigin) : office;
+  if (!originPt) return null;
+
+  const points: LatLng[] = [originPt];
+  for (const candidates of stopCandidates) {
+    let pt: LatLng | null = null;
+    for (const candidate of candidates) {
+      pt = await geocode(candidate);
+      if (pt) break;
+    }
+    if (pt) points.push(pt); // stop couldn't be resolved — skip it, keep the route going
+  }
+  if (points.length < 2) return null; // not even one stop resolved
+
+  let homePt: LatLng | null = null;
+  for (const candidate of homeCandidates) {
+    homePt = await geocode(candidate);
+    if (homePt) break;
+  }
+  points.push(homePt ?? originPt); // no home address on file — route back to the branch
+
+  const route = await routeGeoapify(points, "drive");
+  if (route) return metersToMiles(route.totalDistanceMeters);
+  // Routing call itself failed — sum consecutive straight-line legs rather than losing the whole day's mileage.
+  let total = 0;
+  for (let i = 1; i < points.length; i++) total += haversineMiles(points[i - 1], points[i]);
+  return total;
+}
+
+/**
+ * Real driving miles for a technician's full day route: branch -> stop 1 ->
+ * stop 2 -> ... -> stop N -> home address (or back to the branch if none on
+ * file). `stops` must already be in visit order — this just chains
+ * consecutive legs and sums them, it doesn't re-sequence anything.
+ * `originStop` (typically the day's first stop) is only used to resolve the
+ * Electrolux/Huntsville branch override, same as computeOfficeDistanceMiles.
+ */
+export async function computeDailyRouteMiles(
+  officeLocation: string,
+  originStop: MileageTicketInput,
+  stops: MileageTicketInput[],
+  homeAddress: string | undefined,
+  mapProvider: "google" | "leaflet" | null,
+): Promise<number | null> {
+  if (!mapProvider || stops.length === 0) return null;
+  const overrideOrigin = getElectroluxHuntsvilleMileageOrigin(originStop);
+  const office = overrideOrigin ? null : getOfficeCoordinates(officeLocation);
+  if (!overrideOrigin && !office) return null;
+
+  const stopCandidates = stops.map(destinationCandidatesFor).filter((c) => c.length > 0);
+  if (stopCandidates.length === 0) return null;
+  const homeCandidates =
+    homeAddress && homeAddress.trim() && homeAddress !== "(no address on file)" ? [homeAddress.trim()] : [];
+
+  return mapProvider === "leaflet"
+    ? computeDailyRouteMilesLeaflet(overrideOrigin, office, stopCandidates, homeCandidates)
+    : computeDailyRouteMilesGoogle(overrideOrigin, office, stopCandidates, homeCandidates);
 }
 
 // ─────────────────────────────────────────────────────────────────────────

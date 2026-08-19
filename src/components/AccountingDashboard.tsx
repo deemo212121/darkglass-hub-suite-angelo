@@ -688,16 +688,25 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       if (cancelled) return;
       setMileageTicketHasPhotos((prev) => new Map([...prev, ...results]));
 
-      // Persist the same rule into payroll_excluded — this is what actually
-      // makes Tech Payroll (getTechCompletedRepairCounts, and this file's
-      // own mileage total default) skip these tickets, not just the badge.
+      // A day's mileage entries share one route total (see
+      // syncMileageFromTickets) — if ANY ticket that day is missing
+      // photos, the whole day's drive is unproven, so every entry in that
+      // technician's (profile/name, work date) group holds, not just the
+      // one ticket that's missing photos.
+      const dayKey = (e: MileageEntry) => `${e.profileId ?? e.technicianName ?? ""}|${e.workDate}`;
+      const heldDays = new Set(
+        mileageEntries
+          .filter((e) => e.source === "auto" && e.ticketNo && results.get(e.ticketNo) === false)
+          .map(dayKey)
+      );
+
       const affectedEntries = mileageEntries
         .filter((e) => e.source === "auto" && e.ticketNo && results.has(e.ticketNo))
         .map((e) => ({ id: e.id, payrollExcluded: e.payrollExcluded, payrollHoldReason: e.payrollHoldReason }));
       const hasPhotosByEntryId = new Map(
         mileageEntries
           .filter((e) => e.source === "auto" && e.ticketNo && results.has(e.ticketNo))
-          .map((e) => [e.id, results.get(e.ticketNo as string) as boolean])
+          .map((e) => [e.id, !heldDays.has(dayKey(e))])
       );
       const changed = await reconcileMileageNoPhotoHolds(affectedEntries, hasPhotosByEntryId);
       if (!cancelled && changed > 0) setMileageEntries(await getMileageEntries());
@@ -1962,12 +1971,23 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   const mileageBranchOptions = Array.from(new Set(mileageEntries.map((e) => e.branch))).sort((a, b) => a.localeCompare(b));
   const mileageStatusOptions = Array.from(new Set(mileageEntries.map((e) => e.ticketStatus || "").filter(Boolean))).sort((a, b) => a.localeCompare(b));
   const MILEAGE_PAYROLL_OPTIONS = ["Included", "On Hold"];
+  // A day's mileage entries share one route total, so a missing photo on
+  // ANY of a technician's tickets that day holds the WHOLE day, not just
+  // the one ticket that's actually missing photos — same grouping key as
+  // the reconciliation effect above and syncMileageFromTickets.
+  const mileageDayKey = (entry: MileageEntry) => `${entry.profileId ?? entry.technicianName ?? ""}|${entry.workDate}`;
+  const mileageHeldDayKeys = new Set(
+    mileageEntries
+      .filter((e) => e.source === "auto" && e.ticketNo && mileageTicketHasPhotos.get(e.ticketNo) === false)
+      .map(mileageDayKey)
+  );
+  const mileageNoPhotosHold = (entry: MileageEntry) =>
+    entry.source === "auto" && !!entry.ticketNo && mileageHeldDayKeys.has(mileageDayKey(entry));
   // Same rule the Payroll badge itself renders — persisted payroll_excluded
   // (manual OR the automatic no-photos hold once reconciled) OR'd with the
   // live photo-check result for entries not yet reconciled, so the filter
   // and the badge can never disagree about what a row currently shows.
-  const mileageEntryIsOnHold = (entry: MileageEntry) =>
-    entry.payrollExcluded || (entry.source === "auto" && !!entry.ticketNo && mileageTicketHasPhotos.get(entry.ticketNo) === false);
+  const mileageEntryIsOnHold = (entry: MileageEntry) => entry.payrollExcluded || mileageNoPhotosHold(entry);
   const mileageEntriesByBranch = (() => {
     const nameFilter = mileageNameFilter.trim().toLowerCase();
     const ticketFilter = mileageTicketFilter.trim().toLowerCase();
@@ -3288,7 +3308,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                             {isMileageColVisible("payroll") && (
                             <td className="px-3 py-2.5">
                               {(() => {
-                                const noPhotosHold = entry.source === "auto" && !!entry.ticketNo && mileageTicketHasPhotos.get(entry.ticketNo) === false;
+                                const noPhotosHold = mileageNoPhotosHold(entry);
                                 if (entry.payrollExcluded) {
                                   return (
                                     <span
@@ -3300,10 +3320,15 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                                   );
                                 }
                                 if (noPhotosHold) {
+                                  const ownTicketMissing = mileageTicketHasPhotos.get(entry.ticketNo as string) === false;
                                   return (
                                     <span
                                       className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold uppercase tracking-wide bg-red-500/20 text-red-300"
-                                      title="No photos uploaded for this ticket yet — switches to Included automatically once photos are added."
+                                      title={
+                                        ownTicketMissing
+                                          ? "No photos uploaded for this ticket yet — switches to Included automatically once photos are added."
+                                          : "Another ticket on this technician's route that day has no photos yet — the whole day's mileage holds until it's added."
+                                      }
                                     >
                                       On Hold
                                     </span>
