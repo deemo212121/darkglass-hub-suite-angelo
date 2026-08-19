@@ -650,6 +650,10 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   const [mileagePhotoModalEntry, setMileagePhotoModalEntry] = useState<MileageEntry | null>(null);
   const [mileagePhotoModalPhotos, setMileagePhotoModalPhotos] = useState<TicketPhoto[]>([]);
   const [mileagePhotoModalLoading, setMileagePhotoModalLoading] = useState(false);
+  // Clicking a thumbnail opens this in-app lightbox instead of the raw
+  // Firebase Storage URL in a new tab — closing it returns to the grid
+  // above (mileagePhotoModalEntry stays open, only this closes).
+  const [mileagePhotoLightbox, setMileagePhotoLightbox] = useState<TicketPhoto | null>(null);
 
   // Auto Payroll hold when a ticket has no photos yet — separate from the
   // manual On Hold toggle below (Ban icon), which keeps its own "who/when"
@@ -3754,22 +3758,54 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                   ) : (
                     <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                       {photos.map((photo) => (
-                        <a
+                        <button
                           key={photo.fullPath}
-                          href={photo.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
+                          type="button"
+                          onClick={() => setMileagePhotoLightbox(photo)}
                           title={photo.uploadedBy ? `Uploaded by ${photo.uploadedBy}` : undefined}
-                          className="block overflow-hidden rounded-lg border border-white/10 bg-black/20 hover:border-blue-400/50 transition"
+                          className="block overflow-hidden rounded-lg border border-white/10 bg-black/20 hover:border-blue-400/50 transition text-left"
                         >
                           <img src={photo.url} alt="" className="h-32 w-full object-cover" loading="lazy" />
-                        </a>
+                          {photo.uploadedAt && (
+                            <div className="px-2 py-1 text-[10px] text-slate-400">
+                              {new Date(photo.uploadedAt).toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" })}
+                            </div>
+                          )}
+                        </button>
                       ))}
                     </div>
                   )}
                 </>
               );
             })()}
+          </div>
+        </div>
+      )}
+
+      {mileagePhotoLightbox && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 p-4"
+          onClick={() => setMileagePhotoLightbox(null)}
+        >
+          <div className="max-h-[90vh] max-w-4xl" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-2 flex items-center justify-between gap-3 text-xs text-slate-300">
+              <span>
+                {mileagePhotoLightbox.uploadedAt &&
+                  `Uploaded ${new Date(mileagePhotoLightbox.uploadedAt).toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" })}`}
+                {mileagePhotoLightbox.uploadedBy && ` · by ${mileagePhotoLightbox.uploadedBy}`}
+              </span>
+              <button
+                className="rounded-md border border-white/15 bg-slate-800/70 p-1.5 text-slate-300 hover:bg-slate-700"
+                onClick={() => setMileagePhotoLightbox(null)}
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <img
+              src={mileagePhotoLightbox.url}
+              alt=""
+              className="max-h-[80vh] w-auto max-w-full rounded-lg border border-white/10 object-contain"
+            />
           </div>
         </div>
       )}
