@@ -1054,7 +1054,12 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     setCorrectionHistory(await getCompanyTimecardCorrectionHistory());
   };
 
-  const pendingEmployeeRequests = isFullRequestsAdmin ? employeeRequests.filter((r) => r.status === "pending") : [];
+  // payroll_dispute (0182) is reviewed on Accounting Dashboard's own
+  // "Payroll Disputes" tab instead — excluded here so it isn't reviewed
+  // (and potentially double-actioned) from two different places.
+  const pendingEmployeeRequests = isFullRequestsAdmin
+    ? employeeRequests.filter((r) => r.status === "pending" && r.requestType !== "payroll_dispute")
+    : [];
 
   const handleEmployeeRequestAction = async (id: string, status: EmployeeRequestStatus) => {
     try {

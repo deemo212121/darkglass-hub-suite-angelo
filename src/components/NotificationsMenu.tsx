@@ -76,7 +76,21 @@ function timeAgo(iso: string) {
   return `${Math.floor(hrs / 24)}d ago`;
 }
 
-export function NotificationsMenu() {
+interface NotificationsMenuProps {
+  /**
+   * Called instead of the default router navigate() when a notification
+   * carries a link — the mobile shell (MobileTechApp.tsx) passes this
+   * since it's an isolated surface with its own in-memory view-switching
+   * state, not real routes: every stored linkTo is a DESKTOP path (e.g.
+   * "/m/dashboard/attendance-monitoring?tab=disputes-inquiries"), and
+   * navigating there from mobile would jump out of the mobile shell into
+   * an un-adapted desktop page. Desktop usage (no prop) keeps the
+   * original router navigation unchanged.
+   */
+  onLinkClick?: (linkTo: string) => void;
+}
+
+export function NotificationsMenu({ onLinkClick }: NotificationsMenuProps = {}) {
   const { uid, ready, role } = useAuth();
   const navigate = useNavigate();
   // HR either as the primary role or as a sub-role (extra_roles) — useAuth()
@@ -270,7 +284,9 @@ export function NotificationsMenu() {
   const handleSelect = (n: MergedNotif) => {
     markRead(n);
     setOpen(false);
-    if (n.linkTo) navigate({ to: n.linkTo });
+    if (!n.linkTo) return;
+    if (onLinkClick) onLinkClick(n.linkTo);
+    else navigate({ to: n.linkTo });
   };
 
   return (

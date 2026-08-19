@@ -1666,8 +1666,9 @@ input::-ms-clear {
 }
 .mtech-app-header-right {
   position: relative;
-  width: 56px;
   display: flex;
+  align-items: center;
+  gap: 0.5rem;
   justify-content: flex-end;
 }
 .mtech-app-profile-btn {
@@ -7357,8 +7358,9 @@ a.mtech-phone-link:active { opacity: 0.7; }
 }
 .mtech-app-header-right {
   position: relative;
-  width: 56px;
   display: flex;
+  align-items: center;
+  gap: 0.5rem;
   justify-content: flex-end;
 }
 .mtech-app-profile-btn {
