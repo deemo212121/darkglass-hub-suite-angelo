@@ -363,7 +363,7 @@ export function ExpenseTrackingPage({ mod, sub }: { mod: ModuleDef; sub: SubModu
               />
               <select value={filterEmployee} onChange={(e) => setFilterEmployee(e.target.value)} className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none">
                 <option value="all">All Employees</option>
-                {profiles.map((p) => <option key={p.id} value={p.id}>{p.display_name || p.email}</option>)}
+                {profiles.filter((p) => p.is_active).map((p) => <option key={p.id} value={p.id}>{p.display_name || p.email}</option>)}
               </select>
               <select value={filterCategory} onChange={(e) => setFilterCategory(e.target.value)} className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none">
                 <option value="all">All Categories</option>
@@ -586,7 +586,7 @@ export function ExpenseTrackingPage({ mod, sub }: { mod: ModuleDef; sub: SubModu
                   className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none disabled:opacity-60"
                 >
                   <option value="">Select employee</option>
-                  {profiles.map((p) => <option key={p.id} value={p.id}>{p.display_name || p.email}</option>)}
+                  {profiles.filter((p) => p.is_active).map((p) => <option key={p.id} value={p.id}>{p.display_name || p.email}</option>)}
                 </select>
               </div>
               <div className="grid grid-cols-2 gap-3">

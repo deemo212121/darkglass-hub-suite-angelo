@@ -74,7 +74,7 @@ export function ReportOperationsDaily({ mod, sub }: { mod: ModuleDef; sub: SubMo
         ]);
         if (cancelled) return;
         setTickets(ticketData);
-        setStaff(profiles.filter(isBizOpsProfile));
+        setStaff(profiles.filter((p) => p.is_active && isBizOpsProfile(p)));
         setNotes(allNotes);
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load Operations Daily Report.");

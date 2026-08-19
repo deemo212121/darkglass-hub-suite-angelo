@@ -26,7 +26,8 @@ import {
   updateTicketPart,
   type UIPartRow,
 } from "@/lib/supabase/tickets";
-import { getMyProfileId } from "@/lib/supabase/users";
+import { getMyProfileId, getMyFullProfile } from "@/lib/supabase/users";
+import { getTechPayrollBreakdown, type TechPayrollBreakdown } from "@/lib/supabase/techPayroll";
 import { getCompanyMapProvider, type MapProvider } from "@/lib/supabase/companySettings";
 import { loadGoogleMapsScript, getLeaflet, makeGeocoder, haversineMiles, routeGeoapify, metersToMiles, formatDuration, attachLeafletResizeFix, createBadgeDivIcon, OSM_TILE_URL, OSM_ATTRIBUTION } from "@/lib/mapEngine";
 import type * as Leaflet from "leaflet";
@@ -557,7 +558,7 @@ export function MobileTechApp() {
         )}
 
         {view === "payroll" && (
-          <MobilePayrollView userName={headerName} profileId={profileId} />
+          <MobilePayrollView userName={headerName} profileId={profileId} uid={uid} role={role} />
         )}
 
         {view === "timecard" && (
@@ -1855,36 +1856,35 @@ function RepairTab({ ticket, authorName }: { ticket: Ticket; authorName: string 
                 <span>📅 {fmtDate(v.scheduleDate)}{v.timeSlot ? ` · ${v.timeSlot}` : ""}</span>
                 <span>👤 {v.technician || "—"}</span>
               </div>
-              {v.activity && <InfoRow label="Activity" value={v.activity} />}
-              {v.actionType && <InfoRow label="Action" value={v.actionType} />}
-              {v.repairType && <InfoRow label="Repair Type" value={v.repairType} />}
-              {v.symptomCx && <InfoRow label="Symptom (Cx)" value={v.symptomCx} />}
+              {/* Tech-facing read order: what the customer complained about,
+                  then what the tech found, then what the tech did about it
+                  (Service Performed's composed text carries Parts Needed
+                  right after Notes) — before the lower-priority scheduling
+                  fields below. Long free-text fields all use the same
+                  stacked ServiceSection layout (label above, full-width
+                  value below) instead of InfoRow's label-left/value-right
+                  row, which squeezes long paragraphs against the right edge
+                  and reads as inconsistent next to short categorical
+                  fields like Action Type. */}
+              {v.symptomCx && <ServiceSection label="Symptom (Cx)" value={v.symptomCx} />}
               {!isEditing && v.diagnosis && (
-                <InfoRow label="Cause of Failure (Tech)" value={v.diagnosis} />
+                <ServiceSection label="Cause of Failure (Tech)" value={v.diagnosis} />
               )}
               {!isEditing && v.resolution && (
                 <ServiceSection label="Service Performed (Tech)" value={v.resolution} />
               )}
               {isLatestVisit && <PartsUsedList parts={usedParts} />}
+              {v.activity && <InfoRow label="Activity" value={v.activity} />}
+              {v.actionType && <InfoRow label="Action Type (CSR)" value={v.actionType} />}
+              {v.repairType && <InfoRow label="Repair Type" value={v.repairType} />}
               {!isEditing && v.nonCompletionReason && (
-                <InfoRow label="Non-Completion Reason" value={v.nonCompletionReason} />
+                <ServiceSection label="Non-Completion Reason" value={v.nonCompletionReason} />
               )}
-              {v.schedNotes && <InfoRow label="Sched Notes" value={v.schedNotes} />}
-              {v.note && <InfoRow label="Internal Note" value={v.note} />}
+              {v.schedNotes && <ServiceSection label="Sched Notes" value={v.schedNotes} />}
+              {v.note && <ServiceSection label="Internal Note" value={v.note} />}
 
               {isEditing ? (
                 <div className="mtech-visit-edit">
-                  <label className="mtech-visit-edit-label">Repair Status</label>
-                  <select
-                    className="mtech-visit-edit-input"
-                    value={editDraft.repairStatus}
-                    onChange={(e) => setEditDraft((d) => ({ ...d, repairStatus: e.target.value }))}
-                  >
-                    <option value="">— select —</option>
-                    {MOBILE_REPAIR_STATUSES.map((s) => (
-                      <option key={s} value={s}>{s}</option>
-                    ))}
-                  </select>
                   <label className="mtech-visit-edit-label">Cause of Failure (Tech)</label>
                   <textarea
                     className="mtech-visit-edit-input"
@@ -1906,6 +1906,17 @@ function RepairTab({ ticket, authorName }: { ticket: Ticket; authorName: string 
                     }
                     rows={10}
                   />
+                  <label className="mtech-visit-edit-label">Repair Status</label>
+                  <select
+                    className="mtech-visit-edit-input"
+                    value={editDraft.repairStatus}
+                    onChange={(e) => setEditDraft((d) => ({ ...d, repairStatus: e.target.value }))}
+                  >
+                    <option value="">— select —</option>
+                    {MOBILE_REPAIR_STATUSES.map((s) => (
+                      <option key={s} value={s}>{s}</option>
+                    ))}
+                  </select>
                   <label className="mtech-visit-edit-label">Non-Completion Reason</label>
                   <textarea
                     className="mtech-visit-edit-input"
@@ -2375,6 +2386,7 @@ function ChatView({ firebaseUid, authorName }: { firebaseUid: string; authorName
         if (cancelled) return;
         const list: ChatContact[] = [];
         for (const u of rows) {
+          if (!(u as any).is_active) continue;
           const primary = String((u as any).role || "").toUpperCase();
           const extras = ((u as any).extra_roles as string[] | null | undefined) || [];
           const allRoles = [primary, ...extras.map((r) => String(r).toUpperCase())];
@@ -3144,9 +3156,29 @@ interface MobilePayRowInline {
   payslip: MyPayslipRow;
 }
 
-function MobilePayrollView({ userName, profileId }: { userName: string; profileId: string | null }) {
+function MobilePayrollView({
+  userName,
+  profileId,
+  uid,
+  role,
+}: {
+  userName: string;
+  profileId: string | null;
+  uid: string | null;
+  role: string | null;
+}) {
   const [payslips, setPayslips] = useState<MyPayslipRow[]>([]);
   const [loading, setLoading] = useState(true);
+  // Technicians are paid per completed repair ticket (Tech Payroll on the
+  // Accounting Dashboard) instead of hourly — same piece-rate categories
+  // shown there, not the generic Hours/OT/Regular Pay breakdown below,
+  // which doesn't mean anything for piece-rate pay.
+  const isTech = normalizeRole(role || "") === "TECHNICIAN";
+  const [assignedBranch, setAssignedBranch] = useState("");
+  const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
+  const [breakdownByRun, setBreakdownByRun] = useState<
+    Record<string, TechPayrollBreakdown | "loading" | "error">
+  >({});
 
   useEffect(() => {
     let cancelled = false;
@@ -3169,6 +3201,36 @@ function MobilePayrollView({ userName, profileId }: { userName: string; profileI
     })();
     return () => { cancelled = true; };
   }, [profileId]);
+
+  useEffect(() => {
+    if (!isTech || !uid) return;
+    let cancelled = false;
+    getMyFullProfile(uid).then((p) => { if (!cancelled) setAssignedBranch(p?.assignedBranch || ""); });
+    return () => { cancelled = true; };
+  }, [isTech, uid]);
+
+  const toggleBreakdown = async (row: MobilePayRowInline) => {
+    if (expandedRunId === row.id) {
+      setExpandedRunId(null);
+      return;
+    }
+    setExpandedRunId(row.id);
+    if (breakdownByRun[row.id] || !profileId) return;
+    setBreakdownByRun((prev) => ({ ...prev, [row.id]: "loading" }));
+    try {
+      const breakdown = await getTechPayrollBreakdown(
+        profileId,
+        userName,
+        assignedBranch,
+        row.payslip.periodStart,
+        row.payslip.periodEnd,
+      );
+      setBreakdownByRun((prev) => ({ ...prev, [row.id]: breakdown }));
+    } catch (e) {
+      console.error("payroll: tech breakdown failed", e);
+      setBreakdownByRun((prev) => ({ ...prev, [row.id]: "error" }));
+    }
+  };
 
   const fmtDate = (iso: string) => {
     const d = new Date(iso);
@@ -3232,6 +3294,7 @@ function MobilePayrollView({ userName, profileId }: { userName: string; profileI
                   type="button"
                   className="mtech-payroll-action"
                   onClick={() => {
+                    if (isTech) { void toggleBreakdown(row); return; }
                     const p = row.payslip;
                     alert(
                       `Pay period ${row.periodLabel}\nStatus: ${row.status}\n\n` +
@@ -3241,7 +3304,7 @@ function MobilePayrollView({ userName, profileId }: { userName: string; profileI
                     );
                   }}
                 >
-                  View
+                  {isTech && expandedRunId === row.id ? "Hide" : "View"}
                 </button>
                 <button
                   type="button"
@@ -3257,6 +3320,9 @@ function MobilePayrollView({ userName, profileId }: { userName: string; profileI
                 </button>
               </div>
             </div>
+            {isTech && expandedRunId === row.id && (
+              <TechPayrollBreakdownPanel entry={breakdownByRun[row.id]} netPay={row.amount} />
+            )}
           </div>
         ))}
       </div>
@@ -3264,6 +3330,58 @@ function MobilePayrollView({ userName, profileId }: { userName: string; profileI
       <p className="mtech-payroll-note">
         Payroll is issued per pay period. If an amount looks wrong, reach out to your branch manager or HR.
       </p>
+    </div>
+  );
+}
+
+/** Inline expand panel for a technician's Tech Payroll piece-rate breakdown
+ * — same categories as the Accounting Dashboard's Tech Payroll tab. Net Pay
+ * shown here is always the row's own real payslip amount (what was actually
+ * paid), never the live-recomputed total, since Finance may have adjusted
+ * things after the run was generated. */
+function TechPayrollBreakdownPanel({
+  entry,
+  netPay,
+}: {
+  entry: TechPayrollBreakdown | "loading" | "error" | undefined;
+  netPay: number;
+}) {
+  if (!entry || entry === "loading") {
+    return <div className="mtech-payroll-breakdown mtech-muted">Loading breakdown…</div>;
+  }
+  if (entry === "error") {
+    return <div className="mtech-payroll-breakdown mtech-muted">Couldn't load the breakdown for this period.</div>;
+  }
+  const ratioPct = entry.ticketsAssigned > 0 ? (entry.ticketsCompleted / entry.ticketsAssigned) * 100 : null;
+  // Same Math.max(1, ...) denominator floor AccountingDashboard.tsx uses,
+  // so a zero-working-days edge case reads identically on both surfaces.
+  const avgComp = entry.ticketsCompleted / Math.max(1, entry.workingDays);
+  const line = (label: string, value: string) => (
+    <div className="mtech-payroll-breakdown-row">
+      <span className="mtech-payroll-breakdown-label">{label}</span>
+      <span className="mtech-payroll-breakdown-value">{value}</span>
+    </div>
+  );
+  return (
+    <div className="mtech-payroll-breakdown">
+      {line("Tickets Completed", String(entry.ticketsCompleted))}
+      {line("Tickets Assigned", String(entry.ticketsAssigned))}
+      {line("Ratio", ratioPct === null ? "—" : `${ratioPct.toFixed(0)}%`)}
+      {line("Avg. Comp.", avgComp.toFixed(2))}
+      {line("2 Man Job", `$${entry.techCategoryPay.twoManJob.toFixed(2)}`)}
+      {line("Back Tub", `$${entry.techCategoryPay.backTub.toFixed(2)}`)}
+      {line("Sealed System", `$${entry.techCategoryPay.sealedSystem.toFixed(2)}`)}
+      {line("Sealed System (R600)", `$${entry.techCategoryPay.sealedSystemR600.toFixed(2)}`)}
+      {line("Two Tech", `${entry.twoTechCount} · $${entry.twoTechPay.toFixed(2)}`)}
+      {line("LDT", `${entry.ldtCount} · $${entry.ldtPay.toFixed(2)}`)}
+      {line("Mileage", `${entry.mileage} mi · $${entry.mileagePay.toFixed(2)}`)}
+      {line("Training Paid", `$${entry.trainingPay.toFixed(2)}`)}
+      {entry.mcaBonus > 0 && line("MCA Bonus", `$${entry.mcaBonus.toFixed(2)}`)}
+      {entry.completedTicketsPay > 0 && line("Completed Tickets Rate", `$${entry.completedTicketsPay.toFixed(2)}`)}
+      <div className="mtech-payroll-breakdown-row mtech-payroll-breakdown-total">
+        <span className="mtech-payroll-breakdown-label">Net Pay</span>
+        <span className="mtech-payroll-breakdown-value">${netPay.toFixed(2)}</span>
+      </div>
     </div>
   );
 }
@@ -3494,7 +3612,7 @@ function MobileClockInTeamView({ profileId }: { profileId: string | null }) {
       const entryByProfile = new Map<string, CompanyTimecardEntry>(todayEntries.map((e) => [e.profileId, e]));
       const scoped = visibleAttendanceProfileIds(myProfile, allProfiles, csrComposition);
       const myTechnicians = allProfiles.filter(
-        (p) => (scoped === null || scoped.has(p.id)) && normalizeRole(p.role) === "TECHNICIAN"
+        (p) => p.is_active && (scoped === null || scoped.has(p.id)) && normalizeRole(p.role) === "TECHNICIAN"
       );
       setRows(
         myTechnicians

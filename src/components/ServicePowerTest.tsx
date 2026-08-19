@@ -5,8 +5,10 @@
 import { useState } from 'react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { useAuth } from '@/lib/auth';
 
 export function ServicePowerTest() {
+  const { companyId } = useAuth();
   const [testing, setTesting] = useState(false);
   const [result, setResult] = useState<{
     success: boolean;
@@ -29,6 +31,7 @@ export function ServicePowerTest() {
         body: JSON.stringify({
           action: 'test',
           params: {},
+          companyId,
         }),
       });
 

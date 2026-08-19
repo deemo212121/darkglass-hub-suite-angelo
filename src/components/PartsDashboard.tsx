@@ -120,7 +120,7 @@ export function PartsDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
         if (cancelled) return;
         setRows(partsRows);
         setTruckStock(truck);
-        setStaff(users.filter((p) => PARTS_ROLES.has(normalizeRole(p.role))));
+        setStaff(users.filter((p) => p.is_active && PARTS_ROLES.has(normalizeRole(p.role))));
         setNotes(allNotes);
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load Parts Dashboard.");

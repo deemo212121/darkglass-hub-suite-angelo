@@ -253,7 +253,7 @@ export function ItTicketsPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     getCompanyUsers()
       .then((users) =>
         setItAdmins(
-          users.filter((u) => hasDashboardAccess(IT_ADMIN_ROLES, u.role, u.extra_roles))
+          users.filter((u) => u.is_active && hasDashboardAccess(IT_ADMIN_ROLES, u.role, u.extra_roles))
         )
       )
       .catch((err) => console.error("Failed to load IT/Admin roster:", err));

@@ -15,6 +15,41 @@ export interface UITimeEntry {
   notes: string;
 }
 
+/** True only for a genuine network-level failure (the request never reached
+ * the server at all) — distinct from a real Postgres/RLS error (which got a
+ * response, just a rejecting one). supabase-js catches the browser's raw
+ * "TypeError: Failed to fetch" internally and hands it back through the
+ * normal `{ error }` result shape rather than letting it propagate as a
+ * thrown TypeError, so this checks the message text (it's already been
+ * stringified into error.message by the time our own code re-throws it as
+ * a plain Error below) rather than the exception's type. Retrying a real
+ * server error would just waste time re-showing the same failure; retrying
+ * a network blip (common on a tech's phone moving between coverage spots
+ * while punching in/out) often just works. */
+function isNetworkFailure(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return /failed to fetch|networkerror|network request failed|load failed/i.test(message);
+}
+
+const NETWORK_UNREACHABLE_MESSAGE = "Couldn't reach the server — check your connection and try again.";
+
+/** Retries only genuine network failures, with a short backoff, before
+ * giving the caller a plain-language message instead of a raw browser
+ * TypeError. A real server-side error (RLS, validation, etc.) is thrown
+ * immediately on the first attempt, unchanged. */
+async function withNetworkRetry<T>(fn: () => Promise<T>, attempts = 3): Promise<T> {
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (!isNetworkFailure(err)) throw err;
+      if (i === attempts - 1) throw new Error(NETWORK_UNREACHABLE_MESSAGE);
+      await new Promise((resolve) => setTimeout(resolve, 500 * (i + 1)));
+    }
+  }
+  throw new Error(NETWORK_UNREACHABLE_MESSAGE);
+}
+
 /** Resolve the caller's profile id from their Firebase uid. */
 async function getMyProfileId(firebaseUid: string): Promise<string | null> {
   const { data, error } = await supabase
@@ -218,25 +253,27 @@ export async function saveEntry(
   // day (e.g. the technician's own Time Out) doesn't wipe out that audit
   // trail, since PostgREST's upsert only updates columns present in the
   // payload.
-  const { error } = await supabase
-    .from("timecard_entries")
-    .upsert(
-      {
-        profile_id: profileId,
-        work_date: workDate,
-        check_in: entry.checkIn || null,
-        check_out: entry.checkOut || null,
-        meal_start: entry.mealStart || null,
-        meal_end: entry.mealEnd || null,
-        notes: entry.notes || null,
-        ...(opts?.clockedInBy ? { clocked_in_by: opts.clockedInBy } : {}),
-      },
-      { onConflict: "profile_id,work_date" }
-    );
-  if (error) {
-    console.error("saveEntry error:", error.message);
-    throw new Error(error.message);
-  }
+  await withNetworkRetry(async () => {
+    const { error } = await supabase
+      .from("timecard_entries")
+      .upsert(
+        {
+          profile_id: profileId,
+          work_date: workDate,
+          check_in: entry.checkIn || null,
+          check_out: entry.checkOut || null,
+          meal_start: entry.mealStart || null,
+          meal_end: entry.mealEnd || null,
+          notes: entry.notes || null,
+          ...(opts?.clockedInBy ? { clocked_in_by: opts.clockedInBy } : {}),
+        },
+        { onConflict: "profile_id,work_date" }
+      );
+    if (error) {
+      console.error("saveEntry error:", error.message);
+      throw new Error(error.message);
+    }
+  });
 }
 
 /** Delete a day's entry for the caller's profile. */

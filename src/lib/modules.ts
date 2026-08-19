@@ -245,7 +245,7 @@ const dashboardMod: ModuleDef = {
     },
     {
       slug: "csr-team-leader-dashboard",
-      title: "CSR Dashboard",
+      title: "CSR Team Leader Dashboard",
       description: "Your personal tracker plus your team's live metrics.",
       custom: "csr-team-leader-dashboard" as any,
       fields: [],

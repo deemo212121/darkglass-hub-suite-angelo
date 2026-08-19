@@ -654,3 +654,140 @@ export async function upsertTechCategoryOverride(
   );
   if (error) throw new Error(error.message);
 }
+
+/** One technician's full Tech Payroll breakdown for a period — the piece-rate categories, not hours x rate. */
+export interface TechPayrollBreakdown {
+  periodStart: string;
+  periodEnd: string;
+  ticketsCompleted: number;
+  ticketsAssigned: number;
+  /** Distinct days clocked in during the period — Avg. Comp.'s denominator. */
+  workingDays: number;
+  techCategoryPay: { twoManJob: number; backTub: number; sealedSystem: number; sealedSystemR600: number };
+  /** Completed (redo-excluded) count per repair_type category, every configured category. */
+  techCategoryCounts: Record<string, number>;
+  twoTechCount: number;
+  twoTechPay: number;
+  ldtCount: number;
+  ldtPay: number;
+  mileage: number;
+  mileagePay: number;
+  trainingValue: number;
+  trainingPay: number;
+  mcaBonus: number;
+  /** Flat per-ticket rate paid on every completed (redo-excluded) ticket, on top of its own repair-type rate. */
+  completedTicketsPay: number;
+  /** Same total AccountingDashboard.tsx's Tech Payroll tab calls Total Net for this technician/period. */
+  grossPay: number;
+}
+
+/**
+ * Same piece-rate formula AccountingDashboard.tsx's Tech Payroll tab uses to
+ * total one technician's pay for a period, scoped down to a single
+ * technician — lets the mobile Payroll tab show a tech the exact same
+ * breakdown/total Finance sees on desktop instead of an hours x rate view
+ * that doesn't apply to piece-rate pay. Read-only and safe to call for a
+ * period that hasn't been "Generate Payroll"-ed yet (same live-computation
+ * the desktop tab itself does before a run exists).
+ */
+export async function getTechPayrollBreakdown(
+  profileId: string,
+  fullName: string,
+  assignedBranch: string,
+  periodStart: string,
+  periodEnd: string
+): Promise<TechPayrollBreakdown> {
+  const nameKey = fullName.trim().toLowerCase();
+  const [repairCounts, categoryOverrides, assignedCounts, manualItems, secondCounts, rates, timecardRes] = await Promise.all([
+    getTechCompletedRepairCounts(periodStart, periodEnd),
+    getTechCategoryOverrides(periodStart, periodEnd),
+    getTechAssignedCounts(periodStart, periodEnd),
+    getTechManualPayItems(periodStart, periodEnd),
+    getTechSecondCounts(periodStart, periodEnd),
+    getTechRepairRates(),
+    supabase
+      .from("timecard_entries")
+      .select("work_date, check_in")
+      .eq("profile_id", profileId)
+      .gte("work_date", periodStart)
+      .lte("work_date", periodEnd),
+  ]);
+  const rateFor = (repairType: string, branch: string) => techRateFor(rates, repairType, branch);
+
+  // Mirrors AccountingDashboard.tsx's techGrossByProfile accumulation, scoped to just this technician.
+  let ticketsCompleted = 0;
+  let categoryGross = 0;
+  let twoManJob = 0, backTub = 0, sealedSystem = 0, sealedSystemR600 = 0;
+  const categoryCounts: Record<string, number> = {};
+  for (const rc of repairCounts) {
+    if (rc.technician.trim().toLowerCase() !== nameKey) continue;
+    const rate = rateFor(rc.repairType, rc.branch || assignedBranch || "");
+    const amount = rate * rc.count;
+    ticketsCompleted += rc.count;
+    categoryGross += amount;
+    if (rc.repairType === "2 Man Job") twoManJob += amount;
+    if (rc.repairType === "Back Tub") backTub += amount;
+    if (rc.repairType === "Sealed System") sealedSystem += amount;
+    if (rc.repairType === "Sealed System(R600)") sealedSystemR600 += amount;
+    categoryCounts[rc.repairType] = (categoryCounts[rc.repairType] ?? 0) + rc.count;
+  }
+  // Finance's manual category-count corrections replace the live count for
+  // that category — same second pass AccountingDashboard.tsx applies.
+  let twoTechOverride: number | undefined;
+  for (const ov of categoryOverrides) {
+    if (ov.profileId !== profileId) continue;
+    if (ov.category === "Two Tech") { twoTechOverride = ov.count; continue; }
+    const rate = rateFor(ov.category, assignedBranch || "");
+    const liveCount = categoryCounts[ov.category] ?? 0;
+    const countDelta = ov.count - liveCount;
+    const amountDelta = countDelta * rate;
+    ticketsCompleted += countDelta;
+    categoryGross += amountDelta;
+    if (ov.category === "2 Man Job") twoManJob += amountDelta;
+    if (ov.category === "Back Tub") backTub += amountDelta;
+    if (ov.category === "Sealed System") sealedSystem += amountDelta;
+    if (ov.category === "Sealed System(R600)") sealedSystemR600 += amountDelta;
+    categoryCounts[ov.category] = ov.count;
+  }
+
+  const manual = manualItems.find((m) => m.profileId === profileId);
+  const ldtPay = (manual?.ldtCount ?? 0) * rateFor("LDT", assignedBranch || "");
+  const mileagePay = (manual?.mileage ?? 0) * rateFor("Mileage", assignedBranch || "");
+  const trainingPay = (manual?.trainingValue ?? 0) * rateFor("Training Paid", assignedBranch || "");
+
+  const twoTechCount = twoTechOverride ?? secondCounts.get(nameKey) ?? 0;
+  const twoTechPay = twoTechCount * rateFor("Two Tech", assignedBranch || "");
+
+  const mcaThreshold = rateFor("MCA Threshold", assignedBranch || "");
+  const mcaBonus = mcaThreshold > 0 && ticketsCompleted >= mcaThreshold ? rateFor("MCA Bonus", assignedBranch || "") : 0;
+
+  const completedTicketsPay = ticketsCompleted * rateFor("Completed Tickets", assignedBranch || "");
+
+  const grossPay = categoryGross + ldtPay + mileagePay + trainingPay + twoTechPay + mcaBonus + completedTicketsPay;
+
+  const workingDates = new Set<string>();
+  for (const r of (timecardRes.data ?? []) as Array<{ work_date: string; check_in: string | null }>) {
+    if (r.check_in) workingDates.add(r.work_date);
+  }
+
+  return {
+    periodStart,
+    periodEnd,
+    ticketsCompleted,
+    ticketsAssigned: assignedCounts.get(nameKey) ?? 0,
+    workingDays: workingDates.size,
+    techCategoryPay: { twoManJob, backTub, sealedSystem, sealedSystemR600 },
+    techCategoryCounts: categoryCounts,
+    twoTechCount,
+    twoTechPay,
+    ldtCount: manual?.ldtCount ?? 0,
+    ldtPay,
+    mileage: manual?.mileage ?? 0,
+    mileagePay,
+    trainingValue: manual?.trainingValue ?? 0,
+    trainingPay,
+    mcaBonus,
+    completedTicketsPay,
+    grossPay,
+  };
+}

@@ -16,7 +16,6 @@ import { AnnouncementBanner } from "@/components/AnnouncementBanner";
 import { PasswordChangeReminder } from "@/components/PasswordChangeReminder";
 import { TicketSearchFab } from "@/components/TicketSearchFab";
 import { ModuleNavigator } from "@/components/ModuleNavigator";
-import { SystemDataInitializer } from "@/components/SystemDataInitializer";
 import { SessionKickedOutBanner } from "@/components/SessionKickedOutBanner";
 
 import appCss from "../styles.css?url";
@@ -151,7 +150,6 @@ function RootComponent() {
       <ThemeProvider>
         <AuthProvider>
           <SuperSuperAdminGuard />
-          <SystemDataInitializer />
           <SessionKickedOutBanner />
           <MustChangePasswordGate hideChrome={hideChrome} />
           {!hideChrome && <AnnouncementBanner />}

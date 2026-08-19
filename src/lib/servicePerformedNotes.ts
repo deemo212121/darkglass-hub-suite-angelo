@@ -48,9 +48,20 @@ export function parseServicePerformed(text: string): ServicePerformedSections {
     let currentKey: keyof ServicePerformedSections | null = null;
     for (const line of text.split("\n")) {
       const trimmed = line.trim();
-      const match = SECTION_LABELS.find((s) => trimmed === s.label);
+      // Match the label on its own ("Parts Needed:") OR leading a line that
+      // also carries a value ("Parts Needed: Part124") - a tech retyping the
+      // label before every part instead of listing them under one header is
+      // the common real-world case, and each repeat must fold into the SAME
+      // section rather than getting stuck in "notes" (the label only
+      // switches section when it matches exactly), which is what produced
+      // several duplicate "Parts Needed:" headers in saved notes before.
+      const match = SECTION_LABELS.find(
+        (s) => trimmed === s.label || trimmed.startsWith(s.label),
+      );
       if (match) {
         currentKey = match.key;
+        const inlineValue = trimmed.slice(match.label.length).trim();
+        if (inlineValue) buffers[match.key].push(inlineValue);
         continue;
       }
       // Before the first recognized label (or for text that never had any

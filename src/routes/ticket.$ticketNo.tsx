@@ -1384,6 +1384,12 @@ function TicketDetailsPage() {
   // "user typed a different Part No, this stale data is from the last part
   // and must be replaced" — see handleMarconeLookup's guard below.
   const lastMarconeFillPartNoRef = React.useRef<string | null>(null);
+  // Paired with the ref above: which Part Dist. that fill actually came
+  // from. Part No alone isn't enough — switching Part Dist. (e.g. Encompass
+  // -> Marcone) for the SAME part number must still be treated as stale and
+  // replaced, since the on-screen price/description belong to the OLD
+  // distributor's answer, not the one about to be looked up.
+  const lastMarconeFillDistRef = React.useRef<string | null>(null);
   // ServicePower status sending
   const [spStatus, setSpStatus] = useState("");
   const [spStatusSending, setSpStatusSending] = useState(false);
@@ -4496,6 +4502,7 @@ function TicketDetailsPage() {
     setEditingPartId(null);
     setPartDraft(createEmptyPartDraft());
     lastMarconeFillPartNoRef.current = null;
+    lastMarconeFillDistRef.current = null;
   };
 
   // ── Marcone /parts/lookup — autofill Description / List Price / Core / Stock ──
@@ -4536,7 +4543,8 @@ function TicketDetailsPage() {
       // THIS part number — otherwise it's stale leftover description/price
       // from whatever part was looked up before the user changed Part No,
       // and must be replaced rather than preserved.
-      const isRefetchOfSamePart = lastMarconeFillPartNoRef.current === partNumber;
+      const isRefetchOfSamePart =
+        lastMarconeFillPartNoRef.current === partNumber && lastMarconeFillDistRef.current === partDist;
 
       if (isMarcone) {
         const { marconeLookupPart } = await import("@/lib/marconeApi");
@@ -4557,6 +4565,7 @@ function TicketDetailsPage() {
           coreValue: (isRefetchOfSamePart && prev.coreValue) || (d.coreValue ?? "").toString(),
         }));
         lastMarconeFillPartNoRef.current = partNumber;
+        lastMarconeFillDistRef.current = partDist;
         const stockLine = d.inStock ? "in stock" : "out of stock";
         const discLine = d.isDiscontinued ? " · discontinued" : "";
         setMarconeLookupMsg({
@@ -4585,6 +4594,7 @@ function TicketDetailsPage() {
         coreValue: (isRefetchOfSamePart && prev.coreValue) || (d.corePrice ?? "").toString(),
       }));
       lastMarconeFillPartNoRef.current = partNumber;
+      lastMarconeFillDistRef.current = partDist;
       const stockLine = d.inStock ? "in stock" : "out of stock";
       setMarconeLookupMsg({
         kind: "ok",
@@ -4859,9 +4869,11 @@ function TicketDetailsPage() {
     }
     setEditingPartId(row.id);
     // The loaded description/price genuinely belong to this row's own Part
-    // No — treat it the same as a prior successful lookup for that part, so
-    // clicking Lookup without changing Part No won't clobber the saved value.
+    // No AND Part Dist. — treat it the same as a prior successful lookup for
+    // that pair, so clicking Lookup without changing either won't clobber
+    // the saved value.
     lastMarconeFillPartNoRef.current = row.partNo || null;
+    lastMarconeFillDistRef.current = row.partDist || null;
     setPartDraft({
       partNo: row.partNo || "",
       partDist: row.partDist || "",
@@ -5403,7 +5415,7 @@ function TicketDetailsPage() {
       try {
         const { getCompanyUsers } = await import("@/lib/supabase/users");
         const rows = await getCompanyUsers();
-        if (!cancelled) setShareContacts(rows as any);
+        if (!cancelled) setShareContacts(rows.filter((r) => r.is_active) as any);
       } catch (err) {
         if (!cancelled) setShareError(err instanceof Error ? err.message : String(err));
       }

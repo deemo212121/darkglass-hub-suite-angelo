@@ -3,7 +3,6 @@ import { useState, useMemo, useRef, useEffect } from "react";
 import { Link, useSearch } from "@tanstack/react-router";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
-import { getEmployeeFromEmail } from "@/lib/userDataSync";
 import { usePersistedTab } from "@/lib/usePersistedTab";
 import { LOCATIONS } from "@/lib/locations";
 import {
@@ -106,7 +105,6 @@ const LOGIN_LOGOUT_HISTORY: LoginLogoutRecord[] = [
 export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef; }) {
   const { email, uid, role, extraRoles, displayName } = useAuth();
   const search = (useSearch({ strict: false }) as { tab?: string }) ?? {};
-  const employee = getEmployeeFromEmail(email);
 
   const [activeTab, setActiveTab] = usePersistedTab<"dashboard" | "payroll" | "attendance" | "requests">(
     "ahs:employee-self-service-active-tab",
@@ -392,7 +390,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
         createNotification({
           recipientId: r.id,
           senderId: myProfileId,
-          senderName: displayName || employee?.role || "Employee",
+          senderName: displayName || "Employee",
           body,
           linkTo,
         }).catch((err) => console.error("Failed to notify", r.id, err))
@@ -468,7 +466,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
             ptoType: ptoTypeMap[formData.leaveType] || "vacation",
             startDate: formData.startDate,
             endDate: formData.endDate,
-            reason: `Branch: ${formData.branch} | Position: ${ROLE_LABELS[formData.position] || formData.position || employee?.role || "N/A"} - ${formData.details}`,
+            reason: `Branch: ${formData.branch} | Position: ${ROLE_LABELS[formData.position] || formData.position || "N/A"} - ${formData.details}`,
             requestedBy: myProfileId,
             managerId: managerProfile?.id ?? null,
           });
@@ -518,7 +516,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
             ptoType: "sick",
             startDate: formData.startDate,
             endDate: formData.endDate,
-            reason: `Branch: ${formData.branch} | Position: ${ROLE_LABELS[formData.position] || formData.position || employee?.role || "N/A"} - ${formData.details}`,
+            reason: `Branch: ${formData.branch} | Position: ${ROLE_LABELS[formData.position] || formData.position || "N/A"} - ${formData.details}`,
             requestedBy: myProfileId,
             managerId: managerProfile?.id ?? null,
           });
@@ -1418,7 +1416,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                         <div>
                           <label className="text-xs font-semibold text-white block mb-1">Position</label>
                           <select
-                            value={formData.position || employee?.role || ""}
+                            value={formData.position || ""}
                             onChange={(e) => setFormData({ ...formData, position: e.target.value })}
                             className="w-full px-3 py-2 bg-slate-800 border border-white/10 rounded text-white text-sm focus:outline-none focus:border-blue-500"
                           >

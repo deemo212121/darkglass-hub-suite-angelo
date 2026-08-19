@@ -197,6 +197,7 @@ export function CSRTeamLeaderDashboard({ mod, sub }: { mod: ModuleDef; sub: SubM
         setTeamColor(team?.color ?? "#3b82f6");
 
         const roster = profiles.filter((p) => {
+          if (!p.is_active) return false;
           const extras = p.extra_roles || [];
           return p.role === "CSR_AGENT" || p.role === "CSR_TEAM_LEADER" || extras.includes("CSR_AGENT") || extras.includes("CSR_TEAM_LEADER");
         });

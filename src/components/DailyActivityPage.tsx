@@ -16,11 +16,14 @@ import { ROLE_LABELS } from "@/lib/roleLabels";
 
 // Every audit action bucketed into exactly one of these, so a user's TOTAL
 // always equals the sum of their columns (matches the reference report).
-type ActionBucket =
+// Exported so other reports can derive their own summaries from the same
+// real classification instead of re-embedding this whole page — e.g. Triage
+// Daily Report's own Activity panel.
+export type ActionBucket =
   | "schedule" | "reschedule" | "cancel" | "callAttempt" | "csrUpdate"
   | "infoUpdate" | "completed" | "acknowledge" | "claimRequested" | "triageSupport";
 
-const BUCKET_LABEL: Record<ActionBucket, string> = {
+export const BUCKET_LABEL: Record<ActionBucket, string> = {
   schedule: "* SCHEDULE",
   reschedule: "RESCHEDULE",
   cancel: "CANCEL",
@@ -34,7 +37,7 @@ const BUCKET_LABEL: Record<ActionBucket, string> = {
 };
 // One distinct color per action type, reused for both the per-user trend
 // chart's lines and its legend/tooltip.
-const BUCKET_COLOR: Record<ActionBucket, string> = {
+export const BUCKET_COLOR: Record<ActionBucket, string> = {
   schedule: "#3b82f6",
   reschedule: "#818cf8",
   cancel: "#ef4444",
@@ -46,7 +49,7 @@ const BUCKET_COLOR: Record<ActionBucket, string> = {
   claimRequested: "#a78bfa",
   triageSupport: "#fb923c",
 };
-const BUCKET_ORDER: ActionBucket[] = [
+export const BUCKET_ORDER: ActionBucket[] = [
   "schedule", "reschedule", "cancel", "callAttempt", "csrUpdate",
   "infoUpdate", "completed", "acknowledge", "claimRequested", "triageSupport",
 ];
@@ -60,7 +63,7 @@ const BUCKET_ORDER: ActionBucket[] = [
 // tracked "call attempt" action anywhere in the schema, so that column has
 // no live source and always reads 0 — kept in the table only so the layout
 // matches the reference; it isn't fabricated.
-function classify(entry: TicketAuditEntry): ActionBucket {
+export function classify(entry: TicketAuditEntry): ActionBucket {
   if (entry.action === "reschedule") {
     return entry.beforeValue ? "reschedule" : "schedule";
   }

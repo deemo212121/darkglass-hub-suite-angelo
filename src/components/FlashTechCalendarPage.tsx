@@ -177,7 +177,7 @@ export function FlashTechCalendarPage({ mod, sub }: Props) {
 
   const filteredTechnicianOptions = useMemo(() => {
     const q = technicianQuery.trim().toLowerCase();
-    const active = users.filter((u) => u.display_name);
+    const active = users.filter((u) => u.is_active && u.display_name);
     return q ? active.filter((u) => (u.display_name || "").toLowerCase().includes(q)) : active;
   }, [users, technicianQuery]);
 

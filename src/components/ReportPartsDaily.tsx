@@ -240,7 +240,7 @@ export function ReportPartsDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
         ]);
         if (cancelled) return;
         setRows(partRows);
-        setStaff(profiles.filter(isPartsProfile));
+        setStaff(profiles.filter((p) => p.is_active && isPartsProfile(p)));
         setNotes(allNotes);
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load Part Daily Report.");

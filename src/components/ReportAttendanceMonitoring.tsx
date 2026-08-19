@@ -42,13 +42,17 @@ const daysAgoIso = (n: number) => { const d = new Date(); d.setDate(d.getDate() 
  * AttendanceMonitoringPage.tsx's computeAlerts so "late/absent" mean the
  * same thing on both pages.
  */
-function isOffDay(dateIso: string, offDays: number[] | null | undefined): boolean {
+// Exported (along with dayStatus/graceMinutesFor/DayStatus below) so other
+// reports can derive their own attendance summary from the same real
+// present/late/absent classification instead of re-embedding this whole
+// page — e.g. Triage Daily Report's own Attendance panel.
+export function isOffDay(dateIso: string, offDays: number[] | null | undefined): boolean {
   if (!offDays || offDays.length === 0) return false;
   const dow = new Date(dateIso + "T00:00:00").getDay();
   return offDays.includes(dow);
 }
 
-interface DayStatus {
+export interface DayStatus {
   present: boolean;
   late: boolean;
   absent: boolean;
@@ -64,7 +68,7 @@ interface DayStatus {
  * every row (e.g. a PH employee clocking in at 08:00:32 against a 08:00
  * schedule reads "Late" here but "✓ OK" there).
  */
-function dayStatus(entry: CompanyTimecardEntry | undefined, requiredCheckIn: string | null, offDay: boolean, graceMinutes: number): DayStatus {
+export function dayStatus(entry: CompanyTimecardEntry | undefined, requiredCheckIn: string | null, offDay: boolean, graceMinutes: number): DayStatus {
   if (!entry || (!entry.checkIn && !entry.checkOut)) {
     return { present: false, late: false, absent: !offDay, hours: 0 };
   }
@@ -80,7 +84,7 @@ function dayStatus(entry: CompanyTimecardEntry | undefined, requiredCheckIn: str
 }
 
 /** Mirrors AttendanceMonitoringPage's own country/role -> grace-minutes resolution exactly, so both pages agree on what counts as "late". */
-function graceMinutesFor(p: ProfileRow): number {
+export function graceMinutesFor(p: ProfileRow): number {
   const country = p.assigned_branch === "Philippines" ? "PH" : "US";
   return payGraceMinutesFor(country, normalizeRole(p.role) === "TECHNICIAN");
 }

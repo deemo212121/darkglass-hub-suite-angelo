@@ -493,7 +493,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   );
 
   const visibleProfiles = useMemo(() => {
-    let result = profiles;
+    let result = profiles.filter((p) => p.is_active);
     if (allowedLocations !== null) result = result.filter((p) => allowedLocations.includes(p.assigned_branch || ""));
     if (teamScopedIds !== null) result = result.filter((p) => teamScopedIds.has(p.id));
     return result;
@@ -1321,7 +1321,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
 
               {/* Filters and Search for Daily */}
               <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
-                <div className="grid gap-3 md:grid-cols-5">
+                <div className="grid gap-3 md:grid-cols-6">
                   <div>
                     <label className="block text-xs text-slate-400 uppercase mb-2">Search Employee</label>
                     <input
@@ -1350,7 +1350,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                       ))}
                     </select>
                   </div>
-                  <div>
+                  <div className="md:col-span-2">
                     <label className="block text-xs text-slate-400 uppercase mb-2">
                       Filter by Date Range
                       {dateRangeActive && (
@@ -1365,7 +1365,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                         value={filterDateFrom}
                         max={filterDateTo || undefined}
                         onChange={(e) => setFilterDateFrom(e.target.value)}
-                        className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none"
+                        className="flex-1 min-w-0 bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none"
                       />
                       <span className="text-slate-500 text-xs shrink-0">to</span>
                       <input
@@ -1373,7 +1373,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                         value={filterDateTo}
                         min={filterDateFrom || undefined}
                         onChange={(e) => setFilterDateTo(e.target.value)}
-                        className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none"
+                        className="flex-1 min-w-0 bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none"
                       />
                     </div>
                   </div>
