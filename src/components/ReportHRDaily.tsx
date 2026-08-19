@@ -1673,16 +1673,22 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // covered by COE_OFFICE_USE_ROLES's fixed BizOps-only list above.
   const isCoeOfficeUseEligible = (role: string) => role.includes("MANAGER") || role === "ADMIN" || role === "SUPERADMIN" || role === "HR" || role.includes("BIZOPS");
   const [coeOfficeUseNameDropdownOpen, setCoeOfficeUseNameDropdownOpen] = useState(false);
+  // Held roles pile up: a secondary Manager/Admin/HR/BizOps role makes
+  // someone just as eligible a signer as if it were their primary position.
   const filteredCoeOfficeUseNameOptions = (query: string) => {
     const q = query.trim().toLowerCase();
-    const candidates = employees.filter((e) => isCoeOfficeUseEligible(normalizeRole(e.position))).sort((a, b) => a.name.localeCompare(b.name));
+    const candidates = employees
+      .filter((e) => [e.position, ...e.extraRoles].some((r) => isCoeOfficeUseEligible(normalizeRole(r))))
+      .sort((a, b) => a.name.localeCompare(b.name));
     return q ? candidates.filter((e) => e.name.toLowerCase().includes(q)) : candidates;
   };
 
   const [coeAuthorizedRepDropdownOpen, setCoeAuthorizedRepDropdownOpen] = useState(false);
   const filteredCoeAuthorizedRepOptions = (query: string) => {
     const q = query.trim().toLowerCase();
-    const candidates = employees.filter((e) => COE_OFFICE_USE_ROLES.has(normalizeRole(e.position))).sort((a, b) => a.name.localeCompare(b.name));
+    const candidates = employees
+      .filter((e) => [e.position, ...e.extraRoles].some((r) => COE_OFFICE_USE_ROLES.has(normalizeRole(r))))
+      .sort((a, b) => a.name.localeCompare(b.name));
     return q ? candidates.filter((e) => e.name.toLowerCase().includes(q)) : candidates;
   };
 
@@ -4755,8 +4761,13 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // Manager, CSR Manager, Technician Manager, etc.) — matches the same
   // substring convention already used elsewhere in this file/app rather
   // than a hardcoded list, so it stays correct as new manager roles appear.
+  // Held roles pile up: a secondary manager role counts the same as
+  // holding it as the primary position — position is display/title only.
   const managerRecipients = useMemo(
-    () => employees.filter((e) => e.status === "active" && normalizeRole(e.position).includes("MANAGER")).sort((a, b) => a.name.localeCompare(b.name)),
+    () =>
+      employees
+        .filter((e) => e.status === "active" && [e.position, ...e.extraRoles].some((r) => normalizeRole(r).includes("MANAGER")))
+        .sort((a, b) => a.name.localeCompare(b.name)),
     [employees]
   );
   const [forwardCvDialog, setForwardCvDialog] = useState<Candidate | null>(null);

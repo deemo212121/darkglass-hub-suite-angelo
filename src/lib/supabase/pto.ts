@@ -439,9 +439,15 @@ export async function reviewPtoStage(
     try {
       const roster = await getCompanyUsers();
       const requesterName = roster.find((p) => p.id === request.profileId)?.display_name || "An employee";
-      const recipients = roster.filter(
-        (p) => ["HR", "FINANCE"].includes((p.role || "").toUpperCase()) && p.id !== reviewerId
-      );
+      // Held roles pile up here too, same as canReviewPtoStage — someone
+      // with HR/FINANCE only as a secondary role can still approve this
+      // stage, so they need to be notified just as reliably as a primary
+      // holder, not silently skipped.
+      const recipients = roster.filter((p) => {
+        if (p.id === reviewerId || !p.is_active) return false;
+        const heldRoles = [p.role, ...(p.extra_roles ?? [])].map((r) => (r || "").toUpperCase());
+        return heldRoles.includes("HR") || heldRoles.includes("FINANCE");
+      });
       await Promise.all(
         recipients.map((r) =>
           createNotification({

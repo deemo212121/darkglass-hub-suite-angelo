@@ -76,13 +76,14 @@ interface BranchEmployee {
  * exact profiles row Master List reads.
  */
 export function StaffListPage({ mod: _mod, sub: _sub }: { mod: ModuleDef; sub: SubModuleDef }) {
-  const { role: viewerRole } = useAuth();
+  const { role: viewerRole, extraRoles: viewerExtraRoles } = useAuth();
   // Company Email is the real Firebase Auth login credential, not just
   // contact info — changing it has to go through /api/admin-update-email
   // (see adminUpdateEmailBridge.ts) rather than a plain Supabase field
   // edit, and only Admin/SuperAdmin are trusted with that, same
-  // restriction as the User Management detail page.
-  const canEditEmail = normalizeRole(viewerRole) === "ADMIN" || normalizeRole(viewerRole) === "SUPERADMIN";
+  // restriction as the User Management detail page. Held against primary
+  // role OR any extra_roles entry, same convention as everywhere else.
+  const canEditEmail = [viewerRole, ...viewerExtraRoles].some((r) => normalizeRole(r) === "ADMIN" || normalizeRole(r) === "SUPERADMIN");
   const [employees, setEmployees] = useState<BranchEmployee[]>([]);
   const [tierLevel, setTierLevel] = useState<StaffListTierLevelRow[]>([]);
   // Senior Branch Managers oversee several branches at once, but a

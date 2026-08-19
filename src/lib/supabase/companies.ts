@@ -213,11 +213,14 @@ export async function getCompanyAdminAccounts(legacyCode: string): Promise<Compa
   if (companyErr) throw new Error(companyErr.message);
   if (!company) return [];
 
+  // Held roles pile up: someone holding ADMIN/SUPERADMIN only as a
+  // secondary/extra role is a real admin account just as much as a
+  // primary holder — role is display/title only.
   const { data, error } = await supabase
     .from("profiles")
     .select("id, firebase_uid, email, username, display_name, role, extra_roles, is_active, phone_number, department, created_at")
     .eq("company_id", (company as any).id)
-    .in("role", ["ADMIN", "SUPERADMIN"])
+    .or("role.in.(ADMIN,SUPERADMIN),extra_roles.cs.{ADMIN},extra_roles.cs.{SUPERADMIN}")
     .order("display_name", { ascending: true });
   if (error) throw new Error(error.message);
 
@@ -247,10 +250,11 @@ export async function getCompanyAdminAccounts(legacyCode: string): Promise<Compa
  * doesn't fire a request per company.
  */
 export async function getAllCompanyAdminAccountCounts(): Promise<Record<string, number>> {
+  // Held roles pile up, same as getCompanyAdminAccounts above.
   const { data, error } = await supabase
     .from("profiles")
     .select("company:company_id(legacy_code)")
-    .in("role", ["ADMIN", "SUPERADMIN"]);
+    .or("role.in.(ADMIN,SUPERADMIN),extra_roles.cs.{ADMIN},extra_roles.cs.{SUPERADMIN}");
   if (error) throw new Error(error.message);
 
   const counts: Record<string, number> = {};

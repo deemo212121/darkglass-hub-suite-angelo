@@ -65,14 +65,17 @@ const branchesOf = (assignedBranch: string | null, branchAccess: string | null):
 };
 
 export function CSRDashboard({ mod }: { mod: ModuleDef; sub: SubModuleDef }) {
-  const { role, ready } = useAuth();
+  const { role, extraRoles, ready } = useAuth();
   const navigate = useNavigate();
   const normalizedRole = normalizeRole(role);
   // CSR Agents and Team Leaders don't get the org-wide manager overview —
   // they land on their own Personal + Team dashboard instead.
   const shouldRedirectToPersonalDashboard = normalizedRole === "CSR_AGENT" || normalizedRole === "CSR_TEAM_LEADER";
   const isCsrManager = normalizedRole === "CSR_MANAGER";
-  const canReviewNotes = ready && STAGE1_REVIEWER_ROLES.has(normalizedRole);
+  // Held roles pile up: a secondary role granting stage-1 review authority
+  // counts the same as holding it primarily, same convention
+  // CsrAgentDetailPage.tsx already uses for this same permission.
+  const canReviewNotes = ready && [normalizedRole, ...extraRoles.map(normalizeRole)].some((r) => STAGE1_REVIEWER_ROLES.has(r));
 
   useEffect(() => {
     if (ready && shouldRedirectToPersonalDashboard) {

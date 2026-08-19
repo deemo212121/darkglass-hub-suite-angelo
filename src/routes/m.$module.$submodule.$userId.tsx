@@ -477,7 +477,9 @@ function UserDetailsPage() {
   // username to profiles.email before calling Firebase), not just contact
   // info, so changing it has to go through /api/admin-update-email (see
   // adminUpdateEmailBridge.ts) rather than a plain Supabase field edit.
-  const canEditEmail = viewerRole === "ADMIN" || viewerRole === "SUPERADMIN";
+  // Held against primary role OR any extra_roles entry, same convention as
+  // canEditAccountDetails above.
+  const canEditEmail = [viewerRole, ...(viewerExtraRoles ?? [])].some((r) => normalizeRole(r) === "ADMIN" || normalizeRole(r) === "SUPERADMIN");
 
   const [loading, setLoading] = useState(true);
   const [notFoundUser, setNotFoundUser] = useState(false);

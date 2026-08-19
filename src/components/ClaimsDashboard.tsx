@@ -28,6 +28,14 @@ import { getAllAgentNotes, type CsrAgentNote } from "@/lib/supabase/csrAgentNote
 import { normalizeRole, ROLE_LABELS } from "@/lib/roleLabels";
 
 const CLAIMS_ROLES = new Set(["CLAIMS", "CLAIMS_MANAGER"]);
+// Checks both primary role AND extra_roles — this app supports dual-role
+// users (e.g. a CSR Agent who is also a Claims Manager), same convention
+// as ReportOperationsDaily.tsx's isBizOpsProfile / ReportPartsDaily.tsx's
+// isPartsProfile.
+function isClaimsProfile(p: ProfileRow): boolean {
+  if (CLAIMS_ROLES.has(normalizeRole(p.role))) return true;
+  return (p.extra_roles || []).some((r) => CLAIMS_ROLES.has(normalizeRole(r)));
+}
 const CHART_COLORS = ["#3b82f6", "#34d399", "#a78bfa", "#fb923c", "#f472b6", "#facc15", "#60a5fa", "#f87171"];
 
 // Claim-stage vocabulary — same PT-/CL- statuses NeedClaimList.tsx and
@@ -92,7 +100,7 @@ export function ClaimsDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModuleDe
         ]);
         if (cancelled) return;
         setTickets(allTickets.filter(isClaimTicket));
-        setStaff(profiles.filter((p) => p.is_active && CLAIMS_ROLES.has(normalizeRole(p.role))));
+        setStaff(profiles.filter((p) => p.is_active && isClaimsProfile(p)));
         setNotes(allNotes);
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load Claims Dashboard.");

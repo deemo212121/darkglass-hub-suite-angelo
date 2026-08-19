@@ -32,7 +32,8 @@ const PARTS_ROLES = new Set(["PARTS", "PARTS_MANAGER"]);
 // data-fetching effect sees a stable reference across renders — an inline
 // arrow recreated on every render would retrigger its fetch each time. Same
 // pattern TriageDashboardPage.tsx already established for this component.
-const isPartsProfileFilter = (p: ProfileRow) => PARTS_ROLES.has(normalizeRole(p.role));
+const isPartsProfileFilter = (p: ProfileRow) =>
+  PARTS_ROLES.has(normalizeRole(p.role)) || (p.extra_roles || []).some((r) => PARTS_ROLES.has(normalizeRole(r)));
 const PENDING_STATUSES = new Set(["Need PO", "PO Made"]);
 const READY_STATUSES = new Set(["Part Ready", "Tech Pickup"]);
 const DONE_STATUSES = new Set(["Used", "Claimed"]);
