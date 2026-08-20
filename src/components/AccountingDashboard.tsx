@@ -103,7 +103,6 @@ const MILEAGE_COLUMNS = [
   { key: "contactNumber", label: "Contact Number" },
   { key: "email", label: "Email" },
   { key: "totalMileage", label: "Total Mileage" },
-  { key: "googleMapLink", label: "Google Map Link" },
   { key: "payroll", label: "Payroll" },
   { key: "actions", label: "Actions" },
 ] as const;
@@ -3289,7 +3288,6 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                           {isMileageColVisible("contactNumber") && <th className="px-3 py-3 text-xs font-semibold text-slate-200 text-left">Contact Number</th>}
                           {isMileageColVisible("email") && <th className="px-3 py-3 text-xs font-semibold text-slate-200 text-left">Email</th>}
                           {isMileageColVisible("totalMileage") && <th className="px-3 py-3 text-xs font-semibold text-slate-200 text-left">Total Mileage</th>}
-                          {isMileageColVisible("googleMapLink") && <th className="px-3 py-3 text-xs font-semibold text-slate-200 text-left">Google Map Link</th>}
                           {isMileageColVisible("payroll") && <th className="px-3 py-3 text-xs font-semibold text-slate-200 text-left">Payroll</th>}
                           {isMileageColVisible("actions") && <th className="px-3 py-3 text-xs font-semibold text-slate-200 text-left">Actions</th>}
                         </tr>
@@ -3372,17 +3370,6 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                                 >
                                   adj
                                 </span>
-                              )}
-                            </td>
-                            )}
-                            {isMileageColVisible("googleMapLink") && (
-                            <td className="px-3 py-2.5">
-                              {entry.googleMapLink ? (
-                                <a href={entry.googleMapLink} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 underline">
-                                  Map link
-                                </a>
-                              ) : (
-                                <span className="text-slate-500">—</span>
                               )}
                             </td>
                             )}
