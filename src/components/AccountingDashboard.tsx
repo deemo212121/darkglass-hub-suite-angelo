@@ -2130,6 +2130,83 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     }
   };
 
+  // Shared by the payroll-hold toggle and the no-photos reminder button
+  // below — a mileage entry's audience is always the technician themselves
+  // plus their resolved manager plus their branch's senior branch manager
+  // (if any), never just the tech alone, since a held ticket's mileage is
+  // as much a manager-visibility issue as a technician to-do.
+  const resolveMileageNotifyRecipients = async (entry: MileageEntry): Promise<Set<string>> => {
+    const allProfiles = await getCompanyUsers();
+    const targetProfile = allProfiles.find((p) => p.id === entry.profileId);
+    const recipientIds = new Set<string>([entry.profileId!]);
+    if (targetProfile) {
+      const manager = await resolveTeamLeadOrManager(targetProfile, allProfiles);
+      if (manager) recipientIds.add(manager.id);
+
+      const branch = (targetProfile.assigned_branch || entry.branch || "").trim().toLowerCase();
+      if (branch) {
+        const seniorBranchManager = allProfiles.find(
+          (p) =>
+            (p.assigned_branch || "").trim().toLowerCase() === branch &&
+            [p.role, ...(p.extra_roles ?? [])].some((r) => normalizeRole(r) === "SENIOR_BRANCH_MANAGER")
+        );
+        if (seniorBranchManager) recipientIds.add(seniorBranchManager.id);
+      }
+    }
+    return recipientIds;
+  };
+
+  // "Send" button on a no-photos-held mileage row — a deliberate, one-off
+  // nudge Accounting sends when THEY notice a hold, not an automatic ping
+  // on every reconciliation pass (reconcileMileageNoPhotoHolds itself stays
+  // silent — it can re-fire many times as photos trickle in, which would
+  // spam the same people repeatedly). Reuses the exact recipient set and
+  // "Accounting"-branded notification convention as the manual hold toggle
+  // above, just with photos-specific wording and no confirm dialog — this
+  // is a low-stakes reminder, not a payroll-affecting action.
+  const [sendingReminderId, setSendingReminderId] = useState<string | null>(null);
+  const [reminderSentIds, setReminderSentIds] = useState<Set<string>>(new Set());
+  const handleSendMileageReminder = async (entry: MileageEntry) => {
+    if (!entry.profileId || !entry.ticketNo) return;
+    setSendingReminderId(entry.id);
+    try {
+      const recipientIds = await resolveMileageNotifyRecipients(entry);
+      const rowLabel = mileageRowName(entry);
+      const body = `📸 Ticket ${entry.ticketNo} still needs photos uploaded — its mileage for ${entry.workDate} is on hold from payroll until photos are added. Please upload photos for this ticket as soon as possible.`;
+      await Promise.all(
+        Array.from(recipientIds).map((id) =>
+          createNotification({
+            recipientId: id,
+            senderId: myProfileId,
+            senderName: "Accounting",
+            body,
+            linkTo: `/m/tickets/ticket-list?ticketNo=${encodeURIComponent(entry.ticketNo!)}`,
+          })
+        )
+      );
+      void logModuleActivity({
+        module: "accounting",
+        actorName: displayName || email || "Admin",
+        action: "mileage_photo_reminder_sent",
+        targetType: "ticket",
+        targetId: entry.ticketId ?? undefined,
+        targetLabel: `${entry.ticketNo} — ${rowLabel}`,
+      });
+      setReminderSentIds((prev) => new Set(prev).add(entry.id));
+      window.setTimeout(() => {
+        setReminderSentIds((prev) => {
+          const next = new Set(prev);
+          next.delete(entry.id);
+          return next;
+        });
+      }, 4000);
+    } catch (err) {
+      alert(`Failed to send reminder: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setSendingReminderId(null);
+    }
+  };
+
   // While on hold, a ticket never counts toward the technician's "Completed
   // Tickets" pay, even if it later becomes completed (see
   // getTechCompletedRepairCounts in techPayroll.ts) — but it's reversible,
@@ -2176,23 +2253,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       if (entry.profileId) {
         (async () => {
           try {
-            const allProfiles = await getCompanyUsers();
-            const targetProfile = allProfiles.find((p) => p.id === entry.profileId);
-            const recipientIds = new Set<string>([entry.profileId!]);
-            if (targetProfile) {
-              const manager = await resolveTeamLeadOrManager(targetProfile, allProfiles);
-              if (manager) recipientIds.add(manager.id);
-
-              const branch = (targetProfile.assigned_branch || entry.branch || "").trim().toLowerCase();
-              if (branch) {
-                const seniorBranchManager = allProfiles.find(
-                  (p) =>
-                    (p.assigned_branch || "").trim().toLowerCase() === branch &&
-                    [p.role, ...(p.extra_roles ?? [])].some((r) => normalizeRole(r) === "SENIOR_BRANCH_MANAGER")
-                );
-                if (seniorBranchManager) recipientIds.add(seniorBranchManager.id);
-              }
-            }
+            const recipientIds = await resolveMileageNotifyRecipients(entry);
             const body = excluding
               ? `🚫 ${entry.ticketNo ? `Ticket ${entry.ticketNo}` : "A ticket"} (${entry.address}) was put on hold for payroll by Accounting.`
               : `✅ ${entry.ticketNo ? `Ticket ${entry.ticketNo}` : "A ticket"} (${entry.address}) was taken off hold for payroll by Accounting — it counts toward pay again.`;
@@ -3372,6 +3433,16 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                                     className="text-slate-400 hover:text-blue-300"
                                   >
                                     <RouteIcon className="h-3.5 w-3.5" />
+                                  </button>
+                                )}
+                                {entry.source === "auto" && entry.profileId && entry.ticketNo && mileageTicketHasPhotos.get(entry.ticketNo) === false && (
+                                  <button
+                                    onClick={() => handleSendMileageReminder(entry)}
+                                    disabled={sendingReminderId === entry.id}
+                                    title={reminderSentIds.has(entry.id) ? "Reminder sent" : `Remind ${mileageRowName(entry)} to upload photos for this ticket`}
+                                    className={`disabled:opacity-40 ${reminderSentIds.has(entry.id) ? "text-emerald-400" : "text-slate-400 hover:text-blue-300"}`}
+                                  >
+                                    {sendingReminderId === entry.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
                                   </button>
                                 )}
                                 <button
