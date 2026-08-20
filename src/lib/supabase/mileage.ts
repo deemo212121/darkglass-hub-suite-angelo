@@ -51,6 +51,38 @@ export interface MileageEntry {
    *  automatic rule know never to touch a human's manual hold, and lets a
    *  human's "take it off hold" always win even with no photo. Migration 0181. */
   payrollHoldReason: "manual" | "no_photos" | null;
+  /** This day's manually-set stop sequence (0-based, shared meaning across
+   *  every entry in the same technician+work_date group) — see
+   *  recalculateMileageDayRoute. Null means "use the automatic time-slot/
+   *  created-at heuristic in syncMileageFromTickets" — including after a
+   *  fresh ticket joins an already-manually-ordered day, which resets the
+   *  whole group back to null/heuristic rather than guessing where the new
+   *  stop belongs. Migration 0182. */
+  routeOrder: number | null;
+  /** Full replacement for this day's total, if Finance has set one — see
+   *  mileageEffectiveTotal and setMileageDayAdjustment. Takes precedence
+   *  over mileageAdjustment when both are set. Migration 0182. */
+  mileageOverride: number | null;
+  /** A +/- delta added to totalMileage (ignored when mileageOverride is
+   *  set) — see mileageEffectiveTotal. Migration 0182. */
+  mileageAdjustment: number | null;
+  adjustmentNote: string | null;
+  adjustedByName: string | null;
+  adjustedAt: string | null;
+}
+
+/**
+ * The number that actually counts for display and payroll — a manual
+ * override replaces the calculated total_mileage outright; a manual
+ * adjustment adds/subtracts from it; with neither set, it's just the
+ * calculated total. EVERY read of a day's mileage figure (the Mileage
+ * table, the technician detail modal, getTechAutoMileageTotals) must go
+ * through this rather than entry.totalMileage directly, or a Finance
+ * correction silently won't take effect.
+ */
+export function mileageEffectiveTotal(entry: Pick<MileageEntry, "totalMileage" | "mileageOverride" | "mileageAdjustment">): number {
+  if (entry.mileageOverride != null) return entry.mileageOverride;
+  return entry.totalMileage + (entry.mileageAdjustment ?? 0);
 }
 
 function mapRow(r: any): MileageEntry {
@@ -75,11 +107,17 @@ function mapRow(r: any): MileageEntry {
     payrollExcludedAt: r.payroll_excluded_at ?? null,
     payrollExcludedByName: r.payroll_excluded_by_name ?? null,
     payrollHoldReason: r.payroll_hold_reason === "manual" || r.payroll_hold_reason === "no_photos" ? r.payroll_hold_reason : null,
+    routeOrder: r.route_order ?? null,
+    mileageOverride: r.mileage_override != null ? Number(r.mileage_override) : null,
+    mileageAdjustment: r.mileage_adjustment != null ? Number(r.mileage_adjustment) : null,
+    adjustmentNote: r.adjustment_note ?? null,
+    adjustedByName: r.adjusted_by_name ?? null,
+    adjustedAt: r.adjusted_at ?? null,
   };
 }
 
 const ENTRY_COLUMNS =
-  "id, profile_id, technician_name, branch, work_date, address, contact_number, email, total_mileage, google_map_link, created_by_name, created_at, ticket_id, ticket_no, ticket_status, source, payroll_excluded, payroll_excluded_at, payroll_excluded_by_name, payroll_hold_reason";
+  "id, profile_id, technician_name, branch, work_date, address, contact_number, email, total_mileage, google_map_link, created_by_name, created_at, ticket_id, ticket_no, ticket_status, source, payroll_excluded, payroll_excluded_at, payroll_excluded_by_name, payroll_hold_reason, route_order, mileage_override, mileage_adjustment, adjustment_note, adjusted_by_name, adjusted_at";
 
 /** All mileage entries for the caller's company (RLS-scoped), newest first. */
 export async function getMileageEntries(): Promise<MileageEntry[]> {
@@ -163,6 +201,84 @@ export async function reconcileMileageNoPhotoHolds(
 export async function deleteMileageEntry(id: string): Promise<void> {
   const { error } = await supabase.from("mileage_entries").delete().eq("id", id);
   if (error) throw new Error(error.message);
+}
+
+/**
+ * Coarse visit-order heuristic, shared by syncMileageFromTickets (below)
+ * and the Day Route view: a time_slot's own leading number as its start
+ * hour (e.g. "8-12" -> 8, "1-5" -> 1) — AM/PM isn't recorded, but this is
+ * only used for RELATIVE ordering within one technician's one day, not an
+ * absolute time, so the ambiguity doesn't matter here. A bare "AM"/"PM"
+ * slot (no digits at all — seen in real ticket data alongside the numeric
+ * ranges) sorts before/after every numeric range rather than at a specific
+ * hour that could tie with (and then get arbitrarily reordered against) a
+ * real numeric slot like "12-4". Missing/unparsable slots sort last of all.
+ */
+export function timeSlotStartHour(slot: unknown): number {
+  const raw = String(slot || "").trim().toUpperCase();
+  if (!raw) return Number.MAX_SAFE_INTEGER;
+  if (raw === "AM") return -1;
+  if (raw === "PM") return 13;
+  const m = raw.match(/(\d{1,2})/);
+  return m ? Number(m[1]) : Number.MAX_SAFE_INTEGER;
+}
+
+/** Orders tickets by timeSlotStartHour, breaking ties with created_at. */
+export function sortStopsByHeuristic<T extends { time_slot?: unknown; created_at: string }>(tickets: T[]): T[] {
+  return [...tickets].sort((a, b) => {
+    const slotDiff = timeSlotStartHour(a.time_slot) - timeSlotStartHour(b.time_slot);
+    if (slotDiff !== 0) return slotDiff;
+    return String(a.created_at).localeCompare(String(b.created_at));
+  });
+}
+
+/** One stop in a technician's day route — Day Route view's stop list/map. */
+export interface MileageDayStop {
+  ticketId: string;
+  ticketNo: string;
+  status: string | null;
+  timeSlot: string | null;
+  address: string;
+  city: string | null;
+  state: string | null;
+  zip: string | null;
+}
+
+/**
+ * Fetches this day's stops in visit order — the saved route_order if every
+ * entry has one (a human has already sequenced this day), else the same
+ * time-slot heuristic syncMileageFromTickets uses. Used to seed the Day
+ * Route view's map/list before any reordering happens.
+ */
+export async function getMileageDayRouteStops(
+  entries: { ticketId: string | null; routeOrder: number | null }[]
+): Promise<MileageDayStop[]> {
+  const ticketIds = entries.map((e) => e.ticketId).filter((id): id is string => !!id);
+  if (ticketIds.length === 0) return [];
+  const { data, error } = await supabase
+    .from("tickets")
+    .select("id, ticket_no, status, time_slot, created_at, customer:customers ( address, city, state, zip )")
+    .in("id", ticketIds);
+  if (error) throw new Error(error.message);
+  const rows = (data ?? []) as any[];
+  const allHaveOrder = entries.every((e) => e.routeOrder != null);
+  const orderIndex = new Map(entries.map((e) => [e.ticketId, e.routeOrder]));
+  const ordered = allHaveOrder
+    ? [...rows].sort((a, b) => (orderIndex.get(a.id) ?? 0) - (orderIndex.get(b.id) ?? 0))
+    : sortStopsByHeuristic(rows);
+  return ordered.map((t: any) => {
+    const customer = t.customer ?? {};
+    return {
+      ticketId: t.id,
+      ticketNo: t.ticket_no,
+      status: t.status ?? null,
+      timeSlot: t.time_slot ?? null,
+      address: customer.address ?? "",
+      city: customer.city ?? null,
+      state: customer.state ?? null,
+      zip: customer.zip ?? null,
+    };
+  });
 }
 
 export interface MileageSyncResult {
@@ -287,31 +403,8 @@ export async function syncMileageFromTickets(input: {
   const untouchedTicketCount = allAssignedTickets.length - groupsToProcess.reduce((s, g) => s + g.length, 0);
   result.skipped = untouchedTicketCount;
 
-  // Coarse visit-order heuristic: a time_slot's own leading number as its
-  // start hour (e.g. "8-12" -> 8, "1-5" -> 1) — AM/PM isn't recorded, but
-  // this is only used for RELATIVE ordering within one technician's one
-  // day, not an absolute time, so the ambiguity doesn't matter here. A bare
-  // "AM"/"PM" slot (no digits at all — seen in real ticket data alongside
-  // the numeric ranges) sorts before/after every numeric range rather than
-  // at a specific hour that could tie with (and then get arbitrarily
-  // reordered against) a real numeric slot like "12-4". Missing/
-  // unparsable slots sort last of all; ticket creation time (created_at)
-  // breaks ties and covers same-slot or slot-less tickets.
-  const timeSlotStartHour = (slot: unknown): number => {
-    const raw = String(slot || "").trim().toUpperCase();
-    if (!raw) return Number.MAX_SAFE_INTEGER;
-    if (raw === "AM") return -1;
-    if (raw === "PM") return 13;
-    const m = raw.match(/(\d{1,2})/);
-    return m ? Number(m[1]) : Number.MAX_SAFE_INTEGER;
-  };
-
   for (const groupTickets of groupsToProcess) {
-    const orderedTickets = [...groupTickets].sort((a, b) => {
-      const slotDiff = timeSlotStartHour(a.time_slot) - timeSlotStartHour(b.time_slot);
-      if (slotDiff !== 0) return slotDiff;
-      return String(a.created_at).localeCompare(String(b.created_at));
-    });
+    const orderedTickets = sortStopsByHeuristic(groupTickets);
 
     const rawName = String(orderedTickets[0].technician).trim();
     const technician = techByNormalizedName.get(rawName.toLowerCase()) ?? null;
@@ -334,15 +427,20 @@ export async function syncMileageFromTickets(input: {
     }
     const roundedMiles = Math.round(miles * 10) / 10;
 
-    // Refresh already-synced tickets in this group whose total_mileage is
-    // now stale (a new stop changed the day's route) — a plain number
-    // update, no new geocoding per row.
+    // Refresh every already-synced ticket in this group — a new stop
+    // joined, so the whole day's route (and therefore every existing
+    // row's total) is potentially stale, even if this particular round
+    // happens to land on the same number as before. Also clears
+    // route_order: a human-set stop order no longer describes this day
+    // now that its stop list has changed, so it resets to the automatic
+    // heuristic (used above) rather than silently keeping a sequence that
+    // doesn't include the new stop.
     for (const t of orderedTickets) {
       const existing = existingByTicketId.get(t.id);
-      if (existing && existing.totalMileage !== roundedMiles) {
+      if (existing) {
         const { error: updateErr } = await supabase
           .from("mileage_entries")
-          .update({ total_mileage: roundedMiles })
+          .update({ total_mileage: roundedMiles, route_order: null })
           .eq("id", existing.id);
         if (updateErr) result.errors.push(`Ticket ${t.ticket_no}: failed to refresh mileage — ${updateErr.message}`);
       }
@@ -391,4 +489,82 @@ export async function syncMileageFromTickets(input: {
   }
 
   return result;
+}
+
+/**
+ * Recomputes one technician's one day of driving with a HUMAN-CHOSEN stop
+ * order (the Day Route view's drag/reorder controls) instead of the
+ * automatic time-slot heuristic, and saves both the new total and each
+ * row's route_order (its index in orderedTicketIds) so the order sticks
+ * until either a human changes it again or a new ticket joins that day
+ * (which resets it — see syncMileageFromTickets). Throws rather than
+ * returning null on failure so the UI can show a real error instead of
+ * silently leaving the old total in place.
+ */
+export async function recalculateMileageDayRoute(input: {
+  /** This day's existing mileage_entries rows — id + the ticket each one is for. */
+  entries: { id: string; ticketId: string }[];
+  /** The new visit order, by ticket id — must cover every ticket in entries. */
+  orderedTicketIds: string[];
+  branch: string;
+  homeAddress?: string;
+}): Promise<number> {
+  const { data: ticketRows, error: ticketsErr } = await supabase
+    .from("tickets")
+    .select("id, location, account, customer:customers ( address, city, state, zip )")
+    .in("id", input.orderedTicketIds);
+  if (ticketsErr) throw new Error(ticketsErr.message);
+  const ticketById = new Map((ticketRows ?? []).map((t: any) => [t.id, t]));
+
+  const orderedStops: MileageTicketInput[] = input.orderedTicketIds.map((id) => {
+    const t = ticketById.get(id);
+    const customer = t?.customer ?? {};
+    return { location: t?.location, city: customer.city, address: customer.address, state: customer.state, zip: customer.zip, account: t?.account };
+  });
+  if (orderedStops.length === 0) throw new Error("No stops to route.");
+
+  const mapProvider = await getCompanyMapProvider();
+  const miles = await computeDailyRouteMiles(input.branch, orderedStops[0], orderedStops, input.homeAddress, mapProvider);
+  if (miles === null) throw new Error("No route found for this stop order.");
+  const roundedMiles = Math.round(miles * 10) / 10;
+
+  const orderIndexByTicketId = new Map(input.orderedTicketIds.map((id, idx) => [id, idx]));
+  for (const entry of input.entries) {
+    const { error } = await supabase
+      .from("mileage_entries")
+      .update({ total_mileage: roundedMiles, route_order: orderIndexByTicketId.get(entry.ticketId) ?? null })
+      .eq("id", entry.id);
+    if (error) throw new Error(`Failed to save ticket order: ${error.message}`);
+  }
+  return roundedMiles;
+}
+
+/**
+ * Sets (or clears, when both override and adjustment are null) Finance's
+ * manual correction to a day's mileage total — see mileageEffectiveTotal.
+ * Applied identically across every row of the (technician, work_date)
+ * group, same as total_mileage itself is shared, so the effective total
+ * reads the same no matter which of that day's tickets you're looking at.
+ */
+export async function setMileageDayAdjustment(input: {
+  entryIds: string[];
+  override: number | null;
+  adjustment: number | null;
+  note: string | null;
+  byProfileId: string | null;
+  byName: string | null;
+}): Promise<void> {
+  const hasAdjustment = input.override != null || input.adjustment != null;
+  const { error } = await supabase
+    .from("mileage_entries")
+    .update({
+      mileage_override: input.override,
+      mileage_adjustment: input.adjustment,
+      adjustment_note: input.note,
+      adjusted_by: hasAdjustment ? input.byProfileId : null,
+      adjusted_by_name: hasAdjustment ? input.byName : null,
+      adjusted_at: hasAdjustment ? new Date().toISOString() : null,
+    })
+    .in("id", input.entryIds);
+  if (error) throw new Error(error.message);
 }

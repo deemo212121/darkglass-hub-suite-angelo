@@ -24,6 +24,7 @@ import {
   X,
   Ban,
   Columns3,
+  Route as RouteIcon,
 } from "lucide-react";
 import {
   BarChart,
@@ -67,7 +68,8 @@ import {
   type TechCategoryOverride,
 } from "@/lib/supabase/techPayroll";
 import { TechActivityReportModal } from "@/components/TechActivityReportModal";
-import { getMileageEntries, deleteMileageEntry, syncMileageFromTickets, setMileageEntryPayrollExcluded, reconcileMileageNoPhotoHolds, type MileageEntry } from "@/lib/supabase/mileage";
+import { getMileageEntries, deleteMileageEntry, syncMileageFromTickets, setMileageEntryPayrollExcluded, reconcileMileageNoPhotoHolds, mileageEffectiveTotal, type MileageEntry } from "@/lib/supabase/mileage";
+import { MileageDayRouteModal } from "@/components/MileageDayRouteModal";
 import { perCutoffSalary } from "@/lib/supabase/salary";
 import { useAuth } from "@/lib/auth";
 import { getGmailConnectionStatus, disconnectGmail, sendPayslipEmail, type GmailConnectionStatus, type GmailRegion } from "@/lib/supabase/gmailConnection";
@@ -643,6 +645,12 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // breakdown modal — same "click a name to see the ticket-by-ticket detail"
   // convention as Overall Status's Tech Completion Rate table.
   const [mileageTechDetailId, setMileageTechDetailId] = useState<string | null>(null);
+  // Opens the Day Route view (map + reorderable stop list + adjustment
+  // panel) for one technician's one day — keyed the same way as
+  // mileageDayKey/mileageHeldDayKeys below (profileId or raw technician
+  // name, plus work date), since that's the natural grouping for "a day's
+  // route" regardless of whether the technician has a linked profile.
+  const [mileageDayRouteKey, setMileageDayRouteKey] = useState<string | null>(null);
 
   // Photos column — the cell itself is just a plain "Photos" link; clicking
   // it opens the modal below, which fetches that ONE ticket's full photo
@@ -3293,7 +3301,19 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                             {isMileageColVisible("address") && <td className="px-3 py-2.5 text-slate-300">{entry.address}</td>}
                             {isMileageColVisible("contactNumber") && <td className="px-3 py-2.5 text-slate-300">{entry.contactNumber || "—"}</td>}
                             {isMileageColVisible("email") && <td className="px-3 py-2.5 text-slate-300">{entry.email || "—"}</td>}
-                            {isMileageColVisible("totalMileage") && <td className="px-3 py-2.5 text-slate-300">{entry.totalMileage}</td>}
+                            {isMileageColVisible("totalMileage") && (
+                            <td className="px-3 py-2.5 text-slate-300">
+                              {mileageEffectiveTotal(entry).toFixed(1)}
+                              {(entry.mileageOverride != null || entry.mileageAdjustment != null) && (
+                                <span
+                                  className="ml-1.5 text-[9px] px-1 py-0.5 rounded-full font-semibold uppercase tracking-wide bg-amber-500/20 text-amber-300"
+                                  title={`Adjusted from the calculated ${entry.totalMileage.toFixed(1)} mi by ${entry.adjustedByName || "someone"}${entry.adjustmentNote ? ` — "${entry.adjustmentNote}"` : ""}`}
+                                >
+                                  adj
+                                </span>
+                              )}
+                            </td>
+                            )}
                             {isMileageColVisible("googleMapLink") && (
                             <td className="px-3 py-2.5">
                               {entry.googleMapLink ? (
@@ -3345,6 +3365,15 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                             {isMileageColVisible("actions") && (
                             <td className="px-3 py-2.5">
                               <div className="flex items-center gap-2">
+                                {entry.source === "auto" && entry.ticketId && (
+                                  <button
+                                    onClick={() => setMileageDayRouteKey(mileageDayKey(entry))}
+                                    title="View this day's route"
+                                    className="text-slate-400 hover:text-blue-300"
+                                  >
+                                    <RouteIcon className="h-3.5 w-3.5" />
+                                  </button>
+                                )}
                                 <button
                                   onClick={() => handleTogglePayrollExclude(entry)}
                                   disabled={payrollExcludingId === entry.id}
@@ -3653,7 +3682,12 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
               const techEntries = mileageEntries
                 .filter((e) => mileageRowKey(e) === mileageTechDetailId)
                 .sort((a, b) => b.workDate.localeCompare(a.workDate));
-              const totalMiles = techEntries.reduce((s, e) => s + e.totalMileage, 0);
+              // Every ticket on the same day shares that day's route total —
+              // sum each distinct work_date once, not once per ticket, or a
+              // multi-ticket day gets counted several times over here.
+              const milesByDay = new Map<string, number>();
+              for (const e of techEntries) milesByDay.set(e.workDate, mileageEffectiveTotal(e));
+              const totalMiles = Array.from(milesByDay.values()).reduce((s, m) => s + m, 0);
               const detailName = techEntries[0] ? mileageRowName(techEntries[0]) : "Technician";
               return (
                 <>
@@ -3694,6 +3728,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                             <th className="px-2 py-1.5 text-right font-semibold text-slate-400">Mileage</th>
                             <th className="px-2 py-1.5 text-left font-semibold text-slate-400">Source</th>
                             <th className="px-2 py-1.5 text-left font-semibold text-slate-400">Map</th>
+                            <th className="px-2 py-1.5 text-left font-semibold text-slate-400">Route</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -3712,7 +3747,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                               <td className="px-2 py-1.5" style={entry.ticketStatus ? mileageStatusStyle(entry.ticketStatus, repairStatusRows) : { color: "#64748b" }}>{entry.ticketStatus || "—"}</td>
                               <td className="px-2 py-1.5 text-slate-300">{entry.branch}</td>
                               <td className="px-2 py-1.5 text-slate-300">{entry.address}</td>
-                              <td className="px-2 py-1.5 text-right text-slate-300">{entry.totalMileage}</td>
+                              <td className="px-2 py-1.5 text-right text-slate-300">{mileageEffectiveTotal(entry).toFixed(1)}</td>
                               <td className="px-2 py-1.5">
                                 <span
                                   className={`text-[10px] px-1.5 py-0.5 rounded-full font-semibold uppercase tracking-wide ${
@@ -3731,6 +3766,19 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                                   <span className="text-slate-500">—</span>
                                 )}
                               </td>
+                              <td className="px-2 py-1.5">
+                                {entry.source === "auto" && entry.ticketId ? (
+                                  <button
+                                    onClick={() => setMileageDayRouteKey(mileageDayKey(entry))}
+                                    title="View this day's route"
+                                    className="text-slate-400 hover:text-blue-300"
+                                  >
+                                    <RouteIcon className="h-3.5 w-3.5" />
+                                  </button>
+                                ) : (
+                                  <span className="text-slate-500">—</span>
+                                )}
+                              </td>
                             </tr>
                           ))}
                         </tbody>
@@ -3743,6 +3791,27 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
           </div>
         </div>
       )}
+
+      {mileageDayRouteKey && (() => {
+        const dayEntries = mileageEntries.filter((e) => mileageDayKey(e) === mileageDayRouteKey);
+        if (dayEntries.length === 0) return null;
+        const first = dayEntries[0];
+        return (
+          <MileageDayRouteModal
+            technicianName={mileageRowName(first)}
+            workDate={first.workDate}
+            branch={first.branch}
+            homeAddress={first.address && first.address !== "(no address on file)" ? first.address : undefined}
+            entries={dayEntries}
+            myProfileId={myProfileId}
+            actorName={displayName || email || "Admin"}
+            onClose={() => setMileageDayRouteKey(null)}
+            onSaved={() => {
+              void getMileageEntries().then(setMileageEntries);
+            }}
+          />
+        );
+      })()}
 
       {mileagePhotoModalEntry && (
         <div
