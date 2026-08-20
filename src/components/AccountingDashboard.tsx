@@ -145,6 +145,13 @@ export interface SupabaseEmployee {
    *  export, but stays visible in the Payroll tab table so it can be
    *  unchecked again later. See migration 0112. */
   payrollExcluded: boolean;
+  /** profiles.is_active — a deactivated account is excluded from every row
+   *  list on this dashboard (Office/Tech Payroll, Mileage's technician
+   *  picker) since there's nothing left to pay or schedule going forward,
+   *  but `employees` itself still includes them so historical records tied
+   *  to their profile_id (already-synced mileage entries, past payroll line
+   *  items) can still resolve a real name instead of falling back to "—". */
+  isActive: boolean;
 }
 
 interface SalaryEntry {
@@ -745,7 +752,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         mileageRes,
         repairStatusRes,
       ] = await Promise.all([
-        supabase.from("profiles").select("id,display_name,username,role,extra_roles,assigned_branch,email,off_days,required_check_in,required_check_out,payroll_excluded").neq("role", "SUPERSUPERADMIN"),
+        supabase.from("profiles").select("id,display_name,username,role,extra_roles,assigned_branch,email,off_days,required_check_in,required_check_out,payroll_excluded,is_active").neq("role", "SUPERSUPERADMIN"),
         supabase.from("salary_entries").select("profile_id,effective_date,compensation_type,hourly_rate,annual_salary,created_at").not("profile_id", "is", null).order("effective_date", { ascending: false }).order("created_at", { ascending: false }),
         supabase.from("payroll_runs").select("id,period_start,period_end,status,generated_at").order("generated_at", { ascending: false }),
         supabase.from("payroll_line_items").select("payroll_run_id,profile_id,hours_worked,overtime_hours,hourly_rate,regular_pay,overtime_pay,gross_pay,net_pay,currency,extra_pay,notes,paid,paid_at,compensation_type,annual_salary"),
@@ -816,6 +823,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         workingHours: workScheduleById.get(p.id)?.working_hours ?? null,
         mealMinutes: workScheduleById.get(p.id)?.meal_minutes ?? null,
         payrollExcluded: p.payroll_excluded ?? false,
+        isActive: p.is_active ?? true,
         };
       }) as SupabaseEmployee[]);
       setSalaryEntries((salRes.data ?? []) as SalaryEntry[]);
@@ -1136,7 +1144,12 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // overtimeHours/hourlyRate/dutyHours stay populated from real
   // punches/schedule (informational, shown for reference) but grossPay is
   // their piece-rate total instead.
-  const payrollRows: EmployeePayrollRow[] = employees.map((emp) => {
+  // Deactivated accounts never appear as a row here — nothing left to pay
+  // or schedule going forward. `employees` itself stays unfiltered so
+  // name lookups for THEIR existing historical records (e.g. mileage
+  // entries already synced under their profile_id) still resolve a real
+  // name elsewhere on this dashboard instead of falling back to "—".
+  const payrollRows: EmployeePayrollRow[] = employees.filter((emp) => emp.isActive).map((emp) => {
     const comp = latestCompMap.get(emp.id);
     const isFixed = comp?.compensation_type === "fixed";
     const hourlyRate = isFixed ? 0 : comp?.hourly_rate ?? emp.hourly_rate ?? 0;
@@ -1267,7 +1280,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         phCount: phRows.length,
         avgPayPerEmployee,
         periodLabel: genStart && genEnd ? `${genStart} – ${genEnd} · USD` : "USD",
-        employeeCount: employees.length,
+        employeeCount: payrollRows.length,
         employeeCountLabel: "Active",
       };
     }
@@ -1954,10 +1967,14 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   const mileageTechnicians = [...employees]
     .filter(
       (e) =>
-        MILEAGE_TECH_ROLES.has(normalizeRole(e.role)) ||
-        (e.extraRoles ?? []).some((r) => MILEAGE_TECH_ROLES.has(normalizeRole(r)))
+        e.isActive &&
+        (MILEAGE_TECH_ROLES.has(normalizeRole(e.role)) ||
+          (e.extraRoles ?? []).some((r) => MILEAGE_TECH_ROLES.has(normalizeRole(r))))
     )
     .sort((a, b) => a.full_name.localeCompare(b.full_name));
+  // Unfiltered by isActive, unlike the list above — a deactivated
+  // technician's ALREADY-SYNCED mileage rows still need their real name
+  // resolved here, not just active technicians going forward.
   const employeeNameById = new Map(employees.map((e) => [e.id, e.full_name]));
   // A synced entry with no matching profile (profileId: null) falls back to
   // the raw ticket technician_name text — still filterable/displayable/
