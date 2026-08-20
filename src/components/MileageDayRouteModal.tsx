@@ -106,6 +106,17 @@ export function MileageDayRouteModal({ technicianName, workDate, branch, homeAdd
   const orderedStops = order.map((id) => stopsById.get(id)).filter((s): s is MileageDayStop => !!s);
   const orderChanged = stops != null && order.join(",") !== stops.map((s) => s.ticketId).join(",");
 
+  // Whether the day's final leg goes home or loops back to the branch —
+  // defaults to the last SAVED choice (route_return_to), falling back to
+  // the same "home if one's on file, else branch" rule the calculation
+  // itself always used before this was choosable. savedReturnTarget tracks
+  // what's actually persisted so the Save button can tell a live toggle
+  // apart from an already-saved state, the same way `stops` does for order.
+  const defaultReturnTarget: "home" | "branch" = dayEntry?.routeReturnTo ?? (homeAddress ? "home" : "branch");
+  const [returnTarget, setReturnTarget] = useState<"home" | "branch">(defaultReturnTarget);
+  const [savedReturnTarget, setSavedReturnTarget] = useState<"home" | "branch">(defaultReturnTarget);
+  const returnTargetChanged = returnTarget !== savedReturnTarget;
+
   // ── Map: pins for branch/stops/home + a drawn route, redrawn whenever
   // the staged order changes (no API cost for reordering itself — the map
   // just redraws with what's already geocoded/cached).
@@ -118,6 +129,8 @@ export function MileageDayRouteModal({ technicianName, workDate, branch, homeAdd
   const googleOverlaysRef = useRef<any[]>([]);
   const [routeInfo, setRouteInfo] = useState<{ totalMiles: number | null; approximate: boolean } | null>(null);
   const [mapBuilding, setMapBuilding] = useState(false);
+  const [legBreakdown, setLegBreakdown] = useState<{ label: string; miles: number }[]>([]);
+  const [gmapsLink, setGmapsLink] = useState<string | null>(null);
 
   useEffect(() => {
     if (mapProvider !== "leaflet" || L) return;
@@ -182,10 +195,26 @@ export function MileageDayRouteModal({ technicianName, workDate, branch, homeAdd
         if (pt) stopPts.push(pt);
       }
       let homePt: LatLng | null = null;
-      if (homeAddress) homePt = await geocode(homeAddress);
+      if (returnTarget === "home" && homeAddress) homePt = await geocode(homeAddress);
       if (cancelled) return;
 
+      const endsAtHome = homePt != null;
       const points = [originPt, ...stopPts, homePt ?? originPt];
+      // Human-readable label per waypoint, used for both the leg-breakdown
+      // list and the gmaps link isn't needed there, but keeps the two
+      // consistent with what's actually plotted.
+      const pointLabels = ["Branch", ...orderedStops.map((s) => s.ticketNo), endsAtHome ? "Home" : "Branch"];
+
+      // Open in Google Maps — lets Accounting cross-check this exact route
+      // (same stops, same order, same end point) in Google's own app,
+      // independent of which provider this company's map is set to.
+      const gLink =
+        points.length >= 2
+          ? `https://www.google.com/maps/dir/?api=1&origin=${points[0].lat},${points[0].lng}&destination=${points[points.length - 1].lat},${points[points.length - 1].lng}` +
+            (points.length > 2 ? `&waypoints=${points.slice(1, -1).map((p) => `${p.lat},${p.lng}`).join("|")}` : "") +
+            "&travelmode=driving"
+          : null;
+      setGmapsLink(gLink);
 
       // Clear previous layer/markers before redrawing.
       leafletLayersRef.current.forEach((l) => l.remove());
@@ -193,7 +222,7 @@ export function MileageDayRouteModal({ technicianName, workDate, branch, homeAdd
       googleOverlaysRef.current.forEach((o) => o.setMap(null));
       googleOverlaysRef.current = [];
 
-      const labelFor = (i: number) => (i === 0 ? "B" : i === points.length - 1 ? "H" : String(i));
+      const labelFor = (i: number) => (i === 0 ? "B" : i === points.length - 1 ? (endsAtHome ? "H" : "B") : String(i));
       const colorFor = (i: number) => (i === 0 || i === points.length - 1 ? "#64748b" : "#5b7eff");
 
       if (mapProvider === "leaflet" && L) {
@@ -214,12 +243,21 @@ export function MileageDayRouteModal({ technicianName, workDate, branch, homeAdd
           const line = L.geoJSON(route.geometry, { style: { color: "#5b7eff", weight: 5 } }).addTo(map);
           leafletLayersRef.current.push(line);
           setRouteInfo({ totalMiles: metersToMiles(route.totalDistanceMeters), approximate: false });
+          setLegBreakdown(
+            route.legs.map((leg, i) => ({ label: `${pointLabels[i]} → ${pointLabels[i + 1]}`, miles: metersToMiles(leg.distanceMeters) }))
+          );
         } else {
           const poly = L.polyline(points.map((p) => [p.lat, p.lng] as [number, number]), { color: "#5b7eff", weight: 4, dashArray: "6 6" }).addTo(map);
           leafletLayersRef.current.push(poly);
           let total = 0;
-          for (let i = 1; i < points.length; i++) total += haversineMiles(points[i - 1], points[i]);
+          const legs: { label: string; miles: number }[] = [];
+          for (let i = 1; i < points.length; i++) {
+            const miles = haversineMiles(points[i - 1], points[i]);
+            total += miles;
+            legs.push({ label: `${pointLabels[i - 1]} → ${pointLabels[i]}`, miles });
+          }
           setRouteInfo({ totalMiles: total, approximate: true });
+          setLegBreakdown(legs);
         }
         map.fitBounds(L.latLngBounds(points.map((p) => [p.lat, p.lng] as [number, number])), { padding: [40, 40] });
       } else if (mapProvider === "google") {
@@ -244,15 +282,25 @@ export function MileageDayRouteModal({ technicianName, workDate, branch, homeAdd
             if (cancelled) return;
             if (status === "OK" && result) {
               dr.setDirections(result);
-              const totalMeters = result.routes[0].legs.reduce((s: number, leg: any) => s + (leg.distance?.value ?? 0), 0);
+              const legsRaw = result.routes[0].legs as any[];
+              const totalMeters = legsRaw.reduce((s: number, leg: any) => s + (leg.distance?.value ?? 0), 0);
               setRouteInfo({ totalMiles: metersToMiles(totalMeters), approximate: false });
+              setLegBreakdown(
+                legsRaw.map((leg, i) => ({ label: `${pointLabels[i]} → ${pointLabels[i + 1]}`, miles: metersToMiles(leg.distance?.value ?? 0) }))
+              );
             } else {
               const bounds = new g.maps.LatLngBounds();
               points.forEach((p) => bounds.extend(p));
               map.fitBounds(bounds);
               let total = 0;
-              for (let i = 1; i < points.length; i++) total += haversineMiles(points[i - 1], points[i]);
+              const legs: { label: string; miles: number }[] = [];
+              for (let i = 1; i < points.length; i++) {
+                const miles = haversineMiles(points[i - 1], points[i]);
+                total += miles;
+                legs.push({ label: `${pointLabels[i - 1]} → ${pointLabels[i]}`, miles });
+              }
               setRouteInfo({ totalMiles: total, approximate: true });
+              setLegBreakdown(legs);
             }
           }
         );
@@ -264,7 +312,7 @@ export function MileageDayRouteModal({ technicianName, workDate, branch, homeAdd
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mapProvider, mapReady, L, order.join(",")]);
+  }, [mapProvider, mapReady, L, order.join(","), returnTarget]);
 
   const handleSaveOrder = async () => {
     setSaving(true);
@@ -275,12 +323,14 @@ export function MileageDayRouteModal({ technicianName, workDate, branch, homeAdd
         orderedTicketIds: order,
         branch,
         homeAddress,
+        returnTo: returnTarget,
       });
-      // Re-baseline the "did the order change" comparison against what's
+      // Re-baseline both "did anything change" comparisons against what's
       // now actually saved, or the Save button would stay active-looking
-      // (comparing the new order against the stale pre-save snapshot)
-      // even though there's nothing left to save.
+      // (comparing against a stale pre-save snapshot) even with nothing
+      // left to save.
       setStops((prev) => (prev ? order.map((id) => prev.find((s) => s.ticketId === id)!) : prev));
+      setSavedReturnTarget(returnTarget);
       onSaved();
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : "Failed to save the new stop order.");
@@ -373,10 +423,35 @@ export function MileageDayRouteModal({ technicianName, workDate, branch, homeAdd
                 )}
               </div>
               {routeInfo && (
-                <p className="text-[11px] text-slate-500 mt-1.5">
-                  Route preview: {routeInfo.totalMiles?.toFixed(1)} mi{routeInfo.approximate ? " (straight-line estimate — routing call failed)" : ""}
-                  {orderChanged && " — click \"Save this order\" to make this the official total."}
-                </p>
+                <div className="mt-1.5 rounded-md border border-white/10 bg-slate-800/40 px-2.5 py-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-[11px] text-slate-400">
+                      Route preview: <span className="font-semibold text-slate-200">{routeInfo.totalMiles?.toFixed(1)} mi</span>
+                      {routeInfo.approximate ? " (straight-line estimate — routing call failed)" : ""}
+                      {(orderChanged || returnTargetChanged) && " — click “Save this order” below to make this the official total."}
+                    </p>
+                    {gmapsLink && (
+                      <a
+                        href={gmapsLink}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="shrink-0 text-[11px] text-blue-400 hover:text-blue-300 underline whitespace-nowrap"
+                      >
+                        Open in Google Maps
+                      </a>
+                    )}
+                  </div>
+                  {legBreakdown.length > 0 && (
+                    <ul className="mt-1.5 space-y-0.5 border-t border-white/10 pt-1.5">
+                      {legBreakdown.map((leg, i) => (
+                        <li key={i} className="flex items-center justify-between text-[11px] text-slate-500">
+                          <span>{leg.label}</span>
+                          <span className="text-slate-400">{leg.miles.toFixed(1)} mi</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
               )}
 
               <div className="mt-4 rounded-lg border border-white/10 bg-slate-800/40 p-3">
@@ -482,18 +557,37 @@ export function MileageDayRouteModal({ technicianName, workDate, branch, homeAdd
                   </div>
                 ))}
                 <div className="flex items-center gap-2 text-xs text-slate-500 px-2 py-1.5 rounded-md bg-slate-800/40">
-                  <span className="w-5 text-center font-semibold">H</span>
-                  <span>{homeAddress || `${branch} (no home address on file)`}</span>
+                  <span className="w-5 text-center font-semibold">{returnTarget === "home" && homeAddress ? "H" : "B"}</span>
+                  <span className="flex-1">
+                    {returnTarget === "home" && homeAddress ? homeAddress : `${branch} (branch)`}
+                    {!homeAddress && <span className="text-slate-600"> — no home address on file</span>}
+                  </span>
+                  {homeAddress && (
+                    <div className="flex rounded-md border border-white/15 overflow-hidden shrink-0">
+                      <button
+                        onClick={() => setReturnTarget("home")}
+                        className={`px-2 py-0.5 text-[10px] font-semibold ${returnTarget === "home" ? "bg-blue-600 text-white" : "text-slate-400 hover:bg-white/5"}`}
+                      >
+                        Home
+                      </button>
+                      <button
+                        onClick={() => setReturnTarget("branch")}
+                        className={`px-2 py-0.5 text-[10px] font-semibold ${returnTarget === "branch" ? "bg-blue-600 text-white" : "text-slate-400 hover:bg-white/5"}`}
+                      >
+                        Branch
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
 
               {saveError && <p className="text-xs text-red-400 mt-2">{saveError}</p>}
               <button
                 onClick={handleSaveOrder}
-                disabled={saving || !orderChanged}
+                disabled={saving || (!orderChanged && !returnTargetChanged)}
                 className="mt-3 w-full rounded-md bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white text-xs font-semibold px-3 py-2"
               >
-                {saving ? "Recalculating…" : orderChanged ? "Save this order & recalculate" : "No changes to save"}
+                {saving ? "Recalculating…" : orderChanged || returnTargetChanged ? "Save this order & recalculate" : "No changes to save"}
               </button>
               </>
               )}

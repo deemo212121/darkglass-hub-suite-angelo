@@ -59,6 +59,13 @@ export interface MileageEntry {
    *  whole group back to null/heuristic rather than guessing where the new
    *  stop belongs. Migration 0182. */
   routeOrder: number | null;
+  /** Whether this day's route ends at the technician's home address or
+   *  loops back to the branch — see recalculateMileageDayRoute. Null means
+   *  "automatic default" (home if one's on file, branch otherwise — the
+   *  same fallback computeDailyRouteMiles already applied before this
+   *  field existed). Resets to null under the same new-ticket-joins-the-day
+   *  rule as routeOrder. Migration 0183. */
+  routeReturnTo: "home" | "branch" | null;
   /** Full replacement for this day's total, if Finance has set one — see
    *  mileageEffectiveTotal and setMileageDayAdjustment. Takes precedence
    *  over mileageAdjustment when both are set. Migration 0182. */
@@ -108,6 +115,7 @@ function mapRow(r: any): MileageEntry {
     payrollExcludedByName: r.payroll_excluded_by_name ?? null,
     payrollHoldReason: r.payroll_hold_reason === "manual" || r.payroll_hold_reason === "no_photos" ? r.payroll_hold_reason : null,
     routeOrder: r.route_order ?? null,
+    routeReturnTo: r.route_return_to === "home" || r.route_return_to === "branch" ? r.route_return_to : null,
     mileageOverride: r.mileage_override != null ? Number(r.mileage_override) : null,
     mileageAdjustment: r.mileage_adjustment != null ? Number(r.mileage_adjustment) : null,
     adjustmentNote: r.adjustment_note ?? null,
@@ -117,7 +125,7 @@ function mapRow(r: any): MileageEntry {
 }
 
 const ENTRY_COLUMNS =
-  "id, profile_id, technician_name, branch, work_date, address, contact_number, email, total_mileage, google_map_link, created_by_name, created_at, ticket_id, ticket_no, ticket_status, source, payroll_excluded, payroll_excluded_at, payroll_excluded_by_name, payroll_hold_reason, route_order, mileage_override, mileage_adjustment, adjustment_note, adjusted_by_name, adjusted_at";
+  "id, profile_id, technician_name, branch, work_date, address, contact_number, email, total_mileage, google_map_link, created_by_name, created_at, ticket_id, ticket_no, ticket_status, source, payroll_excluded, payroll_excluded_at, payroll_excluded_by_name, payroll_hold_reason, route_order, route_return_to, mileage_override, mileage_adjustment, adjustment_note, adjusted_by_name, adjusted_at";
 
 /** All mileage entries for the caller's company (RLS-scoped), newest first. */
 export async function getMileageEntries(): Promise<MileageEntry[]> {
@@ -440,7 +448,7 @@ export async function syncMileageFromTickets(input: {
       if (existing) {
         const { error: updateErr } = await supabase
           .from("mileage_entries")
-          .update({ total_mileage: roundedMiles, route_order: null })
+          .update({ total_mileage: roundedMiles, route_order: null, route_return_to: null })
           .eq("id", existing.id);
         if (updateErr) result.errors.push(`Ticket ${t.ticket_no}: failed to refresh mileage — ${updateErr.message}`);
       }
@@ -508,6 +516,10 @@ export async function recalculateMileageDayRoute(input: {
   orderedTicketIds: string[];
   branch: string;
   homeAddress?: string;
+  /** "home" routes the final leg to homeAddress (falls back to branch
+   *  anyway if that's blank); "branch" forces a branch-return route even
+   *  when a home address exists. Saved as route_return_to on every row. */
+  returnTo: "home" | "branch";
 }): Promise<number> {
   const { data: ticketRows, error: ticketsErr } = await supabase
     .from("tickets")
@@ -524,7 +536,8 @@ export async function recalculateMileageDayRoute(input: {
   if (orderedStops.length === 0) throw new Error("No stops to route.");
 
   const mapProvider = await getCompanyMapProvider();
-  const miles = await computeDailyRouteMiles(input.branch, orderedStops[0], orderedStops, input.homeAddress, mapProvider);
+  const effectiveHomeAddress = input.returnTo === "home" ? input.homeAddress : undefined;
+  const miles = await computeDailyRouteMiles(input.branch, orderedStops[0], orderedStops, effectiveHomeAddress, mapProvider);
   if (miles === null) throw new Error("No route found for this stop order.");
   const roundedMiles = Math.round(miles * 10) / 10;
 
@@ -532,7 +545,11 @@ export async function recalculateMileageDayRoute(input: {
   for (const entry of input.entries) {
     const { error } = await supabase
       .from("mileage_entries")
-      .update({ total_mileage: roundedMiles, route_order: orderIndexByTicketId.get(entry.ticketId) ?? null })
+      .update({
+        total_mileage: roundedMiles,
+        route_order: orderIndexByTicketId.get(entry.ticketId) ?? null,
+        route_return_to: input.returnTo,
+      })
       .eq("id", entry.id);
     if (error) throw new Error(`Failed to save ticket order: ${error.message}`);
   }
