@@ -530,7 +530,7 @@ export function MileageDayRouteModal({ technicianName, workDate, branch, homeAdd
                   <div key={stop.ticketId} className="flex items-center gap-2 text-xs px-2 py-1.5 rounded-md bg-slate-800/60 border border-white/5">
                     <span className="w-5 text-center font-semibold text-blue-300">{i + 1}</span>
                     <div className="flex-1 min-w-0">
-                      <Link to="/ticket/$ticketNo" params={{ ticketNo: stop.ticketNo }} className="font-mono text-blue-400 hover:text-blue-300 hover:underline">
+                      <Link to="/ticket/$ticketNo" params={{ ticketNo: stop.ticketNo }} target="_blank" rel="noreferrer" className="font-mono text-blue-400 hover:text-blue-300 hover:underline">
                         {stop.ticketNo}
                       </Link>
                       {stop.timeSlot && <span className="text-slate-500"> · {stop.timeSlot}</span>}

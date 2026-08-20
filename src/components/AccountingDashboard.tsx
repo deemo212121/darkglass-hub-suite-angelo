@@ -3332,7 +3332,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                             {isMileageColVisible("ticketNo") && (
                             <td className="px-3 py-2.5 text-slate-300">
                               {entry.ticketNo ? (
-                                <Link to="/ticket/$ticketNo" params={{ ticketNo: entry.ticketNo }} className="font-mono text-blue-400 hover:text-blue-300 hover:underline">
+                                <Link to="/ticket/$ticketNo" params={{ ticketNo: entry.ticketNo }} target="_blank" rel="noreferrer" className="font-mono text-blue-400 hover:text-blue-300 hover:underline">
                                   {entry.ticketNo}
                                 </Link>
                               ) : (
@@ -3808,7 +3808,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                               <td className="px-2 py-1.5 text-slate-300 whitespace-nowrap">{entry.workDate}</td>
                               <td className="px-2 py-1.5">
                                 {entry.ticketNo ? (
-                                  <Link to="/ticket/$ticketNo" params={{ ticketNo: entry.ticketNo }} className="font-mono text-blue-400 hover:text-blue-300 hover:underline">
+                                  <Link to="/ticket/$ticketNo" params={{ ticketNo: entry.ticketNo }} target="_blank" rel="noreferrer" className="font-mono text-blue-400 hover:text-blue-300 hover:underline">
                                     {entry.ticketNo}
                                   </Link>
                                 ) : (
