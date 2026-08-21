@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { CsrTeamComposition } from "@/components/CsrTeamComposition";
+import { WorkHoursPanel } from "@/components/WorkHoursPanel";
 import { useAuth } from "@/lib/auth";
 import { normalizeRole } from "@/lib/roleLabels";
 import {
@@ -27,7 +28,7 @@ import {
   YAxis,
 } from "recharts";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
-import { getCompanyUsers } from "@/lib/supabase/users";
+import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
 import { getTicketAuditLog, getCompanyTickets } from "@/lib/supabase/tickets";
 import { getCsrTeamComposition } from "@/lib/supabase/csrTeams";
 import { getAllAgentNotes, getPendingAgentNotes, reviewAgentNote, type CsrAgentNote } from "@/lib/supabase/csrAgentNotes";
@@ -43,6 +44,14 @@ const CSR_HIDDEN_STATUSES = new Set(["CL-Cancelled", "CL-Claimed", "CL-Data-Clos
 // Manager reviews first -> HR makes the final call). This panel only
 // handles stage 1 — items CSR Managers weigh in on before they go to HR.
 const STAGE1_REVIEWER_ROLES = new Set(["CSR_MANAGER", "MANAGER", "SENIOR_MANAGER", "ADMIN", "SUPERADMIN"]);
+// Module-level (not defined inside the component) so WorkHoursPanel's load
+// effect sees a stable reference across renders — matches the exact CSR
+// roster rule already used inline below for the agent list/report (CSR
+// Associate or Team Leader, primary or extra role).
+const isCsrProfileFilter = (p: ProfileRow) => {
+  const extras = p.extra_roles || [];
+  return p.role === "CSR_AGENT" || p.role === "CSR_TEAM_LEADER" || extras.includes("CSR_AGENT") || extras.includes("CSR_TEAM_LEADER");
+};
 
 interface Agent {
   id: string;
@@ -119,6 +128,7 @@ export function CSRDashboard({ mod }: { mod: ModuleDef; sub: SubModuleDef }) {
   const [dateTo, setDateTo] = useState("");
   const [showPieLabels, setShowPieLabels] = useState(true);
   const [showTeamComposition, setShowTeamComposition] = useState(false);
+  const [showWorkHours, setShowWorkHours] = useState(false);
 
   // ── Ticket Status breakdown (Location Distribution panel) ──
   // Independent of the agent roster/filters above — its own ticket fetch and
@@ -458,17 +468,24 @@ export function CSRDashboard({ mod }: { mod: ModuleDef; sub: SubModuleDef }) {
           ))}
           <button
             type="button"
-            onClick={() => { setShowTeamComposition((v) => !v); setShowGenerateReport(false); }}
+            onClick={() => { setShowTeamComposition((v) => !v); setShowGenerateReport(false); setShowWorkHours(false); }}
             className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-sm font-medium transition-colors ${showTeamComposition ? "border-primary/40 bg-primary/15 text-primary" : "border-white/10 bg-white/5 hover:bg-white/10"}`}
           >
             <span>👥</span>Team Composition
           </button>
           <button
             type="button"
-            onClick={() => { setShowGenerateReport((v) => !v); setShowTeamComposition(false); }}
+            onClick={() => { setShowGenerateReport((v) => !v); setShowTeamComposition(false); setShowWorkHours(false); }}
             className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-sm font-medium transition-colors ${showGenerateReport ? "border-primary/40 bg-primary/15 text-primary" : "border-white/10 bg-white/5 hover:bg-white/10"}`}
           >
             <span>📄</span>Generate Report
+          </button>
+          <button
+            type="button"
+            onClick={() => { setShowWorkHours((v) => !v); setShowTeamComposition(false); setShowGenerateReport(false); }}
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-sm font-medium transition-colors ${showWorkHours ? "border-primary/40 bg-primary/15 text-primary" : "border-white/10 bg-white/5 hover:bg-white/10"}`}
+          >
+            <span>🕐</span>Work Hours
           </button>
         </div>
 
@@ -527,6 +544,12 @@ export function CSRDashboard({ mod }: { mod: ModuleDef; sub: SubModuleDef }) {
 
         {showTeamComposition && <CsrTeamComposition />}
 
+        {showWorkHours && (
+          <div className="mb-4">
+            <WorkHoursPanel filterProfile={isCsrProfileFilter} emptyMessage="No active CSR Associates or Team Leaders found." />
+          </div>
+        )}
+
         {showGenerateReport && (
           <div className="panel p-3 mb-4">
             <p className="text-sm font-semibold mb-2 flex items-center gap-1.5">
@@ -559,7 +582,7 @@ export function CSRDashboard({ mod }: { mod: ModuleDef; sub: SubModuleDef }) {
           </div>
         )}
 
-        {!showTeamComposition && !showGenerateReport && (<>
+        {!showTeamComposition && !showGenerateReport && !showWorkHours && (<>
         {error && (
           <div className="mb-4 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">{error}</div>
         )}

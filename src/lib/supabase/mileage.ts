@@ -51,6 +51,13 @@ export interface MileageEntry {
    *  automatic rule know never to touch a human's manual hold, and lets a
    *  human's "take it off hold" always win even with no photo. Migration 0177. */
   payrollHoldReason: "manual" | "no_photos" | null;
+  /** When payrollExcluded last flipped true -> false — the opposite of
+   *  payrollExcludedAt, which release always nulls out. Lets the mobile "On
+   *  Hold Tickets" screen's Updated sub-tab show what recently cleared,
+   *  since payrollExcludedAt/payrollHoldReason no longer carry that once a
+   *  hold is released. Cleared again if the entry is ever re-held.
+   *  Migration 0184. */
+  payrollReleasedAt: string | null;
 }
 
 function mapRow(r: any): MileageEntry {
@@ -75,11 +82,12 @@ function mapRow(r: any): MileageEntry {
     payrollExcludedAt: r.payroll_excluded_at ?? null,
     payrollExcludedByName: r.payroll_excluded_by_name ?? null,
     payrollHoldReason: r.payroll_hold_reason === "manual" || r.payroll_hold_reason === "no_photos" ? r.payroll_hold_reason : null,
+    payrollReleasedAt: r.payroll_released_at ?? null,
   };
 }
 
 const ENTRY_COLUMNS =
-  "id, profile_id, technician_name, branch, work_date, address, contact_number, email, total_mileage, google_map_link, created_by_name, created_at, ticket_id, ticket_no, ticket_status, source, payroll_excluded, payroll_excluded_at, payroll_excluded_by_name, payroll_hold_reason";
+  "id, profile_id, technician_name, branch, work_date, address, contact_number, email, total_mileage, google_map_link, created_by_name, created_at, ticket_id, ticket_no, ticket_status, source, payroll_excluded, payroll_excluded_at, payroll_excluded_by_name, payroll_hold_reason, payroll_released_at";
 
 /** All mileage entries for the caller's company (RLS-scoped), newest first. */
 export async function getMileageEntries(): Promise<MileageEntry[]> {
@@ -117,6 +125,9 @@ export async function setMileageEntryPayrollExcluded(
       // Manual always wins — a human explicitly deciding "off" should never
       // get silently re-held by the automatic no-photos rule afterward.
       payroll_hold_reason: excluded ? "manual" : null,
+      // Opposite of payroll_excluded_at — stamped on release, cleared on
+      // re-hold (see MileageEntry.payrollReleasedAt).
+      payroll_released_at: excluded ? null : new Date().toISOString(),
     })
     .eq("id", id);
   if (error) throw new Error(error.message);
@@ -152,6 +163,7 @@ export async function reconcileMileageNoPhotoHolds(
         payroll_excluded_by: null,
         payroll_excluded_by_name: shouldHold ? "Auto (no photos)" : null,
         payroll_hold_reason: shouldHold ? "no_photos" : null,
+        payroll_released_at: shouldHold ? null : new Date().toISOString(),
       })
       .eq("id", entry.id);
     if (error) console.error(`reconcileMileageNoPhotoHolds (${entry.id}):`, error.message);

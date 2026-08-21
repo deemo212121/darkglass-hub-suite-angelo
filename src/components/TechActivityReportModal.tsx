@@ -17,6 +17,7 @@ import {
   type TechAssistedTicket,
   type TechCustomPayItem,
 } from "@/lib/supabase/techPayroll";
+import { getCompanyEmployeeRequests, type EmployeeRequestRow } from "@/lib/supabase/employeeRequests";
 
 interface Props {
   row: EmployeePayrollRow;
@@ -25,6 +26,11 @@ interface Props {
   techRepairRates: TechRepairRate[];
   /** Re-fetches the parent's rate table (and everything derived from it) after an inline rate edit here. */
   onRatesChanged: () => void;
+  /** Re-fetches the parent's tech_custom_pay_items (and the real grossPay
+   *  derived from it — see AccountingDashboard.tsx's payrollRows) after a
+   *  custom line is added/edited/removed here, so it counts toward the
+   *  actual payroll total right away instead of only this modal's preview. */
+  onCustomItemsChanged: () => void;
   onManualPayBlur: (
     row: EmployeePayrollRow,
     field: "ldtCount" | "mileage" | "trainingValue" | "owIncentivePct",
@@ -62,6 +68,7 @@ export function TechActivityReportModal({
   periodEnd,
   techRepairRates,
   onRatesChanged,
+  onCustomItemsChanged,
   onManualPayBlur,
   savingManualKey,
   onCategoryOverrideBlur,
@@ -103,6 +110,30 @@ export function TechActivityReportModal({
     return () => { cancelled = true; };
   }, [employee.id, employee.full_name, periodStart, periodEnd]);
 
+  // Approved Dispute Tickets — every payroll_dispute approved for THIS
+  // technician, regardless of the period currently selected above. Shown
+  // unscoped (not filtered to periodStart/periodEnd) since a dispute's own
+  // linked period (set at submit time — see MobilePayrollDisputeView) can
+  // easily differ from whatever period this report happens to be open to,
+  // which is exactly what made a just-approved dispute look "missing"
+  // before this list existed.
+  const [approvedDisputes, setApprovedDisputes] = useState<EmployeeRequestRow[]>([]);
+  const [loadingDisputes, setLoadingDisputes] = useState(true);
+  useEffect(() => {
+    let cancelled = false;
+    setLoadingDisputes(true);
+    getCompanyEmployeeRequests()
+      .then((rows) => {
+        if (cancelled) return;
+        setApprovedDisputes(
+          rows.filter((r) => r.requestType === "payroll_dispute" && r.status === "approved" && r.profileId === employee.id)
+        );
+      })
+      .catch((err) => console.error("Failed to load approved dispute tickets:", err))
+      .finally(() => { if (!cancelled) setLoadingDisputes(false); });
+    return () => { cancelled = true; };
+  }, [employee.id]);
+
   const [savingRateKey, setSavingRateKey] = useState<string | null>(null);
   const handleRateBlur = async (category: string, value: string) => {
     const amount = Number(value) || 0;
@@ -123,6 +154,7 @@ export function TechActivityReportModal({
     try {
       const created = await addTechCustomPayItem(employee.id, periodStart, periodEnd, customItems.length);
       setCustomItems((prev) => [...prev, created]);
+      onCustomItemsChanged();
     } catch (err) {
       alert(`Failed to add line: ${err instanceof Error ? err.message : "Unknown error"}`);
     }
@@ -132,6 +164,7 @@ export function TechActivityReportModal({
     try {
       await updateTechCustomPayItem(item.id, fields);
       setCustomItems((prev) => prev.map((i) => (i.id === item.id ? { ...i, ...fields } : i)));
+      onCustomItemsChanged();
     } catch (err) {
       alert(`Failed to save line: ${err instanceof Error ? err.message : "Unknown error"}`);
     } finally {
@@ -143,6 +176,7 @@ export function TechActivityReportModal({
     try {
       await deleteTechCustomPayItem(item.id);
       setCustomItems((prev) => prev.filter((i) => i.id !== item.id));
+      onCustomItemsChanged();
     } catch (err) {
       alert(`Failed to remove line: ${err instanceof Error ? err.message : "Unknown error"}`);
       setSavingCustomId(null);
@@ -520,10 +554,40 @@ export function TechActivityReportModal({
                   <p className="text-xs text-slate-500">None</p>
                 ) : (
                   <div className="flex flex-col gap-1">
-                    {assistedTickets.map((t) => (
+    {assistedTickets.map((t) => (
                       <Link key={t.ticketId} to="/ticket/$ticketNo" params={{ ticketNo: t.ticketNo }} target="_blank" className="text-xs text-blue-400 hover:text-blue-300 hover:underline">
                         {t.secondTechnician} · {t.ticketNo}
                       </Link>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="bg-slate-800/50 border border-white/10 rounded-lg px-3 py-2.5">
+                <p className="text-[10px] text-slate-400 uppercase tracking-wide mb-1.5">Approved Dispute Tickets</p>
+                {loadingDisputes ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin text-slate-400" />
+                ) : approvedDisputes.length === 0 ? (
+                  <p className="text-xs text-slate-500">None</p>
+                ) : (
+                  <div className="flex flex-col gap-2">
+                    {approvedDisputes.map((d) => (
+                      <div key={d.id} className="text-xs">
+                        <div className="flex items-center justify-between gap-2">
+                          {d.ticketNo ? (
+                            <Link to="/ticket/$ticketNo" params={{ ticketNo: d.ticketNo }} target="_blank" className="text-blue-400 hover:text-blue-300 hover:underline">
+                              {d.ticketNo}
+                            </Link>
+                          ) : (
+                            <span className="text-slate-300">{d.payPeriod || "No ticket #"}</span>
+                          )}
+                          {d.missingAmount != null && <span className="text-green-300 font-semibold">{fmt(d.missingAmount)}</span>}
+                        </div>
+                        <p className="text-slate-500">
+                          {d.periodStart && d.periodEnd ? `${d.periodStart} – ${d.periodEnd}` : d.payPeriod || "No linked period"}
+                          {d.customPayItemId ? " · added to payroll" : " · not auto-added"}
+                        </p>
+                      </div>
                     ))}
                   </div>
                 )}

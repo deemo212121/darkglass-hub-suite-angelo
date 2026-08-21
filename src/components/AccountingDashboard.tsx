@@ -62,14 +62,20 @@ import {
   upsertTechCategoryOverride,
   getTechAutoMileageTotals,
   techRateFor as techRateForRates,
+  getTechCustomPayItems,
+  getAllTechCustomPayItemsForPeriod,
+  addTechCustomPayItem,
+  updateTechCustomPayItem,
+  deleteTechCustomPayItem,
   type TechRepairRate,
   type TechRepairCount,
   type TechManualPayItem,
+  type TechCustomPayItem,
   type TechCategoryOverride,
 } from "@/lib/supabase/techPayroll";
 import { TechActivityReportModal } from "@/components/TechActivityReportModal";
 import { getMileageEntries, addMileageEntry, deleteMileageEntry, syncMileageFromTickets, setMileageEntryPayrollExcluded, reconcileMileageNoPhotoHolds, type MileageEntry } from "@/lib/supabase/mileage";
-import { getCompanyEmployeeRequests, updateEmployeeRequestStatus, type EmployeeRequestRow } from "@/lib/supabase/employeeRequests";
+import { getCompanyEmployeeRequests, updateEmployeeRequestStatus, linkPayrollDisputeCustomPayItem, type EmployeeRequestRow } from "@/lib/supabase/employeeRequests";
 import { perCutoffSalary } from "@/lib/supabase/salary";
 import { useAuth } from "@/lib/auth";
 import { getGmailConnectionStatus, disconnectGmail, sendPayslipEmail, type GmailConnectionStatus, type GmailRegion } from "@/lib/supabase/gmailConnection";
@@ -237,6 +243,19 @@ export interface EmployeePayrollRow {
    * applied into grossPay here, only on the Tech Activity Report modal.
    */
   techManual: { ldtCount: number; ldtPay: number; mileage: number; mileagePay: number; trainingValue: number; trainingPay: number; owIncentivePct: number };
+  /**
+   * True for a row representing the tech-portion of someone's pay (piece-
+   * rate ticket/mileage/category totals), false/undefined for their office-
+   * portion row (hours × rate, or fixed salary). Drives the Office/Tech
+   * Payroll split (usOfficeRows/usTechRows) — a plain TECHNICIAN-role
+   * employee only ever gets one row, tagged true. Someone who holds
+   * TECHNICIAN as a SECONDARY role (extra_roles) alongside a non-technician
+   * primary role gets TWO separate rows — their normal office row (unpaid
+   * primary-role hours) stays exactly as before, plus an additional tagged
+   * row here so their tech-side work (completed tickets, mileage, etc.)
+   * still gets paid instead of silently dropped.
+   */
+  isTechPortion?: boolean;
 }
 
 interface MonthlyBarData {
@@ -542,10 +561,44 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       .catch((err) => console.error("Failed to load payroll disputes:", err))
       .finally(() => setPayrollDisputesLoading(false));
   }, [activeTab, payrollDisputesLoaded]);
+  const [payrollDisputesSubTab, setPayrollDisputesSubTab] = useState<"pending" | "approved">("pending");
   const pendingPayrollDisputes = payrollDisputes.filter((r) => r.status === "pending");
-  const handlePayrollDisputeAction = async (id: string, status: "approved" | "rejected") => {
+  // Approved disputes stay visible (not just pending ones) so an accidental
+  // Approve click can be walked back — see handlePayrollDisputeAction's
+  // "pending" case below, which reuses the exact same status-update path.
+  const approvedPayrollDisputes = payrollDisputes.filter((r) => r.status === "approved");
+  /**
+   * Approving a dispute with a real linked period (migration 0186 — only
+   * set when submitted via the mobile On Hold Tickets Dispute tab) auto-adds
+   * a tech_custom_pay_items line for missingAmount, so it actually shows up
+   * on that period's Tech Activity Report and counts toward Total Payment —
+   * the same "(custom program)" line Finance can already add by hand there.
+   * Moving OFF approved (revert-to-pending, or a hypothetical reject-after-
+   * approve) deletes that line again and clears the link, so an accidental
+   * Approve can be fully walked back. A dispute with no linked period (a
+   * free-text payPeriod dispute, not from the Dispute tab flow) just gets
+   * the plain status change — nothing to auto-inject.
+   */
+  const handlePayrollDisputeAction = async (id: string, status: "approved" | "rejected" | "pending") => {
     try {
+      const dispute = payrollDisputes.find((d) => d.id === id);
       await updateEmployeeRequestStatus(id, status, myProfileId, payrollDisputeNote[id]);
+
+      if (dispute?.customPayItemId && status !== "approved") {
+        await deleteTechCustomPayItem(dispute.customPayItemId).catch((err) => console.error("Failed to remove custom pay item on revert:", err));
+        await linkPayrollDisputeCustomPayItem(id, null).catch((err) => console.error("Failed to clear custom pay item link:", err));
+      } else if (status === "approved" && dispute && !dispute.customPayItemId && dispute.periodStart && dispute.periodEnd && (dispute.missingAmount ?? 0) > 0) {
+        const existing = await getTechCustomPayItems(dispute.profileId, dispute.periodStart, dispute.periodEnd);
+        const created = await addTechCustomPayItem(dispute.profileId, dispute.periodStart, dispute.periodEnd, existing.length);
+        await updateTechCustomPayItem(created.id, {
+          label: `Payroll Dispute${dispute.ticketNo ? ` — Ticket ${dispute.ticketNo}` : ""}`,
+          value: 1,
+          rate: dispute.missingAmount ?? 0,
+        });
+        await linkPayrollDisputeCustomPayItem(id, created.id);
+      }
+      void refreshTechCustomPayItems();
+
       const rows = await getCompanyEmployeeRequests();
       setPayrollDisputes(rows.filter((r) => r.requestType === "payroll_dispute"));
       setPayrollDisputeNote((prev) => {
@@ -599,6 +652,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   const [techAssignedCounts, setTechAssignedCounts] = useState<Map<string, number>>(new Map());
   const [techSecondCounts, setTechSecondCounts] = useState<Map<string, number>>(new Map());
   const [techManualPayItems, setTechManualPayItems] = useState<TechManualPayItem[]>([]);
+  const [techCustomPayItemsAll, setTechCustomPayItemsAll] = useState<TechCustomPayItem[]>([]);
   const [techCategoryOverrides, setTechCategoryOverrides] = useState<TechCategoryOverride[]>([]);
   const [mileageEntries, setMileageEntries] = useState<MileageEntry[]>([]);
 
@@ -924,6 +978,20 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     }
   }, []);
 
+  // Same targeted-refresh reasoning as refreshTechRepairRates — re-reads
+  // tech_custom_pay_items for the current period so a custom line edited
+  // inside the Tech Activity Report modal, or auto-created/removed by a
+  // Payroll Dispute approve/revert (handlePayrollDisputeAction), is
+  // reflected in the real payrollRows calculation right away.
+  const refreshTechCustomPayItems = useCallback(async () => {
+    if (!genStart || !genEnd || genStart > genEnd) return;
+    try {
+      setTechCustomPayItemsAll(await getAllTechCustomPayItemsForPeriod(genStart, genEnd));
+    } catch (err) {
+      console.error("Failed to refresh tech custom pay items:", err);
+    }
+  }, [genStart, genEnd]);
+
   useEffect(() => {
     if (!uid) return;
     let cancelled = false;
@@ -1003,6 +1071,27 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       .catch((err) => {
         console.error("Failed to load tech manual pay items:", err);
         if (!cancelled) setTechManualPayItems([]);
+      });
+    return () => { cancelled = true; };
+  }, [genStart, genEnd]);
+
+  // Same period-scoped, company-wide fetch as techManualPayItems above, for
+  // the "(custom program)" lines on the Tech Activity Report — including
+  // ones an approved Payroll Dispute auto-created (see
+  // handlePayrollDisputeAction). Feeds real grossPay below so these
+  // actually count toward Generate Payroll, not just the modal's own
+  // preview total.
+  useEffect(() => {
+    if (!genStart || !genEnd || genStart > genEnd) {
+      setTechCustomPayItemsAll([]);
+      return;
+    }
+    let cancelled = false;
+    getAllTechCustomPayItemsForPeriod(genStart, genEnd)
+      .then((items) => { if (!cancelled) setTechCustomPayItemsAll(items); })
+      .catch((err) => {
+        console.error("Failed to load tech custom pay items:", err);
+        if (!cancelled) setTechCustomPayItemsAll([]);
       });
     return () => { cancelled = true; };
   }, [genStart, genEnd]);
@@ -1123,6 +1212,13 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // of hourly-or-fixed — role === TECHNICIAN only (TECHNICIAN_MANAGER and
   // everyone else stays on the Office Payroll calculation below).
   const isTechRole = (emp: SupabaseEmployee) => normalizeRole(emp.role) === "TECHNICIAN";
+  // Holds TECHNICIAN as a secondary/extra role while their primary role is
+  // something else (e.g. a CSR Agent who also picks up technician work) —
+  // gets an ADDITIONAL tech-portion payroll row alongside their normal
+  // office row, rather than replacing it (see EmployeePayrollRow.isTechPortion).
+  const hasSecondaryTechRole = (emp: SupabaseEmployee) =>
+    !isTechRole(emp) && (emp.extraRoles ?? []).some((r) => normalizeRole(r) === "TECHNICIAN");
+  const getsTechPortion = (emp: SupabaseEmployee) => isTechRole(emp) || hasSecondaryTechRole(emp);
 
   // Rate lookup: an exact (repair_type, branch) match wins; otherwise fall
   // back to that repair_type's "All Branches" rate; otherwise the branch's
@@ -1225,6 +1321,16 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     })
   );
 
+  // "(custom program)" lines from the Tech Activity Report — hand-added by
+  // Finance, or auto-created when a Payroll Dispute with a linked period
+  // gets approved (see handlePayrollDisputeAction). Summed per technician
+  // so it feeds real grossPay below instead of only the modal's own
+  // preview total.
+  const techCustomTotalByProfile = new Map<string, number>();
+  for (const item of techCustomPayItemsAll) {
+    techCustomTotalByProfile.set(item.profileId, (techCustomTotalByProfile.get(item.profileId) ?? 0) + item.value * item.rate);
+  }
+
   // Build payroll rows. salary_entries.hourly_rate is always entered as a
   // plain USD figure (the shared "Add Rate Change" form labels it "$/hr"
   // with no currency conversion of its own — see EmployeePayrollDetailModal.tsx),
@@ -1241,14 +1347,24 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // overtimeHours/hourlyRate/dutyHours stay populated from real
   // punches/schedule (informational, shown for reference) but grossPay is
   // their piece-rate total instead.
-  const payrollRows: EmployeePayrollRow[] = employees.map((emp) => {
+  // employees.flatMap, not .map: a plain TECHNICIAN emits exactly one row
+  // (unchanged from before, just now tagged isTechPortion: true). Everyone
+  // else emits their normal office row, PLUS a second isTechPortion row if
+  // they hold TECHNICIAN as a secondary role AND actually have tech pay to
+  // show (skip a noisy $0 row for someone who merely holds the role but
+  // did no tech work this period).
+  const payrollRows: EmployeePayrollRow[] = employees.flatMap((emp) => {
     const comp = latestCompMap.get(emp.id);
     const isFixed = comp?.compensation_type === "fixed";
     const hourlyRate = isFixed ? 0 : comp?.hourly_rate ?? emp.hourly_rate ?? 0;
     const annualSalary = isFixed ? comp?.annual_salary ?? 0 : null;
     const hours = hoursMap.get(emp.id) ?? { regular: 0, overtime: 0 };
-    const tech = isTechRole(emp) ? techGrossByProfile.get(emp.id) : undefined;
-    const manual = isTechRole(emp) ? techManualByProfile.get(emp.id) : undefined;
+    const dutyHours = computeDutyHours(emp, genStart, genEnd);
+    const workingDays = workingDaysCountByProfile.get(emp.id) ?? 0;
+
+    const includeTech = getsTechPortion(emp);
+    const tech = includeTech ? techGrossByProfile.get(emp.id) : undefined;
+    const manual = includeTech ? techManualByProfile.get(emp.id) : undefined;
     // "Two Tech" (auto-counted from visits.second_technician) and MCA Bonus
     // (flat bonus for meeting a minimum completed-ticket threshold) are both
     // rate-table-driven and deterministic, same as LDT/Mileage/Training, so
@@ -1262,24 +1378,71 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     // which point their saved number takes over for good — see
     // handleManualPayBlur, which always re-saves whatever's currently
     // showing for every field, not just the one just edited.
-    const effectiveMileage = manual ? manual.mileage : isTechRole(emp) ? techAutoMileageByProfile.get(emp.id) ?? 0 : 0;
+    const effectiveMileage = manual ? manual.mileage : includeTech ? techAutoMileageByProfile.get(emp.id) ?? 0 : 0;
     const effectiveMileagePay = manual ? manual.mileagePay : effectiveMileage * techRateFor("Mileage", techBranch);
     const manualTotal = (manual?.ldtPay ?? 0) + effectiveMileagePay + (manual?.trainingPay ?? 0);
     const twoTechCountForEmp = twoTechOverrideByProfile.get(emp.id) ?? techSecondCounts.get(emp.full_name.trim().toLowerCase()) ?? 0;
-    const twoTechPay = isTechRole(emp) ? twoTechCountForEmp * techRateFor("Two Tech", techBranch) : 0;
-    const mcaThreshold = isTechRole(emp) ? techRateFor("MCA Threshold", techBranch) : 0;
-    const mcaBonus = isTechRole(emp) && mcaThreshold > 0 && (tech?.ticketsCompleted ?? 0) >= mcaThreshold
+    const twoTechPay = includeTech ? twoTechCountForEmp * techRateFor("Two Tech", techBranch) : 0;
+    const mcaThreshold = includeTech ? techRateFor("MCA Threshold", techBranch) : 0;
+    const mcaBonus = includeTech && mcaThreshold > 0 && (tech?.ticketsCompleted ?? 0) >= mcaThreshold
       ? techRateFor("MCA Bonus", techBranch)
       : 0;
     // Flat per-ticket rate paid on every completed (redo-excluded) ticket,
     // on top of that ticket's own repair-type rate already in tech.grossPay.
-    const completedTicketsPay = isTechRole(emp) ? (tech?.ticketsCompleted ?? 0) * techRateFor("Completed Tickets", techBranch) : 0;
-    const grossPay = tech
-      ? tech.grossPay + manualTotal + twoTechPay + mcaBonus + completedTicketsPay
-      : isFixed && annualSalary
-        ? perCutoffSalary(annualSalary)
-        : hours.regular * hourlyRate + hours.overtime * hourlyRate * 1.5;
-    return {
+    const completedTicketsPay = includeTech ? (tech?.ticketsCompleted ?? 0) * techRateFor("Completed Tickets", techBranch) : 0;
+    const customPay = includeTech ? techCustomTotalByProfile.get(emp.id) ?? 0 : 0;
+    // Gated on includeTech, not on `tech` — a technician with zero
+    // completed tickets this period (so techGrossByProfile has no entry
+    // for them) can still have real pay owed via manual LDT/Mileage/
+    // Training, a custom line, or an approved Payroll Dispute; the old
+    // `tech ? ... : 0` gate silently dropped all of that to $0 for them.
+    const techGrossPay = includeTech ? (tech?.grossPay ?? 0) + manualTotal + twoTechPay + mcaBonus + completedTicketsPay + customPay : 0;
+
+    const techRow: EmployeePayrollRow | null =
+      includeTech && (isTechRole(emp) || techGrossPay > 0)
+        ? {
+            employee: emp,
+            compensationType: isFixed ? "fixed" : "hourly",
+            hourlyRate,
+            hourlyRateUSD: hourlyRate,
+            annualSalary,
+            hoursWorked: hours.regular,
+            overtimeHours: hours.overtime,
+            ticketsCompleted: tech?.ticketsCompleted ?? 0,
+            ticketsAssigned: techAssignedCounts.get(emp.full_name.trim().toLowerCase()) ?? 0,
+            techCategoryPay: {
+              twoManJob: tech?.twoManJob ?? 0,
+              backTub: tech?.backTub ?? 0,
+              sealedSystem: tech?.sealedSystem ?? 0,
+              sealedSystemR600: tech?.sealedSystemR600 ?? 0,
+            },
+            techCategoryCounts: tech?.categoryCounts ?? {},
+            workingDays,
+            twoTechCount: twoTechCountForEmp,
+            techManual: {
+              ldtCount: manual?.ldtCount ?? 0,
+              ldtPay: manual?.ldtPay ?? 0,
+              mileage: effectiveMileage,
+              mileagePay: effectiveMileagePay,
+              trainingValue: manual?.trainingValue ?? 0,
+              trainingPay: manual?.trainingPay ?? 0,
+              owIncentivePct: manual?.owIncentivePct ?? 0,
+            },
+            dutyHours,
+            grossPay: techGrossPay,
+            grossPayUSD: techGrossPay,
+            isTechPortion: true,
+          }
+        : null;
+
+    // A plain TECHNICIAN-primary employee's whole pay IS the tech row — no
+    // separate office row, same as before this change.
+    if (isTechRole(emp)) return techRow ? [techRow] : [];
+
+    const officeGrossPay = isFixed && annualSalary
+      ? perCutoffSalary(annualSalary)
+      : hours.regular * hourlyRate + hours.overtime * hourlyRate * 1.5;
+    const officeRow: EmployeePayrollRow = {
       employee: emp,
       compensationType: isFixed ? "fixed" : "hourly",
       hourlyRate,
@@ -1287,36 +1450,25 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       annualSalary,
       hoursWorked: hours.regular,
       overtimeHours: hours.overtime,
-      ticketsCompleted: tech?.ticketsCompleted ?? 0,
-      ticketsAssigned: isTechRole(emp) ? techAssignedCounts.get(emp.full_name.trim().toLowerCase()) ?? 0 : 0,
-      techCategoryPay: {
-        twoManJob: tech?.twoManJob ?? 0,
-        backTub: tech?.backTub ?? 0,
-        sealedSystem: tech?.sealedSystem ?? 0,
-        sealedSystemR600: tech?.sealedSystemR600 ?? 0,
-      },
-      techCategoryCounts: tech?.categoryCounts ?? {},
-      workingDays: workingDaysCountByProfile.get(emp.id) ?? 0,
-      twoTechCount: isTechRole(emp) ? twoTechCountForEmp : 0,
-      techManual: {
-        ldtCount: manual?.ldtCount ?? 0,
-        ldtPay: manual?.ldtPay ?? 0,
-        mileage: effectiveMileage,
-        mileagePay: effectiveMileagePay,
-        trainingValue: manual?.trainingValue ?? 0,
-        trainingPay: manual?.trainingPay ?? 0,
-        owIncentivePct: manual?.owIncentivePct ?? 0,
-      },
-      dutyHours: computeDutyHours(emp, genStart, genEnd),
-      grossPay,
-      grossPayUSD: grossPay,
+      ticketsCompleted: 0,
+      ticketsAssigned: 0,
+      techCategoryPay: { twoManJob: 0, backTub: 0, sealedSystem: 0, sealedSystemR600: 0 },
+      techCategoryCounts: {},
+      workingDays,
+      twoTechCount: 0,
+      techManual: { ldtCount: 0, ldtPay: 0, mileage: 0, mileagePay: 0, trainingValue: 0, trainingPay: 0, owIncentivePct: 0 },
+      dutyHours,
+      grossPay: officeGrossPay,
+      grossPayUSD: officeGrossPay,
+      isTechPortion: false,
     };
+    return techRow ? [officeRow, techRow] : [officeRow];
   });
 
   const usRows = payrollRows.filter((r) => r.employee.country === "US");
   const phRows = payrollRows.filter((r) => r.employee.country === "PH");
-  const usOfficeRows = usRows.filter((r) => !isTechRole(r.employee));
-  const usTechRows = usRows.filter((r) => isTechRole(r.employee));
+  const usOfficeRows = usRows.filter((r) => !r.isTechPortion);
+  const usTechRows = usRows.filter((r) => r.isTechPortion);
 
   // Employees who never draw a salary through this system (e.g. the owner)
   // — kept out of generation, the missing-clock-out gate, and the export,
@@ -3613,10 +3765,34 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         {/* ── Payroll Disputes Tab ─────────────────────────────────────────── */}
         {activeTab === "payrollDisputes" && (
           <div className="space-y-6">
-            <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
-              <p className="text-xs text-slate-400 mb-1">Pending Payroll Disputes</p>
-              <p className="text-2xl font-bold text-yellow-300">{pendingPayrollDisputes.length}</p>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
+                <p className="text-xs text-slate-400 mb-1">Pending Payroll Disputes</p>
+                <p className="text-2xl font-bold text-yellow-300">{pendingPayrollDisputes.length}</p>
+              </div>
+              <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
+                <p className="text-xs text-slate-400 mb-1">Approved Payroll Disputes</p>
+                <p className="text-2xl font-bold text-green-300">{approvedPayrollDisputes.length}</p>
+              </div>
             </div>
+
+            <div className="flex gap-2 border-b border-white/10">
+              {[
+                { id: "pending" as const, label: "Pending", count: pendingPayrollDisputes.length },
+                { id: "approved" as const, label: "Approved Disputes", count: approvedPayrollDisputes.length },
+              ].map((t) => (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => setPayrollDisputesSubTab(t.id)}
+                  className={`px-4 py-2 border-b-2 text-sm font-medium transition-colors ${payrollDisputesSubTab === t.id ? "border-blue-500 text-blue-300" : "border-transparent text-slate-400 hover:text-slate-300"}`}
+                >
+                  {t.label}{t.count > 0 ? ` (${t.count})` : ""}
+                </button>
+              ))}
+            </div>
+
+            {payrollDisputesSubTab === "pending" ? (
             <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
               <h3 className="text-sm font-bold text-white mb-4">Payroll Disputes — Pending</h3>
               {payrollDisputesLoading ? (
@@ -3630,6 +3806,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <p className="text-sm font-semibold text-white">
                           {employeeNameById.get(r.profileId) || "Unknown"} — {r.payPeriod || "No period given"}
+                          {r.ticketNo && <span className="text-blue-300"> · Ticket {r.ticketNo}</span>}
                         </p>
                         {r.disputeReason && (
                           <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold uppercase tracking-wide bg-amber-500/20 text-amber-300">
@@ -3668,6 +3845,11 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                         rows={2}
                         className="w-full mt-2 px-3 py-2 bg-slate-800 border border-white/10 rounded text-white text-sm focus:outline-none focus:border-blue-500 placeholder-slate-500"
                       />
+                      <p className="text-[11px] text-slate-500 mt-1.5">
+                        {r.periodStart && r.periodEnd && (r.missingAmount ?? 0) > 0
+                          ? `Approving adds a $${(r.missingAmount ?? 0).toFixed(2)} "Payroll Dispute" line to their ${r.periodStart} – ${r.periodEnd} Tech Activity Report.`
+                          : "No linked pay period — approving is acknowledgement-only, won't auto-add to payroll."}
+                      </p>
                       <div className="flex gap-2 mt-2">
                         <button
                           type="button"
@@ -3689,6 +3871,68 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                 </div>
               )}
             </div>
+            ) : (
+            <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
+              <h3 className="text-sm font-bold text-white mb-4">Payroll Disputes — Approved</h3>
+              <p className="text-xs text-slate-500 mb-4">
+                Already approved — use Revert if one was approved by mistake. For a dispute with a linked pay period, approving already added a "Payroll Dispute" line to that period's Tech Activity Report; Revert removes that line again and sends the request back to Pending for a fresh decision.
+              </p>
+              {payrollDisputesLoading ? (
+                <p className="text-sm text-slate-400 flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" /> Loading…</p>
+              ) : approvedPayrollDisputes.length === 0 ? (
+                <p className="text-sm text-slate-400">No approved payroll disputes.</p>
+              ) : (
+                <div className="space-y-3">
+                  {approvedPayrollDisputes.map((r) => (
+                    <div key={r.id} className="border border-white/10 rounded-lg p-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <p className="text-sm font-semibold text-white">
+                          {employeeNameById.get(r.profileId) || "Unknown"} — {r.payPeriod || "No period given"}
+                          {r.ticketNo && <span className="text-blue-300"> · Ticket {r.ticketNo}</span>}
+                        </p>
+                        {r.disputeReason && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold uppercase tracking-wide bg-amber-500/20 text-amber-300">
+                            {r.disputeReason}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-slate-400 mt-1">
+                        Submitted: {r.createdAt.slice(0, 10)}
+                        {r.reviewedAt && ` · Approved: ${r.reviewedAt.slice(0, 10)}`}
+                      </p>
+                      {(r.totalReceived !== null || r.totalExpected !== null) && (
+                        <p className="text-sm text-slate-300 mt-2">
+                          Received <span className="font-semibold text-white">${(r.totalReceived ?? 0).toFixed(2)}</span>
+                          {" · "}Expected <span className="font-semibold text-white">${(r.totalExpected ?? 0).toFixed(2)}</span>
+                          {" · "}Missing <span className="font-semibold text-red-300">${(r.missingAmount ?? 0).toFixed(2)}</span>
+                        </p>
+                      )}
+                      <p className="text-sm text-slate-300 mt-2">{r.details}</p>
+                      {r.reviewNote && (
+                        <p className="text-sm text-green-300 mt-2">Response: {r.reviewNote}</p>
+                      )}
+                      <p className="text-xs mt-2">
+                        {r.customPayItemId ? (
+                          <span className="text-green-400">✓ Added to their {r.payPeriod || "linked period"} Tech Activity Report</span>
+                        ) : (
+                          <span className="text-slate-500">No linked pay period — not auto-added to payroll; add a custom line on their Tech Activity Report manually if needed.</span>
+                        )}
+                      </p>
+                      <div className="flex gap-2 mt-3">
+                        <button
+                          type="button"
+                          onClick={() => handlePayrollDisputeAction(r.id, "pending")}
+                          className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded text-xs font-semibold transition"
+                        >
+                          Revert to Pending
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            )}
           </div>
         )}
 
@@ -3948,6 +4192,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
             periodEnd={genEnd}
             techRepairRates={techRepairRates}
             onRatesChanged={refreshTechRepairRates}
+            onCustomItemsChanged={refreshTechCustomPayItems}
             onManualPayBlur={handleManualPayBlur}
             savingManualKey={savingManualKey}
             onCategoryOverrideBlur={handleCategoryOverrideBlur}

@@ -17,7 +17,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { ChevronLeft, FileText, Clock, CheckCircle2, AlertTriangle, Users, Loader2, Download } from "lucide-react";
+import { ChevronLeft, FileText, Clock, CheckCircle2, AlertTriangle, Users, Loader2, Download, LayoutDashboard, CalendarClock } from "lucide-react";
 import { Bar, BarChart, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import * as XLSX from "xlsx";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
@@ -26,8 +26,24 @@ import { getCompanyTickets } from "@/lib/supabase/tickets";
 import type { Ticket } from "@/lib/ticketData";
 import { getAllAgentNotes, type CsrAgentNote } from "@/lib/supabase/csrAgentNotes";
 import { normalizeRole, ROLE_LABELS } from "@/lib/roleLabels";
+import { ReportAttendanceMonitoring } from "@/components/ReportAttendanceMonitoring";
+import { WorkHoursPanel } from "@/components/WorkHoursPanel";
 
 const CLAIMS_ROLES = new Set(["CLAIMS", "CLAIMS_MANAGER"]);
+// Module-level (not defined inside the component) so ReportAttendanceMonitoring/
+// WorkHoursPanel's data-fetching effects see a stable reference across
+// renders — same pattern PartsOrderDashboard.tsx's isPartsOrderProfileFilter
+// established. Superset of the plain `staff` filter below (also checks
+// extra_roles), since a Claims role can be held as a secondary role too.
+const isClaimsProfileFilter = (p: ProfileRow) =>
+  CLAIMS_ROLES.has(normalizeRole(p.role)) || (p.extra_roles ?? []).some((r) => CLAIMS_ROLES.has(normalizeRole(r)));
+
+const TABS = [
+  { id: "overview" as const, label: "Overview", icon: LayoutDashboard },
+  { id: "attendance" as const, label: "Attendance", icon: Clock },
+  { id: "workHours" as const, label: "Work Hours", icon: CalendarClock },
+];
+type ClaimsDashboardTab = (typeof TABS)[number]["id"];
 const CHART_COLORS = ["#3b82f6", "#34d399", "#a78bfa", "#fb923c", "#f472b6", "#facc15", "#60a5fa", "#f87171"];
 
 // Claim-stage vocabulary — same PT-/CL- statuses NeedClaimList.tsx and
@@ -65,6 +81,7 @@ function isClaimTicket(t: Ticket): boolean {
 export function ClaimsDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [tab, setTab] = useState<ClaimsDashboardTab>("overview");
 
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [staff, setStaff] = useState<ProfileRow[]>([]);
@@ -265,8 +282,30 @@ export function ClaimsDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModuleDe
           </div>
         </div>
 
+        <div className="flex gap-2 border-b border-white/10 mb-4 mt-4 overflow-x-auto">
+          {TABS.map((t) => (
+            <button
+              key={t.id}
+              onClick={() => setTab(t.id)}
+              className={`px-4 py-2 border-b-2 transition whitespace-nowrap flex items-center gap-2 text-sm ${tab === t.id ? "border-blue-500 text-blue-300" : "border-transparent text-slate-400 hover:text-slate-300"}`}
+            >
+              <t.icon className="h-4 w-4" />
+              {t.label}
+            </button>
+          ))}
+        </div>
+
+        {tab === "attendance" && (
+          <ReportAttendanceMonitoring mod={mod} sub={sub} filterProfile={isClaimsProfileFilter} groupBy="employee" embedded />
+        )}
+
+        {tab === "workHours" && (
+          <WorkHoursPanel filterProfile={isClaimsProfileFilter} emptyMessage="No active Claims staff found." />
+        )}
+
+        {tab === "overview" && (<>
         {/* Filters */}
-        <div className="panel p-4 mb-6 mt-4">
+        <div className="panel p-4 mb-6">
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             <div>
               <label className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Date From</label>
@@ -463,6 +502,7 @@ export function ClaimsDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModuleDe
         </div>
         </>
         )}
+        </>)}
       </main>
     </div>
   );

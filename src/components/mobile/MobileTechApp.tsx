@@ -9,7 +9,7 @@ import {
   Ticket as TicketIcon,
   MapPin,
   MessageCircle,
-  FileText,
+  PauseCircle,
   DollarSign,
   ExternalLink,
 } from "lucide-react";
@@ -62,6 +62,7 @@ import { createEmployeeRequest, getCompanyEmployeeRequests, notifyRequestReviewe
 import { createPtoRequest, getCompanyPtoRequests, weekdayCount, type PtoType, type PtoRequestRow } from "@/lib/supabase/pto";
 import { createTimecardCorrection, getCompanyTimecardCorrections, type TimecardCorrectionRow } from "@/lib/supabase/timecardCorrections";
 import { createNotification } from "@/lib/supabase/notifications";
+import { getMileageEntries, type MileageEntry } from "@/lib/supabase/mileage";
 import { resolveTeamLeadOrManager } from "@/lib/notifyRouting";
 import { NotificationsMenu } from "@/components/NotificationsMenu";
 import {
@@ -83,7 +84,7 @@ type View =
   | "timecard"
   | "clockinteam"
   | "parts"
-  | "sheets"
+  | "onhold"
   | "itsupport"
   | "payrolldispute"
   | "timeoff"
@@ -127,6 +128,9 @@ const MOBILE_REPAIR_STATUSES = [
 
 // Roles that see their OWN tickets directly (skip the technician roster).
 const SELF_ROLES = new Set(["TECHNICIAN"]);
+
+// How far back On Hold Tickets' "Updated" sub-tab looks for a released hold.
+const RECENTLY_RELEASED_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
 
 // Days a ticket has been open, from aging if present else from created date.
 function openDays(t: Ticket): number {
@@ -251,7 +255,7 @@ export function MobileTechApp() {
       "timecard",
       "clockinteam",
       "parts",
-      "sheets",
+      "onhold",
       "itsupport",
       "payrolldispute",
       "timeoff",
@@ -334,6 +338,60 @@ export function MobileTechApp() {
       cancelled = true;
     };
   }, []);
+
+  // Payroll-hold flags for the On Hold Tickets tab — this is a DIFFERENT
+  // "on hold" than a ticket's own repair status (e.g. "OP-UPDATE HOLD"): it's
+  // mileage_entries.payrollExcluded, the same flag Accounting's Mileage tab
+  // "Notify On-Hold" button reads (missing service photos, or a manual hold)
+  // — see AccountingDashboard.tsx's mileageOnHoldByTechnician. A held ticket
+  // can have any ordinary status, so matching on status text would (and did)
+  // miss it entirely.
+  const [mileageEntries, setMileageEntries] = useState<MileageEntry[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    getMileageEntries()
+      .then((rows) => { if (!cancelled) setMileageEntries(rows); })
+      .catch((e) => console.error("Mobile: failed to load mileage entries", e));
+    return () => { cancelled = true; };
+  }, []);
+
+  // This technician's own payroll run history — for On Hold Tickets' Dispute
+  // sub-tab, to tell whether a released ticket's payroll period was already
+  // generated before it got released (see disputeEligibleTickets below). A
+  // manager-tier viewer has no single "my payroll" to check against, so this
+  // only fetches for a real technician.
+  const [myPayslips, setMyPayslips] = useState<MyPayslipRow[]>([]);
+  useEffect(() => {
+    if (!isSelfRole || !profileId) return;
+    let cancelled = false;
+    getMyPayslips(profileId)
+      .then((rows) => { if (!cancelled) setMyPayslips(rows); })
+      .catch((e) => console.error("Mobile: failed to load payslips", e));
+    return () => { cancelled = true; };
+  }, [isSelfRole, profileId]);
+
+  // Ticket numbers this tech has already filed a payroll dispute for (any
+  // status) — lets the On Hold Tickets Dispute tab flatten that ticket's
+  // "Dispute" button to "Submitted" instead of allowing a duplicate filing.
+  // Prefill/lock context for the Payroll Dispute form itself, set when
+  // arriving via that same "Dispute" button (see MobileOnHoldTicketsView).
+  const [disputedTicketNos, setDisputedTicketNos] = useState<Set<string>>(new Set());
+  const [payrollDisputePrefill, setPayrollDisputePrefill] = useState<{ ticketNo: string; payPeriod?: string; periodStart?: string; periodEnd?: string } | null>(null);
+  useEffect(() => {
+    if (!profileId) return;
+    let cancelled = false;
+    getCompanyEmployeeRequests()
+      .then((all) => {
+        if (cancelled) return;
+        setDisputedTicketNos(new Set(
+          all
+            .filter((r) => r.requestType === "payroll_dispute" && r.profileId === profileId && r.ticketNo)
+            .map((r) => r.ticketNo as string)
+        ));
+      })
+      .catch((e) => console.error("Mobile: failed to load disputed ticket numbers", e));
+    return () => { cancelled = true; };
+  }, [profileId]);
 
   // Load real company users (for the manager technician roster). Techs don't
   // need this list, so only fetch for non-self roles.
@@ -442,6 +500,73 @@ export function MobileTechApp() {
     [tickets, activeTicketNo]
   );
 
+  // On Hold Tickets bottom-nav tab (replaces the old Tech Sheets stub) —
+  // joins mileageEntries' payroll-hold flag back to the real Ticket by
+  // ticket #, so the card can show full details and still open into the
+  // normal ticket detail view via openTicket. Scoped the same way the
+  // Tickets tab is: a technician sees only holds on their OWN mileage
+  // entries (profileId match — precise, not name-fuzzy), a manager (no
+  // single "selected tech" context on this tab) sees every held ticket
+  // across their allowed branches instead.
+  const onHoldTickets = useMemo(() => {
+    const heldTicketNos = new Set(
+      mileageEntries
+        .filter((e) => e.payrollExcluded && e.ticketNo)
+        .filter((e) => (isSelfRole ? e.profileId === profileId : allowedLocations === null || allowedLocations.includes(e.branch)))
+        .map((e) => e.ticketNo as string)
+    );
+    return tickets.filter((t) => heldTicketNos.has(t.ticketNo));
+  }, [mileageEntries, isSelfRole, profileId, allowedLocations, tickets]);
+
+  // On Hold Tickets' "Updated" and "Dispute" sub-tabs — mutually exclusive,
+  // computed together since they're really one decision per released ticket
+  // (payrollReleasedAt, migration 0184 — payrollExcludedAt/payrollHoldReason
+  // get wiped back to null the moment a hold clears, so payrollReleasedAt is
+  // the only field that still remembers a release happened at all):
+  //   - Payroll for that work date's period was already generated BEFORE
+  //     the release → the tech got shorted in a run that already went out
+  //     → Dispute (technician-only — myPayslips is only ever fetched for
+  //     isSelfRole; not time-windowed, since a missed ticket stays eligible
+  //     until actually disputed — there's no per-ticket "already filed"
+  //     tracking yet, so this may include ones already submitted).
+  //   - Otherwise (no run yet for that period, or it ran again after the
+  //     release) → the fix landed in time, the existing/next run just
+  //     counts it normally → Updated, but only within the last 14 days so
+  //     this doesn't grow into a permanent list.
+  const { updatedTickets, disputeEligibleTickets, disputePeriodByTicketNo } = useMemo(() => {
+    const updated: Ticket[] = [];
+    const disputed: Ticket[] = [];
+    // Structured periodStart/periodEnd travel alongside the display label
+    // so the Dispute tab's "Dispute" button can hand real dates to the
+    // Payroll Dispute form (migration 0186) — needed to auto-inject the
+    // missing amount into that exact period's Tech Activity Report once
+    // approved, not just show a human-readable string.
+    const periodByTicketNo = new Map<string, { label: string; periodStart: string; periodEnd: string }>();
+    const recentCutoff = Date.now() - RECENTLY_RELEASED_WINDOW_MS;
+
+    for (const e of mileageEntries) {
+      if (!e.payrollReleasedAt || !e.ticketNo) continue;
+      const inScope = isSelfRole ? e.profileId === profileId : allowedLocations === null || allowedLocations.includes(e.branch);
+      if (!inScope) continue;
+      const ticket = tickets.find((t) => t.ticketNo === e.ticketNo);
+      if (!ticket) continue;
+
+      let isDisputeEligible = false;
+      if (isSelfRole && e.workDate) {
+        const run = myPayslips.find((p) => p.generatedAt && e.workDate! >= p.periodStart && e.workDate! <= p.periodEnd);
+        if (run?.generatedAt && new Date(run.generatedAt).getTime() < new Date(e.payrollReleasedAt).getTime()) {
+          isDisputeEligible = true;
+          periodByTicketNo.set(e.ticketNo, { label: `${run.periodStart} – ${run.periodEnd}`, periodStart: run.periodStart, periodEnd: run.periodEnd });
+        }
+      }
+
+      if (isDisputeEligible) disputed.push(ticket);
+      else if (new Date(e.payrollReleasedAt).getTime() >= recentCutoff) updated.push(ticket);
+    }
+
+    return { updatedTickets: updated, disputeEligibleTickets: disputed, disputePeriodByTicketNo: periodByTicketNo };
+  }, [mileageEntries, isSelfRole, profileId, allowedLocations, tickets, myPayslips]);
+
   // (goDesktop removed — mobile is a separate surface; users stay here.)
 
   const openTicket = (t: Ticket) => {
@@ -474,8 +599,8 @@ export function MobileTechApp() {
   const activeBottomTab: BottomTab =
     view === "chat"
       ? "chat"
-      : view === "sheets"
-      ? "sheets"
+      : view === "onhold"
+      ? "onhold"
       : view === "payroll"
       ? "payroll"
       : view === "map"
@@ -498,7 +623,7 @@ export function MobileTechApp() {
   const handleNotificationLink = (linkTo: string) => {
     const lower = linkTo.toLowerCase();
     if (lower.includes("it-tickets") || lower.includes("itsupport")) { setView("itsupport"); return; }
-    if (lower.includes("payrolldisputes") || lower.includes("accounting-dashboard")) { setView("payrolldispute"); return; }
+    if (lower.includes("payrolldisputes") || lower.includes("accounting-dashboard")) { setPayrollDisputePrefill(null); setView("payrolldispute"); return; }
     if (lower.includes("pto-management")) { setView("timeoff"); return; }
     if (lower.includes("corrections")) { setView("correction"); return; }
     if (lower.includes("disputes-inquiries")) { setView("attendancedispute"); return; }
@@ -517,7 +642,7 @@ export function MobileTechApp() {
         showClockInTeam={isAttendanceManagerTierRole(role, extraRoles)}
         onOpenClockInTeam={() => setView("clockinteam")}
         onOpenItSupport={() => setView("itsupport")}
-        onOpenPayrollDispute={() => setView("payrolldispute")}
+        onOpenPayrollDispute={() => { setPayrollDisputePrefill(null); setView("payrolldispute"); }}
         onOpenTimeOff={() => setView("timeoff")}
         onOpenAttendanceDispute={() => setView("attendancedispute")}
         onOpenCorrection={() => setView("correction")}
@@ -603,10 +728,20 @@ export function MobileTechApp() {
           />
         )}
 
-        {view === "sheets" && (
-          <MobileStubView
-            title="Tech Sheets"
-            message="Tech Sheets browsing is best experienced on desktop. Open the desktop site on a computer to look up model documents."
+        {view === "onhold" && (
+          <MobileOnHoldTicketsView
+            onHoldTickets={onHoldTickets}
+            updatedTickets={updatedTickets}
+            disputeEligibleTickets={disputeEligibleTickets}
+            disputePeriodByTicketNo={disputePeriodByTicketNo}
+            disputedTicketNos={disputedTicketNos}
+            onDispute={(t) => {
+              const period = disputePeriodByTicketNo.get(t.ticketNo);
+              setPayrollDisputePrefill({ ticketNo: t.ticketNo, payPeriod: period?.label, periodStart: period?.periodStart, periodEnd: period?.periodEnd });
+              setView("payrolldispute");
+            }}
+            loading={loading}
+            onOpen={openTicket}
           />
         )}
 
@@ -627,7 +762,13 @@ export function MobileTechApp() {
         )}
 
         {view === "payrolldispute" && (
-          <MobilePayrollDisputeView userName={headerName} profileId={profileId} companyId={companyId} />
+          <MobilePayrollDisputeView
+            userName={headerName}
+            profileId={profileId}
+            companyId={companyId}
+            prefill={payrollDisputePrefill}
+            onSubmitted={(ticketNo) => setDisputedTicketNos((prev) => new Set(prev).add(ticketNo))}
+          />
         )}
 
         {view === "timeoff" && (
@@ -649,8 +790,8 @@ export function MobileTechApp() {
             openTickets={myTickets.filter((t) => !isDone(t.status)).length}
             onOpenTickets={() => setView("tickets")}
             onOpenPayroll={() => setView("payroll")}
-            onOpenParts={() => setView("sheets")}
-            onOpenSheets={() => setView("sheets")}
+            onOpenOnHold={() => setView("onhold")}
+            onOpenRoute={() => setView("map")}
           />
         )}
 
@@ -826,12 +967,12 @@ function AppHeaderMobile({
 }
 
 // ── Persistent bottom navigation bar ────────────────────────────────────
-type BottomTab = "tickets" | "route" | "chat" | "sheets" | "payroll";
+type BottomTab = "tickets" | "route" | "chat" | "onhold" | "payroll";
 const BOTTOM_TABS: Array<{ id: BottomTab; label: string; icon: React.ReactNode }> = [
   { id: "tickets", label: "Tickets",   icon: <TicketIcon  className="mtech-bottom-tab-svg" /> },
   { id: "route",   label: "Route",     icon: <MapPin      className="mtech-bottom-tab-svg" /> },
   { id: "chat",    label: "Chat",      icon: <MessageCircle className="mtech-bottom-tab-svg" /> },
-  { id: "sheets",  label: "Tech Sheet",icon: <FileText    className="mtech-bottom-tab-svg" /> },
+  { id: "onhold",  label: "On Hold",   icon: <PauseCircle className="mtech-bottom-tab-svg" /> },
   { id: "payroll", label: "Payroll",   icon: <DollarSign  className="mtech-bottom-tab-svg" /> },
 ];
 
@@ -972,6 +1113,141 @@ function TicketsView({
               </span>
             </button>
           ))}
+      </div>
+    </>
+  );
+}
+
+// Replaces the old "Tech Sheets" bottom-nav stub. Three sub-tabs, same card
+// markup as TicketsView's ticket cards but no To Do/Done/Search split since
+// each sub-tab here is already its own purpose-scoped list:
+//   - On Hold: every ticket currently excluded from payroll.
+//   - Updated: tickets released from a hold in the last 14 days — lets a
+//     tech confirm what actually cleared after they uploaded photos.
+//   - Dispute: released tickets whose payroll period was already generated
+//     BEFORE the release — the tech got shorted for it in a run that's
+//     already gone out, so it needs a manual Payroll Dispute, not just
+//     waiting on the next run. Technician-only; empty for anyone else.
+function MobileOnHoldTicketsView({
+  onHoldTickets,
+  updatedTickets,
+  disputeEligibleTickets,
+  disputePeriodByTicketNo,
+  disputedTicketNos,
+  onDispute,
+  loading,
+  onOpen,
+}: {
+  onHoldTickets: Ticket[];
+  updatedTickets: Ticket[];
+  disputeEligibleTickets: Ticket[];
+  disputePeriodByTicketNo: Map<string, { label: string; periodStart: string; periodEnd: string }>;
+  /** Ticket numbers that already have a payroll dispute on file — the
+   *  Dispute tab's button flattens to "Submitted" for these instead of
+   *  allowing a second filing. */
+  disputedTicketNos: Set<string>;
+  /** Opens the Payroll Dispute form with this ticket locked in — only
+   *  called from the Dispute tab's own button, never by tapping the card. */
+  onDispute: (t: Ticket) => void;
+  loading: boolean;
+  onOpen: (t: Ticket) => void;
+}) {
+  const [subTab, setSubTab] = useState<"hold" | "updated" | "dispute">("hold");
+  const tickets = subTab === "hold" ? onHoldTickets : subTab === "updated" ? updatedTickets : disputeEligibleTickets;
+  return (
+    <>
+      <div className="mtech-subbar">
+        <span className="mtech-date">On Hold Tickets</span>
+      </div>
+
+      <div className="mtech-tabs">
+        <button className={subTab === "hold" ? "active" : ""} onClick={() => setSubTab("hold")} type="button">
+          On Hold{onHoldTickets.length > 0 ? ` (${onHoldTickets.length})` : ""}
+        </button>
+        <button className={subTab === "updated" ? "active" : ""} onClick={() => setSubTab("updated")} type="button">
+          Updated{updatedTickets.length > 0 ? ` (${updatedTickets.length})` : ""}
+        </button>
+        <button className={subTab === "dispute" ? "active" : ""} onClick={() => setSubTab("dispute")} type="button">
+          Dispute{disputeEligibleTickets.length > 0 ? ` (${disputeEligibleTickets.length})` : ""}
+        </button>
+      </div>
+
+      <div className="mtech-scroll">
+        {loading && <div className="mtech-empty">Loading tickets…</div>}
+        {!loading && tickets.length === 0 && (
+          <div className="mtech-empty">
+            {subTab === "hold"
+              ? "No tickets on hold right now."
+              : subTab === "updated"
+              ? "No tickets released from hold in the last 14 days."
+              : "No missed payroll to dispute — nothing was released after its pay period already ran."}
+          </div>
+        )}
+        {!loading &&
+          tickets.map((t) => {
+            const alreadyDisputed = disputedTicketNos.has(t.ticketNo);
+            return (
+            <div
+              key={t.ticketNo}
+              className="mtech-ticket-card"
+              onClick={() => onOpen(t)}
+              onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onOpen(t); } }}
+              role="button"
+              tabIndex={0}
+            >
+              <div className={`mtech-ticket-accent ${statusTone(t.status)}`} />
+              <div className="mtech-ticket-body">
+                <div className="mtech-ticket-row-top">
+                  <span className="mtech-ticket-no">{t.ticketNo}</span>
+                  <span className={`mtech-ticket-tone-badge ${statusTone(t.status)}`}>
+                    {openDays(t)}d
+                  </span>
+                </div>
+                <div className="mtech-ticket-customer">{t.customer || "—"}</div>
+                <div className="mtech-ticket-meta-row">
+                  <span className="mtech-ticket-meta-chip">{resolveLocation(t)}</span>
+                  {t.warranty && <span className="mtech-ticket-meta-chip">{t.warranty}</span>}
+                  {t.city && <span className="mtech-ticket-meta-chip">{t.city}</span>}
+                </div>
+                <div className="mtech-ticket-status-line">{t.status}</div>
+                {subTab === "dispute" && disputePeriodByTicketNo.has(t.ticketNo) && (
+                  <div className="mtech-ticket-sched" style={{ color: "#fca5a5" }}>
+                    Missed payroll: {disputePeriodByTicketNo.get(t.ticketNo)?.label}
+                  </div>
+                )}
+                {t.schedule && (
+                  <div className="mtech-ticket-sched">
+                    {t.schedule}
+                    {t.model ? ` · ${t.model}` : ""}
+                  </div>
+                )}
+                {subTab === "dispute" && (
+                  <button
+                    type="button"
+                    disabled={alreadyDisputed}
+                    onClick={(e) => { e.stopPropagation(); if (!alreadyDisputed) onDispute(t); }}
+                    style={{
+                      marginTop: "0.5rem",
+                      padding: "0.35rem 0.9rem",
+                      borderRadius: "8px",
+                      border: alreadyDisputed ? "1px solid rgba(148,163,184,0.3)" : "1px solid rgba(96,165,250,0.5)",
+                      background: alreadyDisputed ? "rgba(100,116,139,0.15)" : "rgba(59,130,246,0.15)",
+                      color: alreadyDisputed ? "#94a3b8" : "#93c5fd",
+                      fontWeight: 700,
+                      fontSize: "0.8rem",
+                      cursor: alreadyDisputed ? "default" : "pointer",
+                    }}
+                  >
+                    {alreadyDisputed ? "Submitted" : "Dispute"}
+                  </button>
+                )}
+              </div>
+              <span className="mtech-ticket-chev-icon">
+                <ChevronRight className="h-4 w-4" />
+              </span>
+            </div>
+            );
+          })}
       </div>
     </>
   );
@@ -3203,15 +3479,15 @@ function MobileHomeView({
   openTickets,
   onOpenTickets,
   onOpenPayroll,
-  onOpenParts,
-  onOpenSheets,
+  onOpenOnHold,
+  onOpenRoute,
 }: {
   userName: string;
   openTickets: number;
   onOpenTickets: () => void;
   onOpenPayroll: () => void;
-  onOpenParts: () => void;
-  onOpenSheets: () => void;
+  onOpenOnHold: () => void;
+  onOpenRoute: () => void;
 }) {
   const hourNow = new Date().getHours();
   const greeting =
@@ -3235,11 +3511,11 @@ function MobileHomeView({
           <TicketIcon className="mtech-home-tile-svg" />
           <span className="mtech-home-tile-label">Tickets</span>
         </button>
-        <button className="mtech-home-tile" type="button" onClick={onOpenParts}>
-          <FileText className="mtech-home-tile-svg" />
-          <span className="mtech-home-tile-label">Tech Sheet</span>
+        <button className="mtech-home-tile" type="button" onClick={onOpenOnHold}>
+          <PauseCircle className="mtech-home-tile-svg" />
+          <span className="mtech-home-tile-label">On Hold</span>
         </button>
-        <button className="mtech-home-tile" type="button" onClick={onOpenSheets}>
+        <button className="mtech-home-tile" type="button" onClick={onOpenRoute}>
           <MapPin className="mtech-home-tile-svg" />
           <span className="mtech-home-tile-label">Route</span>
         </button>
@@ -3977,10 +4253,28 @@ const PAYROLL_DISPUTE_REASONS = [
   "Other",
 ];
 
-function MobilePayrollDisputeView({ userName, profileId, companyId }: { userName: string; profileId: string | null; companyId: string | null }) {
+function MobilePayrollDisputeView({
+  userName,
+  profileId,
+  companyId,
+  prefill,
+  onSubmitted,
+}: {
+  userName: string;
+  profileId: string | null;
+  companyId: string | null;
+  /** Set when arriving via the On Hold Tickets Dispute tab's "Dispute"
+   *  button — the ticket number is known for certain in that flow, so it's
+   *  locked instead of left free-text/editable. */
+  prefill?: { ticketNo: string; payPeriod?: string; periodStart?: string; periodEnd?: string } | null;
+  /** Fires once the dispute is actually saved, so the parent can flatten
+   *  that ticket's "Dispute" button to "Submitted" without a full refetch. */
+  onSubmitted?: (ticketNo: string) => void;
+}) {
   const [requests, setRequests] = useState<EmployeeRequestRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [payPeriod, setPayPeriod] = useState("");
+  const [ticketNo, setTicketNo] = useState(prefill?.ticketNo ?? "");
+  const [payPeriod, setPayPeriod] = useState(prefill?.payPeriod ?? "");
   const [totalReceived, setTotalReceived] = useState("");
   const [totalExpected, setTotalExpected] = useState("");
   const [reason, setReason] = useState(PAYROLL_DISPUTE_REASONS[0]);
@@ -4046,6 +4340,9 @@ function MobilePayrollDisputeView({ userName, profileId, companyId }: { userName
         missingAmount: missingAmount ?? undefined,
         disputeReason: reason,
         attachments,
+        ticketNo: ticketNo.trim() || undefined,
+        periodStart: prefill?.periodStart,
+        periodEnd: prefill?.periodEnd,
       });
       void notifyRequestReviewers({
         body: `💰 New Payroll Dispute from ${userName} (${payPeriod.trim()}).`,
@@ -4053,6 +4350,11 @@ function MobilePayrollDisputeView({ userName, profileId, companyId }: { userName
         senderId: profileId,
         senderName: userName,
       });
+      if (ticketNo.trim()) onSubmitted?.(ticketNo.trim());
+      // Prefilled from the Dispute tab — leave the locked ticket number in
+      // place rather than clearing it back to an empty (but still disabled)
+      // field; the tech is done with this screen either way.
+      if (!prefill?.ticketNo) setTicketNo("");
       setPayPeriod("");
       setTotalReceived("");
       setTotalExpected("");
@@ -4077,7 +4379,20 @@ function MobilePayrollDisputeView({ userName, profileId, companyId }: { userName
       </div>
 
       <div className="mtech-panel" style={{ marginTop: 0 }}>
-        <div className="mtech-section-title" style={{ marginTop: 0 }}>Pay Period</div>
+        <div className="mtech-section-title" style={{ marginTop: 0 }}>Ticket Number</div>
+        <input
+          className="mtech-bill-input full"
+          value={ticketNo}
+          onChange={(e) => setTicketNo(e.target.value)}
+          placeholder="e.g. HAP20260736718689"
+          disabled={!!prefill?.ticketNo}
+          style={prefill?.ticketNo ? { opacity: 0.7 } : undefined}
+        />
+        {prefill?.ticketNo && (
+          <p className="mtech-muted" style={{ padding: "0.15rem 0 0.25rem" }}>Locked to the ticket you disputed from.</p>
+        )}
+
+        <div className="mtech-section-title">Pay Period</div>
         <input
           className="mtech-bill-input full"
           value={payPeriod}
@@ -4126,7 +4441,7 @@ function MobilePayrollDisputeView({ userName, profileId, companyId }: { userName
           rows={4}
           value={details}
           onChange={(e) => setDetails(e.target.value)}
-          placeholder="eg ticket # etc."
+          placeholder="Describe what's missing or incorrect"
         />
 
         <div className="mtech-section-title">Upload Supporting Documents</div>
@@ -4163,6 +4478,7 @@ function MobilePayrollDisputeView({ userName, profileId, companyId }: { userName
                 </div>
               </div>
               <div className="mtech-payroll-row-body" style={{ display: "block", padding: "0.4rem 0.85rem 0.7rem" }}>
+                {r.ticketNo && <p className="mtech-muted" style={{ padding: "0.25rem 0", fontWeight: 600, color: "#93c5fd" }}>Ticket {r.ticketNo}</p>}
                 {r.disputeReason && <p className="mtech-muted" style={{ padding: "0.25rem 0", fontWeight: 600 }}>{r.disputeReason}</p>}
                 {(r.totalReceived !== null || r.totalExpected !== null) && (
                   <p className="mtech-muted" style={{ padding: "0.25rem 0" }}>
