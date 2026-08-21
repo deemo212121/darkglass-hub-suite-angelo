@@ -1820,7 +1820,15 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                       <tr><td colSpan={6} className="px-3 py-8 text-center text-slate-400">Loading…</td></tr>
                     ) : visiblePtoRequests.filter(r => r.status === "pending").length === 0 ? (
                       <tr><td colSpan={6} className="px-3 py-8 text-center text-slate-400">No pending PTO requests.</td></tr>
-                    ) : visiblePtoRequests.filter(r => r.status === "pending").map((request) => (
+                    ) : visiblePtoRequests.filter(r => r.status === "pending").map((request) => {
+                      // request.managerId is a snapshot resolved once at
+                      // submission time — if the requester's manager_name
+                      // has since changed, canReviewPtoStage's fallback
+                      // needs their CURRENT one (looked up fresh here, not
+                      // trusted from the stale request row) to avoid
+                      // stranding an already-pending request.
+                      const requesterManagerName = profiles.find((p) => p.id === request.profileId)?.manager_name ?? null;
+                      return (
                       <tr key={request.id} className="border-b border-white/5 hover:bg-white/5 transition">
                         <td className="px-3 py-3 text-white font-medium">{profileName(request.profileId)}</td>
                         <td className="px-3 py-3 text-slate-300">{PTO_TYPE_LABELS[request.ptoType]}</td>
@@ -1856,7 +1864,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                         </td>
                         <td className="px-3 py-3">
                           <div className="flex flex-col gap-1.5">
-                            {request.managerStatus === "pending" && canReviewPtoStage(request, "manager", myProfileId, role, extraRoles) && (
+                            {request.managerStatus === "pending" && canReviewPtoStage(request, "manager", myProfileId, role, extraRoles, displayName, requesterManagerName) && (
                               <div className="flex gap-1">
                                 <span className="text-[10px] text-slate-500 self-center">Mgr:</span>
                                 <button type="button" title="Approve as manager" onClick={() => handlePtoStageAction(request, "manager", "approved")} disabled={busyPtoId === request.id} className="px-2 py-1 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded text-xs transition flex items-center gap-1">
@@ -1867,7 +1875,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                                 </button>
                               </div>
                             )}
-                            {request.hrStatus === "pending" && canReviewPtoStage(request, "hr", myProfileId, role, extraRoles) && (
+                            {request.hrStatus === "pending" && canReviewPtoStage(request, "hr", myProfileId, role, extraRoles, displayName, requesterManagerName) && (
                               <div className="flex gap-1">
                                 <span className="text-[10px] text-slate-500 self-center">HR:</span>
                                 <button type="button" title="Approve as HR" onClick={() => handlePtoStageAction(request, "hr", "approved")} disabled={busyPtoId === request.id} className="px-2 py-1 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded text-xs transition flex items-center gap-1">
@@ -1878,7 +1886,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                                 </button>
                               </div>
                             )}
-                            {request.accountingStatus === "pending" && canReviewPtoStage(request, "accounting", myProfileId, role, extraRoles) && (
+                            {request.accountingStatus === "pending" && canReviewPtoStage(request, "accounting", myProfileId, role, extraRoles, displayName, requesterManagerName) && (
                               <div className="flex gap-1">
                                 <span className="text-[10px] text-slate-500 self-center">Acct:</span>
                                 <button type="button" title="Approve as Accounting" onClick={() => handlePtoStageAction(request, "accounting", "approved")} disabled={busyPtoId === request.id} className="px-2 py-1 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded text-xs transition flex items-center gap-1">
@@ -1889,15 +1897,16 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                                 </button>
                               </div>
                             )}
-                            {!(request.managerStatus === "pending" && canReviewPtoStage(request, "manager", myProfileId, role, extraRoles)) &&
-                             !(request.hrStatus === "pending" && canReviewPtoStage(request, "hr", myProfileId, role, extraRoles)) &&
-                             !(request.accountingStatus === "pending" && canReviewPtoStage(request, "accounting", myProfileId, role, extraRoles)) && (
+                            {!(request.managerStatus === "pending" && canReviewPtoStage(request, "manager", myProfileId, role, extraRoles, displayName, requesterManagerName)) &&
+                             !(request.hrStatus === "pending" && canReviewPtoStage(request, "hr", myProfileId, role, extraRoles, displayName, requesterManagerName)) &&
+                             !(request.accountingStatus === "pending" && canReviewPtoStage(request, "accounting", myProfileId, role, extraRoles, displayName, requesterManagerName)) && (
                               <span className="text-xs text-slate-500">{request.managerStatus === "pending" ? "Awaiting manager" : "Awaiting HR/Accounting"}</span>
                             )}
                           </div>
                         </td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

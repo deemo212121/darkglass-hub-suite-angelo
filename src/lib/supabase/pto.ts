@@ -297,7 +297,15 @@ export function canReviewPtoStage(
   stage: PtoStage,
   viewerProfileId: string | null,
   viewerRole: string | null | undefined,
-  viewerExtraRoles?: string[] | null
+  viewerExtraRoles?: string[] | null,
+  /** The viewer's own display_name — only needed for the stale-snapshot
+   *  fallback below; every existing caller that omits it just loses the
+   *  fallback, not correctness for the common case. */
+  viewerDisplayName?: string | null,
+  /** The requester's CURRENT manager_name (profiles.manager_name), looked
+   *  up fresh by the caller — NOT request.managerId, which is a one-time
+   *  snapshot resolved at submission. See the fallback note below. */
+  requesterCurrentManagerName?: string | null
 ): boolean {
   // Held roles pile up: a secondary HR/FINANCE/MANAGER role grants that
   // stage's authority just as well as holding it as the primary role.
@@ -305,7 +313,19 @@ export function canReviewPtoStage(
   const has = (r: string) => heldRoles.includes(r);
   if (has("SUPERADMIN") || has("SUPERSUPERADMIN")) return true;
   if (stage === "manager") {
-    if (request.managerId) return request.managerId === viewerProfileId;
+    if (request.managerId === viewerProfileId) return true;
+    // request.managerId is resolved ONCE, at submission time, from
+    // whatever the requester's manager_name matched back then. If their
+    // manager assignment has since changed, that snapshot goes stale and
+    // the request is otherwise stranded forever — nobody with real
+    // authority over it today can act, since the snapshot still points at
+    // whoever used to be their manager. Falling back to "is the viewer the
+    // requester's manager RIGHT NOW" keeps a reassignment from silently
+    // orphaning any request that was already pending when it happened.
+    const currentManagerName = (requesterCurrentManagerName || "").trim().toLowerCase();
+    const viewerName = (viewerDisplayName || "").trim().toLowerCase();
+    if (currentManagerName && viewerName && currentManagerName === viewerName) return true;
+    if (request.managerId) return false;
     return has("MANAGER");
   }
   if (request.managerStatus !== "approved") return false;
