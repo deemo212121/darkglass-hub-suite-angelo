@@ -232,39 +232,41 @@ export function TechnicianWhereaboutsPage({ mod, sub }: { mod: ModuleDef; sub: S
         </div>
 
         <div className="mt-5 flex flex-wrap items-center gap-2">
-          <select
-            value={branchFilter}
-            onChange={(e) => setBranchFilter(e.target.value)}
-            className="glass-input text-sm py-1.5 px-3 rounded-md"
-          >
-            <option value="">All Branches</option>
-            {branches.map((b) => (
-              <option key={b} value={b}>{b}</option>
-            ))}
-          </select>
-          <div className="relative">
-            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-500 pointer-events-none" />
-            <input
-              type="text"
-              value={nameSearch}
-              onChange={(e) => setNameSearch(e.target.value)}
-              placeholder="Search technician name…"
-              className="glass-input text-sm py-1.5 pl-8 pr-7 rounded-md w-56"
-            />
-            {nameSearch && (
-              <button
-                type="button"
-                onClick={() => setNameSearch("")}
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white"
-              >
-                <X className="h-3.5 w-3.5" />
-              </button>
-            )}
+          <div className="flex flex-nowrap items-center gap-2">
+            <select
+              value={branchFilter}
+              onChange={(e) => setBranchFilter(e.target.value)}
+              className="glass-input text-sm py-1.5 px-3 rounded-md shrink-0"
+            >
+              <option value="">All Branches</option>
+              {branches.map((b) => (
+                <option key={b} value={b}>{b}</option>
+              ))}
+            </select>
+            <div className="relative shrink-0">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-500 pointer-events-none" />
+              <input
+                type="text"
+                value={nameSearch}
+                onChange={(e) => setNameSearch(e.target.value)}
+                placeholder="Search technician name…"
+                className="glass-input text-sm py-1.5 pl-8 pr-7 rounded-md w-44"
+              />
+              {nameSearch && (
+                <button
+                  type="button"
+                  onClick={() => setNameSearch("")}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+            <button type="button" onClick={handleRefresh} disabled={refreshing} className="btn flex items-center gap-1.5 shrink-0">
+              {refreshing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+              Refresh
+            </button>
           </div>
-          <button type="button" onClick={handleRefresh} disabled={refreshing} className="btn flex items-center gap-1.5">
-            {refreshing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-            Refresh
-          </button>
           <span className="text-xs text-slate-500 ml-auto">
             {filtered.length} technician{filtered.length === 1 ? "" : "s"}
             {branchFilter ? ` · ${branchFilter}` : " · all branches"}
