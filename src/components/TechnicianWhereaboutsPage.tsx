@@ -9,7 +9,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import type * as Leaflet from "leaflet";
-import { ChevronLeft, Loader2, MapPin, RefreshCw } from "lucide-react";
+import { ChevronLeft, Loader2, MapPin, RefreshCw, Search, X } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { getTechnicianWhereabouts, distinctBranches, type TechnicianWhereabouts } from "@/lib/supabase/technicianWhereabouts";
 import { getCompanyMapProvider } from "@/lib/supabase/companySettings";
@@ -41,6 +41,7 @@ export function TechnicianWhereaboutsPage({ mod, sub }: { mod: ModuleDef; sub: S
   const [loadError, setLoadError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [branchFilter, setBranchFilter] = useState<string>("");
+  const [nameSearch, setNameSearch] = useState("");
 
   const load = async () => {
     try {
@@ -63,10 +64,10 @@ export function TechnicianWhereaboutsPage({ mod, sub }: { mod: ModuleDef; sub: S
   };
 
   const branches = useMemo(() => distinctBranches(rows ?? []), [rows]);
-  const filtered = useMemo(
-    () => (rows ?? []).filter((r) => !branchFilter || r.branch === branchFilter),
-    [rows, branchFilter],
-  );
+  const filtered = useMemo(() => {
+    const q = nameSearch.trim().toLowerCase();
+    return (rows ?? []).filter((r) => (!branchFilter || r.branch === branchFilter) && (!q || r.name.toLowerCase().includes(q)));
+  }, [rows, branchFilter, nameSearch]);
   const withJob = filtered.filter((r) => r.status !== "none");
   const noJob = filtered.filter((r) => r.status === "none");
 
@@ -241,6 +242,25 @@ export function TechnicianWhereaboutsPage({ mod, sub }: { mod: ModuleDef; sub: S
               <option key={b} value={b}>{b}</option>
             ))}
           </select>
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-500 pointer-events-none" />
+            <input
+              type="text"
+              value={nameSearch}
+              onChange={(e) => setNameSearch(e.target.value)}
+              placeholder="Search technician name…"
+              className="glass-input text-sm py-1.5 pl-8 pr-7 rounded-md w-56"
+            />
+            {nameSearch && (
+              <button
+                type="button"
+                onClick={() => setNameSearch("")}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
           <button type="button" onClick={handleRefresh} disabled={refreshing} className="btn flex items-center gap-1.5">
             {refreshing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
             Refresh
