@@ -1,6 +1,6 @@
 -- =====================================================================
--- 0183 — Structured fields for payroll_dispute requests (migration
--- 0182), alongside the existing free-text `details` (now used as the
+-- 0185 — Structured fields for payroll_dispute requests (migration
+-- 0184), alongside the existing free-text `details` (now used as the
 -- dispute's "Explanation" field). All nullable — attendance_dispute and
 -- payroll_inquiry rows never populate these.
 --
@@ -10,7 +10,7 @@
 -- {url, name}, not a separate table — a handful of files per dispute at
 -- most, same reasoning tech_manual_pay_items' single-row-per-period took.
 --
--- Run once in the Supabase SQL Editor, after 0182.
+-- Run once in the Supabase SQL Editor, after 0184.
 -- =====================================================================
 
 alter table employee_requests add column if not exists pay_period text;

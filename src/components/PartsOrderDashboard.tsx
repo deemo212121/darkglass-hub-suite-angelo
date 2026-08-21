@@ -16,7 +16,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Link } from "@tanstack/react-router";
-import { ChevronLeft, LayoutDashboard, Package, AlertTriangle, Truck, ClipboardList, DollarSign, Loader2, Users, Download, Calendar, Building2 } from "lucide-react";
+import { ChevronLeft, LayoutDashboard, Package, AlertTriangle, Truck, ClipboardList, DollarSign, Loader2, Users, Download, Calendar, Building2, CalendarClock } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 import * as XLSX from "xlsx";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
@@ -25,6 +25,7 @@ import { getTruckStock, type TruckStockRow } from "@/lib/supabase/truckStock";
 import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
 import { normalizeRole, ROLE_LABELS } from "@/lib/roleLabels";
 import { ReportAttendanceMonitoring } from "@/components/ReportAttendanceMonitoring";
+import { WorkHoursPanel } from "@/components/WorkHoursPanel";
 import { TicketColumnFilter } from "@/components/TicketColumnFilter";
 
 // CheckboxDropdown — a select-styled button that opens a portal-positioned
@@ -151,7 +152,8 @@ function downloadSheetXlsx(filename: string, sheetName: string, rows: (string | 
 
 const TABS = [
   { id: "overview" as const, label: "Overview", icon: LayoutDashboard },
-  { id: "staff" as const, label: "Parts Order Staff", icon: Users },
+  { id: "staff" as const, label: "Attendance", icon: Users },
+  { id: "workHours" as const, label: "Work Hours", icon: CalendarClock },
   { id: "distributor" as const, label: "Distributor & Most Ordered Parts", icon: Truck },
   { id: "daily-po-balances" as const, label: "Daily PO Balances", icon: Calendar },
   { id: "wty-vendor" as const, label: "Wty/Vendor - $", icon: Building2 },
@@ -890,6 +892,10 @@ export function PartsOrderDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
 
         {tab === "staff" && (
         <ReportAttendanceMonitoring mod={mod} sub={sub} filterProfile={isPartsOrderProfileFilter} groupBy="employee" embedded />
+        )}
+
+        {tab === "workHours" && (
+        <WorkHoursPanel filterProfile={isPartsOrderProfileFilter} emptyMessage="No active Parts Order staff found." />
         )}
 
         {tab === "distributor" && (

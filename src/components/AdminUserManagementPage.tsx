@@ -1,7 +1,8 @@
 import { useMemo, useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { Link } from "@tanstack/react-router";
-import { ChevronDown, ChevronLeft, Check, Filter, Search, Loader2 } from "lucide-react";
+import { ChevronDown, ChevronLeft, Check, Filter, Search, Loader2, KeyRound, RotateCcw, Ban, CheckCircle2 } from "lucide-react";
+import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { type UserManagementRecord } from "@/lib/user-management";
 import { useAuth } from "@/lib/auth";
@@ -18,6 +19,21 @@ import { getBranchRoleSchedules, type BranchRoleScheduleRow } from "@/lib/supaba
 function roleDisplay(role: string | null | undefined): string {
   if (!role) return "";
   return ROLE_LABELS[normalizeRole(role)] || role;
+}
+
+/**
+ * Branch Access can list dozens of branches (pipe/comma-separated in
+ * branch_access), which used to blow up row height in the User Management
+ * table. Collapse it to "FirstBranch +N" so every row stays one line tall —
+ * the full list is still available via the `full` string as a hover title.
+ */
+function formatBranchAccess(raw: string | null | undefined): { short: string; full: string } {
+  if (!raw || !raw.trim()) return { short: "—", full: "" };
+  if (raw.trim() === "*") return { short: "All Branches", full: "All Branches" };
+  const parts = raw.split(/[|,;]/).map((s) => s.trim()).filter(Boolean);
+  if (parts.length === 0) return { short: "—", full: "" };
+  const full = parts.join(", ");
+  return parts.length === 1 ? { short: parts[0], full } : { short: `${parts[0]} +${parts.length - 1}`, full };
 }
 
 /** 0 = Super Admin, 1 = Admin, 2 = everyone else — for sorting the Hierarchy tree's root row so Super Admin always leads, then Admin, per the requested chart order. */
@@ -1345,65 +1361,78 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
 
         {viewMode === "list" ? (
           <div className="mt-5 overflow-x-auto rounded-xl border border-white/15 bg-white/8 backdrop-blur-md">
-            <table className="w-full text-xs leading-tight">
+            <table className="w-full table-fixed text-xs leading-tight">
+              <colgroup>
+                <col style={{ width: "3%" }} />
+                <col style={{ width: "9%" }} />
+                <col style={{ width: "9%" }} />
+                <col style={{ width: "7%" }} />
+                <col style={{ width: "13%" }} />
+                <col style={{ width: "8%" }} />
+                <col style={{ width: "6%" }} />
+                <col style={{ width: "7%" }} />
+                <col style={{ width: "8%" }} />
+                <col style={{ width: "6%" }} />
+                <col style={{ width: "24%" }} />
+              </colgroup>
               <thead>
                 <tr className="bg-slate-900/90 text-blue-200">
-                  <th className="px-2 py-1.5 text-left">
+                  <th className="px-2.5 py-2 text-left">
                     <span className="inline-flex items-center">ID
                       <ColumnFilter field="id" label="ID" options={columnOptions["id"] || []}
                         selected={colFilters["id"] || new Set()} onChange={(n) => setColFilter("id", n)} />
                     </span>
                   </th>
-                  <th className="px-2 py-1.5 text-left">
+                  <th className="px-2.5 py-2 text-left">
                     <span className="inline-flex items-center">Login Name
                       <ColumnFilter field="loginName" label="Login Name" options={columnOptions["loginName"] || []}
                         selected={colFilters["loginName"] || new Set()} onChange={(n) => setColFilter("loginName", n)} />
                     </span>
                   </th>
-                  <th className="px-2 py-1.5 text-left">
+                  <th className="px-2.5 py-2 text-left">
                     <span className="inline-flex items-center">User Name
                       <ColumnFilter field="userName" label="User Name" options={columnOptions["userName"] || []}
                         selected={colFilters["userName"] || new Set()} onChange={(n) => setColFilter("userName", n)} />
                     </span>
                   </th>
-                  <th className="px-2 py-1.5 text-left">
+                  <th className="px-2.5 py-2 text-left">
                     <span className="inline-flex items-center">Type
                       <ColumnFilter field="type" label="Type" options={columnOptions["type"] || []}
                         selected={colFilters["type"] || new Set()} onChange={(n) => setColFilter("type", n)} />
                     </span>
                   </th>
-                  <th className="px-2 py-1.5 text-left">
+                  <th className="px-2.5 py-2 text-left">
                     <span className="inline-flex items-center">Email
                       <ColumnFilter field="email" label="Email" options={columnOptions["email"] || []}
                         selected={colFilters["email"] || new Set()} onChange={(n) => setColFilter("email", n)} />
                     </span>
                   </th>
-                  <th className="px-2 py-1.5 text-left">
+                  <th className="px-2.5 py-2 text-left">
                     <span className="inline-flex items-center">Manager
                       <ColumnFilter field="manager" label="Manager" options={columnOptions["manager"] || []}
                         selected={colFilters["manager"] || new Set()} onChange={(n) => setColFilter("manager", n)} />
                     </span>
                   </th>
-                  <th className="px-2 py-1.5 text-left">
-                    <span className="inline-flex items-center">Technician ID
+                  <th className="px-2.5 py-2 text-left">
+                    <span className="inline-flex items-center">Tech ID
                       <ColumnFilter field="technicianId" label="Technician ID" options={columnOptions["technicianId"] || []}
                         selected={colFilters["technicianId"] || new Set()} onChange={(n) => setColFilter("technicianId", n)} />
                     </span>
                   </th>
-                  <th className="px-2 py-1.5 text-left">
-                    <span className="inline-flex items-center">Assigned Branch
+                  <th className="px-2.5 py-2 text-left">
+                    <span className="inline-flex items-center">Branch
                       <ColumnFilter field="office" label="Assigned Branch" options={columnOptions["office"] || []}
                         selected={colFilters["office"] || new Set()} onChange={(n) => setColFilter("office", n)} />
                     </span>
                   </th>
-                  <th className="px-2 py-1.5 text-left">Branch Access</th>
-                  <th className="px-2 py-1.5 text-left">
+                  <th className="px-2.5 py-2 text-left">Branch Access</th>
+                  <th className="px-2.5 py-2 text-left">
                     <span className="inline-flex items-center">Status
                       <ColumnFilter field="status" label="Status" options={columnOptions["status"] || []}
                         selected={colFilters["status"] || new Set()} onChange={(n) => setColFilter("status", n)} />
                     </span>
                   </th>
-                  <th className="px-2 py-1.5 text-left">Actions</th>
+                  <th className="px-2.5 py-2 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/10 bg-slate-950/60 text-slate-200">
@@ -1420,60 +1449,85 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
                     </td>
                   </tr>
                 ) : (
-                  filtered.map((record) => (
-                    <tr key={`${record.id}-${record.loginName}`} className="hover:bg-white/5">
-                      <td className="px-2 py-1.5 whitespace-nowrap">{record.id}</td>
-                      <td className="px-2 py-1.5 whitespace-nowrap"><UserLink moduleSlug={mod.slug} submoduleSlug={sub.slug} userId={record.loginName}>{record.loginName}</UserLink></td>
-                      <td className="px-2 py-1.5 whitespace-nowrap"><UserLink moduleSlug={mod.slug} submoduleSlug={sub.slug} userId={record.loginName}>{record.userName}</UserLink></td>
-                      <td className="px-2 py-1.5 whitespace-nowrap">{roleDisplay(record.type)}</td>
-                      <td className="px-2 py-1.5 whitespace-nowrap text-slate-300">{record.email || "—"}</td>
-                      <td className="px-2 py-1.5 whitespace-nowrap"><UserLink moduleSlug={mod.slug} submoduleSlug={sub.slug} userId={loginNameByDisplayName.get(record.manager) || record.manager || record.loginName}>{record.manager || "—"}</UserLink></td>
-                      <td className="px-2 py-1.5 whitespace-nowrap text-slate-300">{record.technicianId || "—"}</td>
-                      <td className="px-2 py-1.5 whitespace-nowrap text-slate-300">{record.office}</td>
-                      <td className="px-2 py-1.5 text-slate-300">{record.locations}</td>
-                      <td className="px-2 py-1.5 whitespace-nowrap">
+                  filtered.map((record) => {
+                    const branchAccess = formatBranchAccess(record.locations);
+                    const rowKey = `${record.id}-${record.loginName}`;
+                    const branchAccessExpandable = branchAccess.full && branchAccess.full !== branchAccess.short;
+                    return (
+                    <tr key={rowKey} className="hover:bg-white/5">
+                      <td className="px-2.5 py-2 align-top">{record.id}</td>
+                      <td className="px-2.5 py-2 align-top break-words"><UserLink moduleSlug={mod.slug} submoduleSlug={sub.slug} userId={record.loginName}>{record.loginName}</UserLink></td>
+                      <td className="px-2.5 py-2 align-top break-words"><UserLink moduleSlug={mod.slug} submoduleSlug={sub.slug} userId={record.loginName}>{record.userName}</UserLink></td>
+                      <td className="px-2.5 py-2 align-top break-words">{roleDisplay(record.type)}</td>
+                      <td className="px-2.5 py-2 align-top break-words text-slate-300">{record.email || "—"}</td>
+                      <td className="px-2.5 py-2 align-top break-words"><UserLink moduleSlug={mod.slug} submoduleSlug={sub.slug} userId={loginNameByDisplayName.get(record.manager) || record.manager || record.loginName}>{record.manager || "—"}</UserLink></td>
+                      <td className="px-2.5 py-2 align-top break-words text-slate-300">{record.technicianId || "—"}</td>
+                      <td className="px-2.5 py-2 align-top break-words text-slate-300">{record.office}</td>
+                      <td className="px-2.5 py-2 align-top text-slate-300">
+                        {branchAccessExpandable ? (
+                          <HoverCard openDelay={150} closeDelay={100}>
+                            <HoverCardTrigger asChild>
+                              <span className="block truncate cursor-default hover:text-white">{branchAccess.short}</span>
+                            </HoverCardTrigger>
+                            <HoverCardContent className="w-auto max-w-xs text-xs">
+                              <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400">Branch Access</div>
+                              {branchAccess.full}
+                            </HoverCardContent>
+                          </HoverCard>
+                        ) : (
+                          <span className="block truncate">{branchAccess.short}</span>
+                        )}
+                      </td>
+                      <td className="px-2.5 py-2 align-top">
                         <span
                           className={
                             record.isActive === false
-                              ? "rounded-full border border-red-500/40 bg-red-500/10 px-2 py-0.5 text-[11px] font-semibold text-red-300"
-                              : "rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-semibold text-emerald-300"
+                              ? "inline-block rounded-full border border-red-500/40 bg-red-500/10 px-2 py-1 text-[11px] font-semibold text-red-300"
+                              : "inline-block rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-1 text-[11px] font-semibold text-emerald-300"
                           }
                         >
                           {record.isActive === false ? "Deactivated" : "Active"}
                         </span>
                       </td>
-                      <td className="px-2 py-1.5 whitespace-nowrap">
-                        <div className="flex items-center gap-2">
+                      <td className="px-2.5 py-2 align-top">
+                        <div className="flex flex-wrap items-center justify-end gap-1">
                           <button
                             type="button"
                             onClick={() => setResetModal({ mode: "single", row: record })}
-                            className="rounded border border-blue-500/40 bg-blue-500/10 px-2 py-1 text-xs font-semibold text-blue-300 hover:bg-blue-500/20"
+                            title="Force Password Change"
+                            aria-label="Force Password Change"
+                            className="inline-flex items-center gap-1 rounded border border-blue-500/40 bg-blue-500/10 px-2 py-1 text-[11px] font-semibold whitespace-nowrap text-blue-300 hover:bg-blue-500/20"
                           >
-                            Force Password Change
+                            <KeyRound className="h-3 w-3" /> Reset PW
                           </button>
                           <button
                             type="button"
                             onClick={() => setResetToDefaultTarget(record)}
-                            title="For a user who's locked out and can't log in at all"
-                            className="rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-xs font-semibold text-amber-300 hover:bg-amber-500/20"
+                            title="Reset to Default — for a user who's locked out and can't log in at all"
+                            aria-label="Reset to Default"
+                            className="inline-flex items-center gap-1 rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-[11px] font-semibold whitespace-nowrap text-amber-300 hover:bg-amber-500/20"
                           >
-                            Reset to Default
+                            <RotateCcw className="h-3 w-3" /> Default
                           </button>
                           <button
                             type="button"
                             onClick={() => setDeactivateTarget(record)}
+                            title={record.isActive === false ? "Reactivate" : "Deactivate"}
+                            aria-label={record.isActive === false ? "Reactivate" : "Deactivate"}
                             className={
                               record.isActive === false
-                                ? "rounded border border-emerald-500/40 bg-emerald-500/10 px-2 py-1 text-xs font-semibold text-emerald-300 hover:bg-emerald-500/20"
-                                : "rounded border border-red-500/40 bg-red-500/10 px-2 py-1 text-xs font-semibold text-red-300 hover:bg-red-500/20"
+                                ? "inline-flex items-center gap-1 rounded border border-emerald-500/40 bg-emerald-500/10 px-2 py-1 text-[11px] font-semibold whitespace-nowrap text-emerald-300 hover:bg-emerald-500/20"
+                                : "inline-flex items-center gap-1 rounded border border-red-500/40 bg-red-500/10 px-2 py-1 text-[11px] font-semibold whitespace-nowrap text-red-300 hover:bg-red-500/20"
                             }
                           >
+                            {record.isActive === false ? <CheckCircle2 className="h-3 w-3" /> : <Ban className="h-3 w-3" />}
                             {record.isActive === false ? "Reactivate" : "Deactivate"}
                           </button>
                         </div>
                       </td>
                     </tr>
-                  ))
+                    );
+                  })
                 )}
               </tbody>
             </table>

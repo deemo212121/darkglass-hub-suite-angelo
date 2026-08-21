@@ -40,6 +40,19 @@ export interface EmployeeRequestRow {
   missingAmount: number | null;
   disputeReason: string | null;
   attachments: EmployeeRequestAttachment[];
+  /** payroll_dispute only (0185) — the ticket the dispute is about, if any. */
+  ticketNo: string | null;
+  /** payroll_dispute only (0186) — the real payroll period this dispute's
+   *  missing amount belongs to, "YYYY-MM-DD". Only set when submitted via
+   *  the mobile On Hold Tickets Dispute tab, which already knows the exact
+   *  payroll run — a free-text-payPeriod dispute leaves these null and
+   *  can't be auto-injected into payroll on approve. */
+  periodStart: string | null;
+  periodEnd: string | null;
+  /** payroll_dispute only (0186) — the tech_custom_pay_items row Approve
+   *  created to actually add missingAmount into that period's Tech
+   *  Activity Report, so Revert-to-Pending can find and delete it again. */
+  customPayItemId: string | null;
 }
 
 function mapRow(row: any): EmployeeRequestRow {
@@ -60,11 +73,15 @@ function mapRow(row: any): EmployeeRequestRow {
     missingAmount: row.missing_amount === null || row.missing_amount === undefined ? null : Number(row.missing_amount),
     disputeReason: row.dispute_reason ?? null,
     attachments: Array.isArray(row.attachments) ? row.attachments : [],
+    ticketNo: row.ticket_no ?? null,
+    periodStart: row.period_start ?? null,
+    periodEnd: row.period_end ?? null,
+    customPayItemId: row.custom_pay_item_id ?? null,
   };
 }
 
 const SELECT_COLUMNS =
-  "id, profile_id, request_type, details, status, requested_by, reviewed_by, reviewed_at, review_note, created_at, pay_period, total_received, total_expected, missing_amount, dispute_reason, attachments";
+  "id, profile_id, request_type, details, status, requested_by, reviewed_by, reviewed_at, review_note, created_at, pay_period, total_received, total_expected, missing_amount, dispute_reason, attachments, ticket_no, period_start, period_end, custom_pay_item_id";
 
 /** All attendance-dispute/payroll-inquiry requests for the caller's company (RLS-scoped), newest first. */
 export async function getCompanyEmployeeRequests(): Promise<EmployeeRequestRow[]> {
@@ -95,6 +112,9 @@ export async function createEmployeeRequest(input: {
   missingAmount?: number;
   disputeReason?: string;
   attachments?: EmployeeRequestAttachment[];
+  ticketNo?: string;
+  periodStart?: string;
+  periodEnd?: string;
 }): Promise<void> {
   const { error } = await supabase.from("employee_requests").insert({
     profile_id: input.profileId,
@@ -108,6 +128,9 @@ export async function createEmployeeRequest(input: {
     missing_amount: input.missingAmount ?? null,
     dispute_reason: input.disputeReason || null,
     attachments: input.attachments ?? [],
+    ticket_no: input.ticketNo || null,
+    period_start: input.periodStart || null,
+    period_end: input.periodEnd || null,
   });
   if (error) {
     console.error("createEmployeeRequest error:", error.message);
@@ -133,6 +156,23 @@ export async function updateEmployeeRequestStatus(
     .eq("id", id);
   if (error) {
     console.error("updateEmployeeRequestStatus error:", error.message);
+    throw new Error(error.message);
+  }
+}
+
+/**
+ * Records (or clears, passing null) which tech_custom_pay_items row a
+ * payroll_dispute's Approve action created — see AccountingDashboard.tsx's
+ * handlePayrollDisputeAction. Reverting to pending reads this back to know
+ * which custom pay line to delete again.
+ */
+export async function linkPayrollDisputeCustomPayItem(disputeId: string, customPayItemId: string | null): Promise<void> {
+  const { error } = await supabase
+    .from("employee_requests")
+    .update({ custom_pay_item_id: customPayItemId })
+    .eq("id", disputeId);
+  if (error) {
+    console.error("linkPayrollDisputeCustomPayItem error:", error.message);
     throw new Error(error.message);
   }
 }

@@ -577,6 +577,37 @@ export async function getTechCustomPayItems(
   }));
 }
 
+/**
+ * Every technician's custom pay lines for one period, company-wide
+ * (RLS-scoped) — one query instead of one-per-technician, same pattern as
+ * getTechManualPayItems. Used by AccountingDashboard.tsx's real payroll
+ * calculation (payrollRows) so a custom line (hand-added, or auto-created
+ * by an approved Payroll Dispute — see handlePayrollDisputeAction) actually
+ * counts toward Total Payment / what Generate Payroll inserts, not just
+ * the Tech Activity Report modal's own preview total.
+ */
+export async function getAllTechCustomPayItemsForPeriod(periodStart: string, periodEnd: string): Promise<TechCustomPayItem[]> {
+  if (!periodStart || !periodEnd) return [];
+  const { data, error } = await supabase
+    .from("tech_custom_pay_items")
+    .select("id, profile_id, period_start, period_end, label, value, rate")
+    .eq("period_start", periodStart)
+    .eq("period_end", periodEnd);
+  if (error) {
+    console.error("getAllTechCustomPayItemsForPeriod error:", error.message);
+    return [];
+  }
+  return (data ?? []).map((r: any) => ({
+    id: r.id,
+    profileId: r.profile_id,
+    periodStart: r.period_start,
+    periodEnd: r.period_end,
+    label: r.label ?? "",
+    value: Number(r.value) || 0,
+    rate: Number(r.rate) || 0,
+  }));
+}
+
 /** Add a new blank custom pay line for a technician's period. */
 export async function addTechCustomPayItem(
   profileId: string,

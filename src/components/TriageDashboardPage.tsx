@@ -1,9 +1,10 @@
 import { useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { ChevronLeft, Activity, Clock } from "lucide-react";
+import { ChevronLeft, Activity, Clock, CalendarClock } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { DailyActivityPage } from "@/components/DailyActivityPage";
 import { ReportAttendanceMonitoring } from "@/components/ReportAttendanceMonitoring";
+import { WorkHoursPanel } from "@/components/WorkHoursPanel";
 import { isTriageRole } from "@/lib/roleLabels";
 import type { ProfileRow } from "@/lib/supabase/users";
 
@@ -16,18 +17,20 @@ const isTriageProfileFilter = (p: ProfileRow) => isTriageRole(p.role);
 const isNeedTriageStatus = (status: string) => String(status || "").trim().toLowerCase() === "tr-need triage";
 
 /**
- * Technical Support's own department dashboard — two tabs over the exact
+ * Technical Support's own department dashboard — three tabs over the exact
  * same live data every other department-level report already uses, each
  * narrowed to Technical Support (TRIAGE_USER) + Technical Support Manager
  * (TRIAGE_MANAGER) via isTriageProfileFilter:
  *   - Activity: the Daily Activity Report's per-user action breakdown.
  *   - Attendance: the Attendance Monitoring Report's present/absent/late
  *     breakdown for a date range.
- * Both inner pages render `embedded` (no own back-link/title/page shell) —
- * this page provides that chrome once, for both tabs.
+ *   - Work Hours: edit each Triage employee's Required Check-In/Check-Out
+ *     (see WorkHoursPanel.tsx, shared with CSRDashboard.tsx).
+ * The Activity/Attendance pages render `embedded` (no own back-link/title/
+ * page shell) — this page provides that chrome once, for all three tabs.
  */
 export function TriageDashboardPage({ mod, sub, companyId }: { mod: ModuleDef; sub: SubModuleDef; companyId: string | null }) {
-  const [tab, setTab] = useState<"activity" | "attendance">("activity");
+  const [tab, setTab] = useState<"activity" | "attendance" | "workHours">("activity");
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -47,6 +50,7 @@ export function TriageDashboardPage({ mod, sub, companyId }: { mod: ModuleDef; s
           {[
             { id: "activity" as const, label: "Activity", Icon: Activity },
             { id: "attendance" as const, label: "Attendance", Icon: Clock },
+            { id: "workHours" as const, label: "Work Hours", Icon: CalendarClock },
           ].map((t) => (
             <button
               key={t.id}
@@ -61,8 +65,10 @@ export function TriageDashboardPage({ mod, sub, companyId }: { mod: ModuleDef; s
 
         {tab === "activity" ? (
           <DailyActivityPage mod={mod} sub={sub} companyId={companyId} filterProfile={isTriageProfileFilter} pendingStatusFilter={isNeedTriageStatus} embedded />
-        ) : (
+        ) : tab === "attendance" ? (
           <ReportAttendanceMonitoring mod={mod} sub={sub} filterProfile={isTriageProfileFilter} groupBy="employee" embedded />
+        ) : (
+          <WorkHoursPanel filterProfile={isTriageProfileFilter} emptyMessage="No active Technical Support employees found." />
         )}
       </main>
     </div>

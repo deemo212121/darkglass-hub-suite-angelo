@@ -1,5 +1,5 @@
 -- =====================================================================
--- 0182 — Add 'payroll_dispute' as a third employee_requests.request_type,
+-- 0184 — Add 'payroll_dispute' as a third employee_requests.request_type,
 -- alongside 'attendance_dispute'/'payroll_inquiry' (migration 0034).
 --
 -- Distinct from 'payroll_inquiry' (a general question, reviewed with a
@@ -8,7 +8,7 @@
 -- attendance dispute is (Approve/Reject), not just closed with a note.
 -- See AttendanceMonitoringPage.tsx's Disputes & Inquiries tab.
 --
--- Run once in the Supabase SQL Editor, after 0181.
+-- Run once in the Supabase SQL Editor, after 0183.
 -- =====================================================================
 
 alter table employee_requests drop constraint if exists employee_requests_request_type_check;
