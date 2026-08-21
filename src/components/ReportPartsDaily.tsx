@@ -31,6 +31,8 @@ import { getPartsDoneActivity, type PartsDoneActivityRow } from "@/lib/supabase/
 import { getBranchProgress, type BranchProgress } from "@/lib/partsBranchProgress";
 import { getPartReturns as getRaCreatedRows, type PartReturnRow as RaCreatedRow } from "@/lib/supabase/partReturnStatus";
 import { getPartReturns as getReturnPendingRows, type PartReturnRow as ReturnPendingRow } from "@/lib/supabase/partReturn";
+import { getPartsForDailyCollection, type PartCollectionRow } from "@/lib/supabase/partDailyCollection";
+import { getPartsToReceive, type PartReceiveRow } from "@/lib/supabase/partReceive";
 
 const PARTS_ROLES = new Set(["PARTS", "PARTS_MANAGER"]);
 const DONE_STATUSES = new Set(["Used", "Claimed"]);
@@ -215,6 +217,14 @@ export function ReportPartsDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
   const [branchProgressLoading, setBranchProgressLoading] = useState(false);
   const [branchProgressLoaded, setBranchProgressLoaded] = useState(false);
 
+  // Pending Queue tab's raw line-item exports — the actual Collections/
+  // Receives export format the team already produces by hand (matching
+  // the reference workbook's own "Sample Exported Data" sheets), not
+  // just the per-branch pending counts above. Loaded alongside
+  // branchProgress, same tab/timing.
+  const [collectionExportRows, setCollectionExportRows] = useState<PartCollectionRow[]>([]);
+  const [receiveExportRows, setReceiveExportRows] = useState<PartReceiveRow[]>([]);
+
   // RA & Returns tab — RA Created (partReturnStatus.ts) and Return Pending
   // (partReturn.ts) are two distinct real workflows that happen to share
   // the same underlying `parts` table, so both load together when this tab
@@ -306,8 +316,28 @@ export function ReportPartsDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
   useEffect(() => {
     if (tab !== "pending-queue" || branchProgressLoaded || branchOptions.length === 0) return;
     setBranchProgressLoading(true);
-    getBranchProgress(branchOptions)
-      .then((r) => { setBranchProgress(r); setBranchProgressLoaded(true); })
+    // Fetched once over a fixed wide window (not the dashboard Date
+    // Range) — same "load once, filter client-side" pattern the rest of
+    // this file already uses (e.g. Done Activity). collectionExportRows/
+    // receiveExportRows get re-filtered against dateFrom/dateTo/branchFilter
+    // at render time instead of re-fetching on every date change.
+    Promise.all([
+      getBranchProgress(branchOptions),
+      getPartsForDailyCollection({
+        dateType: "Collect Date",
+        startDate: daysAgoIso(89),
+        endDate: todayIso(),
+        notCollected: false,
+        collected: true,
+      }).catch((err) => { console.error("Failed to load Collections export:", err); return []; }),
+      getPartsToReceive().catch((err) => { console.error("Failed to load Receives export:", err); return []; }),
+    ])
+      .then(([progress, collections, receives]) => {
+        setBranchProgress(progress);
+        setCollectionExportRows(collections);
+        setReceiveExportRows(receives);
+        setBranchProgressLoaded(true);
+      })
       .catch((err) => console.error("Failed to load branch progress:", err))
       .finally(() => setBranchProgressLoading(false));
   }, [tab, branchProgressLoaded, branchOptions]);
@@ -604,6 +634,102 @@ export function ReportPartsDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
             </tbody>
           </table>
         </div>
+
+        {(() => {
+          const collectionsScoped = collectionExportRows.filter((r) =>
+            (branchFilter.size === 0 || branchFilter.has(r.location)) && inRange(r.collectedDate, dateFrom, dateTo)
+          );
+          const receivesScoped = receiveExportRows.filter((r) =>
+            (branchFilter.size === 0 || branchFilter.has(r.location)) && inRange(r.receivedDate, dateFrom, dateTo) && r.qtyReceived > 0
+          );
+          return (
+          <>
+          <div className="panel p-0 overflow-hidden mt-4">
+            <div className="px-4 py-3 border-b border-white/10 font-semibold text-sm flex items-center gap-2">
+              <ClipboardList className="h-4 w-4 text-cyan-400" />Collections Export
+              <button
+                type="button"
+                onClick={() => downloadSheetXlsx(
+                  `collections-export_${todayIso()}.xlsx`,
+                  "Collections",
+                  [
+                    ["Run Date", "Branch", "Technician", "Ticket #", "PartNo", "Qty", "Collect Type", "PartStatusDesc"],
+                    ...collectionsScoped.map((r) => [dateOnly(r.collectedDate), r.location, r.techName, r.ticketNo, r.partNo, r.quantity, r.collectType, r.partStatus]),
+                  ]
+                )}
+                className="ml-auto flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300 transition-colors"
+              >
+                <Download className="h-3.5 w-3.5" />Download XLSX
+              </button>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead><tr className="border-b border-white/10 bg-white/5">
+                  {["Run Date", "Branch", "Technician", "Ticket #", "PartNo", "Qty", "Collect Type", "PartStatusDesc"].map((h) => <th key={h} className="px-4 py-2 text-left text-xs text-muted-foreground uppercase whitespace-nowrap">{h}</th>)}
+                </tr></thead>
+                <tbody>
+                  {collectionsScoped.length === 0 ? (
+                    <tr><td colSpan={8} className="px-4 py-8 text-center text-muted-foreground">No collections in this date range.</td></tr>
+                  ) : collectionsScoped.map((r, i) => (
+                    <tr key={r.id} className={`border-b border-white/5 hover:bg-white/5 ${i % 2 !== 0 ? "bg-white/[0.02]" : ""}`}>
+                      <td className="px-4 py-2 text-xs whitespace-nowrap">{dateOnly(r.collectedDate)}</td>
+                      <td className="px-4 py-2 text-xs">{r.location || "—"}</td>
+                      <td className="px-4 py-2 text-xs">{r.techName || "—"}</td>
+                      <td className="px-4 py-2 font-mono text-xs text-blue-300">{r.ticketNo || "—"}</td>
+                      <td className="px-4 py-2 font-mono text-xs">{r.partNo || "—"}</td>
+                      <td className="px-4 py-2 text-right">{r.quantity}</td>
+                      <td className="px-4 py-2 text-xs">{r.collectType || "—"}</td>
+                      <td className="px-4 py-2 text-xs">{r.partStatus || "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="panel p-0 overflow-hidden mt-4">
+            <div className="px-4 py-3 border-b border-white/10 font-semibold text-sm flex items-center gap-2">
+              <ClipboardList className="h-4 w-4 text-emerald-400" />Receives Export
+              <button
+                type="button"
+                onClick={() => downloadSheetXlsx(
+                  `receives-export_${todayIso()}.xlsx`,
+                  "Receives",
+                  [
+                    ["Receive Date", "Branch", "PO Number", "Ticket #", "PartNo", "Unique ID"],
+                    ...receivesScoped.map((r) => [dateOnly(r.receivedDate), r.location, r.poNo, r.ticketNo, r.partNo, `${r.poNo}-${r.partNo}`]),
+                  ]
+                )}
+                className="ml-auto flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300 transition-colors"
+              >
+                <Download className="h-3.5 w-3.5" />Download XLSX
+              </button>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead><tr className="border-b border-white/10 bg-white/5">
+                  {["Receive Date", "Branch", "PO Number", "Ticket #", "PartNo", "Unique ID"].map((h) => <th key={h} className="px-4 py-2 text-left text-xs text-muted-foreground uppercase whitespace-nowrap">{h}</th>)}
+                </tr></thead>
+                <tbody>
+                  {receivesScoped.length === 0 ? (
+                    <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">No receives in this date range.</td></tr>
+                  ) : receivesScoped.map((r, i) => (
+                    <tr key={r.id} className={`border-b border-white/5 hover:bg-white/5 ${i % 2 !== 0 ? "bg-white/[0.02]" : ""}`}>
+                      <td className="px-4 py-2 text-xs whitespace-nowrap">{dateOnly(r.receivedDate)}</td>
+                      <td className="px-4 py-2 text-xs">{r.location || "—"}</td>
+                      <td className="px-4 py-2 font-mono text-xs">{r.poNo || "—"}</td>
+                      <td className="px-4 py-2 font-mono text-xs text-blue-300">{r.ticketNo || "—"}</td>
+                      <td className="px-4 py-2 font-mono text-xs">{r.partNo || "—"}</td>
+                      <td className="px-4 py-2 font-mono text-[11px] text-muted-foreground">{r.poNo}-{r.partNo}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+          </>
+          );
+        })()}
         </>
         )}
         </>
@@ -622,10 +748,13 @@ export function ReportPartsDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
             (raReturnTypeFilter.size === 0 || raReturnTypeFilter.has(r.returnType))
           );
           const returnTypeOptions = Array.from(new Set(raCreatedRows.map((r) => r.returnType))).sort();
-          const reasonBreakdown = (() => {
+          // Branch, not return_reason — that column exists in the schema but
+          // nothing in this app has ever written to it (confirmed against
+          // live data), so it's blank on every real row right now.
+          const raByBranch = (() => {
             const map = new Map<string, number>();
-            for (const r of raScoped) { const key = r.returnReason || "Unspecified"; map.set(key, (map.get(key) ?? 0) + 1); }
-            return Array.from(map.entries()).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
+            for (const r of raScoped) { const key = r.location || "Unspecified"; map.set(key, (map.get(key) ?? 0) + 1); }
+            return Array.from(map.entries()).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value).slice(0, 10);
           })();
           const returnPendingScoped = returnPendingRows.filter((r) =>
             (branchFilter.size === 0 || branchFilter.has(r.location)) &&
@@ -648,12 +777,12 @@ export function ReportPartsDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
               <div className="text-3xl font-bold text-yellow-300 text-center py-4">{raScoped.length}</div>
             </div>
             <div className="panel p-4">
-              <p className="text-sm font-semibold mb-4">RA Reason Breakdown</p>
-              {reasonBreakdown.length === 0 ? (
+              <p className="text-sm font-semibold mb-4">RA Created by Branch</p>
+              {raByBranch.length === 0 ? (
                 <p className="text-xs text-muted-foreground py-16 text-center">No RA activity in this date range.</p>
               ) : (
-                <ResponsiveContainer width="100%" height={Math.max(140, reasonBreakdown.length * 26)} debounce={200}>
-                  <BarChart data={reasonBreakdown} layout="vertical" margin={{ left: 20 }}>
+                <ResponsiveContainer width="100%" height={Math.max(140, raByBranch.length * 26)} debounce={200}>
+                  <BarChart data={raByBranch} layout="vertical" margin={{ left: 20 }}>
                     <XAxis type="number" tick={{ fill: "#94a3b8", fontSize: 11 }} allowDecimals={false} />
                     <YAxis type="category" dataKey="name" tick={{ fill: "#94a3b8", fontSize: 10 }} width={100} />
                     <Tooltip contentStyle={TOOLTIP_STYLE} />
@@ -673,8 +802,8 @@ export function ReportPartsDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
                   `ra-created_${todayIso()}.xlsx`,
                   "RA Created",
                   [
-                    ["Branch", "RA No", "Part No", "Description", "Return Type", "Return Reason", "Return Status", "Returned By", "Qty", "Distributor", "RA Date"],
-                    ...raScoped.map((r) => [r.location, r.raNo, r.partNo, r.description, r.returnType, r.returnReason, r.returnStatus, r.returnedBy, r.qty, r.distributor, r.raDate]),
+                    ["Return Date", "Branch", "RA No", "PO #", "Part No", "Description", "Return Type", "Returned By", "Qty", "Distributor"],
+                    ...raScoped.map((r) => [r.raDate, r.location, r.raNo, r.poNo, r.partNo, r.description, r.returnType, r.returnedBy, r.qty, r.distributor]),
                   ]
                 )}
                 className="ml-auto flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300 transition-colors"
@@ -685,23 +814,21 @@ export function ReportPartsDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead><tr className="border-b border-white/10 bg-white/5">
-                  {["Branch", "RA No", "Part No", "Return Type", "Return Reason", "Return Status", "Returned By", "Qty", "Distributor", "RA Date"].map((h) => <th key={h} className="px-4 py-2 text-left text-xs text-muted-foreground uppercase whitespace-nowrap">{h}</th>)}
+                  {["Return Date", "Branch", "RA No", "PO #", "Return Type", "Returned By", "Qty", "Distributor"].map((h) => <th key={h} className="px-4 py-2 text-left text-xs text-muted-foreground uppercase whitespace-nowrap">{h}</th>)}
                 </tr></thead>
                 <tbody>
                   {raScoped.length === 0 ? (
-                    <tr><td colSpan={10} className="px-4 py-8 text-center text-muted-foreground">No RA records match these filters.</td></tr>
+                    <tr><td colSpan={8} className="px-4 py-8 text-center text-muted-foreground">No RA records match these filters.</td></tr>
                   ) : raScoped.map((r, i) => (
                     <tr key={r.id} className={`border-b border-white/5 hover:bg-white/5 ${i % 2 !== 0 ? "bg-white/[0.02]" : ""}`}>
+                      <td className="px-4 py-2 text-xs whitespace-nowrap">{r.raDate ? dateOnly(r.raDate) : "—"}</td>
                       <td className="px-4 py-2 text-xs">{r.location || "—"}</td>
                       <td className="px-4 py-2 font-mono text-xs text-blue-300">{r.raNo || "—"}</td>
-                      <td className="px-4 py-2 font-mono text-xs">{r.partNo || "—"}</td>
+                      <td className="px-4 py-2 font-mono text-xs">{r.poNo || "—"}</td>
                       <td className="px-4 py-2 text-xs">{r.returnType}</td>
-                      <td className="px-4 py-2 text-xs">{r.returnReason || "—"}</td>
-                      <td className="px-4 py-2 text-xs">{r.returnStatus || "—"}</td>
                       <td className="px-4 py-2 text-xs">{r.returnedBy || "—"}</td>
                       <td className="px-4 py-2 text-right">{r.qty}</td>
                       <td className="px-4 py-2 text-xs">{r.distributor || "—"}</td>
-                      <td className="px-4 py-2 text-xs whitespace-nowrap">{r.raDate ? dateOnly(r.raDate) : "—"}</td>
                     </tr>
                   ))}
                 </tbody>
