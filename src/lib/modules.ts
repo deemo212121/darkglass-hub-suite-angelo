@@ -1406,6 +1406,9 @@ const adminMod: ModuleDef = {
       title: "Internal Message Support",
       description: "Discord-style employee chat and broadcast channels.",
       custom: "internal-message-support" as any,
+      // Reachable via the nav bar's own Messages icon (MessagesMenu.tsx) —
+      // no need for a duplicate tile on the Admin module's grid too.
+      hiddenFromGrid: true,
       fields: [
         { key: "date", label: "Date", type: "date", filterable: true },
         { key: "sender", label: "Sender", type: "select", options: TECHS, filterable: true },
