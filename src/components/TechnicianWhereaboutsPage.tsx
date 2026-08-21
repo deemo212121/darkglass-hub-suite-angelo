@@ -231,7 +231,7 @@ export function TechnicianWhereaboutsPage({ mod, sub }: { mod: ModuleDef; sub: S
           </div>
         </div>
 
-        <div className="mt-5 flex flex-wrap items-center gap-2">
+        <div className="mt-3 flex flex-wrap items-center gap-2">
           <div className="flex flex-nowrap items-center gap-2">
             <select
               value={branchFilter}
@@ -283,9 +283,9 @@ export function TechnicianWhereaboutsPage({ mod, sub }: { mod: ModuleDef; sub: S
             fire again since its own dependencies never changed afterward
             (same pitfall MileageDayRouteModal.tsx already documents). */}
         {!loadError && (
-          <div className="mt-5 grid grid-cols-1 lg:grid-cols-5 gap-4">
-            <div className="lg:col-span-3">
-              <div className="relative h-[520px] rounded-lg border border-white/10 overflow-hidden bg-slate-800">
+          <div className="mt-3 grid grid-cols-1 lg:grid-cols-6 gap-4">
+            <div className="lg:col-span-4">
+              <div className="relative h-[640px] rounded-lg border border-white/10 overflow-hidden bg-slate-800">
                 <div ref={mapEl} className="h-full w-full" />
                 {mapBuilding && (
                   <div className="absolute inset-0 flex items-center justify-center bg-slate-900/60">
@@ -311,7 +311,7 @@ export function TechnicianWhereaboutsPage({ mod, sub }: { mod: ModuleDef; sub: S
               </div>
             </div>
 
-            <div className="lg:col-span-2 space-y-1.5 max-h-[520px] overflow-y-auto">
+            <div className="lg:col-span-2 space-y-1.5 max-h-[640px] overflow-y-auto">
               {!rows ? (
                 <div className="flex items-center gap-2 text-sm text-slate-400 py-6">
                   <Loader2 className="h-4 w-4 animate-spin" /> Loading technicians…
