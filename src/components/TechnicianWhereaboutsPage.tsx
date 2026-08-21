@@ -85,6 +85,20 @@ export function TechnicianWhereaboutsPage({ mod, sub }: { mod: ModuleDef; sub: S
   const googleOverlaysRef = useRef<any[]>([]);
   const [mapBuilding, setMapBuilding] = useState(false);
   const [geocodeMisses, setGeocodeMisses] = useState(0);
+  // Geocoded point per technician, keyed by name — filled in once the map
+  // finishes building, read by the sidebar's click-to-zoom handler below.
+  const techPointsRef = useRef<Map<string, LatLng>>(new Map());
+
+  const zoomToTechnician = (name: string) => {
+    const pt = techPointsRef.current.get(name);
+    if (!pt) return;
+    if (mapProvider === "leaflet" && leafletMapRef.current) {
+      leafletMapRef.current.flyTo([pt.lat, pt.lng], 14, { duration: 0.6 });
+    } else if (mapProvider === "google" && googleMapRef.current) {
+      googleMapRef.current.panTo(pt);
+      googleMapRef.current.setZoom(14);
+    }
+  };
 
   useEffect(() => {
     if (mapProvider !== "leaflet" || L) return;
@@ -147,6 +161,7 @@ export function TechnicianWhereaboutsPage({ mod, sub }: { mod: ModuleDef; sub: S
       }
       if (cancelled) return;
       setGeocodeMisses(misses);
+      techPointsRef.current = new Map(points.map(({ pt, tech }) => [tech.name, pt]));
 
       leafletLayersRef.current.forEach((l) => l.remove());
       leafletLayersRef.current = [];
@@ -282,7 +297,12 @@ export function TechnicianWhereaboutsPage({ mod, sub }: { mod: ModuleDef; sub: S
               ) : (
               <>
               {withJob.map((tech) => (
-                <div key={tech.name} className="flex items-start gap-2 text-xs px-2.5 py-2 rounded-md bg-slate-800/60 border border-white/5">
+                <div
+                  key={tech.name}
+                  onClick={() => zoomToTechnician(tech.name)}
+                  title="Click to zoom to this technician on the map"
+                  className="flex items-start gap-2 text-xs px-2.5 py-2 rounded-md bg-slate-800/60 border border-white/5 cursor-pointer hover:bg-slate-800/90 hover:border-white/15 transition-colors"
+                >
                   <span className="h-2.5 w-2.5 rounded-full mt-1 shrink-0" style={{ background: STATUS_STYLE[tech.status].color }} />
                   <div className="flex-1 min-w-0">
                     <p className="text-white font-medium">
@@ -293,7 +313,14 @@ export function TechnicianWhereaboutsPage({ mod, sub }: { mod: ModuleDef; sub: S
                       {tech.ticketNo && (
                         <>
                           {" — "}
-                          <Link to="/ticket/$ticketNo" params={{ ticketNo: tech.ticketNo }} target="_blank" rel="noreferrer" className="font-mono text-blue-400 hover:text-blue-300 hover:underline">
+                          <Link
+                            to="/ticket/$ticketNo"
+                            params={{ ticketNo: tech.ticketNo }}
+                            target="_blank"
+                            rel="noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                            className="font-mono text-blue-400 hover:text-blue-300 hover:underline"
+                          >
                             {tech.ticketNo}
                           </Link>
                         </>
@@ -308,7 +335,12 @@ export function TechnicianWhereaboutsPage({ mod, sub }: { mod: ModuleDef; sub: S
                 <>
                   <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide pt-2 pb-1">No job scheduled today ({noJob.length})</p>
                   {noJob.map((tech) => (
-                    <div key={tech.name} className="flex items-center gap-2 text-xs px-2.5 py-1.5 rounded-md bg-slate-800/30">
+                    <div
+                      key={tech.name}
+                      onClick={() => zoomToTechnician(tech.name)}
+                      title="Click to zoom to this technician on the map"
+                      className="flex items-center gap-2 text-xs px-2.5 py-1.5 rounded-md bg-slate-800/30 cursor-pointer hover:bg-slate-800/60 transition-colors"
+                    >
                       <span className="h-2.5 w-2.5 rounded-full shrink-0" style={{ background: STATUS_STYLE.none.color }} />
                       <span className="text-slate-300">{tech.name}</span>
                       <span className="text-slate-500">· {tech.branch || "No branch"}</span>
