@@ -158,10 +158,19 @@ export { mapSource };
  * Decide the initial AHS Repair Status for a ticket newly imported from
  * ServicePower. Based on the ServicePower callStatus and (for Accepted)
  * the work-order Source:
- *  - Cancelled            -> "CL-Cancelled"
+ *  - Cancelled            -> "CL-Need Cancel"
  *  - Completed            -> "CL-Ready to Complete"
  *  - Accepted + NSA       -> "CSR-Needs Scheduling"
  *  - Accepted + others    -> "CSR-Assigned to ASC"
+ *
+ * A call ServicePower already shows as cancelled (the warranty company
+ * cancelled it on their end before AHS ever saw it) lands as CL-Need
+ * Cancel, not CL-Cancelled directly — same review gate a CSR-flagged
+ * cancellation goes through elsewhere in this app: only a BizOps Manager
+ * can move a ticket to CL-Cancelled, and only after picking a reason (see
+ * canSetCancelled / CANCEL_REASONS in ticket.$ticketNo.tsx). Auto-applying
+ * CL-Cancelled here would finalize a cancellation with no BizOps review and
+ * no recorded reason.
  *
  * NOTE: this is only used on first insert. On subsequent re-syncs the local
  * status set by AHS users (e.g. CSR-Acknowledged once a CSR clicks Acknowledge)
@@ -169,7 +178,7 @@ export { mapSource };
  */
 function initialAhsStatusForCall(call: any, source: string): string {
   const callStatus = String(call?.callStatus ?? '').toLowerCase();
-  if (callStatus.includes('cancel')) return 'CL-Cancelled';
+  if (callStatus.includes('cancel')) return 'CL-Need Cancel';
   if (callStatus.includes('complete')) return 'CL-Ready to Complete';
   const s = (source || '').trim().toUpperCase();
   if (s.includes('NSA')) return 'CSR-Needs Scheduling';

@@ -43,10 +43,14 @@ import { getNsaDispatches, type NsaDispatch } from "./nsaApi";
 import { resolveBranchFromCustomer } from "./servicePowerSync";
 
 // ─── Status mapping ──────────────────────────────────────────────────────────
+// A dispatch NSA already shows as cancelled lands as CL-Need Cancel, not
+// CL-Cancelled directly — same reasoning as servicePowerSync.ts's own
+// initialAhsStatusForCall: only a BizOps Manager can finalize CL-Cancelled,
+// with a required reason, so a sync must never auto-apply it.
 function mapNsaStatus(nsaStatus: string | undefined): string {
   const s = String(nsaStatus ?? "").toLowerCase().trim();
   if (!s) return "CSR-Needs Scheduling";
-  if (s.includes("cancel")) return "CL-Cancelled";
+  if (s.includes("cancel")) return "CL-Need Cancel";
   if (s.includes("complet")) return "CL-Ready to Complete";
   if (s.includes("closed")) return "CL-Completed";
   if (s.includes("accept") || s.includes("pending") || s.includes("scheduled"))
