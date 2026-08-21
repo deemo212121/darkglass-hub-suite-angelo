@@ -74,6 +74,7 @@ import { TodoListPage } from "@/components/TodoListPage";
 import { AdminUserManagementPage } from "@/components/AdminUserManagementPage";
 import { AccountManagementPage } from "@/components/AccountManagementPage";
 import { LocationManagementPage } from "@/components/LocationManagementPage";
+import { TechnicianWhereaboutsPage } from "@/components/TechnicianWhereaboutsPage";
 import { AddBranchPage } from "@/components/AddBranchPage";
 import { canAccessUserManagement, getUserManagementRecord, canAccessAdminModule } from "@/lib/user-management";
 import { isSubmoduleAllowed, isCompanySuperAdminRole, isCsrRestrictedRole } from "@/lib/roleLabels";
@@ -585,6 +586,8 @@ function SubModule() {
         ? <AccountManagementPage mod={mod} sub={sub} />
         : sub.custom === "location-management"
         ? <LocationManagementPage mod={mod} sub={sub} />
+        : (sub as any).custom === "technician-whereabouts"
+        ? <TechnicianWhereaboutsPage mod={mod} sub={sub} />
         : (sub as any).custom === "universal-activity-log"
         ? <UniversalActivityLogPage mod={mod} sub={sub} />
         : (sub as any).custom === "add-branch"

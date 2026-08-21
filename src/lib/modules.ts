@@ -1402,6 +1402,14 @@ const adminMod: ModuleDef = {
       seed: () => ({}),
     },
     {
+      slug: "technician-whereabouts",
+      title: "Technician Whereabouts",
+      description: "Each technician's current job site, per branch or company-wide.",
+      custom: "technician-whereabouts" as any,
+      fields: [],
+      seed: () => ({}),
+    },
+    {
       slug: "internal-message-support",
       title: "Internal Message Support",
       description: "Discord-style employee chat and broadcast channels.",
