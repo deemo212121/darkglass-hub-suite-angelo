@@ -13,6 +13,7 @@ import {
 import { getMyFullProfile } from "@/lib/supabase/users";
 import { uploadItTicketScreenshot } from "@/lib/firebase/storage";
 import { compressImage, validateImageFile } from "@/lib/imageCompression";
+import { randomId } from "@/lib/utils";
 
 export const Route = createFileRoute("/it-tickets")({
   head: () => ({ meta: [{ title: "IT Support — Admin Hub Solutions" }] }),
@@ -115,7 +116,7 @@ function ItSupportPage() {
       let screenshotUrl: string | null = null;
       if (screenshotFile && companyId) {
         const compressed = await compressImage(screenshotFile);
-        const uploaded = await uploadItTicketScreenshot(companyId, crypto.randomUUID(), compressed.blob, screenshotFile.name);
+        const uploaded = await uploadItTicketScreenshot(companyId, randomId(), compressed.blob, screenshotFile.name);
         screenshotUrl = uploaded.url;
       }
       await createItTicket({
