@@ -47,6 +47,8 @@ import { Route as FillW4ExternalDocIdRouteImport } from './routes/fill-w4-extern
 import { Route as FillI9DocIdRouteImport } from './routes/fill-i9.$docId'
 import { Route as FillI9ExternalDocIdRouteImport } from './routes/fill-i9-external.$docId'
 import { Route as FillFormFormIdRouteImport } from './routes/fill-form.$formId'
+import { Route as FillCarIqAgreementDocIdRouteImport } from './routes/fill-car-iq-agreement.$docId'
+import { Route as FillCarIqAgreementExternalDocIdRouteImport } from './routes/fill-car-iq-agreement-external.$docId'
 import { Route as EmployeeEmployeeIdRouteImport } from './routes/employee.$employeeId'
 import { Route as CsrAgentAgentIdRouteImport } from './routes/csr-agent.$agentId'
 import { Route as ApplySlugRouteImport } from './routes/apply.$slug'
@@ -250,6 +252,17 @@ const FillFormFormIdRoute = FillFormFormIdRouteImport.update({
   path: '/fill-form/$formId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const FillCarIqAgreementDocIdRoute = FillCarIqAgreementDocIdRouteImport.update({
+  id: '/fill-car-iq-agreement/$docId',
+  path: '/fill-car-iq-agreement/$docId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const FillCarIqAgreementExternalDocIdRoute =
+  FillCarIqAgreementExternalDocIdRouteImport.update({
+    id: '/fill-car-iq-agreement-external/$docId',
+    path: '/fill-car-iq-agreement-external/$docId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const EmployeeEmployeeIdRoute = EmployeeEmployeeIdRouteImport.update({
   id: '/employee/$employeeId',
   path: '/employee/$employeeId',
@@ -306,6 +319,8 @@ export interface FileRoutesByFullPath {
   '/apply/$slug': typeof ApplySlugRoute
   '/csr-agent/$agentId': typeof CsrAgentAgentIdRoute
   '/employee/$employeeId': typeof EmployeeEmployeeIdRoute
+  '/fill-car-iq-agreement-external/$docId': typeof FillCarIqAgreementExternalDocIdRoute
+  '/fill-car-iq-agreement/$docId': typeof FillCarIqAgreementDocIdRoute
   '/fill-form/$formId': typeof FillFormFormIdRoute
   '/fill-i9-external/$docId': typeof FillI9ExternalDocIdRoute
   '/fill-i9/$docId': typeof FillI9DocIdRoute
@@ -353,6 +368,8 @@ export interface FileRoutesByTo {
   '/apply/$slug': typeof ApplySlugRoute
   '/csr-agent/$agentId': typeof CsrAgentAgentIdRoute
   '/employee/$employeeId': typeof EmployeeEmployeeIdRoute
+  '/fill-car-iq-agreement-external/$docId': typeof FillCarIqAgreementExternalDocIdRoute
+  '/fill-car-iq-agreement/$docId': typeof FillCarIqAgreementDocIdRoute
   '/fill-form/$formId': typeof FillFormFormIdRoute
   '/fill-i9-external/$docId': typeof FillI9ExternalDocIdRoute
   '/fill-i9/$docId': typeof FillI9DocIdRoute
@@ -401,6 +418,8 @@ export interface FileRoutesById {
   '/apply/$slug': typeof ApplySlugRoute
   '/csr-agent/$agentId': typeof CsrAgentAgentIdRoute
   '/employee/$employeeId': typeof EmployeeEmployeeIdRoute
+  '/fill-car-iq-agreement-external/$docId': typeof FillCarIqAgreementExternalDocIdRoute
+  '/fill-car-iq-agreement/$docId': typeof FillCarIqAgreementDocIdRoute
   '/fill-form/$formId': typeof FillFormFormIdRoute
   '/fill-i9-external/$docId': typeof FillI9ExternalDocIdRoute
   '/fill-i9/$docId': typeof FillI9DocIdRoute
@@ -450,6 +469,8 @@ export interface FileRouteTypes {
     | '/apply/$slug'
     | '/csr-agent/$agentId'
     | '/employee/$employeeId'
+    | '/fill-car-iq-agreement-external/$docId'
+    | '/fill-car-iq-agreement/$docId'
     | '/fill-form/$formId'
     | '/fill-i9-external/$docId'
     | '/fill-i9/$docId'
@@ -497,6 +518,8 @@ export interface FileRouteTypes {
     | '/apply/$slug'
     | '/csr-agent/$agentId'
     | '/employee/$employeeId'
+    | '/fill-car-iq-agreement-external/$docId'
+    | '/fill-car-iq-agreement/$docId'
     | '/fill-form/$formId'
     | '/fill-i9-external/$docId'
     | '/fill-i9/$docId'
@@ -544,6 +567,8 @@ export interface FileRouteTypes {
     | '/apply/$slug'
     | '/csr-agent/$agentId'
     | '/employee/$employeeId'
+    | '/fill-car-iq-agreement-external/$docId'
+    | '/fill-car-iq-agreement/$docId'
     | '/fill-form/$formId'
     | '/fill-i9-external/$docId'
     | '/fill-i9/$docId'
@@ -592,6 +617,8 @@ export interface RootRouteChildren {
   ApplySlugRoute: typeof ApplySlugRoute
   CsrAgentAgentIdRoute: typeof CsrAgentAgentIdRoute
   EmployeeEmployeeIdRoute: typeof EmployeeEmployeeIdRoute
+  FillCarIqAgreementExternalDocIdRoute: typeof FillCarIqAgreementExternalDocIdRoute
+  FillCarIqAgreementDocIdRoute: typeof FillCarIqAgreementDocIdRoute
   FillFormFormIdRoute: typeof FillFormFormIdRoute
   FillI9ExternalDocIdRoute: typeof FillI9ExternalDocIdRoute
   FillI9DocIdRoute: typeof FillI9DocIdRoute
@@ -886,6 +913,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof FillFormFormIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/fill-car-iq-agreement/$docId': {
+      id: '/fill-car-iq-agreement/$docId'
+      path: '/fill-car-iq-agreement/$docId'
+      fullPath: '/fill-car-iq-agreement/$docId'
+      preLoaderRoute: typeof FillCarIqAgreementDocIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/fill-car-iq-agreement-external/$docId': {
+      id: '/fill-car-iq-agreement-external/$docId'
+      path: '/fill-car-iq-agreement-external/$docId'
+      fullPath: '/fill-car-iq-agreement-external/$docId'
+      preLoaderRoute: typeof FillCarIqAgreementExternalDocIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/employee/$employeeId': {
       id: '/employee/$employeeId'
       path: '/employee/$employeeId'
@@ -991,6 +1032,8 @@ const rootRouteChildren: RootRouteChildren = {
   ApplySlugRoute: ApplySlugRoute,
   CsrAgentAgentIdRoute: CsrAgentAgentIdRoute,
   EmployeeEmployeeIdRoute: EmployeeEmployeeIdRoute,
+  FillCarIqAgreementExternalDocIdRoute: FillCarIqAgreementExternalDocIdRoute,
+  FillCarIqAgreementDocIdRoute: FillCarIqAgreementDocIdRoute,
   FillFormFormIdRoute: FillFormFormIdRoute,
   FillI9ExternalDocIdRoute: FillI9ExternalDocIdRoute,
   FillI9DocIdRoute: FillI9DocIdRoute,

@@ -45,7 +45,7 @@ import {
   type OnboardingDocumentColumn,
   type OnboardingGroupKey,
 } from "@/lib/supabase/onboardingDocumentColumns";
-import { uploadCoeCertificate, uploadWarningForm, uploadPromotionForm, uploadActionPlanForm, uploadTerminationForm, uploadW8benForm, uploadW4Form, uploadW4RForm, uploadI9Form, uploadWageAckForm, uploadSignableDocumentSignature } from "@/lib/firebase/storage";
+import { uploadCoeCertificate, uploadWarningForm, uploadPromotionForm, uploadActionPlanForm, uploadTerminationForm, uploadW8benForm, uploadW4Form, uploadW4RForm, uploadI9Form, uploadWageAckForm, uploadCarIqAgreementForm, uploadSignableDocumentSignature } from "@/lib/firebase/storage";
 import { captureHtmlToPdfBlob, loadAssetDataUrl as loadImageDataUrl } from "@/lib/pdfCapture";
 import {
   createSignableDocument,
@@ -76,6 +76,8 @@ import type { W4RFormData } from "@/lib/w4rFormTemplate";
 import { fillW4RPdf } from "@/lib/w4rPdfFill";
 import type { WageAckFormData } from "@/lib/wageAckFormTemplate";
 import { fillWageAckPdf } from "@/lib/wageAckPdfFill";
+import type { CarIqAgreementFormData } from "@/lib/carIqAgreementFormTemplate";
+import { fillCarIqAgreementPdf } from "@/lib/carIqAgreementPdfFill";
 import type { I9FormData } from "@/lib/i9FormTemplate";
 import { fillI9Pdf } from "@/lib/i9PdfFill";
 import { logActivity, getActivityLog, activityActionLabel, type HrActivityLogEntry } from "@/lib/supabase/hrActivityLog";
@@ -656,7 +658,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // Reviews, the Approved log, the department trend chart, and the full
   // Employee Directory all on top of each other, forcing a long scroll to
   // reach anything below Hiring.
-  const [activeTab, setActiveTab] = useState<"hiring" | "warnings" | "masterList" | "leaders" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "promotionForm" | "actionPlanForm" | "terminationForm" | "employeeRequestManager" | "w8ben" | "i9" | "wageAck">("hiring");
+  const [activeTab, setActiveTab] = useState<"hiring" | "warnings" | "masterList" | "leaders" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "promotionForm" | "actionPlanForm" | "terminationForm" | "employeeRequestManager" | "w8ben" | "i9" | "wageAck" | "carIqAgreement">("hiring");
   const [openCategory, setOpenCategory] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   // Which floating-sidebar section headers (Automated Forms/Generate
@@ -680,7 +682,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const navigate = useNavigate();
   const hrSearchParams = (useSearch({ strict: false }) as { tab?: string; submissionId?: string; profileId?: string }) ?? {};
   const initialHrSearchRef = useRef(hrSearchParams);
-  const VALID_HR_TABS = ["hiring", "warnings", "masterList", "leaders", "jotform", "jotformDocuments", "customForms", "onboarding", "hiringReports", "report", "coe", "warningForm", "promotionForm", "actionPlanForm", "terminationForm", "employeeRequestManager", "w8ben", "i9", "wageAck"] as const;
+  const VALID_HR_TABS = ["hiring", "warnings", "masterList", "leaders", "jotform", "jotformDocuments", "customForms", "onboarding", "hiringReports", "report", "coe", "warningForm", "promotionForm", "actionPlanForm", "terminationForm", "employeeRequestManager", "w8ben", "i9", "wageAck", "carIqAgreement"] as const;
   useEffect(() => {
     const tab = initialHrSearchRef.current.tab;
     if (tab && (VALID_HR_TABS as readonly string[]).includes(tab)) setActiveTab(tab as typeof activeTab);
@@ -1355,7 +1357,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     const unsubs = [
       subscribeTableChanges("hr_candidates", () => void loadCandidates(), `company_id=eq.${companyId}`),
       subscribeTableChanges("employee_conduct_notes", () => void loadNotes(), `company_id=eq.${companyId}`),
-      subscribeTableChanges("hr_signable_documents", () => { void loadSentWarningForms(); void loadSentW8benForms(); void loadSentW4Forms(); void loadSentW9Forms(); void loadSentW4RForms(); void loadSentI9Forms(); void loadSentWageAckForms(); }, `company_id=eq.${companyId}`),
+      subscribeTableChanges("hr_signable_documents", () => { void loadSentWarningForms(); void loadSentW8benForms(); void loadSentW4Forms(); void loadSentW9Forms(); void loadSentW4RForms(); void loadSentI9Forms(); void loadSentWageAckForms(); void loadSentCarIqAgreementForms(); }, `company_id=eq.${companyId}`),
       subscribeTableChanges("pto_requests", () => void loadPtoRequests(), `company_id=eq.${companyId}`),
       subscribeTableChanges("timecard_entries", () => void loadTodayTimecardEntries(), `company_id=eq.${companyId}`),
       subscribeTableChanges("timecard_corrections", () => void loadRequestManagerData(), `company_id=eq.${companyId}`),
@@ -3529,6 +3531,193 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
 
+  // ── Car IQ Technician Agreement — same pattern as W-4R above: single
+  // recipient, the recipient fills in everything themselves on
+  // FillCarIqAgreementPage.tsx. No employer/HR co-signature step. The
+  // source PDF has no AcroForm fields at all (see
+  // carIqAgreementFormTemplate.ts's header comment) — every value,
+  // including the Branch dropdown's selection, is drawn directly onto the
+  // page. ──
+  const [sentCarIqAgreementForms, setSentCarIqAgreementForms] = useState<SignableDocument[]>([]);
+  const loadSentCarIqAgreementForms = async () => {
+    try {
+      setSentCarIqAgreementForms(await getSignableDocuments("car_iq_agreement"));
+    } catch (err) {
+      console.error("Failed to load sent Car IQ Technician Agreement forms:", err);
+    }
+  };
+  useEffect(() => {
+    if (activeTab === "carIqAgreement" || activeTab === "jotformDocuments") void loadSentCarIqAgreementForms();
+  }, [activeTab]);
+
+  const [carIqRecipientId, setCarIqRecipientId] = useState("");
+  const [carIqRecipientSearch, setCarIqRecipientSearch] = useState("");
+  const [carIqRecipientDropdownOpen, setCarIqRecipientDropdownOpen] = useState(false);
+  const [carIqSending, setCarIqSending] = useState(false);
+  const [carIqSendError, setCarIqSendError] = useState<string | null>(null);
+  const [carIqActionBusyId, setCarIqActionBusyId] = useState<string | null>(null);
+  const [carIqActionError, setCarIqActionError] = useState<string | null>(null);
+  const [carIqDocPreview, setCarIqDocPreview] = useState<SignableDocument | null>(null);
+  const [carIqPreviewOpen, setCarIqPreviewOpen] = useState(false);
+  const [carIqPreviewPdfUrl, setCarIqPreviewPdfUrl] = useState<string | null>(null);
+  const [carIqPreviewLoading, setCarIqPreviewLoading] = useState(false);
+  const [carIqSendMode, setCarIqSendMode] = useState<"teammate" | "external">("teammate");
+  const [carIqExternalName, setCarIqExternalName] = useState("");
+  const [carIqSentLink, setCarIqSentLink] = useState<{ link: string; recipientName: string } | null>(null);
+  const [carIqSentLinkCopied, setCarIqSentLinkCopied] = useState(false);
+  const filteredCarIqRecipients = useMemo(
+    () => employees.filter((e) => e.status === "active" && e.name.toLowerCase().includes(carIqRecipientSearch.toLowerCase())),
+    [employees, carIqRecipientSearch]
+  );
+
+  const buildCarIqPreviewData = (employeeName: string): CarIqAgreementFormData => ({
+    employeeId: "",
+    employeeName,
+    branch: "",
+    agreed: false,
+    dateSigned: "",
+    signatureDataUrl: "",
+  });
+
+  const closeCarIqPreview = () => {
+    setCarIqPreviewOpen(false);
+    if (carIqPreviewPdfUrl) URL.revokeObjectURL(carIqPreviewPdfUrl);
+    setCarIqPreviewPdfUrl(null);
+  };
+
+  const handleOpenCarIqPreview = async () => {
+    setCarIqSendError(null);
+    setCarIqPreviewOpen(true);
+    setCarIqPreviewLoading(true);
+    try {
+      const recipientName = employees.find((e) => e.id === carIqRecipientId)?.name || "";
+      const pdfBytes = await fillCarIqAgreementPdf(buildCarIqPreviewData(recipientName));
+      const url = URL.createObjectURL(new Blob([pdfBytes as unknown as BlobPart], { type: "application/pdf" }));
+      setCarIqPreviewPdfUrl(url);
+    } catch (err) {
+      setCarIqSendError(err instanceof Error ? err.message : "Failed to build preview.");
+    } finally {
+      setCarIqPreviewLoading(false);
+    }
+  };
+
+  const handleSendCarIqAgreement = async () => {
+    if (!carIqRecipientId || !uid) return;
+    setCarIqSending(true);
+    setCarIqSendError(null);
+    try {
+      const recipient = employees.find((e) => e.id === carIqRecipientId);
+      if (!recipient) throw new Error("Select a recipient first.");
+
+      const doc = await createSignableDocument({
+        documentType: "car_iq_agreement",
+        formData: { employeeId: recipient.id, employeeName: recipient.name } as unknown as Record<string, any>,
+        recipientId: carIqRecipientId,
+        recipientSlot: "employee",
+        pdfUrl: "",
+      });
+
+      const myProfileId = await getMyProfileId(uid);
+      if (!myProfileId) throw new Error("Could not resolve your profile.");
+      const thread = await getOrCreateDmThread(myProfileId, carIqRecipientId);
+      const fillLink = `${getAppUrl()}/fill-car-iq-agreement/${doc.id}`;
+      await sendMessage({
+        dmThreadId: thread.id,
+        senderId: myProfileId,
+        senderName: displayName || "HR",
+        body: `📋 Please complete the Car IQ Technician Agreement Form: ${fillLink}`,
+      });
+
+      void logActivity({ action: "car_iq_agreement_sent", targetType: "employee", targetId: recipient.id, targetLabel: recipient.name });
+
+      closeCarIqPreview();
+      setCarIqRecipientId("");
+      setCarIqRecipientSearch("");
+      await loadSentCarIqAgreementForms();
+    } catch (err) {
+      setCarIqSendError(err instanceof Error ? err.message : "Failed to send request.");
+    } finally {
+      setCarIqSending(false);
+    }
+  };
+
+  /** No AHS profile to tie this to, so no DM — the link itself (shown in the same panel, right below "Generate Link") is the only way the recipient finds out, same as the Warning Form's "External Link" mode. */
+  const handleGenerateExternalCarIqAgreement = async () => {
+    setCarIqSending(true);
+    setCarIqSendError(null);
+    try {
+      const name = carIqExternalName.trim() || "External Recipient";
+      const doc = await createSignableDocument({
+        documentType: "car_iq_agreement",
+        formData: { employeeId: "", employeeName: name } as unknown as Record<string, any>,
+        recipientName: name,
+        recipientSlot: "employee",
+        pdfUrl: "",
+      });
+
+      void logActivity({ action: "car_iq_agreement_sent", targetType: "employee", targetLabel: name, details: { external: true } });
+
+      setCarIqSentLink({ link: `${getAppUrl()}/fill-car-iq-agreement-external/${doc.id}`, recipientName: name });
+      setCarIqExternalName("");
+      await loadSentCarIqAgreementForms();
+    } catch (err) {
+      setCarIqSendError(err instanceof Error ? err.message : "Failed to generate link.");
+    } finally {
+      setCarIqSending(false);
+    }
+  };
+
+  const handleCopyCarIqSentLink = async () => {
+    if (!carIqSentLink) return;
+    try {
+      await navigator.clipboard.writeText(carIqSentLink.link);
+      setCarIqSentLinkCopied(true);
+      setTimeout(() => setCarIqSentLinkCopied(false), 1500);
+    } catch (err) {
+      console.error("Failed to copy link:", err);
+    }
+  };
+
+  const handleCopyCarIqLink = async (doc: SignableDocument) => {
+    try {
+      const path = doc.recipientId ? "fill-car-iq-agreement" : "fill-car-iq-agreement-external";
+      await navigator.clipboard.writeText(`${getAppUrl()}/${path}/${doc.id}`);
+    } catch (err) {
+      console.error("Failed to copy link:", err);
+    }
+  };
+
+  const handleDownloadCarIqPdf = async (doc: SignableDocument) => {
+    if (!doc.pdfUrl) return;
+    const name = (doc.formData as Partial<CarIqAgreementFormData>).employeeName || doc.recipientName || "car-iq-agreement";
+    try {
+      const res = await fetch(doc.pdfUrl);
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = `Car IQ Technician Agreement - ${name}.pdf`;
+      a.click();
+      URL.revokeObjectURL(blobUrl);
+    } catch {
+      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
+    }
+  };
+
+  const handleDeleteCarIqAgreement = async (doc: SignableDocument) => {
+    if (!window.confirm("Permanently delete this Car IQ Technician Agreement request?")) return;
+    setCarIqActionBusyId(doc.id);
+    setCarIqActionError(null);
+    try {
+      await deleteSignableDocument(doc.id);
+      await loadSentCarIqAgreementForms();
+    } catch (err) {
+      setCarIqActionError(err instanceof Error ? err.message : "Failed to delete.");
+    } finally {
+      setCarIqActionBusyId(null);
+    }
+  };
+
   // ── Send to Employer — hands off the employer/HR-side completion step
   // (I-9 Section 2, Acknowledgment of Wage's employer signature) to a
   // DIFFERENT AHS teammate instead of the current viewer completing it
@@ -3606,7 +3795,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       return [fd.firstNameMiddleInitial, fd.lastName].filter(Boolean).join(" ").trim() || recipient || doc.recipientName || "—";
     }
     if (doc.documentType === "w9") return fd.name || recipient || doc.recipientName || "—";
-    return fd.employeeName || recipient || doc.recipientName || "—"; // w8ben, i9, wage_ack
+    return fd.employeeName || recipient || doc.recipientName || "—"; // w8ben, i9, wage_ack, car_iq_agreement
   };
   const signedFormRows = useMemo(() => {
     const rows = [
@@ -3616,9 +3805,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       ...sentW4RForms.map((doc) => ({ doc, formLabel: "Form W-4R" })),
       ...sentI9Forms.map((doc) => ({ doc, formLabel: "Form I-9" })),
       ...sentWageAckForms.map((doc) => ({ doc, formLabel: "Acknowledgment of Wage" })),
+      ...sentCarIqAgreementForms.map((doc) => ({ doc, formLabel: "Car IQ Technician Agreement" })),
     ];
     return rows.sort((a, b) => new Date(b.doc.createdAt).getTime() - new Date(a.doc.createdAt).getTime());
-  }, [sentW8benForms, sentW4Forms, sentW9Forms, sentW4RForms, sentI9Forms, sentWageAckForms]);
+  }, [sentW8benForms, sentW4Forms, sentW9Forms, sentW4RForms, sentI9Forms, sentWageAckForms, sentCarIqAgreementForms]);
 
   const [signedFormsSearch, setSignedFormsSearch] = useState("");
   const [signedFormsTypeFilter, setSignedFormsTypeFilter] = useState("");
@@ -6996,6 +7186,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         { key: "w8ben", label: "W-8 / W-9 / W-4 / W-4R Forms", count: 0, icon: Landmark },
         { key: "i9", label: "Form I-9 (Employment Eligibility)", count: sentI9AwaitingSection2Count, icon: FileCheck },
         { key: "wageAck", label: "Acknowledgment of Wage", count: sentWageAckAwaitingEmployerCount, icon: FileCheck },
+        { key: "carIqAgreement", label: "Car IQ Technician Agreement", count: 0, icon: FileCheck },
       ] as const,
     }] : []),
     {
@@ -8359,6 +8550,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               <option value="Form W-4R">Form W-4R</option>
               <option value="Form I-9">Form I-9</option>
               <option value="Acknowledgment of Wage">Acknowledgment of Wage</option>
+              <option value="Car IQ Technician Agreement">Car IQ Technician Agreement</option>
             </select>
           </div>
           {(signedFormsSearch || signedFormsTypeFilter) && (
@@ -11842,6 +12034,196 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       </>
       )}
 
+      {activeTab === "carIqAgreement" && (
+      <>
+      <div className="panel p-0 overflow-visible mt-4 relative z-20">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">Send Car IQ Technician Agreement Request</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Pick a teammate — they'll get a link to fill in their name and branch, agree to the usage guidelines, and sign the Car IQ Technician Agreement Form. It comes back to you here automatically once submitted.</p>
+        </div>
+        <div className="p-4 flex flex-col gap-3 max-w-md">
+          {carIqSentLink ? (
+            <div className="flex flex-col gap-3">
+              <div className="rounded-md border border-green-500/30 bg-green-500/10 px-3 py-2.5">
+                <p className="text-sm font-semibold text-green-300">Link generated for {carIqSentLink.recipientName}</p>
+                <p className="text-xs text-muted-foreground mt-1">No AHS account needed — copy the link below and send it any way you like (email, Slack, text).</p>
+              </div>
+              <div>
+                <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Fill-in link</label>
+                <div className="flex gap-2 mt-1">
+                  <input type="text" readOnly value={carIqSentLink.link} onFocus={(e) => e.target.select()} className="glass-input text-xs py-1.5 px-3 rounded-md flex-1" />
+                  <button onClick={handleCopyCarIqSentLink} className="btn text-xs px-3 py-1.5 shrink-0">{carIqSentLinkCopied ? "Copied!" : "Copy"}</button>
+                </div>
+              </div>
+              <button onClick={() => setCarIqSentLink(null)} className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white w-fit">Done</button>
+            </div>
+          ) : (
+          <>
+          <div className="flex rounded-md overflow-hidden border border-white/15 h-7.5 w-fit">
+            <button type="button" onClick={() => setCarIqSendMode("teammate")} className={`px-3 text-xs font-medium transition-colors ${carIqSendMode === "teammate" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}>AHS Teammate</button>
+            <button type="button" onClick={() => setCarIqSendMode("external")} className={`px-3 text-xs font-medium transition-colors border-l border-white/15 ${carIqSendMode === "external" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}>External Link</button>
+          </div>
+
+          {carIqSendMode === "teammate" ? (
+          <div className="flex flex-col gap-1 relative">
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient</label>
+            <input
+              type="text"
+              value={carIqRecipientSearch}
+              onChange={(e) => { setCarIqRecipientSearch(e.target.value); setCarIqRecipientId(""); setCarIqRecipientDropdownOpen(true); }}
+              onFocus={() => setCarIqRecipientDropdownOpen(true)}
+              onBlur={() => setTimeout(() => setCarIqRecipientDropdownOpen(false), 150)}
+              placeholder="Search a teammate…"
+              className="glass-input text-sm py-1.5 px-3 rounded-md"
+            />
+            {carIqRecipientDropdownOpen && (
+              <div className="absolute z-50 top-full mt-1 w-full max-h-96 overflow-y-auto rounded-md border border-white/15 bg-slate-900 shadow-2xl">
+                {filteredCarIqRecipients.length === 0 ? (
+                  <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+                ) : (
+                  filteredCarIqRecipients.map((e) => (
+                    <button
+                      key={e.id}
+                      type="button"
+                      onMouseDown={(ev) => ev.preventDefault()}
+                      onClick={() => {
+                        setCarIqRecipientId(e.id);
+                        setCarIqRecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`);
+                        setCarIqRecipientDropdownOpen(false);
+                      }}
+                      className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${carIqRecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                    >
+                      {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+          ) : (
+          <div>
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient name</label>
+            <input
+              type="text"
+              value={carIqExternalName}
+              onChange={(e) => setCarIqExternalName(e.target.value)}
+              placeholder="Type their name (optional)…"
+              className="glass-input text-sm py-1.5 px-3 rounded-md w-full mt-1"
+            />
+            <p className="text-[10px] text-muted-foreground mt-1">No AHS account needed — you'll get a link to send them any way you like (email, Slack, text), and they can open it and fill it in without logging in.</p>
+          </div>
+          )}
+
+          {carIqSendError && (
+            <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{carIqSendError}</p>
+          )}
+          {carIqSendMode === "teammate" ? (
+            <button
+              onClick={handleOpenCarIqPreview}
+              disabled={!carIqRecipientId || carIqSending}
+              className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 w-fit"
+            >
+              Preview & Send
+            </button>
+          ) : (
+            <button
+              onClick={handleGenerateExternalCarIqAgreement}
+              disabled={carIqSending}
+              className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 w-fit"
+            >
+              {carIqSending ? "Generating…" : "Generate Link"}
+            </button>
+          )}
+          </>
+          )}
+        </div>
+      </div>
+
+      <div className="panel p-0 overflow-hidden mt-4">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">Sent Car IQ Technician Agreement Forms</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status.</p>
+        </div>
+        {carIqActionError && (
+          <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{carIqActionError}</p>
+        )}
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-white/10 bg-white/5">
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Employee</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Branch</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent By</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Status</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sentCarIqAgreementForms.length === 0 ? (
+                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">No requests sent yet.</td></tr>
+              ) : (
+                sentCarIqAgreementForms.map((doc) => {
+                  const data = doc.formData as Partial<CarIqAgreementFormData>;
+                  const recipient = employees.find((e) => e.id === doc.recipientId);
+                  const busy = carIqActionBusyId === doc.id;
+                  return (
+                    <tr key={doc.id} className="border-b border-white/5 hover:bg-white/5">
+                      <td className="px-4 py-3 font-medium">
+                        {doc.pdfUrl ? (
+                          <button type="button" onClick={() => setCarIqDocPreview(doc)} className="text-blue-300 hover:text-blue-200 hover:underline text-left">
+                            {data.employeeName || recipient?.name || doc.recipientName || "—"}
+                          </button>
+                        ) : (
+                          data.employeeName || recipient?.name || doc.recipientName || "—"
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-muted-foreground">{data.branch || "—"}</td>
+                      <td className="px-4 py-3 text-muted-foreground">{doc.createdByName ?? "—"}</td>
+                      <td className="px-4 py-3">
+                        <span className={`px-2 py-1 rounded text-xs font-semibold ${
+                          doc.status === "signed" ? "bg-green-500/20 text-green-300"
+                          : doc.status === "cancelled" ? "bg-slate-500/20 text-slate-400"
+                          : "bg-yellow-500/20 text-yellow-300"
+                        }`}>
+                          {doc.status === "signed" ? "Submitted" : doc.status === "cancelled" ? "Cancelled" : "Awaiting Completion"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{new Date(doc.createdAt).toLocaleDateString()}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {doc.status === "pending_signature" && (
+                            <button type="button" onClick={() => handleCopyCarIqLink(doc)} className="btn text-[10px] px-2 py-1">
+                              Copy Link
+                            </button>
+                          )}
+                          {doc.pdfUrl && (
+                            <button type="button" onClick={() => handleDownloadCarIqPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
+                              Download PDF
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => handleDeleteCarIqAgreement(doc)}
+                            title="Permanently delete this request"
+                            className="text-muted-foreground hover:text-red-300 disabled:opacity-50"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      </>
+      )}
+
       {/* Form W-8BEN — preview the REAL official PDF (fillW8benPdf, same function used at submission time) with a blank fill, not a redrawn approximation, before sending the fill-in link */}
       {w8PreviewOpen && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
@@ -12065,6 +12447,61 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             </div>
             <div className="flex-1 overflow-hidden bg-slate-950">
               {w4rDocPreview.pdfUrl && <iframe src={w4rDocPreview.pdfUrl} title="Form W-4R" className="w-full h-full min-h-[70vh] border-0" />}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Form Car IQ Technician Agreement — preview the REAL official PDF (fillCarIqAgreementPdf, same function used at submission time) with a blank fill, before sending the fill-in link */}
+      {carIqPreviewOpen && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-800 border border-white/10 rounded-lg w-full max-w-4xl h-[90vh] flex flex-col">
+            <div className="flex items-center justify-between px-5 py-3 border-b border-white/10">
+              <h3 className="text-base font-bold">Car IQ Technician Agreement — Preview</h3>
+              <button onClick={closeCarIqPreview} className="text-muted-foreground hover:text-foreground">✕</button>
+            </div>
+            <div className="flex-1 bg-white/5">
+              {carIqPreviewLoading || !carIqPreviewPdfUrl ? (
+                <div className="h-full flex items-center justify-center text-sm text-muted-foreground">Loading preview…</div>
+              ) : (
+                <iframe src={carIqPreviewPdfUrl} title="Car IQ Technician Agreement Preview" className="w-full h-full border-0" />
+              )}
+            </div>
+            <div className="px-5 py-3 border-t border-white/10 flex items-center justify-end gap-2">
+              {carIqSendError && (
+                <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2 mr-auto">{carIqSendError}</p>
+              )}
+              <button onClick={closeCarIqPreview} className="btn text-sm px-4 py-2">Cancel</button>
+              <button
+                onClick={handleSendCarIqAgreement}
+                disabled={carIqSending}
+                className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+              >
+                {carIqSending ? "Sending…" : "Send Request"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Car IQ Technician Agreement Sent History — PDF preview, same inline-frame pattern used for W-8BEN/W-4/W-9/W-4R Sent History */}
+      {carIqDocPreview && (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => setCarIqDocPreview(null)}>
+          <div className="bg-slate-900 border border-white/10 rounded-lg shadow-2xl w-full max-w-6xl h-[92vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold">{(carIqDocPreview.formData as Partial<CarIqAgreementFormData>).employeeName || "—"}</p>
+                <p className="text-[10px] text-muted-foreground">Submitted {new Date(carIqDocPreview.signedAt ?? carIqDocPreview.createdAt).toLocaleString()}</p>
+              </div>
+              <div className="flex items-center gap-2">
+                {carIqDocPreview.pdfUrl && (
+                  <a href={carIqDocPreview.pdfUrl} target="_blank" rel="noopener noreferrer" className="btn text-xs px-2.5 py-1.5 flex items-center gap-1"><Download className="h-3 w-3" /> Download</a>
+                )}
+                <button type="button" onClick={() => setCarIqDocPreview(null)} className="btn text-xs px-2.5 py-1.5">Close</button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-hidden bg-slate-950">
+              {carIqDocPreview.pdfUrl && <iframe src={carIqDocPreview.pdfUrl} title="Car IQ Technician Agreement" className="w-full h-full min-h-[70vh] border-0" />}
             </div>
           </div>
         </div>

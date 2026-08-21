@@ -269,6 +269,7 @@ export async function handleSignableDocumentsRequest(request: Request, env?: Rec
         w4r: { name: "Form W-4R", tab: "w8ben" },
         i9: { name: "Form I-9 (Section 1)", tab: "i9" },
         wage_ack: { name: "Acknowledgment of Wage", tab: "wageAck" },
+        car_iq_agreement: { name: "Car IQ Technician Agreement", tab: "carIqAgreement" },
       };
       const docLabel = DOC_TYPE_LABELS[doc.document_type] ?? DOC_TYPE_LABELS.warning_form;
       const notifyFields = {
