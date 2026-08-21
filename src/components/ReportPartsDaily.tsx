@@ -19,7 +19,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Link, useSearch } from "@tanstack/react-router";
-import { ChevronLeft, Loader2, LayoutDashboard, CheckCheck, Building2 } from "lucide-react";
+import { ChevronLeft, Loader2, LayoutDashboard, CheckCheck, Building2, Download } from "lucide-react";
+import * as XLSX from "xlsx";
 import { Bar, BarChart, ResponsiveContainer, Tooltip, XAxis, YAxis, Legend } from "recharts";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { getPartsInventoryRows, type PartInventoryRow } from "@/lib/supabase/partsInventory";
@@ -32,6 +33,17 @@ const PARTS_ROLES = new Set(["PARTS", "PARTS_MANAGER"]);
 const DONE_STATUSES = new Set(["Used", "Claimed"]);
 const TOOLTIP_STYLE = { background: "#ffffff", border: "1px solid #cbd5e1", borderRadius: 6, color: "#0f172a", fontSize: 12, fontWeight: 600, boxShadow: "0 4px 12px rgba(0,0,0,0.3)" } as const;
 const LEGEND_STYLE = { fontSize: 11, color: "#94a3b8" } as const;
+
+// Shared by this page's "Download XLSX" button — same shape as
+// PartsOrderDashboard.tsx's own copy (kept local rather than a shared
+// import; both files' export buttons are one-off enough not to be worth a
+// shared module for a five-line function).
+function downloadSheetXlsx(filename: string, sheetName: string, rows: (string | number)[][]) {
+  const worksheet = XLSX.utils.aoa_to_sheet(rows);
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
+  XLSX.writeFile(workbook, filename);
+}
 
 const TABS = [
   { id: "overview" as const, label: "Overview", icon: LayoutDashboard },
@@ -267,6 +279,14 @@ export function ReportPartsDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
     [rows, dateFrom, dateTo, branchFilter],
   );
   const receivesRows = useMemo(() => inWindow.filter((r) => !!r.inTracking.trim()), [inWindow]);
+  // Pickups scoped by pickedUpDate (when the technician actually picked it
+  // up), same fallback-to-createdAt convention as RA above — not
+  // getBranchProgress()'s pickup source, which is a single-day, example-
+  // data-backed queue view, not a real date-range-scoped history.
+  const pickupRows = useMemo(
+    () => rows.filter((r) => r.pickedUp && inRange(r.pickedUpDate || r.createdAt, dateFrom, dateTo) && (!branchFilter || r.location === branchFilter)),
+    [rows, dateFrom, dateTo, branchFilter],
+  );
 
   const warningCountByProfile = useMemo(() => {
     const map = new Map<string, number>();
@@ -281,6 +301,7 @@ export function ReportPartsDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
 
   const kpi = {
     collections: collectionsRows.length,
+    pickups: pickupRows.length,
     ra: raRows.length,
     receives: receivesRows.length,
     warnings: staff.reduce((s, p) => s + (warningCountByProfile.get(p.id) ?? 0), 0),
@@ -288,17 +309,18 @@ export function ReportPartsDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
   };
 
   const branchChartData = useMemo(() => {
-    const map = new Map<string, { collections: number; ra: number; receives: number }>();
-    const bump = (loc: string, key: "collections" | "ra" | "receives") => {
+    const map = new Map<string, { collections: number; pickups: number; ra: number; receives: number }>();
+    const bump = (loc: string, key: "collections" | "pickups" | "ra" | "receives") => {
       const b = loc || "Unspecified";
-      if (!map.has(b)) map.set(b, { collections: 0, ra: 0, receives: 0 });
+      if (!map.has(b)) map.set(b, { collections: 0, pickups: 0, ra: 0, receives: 0 });
       map.get(b)![key]++;
     };
     for (const r of collectionsRows) bump(r.location, "collections");
+    for (const r of pickupRows) bump(r.location, "pickups");
     for (const r of raRows) bump(r.location, "ra");
     for (const r of receivesRows) bump(r.location, "receives");
     return Array.from(map.entries()).map(([name, v]) => ({ name, ...v })).sort((a, b) => b.collections - a.collections).slice(0, 12);
-  }, [collectionsRows, raRows, receivesRows]);
+  }, [collectionsRows, pickupRows, raRows, receivesRows]);
 
   // Real day-by-day Collections count for the 10 days ending at Date To —
   // not the real "today" — so this stays consistent with the KPI tiles when
@@ -359,9 +381,10 @@ export function ReportPartsDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
           <div className="panel p-8 mb-6 flex items-center justify-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading Part Daily Report…</div>
         ) : (
         <>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
           {[
             ["Collections", kpi.collections, "text-green-300"],
+            ["Pickups", kpi.pickups, "text-purple-300"],
             ["RA Created", kpi.ra, "text-yellow-300"],
             ["Receives", kpi.receives, "text-blue-300"],
             ["Warnings", kpi.warnings, "text-red-300"],
@@ -372,10 +395,27 @@ export function ReportPartsDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
           <div className="panel p-4">
-            <p className="text-sm font-semibold mb-4">Collections / RA / Receives by Branch</p>
+            <div className="flex items-center justify-between mb-4">
+              <p className="text-sm font-semibold">Collections / Pickups / RA / Receives by Branch</p>
+              <button
+                onClick={() => downloadSheetXlsx(
+                  `parts-daily-branch-breakdown_${dateFrom}_to_${dateTo}.xlsx`,
+                  "Branch Breakdown",
+                  [
+                    ["Branch", "Collections", "Pickups", "RA Created", "Receives"],
+                    ...branchChartData.map((b) => [b.name, b.collections, b.pickups, b.ra, b.receives]),
+                  ],
+                )}
+                disabled={branchChartData.length === 0}
+                className="btn text-xs px-2.5 py-1 flex items-center gap-1.5 disabled:opacity-50"
+              >
+                <Download className="h-3 w-3" /> Download XLSX
+              </button>
+            </div>
             {branchChartData.length === 0 ? (
               <p className="text-xs text-muted-foreground py-16 text-center">No part activity in this date range.</p>
             ) : (
+              <>
               <ResponsiveContainer width="100%" height={220} debounce={200}>
                 <BarChart data={branchChartData} margin={{ left: -10 }}>
                   <XAxis dataKey="name" tick={{ fill: "#94a3b8", fontSize: 9 }} angle={-25} textAnchor="end" height={50} />
@@ -383,10 +423,37 @@ export function ReportPartsDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
                   <Tooltip contentStyle={TOOLTIP_STYLE} />
                   <Legend wrapperStyle={LEGEND_STYLE} />
                   <Bar dataKey="collections" fill="#34d399" radius={[4, 4, 0, 0]} name="Collections" />
+                  <Bar dataKey="pickups" fill="#a78bfa" radius={[4, 4, 0, 0]} name="Pickups" />
                   <Bar dataKey="receives" fill="#3b82f6" radius={[4, 4, 0, 0]} name="Receives" />
                   <Bar dataKey="ra" fill="#fb923c" radius={[4, 4, 0, 0]} name="RA Created" />
                 </BarChart>
               </ResponsiveContainer>
+              {/* Raw data under the graph, per the same numbers the chart plots. */}
+              <div className="mt-4 overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b border-white/10 text-muted-foreground">
+                      <th className="text-left font-semibold px-2 py-1.5">Branch</th>
+                      <th className="text-right font-semibold px-2 py-1.5">Collections</th>
+                      <th className="text-right font-semibold px-2 py-1.5">Pickups</th>
+                      <th className="text-right font-semibold px-2 py-1.5">RA Created</th>
+                      <th className="text-right font-semibold px-2 py-1.5">Receives</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {branchChartData.map((b) => (
+                      <tr key={b.name} className="border-b border-white/5">
+                        <td className="px-2 py-1.5 font-medium">{b.name}</td>
+                        <td className="px-2 py-1.5 text-right">{b.collections}</td>
+                        <td className="px-2 py-1.5 text-right">{b.pickups}</td>
+                        <td className="px-2 py-1.5 text-right">{b.ra}</td>
+                        <td className="px-2 py-1.5 text-right">{b.receives}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              </>
             )}
           </div>
           <div className="panel p-4">

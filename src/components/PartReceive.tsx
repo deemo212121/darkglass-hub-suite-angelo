@@ -110,10 +110,29 @@ function agingClass(days: number | null): string {
   return "text-red-400";
 }
 
+// A row-level receive-completeness status — distinct from the part's
+// ticket-facing `status` (always "PO Made" here, since that's this page's
+// own query filter, so it wouldn't differentiate any row). Partial (some
+// but not all of quantity received) isn't otherwise surfaced anywhere —
+// the existing Receive Status checkboxes only split Not Received/Received
+// on qtyReceived > 0, so a partial row currently just reads as "Received."
+type PartReceiveStatus = "Not Received" | "Partial" | "Received";
+function receiveStatusOf(item: Pick<PartReceiveRow, "quantity" | "qtyReceived">): PartReceiveStatus {
+  if (item.qtyReceived <= 0) return "Not Received";
+  if (item.qtyReceived < item.quantity) return "Partial";
+  return "Received";
+}
+function receiveStatusClass(status: PartReceiveStatus): string {
+  if (status === "Received") return "bg-green-500/15 border-green-400/40 text-green-300";
+  if (status === "Partial") return "bg-amber-500/15 border-amber-400/40 text-amber-300";
+  return "bg-slate-500/15 border-slate-400/40 text-slate-300";
+}
+
 // Column visibility (persisted per browser) — same "Columns (n/m)" /
 // "Show columns" panel pattern as TicketList.tsx's own column toggle.
 const PART_RECEIVE_COLUMNS = [
   { key: "receive", label: "Receive" },
+  { key: "partStatus", label: "Part Status" },
   { key: "uniqueId", label: "Unique ID*" },
   { key: "poNumber", label: "PO Number" },
   { key: "partsNote", label: "Parts Note" },
@@ -141,7 +160,7 @@ type PartReceiveColumnKey = (typeof PART_RECEIVE_COLUMNS)[number]["key"];
 // "Ticket" group over 4 sub-columns, flanked by ungrouped columns) — used
 // to keep colSpans correct as columns are hidden/shown.
 const PART_RECEIVE_LEADING_COLS: readonly PartReceiveColumnKey[] = [
-  "receive", "uniqueId", "poNumber", "partsNote", "partFrom", "poDate", "orderNo", "invoiceNo", "partNumber", "partDesc", "eta", "aging", "receiveDate", "tracking",
+  "receive", "partStatus", "uniqueId", "poNumber", "partsNote", "partFrom", "poDate", "orderNo", "invoiceNo", "partNumber", "partDesc", "eta", "aging", "receiveDate", "tracking",
 ];
 const PART_RECEIVE_TICKET_GROUP_COLS: readonly PartReceiveColumnKey[] = ["ticketNo", "ticketStatus", "tech", "schedule"];
 const PART_RECEIVE_TRAILING_COLS: readonly PartReceiveColumnKey[] = ["qtyOrdered", "qtyReceived", "partCost", "coreCost"];
@@ -227,6 +246,7 @@ export function PartReceive({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef })
   const [partFrom, setPartFrom] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
+  const [ticketFilter, setTicketFilter] = useState("");
   const [showNotReceived, setShowNotReceived] = useState(true);
   const [showReceived, setShowReceived] = useState(true);
   const [receiveItems, setReceiveItems] = useState<PartReceiveRow[]>([]);
@@ -470,6 +490,7 @@ export function PartReceive({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef })
   const filteredItems = receiveItems.filter((item) => {
     if (location && item.location !== location) return false;
     if (partFrom && item.partFrom !== partFrom) return false;
+    if (ticketFilter && !item.ticketNo.toLowerCase().includes(ticketFilter.trim().toLowerCase())) return false;
     if (dateFrom || dateTo) {
       if (!item.poDate) return false;
       const rowDate = new Date(item.poDate);
@@ -610,7 +631,19 @@ export function PartReceive({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef })
           {/* Filter Section */}
           <div>
             <h3 className="form-section-title">Filters</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
+              <div className="form-group">
+                <label htmlFor="part-receive-ticket">Ticket #</label>
+                <input
+                  id="part-receive-ticket"
+                  type="text"
+                  value={ticketFilter}
+                  onChange={(e) => setTicketFilter(e.target.value)}
+                  placeholder="Search ticket…"
+                  className="glass-input"
+                />
+              </div>
+
               <div className="form-group">
                 <label htmlFor="part-receive-location">Location</label>
                 <select id="part-receive-location" value={location} onChange={(e) => setLocation(e.target.value)} className="glass-input">
@@ -731,6 +764,7 @@ export function PartReceive({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef })
               <thead>
                 <tr className="bg-blue-900/50 border-b border-blue-500/30">
                   {isColVisible("receive") && <th className="px-4 py-3 text-left font-semibold text-blue-300">Receive</th>}
+                  {isColVisible("partStatus") && <th className="px-4 py-3 text-left font-semibold text-blue-300">Part Status</th>}
                   {isColVisible("uniqueId") && <th className="px-4 py-3 text-left font-semibold text-blue-300">Unique ID*</th>}
                   {isColVisible("poNumber") && <th className="px-4 py-3 text-left font-semibold text-blue-300">PO Number</th>}
                   {isColVisible("partsNote") && <th className="px-4 py-3 text-left font-semibold text-blue-300">Parts Note</th>}
@@ -764,6 +798,7 @@ export function PartReceive({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef })
                   <tr><td colSpan={Math.max(1, totalVisibleColSpan)} className="px-4 py-8 text-center text-slate-400">No parts match these filters.</td></tr>
                 ) : filteredItems.map((item) => {
                   const aging = agingDays(item);
+                  const receiveStatus = receiveStatusOf(item);
                   return (
                   <tr key={item.id} className="border-b border-white/5 hover:bg-white/5 transition-colors">
                     {isColVisible("receive") && (
@@ -776,6 +811,13 @@ export function PartReceive({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef })
                           title="Check to mark this part fully received"
                           className="cursor-pointer"
                         />
+                      </td>
+                    )}
+                    {isColVisible("partStatus") && (
+                      <td className="px-4 py-3">
+                        <span className={`inline-block rounded border px-2 py-0.5 text-[10px] font-semibold ${receiveStatusClass(receiveStatus)}`}>
+                          {receiveStatus}
+                        </span>
                       </td>
                     )}
                     {isColVisible("uniqueId") && (

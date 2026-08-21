@@ -1,16 +1,15 @@
 import { useState, useMemo, useEffect, useRef } from "react";
 import { Link } from "@tanstack/react-router";
-import { ChevronLeft, Download, ChevronDown } from "lucide-react";
-import { LOCATIONS } from "@/lib/locations";
+import { ChevronLeft, Download, ChevronDown, Filter } from "lucide-react";
 import {
   getPartOrderRows,
-  getDistinctPartOrderDistributors,
   type PartOrderRow,
 } from "@/lib/supabase/partOrder";
 import { marconeLookupPart } from "@/lib/marconeApi";
 import { useAuth } from "@/lib/auth";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { exportToCSV } from "@/lib/csvExport";
+import { TicketColumnFilter } from "@/components/TicketColumnFilter";
 
 // Canonical set — matches the ticket-creation form's own WARRANTY_TYPES
 // (NewTicketPage.tsx) and the original part_order.html design mockup, so
@@ -23,24 +22,11 @@ const WARRANTY_TYPES = [
   "Ext Wty", "Ext Labor Wty", "Ext Part Wty",
 ];
 
-// The subset of repair_statuses.description values relevant to "still
-// needs a PO" tickets — the ones an HR/Parts reviewer would actually want
-// to slice by here, not the full company-configurable list (Repair
-// Statuses admin page) which also includes purely-informational states
-// like "Archived"/"CL-Completed" that never apply to an open part order.
-const REPAIR_STATUS_OPTIONS = [
-  "CL-Need Cancel", "CL-Parts Back Ordered", "CL-Ready to Complete",
-  "CSR-Acknowledged", "CSR-Assigned to ASC", "CSR-Left Message for Cx", "CSR-Needs Scheduling",
-  "OP-Ready for Service", "OP-Reschedule Follow up", "OP-UPDATE HOLD", "OP-Waiting for Part",
-  "PT-Need PreAuthorization", "TR-Need PO", "TR-Need Triage",
-];
-
 /**
- * Checkable dropdown with a "Select All" row — no shared component like
- * this exists yet elsewhere in the app (the closest precedents,
- * LtpProjectionReport.tsx's MultiSelect and TicketColumnFilter.tsx, are
- * both single-file-local, not exported), so this stays local to
- * PartOrder.tsx too, reused here for Location/Warranty Type/Repair Status.
+ * Checkable dropdown with a "Select All" row — kept local to PartOrder.tsx,
+ * used here for Warranty Type (the one filter with no corresponding table
+ * column, so it can't become a TicketColumnFilter funnel like the rest —
+ * see COLUMN_FILTER_KEYS/renderColFilter below for those).
  * `selected` is always the literal, explicit set of checked values —
  * defaults to every option (see the useState(WARRANTY_TYPES) etc. call
  * sites below), so "show everything" on first load really does render
@@ -103,18 +89,37 @@ function MultiSelectDropdown({
 
 const todayStr = () => new Date().toISOString().slice(0, 10);
 
+// Per-column funnel filters (Excel-style autofilter), same TicketColumnFilter
+// component and pattern TicketList.tsx already uses — one Set<string> of
+// selected values per column, empty = show all for that column.
+const COLUMN_FILTER_KEYS = ["ticketNo", "location", "status", "partDist", "partNo", "description", "eta"] as const;
+type ColumnFilterKey = (typeof COLUMN_FILTER_KEYS)[number];
+const columnValueGetters: Record<ColumnFilterKey, (o: PartOrderRow) => string> = {
+  ticketNo: (o) => o.ticketNo,
+  location: (o) => o.location,
+  status: (o) => o.status,
+  partDist: (o) => o.partDist,
+  partNo: (o) => o.partNo,
+  description: (o) => o.description,
+  eta: (o) => o.eta,
+};
+
 export function PartOrder({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
   const { ready: authReady } = useAuth();
-  const [locations, setLocations] = useState<string[]>(LOCATIONS as unknown as string[]);
-  const [partDist, setPartDist] = useState("");
   // "all" (default) applies no date filtering at all — same behavior the
   // old plain date input had when left blank. "specific" filters to
   // scheduleDateValue exactly (the old input's only other behavior).
   const [scheduleDateMode, setScheduleDateMode] = useState<"all" | "specific" | "past" | "none">("all");
   const [scheduleDateValue, setScheduleDateValue] = useState("");
   const [warrantyTypes, setWarrantyTypes] = useState<string[]>(WARRANTY_TYPES);
-  const [repairStatuses, setRepairStatuses] = useState<string[]>(REPAIR_STATUS_OPTIONS);
-  const [distributors, setDistributors] = useState<string[]>([]);
+  const [columnFilters, setColumnFilters] = useState<Record<ColumnFilterKey, Set<string>>>(
+    () => Object.fromEntries(COLUMN_FILTER_KEYS.map((k) => [k, new Set<string>()])) as Record<ColumnFilterKey, Set<string>>,
+  );
+  const updateColumnFilter = (key: ColumnFilterKey, next: Set<string>) =>
+    setColumnFilters((prev) => ({ ...prev, [key]: next }));
+  const hasActiveColumnFilters = COLUMN_FILTER_KEYS.some((k) => columnFilters[k]?.size > 0);
+  const clearAllColumnFilters = () =>
+    setColumnFilters(Object.fromEntries(COLUMN_FILTER_KEYS.map((k) => [k, new Set<string>()])) as Record<ColumnFilterKey, Set<string>>);
   const [orders, setOrders] = useState<PartOrderRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -133,9 +138,15 @@ export function PartOrder({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
       .then((rows) => { if (!cancelled) setOrders(rows); })
       .catch((err) => { if (!cancelled) setLoadError(err instanceof Error ? err.message : String(err)); })
       .finally(() => { if (!cancelled) setLoading(false); });
-    getDistinctPartOrderDistributors().then((d) => { if (!cancelled) setDistributors(d); });
     return () => { cancelled = true; };
   }, [authReady]);
+
+  const matchesScheduleDate = (order: PartOrderRow, today: string) => {
+    if (scheduleDateMode === "specific") return !scheduleDateValue || order.scheduleDate === scheduleDateValue;
+    if (scheduleDateMode === "past") return !!order.scheduleDate && order.scheduleDate < today;
+    if (scheduleDateMode === "none") return !order.scheduleDate;
+    return true;
+  };
 
   // Filter orders based on selected criteria
   const filteredOrders = useMemo(() => {
@@ -145,20 +156,52 @@ export function PartOrder({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
       // that field yet (shown as "—" in the table) should never be hidden
       // just because its empty string isn't itself one of the checkable
       // options; only a real, non-matching value gets filtered out.
-      if (order.location && !locations.includes(order.location)) return false;
-      if (partDist && order.partDist !== partDist) return false;
       if (order.warranty && !warrantyTypes.includes(order.warranty)) return false;
-      if (order.repairStatus && !repairStatuses.includes(order.repairStatus)) return false;
-      if (scheduleDateMode === "specific") {
-        if (scheduleDateValue && order.scheduleDate !== scheduleDateValue) return false;
-      } else if (scheduleDateMode === "past") {
-        if (!order.scheduleDate || order.scheduleDate >= today) return false;
-      } else if (scheduleDateMode === "none") {
-        if (order.scheduleDate) return false;
-      }
-      return true;
+      if (!matchesScheduleDate(order, today)) return false;
+      return COLUMN_FILTER_KEYS.every((key) => {
+        const selected = columnFilters[key];
+        if (!selected || selected.size === 0) return true;
+        return selected.has(columnValueGetters[key](order));
+      });
     });
-  }, [orders, locations, partDist, warrantyTypes, repairStatuses, scheduleDateMode, scheduleDateValue]);
+  }, [orders, warrantyTypes, columnFilters, scheduleDateMode, scheduleDateValue]);
+
+  // Build option lists per column from orders that pass every OTHER filter —
+  // so opening one column's funnel still shows every value present among
+  // rows that already match everything else (Excel autofilter UX), same
+  // buildOptionsExcluding pattern TicketList.tsx uses.
+  const buildOptionsExcluding = (excludeKey: ColumnFilterKey): string[] => {
+    const today = todayStr();
+    const values = new Set<string>();
+    for (const order of orders) {
+      if (order.warranty && !warrantyTypes.includes(order.warranty)) continue;
+      if (!matchesScheduleDate(order, today)) continue;
+      const matchesOtherCols = COLUMN_FILTER_KEYS.every((key) => {
+        if (key === excludeKey) return true;
+        const selected = columnFilters[key];
+        if (!selected || selected.size === 0) return true;
+        return selected.has(columnValueGetters[key](order));
+      });
+      if (matchesOtherCols) values.add(columnValueGetters[excludeKey](order));
+    }
+    return Array.from(values);
+  };
+
+  const columnOptions = useMemo(() => {
+    const out = {} as Record<ColumnFilterKey, string[]>;
+    for (const key of COLUMN_FILTER_KEYS) out[key] = buildOptionsExcluding(key);
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orders, warrantyTypes, columnFilters, scheduleDateMode, scheduleDateValue]);
+
+  const renderColFilter = (key: ColumnFilterKey, label: string) => (
+    <TicketColumnFilter
+      options={columnOptions[key] || []}
+      selected={columnFilters[key] || new Set()}
+      onChange={(next) => updateColumnFilter(key, next)}
+      label={`Filter by ${label}`}
+    />
+  );
 
   // Real live stock check (Marcone) per distinct part number currently on
   // screen - fetched once per part number and cached, not re-fetched on
@@ -233,31 +276,21 @@ export function PartOrder({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
 
           {/* Order Criteria Section */}
           <div>
-            <h3 className="form-section-title">Filter Criteria</h3>
+            <div className="flex items-center justify-between">
+              <h3 className="form-section-title mb-0">Filter Criteria</h3>
+              {hasActiveColumnFilters && (
+                <button type="button" onClick={clearAllColumnFilters} className="text-xs text-blue-400 hover:text-blue-300 mb-4">
+                  Clear column filters
+                </button>
+              )}
+            </div>
+            <p className="text-xs text-muted-foreground -mt-2 mb-4">
+              Location, Status, Part Dist., Part No, Description, and ETA are filterable directly from their column header — click the <Filter className="inline h-3 w-3 align-text-bottom" /> icon.
+            </p>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
-              <div className="form-group">
-                <label>Location</label>
-                <MultiSelectDropdown label="Locations" options={LOCATIONS as unknown as string[]} selected={locations} onChange={setLocations} />
-              </div>
-
-              <div className="form-group">
-                <label>Part Dist.</label>
-                <select value={partDist} onChange={(e) => setPartDist(e.target.value)} className="glass-input">
-                  <option value="">All Distributors</option>
-                  {distributors.map(dist => (
-                    <option key={dist} value={dist}>{dist}</option>
-                  ))}
-                </select>
-              </div>
-
               <div className="form-group">
                 <label>Warranty Type</label>
                 <MultiSelectDropdown label="Warranty Types" options={WARRANTY_TYPES} selected={warrantyTypes} onChange={setWarrantyTypes} />
-              </div>
-
-              <div className="form-group">
-                <label>Repair Status</label>
-                <MultiSelectDropdown label="Repair Statuses" options={REPAIR_STATUS_OPTIONS} selected={repairStatuses} onChange={setRepairStatuses} />
               </div>
             </div>
 
@@ -299,7 +332,7 @@ export function PartOrder({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
             <div className="text-sm font-semibold text-blue-300">
               {loading
                 ? "Loading…"
-                : `${filteredOrders.length} part${filteredOrders.length === 1 ? '' : 's'} need${filteredOrders.length === 1 ? 's' : ''} PO${locations.length === 1 ? ` in ${locations[0]}` : ''}`}
+                : `${filteredOrders.length} part${filteredOrders.length === 1 ? '' : 's'} need${filteredOrders.length === 1 ? 's' : ''} PO${columnFilters.location?.size === 1 ? ` in ${Array.from(columnFilters.location)[0]}` : ''}`}
             </div>
             <button
               onClick={handleExport}
@@ -320,13 +353,13 @@ export function PartOrder({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-blue-900/50 border-b border-blue-500/30">
-                  <th className="px-4 py-3 text-left font-semibold text-blue-300">Ticket #</th>
-                  <th className="px-4 py-3 text-left font-semibold text-blue-300">Location</th>
-                  <th className="px-4 py-3 text-left font-semibold text-blue-300">Status</th>
-                  <th className="px-4 py-3 text-left font-semibold text-blue-300">Part Dist.</th>
-                  <th className="px-4 py-3 text-left font-semibold text-blue-300">Part No</th>
-                  <th className="px-4 py-3 text-left font-semibold text-blue-300">Description</th>
-                  <th className="px-4 py-3 text-left font-semibold text-blue-300">ETA</th>
+                  <th className="px-4 py-3 text-left font-semibold text-blue-300">Ticket # {renderColFilter("ticketNo", "Ticket #")}</th>
+                  <th className="px-4 py-3 text-left font-semibold text-blue-300">Location {renderColFilter("location", "Location")}</th>
+                  <th className="px-4 py-3 text-left font-semibold text-blue-300">Status {renderColFilter("status", "Status")}</th>
+                  <th className="px-4 py-3 text-left font-semibold text-blue-300">Part Dist. {renderColFilter("partDist", "Part Dist.")}</th>
+                  <th className="px-4 py-3 text-left font-semibold text-blue-300">Part No {renderColFilter("partNo", "Part No")}</th>
+                  <th className="px-4 py-3 text-left font-semibold text-blue-300">Description {renderColFilter("description", "Description")}</th>
+                  <th className="px-4 py-3 text-left font-semibold text-blue-300">ETA {renderColFilter("eta", "ETA")}</th>
                   <th colSpan={2} className="px-4 py-3 text-center font-semibold text-blue-300">Inventory Qty</th>
                   <th className="px-4 py-3 text-center font-semibold text-blue-300">Action</th>
                 </tr>

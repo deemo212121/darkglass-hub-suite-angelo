@@ -56,6 +56,10 @@ export interface PartInventoryRow {
   raDate: string;
   /** Inbound tracking number — non-empty once the part has been received/tracked in. */
   inTracking: string;
+  /** True once a technician has picked this part up (parts.picked_up) — see Part Daily Pickup. */
+  pickedUp: boolean;
+  /** Date pickedUp was set true; falls back to createdAt when unset. */
+  pickedUpDate: string;
   createdAt: string;
   agingDays: number;
 }
@@ -72,7 +76,7 @@ export async function getPartsInventoryRows(): Promise<PartInventoryRow[]> {
   const [partsRes, ticketsRes] = await Promise.all([
     supabase
       .from("parts")
-      .select("id, ticket_id, part_no, part_dist, part_desc, quantity, part_price, status, po_no, po_date, invoice_no, order_no, eta, ra_no, ra_date, in_tracking, created_at")
+      .select("id, ticket_id, part_no, part_dist, part_desc, quantity, part_price, status, po_no, po_date, invoice_no, order_no, eta, ra_no, ra_date, in_tracking, picked_up, picked_up_date, created_at")
       .order("created_at", { ascending: false }),
     supabase.from("tickets").select("id, ticket_no, location, technician, warranty, claim_company, aging"),
   ]);
@@ -120,6 +124,8 @@ export async function getPartsInventoryRows(): Promise<PartInventoryRow[]> {
       raNo: row.ra_no ?? "",
       raDate: row.ra_date ?? "",
       inTracking: row.in_tracking ?? "",
+      pickedUp: row.picked_up === true,
+      pickedUpDate: row.picked_up_date || row.created_at || "",
       createdAt: row.created_at ?? "",
       agingDays: agingFrom(row.po_date || row.created_at),
     };

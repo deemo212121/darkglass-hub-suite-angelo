@@ -41,7 +41,7 @@ import { getActivityLog as getHrActivityLog, activityActionLabel as hrActivityAc
 import { getModuleActivityLog, moduleActivityActionLabel, type ActivityLogModule } from "./moduleActivityLog";
 import { getMileageEntries } from "./mileage";
 import { normalizeRole, getRoleDepartmentBreakdown } from "@/lib/roleLabels";
-import { classify as classifyTicketAction, BUCKET_LABEL as TICKET_ACTION_LABEL } from "@/components/DailyActivityPage";
+import { classify as classifyTicketAction, BUCKET_LABEL as TICKET_ACTION_LABEL } from "@/lib/ticketActivityBuckets";
 
 export type ActivityDepartment =
   | "claims" | "parts" | "csr" | "triage" | "bizops" | "technician"
