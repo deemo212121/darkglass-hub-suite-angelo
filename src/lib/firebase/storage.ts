@@ -472,6 +472,17 @@ export async function uploadWageAckForm(companyId: string, employeeName: string,
   return getDownloadURL(snapshot.ref);
 }
 
+export async function uploadCarIqAgreementForm(companyId: string, employeeName: string, pdfBlob: Blob): Promise<string> {
+  if (!isFirebaseReady() || !storage) {
+    throw new Error("Firebase Storage not configured");
+  }
+  const folder = `companies/${companyId}/car-iq-agreement-forms`;
+  const objectName = `${Date.now()}-${sanitizeFileName(employeeName || "car-iq-agreement")}.pdf`;
+  const objectRef = ref(storage, `${folder}/${objectName}`);
+  const snapshot = await uploadBytes(objectRef, pdfBlob, { contentType: "application/pdf" });
+  return getDownloadURL(snapshot.ref);
+}
+
 export async function uploadI9Form(companyId: string, employeeName: string, pdfBlob: Blob): Promise<string> {
   if (!isFirebaseReady() || !storage) {
     throw new Error("Firebase Storage not configured");

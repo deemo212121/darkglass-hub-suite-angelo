@@ -33,6 +33,8 @@ export const ACTIVITY_ACTION_LABELS: Record<string, string> = {
   wage_ack_sent: "Sent Acknowledgment of Wage",
   wage_ack_signed: "Signed Acknowledgment of Wage",
   wage_ack_employer_signed: "Completed Acknowledgment of Wage (employer signature)",
+  car_iq_agreement_sent: "Sent Car IQ Technician Agreement",
+  car_iq_agreement_signed: "Signed Car IQ Technician Agreement",
   jotform_submission_deleted: "Deleted Jotform submission",
   jotform_submission_restored: "Restored Jotform submission",
   part_receive_marked_received: "Marked part received",

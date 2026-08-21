@@ -202,7 +202,7 @@ export function OnboardingApplicantDocuments({ companyId, profileId, profileName
   // set) is submitted, same as W-4's "signed" status not yet meaning
   // Employers Only is filled in — HR can re-drag a later version once
   // Section 2 is done, same accepted staleness the W-4 case already has. ──
-  const SIGNABLE_TAX_FORM_TYPES: SignableDocumentType[] = ["w4", "w8ben", "w9", "w4r", "i9", "wage_ack"];
+  const SIGNABLE_TAX_FORM_TYPES: SignableDocumentType[] = ["w4", "w8ben", "w9", "w4r", "i9", "wage_ack", "car_iq_agreement"];
   const SIGNABLE_FORM_LABEL: Partial<Record<SignableDocumentType, string>> = {
     w4: "Form W-4",
     w8ben: "Form W-8BEN",
@@ -210,6 +210,7 @@ export function OnboardingApplicantDocuments({ companyId, profileId, profileName
     w4r: "Form W-4R",
     i9: "Form I-9",
     wage_ack: "Acknowledgment of Wage",
+    car_iq_agreement: "Car IQ Technician Agreement",
   };
   const signableDocApplicantName = (doc: SignableDocument): string => {
     const fd = doc.formData ?? {};
@@ -219,6 +220,7 @@ export function OnboardingApplicantDocuments({ companyId, profileId, profileName
     if (doc.documentType === "w4r") return [fd.firstNameMiddleInitial, fd.lastName].filter(Boolean).join(" ").trim() || "Applicant";
     if (doc.documentType === "i9") return fd.employeeName || "Applicant";
     if (doc.documentType === "wage_ack") return fd.employeeName || "Applicant";
+    if (doc.documentType === "car_iq_agreement") return fd.employeeName || "Applicant";
     return "Applicant";
   };
 
