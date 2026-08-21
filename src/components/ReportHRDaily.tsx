@@ -45,7 +45,7 @@ import {
   type OnboardingDocumentColumn,
   type OnboardingGroupKey,
 } from "@/lib/supabase/onboardingDocumentColumns";
-import { uploadCoeCertificate, uploadWarningForm, uploadPromotionForm, uploadActionPlanForm, uploadTerminationForm, uploadW8benForm, uploadW4Form, uploadW4RForm, uploadI9Form, uploadWageAckForm, uploadCarIqAgreementForm, uploadSignableDocumentSignature } from "@/lib/firebase/storage";
+import { uploadCoeCertificate, uploadWarningForm, uploadPromotionForm, uploadActionPlanForm, uploadTerminationForm, uploadW8benForm, uploadW4Form, uploadW4RForm, uploadI9Form, uploadWageAckForm, uploadCarIqAgreementForm, uploadVehicleAgreementForm, uploadEmployeeConfidentialityForm, uploadMealRestBreakForm, uploadPtoAckForm, uploadSignableDocumentSignature } from "@/lib/firebase/storage";
 import { captureHtmlToPdfBlob, loadAssetDataUrl as loadImageDataUrl } from "@/lib/pdfCapture";
 import {
   createSignableDocument,
@@ -78,6 +78,14 @@ import type { WageAckFormData } from "@/lib/wageAckFormTemplate";
 import { fillWageAckPdf } from "@/lib/wageAckPdfFill";
 import type { CarIqAgreementFormData } from "@/lib/carIqAgreementFormTemplate";
 import { fillCarIqAgreementPdf } from "@/lib/carIqAgreementPdfFill";
+import type { VehicleAgreementFormData } from "@/lib/vehicleAgreementFormTemplate";
+import { fillVehicleAgreementPdf } from "@/lib/vehicleAgreementPdfFill";
+import type { EmployeeConfidentialityFormData } from "@/lib/employeeConfidentialityFormTemplate";
+import { fillEmployeeConfidentialityPdf } from "@/lib/employeeConfidentialityPdfFill";
+import { MEAL_REST_BREAK_BRANCHES, type MealRestBreakFormData } from "@/lib/mealRestBreakFormTemplate";
+import { fillMealRestBreakPdf } from "@/lib/mealRestBreakPdfFill";
+import { PTO_ACK_BRANCHES, type PtoAckFormData } from "@/lib/ptoAckFormTemplate";
+import { fillPtoAckPdf } from "@/lib/ptoAckPdfFill";
 import type { I9FormData } from "@/lib/i9FormTemplate";
 import { fillI9Pdf } from "@/lib/i9PdfFill";
 import { logActivity, getActivityLog, activityActionLabel, type HrActivityLogEntry } from "@/lib/supabase/hrActivityLog";
@@ -658,7 +666,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // Reviews, the Approved log, the department trend chart, and the full
   // Employee Directory all on top of each other, forcing a long scroll to
   // reach anything below Hiring.
-  const [activeTab, setActiveTab] = useState<"hiring" | "warnings" | "masterList" | "leaders" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "promotionForm" | "actionPlanForm" | "terminationForm" | "employeeRequestManager" | "w8ben" | "i9" | "wageAck" | "carIqAgreement">("hiring");
+  const [activeTab, setActiveTab] = useState<"hiring" | "warnings" | "masterList" | "leaders" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "promotionForm" | "actionPlanForm" | "terminationForm" | "employeeRequestManager" | "w8ben" | "i9" | "wageAck" | "carIqAgreement" | "vehicleAgreement" | "employeeConfidentiality" | "mealRestBreak" | "ptoAck">("hiring");
   const [openCategory, setOpenCategory] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   // Which floating-sidebar section headers (Automated Forms/Generate
@@ -682,7 +690,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const navigate = useNavigate();
   const hrSearchParams = (useSearch({ strict: false }) as { tab?: string; submissionId?: string; profileId?: string }) ?? {};
   const initialHrSearchRef = useRef(hrSearchParams);
-  const VALID_HR_TABS = ["hiring", "warnings", "masterList", "leaders", "jotform", "jotformDocuments", "customForms", "onboarding", "hiringReports", "report", "coe", "warningForm", "promotionForm", "actionPlanForm", "terminationForm", "employeeRequestManager", "w8ben", "i9", "wageAck", "carIqAgreement"] as const;
+  const VALID_HR_TABS = ["hiring", "warnings", "masterList", "leaders", "jotform", "jotformDocuments", "customForms", "onboarding", "hiringReports", "report", "coe", "warningForm", "promotionForm", "actionPlanForm", "terminationForm", "employeeRequestManager", "w8ben", "i9", "wageAck", "carIqAgreement", "vehicleAgreement", "employeeConfidentiality", "mealRestBreak", "ptoAck"] as const;
   useEffect(() => {
     const tab = initialHrSearchRef.current.tab;
     if (tab && (VALID_HR_TABS as readonly string[]).includes(tab)) setActiveTab(tab as typeof activeTab);
@@ -1357,7 +1365,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     const unsubs = [
       subscribeTableChanges("hr_candidates", () => void loadCandidates(), `company_id=eq.${companyId}`),
       subscribeTableChanges("employee_conduct_notes", () => void loadNotes(), `company_id=eq.${companyId}`),
-      subscribeTableChanges("hr_signable_documents", () => { void loadSentWarningForms(); void loadSentW8benForms(); void loadSentW4Forms(); void loadSentW9Forms(); void loadSentW4RForms(); void loadSentI9Forms(); void loadSentWageAckForms(); void loadSentCarIqAgreementForms(); }, `company_id=eq.${companyId}`),
+      subscribeTableChanges("hr_signable_documents", () => { void loadSentWarningForms(); void loadSentW8benForms(); void loadSentW4Forms(); void loadSentW9Forms(); void loadSentW4RForms(); void loadSentI9Forms(); void loadSentWageAckForms(); void loadSentCarIqAgreementForms(); void loadSentVehicleAgreementForms(); void loadSentEmployeeConfidentialityForms(); void loadSentMealRestBreakForms(); void loadSentPtoAckForms(); }, `company_id=eq.${companyId}`),
       subscribeTableChanges("pto_requests", () => void loadPtoRequests(), `company_id=eq.${companyId}`),
       subscribeTableChanges("timecard_entries", () => void loadTodayTimecardEntries(), `company_id=eq.${companyId}`),
       subscribeTableChanges("timecard_corrections", () => void loadRequestManagerData(), `company_id=eq.${companyId}`),
@@ -3531,6 +3539,256 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
 
+  // ── Employee Meal and Rest Break Policy Acknowledgment — genuine
+  // two-party flow like Acknowledgment of Wage: the source PDF has no
+  // AcroForm fields at all (see mealRestBreakFormTemplate.ts's header
+  // comment), and the employer side is just a signature, no document
+  // review section to fill in. HR sends a link, the employee fills their
+  // name/branch and signs (FillMealRestBreakPage.tsx), then it lands back
+  // here for HR to add the "Employer Representative" signature. Unlike
+  // Wage Ack, both signature lines live on the same single page. ──
+  const [sentMealRestBreakForms, setSentMealRestBreakForms] = useState<SignableDocument[]>([]);
+  const loadSentMealRestBreakForms = async () => {
+    try {
+      setSentMealRestBreakForms(await getSignableDocuments("meal_rest_break"));
+    } catch (err) {
+      console.error("Failed to load sent Meal and Rest Break forms:", err);
+    }
+  };
+  useEffect(() => {
+    if (activeTab === "mealRestBreak" || activeTab === "jotformDocuments") void loadSentMealRestBreakForms();
+  }, [activeTab]);
+  // Employee done, nobody has claimed the employer signature yet — feeds the sidebar tab's count badge.
+  const sentMealRestBreakAwaitingEmployerCount = useMemo(
+    () => sentMealRestBreakForms.filter(isAwaitingEmployerStep).length,
+    [sentMealRestBreakForms]
+  );
+
+  const [mealRestBreakRecipientId, setMealRestBreakRecipientId] = useState("");
+  const [mealRestBreakRecipientSearch, setMealRestBreakRecipientSearch] = useState("");
+  const [mealRestBreakRecipientDropdownOpen, setMealRestBreakRecipientDropdownOpen] = useState(false);
+  const [mealRestBreakSending, setMealRestBreakSending] = useState(false);
+  const [mealRestBreakSendError, setMealRestBreakSendError] = useState<string | null>(null);
+  const [mealRestBreakActionBusyId, setMealRestBreakActionBusyId] = useState<string | null>(null);
+  const [mealRestBreakActionError, setMealRestBreakActionError] = useState<string | null>(null);
+  const [mealRestBreakDocPreview, setMealRestBreakDocPreview] = useState<SignableDocument | null>(null);
+  const [mealRestBreakSendMode, setMealRestBreakSendMode] = useState<"teammate" | "external">("teammate");
+  const [mealRestBreakExternalName, setMealRestBreakExternalName] = useState("");
+  const [mealRestBreakSentLink, setMealRestBreakSentLink] = useState<{ link: string; recipientName: string } | null>(null);
+  const [mealRestBreakSentLinkCopied, setMealRestBreakSentLinkCopied] = useState(false);
+  const filteredMealRestBreakRecipients = useMemo(
+    () => employees.filter((e) => e.status === "active" && e.name.toLowerCase().includes(mealRestBreakRecipientSearch.toLowerCase())),
+    [employees, mealRestBreakRecipientSearch]
+  );
+
+  const handleSendMealRestBreak = async () => {
+    if (!mealRestBreakRecipientId || !uid) return;
+    setMealRestBreakSending(true);
+    setMealRestBreakSendError(null);
+    try {
+      const recipient = employees.find((e) => e.id === mealRestBreakRecipientId);
+      if (!recipient) throw new Error("Select a recipient first.");
+
+      const doc = await createSignableDocument({
+        documentType: "meal_rest_break",
+        formData: { employeeId: recipient.id, employeeName: recipient.name } as unknown as Record<string, any>,
+        recipientId: mealRestBreakRecipientId,
+        recipientSlot: "employee",
+        pdfUrl: "",
+      });
+
+      const myProfileId = await getMyProfileId(uid);
+      if (!myProfileId) throw new Error("Could not resolve your profile.");
+      const thread = await getOrCreateDmThread(myProfileId, mealRestBreakRecipientId);
+      const fillLink = `${getAppUrl()}/fill-meal-rest-break/${doc.id}`;
+      await sendMessage({
+        dmThreadId: thread.id,
+        senderId: myProfileId,
+        senderName: displayName || "HR",
+        body: `📋 Please complete the Employee Meal and Rest Break Policy Acknowledgment: ${fillLink}`,
+      });
+
+      void logActivity({ action: "meal_rest_break_sent", targetType: "employee", targetId: recipient.id, targetLabel: recipient.name });
+
+      setMealRestBreakRecipientId("");
+      setMealRestBreakRecipientSearch("");
+      await loadSentMealRestBreakForms();
+    } catch (err) {
+      setMealRestBreakSendError(err instanceof Error ? err.message : "Failed to send request.");
+    } finally {
+      setMealRestBreakSending(false);
+    }
+  };
+
+  /** No AHS profile to tie this to, so no DM — the link itself (shown in the same panel, right below "Generate Link") is the only way the recipient finds out, same as the Warning Form's "External Link" mode. */
+  const handleGenerateExternalMealRestBreak = async () => {
+    setMealRestBreakSending(true);
+    setMealRestBreakSendError(null);
+    try {
+      const name = mealRestBreakExternalName.trim() || "External Recipient";
+      const doc = await createSignableDocument({
+        documentType: "meal_rest_break",
+        formData: { employeeId: "", employeeName: name } as unknown as Record<string, any>,
+        recipientName: name,
+        recipientSlot: "employee",
+        pdfUrl: "",
+      });
+
+      void logActivity({ action: "meal_rest_break_sent", targetType: "employee", targetLabel: name, details: { external: true } });
+
+      setMealRestBreakSentLink({ link: `${getAppUrl()}/fill-meal-rest-break-external/${doc.id}`, recipientName: name });
+      setMealRestBreakExternalName("");
+      await loadSentMealRestBreakForms();
+    } catch (err) {
+      setMealRestBreakSendError(err instanceof Error ? err.message : "Failed to generate link.");
+    } finally {
+      setMealRestBreakSending(false);
+    }
+  };
+
+  const handleCopyMealRestBreakSentLink = async () => {
+    if (!mealRestBreakSentLink) return;
+    try {
+      await navigator.clipboard.writeText(mealRestBreakSentLink.link);
+      setMealRestBreakSentLinkCopied(true);
+      setTimeout(() => setMealRestBreakSentLinkCopied(false), 1500);
+    } catch (err) {
+      console.error("Failed to copy link:", err);
+    }
+  };
+
+  const handleCopyMealRestBreakLink = async (doc: SignableDocument) => {
+    try {
+      const path = doc.recipientId ? "fill-meal-rest-break" : "fill-meal-rest-break-external";
+      await navigator.clipboard.writeText(`${getAppUrl()}/${path}/${doc.id}`);
+    } catch (err) {
+      console.error("Failed to copy link:", err);
+    }
+  };
+
+  const handleDownloadMealRestBreakPdf = async (doc: SignableDocument) => {
+    if (!doc.pdfUrl) return;
+    const name = (doc.formData as Partial<MealRestBreakFormData>).employeeName || doc.recipientName || "meal-rest-break";
+    try {
+      const res = await fetch(doc.pdfUrl);
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = `Meal and Rest Break Acknowledgment - ${name}.pdf`;
+      a.click();
+      URL.revokeObjectURL(blobUrl);
+    } catch {
+      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
+    }
+  };
+
+  const handleDeleteMealRestBreak = async (doc: SignableDocument) => {
+    if (!window.confirm("Permanently delete this Meal and Rest Break Acknowledgment request?")) return;
+    setMealRestBreakActionBusyId(doc.id);
+    setMealRestBreakActionError(null);
+    try {
+      await deleteSignableDocument(doc.id);
+      await loadSentMealRestBreakForms();
+    } catch (err) {
+      setMealRestBreakActionError(err instanceof Error ? err.message : "Failed to delete.");
+    } finally {
+      setMealRestBreakActionBusyId(null);
+    }
+  };
+
+  // ── Complete Employer Signature — a plain signature pad (no fields to
+  // review), reassigns the document to the current HR user first so the
+  // RLS update policy allows it (same "claim" pattern Wage Ack's own dialog
+  // uses), then regenerates the whole PDF fresh with both signatures. ──
+  const [mealRestBreakEmployerDialog, setMealRestBreakEmployerDialog] = useState<SignableDocument | null>(null);
+  const [mealRestBreakEmployerSaving, setMealRestBreakEmployerSaving] = useState(false);
+  const [mealRestBreakEmployerError, setMealRestBreakEmployerError] = useState<string | null>(null);
+  const mealRestBreakEmployerSigCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const mealRestBreakEmployerDrawingRef = useRef(false);
+  const mealRestBreakEmployerHasDrawnRef = useRef(false);
+
+  const handleOpenMealRestBreakEmployerDialog = (doc: SignableDocument) => {
+    setMealRestBreakEmployerDialog(doc);
+    setMealRestBreakEmployerError(null);
+    mealRestBreakEmployerHasDrawnRef.current = false;
+  };
+
+  const mealRestBreakEmployerPos = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    const c = mealRestBreakEmployerSigCanvasRef.current!;
+    const r = c.getBoundingClientRect();
+    return { x: ((e.clientX - r.left) / r.width) * c.width, y: ((e.clientY - r.top) / r.height) * c.height };
+  };
+  const mealRestBreakEmployerStartDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    mealRestBreakEmployerDrawingRef.current = true;
+    const ctx = mealRestBreakEmployerSigCanvasRef.current!.getContext("2d")!;
+    const { x, y } = mealRestBreakEmployerPos(e);
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+  const mealRestBreakEmployerMoveDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!mealRestBreakEmployerDrawingRef.current) return;
+    const ctx = mealRestBreakEmployerSigCanvasRef.current!.getContext("2d")!;
+    const { x, y } = mealRestBreakEmployerPos(e);
+    ctx.lineTo(x, y);
+    ctx.strokeStyle = "#0f172a";
+    ctx.lineWidth = 2;
+    ctx.lineCap = "round";
+    ctx.stroke();
+    mealRestBreakEmployerHasDrawnRef.current = true;
+  };
+  const mealRestBreakEmployerEndDraw = () => { mealRestBreakEmployerDrawingRef.current = false; };
+  const mealRestBreakEmployerClearSignature = () => {
+    const c = mealRestBreakEmployerSigCanvasRef.current;
+    if (!c) return;
+    c.getContext("2d")!.clearRect(0, 0, c.width, c.height);
+    mealRestBreakEmployerHasDrawnRef.current = false;
+  };
+
+  const handleSaveMealRestBreakEmployerSignature = async () => {
+    if (!mealRestBreakEmployerDialog || !uid) return;
+    if (!mealRestBreakEmployerHasDrawnRef.current) {
+      setMealRestBreakEmployerError("Please draw your signature.");
+      return;
+    }
+    setMealRestBreakEmployerSaving(true);
+    setMealRestBreakEmployerError(null);
+    try {
+      const myProfileId = await getMyProfileId(uid);
+      if (!myProfileId) throw new Error("Could not resolve your profile.");
+
+      await reassignSignableDocument(mealRestBreakEmployerDialog.id, { recipientId: myProfileId, recipientName: displayName || "HR" }, "hr_staff");
+
+      const existing = mealRestBreakEmployerDialog.formData as MealRestBreakFormData;
+      const employeeSigBytes = existing.employeeSignatureDataUrl
+        ? new Uint8Array(await (await fetch(existing.employeeSignatureDataUrl)).arrayBuffer())
+        : undefined;
+
+      const dataUrl = mealRestBreakEmployerSigCanvasRef.current!.toDataURL("image/png");
+      const employerSigBytes = new Uint8Array(await (await fetch(dataUrl)).arrayBuffer());
+      const signatureUrl = await uploadSignableDocumentSignature(mealRestBreakEmployerDialog.companyId, mealRestBreakEmployerDialog.id, "hr_staff", dataUrl);
+      const signedAt = new Date().toISOString();
+
+      const merged: MealRestBreakFormData = { ...existing, employerSignatureDataUrl: dataUrl, employerDateSigned: signedAt };
+
+      const pdfBytes = await fillMealRestBreakPdf(merged, employeeSigBytes, employerSigBytes);
+      const pdfUrl = await uploadMealRestBreakForm(mealRestBreakEmployerDialog.companyId, existing.employeeName || "meal-rest-break", new Blob([pdfBytes as unknown as BlobPart], { type: "application/pdf" }));
+
+      const entry = { name: displayName || "HR", url: signatureUrl, signedAt };
+      await signDocument(mealRestBreakEmployerDialog.id, "hr_staff", entry, pdfUrl, merged as unknown as Record<string, any>);
+      await confirmSignableDocument(mealRestBreakEmployerDialog.id, null);
+
+      void logActivity({ action: "meal_rest_break_employer_signed", targetType: "employee", targetLabel: existing.employeeName || "" });
+      setMealRestBreakEmployerDialog(null);
+      await loadSentMealRestBreakForms();
+    } catch (err) {
+      setMealRestBreakEmployerError(err instanceof Error ? err.message : "Failed to save signature.");
+    } finally {
+      setMealRestBreakEmployerSaving(false);
+    }
+  };
+
   // ── Car IQ Technician Agreement — same pattern as W-4R above: single
   // recipient, the recipient fills in everything themselves on
   // FillCarIqAgreementPage.tsx. No employer/HR co-signature step. The
@@ -3718,6 +3976,536 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
 
+  // ── Company Vehicle Use Agreement — same pattern as Car IQ Technician
+  // Agreement above: single recipient, the recipient fills in everything
+  // themselves on FillVehicleAgreementPage.tsx. No employer/HR
+  // co-signature step. The source PDF has no AcroForm fields at all (see
+  // vehicleAgreementFormTemplate.ts's header comment) — every value,
+  // including the Branch dropdown's selection, is drawn directly onto the
+  // page. ──
+  const [sentVehicleAgreementForms, setSentVehicleAgreementForms] = useState<SignableDocument[]>([]);
+  const loadSentVehicleAgreementForms = async () => {
+    try {
+      setSentVehicleAgreementForms(await getSignableDocuments("vehicle_agreement"));
+    } catch (err) {
+      console.error("Failed to load sent Company Vehicle Use Agreement forms:", err);
+    }
+  };
+  useEffect(() => {
+    if (activeTab === "vehicleAgreement" || activeTab === "jotformDocuments") void loadSentVehicleAgreementForms();
+  }, [activeTab]);
+
+  const [vehicleRecipientId, setVehicleRecipientId] = useState("");
+  const [vehicleRecipientSearch, setVehicleRecipientSearch] = useState("");
+  const [vehicleRecipientDropdownOpen, setVehicleRecipientDropdownOpen] = useState(false);
+  const [vehicleSending, setVehicleSending] = useState(false);
+  const [vehicleSendError, setVehicleSendError] = useState<string | null>(null);
+  const [vehicleActionBusyId, setVehicleActionBusyId] = useState<string | null>(null);
+  const [vehicleActionError, setVehicleActionError] = useState<string | null>(null);
+  const [vehicleDocPreview, setVehicleDocPreview] = useState<SignableDocument | null>(null);
+  const [vehiclePreviewOpen, setVehiclePreviewOpen] = useState(false);
+  const [vehiclePreviewPdfUrl, setVehiclePreviewPdfUrl] = useState<string | null>(null);
+  const [vehiclePreviewLoading, setVehiclePreviewLoading] = useState(false);
+  const [vehicleSendMode, setVehicleSendMode] = useState<"teammate" | "external">("teammate");
+  const [vehicleExternalName, setVehicleExternalName] = useState("");
+  const [vehicleSentLink, setVehicleSentLink] = useState<{ link: string; recipientName: string } | null>(null);
+  const [vehicleSentLinkCopied, setVehicleSentLinkCopied] = useState(false);
+  const filteredVehicleRecipients = useMemo(
+    () => employees.filter((e) => e.status === "active" && e.name.toLowerCase().includes(vehicleRecipientSearch.toLowerCase())),
+    [employees, vehicleRecipientSearch]
+  );
+
+  const buildVehiclePreviewData = (employeeName: string): VehicleAgreementFormData => ({
+    employeeId: "",
+    employeeName,
+    branch: "",
+    dateSigned: "",
+    signatureDataUrl: "",
+  });
+
+  const closeVehiclePreview = () => {
+    setVehiclePreviewOpen(false);
+    if (vehiclePreviewPdfUrl) URL.revokeObjectURL(vehiclePreviewPdfUrl);
+    setVehiclePreviewPdfUrl(null);
+  };
+
+  const handleOpenVehiclePreview = async () => {
+    setVehicleSendError(null);
+    setVehiclePreviewOpen(true);
+    setVehiclePreviewLoading(true);
+    try {
+      const recipientName = employees.find((e) => e.id === vehicleRecipientId)?.name || "";
+      const pdfBytes = await fillVehicleAgreementPdf(buildVehiclePreviewData(recipientName));
+      const url = URL.createObjectURL(new Blob([pdfBytes as unknown as BlobPart], { type: "application/pdf" }));
+      setVehiclePreviewPdfUrl(url);
+    } catch (err) {
+      setVehicleSendError(err instanceof Error ? err.message : "Failed to build preview.");
+    } finally {
+      setVehiclePreviewLoading(false);
+    }
+  };
+
+  const handleSendVehicleAgreement = async () => {
+    if (!vehicleRecipientId || !uid) return;
+    setVehicleSending(true);
+    setVehicleSendError(null);
+    try {
+      const recipient = employees.find((e) => e.id === vehicleRecipientId);
+      if (!recipient) throw new Error("Select a recipient first.");
+
+      const doc = await createSignableDocument({
+        documentType: "vehicle_agreement",
+        formData: { employeeId: recipient.id, employeeName: recipient.name } as unknown as Record<string, any>,
+        recipientId: vehicleRecipientId,
+        recipientSlot: "employee",
+        pdfUrl: "",
+      });
+
+      const myProfileId = await getMyProfileId(uid);
+      if (!myProfileId) throw new Error("Could not resolve your profile.");
+      const thread = await getOrCreateDmThread(myProfileId, vehicleRecipientId);
+      const fillLink = `${getAppUrl()}/fill-vehicle-agreement/${doc.id}`;
+      await sendMessage({
+        dmThreadId: thread.id,
+        senderId: myProfileId,
+        senderName: displayName || "HR",
+        body: `📋 Please complete the Company Vehicle Use Agreement: ${fillLink}`,
+      });
+
+      void logActivity({ action: "vehicle_agreement_sent", targetType: "employee", targetId: recipient.id, targetLabel: recipient.name });
+
+      closeVehiclePreview();
+      setVehicleRecipientId("");
+      setVehicleRecipientSearch("");
+      await loadSentVehicleAgreementForms();
+    } catch (err) {
+      setVehicleSendError(err instanceof Error ? err.message : "Failed to send request.");
+    } finally {
+      setVehicleSending(false);
+    }
+  };
+
+  /** No AHS profile to tie this to, so no DM — the link itself (shown in the same panel, right below "Generate Link") is the only way the recipient finds out, same as the Warning Form's "External Link" mode. */
+  const handleGenerateExternalVehicleAgreement = async () => {
+    setVehicleSending(true);
+    setVehicleSendError(null);
+    try {
+      const name = vehicleExternalName.trim() || "External Recipient";
+      const doc = await createSignableDocument({
+        documentType: "vehicle_agreement",
+        formData: { employeeId: "", employeeName: name } as unknown as Record<string, any>,
+        recipientName: name,
+        recipientSlot: "employee",
+        pdfUrl: "",
+      });
+
+      void logActivity({ action: "vehicle_agreement_sent", targetType: "employee", targetLabel: name, details: { external: true } });
+
+      setVehicleSentLink({ link: `${getAppUrl()}/fill-vehicle-agreement-external/${doc.id}`, recipientName: name });
+      setVehicleExternalName("");
+      await loadSentVehicleAgreementForms();
+    } catch (err) {
+      setVehicleSendError(err instanceof Error ? err.message : "Failed to generate link.");
+    } finally {
+      setVehicleSending(false);
+    }
+  };
+
+  const handleCopyVehicleSentLink = async () => {
+    if (!vehicleSentLink) return;
+    try {
+      await navigator.clipboard.writeText(vehicleSentLink.link);
+      setVehicleSentLinkCopied(true);
+      setTimeout(() => setVehicleSentLinkCopied(false), 1500);
+    } catch (err) {
+      console.error("Failed to copy link:", err);
+    }
+  };
+
+  const handleCopyVehicleLink = async (doc: SignableDocument) => {
+    try {
+      const path = doc.recipientId ? "fill-vehicle-agreement" : "fill-vehicle-agreement-external";
+      await navigator.clipboard.writeText(`${getAppUrl()}/${path}/${doc.id}`);
+    } catch (err) {
+      console.error("Failed to copy link:", err);
+    }
+  };
+
+  const handleDownloadVehiclePdf = async (doc: SignableDocument) => {
+    if (!doc.pdfUrl) return;
+    const name = (doc.formData as Partial<VehicleAgreementFormData>).employeeName || doc.recipientName || "vehicle-agreement";
+    try {
+      const res = await fetch(doc.pdfUrl);
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = `Company Vehicle Use Agreement - ${name}.pdf`;
+      a.click();
+      URL.revokeObjectURL(blobUrl);
+    } catch {
+      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
+    }
+  };
+
+  const handleDeleteVehicleAgreement = async (doc: SignableDocument) => {
+    if (!window.confirm("Permanently delete this Company Vehicle Use Agreement request?")) return;
+    setVehicleActionBusyId(doc.id);
+    setVehicleActionError(null);
+    try {
+      await deleteSignableDocument(doc.id);
+      await loadSentVehicleAgreementForms();
+    } catch (err) {
+      setVehicleActionError(err instanceof Error ? err.message : "Failed to delete.");
+    } finally {
+      setVehicleActionBusyId(null);
+    }
+  };
+
+  // ── Employee Confidentiality and Non-Disclosure Agreement — same pattern
+  // as Company Vehicle Use Agreement above: single recipient, the recipient
+  // fills in everything themselves on FillEmployeeConfidentialityPage.tsx.
+  // No employer/HR co-signature step. The source PDF has no AcroForm fields
+  // at all (see employeeConfidentialityFormTemplate.ts's header comment) —
+  // every value, including the Branch dropdown's selection, is drawn
+  // directly onto the page. ──
+  const [sentEmployeeConfidentialityForms, setSentEmployeeConfidentialityForms] = useState<SignableDocument[]>([]);
+  const loadSentEmployeeConfidentialityForms = async () => {
+    try {
+      setSentEmployeeConfidentialityForms(await getSignableDocuments("employee_confidentiality"));
+    } catch (err) {
+      console.error("Failed to load sent Employee Confidentiality Agreement forms:", err);
+    }
+  };
+  useEffect(() => {
+    if (activeTab === "employeeConfidentiality" || activeTab === "jotformDocuments") void loadSentEmployeeConfidentialityForms();
+  }, [activeTab]);
+
+  const [confidentialityRecipientId, setConfidentialityRecipientId] = useState("");
+  const [confidentialityRecipientSearch, setConfidentialityRecipientSearch] = useState("");
+  const [confidentialityRecipientDropdownOpen, setConfidentialityRecipientDropdownOpen] = useState(false);
+  const [confidentialitySending, setConfidentialitySending] = useState(false);
+  const [confidentialitySendError, setConfidentialitySendError] = useState<string | null>(null);
+  const [confidentialityActionBusyId, setConfidentialityActionBusyId] = useState<string | null>(null);
+  const [confidentialityActionError, setConfidentialityActionError] = useState<string | null>(null);
+  const [confidentialityDocPreview, setConfidentialityDocPreview] = useState<SignableDocument | null>(null);
+  const [confidentialityPreviewOpen, setConfidentialityPreviewOpen] = useState(false);
+  const [confidentialityPreviewPdfUrl, setConfidentialityPreviewPdfUrl] = useState<string | null>(null);
+  const [confidentialityPreviewLoading, setConfidentialityPreviewLoading] = useState(false);
+  const [confidentialitySendMode, setConfidentialitySendMode] = useState<"teammate" | "external">("teammate");
+  const [confidentialityExternalName, setConfidentialityExternalName] = useState("");
+  const [confidentialitySentLink, setConfidentialitySentLink] = useState<{ link: string; recipientName: string } | null>(null);
+  const [confidentialitySentLinkCopied, setConfidentialitySentLinkCopied] = useState(false);
+  const filteredConfidentialityRecipients = useMemo(
+    () => employees.filter((e) => e.status === "active" && e.name.toLowerCase().includes(confidentialityRecipientSearch.toLowerCase())),
+    [employees, confidentialityRecipientSearch]
+  );
+
+  const buildConfidentialityPreviewData = (employeeName: string): EmployeeConfidentialityFormData => ({
+    employeeId: "",
+    employeeName,
+    address: "",
+    city: "",
+    state: "",
+    zip: "",
+    branch: "",
+    dateSigned: "",
+    signatureDataUrl: "",
+  });
+
+  const closeConfidentialityPreview = () => {
+    setConfidentialityPreviewOpen(false);
+    if (confidentialityPreviewPdfUrl) URL.revokeObjectURL(confidentialityPreviewPdfUrl);
+    setConfidentialityPreviewPdfUrl(null);
+  };
+
+  const handleOpenConfidentialityPreview = async () => {
+    setConfidentialitySendError(null);
+    setConfidentialityPreviewOpen(true);
+    setConfidentialityPreviewLoading(true);
+    try {
+      const recipientName = employees.find((e) => e.id === confidentialityRecipientId)?.name || "";
+      const pdfBytes = await fillEmployeeConfidentialityPdf(buildConfidentialityPreviewData(recipientName));
+      const url = URL.createObjectURL(new Blob([pdfBytes as unknown as BlobPart], { type: "application/pdf" }));
+      setConfidentialityPreviewPdfUrl(url);
+    } catch (err) {
+      setConfidentialitySendError(err instanceof Error ? err.message : "Failed to build preview.");
+    } finally {
+      setConfidentialityPreviewLoading(false);
+    }
+  };
+
+  const handleSendConfidentiality = async () => {
+    if (!confidentialityRecipientId || !uid) return;
+    setConfidentialitySending(true);
+    setConfidentialitySendError(null);
+    try {
+      const recipient = employees.find((e) => e.id === confidentialityRecipientId);
+      if (!recipient) throw new Error("Select a recipient first.");
+
+      const doc = await createSignableDocument({
+        documentType: "employee_confidentiality",
+        formData: { employeeId: recipient.id, employeeName: recipient.name } as unknown as Record<string, any>,
+        recipientId: confidentialityRecipientId,
+        recipientSlot: "employee",
+        pdfUrl: "",
+      });
+
+      const myProfileId = await getMyProfileId(uid);
+      if (!myProfileId) throw new Error("Could not resolve your profile.");
+      const thread = await getOrCreateDmThread(myProfileId, confidentialityRecipientId);
+      const fillLink = `${getAppUrl()}/fill-employee-confidentiality/${doc.id}`;
+      await sendMessage({
+        dmThreadId: thread.id,
+        senderId: myProfileId,
+        senderName: displayName || "HR",
+        body: `📋 Please complete the Employee Confidentiality and Non-Disclosure Agreement: ${fillLink}`,
+      });
+
+      void logActivity({ action: "employee_confidentiality_sent", targetType: "employee", targetId: recipient.id, targetLabel: recipient.name });
+
+      closeConfidentialityPreview();
+      setConfidentialityRecipientId("");
+      setConfidentialityRecipientSearch("");
+      await loadSentEmployeeConfidentialityForms();
+    } catch (err) {
+      setConfidentialitySendError(err instanceof Error ? err.message : "Failed to send request.");
+    } finally {
+      setConfidentialitySending(false);
+    }
+  };
+
+  /** No AHS profile to tie this to, so no DM — the link itself (shown in the same panel, right below "Generate Link") is the only way the recipient finds out, same as the Warning Form's "External Link" mode. */
+  const handleGenerateExternalConfidentiality = async () => {
+    setConfidentialitySending(true);
+    setConfidentialitySendError(null);
+    try {
+      const name = confidentialityExternalName.trim() || "External Recipient";
+      const doc = await createSignableDocument({
+        documentType: "employee_confidentiality",
+        formData: { employeeId: "", employeeName: name } as unknown as Record<string, any>,
+        recipientName: name,
+        recipientSlot: "employee",
+        pdfUrl: "",
+      });
+
+      void logActivity({ action: "employee_confidentiality_sent", targetType: "employee", targetLabel: name, details: { external: true } });
+
+      setConfidentialitySentLink({ link: `${getAppUrl()}/fill-employee-confidentiality-external/${doc.id}`, recipientName: name });
+      setConfidentialityExternalName("");
+      await loadSentEmployeeConfidentialityForms();
+    } catch (err) {
+      setConfidentialitySendError(err instanceof Error ? err.message : "Failed to generate link.");
+    } finally {
+      setConfidentialitySending(false);
+    }
+  };
+
+  const handleCopyConfidentialitySentLink = async () => {
+    if (!confidentialitySentLink) return;
+    try {
+      await navigator.clipboard.writeText(confidentialitySentLink.link);
+      setConfidentialitySentLinkCopied(true);
+      setTimeout(() => setConfidentialitySentLinkCopied(false), 1500);
+    } catch (err) {
+      console.error("Failed to copy link:", err);
+    }
+  };
+
+  const handleCopyConfidentialityLink = async (doc: SignableDocument) => {
+    try {
+      const path = doc.recipientId ? "fill-employee-confidentiality" : "fill-employee-confidentiality-external";
+      await navigator.clipboard.writeText(`${getAppUrl()}/${path}/${doc.id}`);
+    } catch (err) {
+      console.error("Failed to copy link:", err);
+    }
+  };
+
+  const handleDownloadConfidentialityPdf = async (doc: SignableDocument) => {
+    if (!doc.pdfUrl) return;
+    const name = (doc.formData as Partial<EmployeeConfidentialityFormData>).employeeName || doc.recipientName || "employee-confidentiality";
+    try {
+      const res = await fetch(doc.pdfUrl);
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = `Employee Confidentiality Agreement - ${name}.pdf`;
+      a.click();
+      URL.revokeObjectURL(blobUrl);
+    } catch {
+      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
+    }
+  };
+
+  const handleDeleteConfidentiality = async (doc: SignableDocument) => {
+    if (!window.confirm("Permanently delete this Employee Confidentiality and Non-Disclosure Agreement request?")) return;
+    setConfidentialityActionBusyId(doc.id);
+    setConfidentialityActionError(null);
+    try {
+      await deleteSignableDocument(doc.id);
+      await loadSentEmployeeConfidentialityForms();
+    } catch (err) {
+      setConfidentialityActionError(err instanceof Error ? err.message : "Failed to delete.");
+    } finally {
+      setConfidentialityActionBusyId(null);
+    }
+  };
+
+  // ── Employee Paid Time Off (PTO) and Sick Leave Policy Acknowledgment —
+  // same pattern as Employee Confidentiality above: single recipient, the
+  // recipient fills in everything themselves on FillPtoAckPage.tsx. No
+  // employer co-signature step (the source PDF prints "Employer: US IN
+  // HOME SERVICES" as static text, not a second signature line). The
+  // source PDF has no AcroForm fields at all (see ptoAckFormTemplate.ts's
+  // header comment) — every value, including the Branch dropdown's
+  // selection, is drawn directly onto the page. Like Meal and Rest Break,
+  // the name is collected as three separate First/Middle/Last blanks. ──
+  const [sentPtoAckForms, setSentPtoAckForms] = useState<SignableDocument[]>([]);
+  const loadSentPtoAckForms = async () => {
+    try {
+      setSentPtoAckForms(await getSignableDocuments("pto_ack"));
+    } catch (err) {
+      console.error("Failed to load sent PTO & Sick Leave Policy Acknowledgment forms:", err);
+    }
+  };
+  useEffect(() => {
+    if (activeTab === "ptoAck" || activeTab === "jotformDocuments") void loadSentPtoAckForms();
+  }, [activeTab]);
+
+  const [ptoAckRecipientId, setPtoAckRecipientId] = useState("");
+  const [ptoAckRecipientSearch, setPtoAckRecipientSearch] = useState("");
+  const [ptoAckRecipientDropdownOpen, setPtoAckRecipientDropdownOpen] = useState(false);
+  const [ptoAckSending, setPtoAckSending] = useState(false);
+  const [ptoAckSendError, setPtoAckSendError] = useState<string | null>(null);
+  const [ptoAckActionBusyId, setPtoAckActionBusyId] = useState<string | null>(null);
+  const [ptoAckActionError, setPtoAckActionError] = useState<string | null>(null);
+  const [ptoAckDocPreview, setPtoAckDocPreview] = useState<SignableDocument | null>(null);
+  const [ptoAckSendMode, setPtoAckSendMode] = useState<"teammate" | "external">("teammate");
+  const [ptoAckExternalName, setPtoAckExternalName] = useState("");
+  const [ptoAckSentLink, setPtoAckSentLink] = useState<{ link: string; recipientName: string } | null>(null);
+  const [ptoAckSentLinkCopied, setPtoAckSentLinkCopied] = useState(false);
+  const filteredPtoAckRecipients = useMemo(
+    () => employees.filter((e) => e.status === "active" && e.name.toLowerCase().includes(ptoAckRecipientSearch.toLowerCase())),
+    [employees, ptoAckRecipientSearch]
+  );
+
+  const handleSendPtoAck = async () => {
+    if (!ptoAckRecipientId || !uid) return;
+    setPtoAckSending(true);
+    setPtoAckSendError(null);
+    try {
+      const recipient = employees.find((e) => e.id === ptoAckRecipientId);
+      if (!recipient) throw new Error("Select a recipient first.");
+
+      const doc = await createSignableDocument({
+        documentType: "pto_ack",
+        formData: { employeeId: recipient.id, employeeName: recipient.name } as unknown as Record<string, any>,
+        recipientId: ptoAckRecipientId,
+        recipientSlot: "employee",
+        pdfUrl: "",
+      });
+
+      const myProfileId = await getMyProfileId(uid);
+      if (!myProfileId) throw new Error("Could not resolve your profile.");
+      const thread = await getOrCreateDmThread(myProfileId, ptoAckRecipientId);
+      const fillLink = `${getAppUrl()}/fill-pto-ack/${doc.id}`;
+      await sendMessage({
+        dmThreadId: thread.id,
+        senderId: myProfileId,
+        senderName: displayName || "HR",
+        body: `📋 Please complete the Employee Paid Time Off (PTO) and Sick Leave Policy Acknowledgment: ${fillLink}`,
+      });
+
+      void logActivity({ action: "pto_ack_sent", targetType: "employee", targetId: recipient.id, targetLabel: recipient.name });
+
+      setPtoAckRecipientId("");
+      setPtoAckRecipientSearch("");
+      await loadSentPtoAckForms();
+    } catch (err) {
+      setPtoAckSendError(err instanceof Error ? err.message : "Failed to send request.");
+    } finally {
+      setPtoAckSending(false);
+    }
+  };
+
+  /** No AHS profile to tie this to, so no DM — the link itself (shown in the same panel, right below "Generate Link") is the only way the recipient finds out, same as the Warning Form's "External Link" mode. */
+  const handleGenerateExternalPtoAck = async () => {
+    setPtoAckSending(true);
+    setPtoAckSendError(null);
+    try {
+      const name = ptoAckExternalName.trim() || "External Recipient";
+      const doc = await createSignableDocument({
+        documentType: "pto_ack",
+        formData: { employeeId: "", employeeName: name } as unknown as Record<string, any>,
+        recipientName: name,
+        recipientSlot: "employee",
+        pdfUrl: "",
+      });
+
+      void logActivity({ action: "pto_ack_sent", targetType: "employee", targetLabel: name, details: { external: true } });
+
+      setPtoAckSentLink({ link: `${getAppUrl()}/fill-pto-ack-external/${doc.id}`, recipientName: name });
+      setPtoAckExternalName("");
+      await loadSentPtoAckForms();
+    } catch (err) {
+      setPtoAckSendError(err instanceof Error ? err.message : "Failed to generate link.");
+    } finally {
+      setPtoAckSending(false);
+    }
+  };
+
+  const handleCopyPtoAckSentLink = async () => {
+    if (!ptoAckSentLink) return;
+    try {
+      await navigator.clipboard.writeText(ptoAckSentLink.link);
+      setPtoAckSentLinkCopied(true);
+      setTimeout(() => setPtoAckSentLinkCopied(false), 1500);
+    } catch (err) {
+      console.error("Failed to copy link:", err);
+    }
+  };
+
+  const handleCopyPtoAckLink = async (doc: SignableDocument) => {
+    try {
+      const path = doc.recipientId ? "fill-pto-ack" : "fill-pto-ack-external";
+      await navigator.clipboard.writeText(`${getAppUrl()}/${path}/${doc.id}`);
+    } catch (err) {
+      console.error("Failed to copy link:", err);
+    }
+  };
+
+  const handleDownloadPtoAckPdf = async (doc: SignableDocument) => {
+    if (!doc.pdfUrl) return;
+    const name = (doc.formData as Partial<PtoAckFormData>).employeeName || doc.recipientName || "pto-ack";
+    try {
+      const res = await fetch(doc.pdfUrl);
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = `PTO and Sick Leave Policy Acknowledgment - ${name}.pdf`;
+      a.click();
+      URL.revokeObjectURL(blobUrl);
+    } catch {
+      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
+    }
+  };
+
+  const handleDeletePtoAck = async (doc: SignableDocument) => {
+    if (!window.confirm("Permanently delete this PTO & Sick Leave Policy Acknowledgment request?")) return;
+    setPtoAckActionBusyId(doc.id);
+    setPtoAckActionError(null);
+    try {
+      await deleteSignableDocument(doc.id);
+      await loadSentPtoAckForms();
+    } catch (err) {
+      setPtoAckActionError(err instanceof Error ? err.message : "Failed to delete.");
+    } finally {
+      setPtoAckActionBusyId(null);
+    }
+  };
+
   // ── Send to Employer — hands off the employer/HR-side completion step
   // (I-9 Section 2, Acknowledgment of Wage's employer signature) to a
   // DIFFERENT AHS teammate instead of the current viewer completing it
@@ -3758,21 +4546,25 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
       const myProfileId = await getMyProfileId(uid);
       if (myProfileId) {
-        const isI9 = doc.documentType === "i9";
         const employeeName = (doc.formData as { employeeName?: string })?.employeeName || doc.recipientName || "an employee";
         const thread = await getOrCreateDmThread(myProfileId, recipient.id);
+        const body =
+          doc.documentType === "i9"
+            ? `📋 Please complete Section 2 (document review + employer/AR signature) of Form I-9 for ${employeeName} — open the "Form I-9" tab in the HR Dashboard.`
+            : doc.documentType === "meal_rest_break"
+            ? `📋 Please add the employer signature to the Employee Meal and Rest Break Policy Acknowledgment for ${employeeName} — open the "Meal & Rest Break Policy" tab in the HR Dashboard.`
+            : `📋 Please add the employer/representative signature to the Acknowledgment of Wage & Compensation Structure for ${employeeName} — open the "Acknowledgment of Wage" tab in the HR Dashboard.`;
         await sendMessage({
           dmThreadId: thread.id,
           senderId: myProfileId,
           senderName: displayName || "HR",
-          body: isI9
-            ? `📋 Please complete Section 2 (document review + employer/AR signature) of Form I-9 for ${employeeName} — open the "Form I-9" tab in the HR Dashboard.`
-            : `📋 Please add the employer/representative signature to the Acknowledgment of Wage & Compensation Structure for ${employeeName} — open the "Acknowledgment of Wage" tab in the HR Dashboard.`,
+          body,
         });
       }
 
       setEmployerReassignDialog(null);
       if (doc.documentType === "i9") await loadSentI9Forms();
+      else if (doc.documentType === "meal_rest_break") await loadSentMealRestBreakForms();
       else await loadSentWageAckForms();
     } catch (err) {
       setEmployerReassignError(err instanceof Error ? err.message : "Failed to send.");
@@ -3795,7 +4587,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       return [fd.firstNameMiddleInitial, fd.lastName].filter(Boolean).join(" ").trim() || recipient || doc.recipientName || "—";
     }
     if (doc.documentType === "w9") return fd.name || recipient || doc.recipientName || "—";
-    return fd.employeeName || recipient || doc.recipientName || "—"; // w8ben, i9, wage_ack, car_iq_agreement
+    return fd.employeeName || recipient || doc.recipientName || "—"; // w8ben, i9, wage_ack, car_iq_agreement, vehicle_agreement, employee_confidentiality, meal_rest_break
   };
   const signedFormRows = useMemo(() => {
     const rows = [
@@ -3806,9 +4598,13 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       ...sentI9Forms.map((doc) => ({ doc, formLabel: "Form I-9" })),
       ...sentWageAckForms.map((doc) => ({ doc, formLabel: "Acknowledgment of Wage" })),
       ...sentCarIqAgreementForms.map((doc) => ({ doc, formLabel: "Car IQ Technician Agreement" })),
+      ...sentVehicleAgreementForms.map((doc) => ({ doc, formLabel: "Company Vehicle Use Agreement" })),
+      ...sentEmployeeConfidentialityForms.map((doc) => ({ doc, formLabel: "Employee Confidentiality Agreement" })),
+      ...sentMealRestBreakForms.map((doc) => ({ doc, formLabel: "Meal & Rest Break Acknowledgment" })),
+      ...sentPtoAckForms.map((doc) => ({ doc, formLabel: "PTO & Sick Leave Policy Acknowledgment" })),
     ];
     return rows.sort((a, b) => new Date(b.doc.createdAt).getTime() - new Date(a.doc.createdAt).getTime());
-  }, [sentW8benForms, sentW4Forms, sentW9Forms, sentW4RForms, sentI9Forms, sentWageAckForms, sentCarIqAgreementForms]);
+  }, [sentW8benForms, sentW4Forms, sentW9Forms, sentW4RForms, sentI9Forms, sentWageAckForms, sentCarIqAgreementForms, sentVehicleAgreementForms, sentEmployeeConfidentialityForms, sentMealRestBreakForms, sentPtoAckForms]);
 
   const [signedFormsSearch, setSignedFormsSearch] = useState("");
   const [signedFormsTypeFilter, setSignedFormsTypeFilter] = useState("");
@@ -7187,6 +7983,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         { key: "i9", label: "Form I-9 (Employment Eligibility)", count: sentI9AwaitingSection2Count, icon: FileCheck },
         { key: "wageAck", label: "Acknowledgment of Wage", count: sentWageAckAwaitingEmployerCount, icon: FileCheck },
         { key: "carIqAgreement", label: "Car IQ Technician Agreement", count: 0, icon: FileCheck },
+        { key: "vehicleAgreement", label: "Company Vehicle Use Agreement", count: 0, icon: FileCheck },
+        { key: "employeeConfidentiality", label: "Employee Confidentiality Agreement", count: 0, icon: FileCheck },
+        { key: "mealRestBreak", label: "Meal & Rest Break Policy", count: sentMealRestBreakAwaitingEmployerCount, icon: FileCheck },
+        { key: "ptoAck", label: "PTO & Sick Leave Policy", count: 0, icon: FileCheck },
       ] as const,
     }] : []),
     {
@@ -8551,6 +9351,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               <option value="Form I-9">Form I-9</option>
               <option value="Acknowledgment of Wage">Acknowledgment of Wage</option>
               <option value="Car IQ Technician Agreement">Car IQ Technician Agreement</option>
+              <option value="Company Vehicle Use Agreement">Company Vehicle Use Agreement</option>
             </select>
           </div>
           {(signedFormsSearch || signedFormsTypeFilter) && (
@@ -12224,6 +13025,778 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       </>
       )}
 
+      {activeTab === "vehicleAgreement" && (
+      <>
+      <div className="panel p-0 overflow-visible mt-4 relative z-20">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">Send Company Vehicle Use Agreement Request</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Pick a teammate — they'll get a link to fill in their name and branch and sign the Company Vehicle Use Agreement. It comes back to you here automatically once submitted.</p>
+        </div>
+        <div className="p-4 flex flex-col gap-3 max-w-md">
+          {vehicleSentLink ? (
+            <div className="flex flex-col gap-3">
+              <div className="rounded-md border border-green-500/30 bg-green-500/10 px-3 py-2.5">
+                <p className="text-sm font-semibold text-green-300">Link generated for {vehicleSentLink.recipientName}</p>
+                <p className="text-xs text-muted-foreground mt-1">No AHS account needed — copy the link below and send it any way you like (email, Slack, text).</p>
+              </div>
+              <div>
+                <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Fill-in link</label>
+                <div className="flex gap-2 mt-1">
+                  <input type="text" readOnly value={vehicleSentLink.link} onFocus={(e) => e.target.select()} className="glass-input text-xs py-1.5 px-3 rounded-md flex-1" />
+                  <button onClick={handleCopyVehicleSentLink} className="btn text-xs px-3 py-1.5 shrink-0">{vehicleSentLinkCopied ? "Copied!" : "Copy"}</button>
+                </div>
+              </div>
+              <button onClick={() => setVehicleSentLink(null)} className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white w-fit">Done</button>
+            </div>
+          ) : (
+          <>
+          <div className="flex rounded-md overflow-hidden border border-white/15 h-7.5 w-fit">
+            <button type="button" onClick={() => setVehicleSendMode("teammate")} className={`px-3 text-xs font-medium transition-colors ${vehicleSendMode === "teammate" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}>AHS Teammate</button>
+            <button type="button" onClick={() => setVehicleSendMode("external")} className={`px-3 text-xs font-medium transition-colors border-l border-white/15 ${vehicleSendMode === "external" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}>External Link</button>
+          </div>
+
+          {vehicleSendMode === "teammate" ? (
+          <div className="flex flex-col gap-1 relative">
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient</label>
+            <input
+              type="text"
+              value={vehicleRecipientSearch}
+              onChange={(e) => { setVehicleRecipientSearch(e.target.value); setVehicleRecipientId(""); setVehicleRecipientDropdownOpen(true); }}
+              onFocus={() => setVehicleRecipientDropdownOpen(true)}
+              onBlur={() => setTimeout(() => setVehicleRecipientDropdownOpen(false), 150)}
+              placeholder="Search a teammate…"
+              className="glass-input text-sm py-1.5 px-3 rounded-md"
+            />
+            {vehicleRecipientDropdownOpen && (
+              <div className="absolute z-50 top-full mt-1 w-full max-h-96 overflow-y-auto rounded-md border border-white/15 bg-slate-900 shadow-2xl">
+                {filteredVehicleRecipients.length === 0 ? (
+                  <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+                ) : (
+                  filteredVehicleRecipients.map((e) => (
+                    <button
+                      key={e.id}
+                      type="button"
+                      onMouseDown={(ev) => ev.preventDefault()}
+                      onClick={() => {
+                        setVehicleRecipientId(e.id);
+                        setVehicleRecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`);
+                        setVehicleRecipientDropdownOpen(false);
+                      }}
+                      className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${vehicleRecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                    >
+                      {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+          ) : (
+          <div>
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient name</label>
+            <input
+              type="text"
+              value={vehicleExternalName}
+              onChange={(e) => setVehicleExternalName(e.target.value)}
+              placeholder="Type their name (optional)…"
+              className="glass-input text-sm py-1.5 px-3 rounded-md w-full mt-1"
+            />
+            <p className="text-[10px] text-muted-foreground mt-1">No AHS account needed — you'll get a link to send them any way you like (email, Slack, text), and they can open it and fill it in without logging in.</p>
+          </div>
+          )}
+
+          {vehicleSendError && (
+            <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{vehicleSendError}</p>
+          )}
+          {vehicleSendMode === "teammate" ? (
+            <button
+              onClick={handleOpenVehiclePreview}
+              disabled={!vehicleRecipientId || vehicleSending}
+              className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 w-fit"
+            >
+              Preview & Send
+            </button>
+          ) : (
+            <button
+              onClick={handleGenerateExternalVehicleAgreement}
+              disabled={vehicleSending}
+              className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 w-fit"
+            >
+              {vehicleSending ? "Generating…" : "Generate Link"}
+            </button>
+          )}
+          </>
+          )}
+        </div>
+      </div>
+
+      <div className="panel p-0 overflow-hidden mt-4">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">Sent Company Vehicle Use Agreement Forms</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status.</p>
+        </div>
+        {vehicleActionError && (
+          <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{vehicleActionError}</p>
+        )}
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-white/10 bg-white/5">
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Employee</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Branch</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent By</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Status</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sentVehicleAgreementForms.length === 0 ? (
+                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">No requests sent yet.</td></tr>
+              ) : (
+                sentVehicleAgreementForms.map((doc) => {
+                  const data = doc.formData as Partial<VehicleAgreementFormData>;
+                  const recipient = employees.find((e) => e.id === doc.recipientId);
+                  const busy = vehicleActionBusyId === doc.id;
+                  return (
+                    <tr key={doc.id} className="border-b border-white/5 hover:bg-white/5">
+                      <td className="px-4 py-3 font-medium">
+                        {doc.pdfUrl ? (
+                          <button type="button" onClick={() => setVehicleDocPreview(doc)} className="text-blue-300 hover:text-blue-200 hover:underline text-left">
+                            {data.employeeName || recipient?.name || doc.recipientName || "—"}
+                          </button>
+                        ) : (
+                          data.employeeName || recipient?.name || doc.recipientName || "—"
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-muted-foreground">{data.branch || "—"}</td>
+                      <td className="px-4 py-3 text-muted-foreground">{doc.createdByName ?? "—"}</td>
+                      <td className="px-4 py-3">
+                        <span className={`px-2 py-1 rounded text-xs font-semibold ${
+                          doc.status === "signed" ? "bg-green-500/20 text-green-300"
+                          : doc.status === "cancelled" ? "bg-slate-500/20 text-slate-400"
+                          : "bg-yellow-500/20 text-yellow-300"
+                        }`}>
+                          {doc.status === "signed" ? "Submitted" : doc.status === "cancelled" ? "Cancelled" : "Awaiting Completion"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{new Date(doc.createdAt).toLocaleDateString()}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {doc.status === "pending_signature" && (
+                            <button type="button" onClick={() => handleCopyVehicleLink(doc)} className="btn text-[10px] px-2 py-1">
+                              Copy Link
+                            </button>
+                          )}
+                          {doc.pdfUrl && (
+                            <button type="button" onClick={() => handleDownloadVehiclePdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
+                              Download PDF
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => handleDeleteVehicleAgreement(doc)}
+                            title="Permanently delete this request"
+                            className="text-muted-foreground hover:text-red-300 disabled:opacity-50"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      </>
+      )}
+
+      {activeTab === "employeeConfidentiality" && (
+      <>
+      <div className="panel p-0 overflow-visible mt-4 relative z-20">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">Send Employee Confidentiality Agreement Request</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Pick a teammate — they'll get a link to fill in their information and sign the Employee Confidentiality and Non-Disclosure Agreement. It comes back to you here automatically once submitted.</p>
+        </div>
+        <div className="p-4 flex flex-col gap-3 max-w-md">
+          {confidentialitySentLink ? (
+            <div className="flex flex-col gap-3">
+              <div className="rounded-md border border-green-500/30 bg-green-500/10 px-3 py-2.5">
+                <p className="text-sm font-semibold text-green-300">Link generated for {confidentialitySentLink.recipientName}</p>
+                <p className="text-xs text-muted-foreground mt-1">No AHS account needed — copy the link below and send it any way you like (email, Slack, text).</p>
+              </div>
+              <div>
+                <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Fill-in link</label>
+                <div className="flex gap-2 mt-1">
+                  <input type="text" readOnly value={confidentialitySentLink.link} onFocus={(e) => e.target.select()} className="glass-input text-xs py-1.5 px-3 rounded-md flex-1" />
+                  <button onClick={handleCopyConfidentialitySentLink} className="btn text-xs px-3 py-1.5 shrink-0">{confidentialitySentLinkCopied ? "Copied!" : "Copy"}</button>
+                </div>
+              </div>
+              <button onClick={() => setConfidentialitySentLink(null)} className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white w-fit">Done</button>
+            </div>
+          ) : (
+          <>
+          <div className="flex rounded-md overflow-hidden border border-white/15 h-7.5 w-fit">
+            <button type="button" onClick={() => setConfidentialitySendMode("teammate")} className={`px-3 text-xs font-medium transition-colors ${confidentialitySendMode === "teammate" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}>AHS Teammate</button>
+            <button type="button" onClick={() => setConfidentialitySendMode("external")} className={`px-3 text-xs font-medium transition-colors border-l border-white/15 ${confidentialitySendMode === "external" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}>External Link</button>
+          </div>
+
+          {confidentialitySendMode === "teammate" ? (
+          <div className="flex flex-col gap-1 relative">
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient</label>
+            <input
+              type="text"
+              value={confidentialityRecipientSearch}
+              onChange={(e) => { setConfidentialityRecipientSearch(e.target.value); setConfidentialityRecipientId(""); setConfidentialityRecipientDropdownOpen(true); }}
+              onFocus={() => setConfidentialityRecipientDropdownOpen(true)}
+              onBlur={() => setTimeout(() => setConfidentialityRecipientDropdownOpen(false), 150)}
+              placeholder="Search a teammate…"
+              className="glass-input text-sm py-1.5 px-3 rounded-md"
+            />
+            {confidentialityRecipientDropdownOpen && (
+              <div className="absolute z-50 top-full mt-1 w-full max-h-96 overflow-y-auto rounded-md border border-white/15 bg-slate-900 shadow-2xl">
+                {filteredConfidentialityRecipients.length === 0 ? (
+                  <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+                ) : (
+                  filteredConfidentialityRecipients.map((e) => (
+                    <button
+                      key={e.id}
+                      type="button"
+                      onMouseDown={(ev) => ev.preventDefault()}
+                      onClick={() => {
+                        setConfidentialityRecipientId(e.id);
+                        setConfidentialityRecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`);
+                        setConfidentialityRecipientDropdownOpen(false);
+                      }}
+                      className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${confidentialityRecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                    >
+                      {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+          ) : (
+          <div>
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient name</label>
+            <input
+              type="text"
+              value={confidentialityExternalName}
+              onChange={(e) => setConfidentialityExternalName(e.target.value)}
+              placeholder="Type their name (optional)…"
+              className="glass-input text-sm py-1.5 px-3 rounded-md w-full mt-1"
+            />
+            <p className="text-[10px] text-muted-foreground mt-1">No AHS account needed — you'll get a link to send them any way you like (email, Slack, text), and they can open it and fill it in without logging in.</p>
+          </div>
+          )}
+
+          {confidentialitySendError && (
+            <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{confidentialitySendError}</p>
+          )}
+          {confidentialitySendMode === "teammate" ? (
+            <button
+              onClick={handleOpenConfidentialityPreview}
+              disabled={!confidentialityRecipientId || confidentialitySending}
+              className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 w-fit"
+            >
+              Preview & Send
+            </button>
+          ) : (
+            <button
+              onClick={handleGenerateExternalConfidentiality}
+              disabled={confidentialitySending}
+              className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 w-fit"
+            >
+              {confidentialitySending ? "Generating…" : "Generate Link"}
+            </button>
+          )}
+          </>
+          )}
+        </div>
+      </div>
+
+      <div className="panel p-0 overflow-hidden mt-4">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">Sent Employee Confidentiality Agreement Forms</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status.</p>
+        </div>
+        {confidentialityActionError && (
+          <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{confidentialityActionError}</p>
+        )}
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-white/10 bg-white/5">
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Employee</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Branch</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent By</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Status</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sentEmployeeConfidentialityForms.length === 0 ? (
+                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">No requests sent yet.</td></tr>
+              ) : (
+                sentEmployeeConfidentialityForms.map((doc) => {
+                  const data = doc.formData as Partial<EmployeeConfidentialityFormData>;
+                  const recipient = employees.find((e) => e.id === doc.recipientId);
+                  const busy = confidentialityActionBusyId === doc.id;
+                  return (
+                    <tr key={doc.id} className="border-b border-white/5 hover:bg-white/5">
+                      <td className="px-4 py-3 font-medium">
+                        {doc.pdfUrl ? (
+                          <button type="button" onClick={() => setConfidentialityDocPreview(doc)} className="text-blue-300 hover:text-blue-200 hover:underline text-left">
+                            {data.employeeName || recipient?.name || doc.recipientName || "—"}
+                          </button>
+                        ) : (
+                          data.employeeName || recipient?.name || doc.recipientName || "—"
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-muted-foreground">{data.branch || "—"}</td>
+                      <td className="px-4 py-3 text-muted-foreground">{doc.createdByName ?? "—"}</td>
+                      <td className="px-4 py-3">
+                        <span className={`px-2 py-1 rounded text-xs font-semibold ${
+                          doc.status === "signed" ? "bg-green-500/20 text-green-300"
+                          : doc.status === "cancelled" ? "bg-slate-500/20 text-slate-400"
+                          : "bg-yellow-500/20 text-yellow-300"
+                        }`}>
+                          {doc.status === "signed" ? "Submitted" : doc.status === "cancelled" ? "Cancelled" : "Awaiting Completion"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{new Date(doc.createdAt).toLocaleDateString()}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {doc.status === "pending_signature" && (
+                            <button type="button" onClick={() => handleCopyConfidentialityLink(doc)} className="btn text-[10px] px-2 py-1">
+                              Copy Link
+                            </button>
+                          )}
+                          {doc.pdfUrl && (
+                            <button type="button" onClick={() => handleDownloadConfidentialityPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
+                              Download PDF
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => handleDeleteConfidentiality(doc)}
+                            title="Permanently delete this request"
+                            className="text-muted-foreground hover:text-red-300 disabled:opacity-50"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      </>
+      )}
+
+      {activeTab === "mealRestBreak" && (
+      <>
+      <div className="panel p-0 overflow-visible mt-4 relative z-20">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">Send Meal & Rest Break Acknowledgment Request</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Pick a teammate — they'll get a link to fill in their name/branch and sign the Employee Meal and Rest Break Policy Acknowledgment. Once they submit, it lands back here for HR to add the employer signature.</p>
+        </div>
+        <div className="p-4 flex flex-col gap-3 max-w-md">
+          {mealRestBreakSentLink ? (
+            <div className="flex flex-col gap-3">
+              <div className="rounded-md border border-green-500/30 bg-green-500/10 px-3 py-2.5">
+                <p className="text-sm font-semibold text-green-300">Link generated for {mealRestBreakSentLink.recipientName}</p>
+                <p className="text-xs text-muted-foreground mt-1">No AHS account needed — copy the link below and send it any way you like (email, Slack, text). Once submitted, it lands in the table below for you to add the employer signature.</p>
+              </div>
+              <div>
+                <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Fill-in link</label>
+                <div className="flex gap-2 mt-1">
+                  <input type="text" readOnly value={mealRestBreakSentLink.link} onFocus={(e) => e.target.select()} className="glass-input text-xs py-1.5 px-3 rounded-md flex-1" />
+                  <button onClick={handleCopyMealRestBreakSentLink} className="btn text-xs px-3 py-1.5 shrink-0">{mealRestBreakSentLinkCopied ? "Copied!" : "Copy"}</button>
+                </div>
+              </div>
+              <button onClick={() => setMealRestBreakSentLink(null)} className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white w-fit">Done</button>
+            </div>
+          ) : (
+          <>
+          <div className="flex rounded-md overflow-hidden border border-white/15 h-7.5 w-fit">
+            <button type="button" onClick={() => setMealRestBreakSendMode("teammate")} className={`px-3 text-xs font-medium transition-colors ${mealRestBreakSendMode === "teammate" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}>AHS Teammate</button>
+            <button type="button" onClick={() => setMealRestBreakSendMode("external")} className={`px-3 text-xs font-medium transition-colors border-l border-white/15 ${mealRestBreakSendMode === "external" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}>External Link</button>
+          </div>
+
+          {mealRestBreakSendMode === "teammate" ? (
+          <div className="flex flex-col gap-1 relative">
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient</label>
+            <input
+              type="text"
+              value={mealRestBreakRecipientSearch}
+              onChange={(e) => { setMealRestBreakRecipientSearch(e.target.value); setMealRestBreakRecipientId(""); setMealRestBreakRecipientDropdownOpen(true); }}
+              onFocus={() => setMealRestBreakRecipientDropdownOpen(true)}
+              onBlur={() => setTimeout(() => setMealRestBreakRecipientDropdownOpen(false), 150)}
+              placeholder="Search a teammate…"
+              className="glass-input text-sm py-1.5 px-3 rounded-md"
+            />
+            {mealRestBreakRecipientDropdownOpen && (
+              <div className="absolute z-50 top-full mt-1 w-full max-h-96 overflow-y-auto rounded-md border border-white/15 bg-slate-900 shadow-2xl">
+                {filteredMealRestBreakRecipients.length === 0 ? (
+                  <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+                ) : (
+                  filteredMealRestBreakRecipients.map((e) => (
+                    <button
+                      key={e.id}
+                      type="button"
+                      onMouseDown={(ev) => ev.preventDefault()}
+                      onClick={() => {
+                        setMealRestBreakRecipientId(e.id);
+                        setMealRestBreakRecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`);
+                        setMealRestBreakRecipientDropdownOpen(false);
+                      }}
+                      className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${mealRestBreakRecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                    >
+                      {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+          ) : (
+          <div>
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient name</label>
+            <input
+              type="text"
+              value={mealRestBreakExternalName}
+              onChange={(e) => setMealRestBreakExternalName(e.target.value)}
+              placeholder="Type their name (optional)…"
+              className="glass-input text-sm py-1.5 px-3 rounded-md w-full mt-1"
+            />
+            <p className="text-[10px] text-muted-foreground mt-1">No AHS account needed — you'll get a link to send them any way you like (email, Slack, text), and they can open it and fill it in without logging in.</p>
+          </div>
+          )}
+
+          {mealRestBreakSendError && (
+            <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{mealRestBreakSendError}</p>
+          )}
+          {mealRestBreakSendMode === "teammate" ? (
+            <button
+              onClick={handleSendMealRestBreak}
+              disabled={!mealRestBreakRecipientId || mealRestBreakSending}
+              className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 w-fit"
+            >
+              {mealRestBreakSending ? "Sending…" : "Send Request"}
+            </button>
+          ) : (
+            <button
+              onClick={handleGenerateExternalMealRestBreak}
+              disabled={mealRestBreakSending}
+              className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 w-fit"
+            >
+              {mealRestBreakSending ? "Generating…" : "Generate Link"}
+            </button>
+          )}
+          </>
+          )}
+        </div>
+      </div>
+
+      <div className="panel p-0 overflow-hidden mt-4">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">Sent Meal & Rest Break Acknowledgment Forms</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status. "Awaiting Employer Signature" means the employee finished — add your signature to finalize.</p>
+        </div>
+        {mealRestBreakActionError && (
+          <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{mealRestBreakActionError}</p>
+        )}
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-white/10 bg-white/5">
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Employee</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Branch</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent By</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Status</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sentMealRestBreakForms.length === 0 ? (
+                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">No requests sent yet.</td></tr>
+              ) : (
+                sentMealRestBreakForms.map((doc) => {
+                  const data = doc.formData as Partial<MealRestBreakFormData>;
+                  const recipient = employees.find((e) => e.id === doc.recipientId);
+                  const busy = mealRestBreakActionBusyId === doc.id;
+                  const awaitingEmployer = isAwaitingEmployerStep(doc);
+                  return (
+                    <tr key={doc.id} className="border-b border-white/5 hover:bg-white/5">
+                      <td className="px-4 py-3 font-medium">
+                        {doc.pdfUrl ? (
+                          <button type="button" onClick={() => setMealRestBreakDocPreview(doc)} className="text-blue-300 hover:text-blue-200 hover:underline text-left">
+                            {data.employeeName || recipient?.name || doc.recipientName || "—"}
+                          </button>
+                        ) : (
+                          data.employeeName || recipient?.name || doc.recipientName || "—"
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-muted-foreground">{data.branch || "—"}</td>
+                      <td className="px-4 py-3 text-muted-foreground">{doc.createdByName ?? "—"}</td>
+                      <td className="px-4 py-3">
+                        <span className={`px-2 py-1 rounded text-xs font-semibold ${
+                          doc.status === "confirmed" ? "bg-green-500/20 text-green-300"
+                          : awaitingEmployer ? "bg-orange-500/20 text-orange-300"
+                          : doc.status === "cancelled" ? "bg-slate-500/20 text-slate-400"
+                          : "bg-yellow-500/20 text-yellow-300"
+                        }`}>
+                          {doc.status === "confirmed" ? "Completed" : awaitingEmployer ? "Awaiting Employer Signature" : doc.status === "cancelled" ? "Cancelled" : "Awaiting Employee"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{new Date(doc.createdAt).toLocaleDateString()}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {doc.status === "pending_signature" && doc.recipientSlot === "employee" && (
+                            <button type="button" onClick={() => handleCopyMealRestBreakLink(doc)} className="btn text-[10px] px-2 py-1">
+                              Copy Link
+                            </button>
+                          )}
+                          {awaitingEmployer && (
+                            <>
+                              <button type="button" onClick={() => handleOpenMealRestBreakEmployerDialog(doc)} className="btn text-[10px] px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white">
+                                Add Employer Signature →
+                              </button>
+                              <button type="button" onClick={() => handleOpenEmployerReassign(doc)} className="btn text-[10px] px-2 py-1">
+                                Send to Employer
+                              </button>
+                            </>
+                          )}
+                          {doc.pdfUrl && (
+                            <button type="button" onClick={() => handleDownloadMealRestBreakPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
+                              Download PDF
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => handleDeleteMealRestBreak(doc)}
+                            title="Permanently delete this request"
+                            className="text-muted-foreground hover:text-red-300 disabled:opacity-50"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      </>
+      )}
+
+      {activeTab === "ptoAck" && (
+      <>
+      <div className="panel p-0 overflow-visible mt-4 relative z-20">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">Send PTO & Sick Leave Policy Acknowledgment Request</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Pick a teammate — they'll get a link to fill in their name/branch and sign the Employee Paid Time Off (PTO) and Sick Leave Policy Acknowledgment. It comes back to you here automatically once submitted.</p>
+        </div>
+        <div className="p-4 flex flex-col gap-3 max-w-md">
+          {ptoAckSentLink ? (
+            <div className="flex flex-col gap-3">
+              <div className="rounded-md border border-green-500/30 bg-green-500/10 px-3 py-2.5">
+                <p className="text-sm font-semibold text-green-300">Link generated for {ptoAckSentLink.recipientName}</p>
+                <p className="text-xs text-muted-foreground mt-1">No AHS account needed — copy the link below and send it any way you like (email, Slack, text).</p>
+              </div>
+              <div>
+                <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Fill-in link</label>
+                <div className="flex gap-2 mt-1">
+                  <input type="text" readOnly value={ptoAckSentLink.link} onFocus={(e) => e.target.select()} className="glass-input text-xs py-1.5 px-3 rounded-md flex-1" />
+                  <button onClick={handleCopyPtoAckSentLink} className="btn text-xs px-3 py-1.5 shrink-0">{ptoAckSentLinkCopied ? "Copied!" : "Copy"}</button>
+                </div>
+              </div>
+              <button onClick={() => setPtoAckSentLink(null)} className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white w-fit">Done</button>
+            </div>
+          ) : (
+          <>
+          <div className="flex rounded-md overflow-hidden border border-white/15 h-7.5 w-fit">
+            <button type="button" onClick={() => setPtoAckSendMode("teammate")} className={`px-3 text-xs font-medium transition-colors ${ptoAckSendMode === "teammate" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}>AHS Teammate</button>
+            <button type="button" onClick={() => setPtoAckSendMode("external")} className={`px-3 text-xs font-medium transition-colors border-l border-white/15 ${ptoAckSendMode === "external" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}>External Link</button>
+          </div>
+
+          {ptoAckSendMode === "teammate" ? (
+          <div className="flex flex-col gap-1 relative">
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient</label>
+            <input
+              type="text"
+              value={ptoAckRecipientSearch}
+              onChange={(e) => { setPtoAckRecipientSearch(e.target.value); setPtoAckRecipientId(""); setPtoAckRecipientDropdownOpen(true); }}
+              onFocus={() => setPtoAckRecipientDropdownOpen(true)}
+              onBlur={() => setTimeout(() => setPtoAckRecipientDropdownOpen(false), 150)}
+              placeholder="Search a teammate…"
+              className="glass-input text-sm py-1.5 px-3 rounded-md"
+            />
+            {ptoAckRecipientDropdownOpen && (
+              <div className="absolute z-50 top-full mt-1 w-full max-h-96 overflow-y-auto rounded-md border border-white/15 bg-slate-900 shadow-2xl">
+                {filteredPtoAckRecipients.length === 0 ? (
+                  <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+                ) : (
+                  filteredPtoAckRecipients.map((e) => (
+                    <button
+                      key={e.id}
+                      type="button"
+                      onMouseDown={(ev) => ev.preventDefault()}
+                      onClick={() => {
+                        setPtoAckRecipientId(e.id);
+                        setPtoAckRecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`);
+                        setPtoAckRecipientDropdownOpen(false);
+                      }}
+                      className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${ptoAckRecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                    >
+                      {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+          ) : (
+          <div>
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient name</label>
+            <input
+              type="text"
+              value={ptoAckExternalName}
+              onChange={(e) => setPtoAckExternalName(e.target.value)}
+              placeholder="Type their name (optional)…"
+              className="glass-input text-sm py-1.5 px-3 rounded-md w-full mt-1"
+            />
+            <p className="text-[10px] text-muted-foreground mt-1">No AHS account needed — you'll get a link to send them any way you like (email, Slack, text), and they can open it and fill it in without logging in.</p>
+          </div>
+          )}
+
+          {ptoAckSendError && (
+            <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{ptoAckSendError}</p>
+          )}
+          {ptoAckSendMode === "teammate" ? (
+            <button
+              onClick={handleSendPtoAck}
+              disabled={!ptoAckRecipientId || ptoAckSending}
+              className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 w-fit"
+            >
+              {ptoAckSending ? "Sending…" : "Send Request"}
+            </button>
+          ) : (
+            <button
+              onClick={handleGenerateExternalPtoAck}
+              disabled={ptoAckSending}
+              className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 w-fit"
+            >
+              {ptoAckSending ? "Generating…" : "Generate Link"}
+            </button>
+          )}
+          </>
+          )}
+        </div>
+      </div>
+
+      <div className="panel p-0 overflow-hidden mt-4">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">Sent PTO & Sick Leave Policy Acknowledgment Forms</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status.</p>
+        </div>
+        {ptoAckActionError && (
+          <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{ptoAckActionError}</p>
+        )}
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-white/10 bg-white/5">
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Employee</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Branch</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent By</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Status</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sentPtoAckForms.length === 0 ? (
+                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">No requests sent yet.</td></tr>
+              ) : (
+                sentPtoAckForms.map((doc) => {
+                  const data = doc.formData as Partial<PtoAckFormData>;
+                  const recipient = employees.find((e) => e.id === doc.recipientId);
+                  const busy = ptoAckActionBusyId === doc.id;
+                  return (
+                    <tr key={doc.id} className="border-b border-white/5 hover:bg-white/5">
+                      <td className="px-4 py-3 font-medium">
+                        {doc.pdfUrl ? (
+                          <button type="button" onClick={() => setPtoAckDocPreview(doc)} className="text-blue-300 hover:text-blue-200 hover:underline text-left">
+                            {data.employeeName || recipient?.name || doc.recipientName || "—"}
+                          </button>
+                        ) : (
+                          data.employeeName || recipient?.name || doc.recipientName || "—"
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-muted-foreground">{data.branch || "—"}</td>
+                      <td className="px-4 py-3 text-muted-foreground">{doc.createdByName ?? "—"}</td>
+                      <td className="px-4 py-3">
+                        <span className={`px-2 py-1 rounded text-xs font-semibold ${
+                          doc.status === "signed" ? "bg-green-500/20 text-green-300"
+                          : doc.status === "cancelled" ? "bg-slate-500/20 text-slate-400"
+                          : "bg-yellow-500/20 text-yellow-300"
+                        }`}>
+                          {doc.status === "signed" ? "Submitted" : doc.status === "cancelled" ? "Cancelled" : "Awaiting Completion"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{new Date(doc.createdAt).toLocaleDateString()}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {doc.status === "pending_signature" && (
+                            <button type="button" onClick={() => handleCopyPtoAckLink(doc)} className="btn text-[10px] px-2 py-1">
+                              Copy Link
+                            </button>
+                          )}
+                          {doc.pdfUrl && (
+                            <button type="button" onClick={() => handleDownloadPtoAckPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
+                              Download PDF
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => handleDeletePtoAck(doc)}
+                            title="Permanently delete this request"
+                            className="text-muted-foreground hover:text-red-300 disabled:opacity-50"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      </>
+      )}
+
       {/* Form W-8BEN — preview the REAL official PDF (fillW8benPdf, same function used at submission time) with a blank fill, not a redrawn approximation, before sending the fill-in link */}
       {w8PreviewOpen && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
@@ -12502,6 +14075,207 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             </div>
             <div className="flex-1 overflow-hidden bg-slate-950">
               {carIqDocPreview.pdfUrl && <iframe src={carIqDocPreview.pdfUrl} title="Car IQ Technician Agreement" className="w-full h-full min-h-[70vh] border-0" />}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Company Vehicle Use Agreement — preview the REAL official PDF (fillVehicleAgreementPdf, same function used at submission time) with a blank fill, before sending the fill-in link */}
+      {vehiclePreviewOpen && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-800 border border-white/10 rounded-lg w-full max-w-4xl h-[90vh] flex flex-col">
+            <div className="flex items-center justify-between px-5 py-3 border-b border-white/10">
+              <h3 className="text-base font-bold">Company Vehicle Use Agreement — Preview</h3>
+              <button onClick={closeVehiclePreview} className="text-muted-foreground hover:text-foreground">✕</button>
+            </div>
+            <div className="flex-1 bg-white/5">
+              {vehiclePreviewLoading || !vehiclePreviewPdfUrl ? (
+                <div className="h-full flex items-center justify-center text-sm text-muted-foreground">Loading preview…</div>
+              ) : (
+                <iframe src={vehiclePreviewPdfUrl} title="Company Vehicle Use Agreement Preview" className="w-full h-full border-0" />
+              )}
+            </div>
+            <div className="px-5 py-3 border-t border-white/10 flex items-center justify-end gap-2">
+              {vehicleSendError && (
+                <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2 mr-auto">{vehicleSendError}</p>
+              )}
+              <button onClick={closeVehiclePreview} className="btn text-sm px-4 py-2">Cancel</button>
+              <button
+                onClick={handleSendVehicleAgreement}
+                disabled={vehicleSending}
+                className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+              >
+                {vehicleSending ? "Sending…" : "Send Request"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Company Vehicle Use Agreement Sent History — PDF preview, same inline-frame pattern used for W-8BEN/W-4/W-9/W-4R/Car IQ Sent History */}
+      {vehicleDocPreview && (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => setVehicleDocPreview(null)}>
+          <div className="bg-slate-900 border border-white/10 rounded-lg shadow-2xl w-full max-w-6xl h-[92vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold">{(vehicleDocPreview.formData as Partial<VehicleAgreementFormData>).employeeName || "—"}</p>
+                <p className="text-[10px] text-muted-foreground">Submitted {new Date(vehicleDocPreview.signedAt ?? vehicleDocPreview.createdAt).toLocaleString()}</p>
+              </div>
+              <div className="flex items-center gap-2">
+                {vehicleDocPreview.pdfUrl && (
+                  <a href={vehicleDocPreview.pdfUrl} target="_blank" rel="noopener noreferrer" className="btn text-xs px-2.5 py-1.5 flex items-center gap-1"><Download className="h-3 w-3" /> Download</a>
+                )}
+                <button type="button" onClick={() => setVehicleDocPreview(null)} className="btn text-xs px-2.5 py-1.5">Close</button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-hidden bg-slate-950">
+              {vehicleDocPreview.pdfUrl && <iframe src={vehicleDocPreview.pdfUrl} title="Company Vehicle Use Agreement" className="w-full h-full min-h-[70vh] border-0" />}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Employee Confidentiality and Non-Disclosure Agreement — preview the REAL official PDF (fillEmployeeConfidentialityPdf, same function used at submission time) with a blank fill, before sending the fill-in link */}
+      {confidentialityPreviewOpen && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-800 border border-white/10 rounded-lg w-full max-w-4xl h-[90vh] flex flex-col">
+            <div className="flex items-center justify-between px-5 py-3 border-b border-white/10">
+              <h3 className="text-base font-bold">Employee Confidentiality Agreement — Preview</h3>
+              <button onClick={closeConfidentialityPreview} className="text-muted-foreground hover:text-foreground">✕</button>
+            </div>
+            <div className="flex-1 bg-white/5">
+              {confidentialityPreviewLoading || !confidentialityPreviewPdfUrl ? (
+                <div className="h-full flex items-center justify-center text-sm text-muted-foreground">Loading preview…</div>
+              ) : (
+                <iframe src={confidentialityPreviewPdfUrl} title="Employee Confidentiality Agreement Preview" className="w-full h-full border-0" />
+              )}
+            </div>
+            <div className="px-5 py-3 border-t border-white/10 flex items-center justify-end gap-2">
+              {confidentialitySendError && (
+                <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2 mr-auto">{confidentialitySendError}</p>
+              )}
+              <button onClick={closeConfidentialityPreview} className="btn text-sm px-4 py-2">Cancel</button>
+              <button
+                onClick={handleSendConfidentiality}
+                disabled={confidentialitySending}
+                className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+              >
+                {confidentialitySending ? "Sending…" : "Send Request"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Employee Confidentiality Agreement Sent History — PDF preview, same inline-frame pattern used for W-8BEN/W-4/W-9/W-4R/Car IQ/Vehicle Agreement Sent History */}
+      {confidentialityDocPreview && (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => setConfidentialityDocPreview(null)}>
+          <div className="bg-slate-900 border border-white/10 rounded-lg shadow-2xl w-full max-w-6xl h-[92vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold">{(confidentialityDocPreview.formData as Partial<EmployeeConfidentialityFormData>).employeeName || "—"}</p>
+                <p className="text-[10px] text-muted-foreground">Submitted {new Date(confidentialityDocPreview.signedAt ?? confidentialityDocPreview.createdAt).toLocaleString()}</p>
+              </div>
+              <div className="flex items-center gap-2">
+                {confidentialityDocPreview.pdfUrl && (
+                  <a href={confidentialityDocPreview.pdfUrl} target="_blank" rel="noopener noreferrer" className="btn text-xs px-2.5 py-1.5 flex items-center gap-1"><Download className="h-3 w-3" /> Download</a>
+                )}
+                <button type="button" onClick={() => setConfidentialityDocPreview(null)} className="btn text-xs px-2.5 py-1.5">Close</button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-hidden bg-slate-950">
+              {confidentialityDocPreview.pdfUrl && <iframe src={confidentialityDocPreview.pdfUrl} title="Employee Confidentiality Agreement" className="w-full h-full min-h-[70vh] border-0" />}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Meal & Rest Break Acknowledgment Sent History PDF preview — same inline-frame pattern used for the other Sent History tables */}
+      {mealRestBreakDocPreview && (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => setMealRestBreakDocPreview(null)}>
+          <div className="bg-slate-900 border border-white/10 rounded-lg shadow-2xl w-full max-w-6xl h-[92vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold">{(mealRestBreakDocPreview.formData as Partial<MealRestBreakFormData>).employeeName || "—"}</p>
+                <p className="text-[10px] text-muted-foreground">
+                  {mealRestBreakDocPreview.status === "confirmed" ? "Completed" : "Submitted"} {new Date(mealRestBreakDocPreview.signedAt ?? mealRestBreakDocPreview.createdAt).toLocaleString()}
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                {mealRestBreakDocPreview.pdfUrl && (
+                  <a href={mealRestBreakDocPreview.pdfUrl} target="_blank" rel="noopener noreferrer" className="btn text-xs px-2.5 py-1.5 flex items-center gap-1"><Download className="h-3 w-3" /> Download</a>
+                )}
+                <button type="button" onClick={() => setMealRestBreakDocPreview(null)} className="btn text-xs px-2.5 py-1.5">Close</button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-hidden bg-slate-950">
+              {mealRestBreakDocPreview.pdfUrl && <iframe src={mealRestBreakDocPreview.pdfUrl} title="Meal and Rest Break Acknowledgment" className="w-full h-full min-h-[70vh] border-0" />}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* HR adding the "Employer Representative" signature after the employee's half comes back signed — plain signature pad, no fields to review, since the source PDF only asks for a signature + date here. */}
+      {mealRestBreakEmployerDialog && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-800 border border-white/10 rounded-lg p-6 max-w-sm w-full">
+            <h3 className="text-lg font-bold mb-2">Add Employer Signature</h3>
+            <p className="text-sm text-muted-foreground mb-4">
+              Employer representative signature for{" "}
+              <span className="font-semibold text-white">{(mealRestBreakEmployerDialog.formData as Partial<MealRestBreakFormData>).employeeName || "—"}</span>'s
+              Employee Meal and Rest Break Policy Acknowledgment.
+            </p>
+
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2 block">Draw your signature</label>
+            <canvas
+              ref={mealRestBreakEmployerSigCanvasRef}
+              width={400}
+              height={120}
+              onPointerDown={mealRestBreakEmployerStartDraw}
+              onPointerMove={mealRestBreakEmployerMoveDraw}
+              onPointerUp={mealRestBreakEmployerEndDraw}
+              onPointerLeave={mealRestBreakEmployerEndDraw}
+              className="bg-white rounded-md border border-white/15 w-full touch-none cursor-crosshair"
+            />
+            <div className="flex gap-2 mt-2">
+              <button onClick={mealRestBreakEmployerClearSignature} className="btn text-xs px-3 py-1.5">Clear</button>
+            </div>
+
+            {mealRestBreakEmployerError && (
+              <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2 mt-3">{mealRestBreakEmployerError}</p>
+            )}
+            <div className="flex gap-2 justify-end mt-4">
+              <button onClick={() => setMealRestBreakEmployerDialog(null)} className="btn text-sm px-4 py-2">Cancel</button>
+              <button
+                onClick={handleSaveMealRestBreakEmployerSignature}
+                disabled={mealRestBreakEmployerSaving}
+                className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+              >
+                {mealRestBreakEmployerSaving ? "Saving…" : "Complete & Sign"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* PTO & Sick Leave Policy Acknowledgment Sent History PDF preview — same inline-frame pattern used for the other Sent History tables */}
+      {ptoAckDocPreview && (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => setPtoAckDocPreview(null)}>
+          <div className="bg-slate-900 border border-white/10 rounded-lg shadow-2xl w-full max-w-6xl h-[92vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold">{(ptoAckDocPreview.formData as Partial<PtoAckFormData>).employeeName || "—"}</p>
+                <p className="text-[10px] text-muted-foreground">Submitted {new Date(ptoAckDocPreview.signedAt ?? ptoAckDocPreview.createdAt).toLocaleString()}</p>
+              </div>
+              <div className="flex items-center gap-2">
+                {ptoAckDocPreview.pdfUrl && (
+                  <a href={ptoAckDocPreview.pdfUrl} target="_blank" rel="noopener noreferrer" className="btn text-xs px-2.5 py-1.5 flex items-center gap-1"><Download className="h-3 w-3" /> Download</a>
+                )}
+                <button type="button" onClick={() => setPtoAckDocPreview(null)} className="btn text-xs px-2.5 py-1.5">Close</button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-hidden bg-slate-950">
+              {ptoAckDocPreview.pdfUrl && <iframe src={ptoAckDocPreview.pdfUrl} title="PTO and Sick Leave Policy Acknowledgment" className="w-full h-full min-h-[70vh] border-0" />}
             </div>
           </div>
         </div>
@@ -12813,7 +14587,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <div className="bg-slate-800 border border-white/10 rounded-lg p-6 max-w-sm w-full">
             <h3 className="text-lg font-bold mb-2">Send to Employer</h3>
             <p className="text-sm text-muted-foreground mb-4">
-              Pick the AHS teammate who should {employerReassignDialog.documentType === "i9" ? "complete Section 2 (document review + employer/AR signature)" : "add the employer/representative signature"} for{" "}
+              Pick the AHS teammate who should {employerReassignDialog.documentType === "i9" ? "complete Section 2 (document review + employer/AR signature)" : employerReassignDialog.documentType === "meal_rest_break" ? "add the employer signature" : "add the employer/representative signature"} for{" "}
               <span className="font-semibold text-white">{(employerReassignDialog.formData as { employeeName?: string })?.employeeName || employerReassignDialog.recipientName || "—"}</span>.
               They'll be notified in AHS Messages with a link to the right tab.
             </p>

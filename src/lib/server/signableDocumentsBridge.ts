@@ -270,6 +270,10 @@ export async function handleSignableDocumentsRequest(request: Request, env?: Rec
         i9: { name: "Form I-9 (Section 1)", tab: "i9" },
         wage_ack: { name: "Acknowledgment of Wage", tab: "wageAck" },
         car_iq_agreement: { name: "Car IQ Technician Agreement", tab: "carIqAgreement" },
+        vehicle_agreement: { name: "Company Vehicle Use Agreement", tab: "vehicleAgreement" },
+        employee_confidentiality: { name: "Employee Confidentiality and Non-Disclosure Agreement", tab: "employeeConfidentiality" },
+        meal_rest_break: { name: "Employee Meal and Rest Break Policy Acknowledgment", tab: "mealRestBreak" },
+        pto_ack: { name: "Employee Paid Time Off (PTO) and Sick Leave Policy Acknowledgment", tab: "ptoAck" },
       };
       const docLabel = DOC_TYPE_LABELS[doc.document_type] ?? DOC_TYPE_LABELS.warning_form;
       const notifyFields = {
