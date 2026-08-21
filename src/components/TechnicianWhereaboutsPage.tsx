@@ -234,37 +234,16 @@ export function TechnicianWhereaboutsPage({ mod, sub }: { mod: ModuleDef; sub: S
         </div>
 
         <div className="mt-3 flex flex-wrap items-center gap-2">
-          <div className="flex flex-nowrap items-center gap-2">
-            <div className="relative shrink-0 w-48">
-              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-500 pointer-events-none" />
-              <input
-                type="text"
-                value={nameSearch}
-                onChange={(e) => setNameSearch(e.target.value)}
-                placeholder="Search technician name…"
-                className="glass-input text-sm py-1.5 pl-8 pr-7 rounded-md w-full"
-              />
-              {nameSearch && (
-                <button
-                  type="button"
-                  onClick={() => setNameSearch("")}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white"
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              )}
-            </div>
-            <select
-              value={branchFilter}
-              onChange={(e) => setBranchFilter(e.target.value)}
-              className="glass-input text-sm py-1.5 px-3 rounded-md shrink-0 w-48"
-            >
-              <option value="">All Branches</option>
-              {branches.map((b) => (
-                <option key={b} value={b}>{b}</option>
-              ))}
-            </select>
-          </div>
+          <select
+            value={branchFilter}
+            onChange={(e) => setBranchFilter(e.target.value)}
+            className="glass-input text-sm py-1.5 px-3 rounded-md shrink-0 w-48"
+          >
+            <option value="">All Branches</option>
+            {branches.map((b) => (
+              <option key={b} value={b}>{b}</option>
+            ))}
+          </select>
           <span className="text-xs text-slate-500 ml-auto flex items-center gap-1.5">
             {filtered.length} technician{filtered.length === 1 ? "" : "s"}
             {branchFilter ? ` · ${branchFilter}` : " · all branches"}
@@ -314,7 +293,27 @@ export function TechnicianWhereaboutsPage({ mod, sub }: { mod: ModuleDef; sub: S
               </div>
             </div>
 
-            <div className="lg:col-span-2 space-y-1.5 max-h-[640px] overflow-y-auto">
+            <div className="lg:col-span-2 flex flex-col max-h-[640px]">
+              <div className="relative shrink-0 mb-2">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-500 pointer-events-none" />
+                <input
+                  type="text"
+                  value={nameSearch}
+                  onChange={(e) => setNameSearch(e.target.value)}
+                  placeholder="Search technician name…"
+                  className="glass-input text-sm py-1.5 pl-8 pr-7 rounded-md w-full"
+                />
+                {nameSearch && (
+                  <button
+                    type="button"
+                    onClick={() => setNameSearch("")}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </div>
+              <div className="space-y-1.5 overflow-y-auto flex-1">
               {!rows ? (
                 <div className="flex items-center gap-2 text-sm text-slate-400 py-6">
                   <Loader2 className="h-4 w-4 animate-spin" /> Loading technicians…
@@ -376,6 +375,7 @@ export function TechnicianWhereaboutsPage({ mod, sub }: { mod: ModuleDef; sub: S
               {filtered.length === 0 && <p className="text-sm text-slate-500 py-6 text-center">No active technicians for this filter.</p>}
               </>
               )}
+              </div>
             </div>
           </div>
         )}
