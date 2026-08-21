@@ -36,10 +36,12 @@ function initialsOf(name: string): string {
   return ((parts[0]?.[0] ?? "") + (parts[1]?.[0] ?? "")).toUpperCase() || "?";
 }
 
+const AUTO_REFRESH_MS = 60_000;
+
 export function TechnicianWhereaboutsPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
   const [rows, setRows] = useState<TechnicianWhereabouts[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [branchFilter, setBranchFilter] = useState<string>("");
   const [nameSearch, setNameSearch] = useState("");
 
@@ -48,20 +50,20 @@ export function TechnicianWhereaboutsPage({ mod, sub }: { mod: ModuleDef; sub: S
       const r = await getTechnicianWhereabouts();
       setRows(r);
       setLoadError(null);
+      setLastUpdated(new Date());
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : "Failed to load technician whereabouts.");
     }
   };
 
+  // Auto-refreshes so dispatchers watching this page don't need to remember
+  // to hit a manual button — every-minute cadence balances staying current
+  // against re-querying + re-geocoding on every render.
   useEffect(() => {
     void load();
+    const intervalId = window.setInterval(() => void load(), AUTO_REFRESH_MS);
+    return () => window.clearInterval(intervalId);
   }, []);
-
-  const handleRefresh = async () => {
-    setRefreshing(true);
-    await load();
-    setRefreshing(false);
-  };
 
   const branches = useMemo(() => distinctBranches(rows ?? []), [rows]);
   const filtered = useMemo(() => {
@@ -233,16 +235,6 @@ export function TechnicianWhereaboutsPage({ mod, sub }: { mod: ModuleDef; sub: S
 
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <div className="flex flex-nowrap items-center gap-2">
-            <select
-              value={branchFilter}
-              onChange={(e) => setBranchFilter(e.target.value)}
-              className="glass-input text-sm py-1.5 px-3 rounded-md shrink-0"
-            >
-              <option value="">All Branches</option>
-              {branches.map((b) => (
-                <option key={b} value={b}>{b}</option>
-              ))}
-            </select>
             <div className="relative shrink-0">
               <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-500 pointer-events-none" />
               <input
@@ -262,14 +254,25 @@ export function TechnicianWhereaboutsPage({ mod, sub }: { mod: ModuleDef; sub: S
                 </button>
               )}
             </div>
-            <button type="button" onClick={handleRefresh} disabled={refreshing} className="btn flex items-center gap-1.5 shrink-0">
-              {refreshing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-              Refresh
-            </button>
+            <select
+              value={branchFilter}
+              onChange={(e) => setBranchFilter(e.target.value)}
+              className="glass-input text-sm py-1.5 px-3 rounded-md shrink-0"
+            >
+              <option value="">All Branches</option>
+              {branches.map((b) => (
+                <option key={b} value={b}>{b}</option>
+              ))}
+            </select>
           </div>
-          <span className="text-xs text-slate-500 ml-auto">
+          <span className="text-xs text-slate-500 ml-auto flex items-center gap-1.5">
             {filtered.length} technician{filtered.length === 1 ? "" : "s"}
             {branchFilter ? ` · ${branchFilter}` : " · all branches"}
+            {lastUpdated && (
+              <span className="flex items-center gap-1 text-slate-600">
+                · <RefreshCw className="h-2.5 w-2.5" /> Updated {lastUpdated.toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" })}
+              </span>
+            )}
           </span>
         </div>
 
