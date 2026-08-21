@@ -34,9 +34,18 @@ import { Route as SignDocumentDocIdRouteImport } from './routes/sign-document.$d
 import { Route as SignActionPlanFormDocIdRouteImport } from './routes/sign-action-plan-form.$docId'
 import { Route as SignActionPlanExternalDocIdRouteImport } from './routes/sign-action-plan-external.$docId'
 import { Route as MModuleRouteImport } from './routes/m.$module'
+import { Route as FillWageAckDocIdRouteImport } from './routes/fill-wage-ack.$docId'
+import { Route as FillWageAckExternalDocIdRouteImport } from './routes/fill-wage-ack-external.$docId'
 import { Route as FillW9DocIdRouteImport } from './routes/fill-w9.$docId'
+import { Route as FillW9ExternalDocIdRouteImport } from './routes/fill-w9-external.$docId'
 import { Route as FillW8benDocIdRouteImport } from './routes/fill-w8ben.$docId'
+import { Route as FillW8benExternalDocIdRouteImport } from './routes/fill-w8ben-external.$docId'
+import { Route as FillW4rDocIdRouteImport } from './routes/fill-w4r.$docId'
+import { Route as FillW4rExternalDocIdRouteImport } from './routes/fill-w4r-external.$docId'
 import { Route as FillW4DocIdRouteImport } from './routes/fill-w4.$docId'
+import { Route as FillW4ExternalDocIdRouteImport } from './routes/fill-w4-external.$docId'
+import { Route as FillI9DocIdRouteImport } from './routes/fill-i9.$docId'
+import { Route as FillI9ExternalDocIdRouteImport } from './routes/fill-i9-external.$docId'
 import { Route as FillFormFormIdRouteImport } from './routes/fill-form.$formId'
 import { Route as EmployeeEmployeeIdRouteImport } from './routes/employee.$employeeId'
 import { Route as CsrAgentAgentIdRouteImport } from './routes/csr-agent.$agentId'
@@ -175,9 +184,25 @@ const MModuleRoute = MModuleRouteImport.update({
   path: '/m/$module',
   getParentRoute: () => rootRouteImport,
 } as any)
+const FillWageAckDocIdRoute = FillWageAckDocIdRouteImport.update({
+  id: '/fill-wage-ack/$docId',
+  path: '/fill-wage-ack/$docId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const FillWageAckExternalDocIdRoute =
+  FillWageAckExternalDocIdRouteImport.update({
+    id: '/fill-wage-ack-external/$docId',
+    path: '/fill-wage-ack-external/$docId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const FillW9DocIdRoute = FillW9DocIdRouteImport.update({
   id: '/fill-w9/$docId',
   path: '/fill-w9/$docId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const FillW9ExternalDocIdRoute = FillW9ExternalDocIdRouteImport.update({
+  id: '/fill-w9-external/$docId',
+  path: '/fill-w9-external/$docId',
   getParentRoute: () => rootRouteImport,
 } as any)
 const FillW8benDocIdRoute = FillW8benDocIdRouteImport.update({
@@ -185,9 +210,39 @@ const FillW8benDocIdRoute = FillW8benDocIdRouteImport.update({
   path: '/fill-w8ben/$docId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const FillW8benExternalDocIdRoute = FillW8benExternalDocIdRouteImport.update({
+  id: '/fill-w8ben-external/$docId',
+  path: '/fill-w8ben-external/$docId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const FillW4rDocIdRoute = FillW4rDocIdRouteImport.update({
+  id: '/fill-w4r/$docId',
+  path: '/fill-w4r/$docId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const FillW4rExternalDocIdRoute = FillW4rExternalDocIdRouteImport.update({
+  id: '/fill-w4r-external/$docId',
+  path: '/fill-w4r-external/$docId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const FillW4DocIdRoute = FillW4DocIdRouteImport.update({
   id: '/fill-w4/$docId',
   path: '/fill-w4/$docId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const FillW4ExternalDocIdRoute = FillW4ExternalDocIdRouteImport.update({
+  id: '/fill-w4-external/$docId',
+  path: '/fill-w4-external/$docId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const FillI9DocIdRoute = FillI9DocIdRouteImport.update({
+  id: '/fill-i9/$docId',
+  path: '/fill-i9/$docId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const FillI9ExternalDocIdRoute = FillI9ExternalDocIdRouteImport.update({
+  id: '/fill-i9-external/$docId',
+  path: '/fill-i9-external/$docId',
   getParentRoute: () => rootRouteImport,
 } as any)
 const FillFormFormIdRoute = FillFormFormIdRouteImport.update({
@@ -252,9 +307,18 @@ export interface FileRoutesByFullPath {
   '/csr-agent/$agentId': typeof CsrAgentAgentIdRoute
   '/employee/$employeeId': typeof EmployeeEmployeeIdRoute
   '/fill-form/$formId': typeof FillFormFormIdRoute
+  '/fill-i9-external/$docId': typeof FillI9ExternalDocIdRoute
+  '/fill-i9/$docId': typeof FillI9DocIdRoute
+  '/fill-w4-external/$docId': typeof FillW4ExternalDocIdRoute
   '/fill-w4/$docId': typeof FillW4DocIdRoute
+  '/fill-w4r-external/$docId': typeof FillW4rExternalDocIdRoute
+  '/fill-w4r/$docId': typeof FillW4rDocIdRoute
+  '/fill-w8ben-external/$docId': typeof FillW8benExternalDocIdRoute
   '/fill-w8ben/$docId': typeof FillW8benDocIdRoute
+  '/fill-w9-external/$docId': typeof FillW9ExternalDocIdRoute
   '/fill-w9/$docId': typeof FillW9DocIdRoute
+  '/fill-wage-ack-external/$docId': typeof FillWageAckExternalDocIdRoute
+  '/fill-wage-ack/$docId': typeof FillWageAckDocIdRoute
   '/m/$module': typeof MModuleRouteWithChildren
   '/sign-action-plan-external/$docId': typeof SignActionPlanExternalDocIdRoute
   '/sign-action-plan-form/$docId': typeof SignActionPlanFormDocIdRoute
@@ -290,9 +354,18 @@ export interface FileRoutesByTo {
   '/csr-agent/$agentId': typeof CsrAgentAgentIdRoute
   '/employee/$employeeId': typeof EmployeeEmployeeIdRoute
   '/fill-form/$formId': typeof FillFormFormIdRoute
+  '/fill-i9-external/$docId': typeof FillI9ExternalDocIdRoute
+  '/fill-i9/$docId': typeof FillI9DocIdRoute
+  '/fill-w4-external/$docId': typeof FillW4ExternalDocIdRoute
   '/fill-w4/$docId': typeof FillW4DocIdRoute
+  '/fill-w4r-external/$docId': typeof FillW4rExternalDocIdRoute
+  '/fill-w4r/$docId': typeof FillW4rDocIdRoute
+  '/fill-w8ben-external/$docId': typeof FillW8benExternalDocIdRoute
   '/fill-w8ben/$docId': typeof FillW8benDocIdRoute
+  '/fill-w9-external/$docId': typeof FillW9ExternalDocIdRoute
   '/fill-w9/$docId': typeof FillW9DocIdRoute
+  '/fill-wage-ack-external/$docId': typeof FillWageAckExternalDocIdRoute
+  '/fill-wage-ack/$docId': typeof FillWageAckDocIdRoute
   '/m/$module': typeof MModuleRouteWithChildren
   '/sign-action-plan-external/$docId': typeof SignActionPlanExternalDocIdRoute
   '/sign-action-plan-form/$docId': typeof SignActionPlanFormDocIdRoute
@@ -329,9 +402,18 @@ export interface FileRoutesById {
   '/csr-agent/$agentId': typeof CsrAgentAgentIdRoute
   '/employee/$employeeId': typeof EmployeeEmployeeIdRoute
   '/fill-form/$formId': typeof FillFormFormIdRoute
+  '/fill-i9-external/$docId': typeof FillI9ExternalDocIdRoute
+  '/fill-i9/$docId': typeof FillI9DocIdRoute
+  '/fill-w4-external/$docId': typeof FillW4ExternalDocIdRoute
   '/fill-w4/$docId': typeof FillW4DocIdRoute
+  '/fill-w4r-external/$docId': typeof FillW4rExternalDocIdRoute
+  '/fill-w4r/$docId': typeof FillW4rDocIdRoute
+  '/fill-w8ben-external/$docId': typeof FillW8benExternalDocIdRoute
   '/fill-w8ben/$docId': typeof FillW8benDocIdRoute
+  '/fill-w9-external/$docId': typeof FillW9ExternalDocIdRoute
   '/fill-w9/$docId': typeof FillW9DocIdRoute
+  '/fill-wage-ack-external/$docId': typeof FillWageAckExternalDocIdRoute
+  '/fill-wage-ack/$docId': typeof FillWageAckDocIdRoute
   '/m/$module': typeof MModuleRouteWithChildren
   '/sign-action-plan-external/$docId': typeof SignActionPlanExternalDocIdRoute
   '/sign-action-plan-form/$docId': typeof SignActionPlanFormDocIdRoute
@@ -369,9 +451,18 @@ export interface FileRouteTypes {
     | '/csr-agent/$agentId'
     | '/employee/$employeeId'
     | '/fill-form/$formId'
+    | '/fill-i9-external/$docId'
+    | '/fill-i9/$docId'
+    | '/fill-w4-external/$docId'
     | '/fill-w4/$docId'
+    | '/fill-w4r-external/$docId'
+    | '/fill-w4r/$docId'
+    | '/fill-w8ben-external/$docId'
     | '/fill-w8ben/$docId'
+    | '/fill-w9-external/$docId'
     | '/fill-w9/$docId'
+    | '/fill-wage-ack-external/$docId'
+    | '/fill-wage-ack/$docId'
     | '/m/$module'
     | '/sign-action-plan-external/$docId'
     | '/sign-action-plan-form/$docId'
@@ -407,9 +498,18 @@ export interface FileRouteTypes {
     | '/csr-agent/$agentId'
     | '/employee/$employeeId'
     | '/fill-form/$formId'
+    | '/fill-i9-external/$docId'
+    | '/fill-i9/$docId'
+    | '/fill-w4-external/$docId'
     | '/fill-w4/$docId'
+    | '/fill-w4r-external/$docId'
+    | '/fill-w4r/$docId'
+    | '/fill-w8ben-external/$docId'
     | '/fill-w8ben/$docId'
+    | '/fill-w9-external/$docId'
     | '/fill-w9/$docId'
+    | '/fill-wage-ack-external/$docId'
+    | '/fill-wage-ack/$docId'
     | '/m/$module'
     | '/sign-action-plan-external/$docId'
     | '/sign-action-plan-form/$docId'
@@ -445,9 +545,18 @@ export interface FileRouteTypes {
     | '/csr-agent/$agentId'
     | '/employee/$employeeId'
     | '/fill-form/$formId'
+    | '/fill-i9-external/$docId'
+    | '/fill-i9/$docId'
+    | '/fill-w4-external/$docId'
     | '/fill-w4/$docId'
+    | '/fill-w4r-external/$docId'
+    | '/fill-w4r/$docId'
+    | '/fill-w8ben-external/$docId'
     | '/fill-w8ben/$docId'
+    | '/fill-w9-external/$docId'
     | '/fill-w9/$docId'
+    | '/fill-wage-ack-external/$docId'
+    | '/fill-wage-ack/$docId'
     | '/m/$module'
     | '/sign-action-plan-external/$docId'
     | '/sign-action-plan-form/$docId'
@@ -484,9 +593,18 @@ export interface RootRouteChildren {
   CsrAgentAgentIdRoute: typeof CsrAgentAgentIdRoute
   EmployeeEmployeeIdRoute: typeof EmployeeEmployeeIdRoute
   FillFormFormIdRoute: typeof FillFormFormIdRoute
+  FillI9ExternalDocIdRoute: typeof FillI9ExternalDocIdRoute
+  FillI9DocIdRoute: typeof FillI9DocIdRoute
+  FillW4ExternalDocIdRoute: typeof FillW4ExternalDocIdRoute
   FillW4DocIdRoute: typeof FillW4DocIdRoute
+  FillW4rExternalDocIdRoute: typeof FillW4rExternalDocIdRoute
+  FillW4rDocIdRoute: typeof FillW4rDocIdRoute
+  FillW8benExternalDocIdRoute: typeof FillW8benExternalDocIdRoute
   FillW8benDocIdRoute: typeof FillW8benDocIdRoute
+  FillW9ExternalDocIdRoute: typeof FillW9ExternalDocIdRoute
   FillW9DocIdRoute: typeof FillW9DocIdRoute
+  FillWageAckExternalDocIdRoute: typeof FillWageAckExternalDocIdRoute
+  FillWageAckDocIdRoute: typeof FillWageAckDocIdRoute
   MModuleRoute: typeof MModuleRouteWithChildren
   SignActionPlanExternalDocIdRoute: typeof SignActionPlanExternalDocIdRoute
   SignActionPlanFormDocIdRoute: typeof SignActionPlanFormDocIdRoute
@@ -677,11 +795,32 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof MModuleRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/fill-wage-ack/$docId': {
+      id: '/fill-wage-ack/$docId'
+      path: '/fill-wage-ack/$docId'
+      fullPath: '/fill-wage-ack/$docId'
+      preLoaderRoute: typeof FillWageAckDocIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/fill-wage-ack-external/$docId': {
+      id: '/fill-wage-ack-external/$docId'
+      path: '/fill-wage-ack-external/$docId'
+      fullPath: '/fill-wage-ack-external/$docId'
+      preLoaderRoute: typeof FillWageAckExternalDocIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/fill-w9/$docId': {
       id: '/fill-w9/$docId'
       path: '/fill-w9/$docId'
       fullPath: '/fill-w9/$docId'
       preLoaderRoute: typeof FillW9DocIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/fill-w9-external/$docId': {
+      id: '/fill-w9-external/$docId'
+      path: '/fill-w9-external/$docId'
+      fullPath: '/fill-w9-external/$docId'
+      preLoaderRoute: typeof FillW9ExternalDocIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/fill-w8ben/$docId': {
@@ -691,11 +830,53 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof FillW8benDocIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/fill-w8ben-external/$docId': {
+      id: '/fill-w8ben-external/$docId'
+      path: '/fill-w8ben-external/$docId'
+      fullPath: '/fill-w8ben-external/$docId'
+      preLoaderRoute: typeof FillW8benExternalDocIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/fill-w4r/$docId': {
+      id: '/fill-w4r/$docId'
+      path: '/fill-w4r/$docId'
+      fullPath: '/fill-w4r/$docId'
+      preLoaderRoute: typeof FillW4rDocIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/fill-w4r-external/$docId': {
+      id: '/fill-w4r-external/$docId'
+      path: '/fill-w4r-external/$docId'
+      fullPath: '/fill-w4r-external/$docId'
+      preLoaderRoute: typeof FillW4rExternalDocIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/fill-w4/$docId': {
       id: '/fill-w4/$docId'
       path: '/fill-w4/$docId'
       fullPath: '/fill-w4/$docId'
       preLoaderRoute: typeof FillW4DocIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/fill-w4-external/$docId': {
+      id: '/fill-w4-external/$docId'
+      path: '/fill-w4-external/$docId'
+      fullPath: '/fill-w4-external/$docId'
+      preLoaderRoute: typeof FillW4ExternalDocIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/fill-i9/$docId': {
+      id: '/fill-i9/$docId'
+      path: '/fill-i9/$docId'
+      fullPath: '/fill-i9/$docId'
+      preLoaderRoute: typeof FillI9DocIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/fill-i9-external/$docId': {
+      id: '/fill-i9-external/$docId'
+      path: '/fill-i9-external/$docId'
+      fullPath: '/fill-i9-external/$docId'
+      preLoaderRoute: typeof FillI9ExternalDocIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/fill-form/$formId': {
@@ -811,9 +992,18 @@ const rootRouteChildren: RootRouteChildren = {
   CsrAgentAgentIdRoute: CsrAgentAgentIdRoute,
   EmployeeEmployeeIdRoute: EmployeeEmployeeIdRoute,
   FillFormFormIdRoute: FillFormFormIdRoute,
+  FillI9ExternalDocIdRoute: FillI9ExternalDocIdRoute,
+  FillI9DocIdRoute: FillI9DocIdRoute,
+  FillW4ExternalDocIdRoute: FillW4ExternalDocIdRoute,
   FillW4DocIdRoute: FillW4DocIdRoute,
+  FillW4rExternalDocIdRoute: FillW4rExternalDocIdRoute,
+  FillW4rDocIdRoute: FillW4rDocIdRoute,
+  FillW8benExternalDocIdRoute: FillW8benExternalDocIdRoute,
   FillW8benDocIdRoute: FillW8benDocIdRoute,
+  FillW9ExternalDocIdRoute: FillW9ExternalDocIdRoute,
   FillW9DocIdRoute: FillW9DocIdRoute,
+  FillWageAckExternalDocIdRoute: FillWageAckExternalDocIdRoute,
+  FillWageAckDocIdRoute: FillWageAckDocIdRoute,
   MModuleRoute: MModuleRouteWithChildren,
   SignActionPlanExternalDocIdRoute: SignActionPlanExternalDocIdRoute,
   SignActionPlanFormDocIdRoute: SignActionPlanFormDocIdRoute,

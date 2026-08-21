@@ -248,12 +248,27 @@ export async function handleSignableDocumentsRequest(request: Request, env?: Rec
     if (!patchRes.ok) throw new Error(`hr_signable_documents update failed (${patchRes.status}): ${await patchRes.text()}`);
 
     try {
-      const formTitle = (doc.form_data as { employeeName?: string })?.employeeName ?? "an employee";
+      // Name field shape varies by document type: warning/promotion/etc.
+      // and W-8BEN/I-9 use employeeName, W-4/W-4R split into
+      // firstNameMiddleInitial + lastName, W-9 uses a plain name field.
+      const fd = doc.form_data as { employeeName?: string; name?: string; firstNameMiddleInitial?: string; lastName?: string };
+      const formTitle =
+        fd?.employeeName ||
+        fd?.name ||
+        [fd?.firstNameMiddleInitial, fd?.lastName].filter(Boolean).join(" ").trim() ||
+        doc.recipient_name ||
+        "an employee";
       const DOC_TYPE_LABELS: Record<string, { name: string; tab: string }> = {
         warning_form: { name: "Employee Warning Form", tab: "warningForm" },
         promotion_form: { name: "Employee Promotion / Role Change Form", tab: "promotionForm" },
         action_plan_form: { name: "Manager's Action Plan Form", tab: "actionPlanForm" },
         termination_form: { name: "Notice of Termination", tab: "terminationForm" },
+        w8ben: { name: "Form W-8BEN", tab: "w8ben" },
+        w4: { name: "Form W-4", tab: "w8ben" },
+        w9: { name: "Form W-9", tab: "w8ben" },
+        w4r: { name: "Form W-4R", tab: "w8ben" },
+        i9: { name: "Form I-9 (Section 1)", tab: "i9" },
+        wage_ack: { name: "Acknowledgment of Wage", tab: "wageAck" },
       };
       const docLabel = DOC_TYPE_LABELS[doc.document_type] ?? DOC_TYPE_LABELS.warning_form;
       const notifyFields = {

@@ -146,7 +146,7 @@ function validateFieldValue(field: CustomFormField, value: any, valuesByName: Re
   return null;
 }
 
-function FieldRow({ field, value, disabled, onChange }: { field: CustomFormField; value: any; disabled: boolean; onChange: (v: any) => void }) {
+function FieldRow({ field, value, disabled, onChange, valuesByName }: { field: CustomFormField; value: any; disabled: boolean; onChange: (v: any) => void; valuesByName: Record<string, any> }) {
   const def = ELEMENT_REGISTRY[field.type];
   if (!def) return null;
   const style = applyFieldStyle(field);
@@ -155,7 +155,7 @@ function FieldRow({ field, value, disabled, onChange }: { field: CustomFormField
   if (def.kind === "structural" && field.type !== "submitButton") {
     return (
       <div style={style} className={cls}>
-        <def.FillInput field={field} value={value} onChange={onChange} />
+        <def.FillInput field={field} value={value} onChange={onChange} valuesByName={valuesByName} />
       </div>
     );
   }
@@ -171,7 +171,7 @@ function FieldRow({ field, value, disabled, onChange }: { field: CustomFormField
         {field.description && <p className="text-xs text-muted-foreground -mt-1">{field.description}</p>}
         {field.helpText && <p className="text-xs text-muted-foreground -mt-1">{field.helpText}</p>}
         <fieldset disabled={disabled} className="contents">
-          <def.FillInput field={field} value={value} onChange={onChange} />
+          <def.FillInput field={field} value={value} onChange={onChange} valuesByName={valuesByName} />
         </fieldset>
       </div>
     </div>
@@ -293,7 +293,7 @@ export function CustomFormRenderer({ fields, onSubmit }: Props) {
                 {group.fields.map((f) => {
                   const { visible, disabled } = computeFieldState(f, valuesByName);
                   if (!visible) return null;
-                  return <FieldRow key={f.id} field={f} value={values[f.id]} disabled={disabled} onChange={(v) => setValue(f.id, v)} />;
+                  return <FieldRow key={f.id} field={f} value={values[f.id]} disabled={disabled} onChange={(v) => setValue(f.id, v)} valuesByName={valuesByName} />;
                 })}
               </div>
             </details>
@@ -301,7 +301,7 @@ export function CustomFormRenderer({ fields, onSubmit }: Props) {
             group.fields.map((f) => {
               const { visible, disabled } = computeFieldState(f, valuesByName);
               if (!visible) return null;
-              return <FieldRow key={f.id} field={f} value={values[f.id]} disabled={disabled} onChange={(v) => setValue(f.id, v)} />;
+              return <FieldRow key={f.id} field={f} value={values[f.id]} disabled={disabled} onChange={(v) => setValue(f.id, v)} valuesByName={valuesByName} />;
             })
           )
         )}
