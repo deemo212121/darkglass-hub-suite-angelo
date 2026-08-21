@@ -12,6 +12,8 @@
  */
 import { Trash2 } from "lucide-react";
 import type { ComponentType } from "react";
+import DOMPurify from "dompurify";
+import { RichTextEditor, RichTextStyleTag, RICH_TEXT_CLASS } from "@/components/ui/rich-text-editor";
 import { defaultEmptyCheck, type ElementDefinition, type ElementCategory } from "./types";
 
 /** Shared editable options list — used by makeOptionsElement's PropertiesPanel and Product List/Input Table. */
@@ -178,6 +180,75 @@ export function makeOptionsElement(opts: {
   };
 }
 
+/**
+ * A plain <p> collapses "\n" (standard HTML white-space handling) and has no
+ * concept of a bullet, so typing Enter or "- " in the Text textarea below
+ * had no visible effect on the rendered form no matter how the text was
+ * typed — this walks the raw text line by line, keeping consecutive
+ * "- "/"• "-prefixed lines as a real <ul> (so it looks like an actual
+ * bulleted list, not a stray dash) and everything else as pre-wrapped text
+ * blocks (so plain Enter presses become real line breaks), rather than
+ * flattening everything into one run.
+ */
+function renderParagraphBody(text: string, textStyle: React.CSSProperties): React.ReactNode[] {
+  const blocks: React.ReactNode[] = [];
+  let textLines: string[] = [];
+  let bulletLines: string[] = [];
+  const flushText = () => {
+    if (textLines.length === 0) return;
+    blocks.push(<p key={`t${blocks.length}`} style={{ ...textStyle, whiteSpace: "pre-wrap", margin: 0 }} className="text-slate-500">{textLines.join("\n")}</p>);
+    textLines = [];
+  };
+  const flushBullets = () => {
+    if (bulletLines.length === 0) return;
+    blocks.push(
+      <ul key={`b${blocks.length}`} style={{ textAlign: textStyle.textAlign, color: textStyle.color, fontSize: textStyle.fontSize }} className="list-disc pl-5 text-slate-500">
+        {bulletLines.map((line, i) => <li key={i}>{line}</li>)}
+      </ul>
+    );
+    bulletLines = [];
+  };
+  for (const line of (text || "").split("\n")) {
+    const bulletMatch = line.match(/^\s*[-•*]\s+(.*)$/);
+    if (bulletMatch) {
+      flushText();
+      bulletLines.push(bulletMatch[1]);
+    } else {
+      flushBullets();
+      textLines.push(line);
+    }
+  }
+  flushText();
+  flushBullets();
+  return blocks;
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
+/**
+ * Replaces {{field_name}} tokens (same convention as Fill in the Blank's
+ * template) with that other field's live value, HTML-escaped — this is a
+ * live cross-field substitution into a dangerouslySetInnerHTML string, so
+ * an unescaped value would let text typed into ANY other field on the form
+ * inject markup into this one. Only called for FillInput (real values
+ * exist); CanvasPreview has no live values so tokens show literally there,
+ * same treatment Fill in the Blank's own canvas preview gives its blanks.
+ */
+function substituteMergeTokens(html: string, valuesByName?: Record<string, any>): string {
+  // No valuesByName at all = design-time (CanvasPreview) — leave tokens
+  // literal so HR can see what they typed. Once real fill values exist, an
+  // unanswered field's token becomes blank rather than staying as raw
+  // "{{...}}" text in front of whoever's actually filling out the form.
+  if (!valuesByName) return html;
+  return html.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_match, name) => {
+    const value = valuesByName[name];
+    if (value === undefined || value === null) return "";
+    return escapeHtml(String(value));
+  });
+}
+
 export function makeDisplayElement(opts: {
   type: string;
   label: string;
@@ -186,7 +257,7 @@ export function makeDisplayElement(opts: {
   variant: "heading" | "paragraph" | "divider";
   defaultText?: string;
 }): ElementDefinition {
-  const render = (config: Record<string, any>) => {
+  const render = (config: Record<string, any>, valuesByName?: Record<string, any>) => {
     if (opts.variant === "divider") {
       return <hr style={{ borderTopStyle: config.lineStyle || "solid", borderTopWidth: `${config.thickness ?? 1}px`, borderTopColor: config.color || "#e2e8f0", margin: `${config.spacing ?? 8}px 0` }} />;
     }
@@ -198,7 +269,29 @@ export function makeDisplayElement(opts: {
       const underlineCls = config.underline ? "underline" : "";
       return <Tag style={textStyle} className={`text-slate-900 ${boldCls} ${italicCls} ${underlineCls}`}>{config.text || "Heading"}</Tag>;
     }
-    return <p style={{ ...textStyle, marginTop: config.spacing ? `${config.spacing}px` : undefined }} className="text-slate-500">{config.text || "Paragraph text"}</p>;
+    // config.html (rich text, current) takes precedence; config.text-only
+    // (plain text/"- " bullets, saved before rich text existed) falls back
+    // to the line-parser so an already-saved form doesn't lose its
+    // formatting or need re-editing just because this shipped.
+    if (config.html) {
+      const substituted = substituteMergeTokens(config.html, valuesByName);
+      const clean = DOMPurify.sanitize(substituted);
+      return (
+        <>
+          <RichTextStyleTag />
+          <div
+            style={{ ...textStyle, marginTop: config.spacing ? `${config.spacing}px` : undefined }}
+            className={`${RICH_TEXT_CLASS} text-slate-500`}
+            dangerouslySetInnerHTML={{ __html: clean || "Paragraph text" }}
+          />
+        </>
+      );
+    }
+    return (
+      <div style={{ marginTop: config.spacing ? `${config.spacing}px` : undefined }} className="flex flex-col gap-1.5">
+        {renderParagraphBody(config.text || "Paragraph text", textStyle)}
+      </div>
+    );
   };
   return {
     type: opts.type,
@@ -206,9 +299,14 @@ export function makeDisplayElement(opts: {
     icon: opts.icon,
     category: opts.category,
     kind: "structural",
-    defaultConfig: () => (opts.variant === "divider" ? { lineStyle: "solid", thickness: 1, color: "#e2e8f0", spacing: 8 } : { text: opts.defaultText ?? "", alignment: "left", level: 3, bold: true }),
+    defaultConfig: () =>
+      opts.variant === "divider"
+        ? { lineStyle: "solid", thickness: 1, color: "#e2e8f0", spacing: 8 }
+        : opts.variant === "paragraph"
+        ? { html: opts.defaultText ? `<p>${opts.defaultText}</p>` : "", text: opts.defaultText ?? "", alignment: "left" }
+        : { text: opts.defaultText ?? "", alignment: "left", level: 3, bold: true },
     CanvasPreview: ({ config }) => render(config),
-    PropertiesPanel: ({ field, onChange }) => {
+    PropertiesPanel: ({ field, onChange, allFields }) => {
       const set = (patch: Record<string, any>) => onChange({ ...field, config: { ...field.config, ...patch } });
       if (opts.variant === "divider") {
         return (
@@ -234,7 +332,11 @@ export function makeDisplayElement(opts: {
             {opts.variant === "heading" ? (
               <input type="text" value={field.config.text ?? ""} onChange={(e) => set({ text: e.target.value })} className="glass-input text-sm py-1.5 px-2.5 rounded-md" />
             ) : (
-              <textarea value={field.config.text ?? ""} onChange={(e) => set({ text: e.target.value })} className="glass-input text-sm py-1.5 px-2.5 rounded-md min-h-16" />
+              <RichTextEditor
+                value={field.config.html ?? field.config.text ?? ""}
+                onChange={(html) => set({ html })}
+                mergeFields={allFields.filter((f) => f.id !== field.id && f.name)}
+              />
             )}
           </div>
           {opts.variant === "heading" && (
@@ -268,7 +370,7 @@ export function makeDisplayElement(opts: {
         </div>
       );
     },
-    FillInput: ({ field }) => render(field.config),
+    FillInput: ({ field, valuesByName }) => render(field.config, valuesByName),
     isEmptyValue: () => false,
   };
 }

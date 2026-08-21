@@ -103,6 +103,8 @@ export interface FillInputProps {
   field: CustomFormField;
   value: any;
   onChange: (value: any) => void;
+  /** Every other field's current value, keyed by field name — used by Paragraph's `{{field_name}}` merge tokens to live-substitute as the filler types elsewhere on the form. Optional: every other element type ignores it. */
+  valuesByName?: Record<string, any>;
 }
 
 export interface ElementDefinition {

@@ -27,7 +27,7 @@ import { logActivity } from "@/lib/supabase/hrActivityLog";
 import { getJotformSubmissions, type JotformSubmission } from "@/lib/supabase/jotformSubmissions";
 import { getSignableDocuments, type SignableDocument, type SignableDocumentType } from "@/lib/supabase/signableDocuments";
 
-/** A file submission normalized from either a Jotform submission or a signed W-4/W-8BEN/W-9 (hr_signable_documents), so both render/drag/file the same way in the Files Submissions panel. */
+/** A file submission normalized from either a Jotform submission or a signed W-4/W-8BEN/W-9/I-9 (hr_signable_documents), so both render/drag/file the same way in the Files Submissions panel. */
 interface FileSubmissionCandidate {
   dragId: string;
   applicantName: string;
@@ -192,23 +192,33 @@ export function OnboardingApplicantDocuments({ companyId, profileId, profileName
 
   // ── Files Submissions — every applicant's real generated document,
   // whether it came from Jotform (see hr_jotform_submissions /
-  // jotformBridge.ts) or from an in-app signed W-4/W-8BEN/W-9
+  // jotformBridge.ts) or from an in-app signed W-4/W-8BEN/W-9/I-9
   // (hr_signable_documents — the same table the "Sent Warning Forms"
-  // tracker reads, filtered to the tax-form document types here). Both are
-  // normalized into one filterable/draggable list — unlike a Bulk Import
-  // Link, we already know the applicant's name and the form title, so a
-  // drop files it immediately with no "type a label" dialog needed. ──
-  const SIGNABLE_TAX_FORM_TYPES: SignableDocumentType[] = ["w4", "w8ben", "w9"];
+  // tracker reads, filtered to the tax/employment-eligibility document types
+  // here). Both are normalized into one filterable/draggable list — unlike
+  // a Bulk Import Link, we already know the applicant's name and the form
+  // title, so a drop files it immediately with no "type a label" dialog
+  // needed. I-9 documents show up here as soon as Section 1 (pdfUrl already
+  // set) is submitted, same as W-4's "signed" status not yet meaning
+  // Employers Only is filled in — HR can re-drag a later version once
+  // Section 2 is done, same accepted staleness the W-4 case already has. ──
+  const SIGNABLE_TAX_FORM_TYPES: SignableDocumentType[] = ["w4", "w8ben", "w9", "w4r", "i9", "wage_ack"];
   const SIGNABLE_FORM_LABEL: Partial<Record<SignableDocumentType, string>> = {
     w4: "Form W-4",
     w8ben: "Form W-8BEN",
     w9: "Form W-9",
+    w4r: "Form W-4R",
+    i9: "Form I-9",
+    wage_ack: "Acknowledgment of Wage",
   };
   const signableDocApplicantName = (doc: SignableDocument): string => {
     const fd = doc.formData ?? {};
     if (doc.documentType === "w4") return [fd.firstNameMiddleInitial, fd.lastName].filter(Boolean).join(" ").trim() || "Applicant";
     if (doc.documentType === "w9") return fd.name || "Applicant";
     if (doc.documentType === "w8ben") return fd.employeeName || "Applicant";
+    if (doc.documentType === "w4r") return [fd.firstNameMiddleInitial, fd.lastName].filter(Boolean).join(" ").trim() || "Applicant";
+    if (doc.documentType === "i9") return fd.employeeName || "Applicant";
+    if (doc.documentType === "wage_ack") return fd.employeeName || "Applicant";
     return "Applicant";
   };
 

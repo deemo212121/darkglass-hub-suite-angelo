@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useRef, Fragment } from "react";
 import { Link, useSearch, useNavigate } from "@tanstack/react-router";
-import { ChevronLeft, ChevronDown, ChevronRight, Plus, Trash2, AlertTriangle, CheckCircle, XCircle, Paperclip, Users, Clock, UserCheck, UserX, UserMinus, Search, Bell, Download, Forward, History, FileText, ClipboardList, Landmark, GripVertical } from "lucide-react";
+import { ChevronLeft, ChevronDown, ChevronRight, Plus, Trash2, AlertTriangle, CheckCircle, XCircle, Paperclip, Users, Clock, UserCheck, UserX, UserMinus, Search, Bell, Download, Forward, History, FileText, ClipboardList, Landmark, GripVertical, FileCheck } from "lucide-react";
 import {
   getLeadersRoster,
   upsertLeadersRosterRow,
@@ -45,7 +45,7 @@ import {
   type OnboardingDocumentColumn,
   type OnboardingGroupKey,
 } from "@/lib/supabase/onboardingDocumentColumns";
-import { uploadCoeCertificate, uploadWarningForm, uploadPromotionForm, uploadActionPlanForm, uploadTerminationForm, uploadW8benForm, uploadW4Form } from "@/lib/firebase/storage";
+import { uploadCoeCertificate, uploadWarningForm, uploadPromotionForm, uploadActionPlanForm, uploadTerminationForm, uploadW8benForm, uploadW4Form, uploadW4RForm, uploadI9Form, uploadWageAckForm, uploadSignableDocumentSignature } from "@/lib/firebase/storage";
 import { captureHtmlToPdfBlob, loadAssetDataUrl as loadImageDataUrl } from "@/lib/pdfCapture";
 import {
   createSignableDocument,
@@ -55,6 +55,7 @@ import {
   deleteSignableDocument,
   reassignSignableDocument,
   updateSignableDocumentPdfUrl,
+  signDocument,
   type SignableDocument,
 } from "@/lib/supabase/signableDocuments";
 import { buildWarningFormBodyMarkup, warningFormStyles, type WarningFormData, type SignatureSlot } from "@/lib/warningFormTemplate";
@@ -71,6 +72,12 @@ import type { W4FormData } from "@/lib/w4FormTemplate";
 import { fillW4Pdf } from "@/lib/w4PdfFill";
 import type { W9FormData } from "@/lib/w9FormTemplate";
 import { fillW9Pdf } from "@/lib/w9PdfFill";
+import type { W4RFormData } from "@/lib/w4rFormTemplate";
+import { fillW4RPdf } from "@/lib/w4rPdfFill";
+import type { WageAckFormData } from "@/lib/wageAckFormTemplate";
+import { fillWageAckPdf } from "@/lib/wageAckPdfFill";
+import type { I9FormData } from "@/lib/i9FormTemplate";
+import { fillI9Pdf } from "@/lib/i9PdfFill";
 import { logActivity, getActivityLog, activityActionLabel, type HrActivityLogEntry } from "@/lib/supabase/hrActivityLog";
 import { HrActivityLogPanel } from "@/components/HrActivityLogPage";
 import { subscribeTableChanges } from "@/lib/supabase/realtime";
@@ -96,6 +103,22 @@ import { CustomFormsPanel } from "./CustomFormsPanel";
 function formatDateOnlyLong(isoDate: string): string {
   const [y, m, d] = isoDate.split("-").map(Number);
   return new Date(y, m - 1, d).toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" });
+}
+
+/**
+ * True once the employee half of a two-party document (I-9, Acknowledgment
+ * of Wage) is done and the employer/HR half is the only thing left —
+ * whether or not anyone in particular has claimed it yet. Covers both
+ * shapes that state can be in: `signed` + still sitting in the "employee"
+ * slot (nobody's claimed the employer step yet — the original, single-HR
+ * flow), or reassigned via "Send to Employer" (see
+ * handleSendToEmployerStep in ReportHRDaily.tsx) — reassignSignableDocument
+ * resets status to `pending_signature` and moves recipientSlot to
+ * "hr_staff", which would otherwise look identical to "nobody has even
+ * started this yet" if only the original condition were checked.
+ */
+function isAwaitingEmployerStep(doc: { status: string; recipientSlot: string }): boolean {
+  return (doc.status === "signed" && doc.recipientSlot === "employee") || (doc.status === "pending_signature" && doc.recipientSlot === "hr_staff");
 }
 
 // Certificate of Employment's editable body — the prose paragraphs between
@@ -633,9 +656,20 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // Reviews, the Approved log, the department trend chart, and the full
   // Employee Directory all on top of each other, forcing a long scroll to
   // reach anything below Hiring.
-  const [activeTab, setActiveTab] = useState<"hiring" | "warnings" | "masterList" | "leaders" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "promotionForm" | "actionPlanForm" | "terminationForm" | "employeeRequestManager" | "w8ben">("hiring");
+  const [activeTab, setActiveTab] = useState<"hiring" | "warnings" | "masterList" | "leaders" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "promotionForm" | "actionPlanForm" | "terminationForm" | "employeeRequestManager" | "w8ben" | "i9" | "wageAck">("hiring");
   const [openCategory, setOpenCategory] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  // Which floating-sidebar section headers (Automated Forms/Generate
+  // Reports/People Operations) are collapsed — starts empty (everything
+  // expanded), same default the sidebar always had before this toggle existed.
+  const [collapsedSidebarGroups, setCollapsedSidebarGroups] = useState<Set<string>>(new Set());
+  const toggleSidebarGroup = (group: string) =>
+    setCollapsedSidebarGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(group)) next.delete(group);
+      else next.add(group);
+      return next;
+    });
 
   // ── Persist the current tab (and, for Onboarding Documents, which
   // applicant is open) in the URL, so a plain page refresh comes back to
@@ -646,7 +680,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const navigate = useNavigate();
   const hrSearchParams = (useSearch({ strict: false }) as { tab?: string; submissionId?: string; profileId?: string }) ?? {};
   const initialHrSearchRef = useRef(hrSearchParams);
-  const VALID_HR_TABS = ["hiring", "warnings", "masterList", "leaders", "jotform", "jotformDocuments", "customForms", "onboarding", "hiringReports", "report", "coe", "warningForm", "promotionForm", "actionPlanForm", "terminationForm", "employeeRequestManager", "w8ben"] as const;
+  const VALID_HR_TABS = ["hiring", "warnings", "masterList", "leaders", "jotform", "jotformDocuments", "customForms", "onboarding", "hiringReports", "report", "coe", "warningForm", "promotionForm", "actionPlanForm", "terminationForm", "employeeRequestManager", "w8ben", "i9", "wageAck"] as const;
   useEffect(() => {
     const tab = initialHrSearchRef.current.tab;
     if (tab && (VALID_HR_TABS as readonly string[]).includes(tab)) setActiveTab(tab as typeof activeTab);
@@ -1321,7 +1355,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     const unsubs = [
       subscribeTableChanges("hr_candidates", () => void loadCandidates(), `company_id=eq.${companyId}`),
       subscribeTableChanges("employee_conduct_notes", () => void loadNotes(), `company_id=eq.${companyId}`),
-      subscribeTableChanges("hr_signable_documents", () => { void loadSentWarningForms(); void loadSentW8benForms(); void loadSentW4Forms(); void loadSentW9Forms(); }, `company_id=eq.${companyId}`),
+      subscribeTableChanges("hr_signable_documents", () => { void loadSentWarningForms(); void loadSentW8benForms(); void loadSentW4Forms(); void loadSentW9Forms(); void loadSentW4RForms(); void loadSentI9Forms(); void loadSentWageAckForms(); }, `company_id=eq.${companyId}`),
       subscribeTableChanges("pto_requests", () => void loadPtoRequests(), `company_id=eq.${companyId}`),
       subscribeTableChanges("timecard_entries", () => void loadTodayTimecardEntries(), `company_id=eq.${companyId}`),
       subscribeTableChanges("timecard_corrections", () => void loadRequestManagerData(), `company_id=eq.${companyId}`),
@@ -2187,7 +2221,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
   useEffect(() => {
-    if (activeTab === "w8ben") void loadSentW8benForms();
+    if (activeTab === "w8ben" || activeTab === "jotformDocuments") void loadSentW8benForms();
   }, [activeTab]);
 
   const [w8RecipientId, setW8RecipientId] = useState("");
@@ -2201,6 +2235,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [w8PreviewPdfUrl, setW8PreviewPdfUrl] = useState<string | null>(null);
   const [w8DocPreview, setW8DocPreview] = useState<SignableDocument | null>(null);
   const [w8PreviewLoading, setW8PreviewLoading] = useState(false);
+  const [w8SendMode, setW8SendMode] = useState<"teammate" | "external">("teammate");
+  const [w8ExternalName, setW8ExternalName] = useState("");
+  const [w8SentLink, setW8SentLink] = useState<{ link: string; recipientName: string } | null>(null);
+  const [w8SentLinkCopied, setW8SentLinkCopied] = useState(false);
   const filteredW8Recipients = useMemo(
     () => employees.filter((e) => e.status === "active" && e.name.toLowerCase().includes(w8RecipientSearch.toLowerCase())),
     [employees, w8RecipientSearch]
@@ -2291,9 +2329,52 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
 
+  /** No AHS profile to tie this to, so no DM — the link itself (shown in the same panel, right below "Generate Link") is the only way the recipient finds out, same as the Warning Form's "External Link" mode. */
+  const handleGenerateExternalW8ben = async () => {
+    setW8Sending(true);
+    setW8SendError(null);
+    try {
+      // A name isn't required upfront — the recipient fills in their own
+      // name as part of the form itself. hr_signable_documents requires
+      // SOME recipient_name when there's no recipient_id though (migration
+      // 0076), so an untyped name falls back to a generic placeholder
+      // rather than blocking link generation.
+      const name = w8ExternalName.trim() || "External Recipient";
+      const doc = await createSignableDocument({
+        documentType: "w8ben",
+        formData: { employeeId: "", employeeName: name } as unknown as Record<string, any>,
+        recipientName: name,
+        recipientSlot: "employee",
+        pdfUrl: "",
+      });
+
+      void logActivity({ action: "w8ben_form_sent", targetType: "employee", targetLabel: name, details: { external: true } });
+
+      setW8SentLink({ link: `${getAppUrl()}/fill-w8ben-external/${doc.id}`, recipientName: name });
+      setW8ExternalName("");
+      await loadSentW8benForms();
+    } catch (err) {
+      setW8SendError(err instanceof Error ? err.message : "Failed to generate link.");
+    } finally {
+      setW8Sending(false);
+    }
+  };
+
+  const handleCopyW8SentLink = async () => {
+    if (!w8SentLink) return;
+    try {
+      await navigator.clipboard.writeText(w8SentLink.link);
+      setW8SentLinkCopied(true);
+      setTimeout(() => setW8SentLinkCopied(false), 1500);
+    } catch (err) {
+      console.error("Failed to copy link:", err);
+    }
+  };
+
   const handleCopyW8benLink = async (doc: SignableDocument) => {
     try {
-      await navigator.clipboard.writeText(`${getAppUrl()}/fill-w8ben/${doc.id}`);
+      const path = doc.recipientId ? "fill-w8ben" : "fill-w8ben-external";
+      await navigator.clipboard.writeText(`${getAppUrl()}/${path}/${doc.id}`);
     } catch (err) {
       console.error("Failed to copy link:", err);
     }
@@ -2343,7 +2424,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
   // ── W-4 — same pattern as W-8BEN above: HR just picks a recipient, the
   // recipient fills in everything themselves on FillW4Page.tsx. ──
-  const [w8FormType, setW8FormType] = useState<"w8ben" | "w4" | "w9">("w8ben");
+  const [w8FormType, setW8FormType] = useState<"w8ben" | "w4" | "w9" | "w4r">("w8ben");
   const [sentW4Forms, setSentW4Forms] = useState<SignableDocument[]>([]);
   const loadSentW4Forms = async () => {
     try {
@@ -2353,7 +2434,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
   useEffect(() => {
-    if (activeTab === "w8ben") void loadSentW4Forms();
+    if (activeTab === "w8ben" || activeTab === "jotformDocuments") void loadSentW4Forms();
   }, [activeTab]);
 
   const [w4RecipientId, setW4RecipientId] = useState("");
@@ -2367,6 +2448,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [w4PreviewPdfUrl, setW4PreviewPdfUrl] = useState<string | null>(null);
   const [w4PreviewLoading, setW4PreviewLoading] = useState(false);
   const [w4DocPreview, setW4DocPreview] = useState<SignableDocument | null>(null);
+  const [w4SendMode, setW4SendMode] = useState<"teammate" | "external">("teammate");
+  const [w4ExternalName, setW4ExternalName] = useState("");
+  const [w4SentLink, setW4SentLink] = useState<{ link: string; recipientName: string } | null>(null);
+  const [w4SentLinkCopied, setW4SentLinkCopied] = useState(false);
   const filteredW4Recipients = useMemo(
     () => employees.filter((e) => e.status === "active" && e.name.toLowerCase().includes(w4RecipientSearch.toLowerCase())),
     [employees, w4RecipientSearch]
@@ -2489,9 +2574,48 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
 
+  /** No AHS profile to tie this to, so no DM — the link itself (shown in the same panel, right below "Generate Link") is the only way the recipient finds out, same as the Warning Form's "External Link" mode. */
+  const handleGenerateExternalW4 = async () => {
+    setW4Sending(true);
+    setW4SendError(null);
+    try {
+      // A name isn't required upfront — see handleGenerateExternalW8ben's comment.
+      const name = w4ExternalName.trim() || "External Recipient";
+      const doc = await createSignableDocument({
+        documentType: "w4",
+        formData: { employeeId: "" } as unknown as Record<string, any>,
+        recipientName: name,
+        recipientSlot: "employee",
+        pdfUrl: "",
+      });
+
+      void logActivity({ action: "w4_form_sent", targetType: "employee", targetLabel: name, details: { external: true } });
+
+      setW4SentLink({ link: `${getAppUrl()}/fill-w4-external/${doc.id}`, recipientName: name });
+      setW4ExternalName("");
+      await loadSentW4Forms();
+    } catch (err) {
+      setW4SendError(err instanceof Error ? err.message : "Failed to generate link.");
+    } finally {
+      setW4Sending(false);
+    }
+  };
+
+  const handleCopyW4SentLink = async () => {
+    if (!w4SentLink) return;
+    try {
+      await navigator.clipboard.writeText(w4SentLink.link);
+      setW4SentLinkCopied(true);
+      setTimeout(() => setW4SentLinkCopied(false), 1500);
+    } catch (err) {
+      console.error("Failed to copy link:", err);
+    }
+  };
+
   const handleCopyW4Link = async (doc: SignableDocument) => {
     try {
-      await navigator.clipboard.writeText(`${getAppUrl()}/fill-w4/${doc.id}`);
+      const path = doc.recipientId ? "fill-w4" : "fill-w4-external";
+      await navigator.clipboard.writeText(`${getAppUrl()}/${path}/${doc.id}`);
     } catch (err) {
       console.error("Failed to copy link:", err);
     }
@@ -2542,7 +2666,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
   useEffect(() => {
-    if (activeTab === "w8ben") void loadSentW9Forms();
+    if (activeTab === "w8ben" || activeTab === "jotformDocuments") void loadSentW9Forms();
   }, [activeTab]);
 
   const [w9RecipientId, setW9RecipientId] = useState("");
@@ -2556,6 +2680,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [w9PreviewPdfUrl, setW9PreviewPdfUrl] = useState<string | null>(null);
   const [w9PreviewLoading, setW9PreviewLoading] = useState(false);
   const [w9DocPreview, setW9DocPreview] = useState<SignableDocument | null>(null);
+  const [w9SendMode, setW9SendMode] = useState<"teammate" | "external">("teammate");
+  const [w9ExternalName, setW9ExternalName] = useState("");
+  const [w9SentLink, setW9SentLink] = useState<{ link: string; recipientName: string } | null>(null);
+  const [w9SentLinkCopied, setW9SentLinkCopied] = useState(false);
   const filteredW9Recipients = useMemo(
     () => employees.filter((e) => e.status === "active" && e.name.toLowerCase().includes(w9RecipientSearch.toLowerCase())),
     [employees, w9RecipientSearch]
@@ -2646,9 +2774,48 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
 
+  /** No AHS profile to tie this to, so no DM — the link itself (shown in the same panel, right below "Generate Link") is the only way the recipient finds out, same as the Warning Form's "External Link" mode. */
+  const handleGenerateExternalW9 = async () => {
+    setW9Sending(true);
+    setW9SendError(null);
+    try {
+      // A name isn't required upfront — see handleGenerateExternalW8ben's comment.
+      const name = w9ExternalName.trim() || "External Recipient";
+      const doc = await createSignableDocument({
+        documentType: "w9",
+        formData: { employeeId: "", name } as unknown as Record<string, any>,
+        recipientName: name,
+        recipientSlot: "employee",
+        pdfUrl: "",
+      });
+
+      void logActivity({ action: "w9_form_sent", targetType: "employee", targetLabel: name, details: { external: true } });
+
+      setW9SentLink({ link: `${getAppUrl()}/fill-w9-external/${doc.id}`, recipientName: name });
+      setW9ExternalName("");
+      await loadSentW9Forms();
+    } catch (err) {
+      setW9SendError(err instanceof Error ? err.message : "Failed to generate link.");
+    } finally {
+      setW9Sending(false);
+    }
+  };
+
+  const handleCopyW9SentLink = async () => {
+    if (!w9SentLink) return;
+    try {
+      await navigator.clipboard.writeText(w9SentLink.link);
+      setW9SentLinkCopied(true);
+      setTimeout(() => setW9SentLinkCopied(false), 1500);
+    } catch (err) {
+      console.error("Failed to copy link:", err);
+    }
+  };
+
   const handleCopyW9Link = async (doc: SignableDocument) => {
     try {
-      await navigator.clipboard.writeText(`${getAppUrl()}/fill-w9/${doc.id}`);
+      const path = doc.recipientId ? "fill-w9" : "fill-w9-external";
+      await navigator.clipboard.writeText(`${getAppUrl()}/${path}/${doc.id}`);
     } catch (err) {
       console.error("Failed to copy link:", err);
     }
@@ -2683,6 +2850,194 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       setW9ActionError(err instanceof Error ? err.message : "Failed to delete.");
     } finally {
       setW9ActionBusyId(null);
+    }
+  };
+
+  // ── W-4R — same pattern as W-8BEN/W-9 above: HR just picks a recipient,
+  // the recipient fills in everything themselves on FillW4RPage.tsx. No
+  // later "HR completes a section" step — W-4R has no employer box at all. ──
+  const [sentW4RForms, setSentW4RForms] = useState<SignableDocument[]>([]);
+  const loadSentW4RForms = async () => {
+    try {
+      setSentW4RForms(await getSignableDocuments("w4r"));
+    } catch (err) {
+      console.error("Failed to load sent W-4R forms:", err);
+    }
+  };
+  useEffect(() => {
+    if (activeTab === "w8ben" || activeTab === "jotformDocuments") void loadSentW4RForms();
+  }, [activeTab]);
+
+  const [w4rRecipientId, setW4rRecipientId] = useState("");
+  const [w4rRecipientSearch, setW4rRecipientSearch] = useState("");
+  const [w4rRecipientDropdownOpen, setW4rRecipientDropdownOpen] = useState(false);
+  const [w4rSending, setW4rSending] = useState(false);
+  const [w4rSendError, setW4rSendError] = useState<string | null>(null);
+  const [w4rActionBusyId, setW4rActionBusyId] = useState<string | null>(null);
+  const [w4rActionError, setW4rActionError] = useState<string | null>(null);
+  const [w4rPreviewOpen, setW4rPreviewOpen] = useState(false);
+  const [w4rPreviewPdfUrl, setW4rPreviewPdfUrl] = useState<string | null>(null);
+  const [w4rPreviewLoading, setW4rPreviewLoading] = useState(false);
+  const [w4rDocPreview, setW4rDocPreview] = useState<SignableDocument | null>(null);
+  const [w4rSendMode, setW4rSendMode] = useState<"teammate" | "external">("teammate");
+  const [w4rExternalName, setW4rExternalName] = useState("");
+  const [w4rSentLink, setW4rSentLink] = useState<{ link: string; recipientName: string } | null>(null);
+  const [w4rSentLinkCopied, setW4rSentLinkCopied] = useState(false);
+  const filteredW4RRecipients = useMemo(
+    () => employees.filter((e) => e.status === "active" && e.name.toLowerCase().includes(w4rRecipientSearch.toLowerCase())),
+    [employees, w4rRecipientSearch]
+  );
+
+  const buildW4RPreviewData = (firstNameMiddleInitial: string, lastName: string): W4RFormData => ({
+    employeeId: "",
+    firstNameMiddleInitial,
+    lastName,
+    ssn: "",
+    address: "",
+    cityStateZip: "",
+    withholdingRatePercent: "",
+    dateSigned: "",
+    signatureDataUrl: "",
+  });
+
+  const closeW4RPreview = () => {
+    setW4rPreviewOpen(false);
+    if (w4rPreviewPdfUrl) URL.revokeObjectURL(w4rPreviewPdfUrl);
+    setW4rPreviewPdfUrl(null);
+  };
+
+  const handleOpenW4RPreview = async () => {
+    setW4rSendError(null);
+    setW4rPreviewOpen(true);
+    setW4rPreviewLoading(true);
+    try {
+      const recipientName = employees.find((e) => e.id === w4rRecipientId)?.name || "";
+      const pdfBytes = await fillW4RPdf(buildW4RPreviewData(recipientName, ""));
+      const url = URL.createObjectURL(new Blob([pdfBytes as unknown as BlobPart], { type: "application/pdf" }));
+      setW4rPreviewPdfUrl(url);
+    } catch (err) {
+      setW4rSendError(err instanceof Error ? err.message : "Failed to build preview.");
+    } finally {
+      setW4rPreviewLoading(false);
+    }
+  };
+
+  const handleSendW4R = async () => {
+    if (!w4rRecipientId || !uid) return;
+    setW4rSending(true);
+    setW4rSendError(null);
+    try {
+      const recipient = employees.find((e) => e.id === w4rRecipientId);
+      if (!recipient) throw new Error("Select a recipient first.");
+
+      const doc = await createSignableDocument({
+        documentType: "w4r",
+        formData: { employeeId: recipient.id } as unknown as Record<string, any>,
+        recipientId: w4rRecipientId,
+        recipientSlot: "employee",
+        pdfUrl: "",
+      });
+
+      const myProfileId = await getMyProfileId(uid);
+      if (!myProfileId) throw new Error("Could not resolve your profile.");
+      const thread = await getOrCreateDmThread(myProfileId, w4rRecipientId);
+      const fillLink = `${getAppUrl()}/fill-w4r/${doc.id}`;
+      await sendMessage({
+        dmThreadId: thread.id,
+        senderId: myProfileId,
+        senderName: displayName || "HR",
+        body: `📋 Please complete your Form W-4R (Withholding Certificate for Nonperiodic Payments and Eligible Rollover Distributions): ${fillLink}`,
+      });
+
+      void logActivity({ action: "w4r_form_sent", targetType: "employee", targetId: recipient.id, targetLabel: recipient.name });
+
+      closeW4RPreview();
+      setW4rRecipientId("");
+      setW4rRecipientSearch("");
+      await loadSentW4RForms();
+    } catch (err) {
+      setW4rSendError(err instanceof Error ? err.message : "Failed to send W-4R request.");
+    } finally {
+      setW4rSending(false);
+    }
+  };
+
+  /** No AHS profile to tie this to, so no DM — the link itself (shown in the same panel, right below "Generate Link") is the only way the recipient finds out, same as the Warning Form's "External Link" mode. */
+  const handleGenerateExternalW4R = async () => {
+    setW4rSending(true);
+    setW4rSendError(null);
+    try {
+      // A name isn't required upfront — see handleGenerateExternalW8ben's comment.
+      const name = w4rExternalName.trim() || "External Recipient";
+      const doc = await createSignableDocument({
+        documentType: "w4r",
+        formData: { employeeId: "" } as unknown as Record<string, any>,
+        recipientName: name,
+        recipientSlot: "employee",
+        pdfUrl: "",
+      });
+
+      void logActivity({ action: "w4r_form_sent", targetType: "employee", targetLabel: name, details: { external: true } });
+
+      setW4rSentLink({ link: `${getAppUrl()}/fill-w4r-external/${doc.id}`, recipientName: name });
+      setW4rExternalName("");
+      await loadSentW4RForms();
+    } catch (err) {
+      setW4rSendError(err instanceof Error ? err.message : "Failed to generate link.");
+    } finally {
+      setW4rSending(false);
+    }
+  };
+
+  const handleCopyW4RSentLink = async () => {
+    if (!w4rSentLink) return;
+    try {
+      await navigator.clipboard.writeText(w4rSentLink.link);
+      setW4rSentLinkCopied(true);
+      setTimeout(() => setW4rSentLinkCopied(false), 1500);
+    } catch (err) {
+      console.error("Failed to copy link:", err);
+    }
+  };
+
+  const handleCopyW4RLink = async (doc: SignableDocument) => {
+    try {
+      const path = doc.recipientId ? "fill-w4r" : "fill-w4r-external";
+      await navigator.clipboard.writeText(`${getAppUrl()}/${path}/${doc.id}`);
+    } catch (err) {
+      console.error("Failed to copy link:", err);
+    }
+  };
+
+  const handleDownloadW4RPdf = async (doc: SignableDocument) => {
+    if (!doc.pdfUrl) return;
+    const data = doc.formData as Partial<W4RFormData>;
+    const name = `${data.firstNameMiddleInitial ?? ""} ${data.lastName ?? ""}`.trim() || "w4r-form";
+    try {
+      const res = await fetch(doc.pdfUrl);
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = `W-4R - ${name}.pdf`;
+      a.click();
+      URL.revokeObjectURL(blobUrl);
+    } catch {
+      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
+    }
+  };
+
+  const handleDeleteW4R = async (doc: SignableDocument) => {
+    if (!window.confirm("Permanently delete this W-4R request?")) return;
+    setW4rActionBusyId(doc.id);
+    setW4rActionError(null);
+    try {
+      await deleteSignableDocument(doc.id);
+      await loadSentW4RForms();
+    } catch (err) {
+      setW4rActionError(err instanceof Error ? err.message : "Failed to delete.");
+    } finally {
+      setW4rActionBusyId(null);
     }
   };
 
@@ -2735,6 +3090,753 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       setW4EmployerError(err instanceof Error ? err.message : "Failed to save employer info.");
     } finally {
       setW4EmployerSaving(false);
+    }
+  };
+
+  // ── I-9 — genuine two-party flow, unlike W-8BEN/W-4/W-9's single
+  // recipient: HR sends a link, the employee fills in and signs Section 1
+  // (FillI9Page.tsx), then it lands back here for HR to review documents and
+  // complete Section 2 (with their own signature) before it's finalized.
+  // See i9FormTemplate.ts's header comment. ──
+  const [sentI9Forms, setSentI9Forms] = useState<SignableDocument[]>([]);
+  const loadSentI9Forms = async () => {
+    try {
+      setSentI9Forms(await getSignableDocuments("i9"));
+    } catch (err) {
+      console.error("Failed to load sent I-9 forms:", err);
+    }
+  };
+  useEffect(() => {
+    if (activeTab === "i9" || activeTab === "jotformDocuments") void loadSentI9Forms();
+  }, [activeTab]);
+  // Section 1 done, nobody has claimed Section 2 yet — feeds the "Form I-9" sidebar tab's count badge.
+  const sentI9AwaitingSection2Count = useMemo(
+    () => sentI9Forms.filter(isAwaitingEmployerStep).length,
+    [sentI9Forms]
+  );
+
+  const [i9RecipientId, setI9RecipientId] = useState("");
+  const [i9RecipientSearch, setI9RecipientSearch] = useState("");
+  const [i9RecipientDropdownOpen, setI9RecipientDropdownOpen] = useState(false);
+  const [i9Sending, setI9Sending] = useState(false);
+  const [i9SendError, setI9SendError] = useState<string | null>(null);
+  const [i9ActionBusyId, setI9ActionBusyId] = useState<string | null>(null);
+  const [i9ActionError, setI9ActionError] = useState<string | null>(null);
+  const [i9DocPreview, setI9DocPreview] = useState<SignableDocument | null>(null);
+  const [i9SendMode, setI9SendMode] = useState<"teammate" | "external">("teammate");
+  const [i9ExternalName, setI9ExternalName] = useState("");
+  const [i9SentLink, setI9SentLink] = useState<{ link: string; recipientName: string } | null>(null);
+  const [i9SentLinkCopied, setI9SentLinkCopied] = useState(false);
+  const filteredI9Recipients = useMemo(
+    () => employees.filter((e) => e.status === "active" && e.name.toLowerCase().includes(i9RecipientSearch.toLowerCase())),
+    [employees, i9RecipientSearch]
+  );
+
+  const [i9PreviewOpen, setI9PreviewOpen] = useState(false);
+  const [i9PreviewPdfUrl, setI9PreviewPdfUrl] = useState<string | null>(null);
+  const [i9PreviewLoading, setI9PreviewLoading] = useState(false);
+
+  /** What the recipient sees before they've filled anything in — just their name pre-filled, everything else blank, same convention as buildW8benPreviewData. */
+  const buildI9PreviewData = (employeeName: string): I9FormData => ({
+    employeeId: "",
+    employeeName,
+    firstName: "",
+    middleInitial: "",
+    lastName: "",
+    otherLastNames: "",
+    address: "",
+    aptNumber: "",
+    city: "",
+    state: "",
+    zip: "",
+    dateOfBirth: "",
+    ssn: "",
+    email: "",
+    phone: "",
+    citizenshipStatus: "",
+    lprANumber: "",
+    workAuthExpDate: "",
+    uscisANumber: "",
+    i94Number: "",
+    foreignPassport: "",
+    employeeDateSigned: "",
+    employeeSignatureDataUrl: "",
+    documentChoice: "",
+    listADocTitle1: "", listAIssuing1: "", listADocNumber1: "", listAExp1: "",
+    listADocTitle2: "", listAIssuing2: "", listADocNumber2: "", listAExp2: "",
+    listADocTitle3: "", listAIssuing3: "", listADocNumber3: "", listAExp3: "",
+    listBDocTitle1: "", listBIssuing1: "", listBDocNumber1: "", listBExp1: "",
+    listCDocTitle1: "", listCIssuing1: "", listCDocNumber1: "", listCExp1: "",
+    additionalInfo: "",
+    altProcedureCheckbox: false,
+    firstDayEmployed: "",
+    employerNameTitle: "",
+    employerSignatureDataUrl: "",
+    section2DateSigned: "",
+    businessName: "",
+    businessAddress: "",
+  });
+
+  const closeI9Preview = () => {
+    setI9PreviewOpen(false);
+    if (i9PreviewPdfUrl) URL.revokeObjectURL(i9PreviewPdfUrl);
+    setI9PreviewPdfUrl(null);
+  };
+
+  /** Renders the SAME real official PDF (fillI9Pdf, no HTML redraw) with a blank preview fill, so what HR previews is exactly what gets generated when the recipient actually submits Section 1. */
+  const handleOpenI9Preview = async () => {
+    setI9SendError(null);
+    setI9PreviewOpen(true);
+    setI9PreviewLoading(true);
+    try {
+      const recipientName = employees.find((e) => e.id === i9RecipientId)?.name || "";
+      const pdfBytes = await fillI9Pdf(buildI9PreviewData(recipientName));
+      const url = URL.createObjectURL(new Blob([pdfBytes as unknown as BlobPart], { type: "application/pdf" }));
+      setI9PreviewPdfUrl(url);
+    } catch (err) {
+      setI9SendError(err instanceof Error ? err.message : "Failed to build preview.");
+    } finally {
+      setI9PreviewLoading(false);
+    }
+  };
+
+  const handleSendI9 = async () => {
+    if (!i9RecipientId || !uid) return;
+    setI9Sending(true);
+    setI9SendError(null);
+    try {
+      const recipient = employees.find((e) => e.id === i9RecipientId);
+      if (!recipient) throw new Error("Select a recipient first.");
+
+      const doc = await createSignableDocument({
+        documentType: "i9",
+        formData: { employeeId: recipient.id, employeeName: recipient.name } as unknown as Record<string, any>,
+        recipientId: i9RecipientId,
+        recipientSlot: "employee",
+        pdfUrl: "",
+      });
+
+      const myProfileId = await getMyProfileId(uid);
+      if (!myProfileId) throw new Error("Could not resolve your profile.");
+      const thread = await getOrCreateDmThread(myProfileId, i9RecipientId);
+      const fillLink = `${getAppUrl()}/fill-i9/${doc.id}`;
+      await sendMessage({
+        dmThreadId: thread.id,
+        senderId: myProfileId,
+        senderName: displayName || "HR",
+        body: `📋 Please complete Section 1 of your Form I-9 (Employment Eligibility Verification): ${fillLink}`,
+      });
+
+      void logActivity({ action: "i9_form_sent", targetType: "employee", targetId: recipient.id, targetLabel: recipient.name });
+
+      closeI9Preview();
+      setI9RecipientId("");
+      setI9RecipientSearch("");
+      await loadSentI9Forms();
+    } catch (err) {
+      setI9SendError(err instanceof Error ? err.message : "Failed to send I-9 request.");
+    } finally {
+      setI9Sending(false);
+    }
+  };
+
+  /** No AHS profile to tie this to, so no DM — the link itself (shown in the same panel, right below "Generate Link") is the only way the recipient finds out, same as the Warning Form's "External Link" mode. Only Section 1 can go this route — Section 2 always happens inside ReportHRDaily.tsx by a logged-in HR user regardless of how Section 1 arrived. */
+  const handleGenerateExternalI9 = async () => {
+    setI9Sending(true);
+    setI9SendError(null);
+    try {
+      // A name isn't required upfront — see handleGenerateExternalW8ben's comment.
+      const name = i9ExternalName.trim() || "External Recipient";
+      const doc = await createSignableDocument({
+        documentType: "i9",
+        formData: { employeeId: "", employeeName: name } as unknown as Record<string, any>,
+        recipientName: name,
+        recipientSlot: "employee",
+        pdfUrl: "",
+      });
+
+      void logActivity({ action: "i9_form_sent", targetType: "employee", targetLabel: name, details: { external: true } });
+
+      setI9SentLink({ link: `${getAppUrl()}/fill-i9-external/${doc.id}`, recipientName: name });
+      setI9ExternalName("");
+      await loadSentI9Forms();
+    } catch (err) {
+      setI9SendError(err instanceof Error ? err.message : "Failed to generate link.");
+    } finally {
+      setI9Sending(false);
+    }
+  };
+
+  const handleCopyI9SentLink = async () => {
+    if (!i9SentLink) return;
+    try {
+      await navigator.clipboard.writeText(i9SentLink.link);
+      setI9SentLinkCopied(true);
+      setTimeout(() => setI9SentLinkCopied(false), 1500);
+    } catch (err) {
+      console.error("Failed to copy link:", err);
+    }
+  };
+
+  // ── Acknowledgment of Wage — genuine two-party flow like I-9, but much
+  // simpler: the source PDF has no AcroForm fields at all (see
+  // wageAckFormTemplate.ts's header comment), and the employer side is just
+  // a signature, no document review section to fill in. HR sends a link,
+  // the employee fills their name/effective date and signs
+  // (FillWageAckPage.tsx), then it lands back here for HR to add the
+  // "Employer/Representative" signature. ──
+  const [sentWageAckForms, setSentWageAckForms] = useState<SignableDocument[]>([]);
+  const loadSentWageAckForms = async () => {
+    try {
+      setSentWageAckForms(await getSignableDocuments("wage_ack"));
+    } catch (err) {
+      console.error("Failed to load sent Acknowledgment of Wage forms:", err);
+    }
+  };
+  useEffect(() => {
+    if (activeTab === "wageAck" || activeTab === "jotformDocuments") void loadSentWageAckForms();
+  }, [activeTab]);
+  // Employee done, nobody has claimed the employer signature yet — feeds the sidebar tab's count badge.
+  const sentWageAckAwaitingEmployerCount = useMemo(
+    () => sentWageAckForms.filter(isAwaitingEmployerStep).length,
+    [sentWageAckForms]
+  );
+
+  const [wageAckRecipientId, setWageAckRecipientId] = useState("");
+  const [wageAckRecipientSearch, setWageAckRecipientSearch] = useState("");
+  const [wageAckRecipientDropdownOpen, setWageAckRecipientDropdownOpen] = useState(false);
+  const [wageAckSending, setWageAckSending] = useState(false);
+  const [wageAckSendError, setWageAckSendError] = useState<string | null>(null);
+  const [wageAckActionBusyId, setWageAckActionBusyId] = useState<string | null>(null);
+  const [wageAckActionError, setWageAckActionError] = useState<string | null>(null);
+  const [wageAckDocPreview, setWageAckDocPreview] = useState<SignableDocument | null>(null);
+  const [wageAckSendMode, setWageAckSendMode] = useState<"teammate" | "external">("teammate");
+  const [wageAckExternalName, setWageAckExternalName] = useState("");
+  const [wageAckSentLink, setWageAckSentLink] = useState<{ link: string; recipientName: string } | null>(null);
+  const [wageAckSentLinkCopied, setWageAckSentLinkCopied] = useState(false);
+  const filteredWageAckRecipients = useMemo(
+    () => employees.filter((e) => e.status === "active" && e.name.toLowerCase().includes(wageAckRecipientSearch.toLowerCase())),
+    [employees, wageAckRecipientSearch]
+  );
+
+  const handleSendWageAck = async () => {
+    if (!wageAckRecipientId || !uid) return;
+    setWageAckSending(true);
+    setWageAckSendError(null);
+    try {
+      const recipient = employees.find((e) => e.id === wageAckRecipientId);
+      if (!recipient) throw new Error("Select a recipient first.");
+
+      const doc = await createSignableDocument({
+        documentType: "wage_ack",
+        formData: { employeeId: recipient.id, employeeName: recipient.name } as unknown as Record<string, any>,
+        recipientId: wageAckRecipientId,
+        recipientSlot: "employee",
+        pdfUrl: "",
+      });
+
+      const myProfileId = await getMyProfileId(uid);
+      if (!myProfileId) throw new Error("Could not resolve your profile.");
+      const thread = await getOrCreateDmThread(myProfileId, wageAckRecipientId);
+      const fillLink = `${getAppUrl()}/fill-wage-ack/${doc.id}`;
+      await sendMessage({
+        dmThreadId: thread.id,
+        senderId: myProfileId,
+        senderName: displayName || "HR",
+        body: `📋 Please complete the Acknowledgment of Wage & Compensation Structure: ${fillLink}`,
+      });
+
+      void logActivity({ action: "wage_ack_sent", targetType: "employee", targetId: recipient.id, targetLabel: recipient.name });
+
+      setWageAckRecipientId("");
+      setWageAckRecipientSearch("");
+      await loadSentWageAckForms();
+    } catch (err) {
+      setWageAckSendError(err instanceof Error ? err.message : "Failed to send request.");
+    } finally {
+      setWageAckSending(false);
+    }
+  };
+
+  /** No AHS profile to tie this to, so no DM — the link itself (shown in the same panel, right below "Generate Link") is the only way the recipient finds out, same as the Warning Form's "External Link" mode. */
+  const handleGenerateExternalWageAck = async () => {
+    setWageAckSending(true);
+    setWageAckSendError(null);
+    try {
+      // A name isn't required upfront — see handleGenerateExternalW8ben's comment.
+      const name = wageAckExternalName.trim() || "External Recipient";
+      const doc = await createSignableDocument({
+        documentType: "wage_ack",
+        formData: { employeeId: "", employeeName: name } as unknown as Record<string, any>,
+        recipientName: name,
+        recipientSlot: "employee",
+        pdfUrl: "",
+      });
+
+      void logActivity({ action: "wage_ack_sent", targetType: "employee", targetLabel: name, details: { external: true } });
+
+      setWageAckSentLink({ link: `${getAppUrl()}/fill-wage-ack-external/${doc.id}`, recipientName: name });
+      setWageAckExternalName("");
+      await loadSentWageAckForms();
+    } catch (err) {
+      setWageAckSendError(err instanceof Error ? err.message : "Failed to generate link.");
+    } finally {
+      setWageAckSending(false);
+    }
+  };
+
+  const handleCopyWageAckSentLink = async () => {
+    if (!wageAckSentLink) return;
+    try {
+      await navigator.clipboard.writeText(wageAckSentLink.link);
+      setWageAckSentLinkCopied(true);
+      setTimeout(() => setWageAckSentLinkCopied(false), 1500);
+    } catch (err) {
+      console.error("Failed to copy link:", err);
+    }
+  };
+
+  const handleCopyWageAckLink = async (doc: SignableDocument) => {
+    try {
+      const path = doc.recipientId ? "fill-wage-ack" : "fill-wage-ack-external";
+      await navigator.clipboard.writeText(`${getAppUrl()}/${path}/${doc.id}`);
+    } catch (err) {
+      console.error("Failed to copy link:", err);
+    }
+  };
+
+  const handleDownloadWageAckPdf = async (doc: SignableDocument) => {
+    if (!doc.pdfUrl) return;
+    const name = (doc.formData as Partial<WageAckFormData>).employeeName || doc.recipientName || "acknowledgment-of-wage";
+    try {
+      const res = await fetch(doc.pdfUrl);
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = `Acknowledgment of Wage - ${name}.pdf`;
+      a.click();
+      URL.revokeObjectURL(blobUrl);
+    } catch {
+      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
+    }
+  };
+
+  const handleDeleteWageAck = async (doc: SignableDocument) => {
+    if (!window.confirm("Permanently delete this Acknowledgment of Wage request?")) return;
+    setWageAckActionBusyId(doc.id);
+    setWageAckActionError(null);
+    try {
+      await deleteSignableDocument(doc.id);
+      await loadSentWageAckForms();
+    } catch (err) {
+      setWageAckActionError(err instanceof Error ? err.message : "Failed to delete.");
+    } finally {
+      setWageAckActionBusyId(null);
+    }
+  };
+
+  // ── Complete Employer Signature — a plain signature pad (no fields to
+  // review, unlike I-9's Section 2), reassigns the document to the current
+  // HR user first so the RLS update policy allows it (same "claim" pattern
+  // I-9's handleSaveI9Section2 uses), then regenerates the whole PDF fresh
+  // with both signatures. ──
+  const [wageAckEmployerDialog, setWageAckEmployerDialog] = useState<SignableDocument | null>(null);
+  const [wageAckEmployerSaving, setWageAckEmployerSaving] = useState(false);
+  const [wageAckEmployerError, setWageAckEmployerError] = useState<string | null>(null);
+  const wageAckEmployerSigCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const wageAckEmployerDrawingRef = useRef(false);
+  const wageAckEmployerHasDrawnRef = useRef(false);
+
+  const handleOpenWageAckEmployerDialog = (doc: SignableDocument) => {
+    setWageAckEmployerDialog(doc);
+    setWageAckEmployerError(null);
+    wageAckEmployerHasDrawnRef.current = false;
+  };
+
+  const wageAckEmployerPos = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    const c = wageAckEmployerSigCanvasRef.current!;
+    const r = c.getBoundingClientRect();
+    return { x: ((e.clientX - r.left) / r.width) * c.width, y: ((e.clientY - r.top) / r.height) * c.height };
+  };
+  const wageAckEmployerStartDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    wageAckEmployerDrawingRef.current = true;
+    const ctx = wageAckEmployerSigCanvasRef.current!.getContext("2d")!;
+    const { x, y } = wageAckEmployerPos(e);
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+  const wageAckEmployerMoveDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!wageAckEmployerDrawingRef.current) return;
+    const ctx = wageAckEmployerSigCanvasRef.current!.getContext("2d")!;
+    const { x, y } = wageAckEmployerPos(e);
+    ctx.lineTo(x, y);
+    ctx.strokeStyle = "#0f172a";
+    ctx.lineWidth = 2;
+    ctx.lineCap = "round";
+    ctx.stroke();
+    wageAckEmployerHasDrawnRef.current = true;
+  };
+  const wageAckEmployerEndDraw = () => { wageAckEmployerDrawingRef.current = false; };
+  const wageAckEmployerClearSignature = () => {
+    const c = wageAckEmployerSigCanvasRef.current;
+    if (!c) return;
+    c.getContext("2d")!.clearRect(0, 0, c.width, c.height);
+    wageAckEmployerHasDrawnRef.current = false;
+  };
+
+  const handleSaveWageAckEmployerSignature = async () => {
+    if (!wageAckEmployerDialog || !uid) return;
+    if (!wageAckEmployerHasDrawnRef.current) {
+      setWageAckEmployerError("Please draw your signature.");
+      return;
+    }
+    setWageAckEmployerSaving(true);
+    setWageAckEmployerError(null);
+    try {
+      const myProfileId = await getMyProfileId(uid);
+      if (!myProfileId) throw new Error("Could not resolve your profile.");
+
+      await reassignSignableDocument(wageAckEmployerDialog.id, { recipientId: myProfileId, recipientName: displayName || "HR" }, "hr_staff");
+
+      const existing = wageAckEmployerDialog.formData as WageAckFormData;
+      const employeeSigBytes = existing.employeeSignatureDataUrl
+        ? new Uint8Array(await (await fetch(existing.employeeSignatureDataUrl)).arrayBuffer())
+        : undefined;
+
+      const dataUrl = wageAckEmployerSigCanvasRef.current!.toDataURL("image/png");
+      const employerSigBytes = new Uint8Array(await (await fetch(dataUrl)).arrayBuffer());
+      const signatureUrl = await uploadSignableDocumentSignature(wageAckEmployerDialog.companyId, wageAckEmployerDialog.id, "hr_staff", dataUrl);
+      const signedAt = new Date().toISOString();
+
+      const merged: WageAckFormData = { ...existing, employerSignatureDataUrl: dataUrl, employerDateSigned: signedAt };
+
+      const pdfBytes = await fillWageAckPdf(merged, employeeSigBytes, employerSigBytes);
+      const pdfUrl = await uploadWageAckForm(wageAckEmployerDialog.companyId, existing.employeeName || "acknowledgment-of-wage", new Blob([pdfBytes as unknown as BlobPart], { type: "application/pdf" }));
+
+      const entry = { name: displayName || "HR", url: signatureUrl, signedAt };
+      await signDocument(wageAckEmployerDialog.id, "hr_staff", entry, pdfUrl, merged as unknown as Record<string, any>);
+      await confirmSignableDocument(wageAckEmployerDialog.id, null);
+
+      void logActivity({ action: "wage_ack_employer_signed", targetType: "employee", targetLabel: existing.employeeName || "" });
+      setWageAckEmployerDialog(null);
+      await loadSentWageAckForms();
+    } catch (err) {
+      setWageAckEmployerError(err instanceof Error ? err.message : "Failed to save signature.");
+    } finally {
+      setWageAckEmployerSaving(false);
+    }
+  };
+
+  // ── Send to Employer — hands off the employer/HR-side completion step
+  // (I-9 Section 2, Acknowledgment of Wage's employer signature) to a
+  // DIFFERENT AHS teammate instead of the current viewer completing it
+  // themselves right now. Shared by both document types since the flow is
+  // identical: reassignSignableDocument to that teammate's "hr_staff" slot
+  // (same primitive Warning Form's own "Send to Next Recipient" uses), then
+  // DM them so they know to go complete it — there's no separate no-login
+  // link for this step (unlike the employee half), so only an AHS teammate
+  // can be the target, not an external recipient. ──
+  const [employerReassignDialog, setEmployerReassignDialog] = useState<SignableDocument | null>(null);
+  const [employerReassignRecipientId, setEmployerReassignRecipientId] = useState("");
+  const [employerReassignRecipientSearch, setEmployerReassignRecipientSearch] = useState("");
+  const [employerReassignDropdownOpen, setEmployerReassignDropdownOpen] = useState(false);
+  const [employerReassignSending, setEmployerReassignSending] = useState(false);
+  const [employerReassignError, setEmployerReassignError] = useState<string | null>(null);
+  const filteredEmployerReassignRecipients = useMemo(
+    () => employees.filter((e) => e.status === "active" && e.name.toLowerCase().includes(employerReassignRecipientSearch.toLowerCase())),
+    [employees, employerReassignRecipientSearch]
+  );
+
+  const handleOpenEmployerReassign = (doc: SignableDocument) => {
+    setEmployerReassignDialog(doc);
+    setEmployerReassignRecipientId("");
+    setEmployerReassignRecipientSearch("");
+    setEmployerReassignError(null);
+  };
+
+  const handleSendToEmployer = async () => {
+    if (!employerReassignDialog || !employerReassignRecipientId || !uid) return;
+    setEmployerReassignSending(true);
+    setEmployerReassignError(null);
+    try {
+      const doc = employerReassignDialog;
+      const recipient = employees.find((e) => e.id === employerReassignRecipientId);
+      if (!recipient) throw new Error("Select a teammate first.");
+
+      await reassignSignableDocument(doc.id, { recipientId: recipient.id, recipientName: recipient.name }, "hr_staff");
+
+      const myProfileId = await getMyProfileId(uid);
+      if (myProfileId) {
+        const isI9 = doc.documentType === "i9";
+        const employeeName = (doc.formData as { employeeName?: string })?.employeeName || doc.recipientName || "an employee";
+        const thread = await getOrCreateDmThread(myProfileId, recipient.id);
+        await sendMessage({
+          dmThreadId: thread.id,
+          senderId: myProfileId,
+          senderName: displayName || "HR",
+          body: isI9
+            ? `📋 Please complete Section 2 (document review + employer/AR signature) of Form I-9 for ${employeeName} — open the "Form I-9" tab in the HR Dashboard.`
+            : `📋 Please add the employer/representative signature to the Acknowledgment of Wage & Compensation Structure for ${employeeName} — open the "Acknowledgment of Wage" tab in the HR Dashboard.`,
+        });
+      }
+
+      setEmployerReassignDialog(null);
+      if (doc.documentType === "i9") await loadSentI9Forms();
+      else await loadSentWageAckForms();
+    } catch (err) {
+      setEmployerReassignError(err instanceof Error ? err.message : "Failed to send.");
+    } finally {
+      setEmployerReassignSending(false);
+    }
+  };
+
+  // ── Signed Employment Forms — W-8BEN/W-4/W-9/W-4R/I-9, surfaced here too
+  // alongside Applicant Documents so HR has one company-wide searchable
+  // place to find a completed form, rather than hunting through each
+  // document type's own tab or a specific employee's Onboarding Documents
+  // page. Reuses the same sentXForms lists those tabs already load — their
+  // own useEffect gates (see loadSentW8benForms etc. above) were widened to
+  // also fetch when this tab is open. ──
+  const signedFormNameOf = (doc: SignableDocument): string => {
+    const fd = doc.formData as Record<string, any>;
+    const recipient = employees.find((e) => e.id === doc.recipientId)?.name;
+    if (doc.documentType === "w4" || doc.documentType === "w4r") {
+      return [fd.firstNameMiddleInitial, fd.lastName].filter(Boolean).join(" ").trim() || recipient || doc.recipientName || "—";
+    }
+    if (doc.documentType === "w9") return fd.name || recipient || doc.recipientName || "—";
+    return fd.employeeName || recipient || doc.recipientName || "—"; // w8ben, i9, wage_ack
+  };
+  const signedFormRows = useMemo(() => {
+    const rows = [
+      ...sentW8benForms.map((doc) => ({ doc, formLabel: "Form W-8BEN" })),
+      ...sentW4Forms.map((doc) => ({ doc, formLabel: "Form W-4" })),
+      ...sentW9Forms.map((doc) => ({ doc, formLabel: "Form W-9" })),
+      ...sentW4RForms.map((doc) => ({ doc, formLabel: "Form W-4R" })),
+      ...sentI9Forms.map((doc) => ({ doc, formLabel: "Form I-9" })),
+      ...sentWageAckForms.map((doc) => ({ doc, formLabel: "Acknowledgment of Wage" })),
+    ];
+    return rows.sort((a, b) => new Date(b.doc.createdAt).getTime() - new Date(a.doc.createdAt).getTime());
+  }, [sentW8benForms, sentW4Forms, sentW9Forms, sentW4RForms, sentI9Forms, sentWageAckForms]);
+
+  const [signedFormsSearch, setSignedFormsSearch] = useState("");
+  const [signedFormsTypeFilter, setSignedFormsTypeFilter] = useState("");
+  const filteredSignedFormRows = useMemo(() => {
+    const q = signedFormsSearch.trim().toLowerCase();
+    return signedFormRows.filter((r) => {
+      if (signedFormsTypeFilter && r.formLabel !== signedFormsTypeFilter) return false;
+      if (q && !signedFormNameOf(r.doc).toLowerCase().includes(q)) return false;
+      return true;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [signedFormRows, signedFormsSearch, signedFormsTypeFilter, employees]);
+
+  const signedFormStatusLabel = (row: { doc: SignableDocument; formLabel: string }): { label: string; className: string } => {
+    const { doc, formLabel } = row;
+    if (formLabel === "Form I-9") {
+      if (doc.status === "confirmed") return { label: "Completed", className: "bg-green-500/20 text-green-300" };
+      if (isAwaitingEmployerStep(doc)) return { label: "Awaiting HR (Section 2)", className: "bg-orange-500/20 text-orange-300" };
+      if (doc.status === "cancelled") return { label: "Cancelled", className: "bg-slate-500/20 text-slate-400" };
+      return { label: "Awaiting Employee (Section 1)", className: "bg-yellow-500/20 text-yellow-300" };
+    }
+    if (formLabel === "Acknowledgment of Wage") {
+      if (doc.status === "confirmed") return { label: "Completed", className: "bg-green-500/20 text-green-300" };
+      if (isAwaitingEmployerStep(doc)) return { label: "Awaiting Employer Signature", className: "bg-orange-500/20 text-orange-300" };
+      if (doc.status === "cancelled") return { label: "Cancelled", className: "bg-slate-500/20 text-slate-400" };
+      return { label: "Awaiting Employee", className: "bg-yellow-500/20 text-yellow-300" };
+    }
+    if (doc.status === "signed") return { label: "Submitted", className: "bg-green-500/20 text-green-300" };
+    if (doc.status === "cancelled") return { label: "Cancelled", className: "bg-slate-500/20 text-slate-400" };
+    return { label: "Awaiting Completion", className: "bg-yellow-500/20 text-yellow-300" };
+  };
+
+  const [signedFormPreview, setSignedFormPreview] = useState<{ doc: SignableDocument; formLabel: string } | null>(null);
+
+  const handleDownloadSignedForm = async (row: { doc: SignableDocument; formLabel: string }) => {
+    if (!row.doc.pdfUrl) return;
+    const name = signedFormNameOf(row.doc);
+    try {
+      const res = await fetch(row.doc.pdfUrl);
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = `${row.formLabel} - ${name}.pdf`;
+      a.click();
+      URL.revokeObjectURL(blobUrl);
+    } catch {
+      window.open(row.doc.pdfUrl, "_blank", "noopener,noreferrer");
+    }
+  };
+
+  const handleCopyI9Link = async (doc: SignableDocument) => {
+    try {
+      const path = doc.recipientId ? "fill-i9" : "fill-i9-external";
+      await navigator.clipboard.writeText(`${getAppUrl()}/${path}/${doc.id}`);
+    } catch (err) {
+      console.error("Failed to copy link:", err);
+    }
+  };
+
+  const handleDownloadI9Pdf = async (doc: SignableDocument) => {
+    if (!doc.pdfUrl) return;
+    const employeeName = (doc.formData as Partial<I9FormData>).employeeName || "i9-form";
+    try {
+      const res = await fetch(doc.pdfUrl);
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = `Form I-9 - ${employeeName}.pdf`;
+      a.click();
+      URL.revokeObjectURL(blobUrl);
+    } catch {
+      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
+    }
+  };
+
+  const handleDeleteI9 = async (doc: SignableDocument) => {
+    if (!window.confirm("Permanently delete this I-9 request?")) return;
+    setI9ActionBusyId(doc.id);
+    setI9ActionError(null);
+    try {
+      await deleteSignableDocument(doc.id);
+      await loadSentI9Forms();
+    } catch (err) {
+      setI9ActionError(err instanceof Error ? err.message : "Failed to delete.");
+    } finally {
+      setI9ActionBusyId(null);
+    }
+  };
+
+  // ── I-9 Section 2 — HR reviews the employee's ID documents and completes
+  // the employer half after Section 1 comes back signed. Plain form, not a
+  // pdf.js overlay (same treatment as the W-4 "Fill Employer Info" dialog
+  // above), extended with a signature canvas since Section 2 legally
+  // requires the employer/AR's own signature. ──
+  const I9_SECTION2_BLANK = {
+    documentChoice: "" as I9FormData["documentChoice"],
+    listADocTitle1: "", listAIssuing1: "", listADocNumber1: "", listAExp1: "",
+    listADocTitle2: "", listAIssuing2: "", listADocNumber2: "", listAExp2: "",
+    listADocTitle3: "", listAIssuing3: "", listADocNumber3: "", listAExp3: "",
+    listBDocTitle1: "", listBIssuing1: "", listBDocNumber1: "", listBExp1: "",
+    listCDocTitle1: "", listCIssuing1: "", listCDocNumber1: "", listCExp1: "",
+    additionalInfo: "", altProcedureCheckbox: false,
+    firstDayEmployed: "", employerNameTitle: "", businessName: "", businessAddress: "",
+  };
+  const [i9Section2Dialog, setI9Section2Dialog] = useState<SignableDocument | null>(null);
+  const [i9Section2Form, setI9Section2Form] = useState(I9_SECTION2_BLANK);
+  const [i9Section2Saving, setI9Section2Saving] = useState(false);
+  const [i9Section2Error, setI9Section2Error] = useState<string | null>(null);
+  const i9Section2SigCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const i9Section2DrawingRef = useRef(false);
+  const i9Section2HasDrawnRef = useRef(false);
+
+  const handleOpenI9Section2 = (doc: SignableDocument) => {
+    setI9Section2Dialog(doc);
+    setI9Section2Form(I9_SECTION2_BLANK);
+    setI9Section2Error(null);
+    i9Section2HasDrawnRef.current = false;
+  };
+
+  const i9Section2Pos = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    const c = i9Section2SigCanvasRef.current!;
+    const r = c.getBoundingClientRect();
+    return { x: ((e.clientX - r.left) / r.width) * c.width, y: ((e.clientY - r.top) / r.height) * c.height };
+  };
+  const i9Section2StartDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    i9Section2DrawingRef.current = true;
+    const ctx = i9Section2SigCanvasRef.current!.getContext("2d")!;
+    const { x, y } = i9Section2Pos(e);
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+  const i9Section2MoveDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!i9Section2DrawingRef.current) return;
+    const ctx = i9Section2SigCanvasRef.current!.getContext("2d")!;
+    const { x, y } = i9Section2Pos(e);
+    ctx.lineTo(x, y);
+    ctx.strokeStyle = "#0f172a";
+    ctx.lineWidth = 2;
+    ctx.lineCap = "round";
+    ctx.stroke();
+    i9Section2HasDrawnRef.current = true;
+  };
+  const i9Section2EndDraw = () => { i9Section2DrawingRef.current = false; };
+  const i9Section2ClearSignature = () => {
+    const c = i9Section2SigCanvasRef.current;
+    if (!c) return;
+    c.getContext("2d")!.clearRect(0, 0, c.width, c.height);
+    i9Section2HasDrawnRef.current = false;
+  };
+
+  const handleSaveI9Section2 = async () => {
+    if (!i9Section2Dialog || !uid) return;
+    if (!i9Section2Form.documentChoice) {
+      setI9Section2Error("Select which documents were examined (List A, or List B + List C).");
+      return;
+    }
+    if (i9Section2Form.documentChoice === "listA" && !i9Section2Form.listADocTitle1.trim()) {
+      setI9Section2Error("Enter at least one List A document.");
+      return;
+    }
+    if (i9Section2Form.documentChoice === "listBC" && (!i9Section2Form.listBDocTitle1.trim() || !i9Section2Form.listCDocTitle1.trim())) {
+      setI9Section2Error("Enter both a List B and a List C document.");
+      return;
+    }
+    if (!i9Section2Form.firstDayEmployed) {
+      setI9Section2Error("Enter the employee's first day of employment.");
+      return;
+    }
+    if (!i9Section2Form.employerNameTitle.trim() || !i9Section2Form.businessName.trim() || !i9Section2Form.businessAddress.trim()) {
+      setI9Section2Error("Fill in the employer/authorized representative and business info.");
+      return;
+    }
+    if (!i9Section2HasDrawnRef.current) {
+      setI9Section2Error("Please draw your signature.");
+      return;
+    }
+    setI9Section2Saving(true);
+    setI9Section2Error(null);
+    try {
+      const myProfileId = await getMyProfileId(uid);
+      if (!myProfileId) throw new Error("Could not resolve your profile.");
+
+      await reassignSignableDocument(i9Section2Dialog.id, { recipientId: myProfileId, recipientName: displayName || "HR" }, "hr_staff");
+
+      const existing = i9Section2Dialog.formData as I9FormData;
+      const employeeSigBytes = existing.employeeSignatureDataUrl
+        ? new Uint8Array(await (await fetch(existing.employeeSignatureDataUrl)).arrayBuffer())
+        : undefined;
+
+      const dataUrl = i9Section2SigCanvasRef.current!.toDataURL("image/png");
+      const employerSigBytes = new Uint8Array(await (await fetch(dataUrl)).arrayBuffer());
+      const signatureUrl = await uploadSignableDocumentSignature(i9Section2Dialog.companyId, i9Section2Dialog.id, "hr_staff", dataUrl);
+      const signedAt = new Date().toISOString();
+
+      const merged: I9FormData = {
+        ...existing,
+        ...i9Section2Form,
+        employerSignatureDataUrl: dataUrl,
+        section2DateSigned: signedAt,
+      };
+
+      const pdfBytes = await fillI9Pdf(merged, employeeSigBytes, employerSigBytes);
+      const pdfUrl = await uploadI9Form(i9Section2Dialog.companyId, existing.employeeName || "i9-form", new Blob([pdfBytes as unknown as BlobPart], { type: "application/pdf" }));
+
+      const entry = { name: displayName || "HR", url: signatureUrl, signedAt };
+      await signDocument(i9Section2Dialog.id, "hr_staff", entry, pdfUrl, merged as unknown as Record<string, any>);
+      await confirmSignableDocument(i9Section2Dialog.id, null);
+
+      void logActivity({ action: "i9_section2_completed", targetType: "employee", targetLabel: existing.employeeName || "" });
+      setI9Section2Dialog(null);
+      await loadSentI9Forms();
+    } catch (err) {
+      setI9Section2Error(err instanceof Error ? err.message : "Failed to save Section 2.");
+    } finally {
+      setI9Section2Saving(false);
     }
   };
 
@@ -5891,7 +6993,9 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         { key: "promotionForm", label: "Employee Promotion / Role Change", count: 0, icon: FileText },
         { key: "actionPlanForm", label: "Manager's Action Plan Form", count: 0, icon: FileText },
         { key: "terminationForm", label: "Termination Notice Form", count: 0, icon: FileText },
-        { key: "w8ben", label: "W-8 / W-9 / W-4 Forms", count: 0, icon: Landmark },
+        { key: "w8ben", label: "W-8 / W-9 / W-4 / W-4R Forms", count: 0, icon: Landmark },
+        { key: "i9", label: "Form I-9 (Employment Eligibility)", count: sentI9AwaitingSection2Count, icon: FileCheck },
+        { key: "wageAck", label: "Acknowledgment of Wage", count: sentWageAckAwaitingEmployerCount, icon: FileCheck },
       ] as const,
     }] : []),
     {
@@ -5934,12 +7038,20 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           className={`h-full w-72 bg-slate-900 border-r border-white/10 shadow-2xl p-4 overflow-y-auto transition-transform duration-200 ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}`}
         >
           <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-4">HR Sections</p>
-          {tabGroups.map((section) => (
+          {tabGroups.map((section) => {
+            const collapsed = collapsedSidebarGroups.has(section.group);
+            return (
             <div key={section.group} className="mb-3">
-              <div className="flex items-center gap-2 px-2 py-1.5 text-sm font-semibold text-foreground">
-                <section.icon className="h-4 w-4 text-muted-foreground" />
-                {section.group}
-              </div>
+              <button
+                type="button"
+                onClick={() => toggleSidebarGroup(section.group)}
+                className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-sm font-semibold text-foreground hover:bg-white/5 transition-colors"
+              >
+                <section.icon className="h-4 w-4 text-muted-foreground shrink-0" />
+                <span className="flex-1 text-left">{section.group}</span>
+                <ChevronDown className={`h-3.5 w-3.5 text-muted-foreground shrink-0 transition-transform ${collapsed ? "-rotate-90" : ""}`} />
+              </button>
+              {!collapsed && (
               <div className="flex flex-col gap-0.5 pl-2 border-l border-white/10 ml-4">
                 {section.tabs.map((tab) => {
                   const active = activeTab === tab.key;
@@ -5977,8 +7089,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                   </Link>
                 )}
               </div>
+              )}
             </div>
-          ))}
+            );
+          })}
         </div>
       </div>
       <main className="flex-1 max-w-[1900px] mx-auto w-full px-3 py-4">
@@ -7214,6 +8328,110 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           </div>
         )}
       </div>
+      )}
+
+      {/* ── Signed Employment Forms — W-8BEN/W-4/W-9/W-4R/I-9, company-wide and searchable in one place, same as Applicant Documents above but for these instead of Jotform intake forms ── */}
+      {activeTab === "jotformDocuments" && canViewJotformTab && (
+      <div className="panel p-0 overflow-hidden mt-4">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">Signed Employment Forms</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Every W-8BEN/W-4/W-9/W-4R/I-9 sent, teammate or external link alike. Sent from the "W-8 / W-9 / W-4 / W-4R Forms" and "Form I-9" tabs.</p>
+        </div>
+
+        <div className="px-4 py-3 border-b border-white/10 bg-white/5 flex flex-wrap items-end gap-3">
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+            <input
+              type="text"
+              value={signedFormsSearch}
+              onChange={(e) => setSignedFormsSearch(e.target.value)}
+              placeholder="Name…"
+              className="glass-input text-sm py-1.5 pl-8 pr-3 rounded-md w-56"
+            />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Form</label>
+            <select value={signedFormsTypeFilter} onChange={(e) => setSignedFormsTypeFilter(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md">
+              <option value="">All</option>
+              <option value="Form W-8BEN">Form W-8BEN</option>
+              <option value="Form W-4">Form W-4</option>
+              <option value="Form W-9">Form W-9</option>
+              <option value="Form W-4R">Form W-4R</option>
+              <option value="Form I-9">Form I-9</option>
+              <option value="Acknowledgment of Wage">Acknowledgment of Wage</option>
+            </select>
+          </div>
+          {(signedFormsSearch || signedFormsTypeFilter) && (
+            <button onClick={() => { setSignedFormsSearch(""); setSignedFormsTypeFilter(""); }} className="btn text-sm px-3 py-1.5">Clear Filters</button>
+          )}
+          <span className="text-xs text-muted-foreground mb-1.5 ml-auto">
+            {filteredSignedFormRows.length}{(signedFormsSearch || signedFormsTypeFilter) ? ` of ${signedFormRows.length}` : ""} forms
+          </span>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-white/10 bg-white/5">
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Name</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Form</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent By</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Status</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Document</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredSignedFormRows.length === 0 ? (
+                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">{signedFormRows.length === 0 ? "No signed forms sent yet." : "No forms match these filters."}</td></tr>
+              ) : (
+                filteredSignedFormRows.map((row) => {
+                  const status = signedFormStatusLabel(row);
+                  return (
+                    <tr key={row.doc.id} className="border-b border-white/5 hover:bg-white/5">
+                      <td className="px-4 py-3 font-medium">{signedFormNameOf(row.doc)}</td>
+                      <td className="px-4 py-3 text-muted-foreground">{row.formLabel}</td>
+                      <td className="px-4 py-3 text-muted-foreground">{row.doc.createdByName ?? "—"}</td>
+                      <td className="px-4 py-3">
+                        <span className={`px-2 py-1 rounded text-xs font-semibold ${status.className}`}>{status.label}</span>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{new Date(row.doc.createdAt).toLocaleDateString()}</td>
+                      <td className="px-4 py-3">
+                        {row.doc.pdfUrl ? (
+                          <button type="button" onClick={() => setSignedFormPreview(row)} className="btn text-xs px-2.5 py-1.5">View PDF</button>
+                        ) : (
+                          <span className="text-muted-foreground text-xs">Not yet submitted</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      )}
+
+      {/* Signed Employment Forms — PDF preview, same inline-frame pattern used for Applicant Documents' Jotform preview */}
+      {signedFormPreview && (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => setSignedFormPreview(null)}>
+          <div className="bg-slate-900 border border-white/10 rounded-lg shadow-2xl w-full max-w-6xl h-[92vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold">{signedFormNameOf(signedFormPreview.doc)} — {signedFormPreview.formLabel}</p>
+                <p className="text-[10px] text-muted-foreground">Sent {new Date(signedFormPreview.doc.createdAt).toLocaleString()}</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button type="button" onClick={() => handleDownloadSignedForm(signedFormPreview)} className="btn text-xs px-2.5 py-1.5 flex items-center gap-1"><Download className="h-3 w-3" /> Download</button>
+                <button type="button" onClick={() => setSignedFormPreview(null)} className="btn text-xs px-2.5 py-1.5">Close</button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-hidden bg-slate-950">
+              {signedFormPreview.doc.pdfUrl && <iframe src={signedFormPreview.doc.pdfUrl} title={signedFormPreview.formLabel} className="w-full h-full min-h-[70vh] border-0" />}
+            </div>
+          </div>
+        </div>
       )}
 
       {/* ── Deleted Jotforms — soft-deleted submissions, restorable for 30 days ── */}
@@ -9449,7 +10667,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       {activeTab === "w8ben" && (
       <>
       <div className="flex gap-2 mt-4">
-        {(["w8ben", "w4", "w9"] as const).map((ft) => (
+        {(["w8ben", "w4", "w9", "w4r"] as const).map((ft) => (
           <button
             key={ft}
             type="button"
@@ -9458,7 +10676,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               w8FormType === ft ? "border-primary/50 bg-primary/10 text-foreground" : "border-white/10 text-muted-foreground hover:text-foreground"
             }`}
           >
-            {ft === "w8ben" ? "W-8BEN" : ft === "w4" ? "W-4" : "W-9"}
+            {ft === "w8ben" ? "W-8BEN" : ft === "w4" ? "W-4" : ft === "w9" ? "W-9" : "W-4R"}
           </button>
         ))}
       </div>
@@ -9471,6 +10689,29 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <p className="text-[10px] text-muted-foreground mt-0.5">Pick a teammate — they'll get a link to fill in and sign their own Form W-8BEN. It comes back to you here automatically once submitted.</p>
         </div>
         <div className="p-4 flex flex-col gap-3 max-w-md">
+          {w8SentLink ? (
+            <div className="flex flex-col gap-3">
+              <div className="rounded-md border border-green-500/30 bg-green-500/10 px-3 py-2.5">
+                <p className="text-sm font-semibold text-green-300">Link generated for {w8SentLink.recipientName}</p>
+                <p className="text-xs text-muted-foreground mt-1">No AHS account needed — copy the link below and send it any way you like (email, Slack, text).</p>
+              </div>
+              <div>
+                <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Fill-in link</label>
+                <div className="flex gap-2 mt-1">
+                  <input type="text" readOnly value={w8SentLink.link} onFocus={(e) => e.target.select()} className="glass-input text-xs py-1.5 px-3 rounded-md flex-1" />
+                  <button onClick={handleCopyW8SentLink} className="btn text-xs px-3 py-1.5 shrink-0">{w8SentLinkCopied ? "Copied!" : "Copy"}</button>
+                </div>
+              </div>
+              <button onClick={() => setW8SentLink(null)} className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white w-fit">Done</button>
+            </div>
+          ) : (
+          <>
+          <div className="flex rounded-md overflow-hidden border border-white/15 h-7.5 w-fit">
+            <button type="button" onClick={() => setW8SendMode("teammate")} className={`px-3 text-xs font-medium transition-colors ${w8SendMode === "teammate" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}>AHS Teammate</button>
+            <button type="button" onClick={() => setW8SendMode("external")} className={`px-3 text-xs font-medium transition-colors border-l border-white/15 ${w8SendMode === "external" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}>External Link</button>
+          </div>
+
+          {w8SendMode === "teammate" ? (
           <div className="flex flex-col gap-1 relative">
             <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient</label>
             <input
@@ -9506,16 +10747,42 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               </div>
             )}
           </div>
+          ) : (
+          <div>
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient name</label>
+            <input
+              type="text"
+              value={w8ExternalName}
+              onChange={(e) => setW8ExternalName(e.target.value)}
+              placeholder="Type their name (optional)…"
+              className="glass-input text-sm py-1.5 px-3 rounded-md w-full mt-1"
+            />
+            <p className="text-[10px] text-muted-foreground mt-1">No AHS account needed — you'll get a link to send them any way you like (email, Slack, text), and they can open it and fill it in without logging in.</p>
+          </div>
+          )}
+
           {w8SendError && (
             <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{w8SendError}</p>
           )}
-          <button
-            onClick={handleOpenW8benPreview}
-            disabled={!w8RecipientId || w8Sending}
-            className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 w-fit"
-          >
-            Preview & Send
-          </button>
+          {w8SendMode === "teammate" ? (
+            <button
+              onClick={handleOpenW8benPreview}
+              disabled={!w8RecipientId || w8Sending}
+              className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 w-fit"
+            >
+              Preview & Send
+            </button>
+          ) : (
+            <button
+              onClick={handleGenerateExternalW8ben}
+              disabled={w8Sending}
+              className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 w-fit"
+            >
+              {w8Sending ? "Generating…" : "Generate Link"}
+            </button>
+          )}
+          </>
+          )}
         </div>
       </div>
 
@@ -9551,10 +10818,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                       <td className="px-4 py-3 font-medium">
                         {doc.pdfUrl ? (
                           <button type="button" onClick={() => setW8DocPreview(doc)} className="text-blue-300 hover:text-blue-200 hover:underline text-left">
-                            {data.employeeName || recipient?.name || "—"}
+                            {data.employeeName || recipient?.name || doc.recipientName || "—"}
                           </button>
                         ) : (
-                          data.employeeName || recipient?.name || "—"
+                          data.employeeName || recipient?.name || doc.recipientName || "—"
                         )}
                       </td>
                       <td className="px-4 py-3 text-muted-foreground">{doc.createdByName ?? "—"}</td>
@@ -9610,6 +10877,29 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <p className="text-[10px] text-muted-foreground mt-0.5">Pick a teammate — they'll get a link to fill in and sign their own Form W-4. It comes back to you here automatically once submitted.</p>
         </div>
         <div className="p-4 flex flex-col gap-3 max-w-md">
+          {w4SentLink ? (
+            <div className="flex flex-col gap-3">
+              <div className="rounded-md border border-green-500/30 bg-green-500/10 px-3 py-2.5">
+                <p className="text-sm font-semibold text-green-300">Link generated for {w4SentLink.recipientName}</p>
+                <p className="text-xs text-muted-foreground mt-1">No AHS account needed — copy the link below and send it any way you like (email, Slack, text).</p>
+              </div>
+              <div>
+                <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Fill-in link</label>
+                <div className="flex gap-2 mt-1">
+                  <input type="text" readOnly value={w4SentLink.link} onFocus={(e) => e.target.select()} className="glass-input text-xs py-1.5 px-3 rounded-md flex-1" />
+                  <button onClick={handleCopyW4SentLink} className="btn text-xs px-3 py-1.5 shrink-0">{w4SentLinkCopied ? "Copied!" : "Copy"}</button>
+                </div>
+              </div>
+              <button onClick={() => setW4SentLink(null)} className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white w-fit">Done</button>
+            </div>
+          ) : (
+          <>
+          <div className="flex rounded-md overflow-hidden border border-white/15 h-7.5 w-fit">
+            <button type="button" onClick={() => setW4SendMode("teammate")} className={`px-3 text-xs font-medium transition-colors ${w4SendMode === "teammate" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}>AHS Teammate</button>
+            <button type="button" onClick={() => setW4SendMode("external")} className={`px-3 text-xs font-medium transition-colors border-l border-white/15 ${w4SendMode === "external" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}>External Link</button>
+          </div>
+
+          {w4SendMode === "teammate" ? (
           <div className="flex flex-col gap-1 relative">
             <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient</label>
             <input
@@ -9645,16 +10935,42 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               </div>
             )}
           </div>
+          ) : (
+          <div>
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient name</label>
+            <input
+              type="text"
+              value={w4ExternalName}
+              onChange={(e) => setW4ExternalName(e.target.value)}
+              placeholder="Type their name (optional)…"
+              className="glass-input text-sm py-1.5 px-3 rounded-md w-full mt-1"
+            />
+            <p className="text-[10px] text-muted-foreground mt-1">No AHS account needed — you'll get a link to send them any way you like (email, Slack, text), and they can open it and fill it in without logging in.</p>
+          </div>
+          )}
+
           {w4SendError && (
             <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{w4SendError}</p>
           )}
-          <button
-            onClick={handleOpenW4Preview}
-            disabled={!w4RecipientId || w4Sending}
-            className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 w-fit"
-          >
-            Preview & Send
-          </button>
+          {w4SendMode === "teammate" ? (
+            <button
+              onClick={handleOpenW4Preview}
+              disabled={!w4RecipientId || w4Sending}
+              className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 w-fit"
+            >
+              Preview & Send
+            </button>
+          ) : (
+            <button
+              onClick={handleGenerateExternalW4}
+              disabled={w4Sending}
+              className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 w-fit"
+            >
+              {w4Sending ? "Generating…" : "Generate Link"}
+            </button>
+          )}
+          </>
+          )}
         </div>
       </div>
 
@@ -9691,10 +11007,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                       <td className="px-4 py-3 font-medium">
                         {doc.pdfUrl ? (
                           <button type="button" onClick={() => setW4DocPreview(doc)} className="text-blue-300 hover:text-blue-200 hover:underline text-left">
-                            {employeeName || recipient?.name || "—"}
+                            {employeeName || recipient?.name || doc.recipientName || "—"}
                           </button>
                         ) : (
-                          employeeName || recipient?.name || "—"
+                          employeeName || recipient?.name || doc.recipientName || "—"
                         )}
                       </td>
                       <td className="px-4 py-3 text-muted-foreground">{doc.createdByName ?? "—"}</td>
@@ -9755,6 +11071,29 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <p className="text-[10px] text-muted-foreground mt-0.5">Pick a teammate — they'll get a link to fill in and sign their own Form W-9. It comes back to you here automatically once submitted.</p>
         </div>
         <div className="p-4 flex flex-col gap-3 max-w-md">
+          {w9SentLink ? (
+            <div className="flex flex-col gap-3">
+              <div className="rounded-md border border-green-500/30 bg-green-500/10 px-3 py-2.5">
+                <p className="text-sm font-semibold text-green-300">Link generated for {w9SentLink.recipientName}</p>
+                <p className="text-xs text-muted-foreground mt-1">No AHS account needed — copy the link below and send it any way you like (email, Slack, text).</p>
+              </div>
+              <div>
+                <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Fill-in link</label>
+                <div className="flex gap-2 mt-1">
+                  <input type="text" readOnly value={w9SentLink.link} onFocus={(e) => e.target.select()} className="glass-input text-xs py-1.5 px-3 rounded-md flex-1" />
+                  <button onClick={handleCopyW9SentLink} className="btn text-xs px-3 py-1.5 shrink-0">{w9SentLinkCopied ? "Copied!" : "Copy"}</button>
+                </div>
+              </div>
+              <button onClick={() => setW9SentLink(null)} className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white w-fit">Done</button>
+            </div>
+          ) : (
+          <>
+          <div className="flex rounded-md overflow-hidden border border-white/15 h-7.5 w-fit">
+            <button type="button" onClick={() => setW9SendMode("teammate")} className={`px-3 text-xs font-medium transition-colors ${w9SendMode === "teammate" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}>AHS Teammate</button>
+            <button type="button" onClick={() => setW9SendMode("external")} className={`px-3 text-xs font-medium transition-colors border-l border-white/15 ${w9SendMode === "external" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}>External Link</button>
+          </div>
+
+          {w9SendMode === "teammate" ? (
           <div className="flex flex-col gap-1 relative">
             <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient</label>
             <input
@@ -9790,16 +11129,42 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               </div>
             )}
           </div>
+          ) : (
+          <div>
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient name</label>
+            <input
+              type="text"
+              value={w9ExternalName}
+              onChange={(e) => setW9ExternalName(e.target.value)}
+              placeholder="Type their name (optional)…"
+              className="glass-input text-sm py-1.5 px-3 rounded-md w-full mt-1"
+            />
+            <p className="text-[10px] text-muted-foreground mt-1">No AHS account needed — you'll get a link to send them any way you like (email, Slack, text), and they can open it and fill it in without logging in.</p>
+          </div>
+          )}
+
           {w9SendError && (
             <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{w9SendError}</p>
           )}
-          <button
-            onClick={handleOpenW9Preview}
-            disabled={!w9RecipientId || w9Sending}
-            className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 w-fit"
-          >
-            Preview & Send
-          </button>
+          {w9SendMode === "teammate" ? (
+            <button
+              onClick={handleOpenW9Preview}
+              disabled={!w9RecipientId || w9Sending}
+              className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 w-fit"
+            >
+              Preview & Send
+            </button>
+          ) : (
+            <button
+              onClick={handleGenerateExternalW9}
+              disabled={w9Sending}
+              className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 w-fit"
+            >
+              {w9Sending ? "Generating…" : "Generate Link"}
+            </button>
+          )}
+          </>
+          )}
         </div>
       </div>
 
@@ -9835,10 +11200,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                       <td className="px-4 py-3 font-medium">
                         {doc.pdfUrl ? (
                           <button type="button" onClick={() => setW9DocPreview(doc)} className="text-blue-300 hover:text-blue-200 hover:underline text-left">
-                            {data.name || recipient?.name || "—"}
+                            {data.name || recipient?.name || doc.recipientName || "—"}
                           </button>
                         ) : (
-                          data.name || recipient?.name || "—"
+                          data.name || recipient?.name || doc.recipientName || "—"
                         )}
                       </td>
                       <td className="px-4 py-3 text-muted-foreground">{doc.createdByName ?? "—"}</td>
@@ -9885,6 +11250,595 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       </div>
       </>
       )}
+
+      {w8FormType === "w4r" && (
+      <>
+      <div className="panel p-0 overflow-visible mt-4 relative z-20">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">Send W-4R Request</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Pick a teammate — they'll get a link to fill in and sign their own Form W-4R (Withholding Certificate for Nonperiodic Payments and Eligible Rollover Distributions). It comes back to you here automatically once submitted.</p>
+        </div>
+        <div className="p-4 flex flex-col gap-3 max-w-md">
+          {w4rSentLink ? (
+            <div className="flex flex-col gap-3">
+              <div className="rounded-md border border-green-500/30 bg-green-500/10 px-3 py-2.5">
+                <p className="text-sm font-semibold text-green-300">Link generated for {w4rSentLink.recipientName}</p>
+                <p className="text-xs text-muted-foreground mt-1">No AHS account needed — copy the link below and send it any way you like (email, Slack, text).</p>
+              </div>
+              <div>
+                <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Fill-in link</label>
+                <div className="flex gap-2 mt-1">
+                  <input type="text" readOnly value={w4rSentLink.link} onFocus={(e) => e.target.select()} className="glass-input text-xs py-1.5 px-3 rounded-md flex-1" />
+                  <button onClick={handleCopyW4RSentLink} className="btn text-xs px-3 py-1.5 shrink-0">{w4rSentLinkCopied ? "Copied!" : "Copy"}</button>
+                </div>
+              </div>
+              <button onClick={() => setW4rSentLink(null)} className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white w-fit">Done</button>
+            </div>
+          ) : (
+          <>
+          <div className="flex rounded-md overflow-hidden border border-white/15 h-7.5 w-fit">
+            <button type="button" onClick={() => setW4rSendMode("teammate")} className={`px-3 text-xs font-medium transition-colors ${w4rSendMode === "teammate" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}>AHS Teammate</button>
+            <button type="button" onClick={() => setW4rSendMode("external")} className={`px-3 text-xs font-medium transition-colors border-l border-white/15 ${w4rSendMode === "external" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}>External Link</button>
+          </div>
+
+          {w4rSendMode === "teammate" ? (
+          <div className="flex flex-col gap-1 relative">
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient</label>
+            <input
+              type="text"
+              value={w4rRecipientSearch}
+              onChange={(e) => { setW4rRecipientSearch(e.target.value); setW4rRecipientId(""); setW4rRecipientDropdownOpen(true); }}
+              onFocus={() => setW4rRecipientDropdownOpen(true)}
+              onBlur={() => setTimeout(() => setW4rRecipientDropdownOpen(false), 150)}
+              placeholder="Search a teammate…"
+              className="glass-input text-sm py-1.5 px-3 rounded-md"
+            />
+            {w4rRecipientDropdownOpen && (
+              <div className="absolute z-50 top-full mt-1 w-full max-h-96 overflow-y-auto rounded-md border border-white/15 bg-slate-900 shadow-2xl">
+                {filteredW4RRecipients.length === 0 ? (
+                  <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+                ) : (
+                  filteredW4RRecipients.map((e) => (
+                    <button
+                      key={e.id}
+                      type="button"
+                      onMouseDown={(ev) => ev.preventDefault()}
+                      onClick={() => {
+                        setW4rRecipientId(e.id);
+                        setW4rRecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`);
+                        setW4rRecipientDropdownOpen(false);
+                      }}
+                      className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${w4rRecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                    >
+                      {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+          ) : (
+          <div>
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient name</label>
+            <input
+              type="text"
+              value={w4rExternalName}
+              onChange={(e) => setW4rExternalName(e.target.value)}
+              placeholder="Type their name (optional)…"
+              className="glass-input text-sm py-1.5 px-3 rounded-md w-full mt-1"
+            />
+            <p className="text-[10px] text-muted-foreground mt-1">No AHS account needed — you'll get a link to send them any way you like (email, Slack, text), and they can open it and fill it in without logging in.</p>
+          </div>
+          )}
+
+          {w4rSendError && (
+            <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{w4rSendError}</p>
+          )}
+          {w4rSendMode === "teammate" ? (
+            <button
+              onClick={handleOpenW4RPreview}
+              disabled={!w4rRecipientId || w4rSending}
+              className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 w-fit"
+            >
+              Preview & Send
+            </button>
+          ) : (
+            <button
+              onClick={handleGenerateExternalW4R}
+              disabled={w4rSending}
+              className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 w-fit"
+            >
+              {w4rSending ? "Generating…" : "Generate Link"}
+            </button>
+          )}
+          </>
+          )}
+        </div>
+      </div>
+
+      <div className="panel p-0 overflow-hidden mt-4">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">W-4R Sent History</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status.</p>
+        </div>
+        {w4rActionError && (
+          <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{w4rActionError}</p>
+        )}
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-white/10 bg-white/5">
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Name</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent By</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Status</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sentW4RForms.length === 0 ? (
+                <tr><td colSpan={5} className="px-4 py-8 text-center text-muted-foreground text-sm">No W-4R requests sent yet.</td></tr>
+              ) : (
+                sentW4RForms.map((doc) => {
+                  const data = doc.formData as Partial<W4RFormData>;
+                  const recipient = employees.find((e) => e.id === doc.recipientId);
+                  const busy = w4rActionBusyId === doc.id;
+                  const name = `${data.firstNameMiddleInitial ?? ""} ${data.lastName ?? ""}`.trim();
+                  return (
+                    <tr key={doc.id} className="border-b border-white/5 hover:bg-white/5">
+                      <td className="px-4 py-3 font-medium">
+                        {doc.pdfUrl ? (
+                          <button type="button" onClick={() => setW4rDocPreview(doc)} className="text-blue-300 hover:text-blue-200 hover:underline text-left">
+                            {name || recipient?.name || doc.recipientName || "—"}
+                          </button>
+                        ) : (
+                          name || recipient?.name || doc.recipientName || "—"
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-muted-foreground">{doc.createdByName ?? "—"}</td>
+                      <td className="px-4 py-3">
+                        <span className={`px-2 py-1 rounded text-xs font-semibold ${
+                          doc.status === "signed" ? "bg-green-500/20 text-green-300"
+                          : doc.status === "cancelled" ? "bg-slate-500/20 text-slate-400"
+                          : "bg-yellow-500/20 text-yellow-300"
+                        }`}>
+                          {doc.status === "signed" ? "Submitted" : doc.status === "cancelled" ? "Cancelled" : "Awaiting Completion"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{new Date(doc.createdAt).toLocaleDateString()}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {doc.status === "pending_signature" && (
+                            <button type="button" onClick={() => handleCopyW4RLink(doc)} className="btn text-[10px] px-2 py-1">
+                              Copy Link
+                            </button>
+                          )}
+                          {doc.pdfUrl && (
+                            <button type="button" onClick={() => handleDownloadW4RPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
+                              Download PDF
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => handleDeleteW4R(doc)}
+                            title="Permanently delete this request"
+                            className="text-muted-foreground hover:text-red-300 disabled:opacity-50"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      </>
+      )}
+      </>
+      )}
+
+      {activeTab === "i9" && (
+      <>
+      <div className="panel p-0 overflow-visible mt-4 relative z-20">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">Send I-9 Request</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Pick a teammate — they'll get a link to fill in and sign Section 1 (their own information) of Form I-9. Once they submit, it lands back here for HR to complete Section 2 (document review + your own signature).</p>
+        </div>
+        <div className="p-4 flex flex-col gap-3 max-w-md">
+          {i9SentLink ? (
+            <div className="flex flex-col gap-3">
+              <div className="rounded-md border border-green-500/30 bg-green-500/10 px-3 py-2.5">
+                <p className="text-sm font-semibold text-green-300">Link generated for {i9SentLink.recipientName}</p>
+                <p className="text-xs text-muted-foreground mt-1">No AHS account needed — copy the link below and send it any way you like (email, Slack, text). Once Section 1 is submitted, it lands in the Sent I-9 Forms table below for you to complete Section 2.</p>
+              </div>
+              <div>
+                <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Fill-in link</label>
+                <div className="flex gap-2 mt-1">
+                  <input type="text" readOnly value={i9SentLink.link} onFocus={(e) => e.target.select()} className="glass-input text-xs py-1.5 px-3 rounded-md flex-1" />
+                  <button onClick={handleCopyI9SentLink} className="btn text-xs px-3 py-1.5 shrink-0">{i9SentLinkCopied ? "Copied!" : "Copy"}</button>
+                </div>
+              </div>
+              <button onClick={() => setI9SentLink(null)} className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white w-fit">Done</button>
+            </div>
+          ) : (
+          <>
+          <div className="flex rounded-md overflow-hidden border border-white/15 h-7.5 w-fit">
+            <button type="button" onClick={() => setI9SendMode("teammate")} className={`px-3 text-xs font-medium transition-colors ${i9SendMode === "teammate" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}>AHS Teammate</button>
+            <button type="button" onClick={() => setI9SendMode("external")} className={`px-3 text-xs font-medium transition-colors border-l border-white/15 ${i9SendMode === "external" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}>External Link</button>
+          </div>
+
+          {i9SendMode === "teammate" ? (
+          <div className="flex flex-col gap-1 relative">
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient</label>
+            <input
+              type="text"
+              value={i9RecipientSearch}
+              onChange={(e) => { setI9RecipientSearch(e.target.value); setI9RecipientId(""); setI9RecipientDropdownOpen(true); }}
+              onFocus={() => setI9RecipientDropdownOpen(true)}
+              onBlur={() => setTimeout(() => setI9RecipientDropdownOpen(false), 150)}
+              placeholder="Search a teammate…"
+              className="glass-input text-sm py-1.5 px-3 rounded-md"
+            />
+            {i9RecipientDropdownOpen && (
+              <div className="absolute z-50 top-full mt-1 w-full max-h-96 overflow-y-auto rounded-md border border-white/15 bg-slate-900 shadow-2xl">
+                {filteredI9Recipients.length === 0 ? (
+                  <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+                ) : (
+                  filteredI9Recipients.map((e) => (
+                    <button
+                      key={e.id}
+                      type="button"
+                      onMouseDown={(ev) => ev.preventDefault()}
+                      onClick={() => {
+                        setI9RecipientId(e.id);
+                        setI9RecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`);
+                        setI9RecipientDropdownOpen(false);
+                      }}
+                      className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${i9RecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                    >
+                      {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+          ) : (
+          <div>
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient name</label>
+            <input
+              type="text"
+              value={i9ExternalName}
+              onChange={(e) => setI9ExternalName(e.target.value)}
+              placeholder="Type their name (optional)…"
+              className="glass-input text-sm py-1.5 px-3 rounded-md w-full mt-1"
+            />
+            <p className="text-[10px] text-muted-foreground mt-1">No AHS account needed — you'll get a link to send them any way you like (email, Slack, text), and they can open it and fill in Section 1 without logging in.</p>
+          </div>
+          )}
+
+          {i9SendError && (
+            <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{i9SendError}</p>
+          )}
+          {i9SendMode === "teammate" ? (
+            <button
+              onClick={handleOpenI9Preview}
+              disabled={!i9RecipientId || i9Sending}
+              className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 w-fit"
+            >
+              Preview & Send
+            </button>
+          ) : (
+            <button
+              onClick={handleGenerateExternalI9}
+              disabled={i9Sending}
+              className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 w-fit"
+            >
+              {i9Sending ? "Generating…" : "Generate Link"}
+            </button>
+          )}
+          </>
+          )}
+        </div>
+      </div>
+
+      <div className="panel p-0 overflow-hidden mt-4">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">Sent I-9 Forms</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status. "Awaiting HR (Section 2)" means the employee finished Section 1 — review their documents and complete Section 2 to finalize.</p>
+        </div>
+        {i9ActionError && (
+          <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{i9ActionError}</p>
+        )}
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-white/10 bg-white/5">
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Employee</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent By</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Status</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sentI9Forms.length === 0 ? (
+                <tr><td colSpan={5} className="px-4 py-8 text-center text-muted-foreground text-sm">No I-9 requests sent yet.</td></tr>
+              ) : (
+                sentI9Forms.map((doc) => {
+                  const data = doc.formData as Partial<I9FormData>;
+                  const recipient = employees.find((e) => e.id === doc.recipientId);
+                  const busy = i9ActionBusyId === doc.id;
+                  const awaitingSection2 = isAwaitingEmployerStep(doc);
+                  return (
+                    <tr key={doc.id} className="border-b border-white/5 hover:bg-white/5">
+                      <td className="px-4 py-3 font-medium">
+                        {doc.pdfUrl ? (
+                          <button type="button" onClick={() => setI9DocPreview(doc)} className="text-blue-300 hover:text-blue-200 hover:underline text-left">
+                            {data.employeeName || recipient?.name || doc.recipientName || "—"}
+                          </button>
+                        ) : (
+                          data.employeeName || recipient?.name || doc.recipientName || "—"
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-muted-foreground">{doc.createdByName ?? "—"}</td>
+                      <td className="px-4 py-3">
+                        <span className={`px-2 py-1 rounded text-xs font-semibold ${
+                          doc.status === "confirmed" ? "bg-green-500/20 text-green-300"
+                          : awaitingSection2 ? "bg-orange-500/20 text-orange-300"
+                          : doc.status === "cancelled" ? "bg-slate-500/20 text-slate-400"
+                          : "bg-yellow-500/20 text-yellow-300"
+                        }`}>
+                          {doc.status === "confirmed" ? "Completed" : awaitingSection2 ? "Awaiting HR (Section 2)" : doc.status === "cancelled" ? "Cancelled" : "Awaiting Employee (Section 1)"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{new Date(doc.createdAt).toLocaleDateString()}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {doc.status === "pending_signature" && doc.recipientSlot === "employee" && (
+                            <button type="button" onClick={() => handleCopyI9Link(doc)} className="btn text-[10px] px-2 py-1">
+                              Copy Link
+                            </button>
+                          )}
+                          {awaitingSection2 && (
+                            <>
+                              <button type="button" onClick={() => handleOpenI9Section2(doc)} className="btn text-[10px] px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white">
+                                Complete Section 2 →
+                              </button>
+                              <button type="button" onClick={() => handleOpenEmployerReassign(doc)} className="btn text-[10px] px-2 py-1">
+                                Send to Employer
+                              </button>
+                            </>
+                          )}
+                          {doc.pdfUrl && (
+                            <button type="button" onClick={() => handleDownloadI9Pdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
+                              Download PDF
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => handleDeleteI9(doc)}
+                            title="Permanently delete this request"
+                            className="text-muted-foreground hover:text-red-300 disabled:opacity-50"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      </>
+      )}
+
+      {activeTab === "wageAck" && (
+      <>
+      <div className="panel p-0 overflow-visible mt-4 relative z-20">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">Send Acknowledgment of Wage Request</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Pick a teammate — they'll get a link to fill in their name/effective date and sign the Acknowledgment of Wage & Compensation Structure. Once they submit, it lands back here for HR to add the employer/representative signature.</p>
+        </div>
+        <div className="p-4 flex flex-col gap-3 max-w-md">
+          {wageAckSentLink ? (
+            <div className="flex flex-col gap-3">
+              <div className="rounded-md border border-green-500/30 bg-green-500/10 px-3 py-2.5">
+                <p className="text-sm font-semibold text-green-300">Link generated for {wageAckSentLink.recipientName}</p>
+                <p className="text-xs text-muted-foreground mt-1">No AHS account needed — copy the link below and send it any way you like (email, Slack, text). Once submitted, it lands in the table below for you to add the employer signature.</p>
+              </div>
+              <div>
+                <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Fill-in link</label>
+                <div className="flex gap-2 mt-1">
+                  <input type="text" readOnly value={wageAckSentLink.link} onFocus={(e) => e.target.select()} className="glass-input text-xs py-1.5 px-3 rounded-md flex-1" />
+                  <button onClick={handleCopyWageAckSentLink} className="btn text-xs px-3 py-1.5 shrink-0">{wageAckSentLinkCopied ? "Copied!" : "Copy"}</button>
+                </div>
+              </div>
+              <button onClick={() => setWageAckSentLink(null)} className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white w-fit">Done</button>
+            </div>
+          ) : (
+          <>
+          <div className="flex rounded-md overflow-hidden border border-white/15 h-7.5 w-fit">
+            <button type="button" onClick={() => setWageAckSendMode("teammate")} className={`px-3 text-xs font-medium transition-colors ${wageAckSendMode === "teammate" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}>AHS Teammate</button>
+            <button type="button" onClick={() => setWageAckSendMode("external")} className={`px-3 text-xs font-medium transition-colors border-l border-white/15 ${wageAckSendMode === "external" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}>External Link</button>
+          </div>
+
+          {wageAckSendMode === "teammate" ? (
+          <div className="flex flex-col gap-1 relative">
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient</label>
+            <input
+              type="text"
+              value={wageAckRecipientSearch}
+              onChange={(e) => { setWageAckRecipientSearch(e.target.value); setWageAckRecipientId(""); setWageAckRecipientDropdownOpen(true); }}
+              onFocus={() => setWageAckRecipientDropdownOpen(true)}
+              onBlur={() => setTimeout(() => setWageAckRecipientDropdownOpen(false), 150)}
+              placeholder="Search a teammate…"
+              className="glass-input text-sm py-1.5 px-3 rounded-md"
+            />
+            {wageAckRecipientDropdownOpen && (
+              <div className="absolute z-50 top-full mt-1 w-full max-h-96 overflow-y-auto rounded-md border border-white/15 bg-slate-900 shadow-2xl">
+                {filteredWageAckRecipients.length === 0 ? (
+                  <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+                ) : (
+                  filteredWageAckRecipients.map((e) => (
+                    <button
+                      key={e.id}
+                      type="button"
+                      onMouseDown={(ev) => ev.preventDefault()}
+                      onClick={() => {
+                        setWageAckRecipientId(e.id);
+                        setWageAckRecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`);
+                        setWageAckRecipientDropdownOpen(false);
+                      }}
+                      className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${wageAckRecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                    >
+                      {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+          ) : (
+          <div>
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient name</label>
+            <input
+              type="text"
+              value={wageAckExternalName}
+              onChange={(e) => setWageAckExternalName(e.target.value)}
+              placeholder="Type their name (optional)…"
+              className="glass-input text-sm py-1.5 px-3 rounded-md w-full mt-1"
+            />
+            <p className="text-[10px] text-muted-foreground mt-1">No AHS account needed — you'll get a link to send them any way you like (email, Slack, text), and they can open it and fill it in without logging in.</p>
+          </div>
+          )}
+
+          {wageAckSendError && (
+            <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{wageAckSendError}</p>
+          )}
+          {wageAckSendMode === "teammate" ? (
+            <button
+              onClick={handleSendWageAck}
+              disabled={!wageAckRecipientId || wageAckSending}
+              className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 w-fit"
+            >
+              {wageAckSending ? "Sending…" : "Send Request"}
+            </button>
+          ) : (
+            <button
+              onClick={handleGenerateExternalWageAck}
+              disabled={wageAckSending}
+              className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 w-fit"
+            >
+              {wageAckSending ? "Generating…" : "Generate Link"}
+            </button>
+          )}
+          </>
+          )}
+        </div>
+      </div>
+
+      <div className="panel p-0 overflow-hidden mt-4">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">Sent Acknowledgment of Wage Forms</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status. "Awaiting Employer Signature" means the employee finished — add your signature to finalize.</p>
+        </div>
+        {wageAckActionError && (
+          <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{wageAckActionError}</p>
+        )}
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-white/10 bg-white/5">
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Employee</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent By</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Status</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sentWageAckForms.length === 0 ? (
+                <tr><td colSpan={5} className="px-4 py-8 text-center text-muted-foreground text-sm">No requests sent yet.</td></tr>
+              ) : (
+                sentWageAckForms.map((doc) => {
+                  const data = doc.formData as Partial<WageAckFormData>;
+                  const recipient = employees.find((e) => e.id === doc.recipientId);
+                  const busy = wageAckActionBusyId === doc.id;
+                  const awaitingEmployer = isAwaitingEmployerStep(doc);
+                  return (
+                    <tr key={doc.id} className="border-b border-white/5 hover:bg-white/5">
+                      <td className="px-4 py-3 font-medium">
+                        {doc.pdfUrl ? (
+                          <button type="button" onClick={() => setWageAckDocPreview(doc)} className="text-blue-300 hover:text-blue-200 hover:underline text-left">
+                            {data.employeeName || recipient?.name || doc.recipientName || "—"}
+                          </button>
+                        ) : (
+                          data.employeeName || recipient?.name || doc.recipientName || "—"
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-muted-foreground">{doc.createdByName ?? "—"}</td>
+                      <td className="px-4 py-3">
+                        <span className={`px-2 py-1 rounded text-xs font-semibold ${
+                          doc.status === "confirmed" ? "bg-green-500/20 text-green-300"
+                          : awaitingEmployer ? "bg-orange-500/20 text-orange-300"
+                          : doc.status === "cancelled" ? "bg-slate-500/20 text-slate-400"
+                          : "bg-yellow-500/20 text-yellow-300"
+                        }`}>
+                          {doc.status === "confirmed" ? "Completed" : awaitingEmployer ? "Awaiting Employer Signature" : doc.status === "cancelled" ? "Cancelled" : "Awaiting Employee"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{new Date(doc.createdAt).toLocaleDateString()}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {doc.status === "pending_signature" && doc.recipientSlot === "employee" && (
+                            <button type="button" onClick={() => handleCopyWageAckLink(doc)} className="btn text-[10px] px-2 py-1">
+                              Copy Link
+                            </button>
+                          )}
+                          {awaitingEmployer && (
+                            <>
+                              <button type="button" onClick={() => handleOpenWageAckEmployerDialog(doc)} className="btn text-[10px] px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white">
+                                Add Employer Signature →
+                              </button>
+                              <button type="button" onClick={() => handleOpenEmployerReassign(doc)} className="btn text-[10px] px-2 py-1">
+                                Send to Employer
+                              </button>
+                            </>
+                          )}
+                          {doc.pdfUrl && (
+                            <button type="button" onClick={() => handleDownloadWageAckPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
+                              Download PDF
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => handleDeleteWageAck(doc)}
+                            title="Permanently delete this request"
+                            className="text-muted-foreground hover:text-red-300 disabled:opacity-50"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
       </>
       )}
 
@@ -10058,6 +12012,64 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         </div>
       )}
 
+      {/* Form W-4R — preview the REAL official PDF (fillW4RPdf, same function used at submission time) with a blank fill, before sending the fill-in link */}
+      {w4rPreviewOpen && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-800 border border-white/10 rounded-lg w-full max-w-4xl h-[90vh] flex flex-col">
+            <div className="flex items-center justify-between px-5 py-3 border-b border-white/10">
+              <h3 className="text-base font-bold">Form W-4R — Preview</h3>
+              <button onClick={closeW4RPreview} className="text-muted-foreground hover:text-foreground">✕</button>
+            </div>
+            <div className="flex-1 bg-white/5">
+              {w4rPreviewLoading || !w4rPreviewPdfUrl ? (
+                <div className="h-full flex items-center justify-center text-sm text-muted-foreground">Loading preview…</div>
+              ) : (
+                <iframe src={w4rPreviewPdfUrl} title="W-4R Preview" className="w-full h-full border-0" />
+              )}
+            </div>
+            <div className="px-5 py-3 border-t border-white/10 flex items-center justify-end gap-2">
+              {w4rSendError && (
+                <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2 mr-auto">{w4rSendError}</p>
+              )}
+              <button onClick={closeW4RPreview} className="btn text-sm px-4 py-2">Cancel</button>
+              <button
+                onClick={handleSendW4R}
+                disabled={w4rSending}
+                className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+              >
+                {w4rSending ? "Sending…" : "Send W-4R Request"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* W-4R Sent History — PDF preview, same inline-frame pattern used for W-8BEN/W-4/W-9 Sent History */}
+      {w4rDocPreview && (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => setW4rDocPreview(null)}>
+          <div className="bg-slate-900 border border-white/10 rounded-lg shadow-2xl w-full max-w-6xl h-[92vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold">{(() => {
+                  const data = w4rDocPreview.formData as Partial<W4RFormData>;
+                  return `${data.firstNameMiddleInitial ?? ""} ${data.lastName ?? ""}`.trim() || "—";
+                })()}</p>
+                <p className="text-[10px] text-muted-foreground">Submitted {new Date(w4rDocPreview.signedAt ?? w4rDocPreview.createdAt).toLocaleString()}</p>
+              </div>
+              <div className="flex items-center gap-2">
+                {w4rDocPreview.pdfUrl && (
+                  <a href={w4rDocPreview.pdfUrl} target="_blank" rel="noopener noreferrer" className="btn text-xs px-2.5 py-1.5 flex items-center gap-1"><Download className="h-3 w-3" /> Download</a>
+                )}
+                <button type="button" onClick={() => setW4rDocPreview(null)} className="btn text-xs px-2.5 py-1.5">Close</button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-hidden bg-slate-950">
+              {w4rDocPreview.pdfUrl && <iframe src={w4rDocPreview.pdfUrl} title="Form W-4R" className="w-full h-full min-h-[70vh] border-0" />}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* HR completing the W-4's "Employers Only" box after the employee has already submitted */}
       {w4EmployerDialog && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
@@ -10098,6 +12110,322 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                 className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
               >
                 {w4EmployerSaving ? "Saving…" : "Save"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Form I-9 — preview the REAL official PDF (fillI9Pdf, same function used at submission time) with a blank fill, not a redrawn approximation, before sending the Section 1 fill-in link */}
+      {i9PreviewOpen && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-800 border border-white/10 rounded-lg w-full max-w-4xl h-[90vh] flex flex-col">
+            <div className="flex items-center justify-between px-5 py-3 border-b border-white/10">
+              <h3 className="text-base font-bold">Form I-9 — Preview</h3>
+              <button onClick={closeI9Preview} className="text-muted-foreground hover:text-foreground">✕</button>
+            </div>
+            <div className="flex-1 bg-white/5">
+              {i9PreviewLoading || !i9PreviewPdfUrl ? (
+                <div className="h-full flex items-center justify-center text-sm text-muted-foreground">Loading preview…</div>
+              ) : (
+                <iframe src={i9PreviewPdfUrl} title="I-9 Preview" className="w-full h-full border-0" />
+              )}
+            </div>
+            <div className="px-5 py-3 border-t border-white/10 flex items-center justify-end gap-2">
+              {i9SendError && (
+                <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2 mr-auto">{i9SendError}</p>
+              )}
+              <button onClick={closeI9Preview} className="btn text-sm px-4 py-2">Cancel</button>
+              <button
+                onClick={handleSendI9}
+                disabled={i9Sending}
+                className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+              >
+                {i9Sending ? "Sending…" : "Send I-9 Request"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* I-9 Sent History PDF preview — same inline-frame pattern used for W-8BEN/W-4/W-9 Sent History */}
+      {i9DocPreview && (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => setI9DocPreview(null)}>
+          <div className="bg-slate-900 border border-white/10 rounded-lg shadow-2xl w-full max-w-6xl h-[92vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold">{(i9DocPreview.formData as Partial<I9FormData>).employeeName || "—"}</p>
+                <p className="text-[10px] text-muted-foreground">
+                  {i9DocPreview.status === "confirmed" ? "Completed" : "Section 1 submitted"} {new Date(i9DocPreview.signedAt ?? i9DocPreview.createdAt).toLocaleString()}
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                {i9DocPreview.pdfUrl && (
+                  <a href={i9DocPreview.pdfUrl} target="_blank" rel="noopener noreferrer" className="btn text-xs px-2.5 py-1.5 flex items-center gap-1"><Download className="h-3 w-3" /> Download</a>
+                )}
+                <button type="button" onClick={() => setI9DocPreview(null)} className="btn text-xs px-2.5 py-1.5">Close</button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-hidden bg-slate-950">
+              {i9DocPreview.pdfUrl && <iframe src={i9DocPreview.pdfUrl} title="Form I-9" className="w-full h-full min-h-[70vh] border-0" />}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* HR completing I-9 Section 2 (document review + employer/AR signature) after the employee's Section 1 comes back signed */}
+      {i9Section2Dialog && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-800 border border-white/10 rounded-lg p-6 max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+            <h3 className="text-lg font-bold mb-2">Complete I-9 Section 2</h3>
+            <p className="text-sm text-muted-foreground mb-4">
+              Document review and employer/AR signature for{" "}
+              <span className="font-semibold text-white">{(i9Section2Dialog.formData as Partial<I9FormData>).employeeName || "—"}</span>.
+            </p>
+
+            <div className="flex flex-col gap-4">
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Documents examined</label>
+                <div className="flex gap-2">
+                  {(["listA", "listBC"] as const).map((choice) => (
+                    <button
+                      key={choice}
+                      type="button"
+                      onClick={() => setI9Section2Form((f) => ({ ...f, documentChoice: choice }))}
+                      className={`px-3 py-1.5 rounded-md text-sm font-semibold border transition-colors ${
+                        i9Section2Form.documentChoice === choice ? "border-primary/50 bg-primary/10 text-foreground" : "border-white/10 text-muted-foreground hover:text-foreground"
+                      }`}
+                    >
+                      {choice === "listA" ? "List A document" : "List B + List C documents"}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {i9Section2Form.documentChoice === "listA" && (
+                <div className="flex flex-col gap-2 border border-white/10 rounded-md p-3">
+                  <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">List A document</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <input type="text" placeholder="Document title" value={i9Section2Form.listADocTitle1} onChange={(e) => setI9Section2Form((f) => ({ ...f, listADocTitle1: e.target.value }))} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+                    <input type="text" placeholder="Issuing authority" value={i9Section2Form.listAIssuing1} onChange={(e) => setI9Section2Form((f) => ({ ...f, listAIssuing1: e.target.value }))} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+                    <input type="text" placeholder="Document number" value={i9Section2Form.listADocNumber1} onChange={(e) => setI9Section2Form((f) => ({ ...f, listADocNumber1: e.target.value }))} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+                    <input type="date" placeholder="Expiration date" value={i9Section2Form.listAExp1} onChange={(e) => setI9Section2Form((f) => ({ ...f, listAExp1: e.target.value }))} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+                  </div>
+                  <p className="text-[10px] text-muted-foreground mt-1">Additional List A documents (if any) — a foreign passport with an I-94 often comes with a supporting document.</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <input type="text" placeholder="Document 2 title (if any)" value={i9Section2Form.listADocTitle2} onChange={(e) => setI9Section2Form((f) => ({ ...f, listADocTitle2: e.target.value }))} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+                    <input type="text" placeholder="Issuing authority" value={i9Section2Form.listAIssuing2} onChange={(e) => setI9Section2Form((f) => ({ ...f, listAIssuing2: e.target.value }))} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+                    <input type="text" placeholder="Document number" value={i9Section2Form.listADocNumber2} onChange={(e) => setI9Section2Form((f) => ({ ...f, listADocNumber2: e.target.value }))} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+                    <input type="date" placeholder="Expiration date" value={i9Section2Form.listAExp2} onChange={(e) => setI9Section2Form((f) => ({ ...f, listAExp2: e.target.value }))} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+                  </div>
+                </div>
+              )}
+
+              {i9Section2Form.documentChoice === "listBC" && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="flex flex-col gap-2 border border-white/10 rounded-md p-3">
+                    <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">List B document</p>
+                    <input type="text" placeholder="Document title" value={i9Section2Form.listBDocTitle1} onChange={(e) => setI9Section2Form((f) => ({ ...f, listBDocTitle1: e.target.value }))} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+                    <input type="text" placeholder="Issuing authority" value={i9Section2Form.listBIssuing1} onChange={(e) => setI9Section2Form((f) => ({ ...f, listBIssuing1: e.target.value }))} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+                    <input type="text" placeholder="Document number" value={i9Section2Form.listBDocNumber1} onChange={(e) => setI9Section2Form((f) => ({ ...f, listBDocNumber1: e.target.value }))} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+                    <input type="date" placeholder="Expiration date" value={i9Section2Form.listBExp1} onChange={(e) => setI9Section2Form((f) => ({ ...f, listBExp1: e.target.value }))} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+                  </div>
+                  <div className="flex flex-col gap-2 border border-white/10 rounded-md p-3">
+                    <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">List C document</p>
+                    <input type="text" placeholder="Document title" value={i9Section2Form.listCDocTitle1} onChange={(e) => setI9Section2Form((f) => ({ ...f, listCDocTitle1: e.target.value }))} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+                    <input type="text" placeholder="Issuing authority" value={i9Section2Form.listCIssuing1} onChange={(e) => setI9Section2Form((f) => ({ ...f, listCIssuing1: e.target.value }))} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+                    <input type="text" placeholder="Document number" value={i9Section2Form.listCDocNumber1} onChange={(e) => setI9Section2Form((f) => ({ ...f, listCDocNumber1: e.target.value }))} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+                    <input type="date" placeholder="Expiration date" value={i9Section2Form.listCExp1} onChange={(e) => setI9Section2Form((f) => ({ ...f, listCExp1: e.target.value }))} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+                  </div>
+                </div>
+              )}
+
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Additional information</label>
+                <textarea value={i9Section2Form.additionalInfo} onChange={(e) => setI9Section2Form((f) => ({ ...f, additionalInfo: e.target.value }))} rows={2} className="glass-input text-sm py-1.5 px-3 rounded-md resize-y" />
+              </div>
+
+              <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                <input type="checkbox" checked={i9Section2Form.altProcedureCheckbox} onChange={(e) => setI9Section2Form((f) => ({ ...f, altProcedureCheckbox: e.target.checked }))} />
+                Documents examined using an alternative procedure authorized by DHS
+              </label>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">First day of employment</label>
+                  <input type="date" value={i9Section2Form.firstDayEmployed} onChange={(e) => setI9Section2Form((f) => ({ ...f, firstDayEmployed: e.target.value }))} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Employer/AR name & title</label>
+                  <input type="text" value={i9Section2Form.employerNameTitle} onChange={(e) => setI9Section2Form((f) => ({ ...f, employerNameTitle: e.target.value }))} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Employer business name</label>
+                  <input type="text" value={i9Section2Form.businessName} onChange={(e) => setI9Section2Form((f) => ({ ...f, businessName: e.target.value }))} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Employer business address</label>
+                  <input type="text" value={i9Section2Form.businessAddress} onChange={(e) => setI9Section2Form((f) => ({ ...f, businessAddress: e.target.value }))} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Employer/AR signature</label>
+                <canvas
+                  ref={i9Section2SigCanvasRef}
+                  width={440}
+                  height={100}
+                  onPointerDown={i9Section2StartDraw}
+                  onPointerMove={i9Section2MoveDraw}
+                  onPointerUp={i9Section2EndDraw}
+                  onPointerLeave={i9Section2EndDraw}
+                  className="touch-none cursor-crosshair bg-white rounded-md border border-white/20 w-full max-w-[440px] h-[100px]"
+                />
+                <button type="button" onClick={i9Section2ClearSignature} className="btn text-xs px-3 py-1.5 w-fit mt-1">Clear signature</button>
+              </div>
+            </div>
+
+            {i9Section2Error && (
+              <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2 mt-3">{i9Section2Error}</p>
+            )}
+            <div className="flex gap-2 justify-end mt-4">
+              <button onClick={() => setI9Section2Dialog(null)} className="btn text-sm px-4 py-2">Cancel</button>
+              <button
+                onClick={handleSaveI9Section2}
+                disabled={i9Section2Saving}
+                className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+              >
+                {i9Section2Saving ? "Saving…" : "Complete & Sign"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Acknowledgment of Wage Sent History PDF preview — same inline-frame pattern used for I-9/W-8BEN/W-4/W-9 Sent History */}
+      {wageAckDocPreview && (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => setWageAckDocPreview(null)}>
+          <div className="bg-slate-900 border border-white/10 rounded-lg shadow-2xl w-full max-w-6xl h-[92vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold">{(wageAckDocPreview.formData as Partial<WageAckFormData>).employeeName || "—"}</p>
+                <p className="text-[10px] text-muted-foreground">
+                  {wageAckDocPreview.status === "confirmed" ? "Completed" : "Submitted"} {new Date(wageAckDocPreview.signedAt ?? wageAckDocPreview.createdAt).toLocaleString()}
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                {wageAckDocPreview.pdfUrl && (
+                  <a href={wageAckDocPreview.pdfUrl} target="_blank" rel="noopener noreferrer" className="btn text-xs px-2.5 py-1.5 flex items-center gap-1"><Download className="h-3 w-3" /> Download</a>
+                )}
+                <button type="button" onClick={() => setWageAckDocPreview(null)} className="btn text-xs px-2.5 py-1.5">Close</button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-hidden bg-slate-950">
+              {wageAckDocPreview.pdfUrl && <iframe src={wageAckDocPreview.pdfUrl} title="Acknowledgment of Wage" className="w-full h-full min-h-[70vh] border-0" />}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* HR adding the "Employer/Representative" signature after the employee's half comes back signed — plain signature pad, no fields to review (unlike I-9's Section 2) since the source PDF only asks for a signature + date here. */}
+      {wageAckEmployerDialog && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-800 border border-white/10 rounded-lg p-6 max-w-sm w-full">
+            <h3 className="text-lg font-bold mb-2">Add Employer Signature</h3>
+            <p className="text-sm text-muted-foreground mb-4">
+              Employer/representative signature for{" "}
+              <span className="font-semibold text-white">{(wageAckEmployerDialog.formData as Partial<WageAckFormData>).employeeName || "—"}</span>'s
+              Acknowledgment of Wage & Compensation Structure.
+            </p>
+
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2 block">Draw your signature</label>
+            <canvas
+              ref={wageAckEmployerSigCanvasRef}
+              width={400}
+              height={120}
+              onPointerDown={wageAckEmployerStartDraw}
+              onPointerMove={wageAckEmployerMoveDraw}
+              onPointerUp={wageAckEmployerEndDraw}
+              onPointerLeave={wageAckEmployerEndDraw}
+              className="bg-white rounded-md border border-white/15 w-full touch-none cursor-crosshair"
+            />
+            <div className="flex gap-2 mt-2">
+              <button onClick={wageAckEmployerClearSignature} className="btn text-xs px-3 py-1.5">Clear</button>
+            </div>
+
+            {wageAckEmployerError && (
+              <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2 mt-3">{wageAckEmployerError}</p>
+            )}
+            <div className="flex gap-2 justify-end mt-4">
+              <button onClick={() => setWageAckEmployerDialog(null)} className="btn text-sm px-4 py-2">Cancel</button>
+              <button
+                onClick={handleSaveWageAckEmployerSignature}
+                disabled={wageAckEmployerSaving}
+                className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+              >
+                {wageAckEmployerSaving ? "Saving…" : "Complete & Sign"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Send to Employer — hands off I-9 Section 2 / Acknowledgment of Wage's employer signature to a different AHS teammate instead of completing it right now. */}
+      {employerReassignDialog && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-800 border border-white/10 rounded-lg p-6 max-w-sm w-full">
+            <h3 className="text-lg font-bold mb-2">Send to Employer</h3>
+            <p className="text-sm text-muted-foreground mb-4">
+              Pick the AHS teammate who should {employerReassignDialog.documentType === "i9" ? "complete Section 2 (document review + employer/AR signature)" : "add the employer/representative signature"} for{" "}
+              <span className="font-semibold text-white">{(employerReassignDialog.formData as { employeeName?: string })?.employeeName || employerReassignDialog.recipientName || "—"}</span>.
+              They'll be notified in AHS Messages with a link to the right tab.
+            </p>
+            <div className="flex flex-col gap-1 relative">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient</label>
+              <input
+                type="text"
+                value={employerReassignRecipientSearch}
+                onChange={(e) => { setEmployerReassignRecipientSearch(e.target.value); setEmployerReassignRecipientId(""); setEmployerReassignDropdownOpen(true); }}
+                onFocus={() => setEmployerReassignDropdownOpen(true)}
+                onBlur={() => setTimeout(() => setEmployerReassignDropdownOpen(false), 150)}
+                placeholder="Search a teammate…"
+                className="glass-input text-sm py-1.5 px-3 rounded-md"
+              />
+              {employerReassignDropdownOpen && (
+                <div className="absolute z-50 top-full mt-1 w-full max-h-48 overflow-y-auto rounded-md border border-white/15 bg-slate-900 shadow-2xl">
+                  {filteredEmployerReassignRecipients.length === 0 ? (
+                    <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+                  ) : (
+                    filteredEmployerReassignRecipients.map((e) => (
+                      <button
+                        key={e.id}
+                        type="button"
+                        onMouseDown={(ev) => ev.preventDefault()}
+                        onClick={() => {
+                          setEmployerReassignRecipientId(e.id);
+                          setEmployerReassignRecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`);
+                          setEmployerReassignDropdownOpen(false);
+                        }}
+                        className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${employerReassignRecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                      >
+                        {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+            {employerReassignError && (
+              <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2 mt-3">{employerReassignError}</p>
+            )}
+            <div className="flex gap-2 justify-end mt-4">
+              <button onClick={() => setEmployerReassignDialog(null)} className="btn text-sm px-4 py-2">Cancel</button>
+              <button
+                onClick={handleSendToEmployer}
+                disabled={!employerReassignRecipientId || employerReassignSending}
+                className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+              >
+                {employerReassignSending ? "Sending…" : "Send"}
               </button>
             </div>
           </div>
