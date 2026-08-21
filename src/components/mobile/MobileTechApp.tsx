@@ -51,13 +51,19 @@ import { isAttendanceManagerTierRole, normalizeRole } from "@/lib/roleLabels";
 import { timezoneForBranch, nowInTimezone } from "@/lib/attendanceGrace";
 import { getTicketComments, addTicketComment, type TicketComment } from "@/lib/supabase/comments";
 import { TicketPhotos } from "@/components/TicketPhotos";
-import { uploadTicketSignature } from "@/lib/firebase/storage";
+import { uploadTicketSignature, uploadPayrollDisputeAttachment } from "@/lib/firebase/storage";
 import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
 import { lookupZip } from "@/lib/zipCoverage";
 import { resolveTierCode } from "@/lib/tierCodes";
 import { getModelResources, saveModelResources, type ModelResources } from "@/lib/supabase/modelResources";
 import { getUndismissedMobilePopupAlerts, dismissTicketAlert, type TicketAlert } from "@/lib/supabase/ticketAlerts";
 import { createItTicket, getItTickets, type ItTicketRow, type ItTicketPriority } from "@/lib/supabase/itTickets";
+import { createEmployeeRequest, getCompanyEmployeeRequests, notifyRequestReviewers, type EmployeeRequestRow } from "@/lib/supabase/employeeRequests";
+import { createPtoRequest, getCompanyPtoRequests, weekdayCount, type PtoType, type PtoRequestRow } from "@/lib/supabase/pto";
+import { createTimecardCorrection, getCompanyTimecardCorrections, type TimecardCorrectionRow } from "@/lib/supabase/timecardCorrections";
+import { createNotification } from "@/lib/supabase/notifications";
+import { resolveTeamLeadOrManager } from "@/lib/notifyRouting";
+import { NotificationsMenu } from "@/components/NotificationsMenu";
 import {
   parseServicePerformed,
   composeServicePerformed,
@@ -78,8 +84,21 @@ type View =
   | "clockinteam"
   | "parts"
   | "sheets"
-  | "itsupport";
+  | "itsupport"
+  | "payrolldispute"
+  | "timeoff"
+  | "attendancedispute"
+  | "correction";
 type DetailTab = "general" | "tracking" | "parts" | "billing";
+
+// Zero-padded "HH:MM"/"HH:MM:SS" strings sort chronologically as plain
+// strings, so this catches the classic native <input type="time"> mistake
+// of leaving the AM/PM half wrong — mirrors EmployeeSelfServicePage.tsx's
+// local helper of the same name (kept as its own copy since neither file
+// exports page-local helpers).
+function isCheckOutBeforeCheckIn(checkIn: string, checkOut: string): boolean {
+  return !!checkIn && !!checkOut && checkOut <= checkIn;
+}
 
 // Repair-status options the tech can pick from when editing a visit row
 // on mobile. Same set the desktop Add Visit modal uses so both surfaces
@@ -229,9 +248,15 @@ export function MobileTechApp() {
       "chat",
       "home",
       "payroll",
+      "timecard",
+      "clockinteam",
       "parts",
       "sheets",
       "itsupport",
+      "payrolldispute",
+      "timeoff",
+      "attendancedispute",
+      "correction",
     ];
     if (stored && (known as string[]).includes(stored)) {
       return stored as View;
@@ -457,6 +482,29 @@ export function MobileTechApp() {
       ? "route"
       : "tickets"; // tickets, roster, detail, home, parts all highlight Tickets
 
+  // Every notification's linkTo is a DESKTOP path (e.g.
+  // "/m/dashboard/attendance-monitoring?tab=disputes-inquiries") — the
+  // mobile shell is an isolated surface with its own in-memory view
+  // switching, not real routes, so clicking one here must redirect within
+  // the mobile shell instead of navigating the router to a desktop-only
+  // page. Unmapped links (Parts/Mileage/Report — Finance/Accounting-only
+  // notifications a technician wouldn't normally get — and the ambiguous
+  // "employee-self-service?tab=requests" self-notify link shared by both
+  // PTO and Time Correction, which can't be told apart from the URL alone)
+  // are a deliberate no-op rather than breaking out to an un-adapted
+  // desktop screen. Specific tab checks (pto-management/corrections/
+  // disputes-inquiries) must come before the generic "attendance-monitoring"
+  // substring since all three of those links contain it.
+  const handleNotificationLink = (linkTo: string) => {
+    const lower = linkTo.toLowerCase();
+    if (lower.includes("it-tickets") || lower.includes("itsupport")) { setView("itsupport"); return; }
+    if (lower.includes("payrolldisputes") || lower.includes("accounting-dashboard")) { setView("payrolldispute"); return; }
+    if (lower.includes("pto-management")) { setView("timeoff"); return; }
+    if (lower.includes("corrections")) { setView("correction"); return; }
+    if (lower.includes("disputes-inquiries")) { setView("attendancedispute"); return; }
+    if (lower.includes("ticket-list") || lower.includes("/ticket/")) { setView(isSelfRole ? "tickets" : "roster"); return; }
+  };
+
   return (
     <div className="mtech">
       {/* ── Fixed top header ───────────────────────────────────────── */}
@@ -469,6 +517,11 @@ export function MobileTechApp() {
         showClockInTeam={isAttendanceManagerTierRole(role, extraRoles)}
         onOpenClockInTeam={() => setView("clockinteam")}
         onOpenItSupport={() => setView("itsupport")}
+        onOpenPayrollDispute={() => setView("payrolldispute")}
+        onOpenTimeOff={() => setView("timeoff")}
+        onOpenAttendanceDispute={() => setView("attendancedispute")}
+        onOpenCorrection={() => setView("correction")}
+        onNotificationLink={handleNotificationLink}
         onSwitchToDesktop={() => {
           setDesktopOverride(true);
           navigate({ to: "/home", replace: true });
@@ -573,6 +626,22 @@ export function MobileTechApp() {
           <MobileItSupportView userName={headerName} />
         )}
 
+        {view === "payrolldispute" && (
+          <MobilePayrollDisputeView userName={headerName} profileId={profileId} companyId={companyId} />
+        )}
+
+        {view === "timeoff" && (
+          <MobileTimeOffView userName={headerName} profileId={profileId} />
+        )}
+
+        {view === "attendancedispute" && (
+          <MobileAttendanceDisputeView userName={headerName} profileId={profileId} />
+        )}
+
+        {view === "correction" && (
+          <MobileTimeCorrectionView userName={headerName} profileId={profileId} />
+        )}
+
         {/* home / parts sub-views still reachable but not in bottom nav — redirect to tickets */}
         {view === "home" && (
           <MobileHomeView
@@ -616,6 +685,11 @@ function AppHeaderMobile({
   showClockInTeam,
   onOpenClockInTeam,
   onOpenItSupport,
+  onOpenPayrollDispute,
+  onOpenTimeOff,
+  onOpenAttendanceDispute,
+  onOpenCorrection,
+  onNotificationLink,
   onSwitchToDesktop,
   onLogout,
 }: {
@@ -627,6 +701,11 @@ function AppHeaderMobile({
   showClockInTeam: boolean;
   onOpenClockInTeam: () => void;
   onOpenItSupport: () => void;
+  onOpenPayrollDispute: () => void;
+  onOpenTimeOff: () => void;
+  onOpenAttendanceDispute: () => void;
+  onOpenCorrection: () => void;
+  onNotificationLink: (linkTo: string) => void;
   onSwitchToDesktop: () => void;
   onLogout: () => void;
 }) {
@@ -656,8 +735,9 @@ function AppHeaderMobile({
       {/* Center: app name wordmark */}
       <div className="mtech-app-header-title">Admin Hub</div>
 
-      {/* Right: profile bubble → logout dropdown */}
+      {/* Right: notification bell + profile bubble → logout dropdown */}
       <div className="mtech-app-header-right">
+        <NotificationsMenu onLinkClick={onNotificationLink} />
         <button
           type="button"
           className="mtech-app-profile-btn"
@@ -694,6 +774,34 @@ function AppHeaderMobile({
                 onClick={() => { setMenu(false); onOpenItSupport(); }}
               >
                 🎫 IT Support
+              </button>
+              <button
+                type="button"
+                className="mtech-app-profile-timecard"
+                onClick={() => { setMenu(false); onOpenPayrollDispute(); }}
+              >
+                💰 Payroll Dispute
+              </button>
+              <button
+                type="button"
+                className="mtech-app-profile-timecard"
+                onClick={() => { setMenu(false); onOpenTimeOff(); }}
+              >
+                🌴 Time Off Request
+              </button>
+              <button
+                type="button"
+                className="mtech-app-profile-timecard"
+                onClick={() => { setMenu(false); onOpenAttendanceDispute(); }}
+              >
+                ⚠️ Attendance Dispute
+              </button>
+              <button
+                type="button"
+                className="mtech-app-profile-timecard"
+                onClick={() => { setMenu(false); onOpenCorrection(); }}
+              >
+                ✏️ Time Correction
               </button>
               <button
                 type="button"
@@ -3832,6 +3940,780 @@ function MobileItSupportView({ userName }: { userName: string }) {
                 )}
                 <p className="mtech-muted" style={{ padding: 0 }}>
                   Submitted {new Date(t.createdAt).toLocaleDateString()} · {t.priority[0].toUpperCase() + t.priority.slice(1)} priority
+                </p>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const PAYROLL_DISPUTE_STATUS_COLORS: Record<EmployeeRequestRow["status"], { bg: string; fg: string }> = {
+  pending: { bg: "rgba(234,179,8,0.18)", fg: "#fde047" },
+  approved: { bg: "rgba(16,185,129,0.18)", fg: "#6ee7b7" },
+  rejected: { bg: "rgba(239,68,68,0.18)", fg: "#fca5a5" },
+  closed: { bg: "rgba(100,116,139,0.25)", fg: "#cbd5e1" },
+};
+const PAYROLL_DISPUTE_STATUS_LABELS: Record<EmployeeRequestRow["status"], string> = {
+  pending: "Pending",
+  approved: "Approved",
+  rejected: "Rejected",
+  closed: "Closed",
+};
+
+// Submit a payroll dispute and track your own — same shape as IT Support
+// above, backed by employee_requests (request_type "payroll_dispute",
+// migration 0182) instead of it_tickets. Reviewed on desktop's Attendance
+// Monitoring > Disputes & Inquiries tab with Approve/Reject, same as an
+// Attendance Dispute (a Payroll Inquiry there only gets "Respond & Close").
+const PAYROLL_DISPUTE_REASONS = [
+  "Missing hours",
+  "Incorrect hourly rate",
+  "Missing completed ticket(s)",
+  "Missing mileage",
+  "Missing bonus/incentive",
+  "Other",
+];
+
+function MobilePayrollDisputeView({ userName, profileId, companyId }: { userName: string; profileId: string | null; companyId: string | null }) {
+  const [requests, setRequests] = useState<EmployeeRequestRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [payPeriod, setPayPeriod] = useState("");
+  const [totalReceived, setTotalReceived] = useState("");
+  const [totalExpected, setTotalExpected] = useState("");
+  const [reason, setReason] = useState(PAYROLL_DISPUTE_REASONS[0]);
+  const [details, setDetails] = useState("");
+  const [files, setFiles] = useState<File[]>([]);
+  const [submitting, setSubmitting] = useState(false);
+  const [msg, setMsg] = useState("");
+
+  // Derived, not typed in — avoids the missing amount ever disagreeing
+  // with the two numbers it's supposed to summarize.
+  const missingAmount = (() => {
+    const received = Number(totalReceived);
+    const expected = Number(totalExpected);
+    if (totalReceived === "" || totalExpected === "" || Number.isNaN(received) || Number.isNaN(expected)) return null;
+    return expected - received;
+  })();
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const all = await getCompanyEmployeeRequests();
+      setRequests(all.filter((r) => r.requestType === "payroll_dispute" && r.profileId === profileId));
+    } catch (e) {
+      console.error("payroll dispute: load requests failed", e);
+    } finally {
+      setLoading(false);
+    }
+  };
+  useEffect(() => {
+    void load();
+  }, [profileId]);
+
+  const submit = async () => {
+    if (!profileId) {
+      setMsg("Your profile hasn't loaded yet — try again in a moment.");
+      return;
+    }
+    if (!payPeriod.trim() || totalReceived === "" || totalExpected === "" || !details.trim()) {
+      setMsg("Fill in the pay period, both amounts, and an explanation before submitting.");
+      return;
+    }
+    setSubmitting(true);
+    setMsg("");
+    try {
+      let attachments: { url: string; name: string }[] = [];
+      if (files.length > 0 && companyId) {
+        const disputeKey = crypto.randomUUID();
+        attachments = await Promise.all(
+          files.map(async (f) => {
+            const { url } = await uploadPayrollDisputeAttachment(companyId, disputeKey, f);
+            return { url, name: f.name };
+          })
+        );
+      }
+      await createEmployeeRequest({
+        profileId,
+        requestType: "payroll_dispute",
+        details: details.trim(),
+        requestedBy: profileId,
+        payPeriod: payPeriod.trim(),
+        totalReceived: Number(totalReceived),
+        totalExpected: Number(totalExpected),
+        missingAmount: missingAmount ?? undefined,
+        disputeReason: reason,
+        attachments,
+      });
+      void notifyRequestReviewers({
+        body: `💰 New Payroll Dispute from ${userName} (${payPeriod.trim()}).`,
+        linkTo: "/m/dashboard/accounting-dashboard?tab=payrollDisputes",
+        senderId: profileId,
+        senderName: userName,
+      });
+      setPayPeriod("");
+      setTotalReceived("");
+      setTotalExpected("");
+      setReason(PAYROLL_DISPUTE_REASONS[0]);
+      setDetails("");
+      setFiles([]);
+      setMsg("Dispute submitted.");
+      await load();
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : "Failed to submit dispute.");
+    } finally {
+      setSubmitting(false);
+      setTimeout(() => setMsg(""), 3000);
+    }
+  };
+
+  return (
+    <div className="mtech-scroll">
+      <div className="mtech-payroll-heading">
+        <div className="mtech-payroll-name">Payroll Dispute</div>
+        <div className="mtech-payroll-sub">Dispute a pay period and track your own requests</div>
+      </div>
+
+      <div className="mtech-panel" style={{ marginTop: 0 }}>
+        <div className="mtech-section-title" style={{ marginTop: 0 }}>Pay Period</div>
+        <input
+          className="mtech-bill-input full"
+          value={payPeriod}
+          onChange={(e) => setPayPeriod(e.target.value)}
+          placeholder="e.g. Aug 1 – Aug 15, 2026"
+        />
+
+        <div className="mtech-section-title">Total Received</div>
+        <input
+          className="mtech-bill-input full"
+          type="number"
+          inputMode="decimal"
+          value={totalReceived}
+          onChange={(e) => setTotalReceived(e.target.value)}
+          placeholder="$0.00"
+        />
+
+        <div className="mtech-section-title">Total Expected</div>
+        <input
+          className="mtech-bill-input full"
+          type="number"
+          inputMode="decimal"
+          value={totalExpected}
+          onChange={(e) => setTotalExpected(e.target.value)}
+          placeholder="$0.00"
+        />
+
+        <div className="mtech-section-title">Missing Amount</div>
+        <input
+          className="mtech-bill-input full"
+          value={missingAmount === null ? "" : `$${missingAmount.toFixed(2)}`}
+          placeholder="Fills in automatically"
+          disabled
+        />
+
+        <div className="mtech-section-title">Reason for Dispute</div>
+        <select className="mtech-bill-input full" value={reason} onChange={(e) => setReason(e.target.value)}>
+          {PAYROLL_DISPUTE_REASONS.map((r) => (
+            <option key={r} value={r}>{r}</option>
+          ))}
+        </select>
+
+        <div className="mtech-section-title">Explanation</div>
+        <textarea
+          className="mtech-bill-input full"
+          rows={4}
+          value={details}
+          onChange={(e) => setDetails(e.target.value)}
+          placeholder="eg ticket # etc."
+        />
+
+        <div className="mtech-section-title">Upload Supporting Documents</div>
+        <input
+          className="mtech-bill-input full"
+          type="file"
+          multiple
+          accept="image/*,.pdf"
+          onChange={(e) => setFiles(Array.from(e.target.files || []))}
+        />
+        {files.length > 0 && (
+          <p className="mtech-muted" style={{ padding: "0.25rem 0" }}>{files.length} file{files.length === 1 ? "" : "s"} selected</p>
+        )}
+
+        <button type="button" className="mtech-save-btn" onClick={submit} disabled={submitting}>
+          {submitting ? "Submitting…" : "Submit Dispute"}
+        </button>
+        {msg && <div className="mtech-save-msg">{msg}</div>}
+      </div>
+
+      <div style={{ fontWeight: 800, fontSize: "0.95rem", color: "#f1f5f9", margin: "0.4rem 0 0.1rem" }}>My Disputes</div>
+      {loading ? (
+        <div className="mtech-muted" style={{ color: "#94a3b8" }}>Loading disputes…</div>
+      ) : requests.length === 0 ? (
+        <div className="mtech-muted" style={{ color: "#94a3b8" }}>No disputes submitted yet.</div>
+      ) : (
+        <div className="mtech-payroll-list">
+          {requests.map((r) => (
+            <div key={r.id} className="mtech-payroll-row">
+              <div className="mtech-payroll-row-head">
+                <div className="mtech-payroll-row-date">{r.payPeriod || new Date(r.createdAt).toLocaleDateString()}</div>
+                <div className="mtech-payroll-status" style={{ background: PAYROLL_DISPUTE_STATUS_COLORS[r.status].bg, color: PAYROLL_DISPUTE_STATUS_COLORS[r.status].fg }}>
+                  {PAYROLL_DISPUTE_STATUS_LABELS[r.status]}
+                </div>
+              </div>
+              <div className="mtech-payroll-row-body" style={{ display: "block", padding: "0.4rem 0.85rem 0.7rem" }}>
+                {r.disputeReason && <p className="mtech-muted" style={{ padding: "0.25rem 0", fontWeight: 600 }}>{r.disputeReason}</p>}
+                {(r.totalReceived !== null || r.totalExpected !== null) && (
+                  <p className="mtech-muted" style={{ padding: "0.25rem 0" }}>
+                    Received ${(r.totalReceived ?? 0).toFixed(2)} · Expected ${(r.totalExpected ?? 0).toFixed(2)} · Missing ${(r.missingAmount ?? 0).toFixed(2)}
+                  </p>
+                )}
+                <p className="mtech-muted" style={{ padding: "0.25rem 0" }}>{r.details}</p>
+                {r.attachments.length > 0 && (
+                  <p className="mtech-muted" style={{ padding: "0.25rem 0" }}>
+                    {r.attachments.map((a, i) => (
+                      <a key={a.url} href={a.url} target="_blank" rel="noopener noreferrer" style={{ color: "#93c5fd", marginRight: "0.5rem" }}>
+                        {a.name}{i < r.attachments.length - 1 ? "," : ""}
+                      </a>
+                    ))}
+                  </p>
+                )}
+                {r.reviewNote && (
+                  <p className="mtech-muted" style={{ color: "#16a34a", fontWeight: 600, padding: "0.25rem 0" }}>Response: {r.reviewNote}</p>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Generic status-pill colors shared by Time Off/Attendance Dispute/Time
+// Correction below — covers every status string PTO (denied/cancelled),
+// corrections (rejected), and employee_requests (rejected/closed) can
+// produce, so one map/label pair works for all three instead of three
+// near-identical copies.
+const REQUEST_STATUS_COLORS: Record<string, { bg: string; fg: string }> = {
+  pending: { bg: "rgba(234,179,8,0.18)", fg: "#fde047" },
+  approved: { bg: "rgba(16,185,129,0.18)", fg: "#6ee7b7" },
+  rejected: { bg: "rgba(239,68,68,0.18)", fg: "#fca5a5" },
+  denied: { bg: "rgba(239,68,68,0.18)", fg: "#fca5a5" },
+  cancelled: { bg: "rgba(100,116,139,0.25)", fg: "#cbd5e1" },
+  closed: { bg: "rgba(100,116,139,0.25)", fg: "#cbd5e1" },
+};
+function requestStatusLabel(status: string): string {
+  return status.charAt(0).toUpperCase() + status.slice(1);
+}
+
+const LEAVE_TYPES = ["Vacation", "Personal", "Sick", "Unpaid"];
+const PTO_TYPE_LABELS: Record<PtoType, string> = {
+  vacation: "Vacation",
+  sick: "Sick Leave",
+  personal: "Personal",
+  holiday: "Holiday",
+  unpaid: "Unpaid",
+  bereavement: "Bereavement",
+};
+
+// Submit a PTO/Sick/Personal/Unpaid request and track your own — same
+// "submit form + My Requests list" shape as Payroll Dispute above, backed
+// by pto.ts's two-stage manager-then-(HR OR Accounting) approval instead of
+// employee_requests. Unlike EmployeeSelfServicePage.tsx's desktop version,
+// this deliberately skips the tenure-eligibility gate and remaining-balance
+// math (ptoYearWindow/ptoAllowanceForTenureYear, sickYearWindow) — that
+// logic lives only in the desktop page today, and duplicating the
+// anniversary-anchored tenure-year calculation here risks it drifting out
+// of sync. The manager/HR/Accounting review stage is the real enforcement
+// point either way, so mobile submits directly and lets that catch
+// anything out of policy.
+function MobileTimeOffView({ userName, profileId }: { userName: string; profileId: string | null }) {
+  const [requests, setRequests] = useState<PtoRequestRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [companyProfiles, setCompanyProfiles] = useState<ProfileRow[]>([]);
+  const [leaveType, setLeaveType] = useState(LEAVE_TYPES[0]);
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
+  const [details, setDetails] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [msg, setMsg] = useState("");
+
+  useEffect(() => {
+    getCompanyUsers().then(setCompanyProfiles).catch((e) => console.error("time off: load users failed", e));
+  }, []);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const all = await getCompanyPtoRequests();
+      setRequests(all.filter((r) => r.profileId === profileId));
+    } catch (e) {
+      console.error("time off: load requests failed", e);
+    } finally {
+      setLoading(false);
+    }
+  };
+  useEffect(() => {
+    void load();
+  }, [profileId]);
+
+  const submit = async () => {
+    if (!profileId) {
+      setMsg("Your profile hasn't loaded yet — try again in a moment.");
+      return;
+    }
+    if (!startDate || !endDate) {
+      setMsg("Select a start and end date.");
+      return;
+    }
+    if (!details.trim()) {
+      setMsg("Add a reason for the request.");
+      return;
+    }
+    setSubmitting(true);
+    setMsg("");
+    try {
+      const ptoTypeMap: Record<string, PtoType> = { Vacation: "vacation", Personal: "personal", Sick: "sick", Unpaid: "unpaid" };
+      const ptoType = ptoTypeMap[leaveType] || "vacation";
+      const myProfile = companyProfiles.find((p) => p.id === profileId) ?? null;
+      const managerProfile = myProfile ? await resolveTeamLeadOrManager(myProfile, companyProfiles) : null;
+      await createPtoRequest({
+        profileId,
+        ptoType,
+        startDate,
+        endDate,
+        reason: details.trim(),
+        requestedBy: profileId,
+        managerId: managerProfile?.id ?? null,
+      });
+      // Manager + every HR user (falling back to Admin/SuperAdmin if no
+      // manager could be resolved) — same recipient rule the desktop PTO/
+      // Sick submit flow uses, so nobody's request is stranded unseen.
+      const recipients = new Map<string, ProfileRow>();
+      if (managerProfile && managerProfile.id !== profileId) recipients.set(managerProfile.id, managerProfile);
+      for (const p of companyProfiles) {
+        if (p.id === profileId) continue;
+        const primary = (p.role || "").toUpperCase();
+        if (primary === "HR" || (!managerProfile && (primary === "ADMIN" || primary === "SUPERADMIN"))) recipients.set(p.id, p);
+      }
+      const emoji = ptoType === "sick" ? "🤒" : "🗓️";
+      const label = ptoType === "sick" ? "Sick Leave" : "PTO";
+      await Promise.all(
+        Array.from(recipients.values()).map((r) =>
+          createNotification({
+            recipientId: r.id,
+            senderId: profileId,
+            senderName: userName,
+            body: `${emoji} New ${label} Request from ${userName} needs your approval: ${startDate} to ${endDate}.`,
+            linkTo: "/m/dashboard/attendance-monitoring?tab=pto-management",
+          }).catch((err) => console.error("Failed to notify", r.id, err))
+        )
+      );
+      setStartDate("");
+      setEndDate("");
+      setDetails("");
+      setLeaveType(LEAVE_TYPES[0]);
+      setMsg("Request submitted.");
+      await load();
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : "Failed to submit request.");
+    } finally {
+      setSubmitting(false);
+      setTimeout(() => setMsg(""), 3000);
+    }
+  };
+
+  return (
+    <div className="mtech-scroll">
+      <div className="mtech-payroll-heading">
+        <div className="mtech-payroll-name">Time Off Request</div>
+        <div className="mtech-payroll-sub">Request PTO, sick leave, or unpaid time off</div>
+      </div>
+
+      <div className="mtech-panel" style={{ marginTop: 0 }}>
+        <div className="mtech-section-title" style={{ marginTop: 0 }}>Leave Type</div>
+        <select className="mtech-bill-input full" value={leaveType} onChange={(e) => setLeaveType(e.target.value)}>
+          {LEAVE_TYPES.map((t) => (
+            <option key={t} value={t}>{t}</option>
+          ))}
+        </select>
+
+        <div className="mtech-section-title">Start Date</div>
+        <input className="mtech-bill-input full" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+
+        <div className="mtech-section-title">End Date</div>
+        <input className="mtech-bill-input full" type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+
+        <div className="mtech-section-title">Reason</div>
+        <textarea
+          className="mtech-bill-input full"
+          rows={4}
+          value={details}
+          onChange={(e) => setDetails(e.target.value)}
+          placeholder="Why are you requesting time off?"
+        />
+
+        <button type="button" className="mtech-save-btn" onClick={submit} disabled={submitting}>
+          {submitting ? "Submitting…" : "Submit Request"}
+        </button>
+        {msg && <div className="mtech-save-msg">{msg}</div>}
+      </div>
+
+      <div style={{ fontWeight: 800, fontSize: "0.95rem", color: "#f1f5f9", margin: "0.4rem 0 0.1rem" }}>My Requests</div>
+      {loading ? (
+        <div className="mtech-muted" style={{ color: "#94a3b8" }}>Loading requests…</div>
+      ) : requests.length === 0 ? (
+        <div className="mtech-muted" style={{ color: "#94a3b8" }}>No requests submitted yet.</div>
+      ) : (
+        <div className="mtech-payroll-list">
+          {requests.map((r) => (
+            <div key={r.id} className="mtech-payroll-row">
+              <div className="mtech-payroll-row-head">
+                <div className="mtech-payroll-row-date">{r.startDate} – {r.endDate}</div>
+                <div className="mtech-payroll-status" style={{ background: REQUEST_STATUS_COLORS[r.status].bg, color: REQUEST_STATUS_COLORS[r.status].fg }}>
+                  {requestStatusLabel(r.status)}
+                </div>
+              </div>
+              <div className="mtech-payroll-row-body" style={{ display: "block", padding: "0.4rem 0.85rem 0.7rem" }}>
+                <p className="mtech-muted" style={{ padding: "0.25rem 0", fontWeight: 600 }}>
+                  {PTO_TYPE_LABELS[r.ptoType] || r.ptoType} · {(r.hoursRequested / 8).toFixed(r.hoursRequested % 8 === 0 ? 0 : 1)} day{r.hoursRequested === 8 ? "" : "s"}
+                </p>
+                <p className="mtech-muted" style={{ padding: "0.25rem 0" }}>{r.reason}</p>
+                <p className="mtech-muted" style={{ padding: "0.25rem 0" }}>
+                  Manager: {requestStatusLabel(r.managerStatus)} · HR: {requestStatusLabel(r.hrStatus)} · Accounting: {requestStatusLabel(r.accountingStatus)}
+                </p>
+                {r.reviewNote && (
+                  <p className="mtech-muted" style={{ color: "#16a34a", fontWeight: 600, padding: "0.25rem 0" }}>Response: {r.reviewNote}</p>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Submit an attendance dispute and track your own — the simplest of the
+// three new mobile request views: a plain details textarea, reviewed on
+// desktop's existing (untouched) Attendance Monitoring > Disputes &
+// Inquiries tab, same as before mobile could submit one at all.
+function MobileAttendanceDisputeView({ userName, profileId }: { userName: string; profileId: string | null }) {
+  const [requests, setRequests] = useState<EmployeeRequestRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [details, setDetails] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [msg, setMsg] = useState("");
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const all = await getCompanyEmployeeRequests();
+      setRequests(all.filter((r) => r.requestType === "attendance_dispute" && r.profileId === profileId));
+    } catch (e) {
+      console.error("attendance dispute: load requests failed", e);
+    } finally {
+      setLoading(false);
+    }
+  };
+  useEffect(() => {
+    void load();
+  }, [profileId]);
+
+  const submit = async () => {
+    if (!profileId) {
+      setMsg("Your profile hasn't loaded yet — try again in a moment.");
+      return;
+    }
+    if (!details.trim()) {
+      setMsg("Describe what looks wrong on your attendance record.");
+      return;
+    }
+    setSubmitting(true);
+    setMsg("");
+    try {
+      await createEmployeeRequest({
+        profileId,
+        requestType: "attendance_dispute",
+        details: details.trim(),
+        requestedBy: profileId,
+      });
+      void notifyRequestReviewers({
+        body: `⚠️ New Attendance Dispute from ${userName}.`,
+        linkTo: "/m/dashboard/attendance-monitoring?tab=disputes-inquiries",
+        senderId: profileId,
+        senderName: userName,
+      });
+      setDetails("");
+      setMsg("Dispute submitted.");
+      await load();
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : "Failed to submit dispute.");
+    } finally {
+      setSubmitting(false);
+      setTimeout(() => setMsg(""), 3000);
+    }
+  };
+
+  return (
+    <div className="mtech-scroll">
+      <div className="mtech-payroll-heading">
+        <div className="mtech-payroll-name">Attendance Dispute</div>
+        <div className="mtech-payroll-sub">Flag an issue with your attendance record</div>
+      </div>
+
+      <div className="mtech-panel" style={{ marginTop: 0 }}>
+        <div className="mtech-section-title" style={{ marginTop: 0 }}>What's wrong?</div>
+        <textarea
+          className="mtech-bill-input full"
+          rows={5}
+          value={details}
+          onChange={(e) => setDetails(e.target.value)}
+          placeholder="Describe the issue — date, what happened, etc."
+        />
+        <button type="button" className="mtech-save-btn" onClick={submit} disabled={submitting}>
+          {submitting ? "Submitting…" : "Submit Dispute"}
+        </button>
+        {msg && <div className="mtech-save-msg">{msg}</div>}
+      </div>
+
+      <div style={{ fontWeight: 800, fontSize: "0.95rem", color: "#f1f5f9", margin: "0.4rem 0 0.1rem" }}>My Disputes</div>
+      {loading ? (
+        <div className="mtech-muted" style={{ color: "#94a3b8" }}>Loading disputes…</div>
+      ) : requests.length === 0 ? (
+        <div className="mtech-muted" style={{ color: "#94a3b8" }}>No disputes submitted yet.</div>
+      ) : (
+        <div className="mtech-payroll-list">
+          {requests.map((r) => (
+            <div key={r.id} className="mtech-payroll-row">
+              <div className="mtech-payroll-row-head">
+                <div className="mtech-payroll-row-date">{new Date(r.createdAt).toLocaleDateString()}</div>
+                <div className="mtech-payroll-status" style={{ background: REQUEST_STATUS_COLORS[r.status].bg, color: REQUEST_STATUS_COLORS[r.status].fg }}>
+                  {requestStatusLabel(r.status)}
+                </div>
+              </div>
+              <div className="mtech-payroll-row-body" style={{ display: "block", padding: "0.4rem 0.85rem 0.7rem" }}>
+                <p className="mtech-muted" style={{ padding: "0.25rem 0" }}>{r.details}</p>
+                {r.reviewNote && (
+                  <p className="mtech-muted" style={{ color: "#16a34a", fontWeight: 600, padding: "0.25rem 0" }}>Response: {r.reviewNote}</p>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Submit a time correction and track your own — needs the employee's own
+// "original" check-in/out/meal punch for the selected date (looked up via
+// getMonthEntries, the same source MobileTimecardView already uses for
+// today's entry) so the review queue can show what's being corrected FROM,
+// not just what it's being corrected TO. Same two-stage manager-then-(HR OR
+// Accounting) approval as Time Off, via timecardCorrections.ts.
+function MobileTimeCorrectionView({ userName, profileId }: { userName: string; profileId: string | null }) {
+  const [requests, setRequests] = useState<TimecardCorrectionRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [companyProfiles, setCompanyProfiles] = useState<ProfileRow[]>([]);
+  const [correctionDate, setCorrectionDate] = useState("");
+  const [correctedCheckIn, setCorrectedCheckIn] = useState("");
+  const [correctedCheckOut, setCorrectedCheckOut] = useState("");
+  const [correctedMealStart, setCorrectedMealStart] = useState("");
+  const [correctedMealEnd, setCorrectedMealEnd] = useState("");
+  const [details, setDetails] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [msg, setMsg] = useState("");
+
+  useEffect(() => {
+    getCompanyUsers().then(setCompanyProfiles).catch((e) => console.error("time correction: load users failed", e));
+  }, []);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const all = await getCompanyTimecardCorrections();
+      setRequests(all.filter((r) => r.profileId === profileId));
+    } catch (e) {
+      console.error("time correction: load requests failed", e);
+    } finally {
+      setLoading(false);
+    }
+  };
+  useEffect(() => {
+    void load();
+  }, [profileId]);
+
+  const submit = async () => {
+    if (!profileId) {
+      setMsg("Your profile hasn't loaded yet — try again in a moment.");
+      return;
+    }
+    if (!correctionDate) {
+      setMsg("Select the date you're correcting.");
+      return;
+    }
+    if (!correctedCheckIn && !correctedCheckOut && !correctedMealStart && !correctedMealEnd) {
+      setMsg("Enter at least one corrected time (check in, check out, meal start, or meal end).");
+      return;
+    }
+    if (!details.trim()) {
+      setMsg("Add a reason for the correction.");
+      return;
+    }
+    setSubmitting(true);
+    setMsg("");
+    try {
+      const [y, m] = correctionDate.split("-").map(Number);
+      const monthEntries = await getMonthEntries(profileId, y, m - 1);
+      const existing = monthEntries[correctionDate];
+
+      const effectiveCheckIn = correctedCheckIn || existing?.checkIn || "";
+      const effectiveCheckOut = correctedCheckOut || existing?.checkOut || "";
+      if (isCheckOutBeforeCheckIn(effectiveCheckIn, effectiveCheckOut)) {
+        setMsg(`Check out (${effectiveCheckOut}) is before check in (${effectiveCheckIn}). Double-check the time.`);
+        setSubmitting(false);
+        return;
+      }
+      const effectiveMealStart = correctedMealStart || existing?.mealStart || "";
+      const effectiveMealEnd = correctedMealEnd || existing?.mealEnd || "";
+      if (isCheckOutBeforeCheckIn(effectiveMealStart, effectiveMealEnd)) {
+        setMsg(`Meal end (${effectiveMealEnd}) is before meal start (${effectiveMealStart}). Double-check the time.`);
+        setSubmitting(false);
+        return;
+      }
+
+      const myProfile = companyProfiles.find((p) => p.id === profileId) ?? null;
+      const managerProfile = myProfile ? await resolveTeamLeadOrManager(myProfile, companyProfiles) : null;
+
+      await createTimecardCorrection({
+        profileId,
+        workDate: correctionDate,
+        originalCheckIn: existing?.checkIn || "",
+        originalCheckOut: existing?.checkOut || "",
+        correctedCheckIn,
+        correctedCheckOut,
+        originalMealStart: existing?.mealStart || "",
+        originalMealEnd: existing?.mealEnd || "",
+        correctedMealStart,
+        correctedMealEnd,
+        reason: details.trim(),
+        requestedBy: profileId,
+        managerId: managerProfile?.id ?? null,
+      });
+
+      // Manager + every HR/Finance user + the requester themselves — same
+      // recipient rule the desktop correction submit flow uses, so HR/
+      // Finance get an early heads-up rather than only learning about it
+      // once the manager has already approved.
+      const recipients = new Map<string, ProfileRow>();
+      if (managerProfile && managerProfile.id !== profileId) recipients.set(managerProfile.id, managerProfile);
+      for (const p of companyProfiles) {
+        const primary = (p.role || "").toUpperCase();
+        if (primary === "HR" || primary === "FINANCE") recipients.set(p.id, p);
+      }
+      if (myProfile) recipients.set(myProfile.id, myProfile);
+      await Promise.all(
+        Array.from(recipients.values()).map((r) =>
+          createNotification({
+            recipientId: r.id,
+            senderId: profileId,
+            senderName: userName,
+            body: `🕐 New Time Correction Request from ${userName} for ${correctionDate}.`,
+            linkTo: r.id === profileId
+              ? "/m/dashboard/employee-self-service?tab=requests"
+              : "/m/dashboard/attendance-monitoring?tab=corrections",
+          }).catch((err) => console.error("Failed to notify", r.id, err))
+        )
+      );
+
+      setCorrectionDate("");
+      setCorrectedCheckIn("");
+      setCorrectedCheckOut("");
+      setCorrectedMealStart("");
+      setCorrectedMealEnd("");
+      setDetails("");
+      setMsg("Correction submitted.");
+      await load();
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : "Failed to submit correction.");
+    } finally {
+      setSubmitting(false);
+      setTimeout(() => setMsg(""), 3000);
+    }
+  };
+
+  return (
+    <div className="mtech-scroll">
+      <div className="mtech-payroll-heading">
+        <div className="mtech-payroll-name">Time Correction</div>
+        <div className="mtech-payroll-sub">Request a fix to a check-in, check-out, or meal punch</div>
+      </div>
+
+      <div className="mtech-panel" style={{ marginTop: 0 }}>
+        <div className="mtech-section-title" style={{ marginTop: 0 }}>Date</div>
+        <input className="mtech-bill-input full" type="date" value={correctionDate} onChange={(e) => setCorrectionDate(e.target.value)} />
+
+        <div className="mtech-section-title">Corrected Check In</div>
+        <input className="mtech-bill-input full" type="time" value={correctedCheckIn} onChange={(e) => setCorrectedCheckIn(e.target.value)} />
+
+        <div className="mtech-section-title">Corrected Check Out</div>
+        <input className="mtech-bill-input full" type="time" value={correctedCheckOut} onChange={(e) => setCorrectedCheckOut(e.target.value)} />
+
+        <div className="mtech-section-title">Corrected Meal Start</div>
+        <input className="mtech-bill-input full" type="time" value={correctedMealStart} onChange={(e) => setCorrectedMealStart(e.target.value)} />
+
+        <div className="mtech-section-title">Corrected Meal End</div>
+        <input className="mtech-bill-input full" type="time" value={correctedMealEnd} onChange={(e) => setCorrectedMealEnd(e.target.value)} />
+
+        <p className="mtech-muted" style={{ padding: "0.25rem 0" }}>Fill in only the field(s) that were wrong — the rest is left as recorded.</p>
+
+        <div className="mtech-section-title">Reason</div>
+        <textarea
+          className="mtech-bill-input full"
+          rows={4}
+          value={details}
+          onChange={(e) => setDetails(e.target.value)}
+          placeholder="What happened?"
+        />
+
+        <button type="button" className="mtech-save-btn" onClick={submit} disabled={submitting}>
+          {submitting ? "Submitting…" : "Submit Correction"}
+        </button>
+        {msg && <div className="mtech-save-msg">{msg}</div>}
+      </div>
+
+      <div style={{ fontWeight: 800, fontSize: "0.95rem", color: "#f1f5f9", margin: "0.4rem 0 0.1rem" }}>My Corrections</div>
+      {loading ? (
+        <div className="mtech-muted" style={{ color: "#94a3b8" }}>Loading corrections…</div>
+      ) : requests.length === 0 ? (
+        <div className="mtech-muted" style={{ color: "#94a3b8" }}>No corrections submitted yet.</div>
+      ) : (
+        <div className="mtech-payroll-list">
+          {requests.map((r) => (
+            <div key={r.id} className="mtech-payroll-row">
+              <div className="mtech-payroll-row-head">
+                <div className="mtech-payroll-row-date">{r.workDate}</div>
+                <div className="mtech-payroll-status" style={{ background: REQUEST_STATUS_COLORS[r.status].bg, color: REQUEST_STATUS_COLORS[r.status].fg }}>
+                  {requestStatusLabel(r.status)}
+                </div>
+              </div>
+              <div className="mtech-payroll-row-body" style={{ display: "block", padding: "0.4rem 0.85rem 0.7rem" }}>
+                {(r.correctedCheckIn || r.correctedCheckOut) && (
+                  <p className="mtech-muted" style={{ padding: "0.25rem 0" }}>
+                    Check: {r.originalCheckIn || "—"} → {r.correctedCheckIn || "—"} / {r.originalCheckOut || "—"} → {r.correctedCheckOut || "—"}
+                  </p>
+                )}
+                {(r.correctedMealStart || r.correctedMealEnd) && (
+                  <p className="mtech-muted" style={{ padding: "0.25rem 0" }}>
+                    Meal: {r.originalMealStart || "—"} → {r.correctedMealStart || "—"} / {r.originalMealEnd || "—"} → {r.correctedMealEnd || "—"}
+                  </p>
+                )}
+                <p className="mtech-muted" style={{ padding: "0.25rem 0" }}>{r.reason}</p>
+                <p className="mtech-muted" style={{ padding: "0.25rem 0" }}>
+                  Manager: {requestStatusLabel(r.managerStatus)} · HR: {requestStatusLabel(r.hrStatus)} · Accounting: {requestStatusLabel(r.accountingStatus)}
                 </p>
               </div>
             </div>

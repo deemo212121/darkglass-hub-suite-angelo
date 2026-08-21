@@ -288,6 +288,28 @@ export async function uploadExpenseReceipt(companyId: string, expenseId: string,
 }
 
 /**
+ * Upload a supporting document for a Payroll Dispute (employee_requests,
+ * request_type "payroll_dispute" — migration 0182/0183). Stored under
+ * companies/{companyId}/payroll-disputes/{disputeKey}/, same
+ * client-generated-key-before-insert convention as uploadItTicketScreenshot
+ * below — the resulting URL(s) go into that same createEmployeeRequest call.
+ */
+export async function uploadPayrollDisputeAttachment(companyId: string, disputeKey: string, file: File): Promise<{ url: string; fullPath: string }> {
+  if (!isFirebaseReady() || !storage) {
+    throw new Error("Firebase Storage not configured");
+  }
+  const folder = `companies/${companyId}/payroll-disputes/${disputeKey}`;
+  const objectName = `${Date.now()}-${sanitizeFileName(file.name)}`;
+  const objectRef = ref(storage, `${folder}/${objectName}`);
+  const snapshot = await uploadBytes(objectRef, file, {
+    contentType: file.type || "application/octet-stream",
+    customMetadata: { uploadedAt: new Date().toISOString() },
+  });
+  const url = await getDownloadURL(snapshot.ref);
+  return { url, fullPath: snapshot.ref.fullPath };
+}
+
+/**
  * Upload a screenshot for an IT ticket (IT Support page). Stored under
  * companies/{companyId}/it-tickets/{ticketKey}/, same convention as
  * expense receipts above. `ticketKey` is a client-generated placeholder

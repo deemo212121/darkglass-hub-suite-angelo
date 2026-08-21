@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, Fragment } from "react";
-import { Link } from "@tanstack/react-router";
+import { Link, useSearch } from "@tanstack/react-router";
 import { usePersistedTab } from "@/lib/usePersistedTab";
 import {
   ChevronLeft,
@@ -25,6 +25,7 @@ import {
   Ban,
   Columns3,
   Route as RouteIcon,
+  Bell,
 } from "lucide-react";
 import {
   BarChart,
@@ -70,6 +71,7 @@ import {
 import { TechActivityReportModal } from "@/components/TechActivityReportModal";
 import { getMileageEntries, deleteMileageEntry, syncMileageFromTickets, setMileageEntryPayrollExcluded, reconcileMileageNoPhotoHolds, mileageEffectiveTotal, type MileageEntry } from "@/lib/supabase/mileage";
 import { MileageDayRouteModal } from "@/components/MileageDayRouteModal";
+import { getCompanyEmployeeRequests, updateEmployeeRequestStatus, type EmployeeRequestRow } from "@/lib/supabase/employeeRequests";
 import { perCutoffSalary } from "@/lib/supabase/salary";
 import { useAuth } from "@/lib/auth";
 import { getGmailConnectionStatus, disconnectGmail, sendPayslipEmail, type GmailConnectionStatus, type GmailRegion } from "@/lib/supabase/gmailConnection";
@@ -517,11 +519,52 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   const { uid, role, displayName, email, companyId } = useAuth();
   const canConnectGmail = String(role || "").toUpperCase() === "ADMIN" || String(role || "").toUpperCase() === "SUPERADMIN";
   const [myProfileId, setMyProfileId] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = usePersistedTab<"overview" | "payroll" | "techPayroll" | "mileage" | "reports">(
+  const [activeTab, setActiveTab] = usePersistedTab<"overview" | "payroll" | "techPayroll" | "mileage" | "payrollDisputes" | "reports">(
     "ahs:accounting-dashboard-active-tab",
-    ["overview", "payroll", "techPayroll", "mileage", "reports"],
+    ["overview", "payroll", "techPayroll", "mileage", "payrollDisputes", "reports"],
     "overview",
   );
+  // Deep link from a bell-icon notification straight into the Payroll
+  // Disputes tab (a new dispute was submitted) — same ?tab= convention
+  // Employee Self-Service/PartInventory.tsx already use.
+  const routeSearch = (useSearch({ strict: false }) as { tab?: string }) ?? {};
+  useEffect(() => {
+    if (routeSearch.tab === "payrollDisputes") setActiveTab("payrollDisputes");
+  }, [routeSearch.tab]);
+
+  // Payroll Disputes tab — employee_requests rows with request_type
+  // "payroll_dispute" (migrations 0182/0183), submitted from the mobile
+  // tech app's own Payroll Dispute view. Reviewed here (not Attendance
+  // Monitoring's Disputes & Inquiries, which excludes this type) with
+  // Approve/Reject, same review shape as an Attendance Dispute. Loaded
+  // lazily, only once this tab is opened.
+  const [payrollDisputes, setPayrollDisputes] = useState<EmployeeRequestRow[]>([]);
+  const [payrollDisputesLoading, setPayrollDisputesLoading] = useState(false);
+  const [payrollDisputesLoaded, setPayrollDisputesLoaded] = useState(false);
+  const [payrollDisputeNote, setPayrollDisputeNote] = useState<Record<string, string>>({});
+  useEffect(() => {
+    if (activeTab !== "payrollDisputes" || payrollDisputesLoaded) return;
+    setPayrollDisputesLoading(true);
+    getCompanyEmployeeRequests()
+      .then((rows) => { setPayrollDisputes(rows.filter((r) => r.requestType === "payroll_dispute")); setPayrollDisputesLoaded(true); })
+      .catch((err) => console.error("Failed to load payroll disputes:", err))
+      .finally(() => setPayrollDisputesLoading(false));
+  }, [activeTab, payrollDisputesLoaded]);
+  const pendingPayrollDisputes = payrollDisputes.filter((r) => r.status === "pending");
+  const handlePayrollDisputeAction = async (id: string, status: "approved" | "rejected") => {
+    try {
+      await updateEmployeeRequestStatus(id, status, myProfileId, payrollDisputeNote[id]);
+      const rows = await getCompanyEmployeeRequests();
+      setPayrollDisputes(rows.filter((r) => r.requestType === "payroll_dispute"));
+      setPayrollDisputeNote((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+    } catch (err) {
+      alert(`Failed to update dispute: ${err instanceof Error ? err.message : "Unknown error"}`);
+    }
+  };
   // Overview KPI cards default to the live current-period preview, but can
   // be pointed at any previously generated payroll run instead.
   const [selectedRunId, setSelectedRunId] = useState<string>("current");
@@ -625,6 +668,44 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     try { localStorage.setItem(MILEAGE_COLUMN_VISIBILITY_KEY, JSON.stringify(all)); } catch { /* ignore */ }
   };
 
+  // "Notify On-Hold" — one consolidated notification per technician (not
+  // one per ticket) listing every currently on-hold ticket of theirs,
+  // company-wide regardless of what's filtered on screen. Preview-then-
+  // confirm, same pattern as the Parts hub's "Done" button.
+  const [notifyOnHoldModalOpen, setNotifyOnHoldModalOpen] = useState(false);
+  const [notifyingOnHold, setNotifyingOnHold] = useState(false);
+  const [notifyOnHoldMessage, setNotifyOnHoldMessage] = useState<string | null>(null);
+  const confirmNotifyOnHold = async () => {
+    setNotifyingOnHold(true);
+    setNotifyOnHoldMessage(null);
+    try {
+      await Promise.all(
+        mileageOnHoldByTechnician.map((tech) => {
+          const parts = tech.items.map((i) => (tech.items.some((o) => o.reason !== i.reason) ? `${i.ticketNo} (${i.reason === "manual" ? "manually held" : "no photos"})` : i.ticketNo));
+          const body = `🚫 ${tech.items.length} of your ${tech.items.length === 1 ? "ticket is" : "tickets are"} on hold for payroll: ${parts.join(", ")} — upload photos to release ${tech.items.length === 1 ? "it" : "them"}.`;
+          const firstTicketNo = tech.items[0]?.ticketNo;
+          return createNotification({
+            recipientId: tech.profileId,
+            senderId: myProfileId,
+            senderName: "Accounting",
+            body,
+            linkTo:
+              firstTicketNo && firstTicketNo !== "(no ticket #)"
+                ? `/m/tickets/ticket-list?ticketNo=${encodeURIComponent(firstTicketNo)}`
+                : "/m/tickets/ticket-list",
+          }).catch((err) => console.error("Failed to notify", tech.profileId, err));
+        })
+      );
+      setNotifyOnHoldModalOpen(false);
+      setNotifyOnHoldMessage(`Notified ${mileageOnHoldByTechnician.length} technician${mileageOnHoldByTechnician.length === 1 ? "" : "s"}.`);
+      window.setTimeout(() => setNotifyOnHoldMessage(null), 4000);
+    } catch (err) {
+      setNotifyOnHoldMessage(`Failed to notify: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setNotifyingOnHold(false);
+    }
+  };
+
   // Admin > Repair Statuses config — fetched once so the Mileage tab's
   // Status column can color-code by the same admin-configured colors
   // instead of a hardcoded map (see mileageStatusStyle above).
@@ -677,53 +758,65 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // re-check tickets already known. Clears itself the moment a photo
   // actually exists — no button, no persisted flag to get stale.
   const [mileageTicketHasPhotos, setMileageTicketHasPhotos] = useState<Map<string, boolean>>(new Map());
-  useEffect(() => {
-    const ticketNos = Array.from(
-      new Set(mileageEntries.filter((e) => e.source === "auto" && e.ticketNo && !mileageTicketHasPhotos.has(e.ticketNo)).map((e) => e.ticketNo as string))
-    );
+  // Shared by both the passive (whatever's not been checked yet) and the
+  // forced (Generate Payroll's own re-check, below) photo-check paths —
+  // `force` bypasses the mileageTicketHasPhotos cache so a photo added
+  // AFTER an earlier check still gets picked up before payroll generates.
+  const checkAndReconcilePhotoHolds = useCallback(async (ticketNosIn: string[], force: boolean) => {
+    const ticketNos = force ? ticketNosIn : ticketNosIn.filter((t) => !mileageTicketHasPhotos.has(t));
     if (ticketNos.length === 0 || !companyId) return;
     const cid = companyId;
-    let cancelled = false;
-    (async () => {
-      const CONCURRENCY = 8;
-      const results = new Map<string, boolean>();
-      let idx = 0;
-      async function worker() {
-        while (idx < ticketNos.length) {
-          const ticketNo = ticketNos[idx++];
-          try {
-            results.set(ticketNo, await hasTicketPhotos(cid, `${ticketNo}/service`));
-          } catch {
-            results.set(ticketNo, false);
-          }
+    const CONCURRENCY = 8;
+    const results = new Map<string, boolean>();
+    let idx = 0;
+    async function worker() {
+      while (idx < ticketNos.length) {
+        const ticketNo = ticketNos[idx++];
+        try {
+          results.set(ticketNo, await hasTicketPhotos(cid, `${ticketNo}/service`));
+        } catch {
+          results.set(ticketNo, false);
         }
       }
-      await Promise.all(Array.from({ length: CONCURRENCY }, () => worker()));
-      if (cancelled) return;
-      setMileageTicketHasPhotos((prev) => new Map([...prev, ...results]));
+    }
+    await Promise.all(Array.from({ length: CONCURRENCY }, () => worker()));
+    setMileageTicketHasPhotos((prev) => new Map([...prev, ...results]));
 
-      // A day's mileage entries share one route total (see
-      // syncMileageFromTickets) — if ANY ticket that day is missing
-      // photos, the whole day's drive is unproven, so every entry in that
-      // technician's (profile/name, work date) group holds, not just the
-      // one ticket that's missing photos.
-      const dayKey = (e: MileageEntry) => `${e.profileId ?? e.technicianName ?? ""}|${e.workDate}`;
-      const heldDays = new Set(
-        mileageEntries
-          .filter((e) => e.source === "auto" && e.ticketNo && results.get(e.ticketNo) === false)
-          .map(dayKey)
-      );
+    // A day's mileage entries share one route total (see
+    // syncMileageFromTickets) — if ANY ticket that day is missing
+    // photos, the whole day's drive is unproven, so every entry in that
+    // technician's (profile/name, work date) group holds, not just the
+    // one ticket that's missing photos.
+    const dayKey = (e: MileageEntry) => `${e.profileId ?? e.technicianName ?? ""}|${e.workDate}`;
+    const heldDays = new Set(
+      mileageEntries
+        .filter((e) => e.source === "auto" && e.ticketNo && results.get(e.ticketNo) === false)
+        .map(dayKey)
+    );
 
-      const affectedEntries = mileageEntries
+    // Persist the same rule into payroll_excluded — this is what actually
+    // makes Tech Payroll (getTechCompletedRepairCounts, and this file's
+    // own mileage total default) skip these tickets, not just the badge.
+    const affectedEntries = mileageEntries
+      .filter((e) => e.source === "auto" && e.ticketNo && results.has(e.ticketNo))
+      .map((e) => ({ id: e.id, payrollExcluded: e.payrollExcluded, payrollHoldReason: e.payrollHoldReason }));
+    const hasPhotosByEntryId = new Map(
+      mileageEntries
         .filter((e) => e.source === "auto" && e.ticketNo && results.has(e.ticketNo))
-        .map((e) => ({ id: e.id, payrollExcluded: e.payrollExcluded, payrollHoldReason: e.payrollHoldReason }));
-      const hasPhotosByEntryId = new Map(
-        mileageEntries
-          .filter((e) => e.source === "auto" && e.ticketNo && results.has(e.ticketNo))
-          .map((e) => [e.id, !heldDays.has(dayKey(e))])
-      );
-      const changed = await reconcileMileageNoPhotoHolds(affectedEntries, hasPhotosByEntryId);
-      if (!cancelled && changed > 0) setMileageEntries(await getMileageEntries());
+        .map((e) => [e.id, !heldDays.has(dayKey(e))])
+    );
+    const changed = await reconcileMileageNoPhotoHolds(affectedEntries, hasPhotosByEntryId);
+    if (changed > 0) setMileageEntries(await getMileageEntries());
+  }, [companyId, mileageEntries, mileageTicketHasPhotos]);
+
+  useEffect(() => {
+    const ticketNos = Array.from(
+      new Set(mileageEntries.filter((e) => e.source === "auto" && e.ticketNo).map((e) => e.ticketNo as string))
+    );
+    let cancelled = false;
+    (async () => {
+      await checkAndReconcilePhotoHolds(ticketNos, false);
+      if (cancelled) return;
     })();
     return () => { cancelled = true; };
   }, [mileageEntries, companyId]);
@@ -960,6 +1053,37 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       });
     return () => { cancelled = true; };
   }, [genStart, genEnd, mileageEntries]);
+
+  // Forces a FRESH photo re-check (bypassing the cache above) for every
+  // ticket dated inside the selected payroll period, whenever that period
+  // changes — so a photo uploaded after the page's own passive check
+  // already ran still gets picked up before Generate Payroll runs, instead
+  // of relying on whatever was last checked. Generate Payroll disables
+  // itself (mileagePeriodPhotoCheckLoading below) until this settles.
+  const [mileagePeriodPhotoCheckLoading, setMileagePeriodPhotoCheckLoading] = useState(false);
+  useEffect(() => {
+    if (!genStart || !genEnd || genStart > genEnd) return;
+    const ticketNos = Array.from(
+      new Set(
+        mileageEntries
+          .filter((e) => e.source === "auto" && e.ticketNo && e.workDate >= genStart && e.workDate <= genEnd)
+          .map((e) => e.ticketNo as string)
+      )
+    );
+    if (ticketNos.length === 0) return;
+    let cancelled = false;
+    setMileagePeriodPhotoCheckLoading(true);
+    checkAndReconcilePhotoHolds(ticketNos, true).finally(() => {
+      if (!cancelled) setMileagePeriodPhotoCheckLoading(false);
+    });
+    return () => { cancelled = true; };
+    // mileageEntries.length (not the array itself) — re-runs once real data
+    // first arrives (0 -> N on initial load) and when new entries get
+    // synced in, but NOT on every re-render this same check's own
+    // reconcile-triggered refetch causes (same length, since reconciling
+    // only updates existing rows) — avoids re-force-checking in a loop.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [genStart, genEnd, mileageEntries.length]);
 
   // "Two Tech" auto-count (visits.second_technician) — folds into Total Net
   // the same deterministic, rate-table-driven way LDT/Mileage/Training do.
@@ -2012,6 +2136,22 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // live photo-check result for entries not yet reconciled, so the filter
   // and the badge can never disagree about what a row currently shows.
   const mileageEntryIsOnHold = (entry: MileageEntry) => entry.payrollExcluded || mileageNoPhotosHold(entry);
+  // Company-wide (ignores whatever's currently filtered on screen) —
+  // "Notify On-Hold" button below. Only entries with a real linked
+  // technician (profileId) can be notified; unlinked ones have nobody to
+  // tell. Grouped so each technician gets ONE consolidated notification
+  // listing every held ticket, not one ping per ticket.
+  const mileageOnHoldByTechnician = (() => {
+    const map = new Map<string, { profileId: string; name: string; items: { ticketNo: string; reason: "no_photos" | "manual" }[] }>();
+    for (const entry of mileageEntries) {
+      if (!entry.profileId || !mileageEntryIsOnHold(entry)) continue;
+      const reason: "no_photos" | "manual" = entry.payrollExcluded && entry.payrollHoldReason === "manual" ? "manual" : "no_photos";
+      const existing = map.get(entry.profileId) ?? { profileId: entry.profileId, name: mileageRowName(entry), items: [] };
+      existing.items.push({ ticketNo: entry.ticketNo || "(no ticket #)", reason });
+      map.set(entry.profileId, existing);
+    }
+    return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
+  })();
   const mileageEntriesByBranch = (() => {
     const nameFilter = mileageNameFilter.trim().toLowerCase();
     const ticketFilter = mileageTicketFilter.trim().toLowerCase();
@@ -2392,13 +2532,14 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
             { id: "payroll", label: "Office Payroll", Icon: DollarSign },
             { id: "techPayroll", label: "Tech Payroll", Icon: Wrench },
             { id: "mileage", label: "Mileage", Icon: MapPin },
+            { id: "payrollDisputes", label: "Payroll Disputes", Icon: AlertCircle },
             { id: "reports", label: "Reports", Icon: FileText },
           ].map((tab) => {
             const Icon = tab.Icon;
             return (
               <button
                 key={tab.id}
-                onClick={() => setActiveTab(tab.id as "overview" | "payroll" | "techPayroll" | "mileage" | "reports")}
+                onClick={() => setActiveTab(tab.id as "overview" | "payroll" | "techPayroll" | "mileage" | "payrollDisputes" | "reports")}
                 className={`px-4 py-2 border-b-2 transition whitespace-nowrap flex items-center gap-2 ${
                   activeTab === tab.id
                     ? "border-blue-500 text-blue-300"
@@ -2517,18 +2658,24 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
               <button
                 type="button"
                 onClick={generatePayroll}
-                disabled={generating || nationIncludedPayrollRows.length === 0 || !genStart || !genEnd || genStart > genEnd}
-                title={matchesExistingRun ? "A payroll run already exists for these dates — this will recompute and replace it" : undefined}
+                disabled={generating || mileagePeriodPhotoCheckLoading || nationIncludedPayrollRows.length === 0 || !genStart || !genEnd || genStart > genEnd}
+                title={
+                  mileagePeriodPhotoCheckLoading
+                    ? "Re-checking photo status for tickets in this period before generating…"
+                    : matchesExistingRun
+                      ? "A payroll run already exists for these dates — this will recompute and replace it"
+                      : undefined
+                }
                 className="px-4 py-2 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded font-semibold transition flex items-center gap-2"
               >
-                {generating ? (
+                {generating || mileagePeriodPhotoCheckLoading ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : matchesExistingRun ? (
                   <RefreshCw className="h-4 w-4" />
                 ) : (
                   <DollarSign className="h-4 w-4" />
                 )}
-                {matchesExistingRun ? "Regenerate Payroll" : "Generate Payroll"}
+                {generating ? "Generating…" : mileagePeriodPhotoCheckLoading ? "Checking photos…" : matchesExistingRun ? "Regenerate Payroll" : "Generate Payroll"}
               </button>
               <button
                 type="button"
@@ -3244,6 +3391,20 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                   </button>
                 )}
               </div>
+              <div className="flex items-end gap-2">
+                {notifyOnHoldMessage && <span className="text-xs text-green-400 mb-2">{notifyOnHoldMessage}</span>}
+                <button
+                  type="button"
+                  onClick={() => setNotifyOnHoldModalOpen(true)}
+                  disabled={mileageOnHoldByTechnician.length === 0}
+                  className="btn hover:bg-white/15 inline-flex items-center gap-2 text-xs disabled:opacity-40 disabled:cursor-not-allowed"
+                  title="Send one consolidated notification per technician listing their on-hold tickets, company-wide"
+                >
+                  <Bell className="h-3.5 w-3.5" /> Notify On-Hold
+                  {mileageOnHoldByTechnician.length > 0 && (
+                    <span className="text-xs text-muted-foreground">({mileageOnHoldByTechnician.length})</span>
+                  )}
+                </button>
               <div className="relative">
                 <button
                   type="button"
@@ -3276,6 +3437,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                     </div>
                   </>
                 )}
+              </div>
               </div>
             </div>
 
@@ -3476,6 +3638,88 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                 </div>
               ))
             )}
+          </div>
+        )}
+
+        {/* ── Payroll Disputes Tab ─────────────────────────────────────────── */}
+        {activeTab === "payrollDisputes" && (
+          <div className="space-y-6">
+            <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
+              <p className="text-xs text-slate-400 mb-1">Pending Payroll Disputes</p>
+              <p className="text-2xl font-bold text-yellow-300">{pendingPayrollDisputes.length}</p>
+            </div>
+            <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
+              <h3 className="text-sm font-bold text-white mb-4">Payroll Disputes — Pending</h3>
+              {payrollDisputesLoading ? (
+                <p className="text-sm text-slate-400 flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" /> Loading…</p>
+              ) : pendingPayrollDisputes.length === 0 ? (
+                <p className="text-sm text-slate-400">No pending payroll disputes.</p>
+              ) : (
+                <div className="space-y-3">
+                  {pendingPayrollDisputes.map((r) => (
+                    <div key={r.id} className="border border-white/10 rounded-lg p-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <p className="text-sm font-semibold text-white">
+                          {employeeNameById.get(r.profileId) || "Unknown"} — {r.payPeriod || "No period given"}
+                        </p>
+                        {r.disputeReason && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold uppercase tracking-wide bg-amber-500/20 text-amber-300">
+                            {r.disputeReason}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-slate-400 mt-1">Submitted: {r.createdAt.slice(0, 10)}</p>
+                      {(r.totalReceived !== null || r.totalExpected !== null) && (
+                        <p className="text-sm text-slate-300 mt-2">
+                          Received <span className="font-semibold text-white">${(r.totalReceived ?? 0).toFixed(2)}</span>
+                          {" · "}Expected <span className="font-semibold text-white">${(r.totalExpected ?? 0).toFixed(2)}</span>
+                          {" · "}Missing <span className="font-semibold text-red-300">${(r.missingAmount ?? 0).toFixed(2)}</span>
+                        </p>
+                      )}
+                      <p className="text-sm text-slate-300 mt-2">{r.details}</p>
+                      {r.attachments.length > 0 && (
+                        <div className="flex flex-wrap gap-2 mt-2">
+                          {r.attachments.map((a) => (
+                            <a
+                              key={a.url}
+                              href={a.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-xs text-blue-400 hover:text-blue-300 underline"
+                            >
+                              {a.name}
+                            </a>
+                          ))}
+                        </div>
+                      )}
+                      <textarea
+                        placeholder="Optional response note (visible to the employee)..."
+                        value={payrollDisputeNote[r.id] || ""}
+                        onChange={(e) => setPayrollDisputeNote({ ...payrollDisputeNote, [r.id]: e.target.value })}
+                        rows={2}
+                        className="w-full mt-2 px-3 py-2 bg-slate-800 border border-white/10 rounded text-white text-sm focus:outline-none focus:border-blue-500 placeholder-slate-500"
+                      />
+                      <div className="flex gap-2 mt-2">
+                        <button
+                          type="button"
+                          onClick={() => handlePayrollDisputeAction(r.id, "approved")}
+                          className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded text-xs font-semibold transition"
+                        >
+                          Approve
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handlePayrollDisputeAction(r.id, "rejected")}
+                          className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded text-xs font-semibold transition"
+                        >
+                          Reject
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         )}
 
@@ -3887,6 +4131,67 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
           />
         );
       })()}
+
+      {notifyOnHoldModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+          onClick={() => !notifyingOnHold && setNotifyOnHoldModalOpen(false)}
+        >
+          <div
+            className="max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-xl border border-white/10 bg-slate-900 p-5"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-4 flex items-start justify-between gap-3">
+              <div>
+                <h3 className="text-lg font-bold text-white">Notify On-Hold Technicians</h3>
+                <p className="text-sm text-slate-400 mt-1">
+                  {mileageOnHoldByTechnician.length} technician{mileageOnHoldByTechnician.length === 1 ? "" : "s"} will get one consolidated notification each, listing their on-hold tickets — company-wide, regardless of the filters above.
+                </p>
+              </div>
+              <button type="button" onClick={() => setNotifyOnHoldModalOpen(false)} className="text-slate-400 hover:text-white text-xl leading-none">×</button>
+            </div>
+            <div className="space-y-2 mb-4">
+              {mileageOnHoldByTechnician.map((tech) => (
+                <div key={tech.profileId} className="rounded-lg border border-white/10 bg-white/5 px-3 py-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-sm font-semibold text-slate-200">{tech.name}</span>
+                    <span className="text-xs text-slate-500">{tech.items.length} on hold</span>
+                  </div>
+                  <ul className="mt-1 space-y-0.5">
+                    {tech.items.map((item, i) => (
+                      <li key={`${item.ticketNo}-${i}`} className="text-xs text-slate-400">
+                        {item.ticketNo}{" "}
+                        <span className={item.reason === "manual" ? "text-amber-400" : "text-red-400"}>
+                          ({item.reason === "manual" ? "manually held" : "no photos"})
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </div>
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setNotifyOnHoldModalOpen(false)}
+                disabled={notifyingOnHold}
+                className="px-4 py-2 bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-white rounded font-semibold transition"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmNotifyOnHold}
+                disabled={notifyingOnHold}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded font-semibold transition flex items-center gap-2"
+              >
+                {notifyingOnHold && <Loader2 className="h-4 w-4 animate-spin" />}
+                {notifyingOnHold ? "Sending…" : "Confirm & Send"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {mileagePhotoModalEntry && (
         <div
