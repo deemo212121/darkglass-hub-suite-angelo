@@ -483,6 +483,50 @@ export async function uploadCarIqAgreementForm(companyId: string, employeeName: 
   return getDownloadURL(snapshot.ref);
 }
 
+export async function uploadEmployeeConfidentialityForm(companyId: string, employeeName: string, pdfBlob: Blob): Promise<string> {
+  if (!isFirebaseReady() || !storage) {
+    throw new Error("Firebase Storage not configured");
+  }
+  const folder = `companies/${companyId}/employee-confidentiality-forms`;
+  const objectName = `${Date.now()}-${sanitizeFileName(employeeName || "employee-confidentiality")}.pdf`;
+  const objectRef = ref(storage, `${folder}/${objectName}`);
+  const snapshot = await uploadBytes(objectRef, pdfBlob, { contentType: "application/pdf" });
+  return getDownloadURL(snapshot.ref);
+}
+
+export async function uploadMealRestBreakForm(companyId: string, employeeName: string, pdfBlob: Blob): Promise<string> {
+  if (!isFirebaseReady() || !storage) {
+    throw new Error("Firebase Storage not configured");
+  }
+  const folder = `companies/${companyId}/meal-rest-break-forms`;
+  const objectName = `${Date.now()}-${sanitizeFileName(employeeName || "meal-rest-break")}.pdf`;
+  const objectRef = ref(storage, `${folder}/${objectName}`);
+  const snapshot = await uploadBytes(objectRef, pdfBlob, { contentType: "application/pdf" });
+  return getDownloadURL(snapshot.ref);
+}
+
+export async function uploadPtoAckForm(companyId: string, employeeName: string, pdfBlob: Blob): Promise<string> {
+  if (!isFirebaseReady() || !storage) {
+    throw new Error("Firebase Storage not configured");
+  }
+  const folder = `companies/${companyId}/pto-ack-forms`;
+  const objectName = `${Date.now()}-${sanitizeFileName(employeeName || "pto-ack")}.pdf`;
+  const objectRef = ref(storage, `${folder}/${objectName}`);
+  const snapshot = await uploadBytes(objectRef, pdfBlob, { contentType: "application/pdf" });
+  return getDownloadURL(snapshot.ref);
+}
+
+export async function uploadVehicleAgreementForm(companyId: string, employeeName: string, pdfBlob: Blob): Promise<string> {
+  if (!isFirebaseReady() || !storage) {
+    throw new Error("Firebase Storage not configured");
+  }
+  const folder = `companies/${companyId}/vehicle-agreement-forms`;
+  const objectName = `${Date.now()}-${sanitizeFileName(employeeName || "vehicle-agreement")}.pdf`;
+  const objectRef = ref(storage, `${folder}/${objectName}`);
+  const snapshot = await uploadBytes(objectRef, pdfBlob, { contentType: "application/pdf" });
+  return getDownloadURL(snapshot.ref);
+}
+
 export async function uploadI9Form(companyId: string, employeeName: string, pdfBlob: Blob): Promise<string> {
   if (!isFirebaseReady() || !storage) {
     throw new Error("Firebase Storage not configured");
