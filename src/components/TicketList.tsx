@@ -517,7 +517,11 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
   }, [tickets, reloadTickets]);
 
   // Auto-sync schedule: initial run + 5-minute interval.
+  // Temporarily disabled — the ServicePower auto-pull is turned off for now.
+  // Flip this back to true to re-enable it.
+  const SP_AUTO_SYNC_ENABLED = false;
   useEffect(() => {
+    if (!SP_AUTO_SYNC_ENABLED) return;
     let cancelled = false;
     const tick = () => {
       if (cancelled) return;
