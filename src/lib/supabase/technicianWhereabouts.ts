@@ -91,3 +91,35 @@ export async function getTechnicianWhereabouts(): Promise<TechnicianWhereabouts[
 export function distinctBranches(rows: TechnicianOption[]): string[] {
   return Array.from(new Set(rows.map((r) => r.branch).filter((b) => b.trim()))).sort((a, b) => a.localeCompare(b));
 }
+
+export interface TechnicianRouteStop {
+  ticketNo: string;
+  status: string;
+  statusGroup: ReturnType<typeof statusGroupOf>;
+  timeSlot: string | null;
+  address: string;
+}
+
+/** Every ticket scheduled today for one technician, in time-slot order — feeds the "today's route" map view opened by clicking their dot. */
+export async function getTechnicianTodayRoute(technicianName: string): Promise<TechnicianRouteStop[]> {
+  const today = new Date().toISOString().slice(0, 10);
+  const { data, error } = await supabase
+    .from("tickets")
+    .select("ticket_no, technician, status, time_slot, customer:customers ( address, address2, city, state, zip )")
+    .eq("schedule_date", today);
+  if (error) {
+    console.error("getTechnicianTodayRoute error:", error.message);
+    throw new Error(error.message);
+  }
+  const key = technicianName.trim().toLowerCase();
+  return (data ?? [])
+    .filter((row: any) => String(row.technician || "").trim().toLowerCase() === key)
+    .map((row: any) => ({
+      ticketNo: row.ticket_no as string,
+      status: row.status as string,
+      statusGroup: statusGroupOf(row.status),
+      timeSlot: row.time_slot as string | null,
+      address: formatAddress(row.customer ?? {}),
+    }))
+    .sort((a, b) => slotSortKey(a.timeSlot).localeCompare(slotSortKey(b.timeSlot)));
+}

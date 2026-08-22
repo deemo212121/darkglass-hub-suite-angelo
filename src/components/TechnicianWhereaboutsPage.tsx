@@ -12,6 +12,7 @@ import type * as Leaflet from "leaflet";
 import { ChevronLeft, Loader2, MapPin, RefreshCw, Search, X } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { getTechnicianWhereabouts, distinctBranches, type TechnicianWhereabouts } from "@/lib/supabase/technicianWhereabouts";
+import { TechnicianDayRouteModal } from "@/components/TechnicianDayRouteModal";
 import { getCompanyMapProvider } from "@/lib/supabase/companySettings";
 import {
   getLeaflet,
@@ -43,6 +44,33 @@ function hashString(str: string): number {
 function technicianColor(name: string): string {
   const hue = hashString(name) % 360;
   return `hsl(${hue}, 70%, 55%)`;
+}
+
+// Several technicians commonly resolve to the exact same coordinates (e.g.
+// everyone with no job today falls back to the same branch office point) —
+// left as-is, later markers completely cover earlier ones and only the
+// last-drawn technician is visible or clickable. Nudges each member of a
+// same-point cluster into a small ring around the original point instead.
+function spreadOverlappingPoints(points: Array<{ pt: LatLng; tech: TechnicianWhereabouts }>): Array<{ pt: LatLng; tech: TechnicianWhereabouts }> {
+  const groups = new Map<string, Array<{ pt: LatLng; tech: TechnicianWhereabouts }>>();
+  for (const p of points) {
+    const key = `${p.pt.lat.toFixed(5)},${p.pt.lng.toFixed(5)}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key)!.push(p);
+  }
+  const OFFSET_DEG = 0.0009; // ~100m at these latitudes — enough to separate dots without drifting onto a different street.
+  const result: Array<{ pt: LatLng; tech: TechnicianWhereabouts }> = [];
+  for (const group of groups.values()) {
+    if (group.length === 1) {
+      result.push(group[0]);
+      continue;
+    }
+    group.forEach((p, i) => {
+      const angle = (2 * Math.PI * i) / group.length;
+      result.push({ tech: p.tech, pt: { lat: p.pt.lat + OFFSET_DEG * Math.sin(angle), lng: p.pt.lng + OFFSET_DEG * Math.cos(angle) } });
+    });
+  }
+  return result;
 }
 
 const AUTO_REFRESH_MS = 60_000;
@@ -100,6 +128,7 @@ export function TechnicianWhereaboutsPage({ mod, sub }: { mod: ModuleDef; sub: S
   // Geocoded point per technician, keyed by name — filled in once the map
   // finishes building, read by the sidebar's click-to-zoom handler below.
   const techPointsRef = useRef<Map<string, LatLng>>(new Map());
+  const [routeModalTech, setRouteModalTech] = useState<TechnicianWhereabouts | null>(null);
 
   const zoomToTechnician = (name: string) => {
     const pt = techPointsRef.current.get(name);
@@ -173,21 +202,22 @@ export function TechnicianWhereaboutsPage({ mod, sub }: { mod: ModuleDef; sub: S
       }
       if (cancelled) return;
       setGeocodeMisses(misses);
-      techPointsRef.current = new Map(points.map(({ pt, tech }) => [tech.name, pt]));
+      const spread = spreadOverlappingPoints(points);
+      techPointsRef.current = new Map(spread.map(({ pt, tech }) => [tech.name, pt]));
 
       leafletLayersRef.current.forEach((l) => l.remove());
       leafletLayersRef.current = [];
       googleOverlaysRef.current.forEach((o) => o.setMap(null));
       googleOverlaysRef.current = [];
 
-      if (points.length === 0) {
+      if (spread.length === 0) {
         setMapBuilding(false);
         return;
       }
 
       if (mapProvider === "leaflet" && L) {
         const map = leafletMapRef.current!;
-        points.forEach(({ pt, tech }) => {
+        spread.forEach(({ pt, tech }) => {
           const marker = L.circleMarker([pt.lat, pt.lng], {
             radius: 8,
             fillColor: technicianColor(tech.name),
@@ -197,14 +227,15 @@ export function TechnicianWhereaboutsPage({ mod, sub }: { mod: ModuleDef; sub: S
             className: "whereabouts-marker",
           }).addTo(map);
           marker.bindTooltip(`${tech.name} — ${STATUS_STYLE[tech.status].label}`, { direction: "top", offset: [0, -8] });
+          marker.on("click", () => setRouteModalTech(tech));
           leafletLayersRef.current.push(marker);
         });
-        map.fitBounds(L.latLngBounds(points.map((p) => [p.pt.lat, p.pt.lng] as [number, number])), { padding: [40, 40] });
+        map.fitBounds(L.latLngBounds(spread.map((p) => [p.pt.lat, p.pt.lng] as [number, number])), { padding: [40, 40] });
       } else if (mapProvider === "google") {
         const g = (window as any).google;
         const map = googleMapRef.current;
         const bounds = new g.maps.LatLngBounds();
-        points.forEach(({ pt, tech }) => {
+        spread.forEach(({ pt, tech }) => {
           const marker = new g.maps.Marker({
             map,
             position: pt,
@@ -218,6 +249,7 @@ export function TechnicianWhereaboutsPage({ mod, sub }: { mod: ModuleDef; sub: S
             },
             title: `${tech.name} — ${STATUS_STYLE[tech.status].label}`,
           });
+          marker.addListener("click", () => setRouteModalTech(tech));
           googleOverlaysRef.current.push(marker);
           bounds.extend(pt);
         });
@@ -299,7 +331,7 @@ export function TechnicianWhereaboutsPage({ mod, sub }: { mod: ModuleDef; sub: S
                 </p>
               )}
               <p className="mt-3 text-[11px] text-slate-500">
-                Each dot's fill color identifies the technician (matches the sidebar) — hover a dot, or click a name below, to zoom in. Ring color is status:
+                Each dot's fill color identifies the technician (matches the sidebar) — hover for their name, click for today's route, or click a name below to zoom in. Ring color is status:
               </p>
               <div className="mt-1.5 flex items-center gap-4 text-[11px] text-slate-400">
                 {(Object.keys(STATUS_STYLE) as TechnicianWhereabouts["status"][]).map((s) => (
@@ -404,6 +436,13 @@ export function TechnicianWhereaboutsPage({ mod, sub }: { mod: ModuleDef; sub: S
           </div>
         )}
       </div>
+      {routeModalTech && (
+        <TechnicianDayRouteModal
+          technicianName={routeModalTech.name}
+          branch={routeModalTech.branch}
+          onClose={() => setRouteModalTech(null)}
+        />
+      )}
     </main>
   );
 }
