@@ -19,7 +19,6 @@ import {
   makeGeocoder,
   getOfficeCoordinates,
   attachLeafletResizeFix,
-  createBadgeDivIcon,
   OSM_TILE_URL,
   OSM_ATTRIBUTION,
   type LatLng,
@@ -31,9 +30,19 @@ const STATUS_STYLE: Record<TechnicianWhereabouts["status"], { color: string; lab
   none: { color: "#64748b", label: "No job today" },
 };
 
-function initialsOf(name: string): string {
-  const parts = name.trim().split(/\s+/);
-  return ((parts[0]?.[0] ?? "") + (parts[1]?.[0] ?? "")).toUpperCase() || "?";
+// One dot color per technician, stable across renders/refreshes (same name
+// always hashes to the same hue) — lets a color be visually matched between
+// the map and the sidebar list without needing a separate legend for every
+// technician. Status (at job now / last stop / no job) is layered on top as
+// the dot's ring color instead, so both signals stay visible at once.
+function hashString(str: string): number {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) hash = (hash * 31 + str.charCodeAt(i)) | 0;
+  return Math.abs(hash);
+}
+function technicianColor(name: string): string {
+  const hue = hashString(name) % 360;
+  return `hsl(${hue}, 70%, 55%)`;
 }
 
 const AUTO_REFRESH_MS = 60_000;
@@ -179,14 +188,15 @@ export function TechnicianWhereaboutsPage({ mod, sub }: { mod: ModuleDef; sub: S
       if (mapProvider === "leaflet" && L) {
         const map = leafletMapRef.current!;
         points.forEach(({ pt, tech }) => {
-          const color = STATUS_STYLE[tech.status].color;
-          const marker = L.marker([pt.lat, pt.lng], {
-            icon: createBadgeDivIcon(
-              L,
-              `<div style="background:${color};color:#fff;font-size:11px;font-weight:bold;border:2px solid #fff;border-radius:6px;padding:2px 6px;white-space:nowrap;box-shadow:0 1px 3px rgba(0,0,0,0.4);">${tech.name}</div>`,
-              { className: "whereabouts-marker", anchor: "bottom" },
-            ),
+          const marker = L.circleMarker([pt.lat, pt.lng], {
+            radius: 8,
+            fillColor: technicianColor(tech.name),
+            fillOpacity: 1,
+            color: STATUS_STYLE[tech.status].color,
+            weight: 3,
+            className: "whereabouts-marker",
           }).addTo(map);
+          marker.bindTooltip(`${tech.name} — ${STATUS_STYLE[tech.status].label}`, { direction: "top", offset: [0, -8] });
           leafletLayersRef.current.push(marker);
         });
         map.fitBounds(L.latLngBounds(points.map((p) => [p.pt.lat, p.pt.lng] as [number, number])), { padding: [40, 40] });
@@ -195,13 +205,18 @@ export function TechnicianWhereaboutsPage({ mod, sub }: { mod: ModuleDef; sub: S
         const map = googleMapRef.current;
         const bounds = new g.maps.LatLngBounds();
         points.forEach(({ pt, tech }) => {
-          const color = STATUS_STYLE[tech.status].color;
           const marker = new g.maps.Marker({
             map,
             position: pt,
-            label: { text: initialsOf(tech.name), color: "#fff", fontSize: "11px", fontWeight: "bold" },
-            icon: { path: g.maps.SymbolPath.CIRCLE, scale: 14, fillColor: color, fillOpacity: 1, strokeColor: "#fff", strokeWeight: 2 },
-            title: tech.name,
+            icon: {
+              path: g.maps.SymbolPath.CIRCLE,
+              scale: 8,
+              fillColor: technicianColor(tech.name),
+              fillOpacity: 1,
+              strokeColor: STATUS_STYLE[tech.status].color,
+              strokeWeight: 3,
+            },
+            title: `${tech.name} — ${STATUS_STYLE[tech.status].label}`,
           });
           googleOverlaysRef.current.push(marker);
           bounds.extend(pt);
@@ -283,10 +298,13 @@ export function TechnicianWhereaboutsPage({ mod, sub }: { mod: ModuleDef; sub: S
                   {geocodeMisses} technician{geocodeMisses === 1 ? "" : "s"} couldn't be placed on the map (no resolvable address or branch).
                 </p>
               )}
-              <div className="mt-3 flex items-center gap-4 text-[11px] text-slate-400">
+              <p className="mt-3 text-[11px] text-slate-500">
+                Each dot's fill color identifies the technician (matches the sidebar) — hover a dot, or click a name below, to zoom in. Ring color is status:
+              </p>
+              <div className="mt-1.5 flex items-center gap-4 text-[11px] text-slate-400">
                 {(Object.keys(STATUS_STYLE) as TechnicianWhereabouts["status"][]).map((s) => (
                   <span key={s} className="flex items-center gap-1.5">
-                    <span className="h-2.5 w-2.5 rounded-full" style={{ background: STATUS_STYLE[s].color }} />
+                    <span className="h-2.5 w-2.5 rounded-full bg-slate-600" style={{ boxShadow: `0 0 0 2px ${STATUS_STYLE[s].color}` }} />
                     {STATUS_STYLE[s].label}
                   </span>
                 ))}
@@ -327,7 +345,10 @@ export function TechnicianWhereaboutsPage({ mod, sub }: { mod: ModuleDef; sub: S
                   title="Click to zoom to this technician on the map"
                   className="flex items-start gap-2 text-xs px-2.5 py-2 rounded-md bg-slate-800/60 border border-white/5 cursor-pointer hover:bg-slate-800/90 hover:border-white/15 transition-colors"
                 >
-                  <span className="h-2.5 w-2.5 rounded-full mt-1 shrink-0" style={{ background: STATUS_STYLE[tech.status].color }} />
+                  <span
+                    className="h-2.5 w-2.5 rounded-full mt-1 shrink-0"
+                    style={{ background: technicianColor(tech.name), boxShadow: `0 0 0 2px ${STATUS_STYLE[tech.status].color}` }}
+                  />
                   <div className="flex-1 min-w-0">
                     <p className="text-white font-medium">
                       {tech.name} <span className="text-slate-500 font-normal">· {tech.branch || "No branch"}</span>
@@ -365,7 +386,10 @@ export function TechnicianWhereaboutsPage({ mod, sub }: { mod: ModuleDef; sub: S
                       title="Click to zoom to this technician on the map"
                       className="flex items-center gap-2 text-xs px-2.5 py-1.5 rounded-md bg-slate-800/30 cursor-pointer hover:bg-slate-800/60 transition-colors"
                     >
-                      <span className="h-2.5 w-2.5 rounded-full shrink-0" style={{ background: STATUS_STYLE.none.color }} />
+                      <span
+                        className="h-2.5 w-2.5 rounded-full shrink-0"
+                        style={{ background: technicianColor(tech.name), boxShadow: `0 0 0 2px ${STATUS_STYLE.none.color}` }}
+                      />
                       <span className="text-slate-300">{tech.name}</span>
                       <span className="text-slate-500">· {tech.branch || "No branch"}</span>
                     </div>
