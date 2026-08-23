@@ -219,7 +219,7 @@ export function OnboardingApplicantDocuments({ companyId, profileId, profileName
     mileage_fuel: "Mileage & Fuel Policy Agreement",
     location_consent: "Location Sharing Consent Agreement",
     damage: "Damage, Part Loss, and Tool Penalty Commission Deduction Agreement",
-    contractor_data: "Contractor Data",
+    contractor_data: "Employee Data",
     direct_deposit: "Direct Deposit Authorization",
   };
   const signableDocApplicantName = (doc: SignableDocument): string => {

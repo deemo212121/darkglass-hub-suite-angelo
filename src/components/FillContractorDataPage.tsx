@@ -253,12 +253,12 @@ export function FillContractorDataPage({ docId }: Props) {
 
       if (doc.createdBy) {
         const thread = await getOrCreateDmThread(myProfileId, doc.createdBy);
-        const filename = `Contractor Data - ${employeeName}.pdf`;
+        const filename = `Employee Data - ${employeeName}.pdf`;
         await sendMessage({
           dmThreadId: thread.id,
           senderId: myProfileId,
           senderName: displayName || "Employee",
-          body: `📄 Contractor Data for ${employeeName} has been submitted: [${filename}](${pdfUrl})`,
+          body: `📄 Employee Data for ${employeeName} has been submitted: [${filename}](${pdfUrl})`,
         });
       }
 
@@ -266,7 +266,7 @@ export function FillContractorDataPage({ docId }: Props) {
         .then(({ taxForms }) => {
           if (!taxForms) return;
           const excludeIds = doc.createdBy ? [doc.createdBy] : [];
-          void notifyHrRoleUsers(myProfileId, displayName || "Employee", excludeIds, `📄 Contractor Data for ${employeeName} has been submitted.`);
+          void notifyHrRoleUsers(myProfileId, displayName || "Employee", excludeIds, `📄 Employee Data for ${employeeName} has been submitted.`);
         })
         .catch((err) => console.error("[contractor-data] hr notify check failed:", err));
 

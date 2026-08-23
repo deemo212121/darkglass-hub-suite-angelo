@@ -5924,7 +5924,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         dmThreadId: thread.id,
         senderId: myProfileId,
         senderName: displayName || "HR",
-        body: `📋 Please complete the Contractor Data form: ${fillLink}`,
+        body: `📋 Please complete the Employee Data form: ${fillLink}`,
       });
 
       void logActivity({ action: "contractor_data_sent", targetType: "employee", targetId: recipient.id, targetLabel: recipient.name });
@@ -5987,14 +5987,14 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
   const handleDownloadContractorDataPdf = async (doc: SignableDocument) => {
     if (!doc.pdfUrl) return;
-    const name = (doc.formData as Partial<ContractorDataFormData>).employeeName || doc.recipientName || "contractor-data";
+    const name = (doc.formData as Partial<ContractorDataFormData>).employeeName || doc.recipientName || "employee-data";
     try {
       const res = await fetch(doc.pdfUrl);
       const blob = await res.blob();
       const blobUrl = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = blobUrl;
-      a.download = `Contractor Data - ${name}.pdf`;
+      a.download = `Employee Data - ${name}.pdf`;
       a.click();
       URL.revokeObjectURL(blobUrl);
     } catch {
@@ -6003,7 +6003,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   };
 
   const handleDeleteContractorData = async (doc: SignableDocument) => {
-    if (!window.confirm("Permanently delete this Contractor Data request?")) return;
+    if (!window.confirm("Permanently delete this Employee Data request?")) return;
     setContractorDataActionBusyId(doc.id);
     setContractorDataActionError(null);
     try {
@@ -6325,7 +6325,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       ...sentMileageFuelForms.map((doc) => ({ doc, formLabel: "Mileage & Fuel Policy Agreement" })),
       ...sentLocationConsentForms.map((doc) => ({ doc, formLabel: "Location Sharing Consent Agreement" })),
       ...sentDamageForms.map((doc) => ({ doc, formLabel: "Damage Agreement" })),
-      ...sentContractorDataForms.map((doc) => ({ doc, formLabel: "Contractor Data" })),
+      ...sentContractorDataForms.map((doc) => ({ doc, formLabel: "Employee Data" })),
       ...sentDirectDepositForms.map((doc) => ({ doc, formLabel: "Direct Deposit Authorization" })),
     ];
     return rows.sort((a, b) => new Date(b.doc.createdAt).getTime() - new Date(a.doc.createdAt).getTime());
@@ -9708,10 +9708,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     { key: "wageAck", label: "Acknowledgment of Wage", count: sentWageAckAwaitingEmployerCount, icon: FileCheck },
     { key: "carIqAgreement", label: "Car IQ Technician Agreement", count: 0, icon: FileCheck },
     { key: "vehicleAgreement", label: "Company Vehicle Use Agreement", count: 0, icon: FileCheck },
-    { key: "contractorData", label: "Contractor Data", count: 0, icon: FileCheck },
     { key: "damage", label: "Damage Agreement", count: sentDamageAwaitingEmployerCount, icon: FileCheck },
     { key: "directDeposit", label: "Direct Deposit Authorization", count: 0, icon: FileCheck },
     { key: "employeeConfidentiality", label: "Employee Confidentiality Agreement", count: 0, icon: FileCheck },
+    { key: "contractorData", label: "Employee Data", count: 0, icon: FileCheck },
     { key: "locationConsent", label: "Location Sharing Consent", count: sentLocationConsentAwaitingEmployerCount, icon: FileCheck },
     { key: "mealRestBreak", label: "Meal & Rest Break Policy", count: sentMealRestBreakAwaitingEmployerCount, icon: FileCheck },
     { key: "mileageFuel", label: "Mileage & Fuel Policy", count: sentMileageFuelAwaitingEmployerCount, icon: FileCheck },
@@ -16609,7 +16609,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       <>
       <div className="panel p-0 overflow-visible mt-4 relative z-20">
         <div className="px-4 py-4 border-b border-white/10">
-          <h2 className="font-semibold text-sm">Send Contractor Data Request</h2>
+          <h2 className="font-semibold text-sm">Send Employee Data Request</h2>
           <p className="text-[10px] text-muted-foreground mt-0.5">Pick a teammate — they'll get a link to fill in their contact/address/identity info, upload photos of their SSN card and driver's license, and sign. It comes back to you here automatically once submitted.</p>
         </div>
         <div className="p-4 flex flex-col md:flex-row gap-6">
@@ -16712,7 +16712,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                 {contractorDataPreviewLoading || !contractorDataPreviewPdfUrl ? (
                   <div className="h-full flex items-center justify-center text-sm text-muted-foreground" style={{ minHeight: 560 }}>Loading preview…</div>
                 ) : (
-                  <iframe src={contractorDataPreviewPdfUrl} title="Contractor Data Preview" className="w-full border-0" style={{ height: 560 }} />
+                  <iframe src={contractorDataPreviewPdfUrl} title="Employee Data Preview" className="w-full border-0" style={{ height: 560 }} />
                 )}
               </div>
             ) : (
@@ -16726,7 +16726,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
       <div className="panel p-0 overflow-hidden mt-4">
         <div className="px-4 py-4 border-b border-white/10">
-          <h2 className="font-semibold text-sm">Sent Contractor Data Forms</h2>
+          <h2 className="font-semibold text-sm">Sent Employee Data Forms</h2>
           <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status.</p>
         </div>
         {contractorDataActionError && (
@@ -17567,7 +17567,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               </div>
             </div>
             <div className="flex-1 overflow-hidden bg-slate-950">
-              {contractorDataDocPreview.pdfUrl && <iframe src={contractorDataDocPreview.pdfUrl} title="Contractor Data" className="w-full h-full min-h-[70vh] border-0" />}
+              {contractorDataDocPreview.pdfUrl && <iframe src={contractorDataDocPreview.pdfUrl} title="Employee Data" className="w-full h-full min-h-[70vh] border-0" />}
             </div>
           </div>
         </div>

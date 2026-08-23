@@ -310,7 +310,7 @@ export async function handleSignableDocumentsRequest(request: Request, env?: Rec
         mileage_fuel: { name: "Personal Vehicle Mileage and Fuel Policy Agreement", tab: "mileageFuel" },
         location_consent: { name: "Employee Mobile App Location Sharing Consent Agreement", tab: "locationConsent" },
         damage: { name: "Damage, Part Loss, and Tool Penalty Commission Deduction Agreement", tab: "damage" },
-        contractor_data: { name: "Contractor Data", tab: "contractorData" },
+        contractor_data: { name: "Employee Data", tab: "contractorData" },
         direct_deposit: { name: "Direct Deposit Authorization", tab: "directDeposit" },
       };
       const docLabel = DOC_TYPE_LABELS[doc.document_type] ?? DOC_TYPE_LABELS.warning_form;
