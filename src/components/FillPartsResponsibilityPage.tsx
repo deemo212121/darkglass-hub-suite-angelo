@@ -55,6 +55,7 @@ const PAGE1_RECT = {
 
 const PAGE2_RECT = {
   dateSigned: { x: 101.5, y: 650.6, w: 217.4, h: 13 },
+  printedName: { x: 208, y: 625.7, w: 290, h: 14 },
   signature: { x: 187.9, y: 600.7, w: 298.5, h: 20 },
 } as const;
 
@@ -355,6 +356,9 @@ export function FillPartsResponsibilityPage({ docId }: Props) {
                     <>
                       <div style={overlayStyle(PAGE2_RECT.dateSigned)} className="flex items-center font-bold text-[#00008B]">
                         {fmtDateSigned(new Date())}
+                      </div>
+                      <div style={overlayStyle(PAGE2_RECT.printedName)} className="flex items-center font-bold text-[#00008B]">
+                        {[form.firstName, form.middleName, form.lastName].filter(Boolean).join(" ")}
                       </div>
 
                       <canvas
