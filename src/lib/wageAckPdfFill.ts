@@ -11,6 +11,7 @@
  */
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import type { WageAckFormData } from "./wageAckFormTemplate";
+import { addLogoHeader } from "./pdfLogoHeader";
 
 const fmtDate = (v: string) => {
   if (!v) return "";
@@ -21,10 +22,14 @@ const fmtDate = (v: string) => {
   return `${mm}-${dd}-${d.getFullYear()}`;
 };
 
+/** Stamps the company logo into the header of every page — see pdfLogoHeader.ts. Applied here, not just in fillWageAckPdf, so the interactive fill page (which renders these same blank bytes straight to canvas via pdf.js) shows it too. */
 export async function loadBlankWageAckBytes(): Promise<Uint8Array> {
   const mod = await import("@/assets/Acknowledgment of Wage.pdf");
   const res = await fetch(mod.default);
-  return new Uint8Array(await res.arrayBuffer());
+  const bytes = new Uint8Array(await res.arrayBuffer());
+  const pdfDoc = await PDFDocument.load(bytes);
+  await addLogoHeader(pdfDoc);
+  return pdfDoc.save();
 }
 
 export async function fillWageAckPdf(data: WageAckFormData, employeeSigBytes?: Uint8Array, employerSigBytes?: Uint8Array): Promise<Uint8Array> {

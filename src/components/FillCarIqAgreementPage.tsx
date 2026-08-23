@@ -34,20 +34,19 @@ interface Props {
 const PAGE_WIDTH = 612;
 const PAGE_HEIGHT = 792;
 
-// Field rectangles (PDF user-space units, origin bottom-left), extracted
-// via pdf.js's text-position API against the actual label/blank positions
-// on src/assets/Car IQ Technician Agreement Form.pdf — the exact numbers
-// carIqAgreementPdfFill.ts's draw coordinates were derived from. This PDF
-// has no real AcroForm fields at all.
+// Field rectangles (PDF user-space units, origin bottom-left), precisely
+// calibrated against src/assets/Car IQ Technician Agreement Form.pdf —
+// see carIqAgreementPdfFill.ts's header comment for how the merged
+// "First Name: ___ Last Name: ___" line was split. This PDF has no real
+// AcroForm fields at all.
 const PAGE1_RECT = {
-  employeeName: { x: 74, y: 311, w: 468, h: 14 },
+  firstName: { x: 132.5, y: 307.9, w: 123.4, h: 14 },
+  lastName: { x: 318.3, y: 307.9, w: 123.4, h: 14 },
   branch: { x: 116, y: 261, w: 200, h: 14 },
   dateSigned: { x: 141, y: 286, w: 170, h: 13 },
   agreeCheckbox: { x: 112, y: 359, w: 12, h: 12 },
-} as const;
-
-const PAGE2_RECT = {
-  signature: { x: 180, y: 190, w: 280, h: 24 },
+  // "Employee Signature:" was moved up onto this page — see carIqAgreementPdfFill.ts's loadBlankCarIqAgreementBytes.
+  signature: { x: 180, y: 219, w: 280, h: 24 },
 } as const;
 
 const fmtDateSigned = (d: Date) => `${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getDate()).padStart(2, "0")}/${d.getFullYear()}`;
@@ -55,6 +54,8 @@ const fmtDateSigned = (d: Date) => `${String(d.getMonth() + 1).padStart(2, "0")}
 const BLANK_FORM: CarIqAgreementFormData = {
   employeeId: "",
   employeeName: "",
+  firstName: "",
+  lastName: "",
   branch: "",
   agreed: false,
   dateSigned: "",
@@ -190,7 +191,8 @@ export function FillCarIqAgreementPage({ docId }: Props) {
   };
 
   const validate = (): string | null => {
-    if (!form.employeeName.trim()) return "Enter your name.";
+    if (!form.firstName.trim()) return "Enter your first name.";
+    if (!form.lastName.trim()) return "Enter your last name.";
     if (!form.branch) return "Select your branch.";
     if (!form.agreed) return "You must check \"I AGREE\" to continue.";
     if (!hasDrawnRef.current) return "Please draw your signature.";
@@ -208,26 +210,27 @@ export function FillCarIqAgreementPage({ docId }: Props) {
     setError(null);
     try {
       const companyId = doc.companyId;
+      const employeeName = [form.firstName, form.lastName].filter(Boolean).join(" ");
       const dataUrl = sigCanvasRef.current.toDataURL("image/png");
       const sigBytes = new Uint8Array(await (await fetch(dataUrl)).arrayBuffer());
       const signatureUrl = await uploadSignableDocumentSignature(companyId, doc.id, "employee", dataUrl);
       const signedAt = new Date().toISOString();
-      const finalData: CarIqAgreementFormData = { ...form, dateSigned: signedAt, signatureDataUrl: dataUrl };
-      const entry = { name: displayName || form.employeeName || "Signed", url: signatureUrl, signedAt };
+      const finalData: CarIqAgreementFormData = { ...form, employeeName, dateSigned: signedAt, signatureDataUrl: dataUrl };
+      const entry = { name: displayName || employeeName || "Signed", url: signatureUrl, signedAt };
 
       const pdfBytes = await fillCarIqAgreementPdf(finalData, sigBytes);
-      const pdfUrl = await uploadCarIqAgreementForm(companyId, form.employeeName, new Blob([pdfBytes as unknown as BlobPart], { type: "application/pdf" }));
+      const pdfUrl = await uploadCarIqAgreementForm(companyId, employeeName, new Blob([pdfBytes as unknown as BlobPart], { type: "application/pdf" }));
 
       await signDocument(doc.id, "employee", entry, pdfUrl, finalData as unknown as Record<string, any>);
 
       if (doc.createdBy) {
         const thread = await getOrCreateDmThread(myProfileId, doc.createdBy);
-        const filename = `Car IQ Technician Agreement - ${form.employeeName}.pdf`;
+        const filename = `Car IQ Technician Agreement - ${employeeName}.pdf`;
         await sendMessage({
           dmThreadId: thread.id,
           senderId: myProfileId,
           senderName: displayName || "Employee",
-          body: `📄 Car IQ Technician Agreement for ${form.employeeName} has been signed: [${filename}](${pdfUrl})`,
+          body: `📄 Car IQ Technician Agreement for ${employeeName} has been signed: [${filename}](${pdfUrl})`,
         });
       }
 
@@ -235,12 +238,12 @@ export function FillCarIqAgreementPage({ docId }: Props) {
         .then(({ taxForms }) => {
           if (!taxForms) return;
           const excludeIds = doc.createdBy ? [doc.createdBy] : [];
-          void notifyHrRoleUsers(myProfileId, displayName || "Employee", excludeIds, `📄 Car IQ Technician Agreement for ${form.employeeName} has been signed.`);
+          void notifyHrRoleUsers(myProfileId, displayName || "Employee", excludeIds, `📄 Car IQ Technician Agreement for ${employeeName} has been signed.`);
         })
         .catch((err) => console.error("[car-iq-agreement] hr notify check failed:", err));
 
       setDoc({ ...doc, status: "signed", pdfUrl, formData: finalData as unknown as Record<string, any>, signatures: { employee: entry }, signedAt });
-      void logActivity({ action: "car_iq_agreement_signed", targetType: "employee", targetLabel: form.employeeName });
+      void logActivity({ action: "car_iq_agreement_signed", targetType: "employee", targetLabel: employeeName });
       setSubmitted(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to submit form.");
@@ -317,10 +320,16 @@ export function FillCarIqAgreementPage({ docId }: Props) {
                       </button>
 
                       <input
-                        style={overlayStyle(PAGE1_RECT.employeeName)}
+                        style={overlayStyle(PAGE1_RECT.firstName)}
                         className={overlayInputCls}
-                        value={form.employeeName}
-                        onChange={(e) => updateField("employeeName", e.target.value)}
+                        value={form.firstName}
+                        onChange={(e) => updateField("firstName", e.target.value)}
+                      />
+                      <input
+                        style={overlayStyle(PAGE1_RECT.lastName)}
+                        className={overlayInputCls}
+                        value={form.lastName}
+                        onChange={(e) => updateField("lastName", e.target.value)}
                       />
 
                       <div style={overlayStyle(PAGE1_RECT.dateSigned)} className="flex items-center font-bold text-[#00008B]">
@@ -336,26 +345,24 @@ export function FillCarIqAgreementPage({ docId }: Props) {
                         <option value="">Select…</option>
                         {CAR_IQ_BRANCHES.map((b) => <option key={b} value={b}>{b}</option>)}
                       </select>
-                    </>
-                  )}
 
-                  {!pageLoading && pageNum === 2 && (
-                    <canvas
-                      ref={sigCanvasRef}
-                      width={440}
-                      height={100}
-                      onPointerDown={startDraw}
-                      onPointerMove={moveDraw}
-                      onPointerUp={endDraw}
-                      onPointerLeave={endDraw}
-                      className="absolute touch-none cursor-crosshair"
-                      style={{
-                        left: PAGE2_RECT.signature.x * scale,
-                        top: (PAGE_HEIGHT - PAGE2_RECT.signature.y - PAGE2_RECT.signature.h) * scale,
-                        width: PAGE2_RECT.signature.w * scale,
-                        height: PAGE2_RECT.signature.h * scale,
-                      }}
-                    />
+                      <canvas
+                        ref={sigCanvasRef}
+                        width={440}
+                        height={100}
+                        onPointerDown={startDraw}
+                        onPointerMove={moveDraw}
+                        onPointerUp={endDraw}
+                        onPointerLeave={endDraw}
+                        className="absolute touch-none cursor-crosshair"
+                        style={{
+                          left: PAGE1_RECT.signature.x * scale,
+                          top: (PAGE_HEIGHT - PAGE1_RECT.signature.y - PAGE1_RECT.signature.h) * scale,
+                          width: PAGE1_RECT.signature.w * scale,
+                          height: PAGE1_RECT.signature.h * scale,
+                        }}
+                      />
+                    </>
                   )}
                 </div>
               ))}

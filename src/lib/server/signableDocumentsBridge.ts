@@ -25,7 +25,17 @@
  *     the drawn signature (PNG) and the freshly-regenerated PDF as
  *     multipart/form-data, uploads both to Firebase Storage, updates the
  *     row, and notifies the document's creator the same way the Custom
- *     Forms webhook notifies HR.
+ *     Forms webhook notifies HR. Also accepts any number of extra
+ *     supporting-document files under `attachment_{fieldName}` (repeated
+ *     entries under the same key = multiple files for that one field, e.g.
+ *     front+back of an ID) — Contractor Data's SSN card/driver's license
+ *     photos are the first user of this. Each gets uploaded the same way as
+ *     the signature/PDF, and the resulting URLs are collected into
+ *     `{fieldName: string[]}` and merged into the form_data patch under
+ *     that exact field name, so e.g. `attachment_ssnCardUrls` files end up
+ *     at `form_data.ssnCardUrls` — matching ContractorDataFormData's field
+ *     name directly, no server-side knowledge of any specific document
+ *     type's shape needed.
  */
 import { getGoogleAccessToken, uploadFileToStorage } from "./jotformBridge";
 
@@ -231,6 +241,28 @@ export async function handleSignableDocumentsRequest(request: Request, env?: Rec
       new Uint8Array(await pdfFile.arrayBuffer())
     );
 
+    // Any number of `attachment_{fieldName}` entries (repeated under the
+    // same key = multiple files for that field, e.g. front+back of an ID)
+    // — see this file's header comment. Uploaded the same way as the
+    // signature/PDF above, then merged into the form_data patch under
+    // their exact field name.
+    const attachmentUrlsByField: Record<string, string[]> = {};
+    let attachmentIndex = 0;
+    for (const [key, value] of formData.entries()) {
+      if (!key.startsWith("attachment_") || !(value instanceof File)) continue;
+      const fieldName = key.slice("attachment_".length);
+      const ext = value.name.includes(".") ? value.name.split(".").pop() : "bin";
+      const url = await uploadFileToStorage(
+        envBag.storageBucket,
+        accessToken,
+        `companies/${doc.company_id}/signable-documents/${doc.id}/${fieldName}-${attachmentIndex}-${stamp}.${ext}`,
+        value.type || "application/octet-stream",
+        new Uint8Array(await value.arrayBuffer())
+      );
+      (attachmentUrlsByField[fieldName] ??= []).push(url);
+      attachmentIndex += 1;
+    }
+
     const signedAt = new Date().toISOString();
     const signatures = { ...(doc.signatures ?? {}), [doc.recipient_slot]: { name: doc.recipient_name ?? "Signed", url: signatureUrl, signedAt } };
 
@@ -242,7 +274,7 @@ export async function handleSignableDocumentsRequest(request: Request, env?: Rec
         status: "signed",
         pdf_url: pdfUrl,
         signed_at: signedAt,
-        ...(formDataPatch ? { form_data: formDataPatch } : {}),
+        ...(formDataPatch || Object.keys(attachmentUrlsByField).length > 0 ? { form_data: { ...formDataPatch, ...attachmentUrlsByField } } : {}),
       }),
     });
     if (!patchRes.ok) throw new Error(`hr_signable_documents update failed (${patchRes.status}): ${await patchRes.text()}`);
@@ -274,6 +306,12 @@ export async function handleSignableDocumentsRequest(request: Request, env?: Rec
         employee_confidentiality: { name: "Employee Confidentiality and Non-Disclosure Agreement", tab: "employeeConfidentiality" },
         meal_rest_break: { name: "Employee Meal and Rest Break Policy Acknowledgment", tab: "mealRestBreak" },
         pto_ack: { name: "Employee Paid Time Off (PTO) and Sick Leave Policy Acknowledgment", tab: "ptoAck" },
+        parts_responsibility: { name: "Parts Responsibility and Technician Floor Protection Acknowledgment Form", tab: "partsResponsibility" },
+        mileage_fuel: { name: "Personal Vehicle Mileage and Fuel Policy Agreement", tab: "mileageFuel" },
+        location_consent: { name: "Employee Mobile App Location Sharing Consent Agreement", tab: "locationConsent" },
+        damage: { name: "Damage, Part Loss, and Tool Penalty Commission Deduction Agreement", tab: "damage" },
+        contractor_data: { name: "Contractor Data", tab: "contractorData" },
+        direct_deposit: { name: "Direct Deposit Authorization", tab: "directDeposit" },
       };
       const docLabel = DOC_TYPE_LABELS[doc.document_type] ?? DOC_TYPE_LABELS.warning_form;
       const notifyFields = {

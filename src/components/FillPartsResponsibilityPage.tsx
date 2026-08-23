@@ -1,22 +1,21 @@
 /**
- * Fill Company Vehicle Use Agreement — opened from the deep link a Team
- * Messenger message sends (see ReportHRDaily.tsx's "Company Vehicle Use
- * Agreement" tab "Send Request" flow). Same architecture as
- * FillCarIqAgreementPage.tsx: renders the REAL official PDF's pages to
- * canvases via pdf.js, with input overlays at each blank's own
- * coordinates — no redrawn lookalike. Submitting draws the collected
- * values directly onto that same real PDF via fillVehicleAgreementPdf
- * (there are no AcroForm fields on this PDF at all — see
- * vehicleAgreementFormTemplate.ts's header comment) and sends the result
- * back to HR.
+ * Fill Parts Responsibility and Technician Floor Protection Acknowledgment
+ * Form — opened from the deep link a Team Messenger message sends (see
+ * ReportHRDaily.tsx's "Parts Responsibility Form" tab "Send Request"
+ * flow). Same architecture as FillMealRestBreakPage.tsx: renders the REAL
+ * official PDF's pages to canvases via pdf.js, with input overlays at each
+ * blank's own coordinates — no redrawn lookalike. Submitting draws the
+ * collected values directly onto that same real PDF via
+ * fillPartsResponsibilityPdf (there are no AcroForm fields on this PDF at
+ * all — see partsResponsibilityFormTemplate.ts's header comment) and sends
+ * the result back to HR.
  *
- * Single-party, same shape as W-4R/Car IQ — no employer/HR co-signature
- * step, and no separate "I AGREE" checkbox (signing itself is the
- * agreement here). Everything sits on page 2 (page 1 is guidelines-only
- * reference), including the signature — the source PDF's pages 3–4 only
- * ever held the unused branch checklist and the signature line (plus a
- * fully blank trailing page), so loadBlankVehicleAgreementBytes drops both
- * (see that function's comment).
+ * Genuine two-party document, same shape as Acknowledgment of Wage/Meal
+ * and Rest Break: only the technician half (name, branch, date,
+ * signature) is fillable here. The "Manager/Supervisor Signature" line is
+ * completed separately afterward by HR inside ReportHRDaily.tsx's
+ * "Complete Manager Signature" dialog — shown here read-only (the blank
+ * PDF page underneath, no overlay).
  */
 import { useEffect, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
@@ -25,9 +24,9 @@ import { AppHeader } from "@/components/Header";
 import { useAuth } from "@/lib/auth";
 import { getMyProfileId } from "@/lib/supabase/users";
 import { getSignableDocument, signDocument, type SignableDocument } from "@/lib/supabase/signableDocuments";
-import { uploadSignableDocumentSignature, uploadVehicleAgreementForm } from "@/lib/firebase/storage";
-import { fillVehicleAgreementPdf, loadBlankVehicleAgreementBytes } from "@/lib/vehicleAgreementPdfFill";
-import { VEHICLE_AGREEMENT_BRANCHES, type VehicleAgreementFormData } from "@/lib/vehicleAgreementFormTemplate";
+import { uploadSignableDocumentSignature, uploadPartsResponsibilityForm } from "@/lib/firebase/storage";
+import { fillPartsResponsibilityPdf, loadBlankPartsResponsibilityBytes } from "@/lib/partsResponsibilityPdfFill";
+import { PARTS_RESPONSIBILITY_BRANCHES, type PartsResponsibilityFormData } from "@/lib/partsResponsibilityFormTemplate";
 import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
 import { logActivity } from "@/lib/supabase/hrActivityLog";
 import { getHrNotificationSettings } from "@/lib/supabase/companySettings";
@@ -42,32 +41,39 @@ const PAGE_WIDTH = 612;
 const PAGE_HEIGHT = 792;
 
 // Field rectangles (PDF user-space units, origin bottom-left), precisely
-// calibrated against src/assets/COMPANY VEHICLE USE AGREEMENT.pdf — see
-// vehicleAgreementPdfFill.ts's header comment for how the merged
-// "First Name: ___ Last Name: ___" line was split. This PDF has no real
-// AcroForm fields at all.
-const PAGE2_RECT = {
-  firstName: { x: 132.3, y: 215, w: 99.5, h: 14 },
-  lastName: { x: 294.1, y: 215, w: 99.5, h: 14 },
-  dateSigned: { x: 102, y: 193, w: 170, h: 13 },
-  branch: { x: 114, y: 168, w: 200, h: 14 },
-  // "Employee Signature:" was moved up onto this page — see vehicleAgreementPdfFill.ts's loadBlankVehicleAgreementBytes.
-  signature: { x: 180, y: 126, w: 300, h: 24 },
+// calibrated against src/assets/Parts Responsibility and Technician Floor
+// Protection Acknowledgment Form.pdf — see
+// partsResponsibilityPdfFill.ts's header comment for how the merged
+// First/Middle/Last Name line was split using the PDF's own measured
+// underscore-glyph width. This PDF has no real AcroForm fields at all.
+const PAGE1_RECT = {
+  firstName: { x: 219.8, y: 642.6, w: 99.7, h: 14 },
+  middleName: { x: 393.4, y: 642.6, w: 99.7, h: 14 },
+  lastName: { x: 107.3, y: 625.7, w: 101.2, h: 14 },
+  branch: { x: 233.8, y: 600.7, w: 220, h: 14 },
 } as const;
 
-const fmtDateSigned = (d: Date) => `${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getDate()).padStart(2, "0")}/${d.getFullYear()}`;
+const PAGE2_RECT = {
+  dateSigned: { x: 101.5, y: 650.6, w: 217.4, h: 13 },
+  signature: { x: 187.9, y: 600.7, w: 298.5, h: 20 },
+} as const;
 
-const BLANK_FORM: VehicleAgreementFormData = {
+const fmtDateSigned = (d: Date) => `${String(d.getMonth() + 1).padStart(2, "0")} / ${String(d.getDate()).padStart(2, "0")} / ${d.getFullYear()}`;
+
+const BLANK_FORM: PartsResponsibilityFormData = {
   employeeId: "",
   employeeName: "",
   firstName: "",
+  middleName: "",
   lastName: "",
   branch: "",
-  dateSigned: "",
-  signatureDataUrl: "",
+  technicianDateSigned: "",
+  technicianSignatureDataUrl: "",
+  managerDateSigned: "",
+  managerSignatureDataUrl: "",
 };
 
-export function FillVehicleAgreementPage({ docId }: Props) {
+export function FillPartsResponsibilityPage({ docId }: Props) {
   const { ready, uid, displayName, role } = useAuth();
   const [myProfileId, setMyProfileId] = useState<string | null>(null);
   const [doc, setDoc] = useState<SignableDocument | null>(null);
@@ -82,7 +88,7 @@ export function FillVehicleAgreementPage({ docId }: Props) {
   const pdfDocRef = useRef<any>(null);
   const pageCanvasRefs = useRef<(HTMLCanvasElement | null)[]>([]);
 
-  const [form, setForm] = useState<VehicleAgreementFormData>({ ...BLANK_FORM });
+  const [form, setForm] = useState<PartsResponsibilityFormData>({ ...BLANK_FORM });
 
   const sigCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const drawingRef = useRef(false);
@@ -98,11 +104,11 @@ export function FillVehicleAgreementPage({ docId }: Props) {
         const [profileId, document] = await Promise.all([getMyProfileId(uid), getSignableDocument(docId)]);
         if (cancelled) return;
         setMyProfileId(profileId);
-        if (!document || document.documentType !== "vehicle_agreement") {
+        if (!document || document.documentType !== "parts_responsibility") {
           setError("This document doesn't exist or has been removed.");
         } else {
           setDoc(document);
-          const existing = document.formData as Partial<VehicleAgreementFormData>;
+          const existing = document.formData as Partial<PartsResponsibilityFormData>;
           setForm((prev) => ({ ...prev, ...existing }));
         }
       } catch (err) {
@@ -119,7 +125,7 @@ export function FillVehicleAgreementPage({ docId }: Props) {
     let cancelled = false;
     (async () => {
       try {
-        const [pdfjsLib, bytes] = await Promise.all([import("pdfjs-dist"), loadBlankVehicleAgreementBytes()]);
+        const [pdfjsLib, bytes] = await Promise.all([import("pdfjs-dist"), loadBlankPartsResponsibilityBytes()]);
         pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
         const pdf = await pdfjsLib.getDocument({ data: bytes }).promise;
         if (cancelled) return;
@@ -161,7 +167,7 @@ export function FillVehicleAgreementPage({ docId }: Props) {
     return () => { cancelled = true; };
   }, [numPages, scale]);
 
-  const updateField = <K extends keyof VehicleAgreementFormData>(key: K, value: VehicleAgreementFormData[K]) => setForm((f) => ({ ...f, [key]: value }));
+  const updateField = <K extends keyof PartsResponsibilityFormData>(key: K, value: PartsResponsibilityFormData[K]) => setForm((f) => ({ ...f, [key]: value }));
 
   const pos = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const c = sigCanvasRef.current!;
@@ -214,27 +220,27 @@ export function FillVehicleAgreementPage({ docId }: Props) {
     setError(null);
     try {
       const companyId = doc.companyId;
-      const employeeName = [form.firstName, form.lastName].filter(Boolean).join(" ");
+      const employeeName = [form.firstName, form.middleName, form.lastName].filter(Boolean).join(" ");
       const dataUrl = sigCanvasRef.current.toDataURL("image/png");
       const sigBytes = new Uint8Array(await (await fetch(dataUrl)).arrayBuffer());
       const signatureUrl = await uploadSignableDocumentSignature(companyId, doc.id, "employee", dataUrl);
       const signedAt = new Date().toISOString();
-      const finalData: VehicleAgreementFormData = { ...form, employeeName, dateSigned: signedAt, signatureDataUrl: dataUrl };
+      const finalData: PartsResponsibilityFormData = { ...form, employeeName, technicianDateSigned: signedAt, technicianSignatureDataUrl: dataUrl };
       const entry = { name: displayName || employeeName || "Signed", url: signatureUrl, signedAt };
 
-      const pdfBytes = await fillVehicleAgreementPdf(finalData, sigBytes);
-      const pdfUrl = await uploadVehicleAgreementForm(companyId, employeeName, new Blob([pdfBytes as unknown as BlobPart], { type: "application/pdf" }));
+      const pdfBytes = await fillPartsResponsibilityPdf(finalData, sigBytes);
+      const pdfUrl = await uploadPartsResponsibilityForm(companyId, employeeName, new Blob([pdfBytes as unknown as BlobPart], { type: "application/pdf" }));
 
       await signDocument(doc.id, "employee", entry, pdfUrl, finalData as unknown as Record<string, any>);
 
       if (doc.createdBy) {
         const thread = await getOrCreateDmThread(myProfileId, doc.createdBy);
-        const filename = `Company Vehicle Use Agreement - ${employeeName}.pdf`;
+        const filename = `Parts Responsibility and Floor Protection Acknowledgment - ${employeeName}.pdf`;
         await sendMessage({
           dmThreadId: thread.id,
           senderId: myProfileId,
           senderName: displayName || "Employee",
-          body: `📄 Company Vehicle Use Agreement for ${employeeName} has been signed: [${filename}](${pdfUrl})`,
+          body: `📄 Parts Responsibility and Technician Floor Protection Acknowledgment Form for ${employeeName} has been signed, and is ready for the manager/supervisor signature: [${filename}](${pdfUrl})`,
         });
       }
 
@@ -242,12 +248,12 @@ export function FillVehicleAgreementPage({ docId }: Props) {
         .then(({ taxForms }) => {
           if (!taxForms) return;
           const excludeIds = doc.createdBy ? [doc.createdBy] : [];
-          void notifyHrRoleUsers(myProfileId, displayName || "Employee", excludeIds, `📄 Company Vehicle Use Agreement for ${employeeName} has been signed.`);
+          void notifyHrRoleUsers(myProfileId, displayName || "Employee", excludeIds, `📄 Parts Responsibility and Technician Floor Protection Acknowledgment Form for ${employeeName} has been signed — the manager/supervisor signature is ready to be added.`);
         })
-        .catch((err) => console.error("[vehicle-agreement] hr notify check failed:", err));
+        .catch((err) => console.error("[parts-responsibility] hr notify check failed:", err));
 
       setDoc({ ...doc, status: "signed", pdfUrl, formData: finalData as unknown as Record<string, any>, signatures: { employee: entry }, signedAt });
-      void logActivity({ action: "vehicle_agreement_signed", targetType: "employee", targetLabel: employeeName });
+      void logActivity({ action: "parts_responsibility_signed", targetType: "employee", targetLabel: employeeName });
       setSubmitted(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to submit form.");
@@ -286,9 +292,10 @@ export function FillVehicleAgreementPage({ docId }: Props) {
           <div className="panel p-6 text-sm text-red-300">{error}</div>
         ) : !doc ? null : !isRecipient && !isSuperadmin ? (
           <div className="panel p-6 text-sm text-muted-foreground">This document isn't addressed to your account.</div>
-        ) : submitted || doc.status === "signed" ? (
+        ) : submitted || doc.status === "signed" || doc.status === "confirmed" ? (
           <div className="panel p-6 text-center">
             <p className="text-sm font-semibold mb-2">✅ Submitted{submitted ? " and sent back to HR" : ""}.</p>
+            <p className="text-xs text-muted-foreground mb-2">HR will add the manager/supervisor signature separately.</p>
             {doc.pdfUrl && (
               <a href={doc.pdfUrl} target="_blank" rel="noreferrer noopener" className="text-blue-300 hover:text-blue-200 underline text-sm">
                 View the completed PDF
@@ -298,7 +305,7 @@ export function FillVehicleAgreementPage({ docId }: Props) {
         ) : (
           <div className="panel p-4">
             <p className="text-xs text-muted-foreground mb-3">
-              Read the vehicle use guidelines below, fill in your name and branch, draw your signature, then submit.
+              Read the parts responsibility and floor protection policy below, fill in your name and branch, draw your signature, then submit.
             </p>
 
             <div className="overflow-x-auto flex flex-col items-center bg-white/5 rounded-md p-4 gap-4">
@@ -311,34 +318,44 @@ export function FillVehicleAgreementPage({ docId }: Props) {
                     </div>
                   )}
 
-                  {!pageLoading && pageNum === 2 && (
+                  {!pageLoading && pageNum === 1 && (
                     <>
                       <input
-                        style={overlayStyle(PAGE2_RECT.firstName)}
+                        style={overlayStyle(PAGE1_RECT.firstName)}
                         className={overlayInputCls}
                         value={form.firstName}
                         onChange={(e) => updateField("firstName", e.target.value)}
                       />
                       <input
-                        style={overlayStyle(PAGE2_RECT.lastName)}
+                        style={overlayStyle(PAGE1_RECT.middleName)}
+                        className={overlayInputCls}
+                        value={form.middleName}
+                        onChange={(e) => updateField("middleName", e.target.value)}
+                      />
+                      <input
+                        style={overlayStyle(PAGE1_RECT.lastName)}
                         className={overlayInputCls}
                         value={form.lastName}
                         onChange={(e) => updateField("lastName", e.target.value)}
                       />
 
-                      <div style={overlayStyle(PAGE2_RECT.dateSigned)} className="flex items-center font-bold text-[#00008B]">
-                        {fmtDateSigned(new Date())}
-                      </div>
-
                       <select
-                        style={overlayStyle(PAGE2_RECT.branch)}
+                        style={overlayStyle(PAGE1_RECT.branch)}
                         className={`${overlayInputCls} appearance-none`}
                         value={form.branch}
                         onChange={(e) => updateField("branch", e.target.value)}
                       >
                         <option value="">Select…</option>
-                        {VEHICLE_AGREEMENT_BRANCHES.map((b) => <option key={b} value={b}>{b}</option>)}
+                        {PARTS_RESPONSIBILITY_BRANCHES.map((b) => <option key={b} value={b}>{b}</option>)}
                       </select>
+                    </>
+                  )}
+
+                  {!pageLoading && pageNum === 2 && (
+                    <>
+                      <div style={overlayStyle(PAGE2_RECT.dateSigned)} className="flex items-center font-bold text-[#00008B]">
+                        {fmtDateSigned(new Date())}
+                      </div>
 
                       <canvas
                         ref={sigCanvasRef}

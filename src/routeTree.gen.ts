@@ -48,13 +48,25 @@ import { Route as FillVehicleAgreementDocIdRouteImport } from './routes/fill-veh
 import { Route as FillVehicleAgreementExternalDocIdRouteImport } from './routes/fill-vehicle-agreement-external.$docId'
 import { Route as FillPtoAckDocIdRouteImport } from './routes/fill-pto-ack.$docId'
 import { Route as FillPtoAckExternalDocIdRouteImport } from './routes/fill-pto-ack-external.$docId'
+import { Route as FillPartsResponsibilityDocIdRouteImport } from './routes/fill-parts-responsibility.$docId'
+import { Route as FillPartsResponsibilityExternalDocIdRouteImport } from './routes/fill-parts-responsibility-external.$docId'
+import { Route as FillMileageFuelDocIdRouteImport } from './routes/fill-mileage-fuel.$docId'
+import { Route as FillMileageFuelExternalDocIdRouteImport } from './routes/fill-mileage-fuel-external.$docId'
 import { Route as FillMealRestBreakDocIdRouteImport } from './routes/fill-meal-rest-break.$docId'
 import { Route as FillMealRestBreakExternalDocIdRouteImport } from './routes/fill-meal-rest-break-external.$docId'
+import { Route as FillLocationConsentDocIdRouteImport } from './routes/fill-location-consent.$docId'
+import { Route as FillLocationConsentExternalDocIdRouteImport } from './routes/fill-location-consent-external.$docId'
 import { Route as FillI9DocIdRouteImport } from './routes/fill-i9.$docId'
 import { Route as FillI9ExternalDocIdRouteImport } from './routes/fill-i9-external.$docId'
 import { Route as FillFormFormIdRouteImport } from './routes/fill-form.$formId'
 import { Route as FillEmployeeConfidentialityDocIdRouteImport } from './routes/fill-employee-confidentiality.$docId'
 import { Route as FillEmployeeConfidentialityExternalDocIdRouteImport } from './routes/fill-employee-confidentiality-external.$docId'
+import { Route as FillDirectDepositDocIdRouteImport } from './routes/fill-direct-deposit.$docId'
+import { Route as FillDirectDepositExternalDocIdRouteImport } from './routes/fill-direct-deposit-external.$docId'
+import { Route as FillDamageDocIdRouteImport } from './routes/fill-damage.$docId'
+import { Route as FillDamageExternalDocIdRouteImport } from './routes/fill-damage-external.$docId'
+import { Route as FillContractorDataDocIdRouteImport } from './routes/fill-contractor-data.$docId'
+import { Route as FillContractorDataExternalDocIdRouteImport } from './routes/fill-contractor-data-external.$docId'
 import { Route as FillCarIqAgreementDocIdRouteImport } from './routes/fill-car-iq-agreement.$docId'
 import { Route as FillCarIqAgreementExternalDocIdRouteImport } from './routes/fill-car-iq-agreement-external.$docId'
 import { Route as EmployeeEmployeeIdRouteImport } from './routes/employee.$employeeId'
@@ -267,6 +279,29 @@ const FillPtoAckExternalDocIdRoute = FillPtoAckExternalDocIdRouteImport.update({
   path: '/fill-pto-ack-external/$docId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const FillPartsResponsibilityDocIdRoute =
+  FillPartsResponsibilityDocIdRouteImport.update({
+    id: '/fill-parts-responsibility/$docId',
+    path: '/fill-parts-responsibility/$docId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const FillPartsResponsibilityExternalDocIdRoute =
+  FillPartsResponsibilityExternalDocIdRouteImport.update({
+    id: '/fill-parts-responsibility-external/$docId',
+    path: '/fill-parts-responsibility-external/$docId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const FillMileageFuelDocIdRoute = FillMileageFuelDocIdRouteImport.update({
+  id: '/fill-mileage-fuel/$docId',
+  path: '/fill-mileage-fuel/$docId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const FillMileageFuelExternalDocIdRoute =
+  FillMileageFuelExternalDocIdRouteImport.update({
+    id: '/fill-mileage-fuel-external/$docId',
+    path: '/fill-mileage-fuel-external/$docId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const FillMealRestBreakDocIdRoute = FillMealRestBreakDocIdRouteImport.update({
   id: '/fill-meal-rest-break/$docId',
   path: '/fill-meal-rest-break/$docId',
@@ -276,6 +311,18 @@ const FillMealRestBreakExternalDocIdRoute =
   FillMealRestBreakExternalDocIdRouteImport.update({
     id: '/fill-meal-rest-break-external/$docId',
     path: '/fill-meal-rest-break-external/$docId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const FillLocationConsentDocIdRoute =
+  FillLocationConsentDocIdRouteImport.update({
+    id: '/fill-location-consent/$docId',
+    path: '/fill-location-consent/$docId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const FillLocationConsentExternalDocIdRoute =
+  FillLocationConsentExternalDocIdRouteImport.update({
+    id: '/fill-location-consent-external/$docId',
+    path: '/fill-location-consent-external/$docId',
     getParentRoute: () => rootRouteImport,
   } as any)
 const FillI9DocIdRoute = FillI9DocIdRouteImport.update({
@@ -303,6 +350,38 @@ const FillEmployeeConfidentialityExternalDocIdRoute =
   FillEmployeeConfidentialityExternalDocIdRouteImport.update({
     id: '/fill-employee-confidentiality-external/$docId',
     path: '/fill-employee-confidentiality-external/$docId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const FillDirectDepositDocIdRoute = FillDirectDepositDocIdRouteImport.update({
+  id: '/fill-direct-deposit/$docId',
+  path: '/fill-direct-deposit/$docId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const FillDirectDepositExternalDocIdRoute =
+  FillDirectDepositExternalDocIdRouteImport.update({
+    id: '/fill-direct-deposit-external/$docId',
+    path: '/fill-direct-deposit-external/$docId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const FillDamageDocIdRoute = FillDamageDocIdRouteImport.update({
+  id: '/fill-damage/$docId',
+  path: '/fill-damage/$docId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const FillDamageExternalDocIdRoute = FillDamageExternalDocIdRouteImport.update({
+  id: '/fill-damage-external/$docId',
+  path: '/fill-damage-external/$docId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const FillContractorDataDocIdRoute = FillContractorDataDocIdRouteImport.update({
+  id: '/fill-contractor-data/$docId',
+  path: '/fill-contractor-data/$docId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const FillContractorDataExternalDocIdRoute =
+  FillContractorDataExternalDocIdRouteImport.update({
+    id: '/fill-contractor-data-external/$docId',
+    path: '/fill-contractor-data-external/$docId',
     getParentRoute: () => rootRouteImport,
   } as any)
 const FillCarIqAgreementDocIdRoute = FillCarIqAgreementDocIdRouteImport.update({
@@ -374,13 +453,25 @@ export interface FileRoutesByFullPath {
   '/employee/$employeeId': typeof EmployeeEmployeeIdRoute
   '/fill-car-iq-agreement-external/$docId': typeof FillCarIqAgreementExternalDocIdRoute
   '/fill-car-iq-agreement/$docId': typeof FillCarIqAgreementDocIdRoute
+  '/fill-contractor-data-external/$docId': typeof FillContractorDataExternalDocIdRoute
+  '/fill-contractor-data/$docId': typeof FillContractorDataDocIdRoute
+  '/fill-damage-external/$docId': typeof FillDamageExternalDocIdRoute
+  '/fill-damage/$docId': typeof FillDamageDocIdRoute
+  '/fill-direct-deposit-external/$docId': typeof FillDirectDepositExternalDocIdRoute
+  '/fill-direct-deposit/$docId': typeof FillDirectDepositDocIdRoute
   '/fill-employee-confidentiality-external/$docId': typeof FillEmployeeConfidentialityExternalDocIdRoute
   '/fill-employee-confidentiality/$docId': typeof FillEmployeeConfidentialityDocIdRoute
   '/fill-form/$formId': typeof FillFormFormIdRoute
   '/fill-i9-external/$docId': typeof FillI9ExternalDocIdRoute
   '/fill-i9/$docId': typeof FillI9DocIdRoute
+  '/fill-location-consent-external/$docId': typeof FillLocationConsentExternalDocIdRoute
+  '/fill-location-consent/$docId': typeof FillLocationConsentDocIdRoute
   '/fill-meal-rest-break-external/$docId': typeof FillMealRestBreakExternalDocIdRoute
   '/fill-meal-rest-break/$docId': typeof FillMealRestBreakDocIdRoute
+  '/fill-mileage-fuel-external/$docId': typeof FillMileageFuelExternalDocIdRoute
+  '/fill-mileage-fuel/$docId': typeof FillMileageFuelDocIdRoute
+  '/fill-parts-responsibility-external/$docId': typeof FillPartsResponsibilityExternalDocIdRoute
+  '/fill-parts-responsibility/$docId': typeof FillPartsResponsibilityDocIdRoute
   '/fill-pto-ack-external/$docId': typeof FillPtoAckExternalDocIdRoute
   '/fill-pto-ack/$docId': typeof FillPtoAckDocIdRoute
   '/fill-vehicle-agreement-external/$docId': typeof FillVehicleAgreementExternalDocIdRoute
@@ -431,13 +522,25 @@ export interface FileRoutesByTo {
   '/employee/$employeeId': typeof EmployeeEmployeeIdRoute
   '/fill-car-iq-agreement-external/$docId': typeof FillCarIqAgreementExternalDocIdRoute
   '/fill-car-iq-agreement/$docId': typeof FillCarIqAgreementDocIdRoute
+  '/fill-contractor-data-external/$docId': typeof FillContractorDataExternalDocIdRoute
+  '/fill-contractor-data/$docId': typeof FillContractorDataDocIdRoute
+  '/fill-damage-external/$docId': typeof FillDamageExternalDocIdRoute
+  '/fill-damage/$docId': typeof FillDamageDocIdRoute
+  '/fill-direct-deposit-external/$docId': typeof FillDirectDepositExternalDocIdRoute
+  '/fill-direct-deposit/$docId': typeof FillDirectDepositDocIdRoute
   '/fill-employee-confidentiality-external/$docId': typeof FillEmployeeConfidentialityExternalDocIdRoute
   '/fill-employee-confidentiality/$docId': typeof FillEmployeeConfidentialityDocIdRoute
   '/fill-form/$formId': typeof FillFormFormIdRoute
   '/fill-i9-external/$docId': typeof FillI9ExternalDocIdRoute
   '/fill-i9/$docId': typeof FillI9DocIdRoute
+  '/fill-location-consent-external/$docId': typeof FillLocationConsentExternalDocIdRoute
+  '/fill-location-consent/$docId': typeof FillLocationConsentDocIdRoute
   '/fill-meal-rest-break-external/$docId': typeof FillMealRestBreakExternalDocIdRoute
   '/fill-meal-rest-break/$docId': typeof FillMealRestBreakDocIdRoute
+  '/fill-mileage-fuel-external/$docId': typeof FillMileageFuelExternalDocIdRoute
+  '/fill-mileage-fuel/$docId': typeof FillMileageFuelDocIdRoute
+  '/fill-parts-responsibility-external/$docId': typeof FillPartsResponsibilityExternalDocIdRoute
+  '/fill-parts-responsibility/$docId': typeof FillPartsResponsibilityDocIdRoute
   '/fill-pto-ack-external/$docId': typeof FillPtoAckExternalDocIdRoute
   '/fill-pto-ack/$docId': typeof FillPtoAckDocIdRoute
   '/fill-vehicle-agreement-external/$docId': typeof FillVehicleAgreementExternalDocIdRoute
@@ -489,13 +592,25 @@ export interface FileRoutesById {
   '/employee/$employeeId': typeof EmployeeEmployeeIdRoute
   '/fill-car-iq-agreement-external/$docId': typeof FillCarIqAgreementExternalDocIdRoute
   '/fill-car-iq-agreement/$docId': typeof FillCarIqAgreementDocIdRoute
+  '/fill-contractor-data-external/$docId': typeof FillContractorDataExternalDocIdRoute
+  '/fill-contractor-data/$docId': typeof FillContractorDataDocIdRoute
+  '/fill-damage-external/$docId': typeof FillDamageExternalDocIdRoute
+  '/fill-damage/$docId': typeof FillDamageDocIdRoute
+  '/fill-direct-deposit-external/$docId': typeof FillDirectDepositExternalDocIdRoute
+  '/fill-direct-deposit/$docId': typeof FillDirectDepositDocIdRoute
   '/fill-employee-confidentiality-external/$docId': typeof FillEmployeeConfidentialityExternalDocIdRoute
   '/fill-employee-confidentiality/$docId': typeof FillEmployeeConfidentialityDocIdRoute
   '/fill-form/$formId': typeof FillFormFormIdRoute
   '/fill-i9-external/$docId': typeof FillI9ExternalDocIdRoute
   '/fill-i9/$docId': typeof FillI9DocIdRoute
+  '/fill-location-consent-external/$docId': typeof FillLocationConsentExternalDocIdRoute
+  '/fill-location-consent/$docId': typeof FillLocationConsentDocIdRoute
   '/fill-meal-rest-break-external/$docId': typeof FillMealRestBreakExternalDocIdRoute
   '/fill-meal-rest-break/$docId': typeof FillMealRestBreakDocIdRoute
+  '/fill-mileage-fuel-external/$docId': typeof FillMileageFuelExternalDocIdRoute
+  '/fill-mileage-fuel/$docId': typeof FillMileageFuelDocIdRoute
+  '/fill-parts-responsibility-external/$docId': typeof FillPartsResponsibilityExternalDocIdRoute
+  '/fill-parts-responsibility/$docId': typeof FillPartsResponsibilityDocIdRoute
   '/fill-pto-ack-external/$docId': typeof FillPtoAckExternalDocIdRoute
   '/fill-pto-ack/$docId': typeof FillPtoAckDocIdRoute
   '/fill-vehicle-agreement-external/$docId': typeof FillVehicleAgreementExternalDocIdRoute
@@ -548,13 +663,25 @@ export interface FileRouteTypes {
     | '/employee/$employeeId'
     | '/fill-car-iq-agreement-external/$docId'
     | '/fill-car-iq-agreement/$docId'
+    | '/fill-contractor-data-external/$docId'
+    | '/fill-contractor-data/$docId'
+    | '/fill-damage-external/$docId'
+    | '/fill-damage/$docId'
+    | '/fill-direct-deposit-external/$docId'
+    | '/fill-direct-deposit/$docId'
     | '/fill-employee-confidentiality-external/$docId'
     | '/fill-employee-confidentiality/$docId'
     | '/fill-form/$formId'
     | '/fill-i9-external/$docId'
     | '/fill-i9/$docId'
+    | '/fill-location-consent-external/$docId'
+    | '/fill-location-consent/$docId'
     | '/fill-meal-rest-break-external/$docId'
     | '/fill-meal-rest-break/$docId'
+    | '/fill-mileage-fuel-external/$docId'
+    | '/fill-mileage-fuel/$docId'
+    | '/fill-parts-responsibility-external/$docId'
+    | '/fill-parts-responsibility/$docId'
     | '/fill-pto-ack-external/$docId'
     | '/fill-pto-ack/$docId'
     | '/fill-vehicle-agreement-external/$docId'
@@ -605,13 +732,25 @@ export interface FileRouteTypes {
     | '/employee/$employeeId'
     | '/fill-car-iq-agreement-external/$docId'
     | '/fill-car-iq-agreement/$docId'
+    | '/fill-contractor-data-external/$docId'
+    | '/fill-contractor-data/$docId'
+    | '/fill-damage-external/$docId'
+    | '/fill-damage/$docId'
+    | '/fill-direct-deposit-external/$docId'
+    | '/fill-direct-deposit/$docId'
     | '/fill-employee-confidentiality-external/$docId'
     | '/fill-employee-confidentiality/$docId'
     | '/fill-form/$formId'
     | '/fill-i9-external/$docId'
     | '/fill-i9/$docId'
+    | '/fill-location-consent-external/$docId'
+    | '/fill-location-consent/$docId'
     | '/fill-meal-rest-break-external/$docId'
     | '/fill-meal-rest-break/$docId'
+    | '/fill-mileage-fuel-external/$docId'
+    | '/fill-mileage-fuel/$docId'
+    | '/fill-parts-responsibility-external/$docId'
+    | '/fill-parts-responsibility/$docId'
     | '/fill-pto-ack-external/$docId'
     | '/fill-pto-ack/$docId'
     | '/fill-vehicle-agreement-external/$docId'
@@ -662,13 +801,25 @@ export interface FileRouteTypes {
     | '/employee/$employeeId'
     | '/fill-car-iq-agreement-external/$docId'
     | '/fill-car-iq-agreement/$docId'
+    | '/fill-contractor-data-external/$docId'
+    | '/fill-contractor-data/$docId'
+    | '/fill-damage-external/$docId'
+    | '/fill-damage/$docId'
+    | '/fill-direct-deposit-external/$docId'
+    | '/fill-direct-deposit/$docId'
     | '/fill-employee-confidentiality-external/$docId'
     | '/fill-employee-confidentiality/$docId'
     | '/fill-form/$formId'
     | '/fill-i9-external/$docId'
     | '/fill-i9/$docId'
+    | '/fill-location-consent-external/$docId'
+    | '/fill-location-consent/$docId'
     | '/fill-meal-rest-break-external/$docId'
     | '/fill-meal-rest-break/$docId'
+    | '/fill-mileage-fuel-external/$docId'
+    | '/fill-mileage-fuel/$docId'
+    | '/fill-parts-responsibility-external/$docId'
+    | '/fill-parts-responsibility/$docId'
     | '/fill-pto-ack-external/$docId'
     | '/fill-pto-ack/$docId'
     | '/fill-vehicle-agreement-external/$docId'
@@ -720,13 +871,25 @@ export interface RootRouteChildren {
   EmployeeEmployeeIdRoute: typeof EmployeeEmployeeIdRoute
   FillCarIqAgreementExternalDocIdRoute: typeof FillCarIqAgreementExternalDocIdRoute
   FillCarIqAgreementDocIdRoute: typeof FillCarIqAgreementDocIdRoute
+  FillContractorDataExternalDocIdRoute: typeof FillContractorDataExternalDocIdRoute
+  FillContractorDataDocIdRoute: typeof FillContractorDataDocIdRoute
+  FillDamageExternalDocIdRoute: typeof FillDamageExternalDocIdRoute
+  FillDamageDocIdRoute: typeof FillDamageDocIdRoute
+  FillDirectDepositExternalDocIdRoute: typeof FillDirectDepositExternalDocIdRoute
+  FillDirectDepositDocIdRoute: typeof FillDirectDepositDocIdRoute
   FillEmployeeConfidentialityExternalDocIdRoute: typeof FillEmployeeConfidentialityExternalDocIdRoute
   FillEmployeeConfidentialityDocIdRoute: typeof FillEmployeeConfidentialityDocIdRoute
   FillFormFormIdRoute: typeof FillFormFormIdRoute
   FillI9ExternalDocIdRoute: typeof FillI9ExternalDocIdRoute
   FillI9DocIdRoute: typeof FillI9DocIdRoute
+  FillLocationConsentExternalDocIdRoute: typeof FillLocationConsentExternalDocIdRoute
+  FillLocationConsentDocIdRoute: typeof FillLocationConsentDocIdRoute
   FillMealRestBreakExternalDocIdRoute: typeof FillMealRestBreakExternalDocIdRoute
   FillMealRestBreakDocIdRoute: typeof FillMealRestBreakDocIdRoute
+  FillMileageFuelExternalDocIdRoute: typeof FillMileageFuelExternalDocIdRoute
+  FillMileageFuelDocIdRoute: typeof FillMileageFuelDocIdRoute
+  FillPartsResponsibilityExternalDocIdRoute: typeof FillPartsResponsibilityExternalDocIdRoute
+  FillPartsResponsibilityDocIdRoute: typeof FillPartsResponsibilityDocIdRoute
   FillPtoAckExternalDocIdRoute: typeof FillPtoAckExternalDocIdRoute
   FillPtoAckDocIdRoute: typeof FillPtoAckDocIdRoute
   FillVehicleAgreementExternalDocIdRoute: typeof FillVehicleAgreementExternalDocIdRoute
@@ -1029,6 +1192,34 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof FillPtoAckExternalDocIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/fill-parts-responsibility/$docId': {
+      id: '/fill-parts-responsibility/$docId'
+      path: '/fill-parts-responsibility/$docId'
+      fullPath: '/fill-parts-responsibility/$docId'
+      preLoaderRoute: typeof FillPartsResponsibilityDocIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/fill-parts-responsibility-external/$docId': {
+      id: '/fill-parts-responsibility-external/$docId'
+      path: '/fill-parts-responsibility-external/$docId'
+      fullPath: '/fill-parts-responsibility-external/$docId'
+      preLoaderRoute: typeof FillPartsResponsibilityExternalDocIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/fill-mileage-fuel/$docId': {
+      id: '/fill-mileage-fuel/$docId'
+      path: '/fill-mileage-fuel/$docId'
+      fullPath: '/fill-mileage-fuel/$docId'
+      preLoaderRoute: typeof FillMileageFuelDocIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/fill-mileage-fuel-external/$docId': {
+      id: '/fill-mileage-fuel-external/$docId'
+      path: '/fill-mileage-fuel-external/$docId'
+      fullPath: '/fill-mileage-fuel-external/$docId'
+      preLoaderRoute: typeof FillMileageFuelExternalDocIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/fill-meal-rest-break/$docId': {
       id: '/fill-meal-rest-break/$docId'
       path: '/fill-meal-rest-break/$docId'
@@ -1041,6 +1232,20 @@ declare module '@tanstack/react-router' {
       path: '/fill-meal-rest-break-external/$docId'
       fullPath: '/fill-meal-rest-break-external/$docId'
       preLoaderRoute: typeof FillMealRestBreakExternalDocIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/fill-location-consent/$docId': {
+      id: '/fill-location-consent/$docId'
+      path: '/fill-location-consent/$docId'
+      fullPath: '/fill-location-consent/$docId'
+      preLoaderRoute: typeof FillLocationConsentDocIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/fill-location-consent-external/$docId': {
+      id: '/fill-location-consent-external/$docId'
+      path: '/fill-location-consent-external/$docId'
+      fullPath: '/fill-location-consent-external/$docId'
+      preLoaderRoute: typeof FillLocationConsentExternalDocIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/fill-i9/$docId': {
@@ -1076,6 +1281,48 @@ declare module '@tanstack/react-router' {
       path: '/fill-employee-confidentiality-external/$docId'
       fullPath: '/fill-employee-confidentiality-external/$docId'
       preLoaderRoute: typeof FillEmployeeConfidentialityExternalDocIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/fill-direct-deposit/$docId': {
+      id: '/fill-direct-deposit/$docId'
+      path: '/fill-direct-deposit/$docId'
+      fullPath: '/fill-direct-deposit/$docId'
+      preLoaderRoute: typeof FillDirectDepositDocIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/fill-direct-deposit-external/$docId': {
+      id: '/fill-direct-deposit-external/$docId'
+      path: '/fill-direct-deposit-external/$docId'
+      fullPath: '/fill-direct-deposit-external/$docId'
+      preLoaderRoute: typeof FillDirectDepositExternalDocIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/fill-damage/$docId': {
+      id: '/fill-damage/$docId'
+      path: '/fill-damage/$docId'
+      fullPath: '/fill-damage/$docId'
+      preLoaderRoute: typeof FillDamageDocIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/fill-damage-external/$docId': {
+      id: '/fill-damage-external/$docId'
+      path: '/fill-damage-external/$docId'
+      fullPath: '/fill-damage-external/$docId'
+      preLoaderRoute: typeof FillDamageExternalDocIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/fill-contractor-data/$docId': {
+      id: '/fill-contractor-data/$docId'
+      path: '/fill-contractor-data/$docId'
+      fullPath: '/fill-contractor-data/$docId'
+      preLoaderRoute: typeof FillContractorDataDocIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/fill-contractor-data-external/$docId': {
+      id: '/fill-contractor-data-external/$docId'
+      path: '/fill-contractor-data-external/$docId'
+      fullPath: '/fill-contractor-data-external/$docId'
+      preLoaderRoute: typeof FillContractorDataExternalDocIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/fill-car-iq-agreement/$docId': {
@@ -1199,14 +1446,27 @@ const rootRouteChildren: RootRouteChildren = {
   EmployeeEmployeeIdRoute: EmployeeEmployeeIdRoute,
   FillCarIqAgreementExternalDocIdRoute: FillCarIqAgreementExternalDocIdRoute,
   FillCarIqAgreementDocIdRoute: FillCarIqAgreementDocIdRoute,
+  FillContractorDataExternalDocIdRoute: FillContractorDataExternalDocIdRoute,
+  FillContractorDataDocIdRoute: FillContractorDataDocIdRoute,
+  FillDamageExternalDocIdRoute: FillDamageExternalDocIdRoute,
+  FillDamageDocIdRoute: FillDamageDocIdRoute,
+  FillDirectDepositExternalDocIdRoute: FillDirectDepositExternalDocIdRoute,
+  FillDirectDepositDocIdRoute: FillDirectDepositDocIdRoute,
   FillEmployeeConfidentialityExternalDocIdRoute:
     FillEmployeeConfidentialityExternalDocIdRoute,
   FillEmployeeConfidentialityDocIdRoute: FillEmployeeConfidentialityDocIdRoute,
   FillFormFormIdRoute: FillFormFormIdRoute,
   FillI9ExternalDocIdRoute: FillI9ExternalDocIdRoute,
   FillI9DocIdRoute: FillI9DocIdRoute,
+  FillLocationConsentExternalDocIdRoute: FillLocationConsentExternalDocIdRoute,
+  FillLocationConsentDocIdRoute: FillLocationConsentDocIdRoute,
   FillMealRestBreakExternalDocIdRoute: FillMealRestBreakExternalDocIdRoute,
   FillMealRestBreakDocIdRoute: FillMealRestBreakDocIdRoute,
+  FillMileageFuelExternalDocIdRoute: FillMileageFuelExternalDocIdRoute,
+  FillMileageFuelDocIdRoute: FillMileageFuelDocIdRoute,
+  FillPartsResponsibilityExternalDocIdRoute:
+    FillPartsResponsibilityExternalDocIdRoute,
+  FillPartsResponsibilityDocIdRoute: FillPartsResponsibilityDocIdRoute,
   FillPtoAckExternalDocIdRoute: FillPtoAckExternalDocIdRoute,
   FillPtoAckDocIdRoute: FillPtoAckDocIdRoute,
   FillVehicleAgreementExternalDocIdRoute:
