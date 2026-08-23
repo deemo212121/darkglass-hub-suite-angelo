@@ -82,12 +82,13 @@ import { CompanySettingsPage } from "@/components/CompanySettingsPage";
 import { getDashboardRoleGate, hasDashboardAccess } from "@/lib/dashboardAccess";
 import { getModuleRoleGate } from "@/lib/moduleAccess";
 
-// Roles allowed into the admin module overall, and into User Management
-// specifically. Checked via hasDashboardAccess so a secondary role
-// (profiles.extra_roles) grants access too, not just the primary role —
+// Roles allowed into the admin module overall, and into User Management /
+// Activity Logs specifically. Checked via hasDashboardAccess so a secondary
+// role (profiles.extra_roles) grants access too, not just the primary role —
 // e.g. a Parts Manager who's also been given Admin as a secondary role.
 const ADMIN_MODULE_ROLES = ["ADMIN", "SUPERADMIN"];
-const USER_MANAGEMENT_ROLES = ["HR", "MANAGER", "ADMIN", "SUPERADMIN"];
+const USER_MANAGEMENT_ROLES = ["HR", "MANAGER", "SENIOR_BRANCH_MANAGER", "ADMIN", "SUPERADMIN"];
+const ACTIVITY_LOG_ROLES = ["SENIOR_BRANCH_MANAGER", "ADMIN", "SUPERADMIN"];
 import { getMyRoles } from "@/lib/supabase/users";
 import { ROLE_LABELS } from "@/lib/roleLabels";
 import { useEffect, useState } from "react";
@@ -191,6 +192,7 @@ function SubModule() {
   const roleGrantsQuick = !moduleAllowedRoles || hasDashboardAccess(moduleAllowedRoles, role, []);
   const adminGrantsQuick = mod.slug !== "admin" || hasDashboardAccess(ADMIN_MODULE_ROLES, role, []);
   const userMgmtGrantsQuick = sub.custom !== "user-management" || hasDashboardAccess(USER_MANAGEMENT_ROLES, role, []);
+  const activityLogGrantsQuick = (sub as any).custom !== "universal-activity-log" || hasDashboardAccess(ACTIVITY_LOG_ROLES, role, []);
   // CSR restriction is the mirror case — restricted based on primary role
   // alone (quick, no extraRoles) means a secondary non-CSR role could still
   // lift it, so that also needs extraRoles resolved before deciding. An
@@ -200,7 +202,7 @@ function SubModule() {
   // company-settings is a RESTRICTION relative to the general admin-module
   // gate (plain ADMIN must NOT get in, only the per-company SUPERADMIN role)
   // so it always needs extraRoles resolved, not just when the quick check fails.
-  const needsExtraRoles = (Boolean(moduleAllowedRoles) && !roleGrantsQuick) || !adminGrantsQuick || !userMgmtGrantsQuick || !csrGrantsQuick || sub.custom === "company-settings";
+  const needsExtraRoles = (Boolean(moduleAllowedRoles) && !roleGrantsQuick) || !adminGrantsQuick || !userMgmtGrantsQuick || !activityLogGrantsQuick || !csrGrantsQuick || sub.custom === "company-settings";
   const [extraRoles, setExtraRoles] = useState<string[] | null>(null);
   useEffect(() => {
     if (!needsExtraRoles || !ready || !uid) return;
@@ -263,7 +265,22 @@ function SubModule() {
   // (Senior Managers), and the it_tickets RLS policies enforce it either way.
   const hasItTicketsAccess = sub.custom === "it-tickets" && hasDashboardAccess(getDashboardRoleGate("it-tickets") || [], role, extraRoles);
 
-  if (mod.slug === "admin" && !hasAdminAccess && !hasItTicketsAccess && !ALL_ROLES_ADMIN_SUBMODULES.has(sub.slug)) {
+  // User Management and Activity Logs both have their own, more permissive
+  // role lists below (USER_MANAGEMENT_ROLES / ACTIVITY_LOG_ROLES) — carved
+  // out here so someone who qualifies via one of THOSE lists but isn't
+  // Admin/SuperAdmin doesn't get blocked by this broader gate before ever
+  // reaching their dedicated check.
+  const isUserManagementSubmodule = sub.custom === "user-management";
+  const isActivityLogSubmodule = (sub as any).custom === "universal-activity-log";
+
+  if (
+    mod.slug === "admin" &&
+    !hasAdminAccess &&
+    !hasItTicketsAccess &&
+    !ALL_ROLES_ADMIN_SUBMODULES.has(sub.slug) &&
+    !isUserManagementSubmodule &&
+    !isActivityLogSubmodule
+  ) {
     return (
       <>
         <AppHeader />
@@ -291,8 +308,8 @@ function SubModule() {
   // Check user management access using Firebase role — same primary-or-
   // secondary-role logic as the admin gate above.
   const hasUserManagementAccess = hasDashboardAccess(USER_MANAGEMENT_ROLES, role, extraRoles);
-  
-  if (sub.custom === "user-management" && !hasUserManagementAccess) {
+
+  if (isUserManagementSubmodule && !hasUserManagementAccess) {
     return (
       <>
         <AppHeader />
@@ -301,7 +318,35 @@ function SubModule() {
             <div className="rounded-xl border border-white/15 bg-white/8 p-6 text-white backdrop-blur-md">
               <h1 className="text-2xl font-bold">Access restricted</h1>
               <p className="mt-2 text-sm text-slate-300">
-                User management is only available to HR, Manager, Admin, and SuperAdmin users.
+                User management is only available to HR, Manager, Senior Branch Manager, Admin, and SuperAdmin users.
+              </p>
+              <p className="mt-2 text-sm text-slate-400">
+                Current sign-in: {email}
+              </p>
+              <p className="mt-1 text-sm text-slate-400">
+                Your role: {role || "No role assigned"}
+              </p>
+            </div>
+          </div>
+        </main>
+        <Footer />
+      </>
+    );
+  }
+
+  // Activity Logs — same carve-out pattern as User Management above.
+  const hasActivityLogAccess = hasDashboardAccess(ACTIVITY_LOG_ROLES, role, extraRoles);
+
+  if (isActivityLogSubmodule && !hasActivityLogAccess) {
+    return (
+      <>
+        <AppHeader />
+        <main className="flex-1 bg-slate-950 py-6">
+          <div className="max-w-4xl mx-auto px-6">
+            <div className="rounded-xl border border-white/15 bg-white/8 p-6 text-white backdrop-blur-md">
+              <h1 className="text-2xl font-bold">Access restricted</h1>
+              <p className="mt-2 text-sm text-slate-300">
+                Activity Logs is only available to Senior Branch Manager, Admin, and SuperAdmin users.
               </p>
               <p className="mt-2 text-sm text-slate-400">
                 Current sign-in: {email}
