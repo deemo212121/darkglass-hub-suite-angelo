@@ -16,6 +16,12 @@
  * directly next to the "Branch:" label instead of checking one of the
  * source boxes, so this works uniformly for every branch including ones
  * with no matching checkbox.
+ *
+ * The source PDF's own blank asks for First/Last Name as two separate
+ * underscore-blanks (no middle name field on this one), so those are kept
+ * as two separate fields — employeeName is a derived/display convenience
+ * recomputed from the two parts whenever the employee submits, same
+ * convention Meal and Rest Break/PTO Acknowledgment use.
  */
 
 export const CAR_IQ_BRANCHES = [
@@ -28,7 +34,10 @@ export const CAR_IQ_BRANCHES = [
 export interface CarIqAgreementFormData {
   /** The employee's actual profile id — not shown on the document itself, just carried alongside for lookups. */
   employeeId: string;
+  /** Derived display name — [firstName, lastName].filter(Boolean).join(" "). */
   employeeName: string;
+  firstName: string;
+  lastName: string;
   branch: string;
   /** "I AGREE" checkbox — required, this is the whole point of the document. */
   agreed: boolean;

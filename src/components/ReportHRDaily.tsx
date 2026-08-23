@@ -1,6 +1,9 @@
 import { useState, useMemo, useEffect, useRef, Fragment } from "react";
 import { Link, useSearch, useNavigate } from "@tanstack/react-router";
 import { ChevronLeft, ChevronDown, ChevronRight, Plus, Trash2, AlertTriangle, CheckCircle, XCircle, Paperclip, Users, Clock, UserCheck, UserX, UserMinus, Search, Bell, Download, Forward, History, FileText, ClipboardList, Landmark, GripVertical, FileCheck } from "lucide-react";
+
+/** Shared shape for a sidebar/header-dropdown nav tab entry — broad enough to structurally match every tabGroups[].tabs literal (they all share this key/label/count/icon shape, just with different literal `key`/`label` string types per group), so renderSidebarTabButton/renderDropdownTabButton can be called with tabs from any group. */
+type NavTabDef = { key: string; label: string; count: number; icon: typeof FileCheck };
 import {
   getLeadersRoster,
   upsertLeadersRosterRow,
@@ -45,7 +48,7 @@ import {
   type OnboardingDocumentColumn,
   type OnboardingGroupKey,
 } from "@/lib/supabase/onboardingDocumentColumns";
-import { uploadCoeCertificate, uploadWarningForm, uploadPromotionForm, uploadActionPlanForm, uploadTerminationForm, uploadW8benForm, uploadW4Form, uploadW4RForm, uploadI9Form, uploadWageAckForm, uploadCarIqAgreementForm, uploadVehicleAgreementForm, uploadEmployeeConfidentialityForm, uploadMealRestBreakForm, uploadPtoAckForm, uploadSignableDocumentSignature } from "@/lib/firebase/storage";
+import { uploadCoeCertificate, uploadWarningForm, uploadPromotionForm, uploadActionPlanForm, uploadTerminationForm, uploadW8benForm, uploadW4Form, uploadW4RForm, uploadI9Form, uploadWageAckForm, uploadCarIqAgreementForm, uploadVehicleAgreementForm, uploadEmployeeConfidentialityForm, uploadMealRestBreakForm, uploadPtoAckForm, uploadPartsResponsibilityForm, uploadMileageFuelForm, uploadLocationConsentForm, uploadDamageForm, uploadContractorDataForm, uploadDirectDepositForm, uploadSignableDocumentSignature } from "@/lib/firebase/storage";
 import { captureHtmlToPdfBlob, loadAssetDataUrl as loadImageDataUrl } from "@/lib/pdfCapture";
 import {
   createSignableDocument,
@@ -86,6 +89,16 @@ import { MEAL_REST_BREAK_BRANCHES, type MealRestBreakFormData } from "@/lib/meal
 import { fillMealRestBreakPdf } from "@/lib/mealRestBreakPdfFill";
 import { PTO_ACK_BRANCHES, type PtoAckFormData } from "@/lib/ptoAckFormTemplate";
 import { fillPtoAckPdf } from "@/lib/ptoAckPdfFill";
+import { PARTS_RESPONSIBILITY_BRANCHES, type PartsResponsibilityFormData } from "@/lib/partsResponsibilityFormTemplate";
+import { fillPartsResponsibilityPdf } from "@/lib/partsResponsibilityPdfFill";
+import { MILEAGE_FUEL_BRANCHES, type MileageFuelFormData } from "@/lib/mileageFuelFormTemplate";
+import { fillMileageFuelPdf } from "@/lib/mileageFuelPdfFill";
+import type { LocationConsentFormData } from "@/lib/locationConsentFormTemplate";
+import { fillLocationConsentPdf } from "@/lib/locationConsentPdfFill";
+import type { DamageFormData } from "@/lib/damageFormTemplate";
+import { fillDamagePdf } from "@/lib/damagePdfFill";
+import { buildContractorDataBodyMarkup, contractorDataStyles, BLANK_EMERGENCY_CONTACT, type ContractorDataFormData } from "@/lib/contractorDataFormTemplate";
+import { buildDirectDepositBodyMarkup, directDepositStyles, type DirectDepositFormData } from "@/lib/directDepositFormTemplate";
 import type { I9FormData } from "@/lib/i9FormTemplate";
 import { fillI9Pdf } from "@/lib/i9PdfFill";
 import { logActivity, getActivityLog, activityActionLabel, type HrActivityLogEntry } from "@/lib/supabase/hrActivityLog";
@@ -666,7 +679,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // Reviews, the Approved log, the department trend chart, and the full
   // Employee Directory all on top of each other, forcing a long scroll to
   // reach anything below Hiring.
-  const [activeTab, setActiveTab] = useState<"hiring" | "warnings" | "masterList" | "leaders" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "promotionForm" | "actionPlanForm" | "terminationForm" | "employeeRequestManager" | "w8ben" | "i9" | "wageAck" | "carIqAgreement" | "vehicleAgreement" | "employeeConfidentiality" | "mealRestBreak" | "ptoAck">("hiring");
+  const [activeTab, setActiveTab] = useState<"hiring" | "warnings" | "masterList" | "leaders" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "promotionForm" | "actionPlanForm" | "terminationForm" | "employeeRequestManager" | "w8ben" | "i9" | "wageAck" | "carIqAgreement" | "vehicleAgreement" | "employeeConfidentiality" | "mealRestBreak" | "ptoAck" | "partsResponsibility" | "mileageFuel" | "locationConsent" | "damage" | "contractorData" | "directDeposit">("hiring");
   const [openCategory, setOpenCategory] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   // Which floating-sidebar section headers (Automated Forms/Generate
@@ -690,7 +703,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const navigate = useNavigate();
   const hrSearchParams = (useSearch({ strict: false }) as { tab?: string; submissionId?: string; profileId?: string }) ?? {};
   const initialHrSearchRef = useRef(hrSearchParams);
-  const VALID_HR_TABS = ["hiring", "warnings", "masterList", "leaders", "jotform", "jotformDocuments", "customForms", "onboarding", "hiringReports", "report", "coe", "warningForm", "promotionForm", "actionPlanForm", "terminationForm", "employeeRequestManager", "w8ben", "i9", "wageAck", "carIqAgreement", "vehicleAgreement", "employeeConfidentiality", "mealRestBreak", "ptoAck"] as const;
+  const VALID_HR_TABS = ["hiring", "warnings", "masterList", "leaders", "jotform", "jotformDocuments", "customForms", "onboarding", "hiringReports", "report", "coe", "warningForm", "promotionForm", "actionPlanForm", "terminationForm", "employeeRequestManager", "w8ben", "i9", "wageAck", "carIqAgreement", "vehicleAgreement", "employeeConfidentiality", "mealRestBreak", "ptoAck", "partsResponsibility", "mileageFuel", "locationConsent", "damage", "contractorData", "directDeposit"] as const;
   useEffect(() => {
     const tab = initialHrSearchRef.current.tab;
     if (tab && (VALID_HR_TABS as readonly string[]).includes(tab)) setActiveTab(tab as typeof activeTab);
@@ -1365,7 +1378,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     const unsubs = [
       subscribeTableChanges("hr_candidates", () => void loadCandidates(), `company_id=eq.${companyId}`),
       subscribeTableChanges("employee_conduct_notes", () => void loadNotes(), `company_id=eq.${companyId}`),
-      subscribeTableChanges("hr_signable_documents", () => { void loadSentWarningForms(); void loadSentW8benForms(); void loadSentW4Forms(); void loadSentW9Forms(); void loadSentW4RForms(); void loadSentI9Forms(); void loadSentWageAckForms(); void loadSentCarIqAgreementForms(); void loadSentVehicleAgreementForms(); void loadSentEmployeeConfidentialityForms(); void loadSentMealRestBreakForms(); void loadSentPtoAckForms(); }, `company_id=eq.${companyId}`),
+      subscribeTableChanges("hr_signable_documents", () => { void loadSentWarningForms(); void loadSentW8benForms(); void loadSentW4Forms(); void loadSentW9Forms(); void loadSentW4RForms(); void loadSentI9Forms(); void loadSentWageAckForms(); void loadSentCarIqAgreementForms(); void loadSentVehicleAgreementForms(); void loadSentEmployeeConfidentialityForms(); void loadSentMealRestBreakForms(); void loadSentPtoAckForms(); void loadSentPartsResponsibilityForms(); void loadSentMileageFuelForms(); void loadSentLocationConsentForms(); }, `company_id=eq.${companyId}`),
       subscribeTableChanges("pto_requests", () => void loadPtoRequests(), `company_id=eq.${companyId}`),
       subscribeTableChanges("timecard_entries", () => void loadTodayTimecardEntries(), `company_id=eq.${companyId}`),
       subscribeTableChanges("timecard_corrections", () => void loadRequestManagerData(), `company_id=eq.${companyId}`),
@@ -2239,7 +2252,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [w8PreviewPdfUrl, setW8PreviewPdfUrl] = useState<string | null>(null);
   const [w8DocPreview, setW8DocPreview] = useState<SignableDocument | null>(null);
   const [w8PreviewLoading, setW8PreviewLoading] = useState(false);
-  const [w8SendMode, setW8SendMode] = useState<"teammate" | "external">("teammate");
   const [w8ExternalName, setW8ExternalName] = useState("");
   const [w8SentLink, setW8SentLink] = useState<{ link: string; recipientName: string } | null>(null);
   const [w8SentLinkCopied, setW8SentLinkCopied] = useState(false);
@@ -2270,14 +2282,14 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     dateSigned: "",
   });
 
-  const closeW8benPreview = () => {
-    setW8PreviewOpen(false);
-    if (w8PreviewPdfUrl) URL.revokeObjectURL(w8PreviewPdfUrl);
-    setW8PreviewPdfUrl(null);
-  };
-
-  /** Renders the SAME real official PDF (fillW8benPdf, no HTML redraw) with a blank preview fill, so what HR previews is exactly what gets generated when the recipient actually submits. */
-  const handleOpenW8benPreview = async () => {
+  /** Toggles the inline collapsible preview panel — collapsing just hides it (and revokes the blob URL); expanding (re)builds a fresh blank-filled sample from the currently-selected recipient's name. Renders the SAME real official PDF (fillW8benPdf, no HTML redraw), so what HR previews is exactly what gets generated when the recipient actually submits. */
+  const toggleW8benPreview = async () => {
+    if (w8PreviewOpen) {
+      setW8PreviewOpen(false);
+      if (w8PreviewPdfUrl) URL.revokeObjectURL(w8PreviewPdfUrl);
+      setW8PreviewPdfUrl(null);
+      return;
+    }
     setW8SendError(null);
     setW8PreviewOpen(true);
     setW8PreviewLoading(true);
@@ -2322,7 +2334,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
       void logActivity({ action: "w8ben_form_sent", targetType: "employee", targetId: recipient.id, targetLabel: recipient.name });
 
-      closeW8benPreview();
       setW8RecipientId("");
       setW8RecipientSearch("");
       await loadSentW8benForms();
@@ -2452,7 +2463,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [w4PreviewPdfUrl, setW4PreviewPdfUrl] = useState<string | null>(null);
   const [w4PreviewLoading, setW4PreviewLoading] = useState(false);
   const [w4DocPreview, setW4DocPreview] = useState<SignableDocument | null>(null);
-  const [w4SendMode, setW4SendMode] = useState<"teammate" | "external">("teammate");
   const [w4ExternalName, setW4ExternalName] = useState("");
   const [w4SentLink, setW4SentLink] = useState<{ link: string; recipientName: string } | null>(null);
   const [w4SentLinkCopied, setW4SentLinkCopied] = useState(false);
@@ -2516,13 +2526,14 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     };
   };
 
-  const closeW4Preview = () => {
-    setW4PreviewOpen(false);
-    if (w4PreviewPdfUrl) URL.revokeObjectURL(w4PreviewPdfUrl);
-    setW4PreviewPdfUrl(null);
-  };
-
-  const handleOpenW4Preview = async () => {
+  /** Toggles the inline collapsible preview panel — collapsing just hides it (and revokes the blob URL); expanding (re)builds a fresh blank-filled sample from the currently-selected recipient's name. */
+  const toggleW4Preview = async () => {
+    if (w4PreviewOpen) {
+      setW4PreviewOpen(false);
+      if (w4PreviewPdfUrl) URL.revokeObjectURL(w4PreviewPdfUrl);
+      setW4PreviewPdfUrl(null);
+      return;
+    }
     setW4SendError(null);
     setW4PreviewOpen(true);
     setW4PreviewLoading(true);
@@ -2567,7 +2578,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
       void logActivity({ action: "w4_form_sent", targetType: "employee", targetId: recipient.id, targetLabel: recipient.name });
 
-      closeW4Preview();
       setW4RecipientId("");
       setW4RecipientSearch("");
       await loadSentW4Forms();
@@ -2684,7 +2694,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [w9PreviewPdfUrl, setW9PreviewPdfUrl] = useState<string | null>(null);
   const [w9PreviewLoading, setW9PreviewLoading] = useState(false);
   const [w9DocPreview, setW9DocPreview] = useState<SignableDocument | null>(null);
-  const [w9SendMode, setW9SendMode] = useState<"teammate" | "external">("teammate");
   const [w9ExternalName, setW9ExternalName] = useState("");
   const [w9SentLink, setW9SentLink] = useState<{ link: string; recipientName: string } | null>(null);
   const [w9SentLinkCopied, setW9SentLinkCopied] = useState(false);
@@ -2716,13 +2725,14 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     signatureDataUrl: "",
   });
 
-  const closeW9Preview = () => {
-    setW9PreviewOpen(false);
-    if (w9PreviewPdfUrl) URL.revokeObjectURL(w9PreviewPdfUrl);
-    setW9PreviewPdfUrl(null);
-  };
-
-  const handleOpenW9Preview = async () => {
+  /** Toggles the inline collapsible preview panel — collapsing just hides it (and revokes the blob URL); expanding (re)builds a fresh blank-filled sample from the currently-selected recipient's name. */
+  const toggleW9Preview = async () => {
+    if (w9PreviewOpen) {
+      setW9PreviewOpen(false);
+      if (w9PreviewPdfUrl) URL.revokeObjectURL(w9PreviewPdfUrl);
+      setW9PreviewPdfUrl(null);
+      return;
+    }
     setW9SendError(null);
     setW9PreviewOpen(true);
     setW9PreviewLoading(true);
@@ -2767,7 +2777,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
       void logActivity({ action: "w9_form_sent", targetType: "employee", targetId: recipient.id, targetLabel: recipient.name });
 
-      closeW9Preview();
       setW9RecipientId("");
       setW9RecipientSearch("");
       await loadSentW9Forms();
@@ -2883,7 +2892,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [w4rPreviewPdfUrl, setW4rPreviewPdfUrl] = useState<string | null>(null);
   const [w4rPreviewLoading, setW4rPreviewLoading] = useState(false);
   const [w4rDocPreview, setW4rDocPreview] = useState<SignableDocument | null>(null);
-  const [w4rSendMode, setW4rSendMode] = useState<"teammate" | "external">("teammate");
   const [w4rExternalName, setW4rExternalName] = useState("");
   const [w4rSentLink, setW4rSentLink] = useState<{ link: string; recipientName: string } | null>(null);
   const [w4rSentLinkCopied, setW4rSentLinkCopied] = useState(false);
@@ -2904,13 +2912,14 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     signatureDataUrl: "",
   });
 
-  const closeW4RPreview = () => {
-    setW4rPreviewOpen(false);
-    if (w4rPreviewPdfUrl) URL.revokeObjectURL(w4rPreviewPdfUrl);
-    setW4rPreviewPdfUrl(null);
-  };
-
-  const handleOpenW4RPreview = async () => {
+  /** Toggles the inline collapsible preview panel — collapsing just hides it (and revokes the blob URL); expanding (re)builds a fresh blank-filled sample from the currently-selected recipient's name. */
+  const toggleW4RPreview = async () => {
+    if (w4rPreviewOpen) {
+      setW4rPreviewOpen(false);
+      if (w4rPreviewPdfUrl) URL.revokeObjectURL(w4rPreviewPdfUrl);
+      setW4rPreviewPdfUrl(null);
+      return;
+    }
     setW4rSendError(null);
     setW4rPreviewOpen(true);
     setW4rPreviewLoading(true);
@@ -2955,7 +2964,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
       void logActivity({ action: "w4r_form_sent", targetType: "employee", targetId: recipient.id, targetLabel: recipient.name });
 
-      closeW4RPreview();
       setW4rRecipientId("");
       setW4rRecipientSearch("");
       await loadSentW4RForms();
@@ -3127,7 +3135,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [i9ActionBusyId, setI9ActionBusyId] = useState<string | null>(null);
   const [i9ActionError, setI9ActionError] = useState<string | null>(null);
   const [i9DocPreview, setI9DocPreview] = useState<SignableDocument | null>(null);
-  const [i9SendMode, setI9SendMode] = useState<"teammate" | "external">("teammate");
   const [i9ExternalName, setI9ExternalName] = useState("");
   const [i9SentLink, setI9SentLink] = useState<{ link: string; recipientName: string } | null>(null);
   const [i9SentLinkCopied, setI9SentLinkCopied] = useState(false);
@@ -3181,14 +3188,14 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     businessAddress: "",
   });
 
-  const closeI9Preview = () => {
-    setI9PreviewOpen(false);
-    if (i9PreviewPdfUrl) URL.revokeObjectURL(i9PreviewPdfUrl);
-    setI9PreviewPdfUrl(null);
-  };
-
-  /** Renders the SAME real official PDF (fillI9Pdf, no HTML redraw) with a blank preview fill, so what HR previews is exactly what gets generated when the recipient actually submits Section 1. */
-  const handleOpenI9Preview = async () => {
+  /** Toggles the inline collapsible preview panel — collapsing just hides it (and revokes the blob URL); expanding (re)builds a fresh blank-filled sample from the currently-selected recipient's name. Renders the SAME real official PDF (fillI9Pdf, no HTML redraw), so what HR previews is exactly what gets generated when the recipient actually submits Section 1. */
+  const toggleI9Preview = async () => {
+    if (i9PreviewOpen) {
+      setI9PreviewOpen(false);
+      if (i9PreviewPdfUrl) URL.revokeObjectURL(i9PreviewPdfUrl);
+      setI9PreviewPdfUrl(null);
+      return;
+    }
     setI9SendError(null);
     setI9PreviewOpen(true);
     setI9PreviewLoading(true);
@@ -3233,7 +3240,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
       void logActivity({ action: "i9_form_sent", targetType: "employee", targetId: recipient.id, targetLabel: recipient.name });
 
-      closeI9Preview();
       setI9RecipientId("");
       setI9RecipientSearch("");
       await loadSentI9Forms();
@@ -3314,7 +3320,9 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [wageAckActionBusyId, setWageAckActionBusyId] = useState<string | null>(null);
   const [wageAckActionError, setWageAckActionError] = useState<string | null>(null);
   const [wageAckDocPreview, setWageAckDocPreview] = useState<SignableDocument | null>(null);
-  const [wageAckSendMode, setWageAckSendMode] = useState<"teammate" | "external">("teammate");
+  const [wageAckPreviewExpanded, setWageAckPreviewExpanded] = useState(false);
+  const [wageAckPreviewPdfUrl, setWageAckPreviewPdfUrl] = useState<string | null>(null);
+  const [wageAckPreviewLoading, setWageAckPreviewLoading] = useState(false);
   const [wageAckExternalName, setWageAckExternalName] = useState("");
   const [wageAckSentLink, setWageAckSentLink] = useState<{ link: string; recipientName: string } | null>(null);
   const [wageAckSentLinkCopied, setWageAckSentLinkCopied] = useState(false);
@@ -3322,6 +3330,39 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     () => employees.filter((e) => e.status === "active" && e.name.toLowerCase().includes(wageAckRecipientSearch.toLowerCase())),
     [employees, wageAckRecipientSearch]
   );
+
+  const buildWageAckPreviewData = (employeeName: string): WageAckFormData => ({
+    employeeId: "",
+    employeeName,
+    effectiveDate: "",
+    employeeDateSigned: "",
+    employeeSignatureDataUrl: "",
+    employerDateSigned: "",
+    employerSignatureDataUrl: "",
+  });
+
+  /** Toggles the inline collapsible preview panel — collapsing just hides it (and revokes the blob URL); expanding (re)builds a fresh blank-filled sample from the currently-selected recipient's name. */
+  const toggleWageAckPreview = async () => {
+    if (wageAckPreviewExpanded) {
+      setWageAckPreviewExpanded(false);
+      if (wageAckPreviewPdfUrl) URL.revokeObjectURL(wageAckPreviewPdfUrl);
+      setWageAckPreviewPdfUrl(null);
+      return;
+    }
+    setWageAckSendError(null);
+    setWageAckPreviewExpanded(true);
+    setWageAckPreviewLoading(true);
+    try {
+      const recipientName = employees.find((e) => e.id === wageAckRecipientId)?.name || "";
+      const pdfBytes = await fillWageAckPdf(buildWageAckPreviewData(recipientName));
+      const url = URL.createObjectURL(new Blob([pdfBytes as unknown as BlobPart], { type: "application/pdf" }));
+      setWageAckPreviewPdfUrl(url);
+    } catch (err) {
+      setWageAckSendError(err instanceof Error ? err.message : "Failed to build preview.");
+    } finally {
+      setWageAckPreviewLoading(false);
+    }
+  };
 
   const handleSendWageAck = async () => {
     if (!wageAckRecipientId || !uid) return;
@@ -3566,7 +3607,9 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [mealRestBreakActionBusyId, setMealRestBreakActionBusyId] = useState<string | null>(null);
   const [mealRestBreakActionError, setMealRestBreakActionError] = useState<string | null>(null);
   const [mealRestBreakDocPreview, setMealRestBreakDocPreview] = useState<SignableDocument | null>(null);
-  const [mealRestBreakSendMode, setMealRestBreakSendMode] = useState<"teammate" | "external">("teammate");
+  const [mealRestBreakPreviewExpanded, setMealRestBreakPreviewExpanded] = useState(false);
+  const [mealRestBreakPreviewPdfUrl, setMealRestBreakPreviewPdfUrl] = useState<string | null>(null);
+  const [mealRestBreakPreviewLoading, setMealRestBreakPreviewLoading] = useState(false);
   const [mealRestBreakExternalName, setMealRestBreakExternalName] = useState("");
   const [mealRestBreakSentLink, setMealRestBreakSentLink] = useState<{ link: string; recipientName: string } | null>(null);
   const [mealRestBreakSentLinkCopied, setMealRestBreakSentLinkCopied] = useState(false);
@@ -3574,6 +3617,47 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     () => employees.filter((e) => e.status === "active" && e.name.toLowerCase().includes(mealRestBreakRecipientSearch.toLowerCase())),
     [employees, mealRestBreakRecipientSearch]
   );
+
+  const buildMealRestBreakPreviewData = (employeeName: string): MealRestBreakFormData => {
+    const [firstName = "", ...rest] = employeeName.trim().split(/\s+/).filter(Boolean);
+    const lastName = rest.length ? rest[rest.length - 1] : "";
+    const middleName = rest.length > 1 ? rest.slice(0, -1).join(" ") : "";
+    return {
+      employeeId: "",
+      employeeName,
+      firstName,
+      middleName,
+      lastName,
+      branch: "",
+      employeeDateSigned: "",
+      employeeSignatureDataUrl: "",
+      employerDateSigned: "",
+      employerSignatureDataUrl: "",
+    };
+  };
+
+  /** Toggles the inline collapsible preview panel — collapsing just hides it (and revokes the blob URL); expanding (re)builds a fresh blank-filled sample from the currently-selected recipient's name. */
+  const toggleMealRestBreakPreview = async () => {
+    if (mealRestBreakPreviewExpanded) {
+      setMealRestBreakPreviewExpanded(false);
+      if (mealRestBreakPreviewPdfUrl) URL.revokeObjectURL(mealRestBreakPreviewPdfUrl);
+      setMealRestBreakPreviewPdfUrl(null);
+      return;
+    }
+    setMealRestBreakSendError(null);
+    setMealRestBreakPreviewExpanded(true);
+    setMealRestBreakPreviewLoading(true);
+    try {
+      const recipientName = employees.find((e) => e.id === mealRestBreakRecipientId)?.name || "";
+      const pdfBytes = await fillMealRestBreakPdf(buildMealRestBreakPreviewData(recipientName));
+      const url = URL.createObjectURL(new Blob([pdfBytes as unknown as BlobPart], { type: "application/pdf" }));
+      setMealRestBreakPreviewPdfUrl(url);
+    } catch (err) {
+      setMealRestBreakSendError(err instanceof Error ? err.message : "Failed to build preview.");
+    } finally {
+      setMealRestBreakPreviewLoading(false);
+    }
+  };
 
   const handleSendMealRestBreak = async () => {
     if (!mealRestBreakRecipientId || !uid) return;
@@ -3813,7 +3897,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [carIqPreviewOpen, setCarIqPreviewOpen] = useState(false);
   const [carIqPreviewPdfUrl, setCarIqPreviewPdfUrl] = useState<string | null>(null);
   const [carIqPreviewLoading, setCarIqPreviewLoading] = useState(false);
-  const [carIqSendMode, setCarIqSendMode] = useState<"teammate" | "external">("teammate");
   const [carIqExternalName, setCarIqExternalName] = useState("");
   const [carIqSentLink, setCarIqSentLink] = useState<{ link: string; recipientName: string } | null>(null);
   const [carIqSentLinkCopied, setCarIqSentLinkCopied] = useState(false);
@@ -3822,22 +3905,28 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     [employees, carIqRecipientSearch]
   );
 
-  const buildCarIqPreviewData = (employeeName: string): CarIqAgreementFormData => ({
-    employeeId: "",
-    employeeName,
-    branch: "",
-    agreed: false,
-    dateSigned: "",
-    signatureDataUrl: "",
-  });
-
-  const closeCarIqPreview = () => {
-    setCarIqPreviewOpen(false);
-    if (carIqPreviewPdfUrl) URL.revokeObjectURL(carIqPreviewPdfUrl);
-    setCarIqPreviewPdfUrl(null);
+  const buildCarIqPreviewData = (employeeName: string): CarIqAgreementFormData => {
+    const [firstName = "", ...rest] = employeeName.trim().split(/\s+/).filter(Boolean);
+    return {
+      employeeId: "",
+      employeeName,
+      firstName,
+      lastName: rest.join(" "),
+      branch: "",
+      agreed: false,
+      dateSigned: "",
+      signatureDataUrl: "",
+    };
   };
 
-  const handleOpenCarIqPreview = async () => {
+  /** Toggles the inline collapsible preview panel — collapsing just hides it (and revokes the blob URL); expanding (re)builds a fresh blank-filled sample from the currently-selected recipient's name. */
+  const toggleCarIqPreview = async () => {
+    if (carIqPreviewOpen) {
+      setCarIqPreviewOpen(false);
+      if (carIqPreviewPdfUrl) URL.revokeObjectURL(carIqPreviewPdfUrl);
+      setCarIqPreviewPdfUrl(null);
+      return;
+    }
     setCarIqSendError(null);
     setCarIqPreviewOpen(true);
     setCarIqPreviewLoading(true);
@@ -3882,7 +3971,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
       void logActivity({ action: "car_iq_agreement_sent", targetType: "employee", targetId: recipient.id, targetLabel: recipient.name });
 
-      closeCarIqPreview();
       setCarIqRecipientId("");
       setCarIqRecipientSearch("");
       await loadSentCarIqAgreementForms();
@@ -4000,7 +4088,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [vehiclePreviewOpen, setVehiclePreviewOpen] = useState(false);
   const [vehiclePreviewPdfUrl, setVehiclePreviewPdfUrl] = useState<string | null>(null);
   const [vehiclePreviewLoading, setVehiclePreviewLoading] = useState(false);
-  const [vehicleSendMode, setVehicleSendMode] = useState<"teammate" | "external">("teammate");
   const [vehicleExternalName, setVehicleExternalName] = useState("");
   const [vehicleSentLink, setVehicleSentLink] = useState<{ link: string; recipientName: string } | null>(null);
   const [vehicleSentLinkCopied, setVehicleSentLinkCopied] = useState(false);
@@ -4009,21 +4096,27 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     [employees, vehicleRecipientSearch]
   );
 
-  const buildVehiclePreviewData = (employeeName: string): VehicleAgreementFormData => ({
-    employeeId: "",
-    employeeName,
-    branch: "",
-    dateSigned: "",
-    signatureDataUrl: "",
-  });
-
-  const closeVehiclePreview = () => {
-    setVehiclePreviewOpen(false);
-    if (vehiclePreviewPdfUrl) URL.revokeObjectURL(vehiclePreviewPdfUrl);
-    setVehiclePreviewPdfUrl(null);
+  const buildVehiclePreviewData = (employeeName: string): VehicleAgreementFormData => {
+    const [firstName = "", ...rest] = employeeName.trim().split(/\s+/).filter(Boolean);
+    return {
+      employeeId: "",
+      employeeName,
+      firstName,
+      lastName: rest.join(" "),
+      branch: "",
+      dateSigned: "",
+      signatureDataUrl: "",
+    };
   };
 
-  const handleOpenVehiclePreview = async () => {
+  /** Toggles the inline collapsible preview panel — collapsing just hides it (and revokes the blob URL); expanding (re)builds a fresh blank-filled sample from the currently-selected recipient's name. */
+  const toggleVehiclePreview = async () => {
+    if (vehiclePreviewOpen) {
+      setVehiclePreviewOpen(false);
+      if (vehiclePreviewPdfUrl) URL.revokeObjectURL(vehiclePreviewPdfUrl);
+      setVehiclePreviewPdfUrl(null);
+      return;
+    }
     setVehicleSendError(null);
     setVehiclePreviewOpen(true);
     setVehiclePreviewLoading(true);
@@ -4068,7 +4161,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
       void logActivity({ action: "vehicle_agreement_sent", targetType: "employee", targetId: recipient.id, targetLabel: recipient.name });
 
-      closeVehiclePreview();
       setVehicleRecipientId("");
       setVehicleRecipientSearch("");
       await loadSentVehicleAgreementForms();
@@ -4186,7 +4278,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [confidentialityPreviewOpen, setConfidentialityPreviewOpen] = useState(false);
   const [confidentialityPreviewPdfUrl, setConfidentialityPreviewPdfUrl] = useState<string | null>(null);
   const [confidentialityPreviewLoading, setConfidentialityPreviewLoading] = useState(false);
-  const [confidentialitySendMode, setConfidentialitySendMode] = useState<"teammate" | "external">("teammate");
   const [confidentialityExternalName, setConfidentialityExternalName] = useState("");
   const [confidentialitySentLink, setConfidentialitySentLink] = useState<{ link: string; recipientName: string } | null>(null);
   const [confidentialitySentLinkCopied, setConfidentialitySentLinkCopied] = useState(false);
@@ -4207,13 +4298,14 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     signatureDataUrl: "",
   });
 
-  const closeConfidentialityPreview = () => {
-    setConfidentialityPreviewOpen(false);
-    if (confidentialityPreviewPdfUrl) URL.revokeObjectURL(confidentialityPreviewPdfUrl);
-    setConfidentialityPreviewPdfUrl(null);
-  };
-
-  const handleOpenConfidentialityPreview = async () => {
+  /** Toggles the inline collapsible preview panel — collapsing just hides it (and revokes the blob URL); expanding (re)builds a fresh blank-filled sample from the currently-selected recipient's name. */
+  const toggleConfidentialityPreview = async () => {
+    if (confidentialityPreviewOpen) {
+      setConfidentialityPreviewOpen(false);
+      if (confidentialityPreviewPdfUrl) URL.revokeObjectURL(confidentialityPreviewPdfUrl);
+      setConfidentialityPreviewPdfUrl(null);
+      return;
+    }
     setConfidentialitySendError(null);
     setConfidentialityPreviewOpen(true);
     setConfidentialityPreviewLoading(true);
@@ -4258,7 +4350,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
       void logActivity({ action: "employee_confidentiality_sent", targetType: "employee", targetId: recipient.id, targetLabel: recipient.name });
 
-      closeConfidentialityPreview();
       setConfidentialityRecipientId("");
       setConfidentialityRecipientSearch("");
       await loadSentEmployeeConfidentialityForms();
@@ -4375,7 +4466,9 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [ptoAckActionBusyId, setPtoAckActionBusyId] = useState<string | null>(null);
   const [ptoAckActionError, setPtoAckActionError] = useState<string | null>(null);
   const [ptoAckDocPreview, setPtoAckDocPreview] = useState<SignableDocument | null>(null);
-  const [ptoAckSendMode, setPtoAckSendMode] = useState<"teammate" | "external">("teammate");
+  const [ptoAckPreviewExpanded, setPtoAckPreviewExpanded] = useState(false);
+  const [ptoAckPreviewPdfUrl, setPtoAckPreviewPdfUrl] = useState<string | null>(null);
+  const [ptoAckPreviewLoading, setPtoAckPreviewLoading] = useState(false);
   const [ptoAckExternalName, setPtoAckExternalName] = useState("");
   const [ptoAckSentLink, setPtoAckSentLink] = useState<{ link: string; recipientName: string } | null>(null);
   const [ptoAckSentLinkCopied, setPtoAckSentLinkCopied] = useState(false);
@@ -4383,6 +4476,45 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     () => employees.filter((e) => e.status === "active" && e.name.toLowerCase().includes(ptoAckRecipientSearch.toLowerCase())),
     [employees, ptoAckRecipientSearch]
   );
+
+  const buildPtoAckPreviewData = (employeeName: string): PtoAckFormData => {
+    const [firstName = "", ...rest] = employeeName.trim().split(/\s+/).filter(Boolean);
+    const lastName = rest.length ? rest[rest.length - 1] : "";
+    const middleName = rest.length > 1 ? rest.slice(0, -1).join(" ") : "";
+    return {
+      employeeId: "",
+      employeeName,
+      firstName,
+      middleName,
+      lastName,
+      branch: "",
+      dateSigned: "",
+      signatureDataUrl: "",
+    };
+  };
+
+  /** Toggles the inline collapsible preview panel — collapsing just hides it (and revokes the blob URL); expanding (re)builds a fresh blank-filled sample from the currently-selected recipient's name. */
+  const togglePtoAckPreview = async () => {
+    if (ptoAckPreviewExpanded) {
+      setPtoAckPreviewExpanded(false);
+      if (ptoAckPreviewPdfUrl) URL.revokeObjectURL(ptoAckPreviewPdfUrl);
+      setPtoAckPreviewPdfUrl(null);
+      return;
+    }
+    setPtoAckSendError(null);
+    setPtoAckPreviewExpanded(true);
+    setPtoAckPreviewLoading(true);
+    try {
+      const recipientName = employees.find((e) => e.id === ptoAckRecipientId)?.name || "";
+      const pdfBytes = await fillPtoAckPdf(buildPtoAckPreviewData(recipientName));
+      const url = URL.createObjectURL(new Blob([pdfBytes as unknown as BlobPart], { type: "application/pdf" }));
+      setPtoAckPreviewPdfUrl(url);
+    } catch (err) {
+      setPtoAckSendError(err instanceof Error ? err.message : "Failed to build preview.");
+    } finally {
+      setPtoAckPreviewLoading(false);
+    }
+  };
 
   const handleSendPtoAck = async () => {
     if (!ptoAckRecipientId || !uid) return;
@@ -4500,6 +4632,1581 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
 
+  // ── Parts Responsibility and Technician Floor Protection Acknowledgment
+  // Form — genuine two-party flow like Acknowledgment of Wage/Meal and Rest
+  // Break: the source PDF has no AcroForm fields at all (see
+  // partsResponsibilityFormTemplate.ts's header comment), and the
+  // manager/supervisor side is just a signature, no document review
+  // section to fill in. HR sends a link, the technician fills their
+  // name/branch, dates, and signs (FillPartsResponsibilityPage.tsx), then
+  // it lands back here for HR to add the "Manager/Supervisor" signature. ──
+  const [sentPartsResponsibilityForms, setSentPartsResponsibilityForms] = useState<SignableDocument[]>([]);
+  const loadSentPartsResponsibilityForms = async () => {
+    try {
+      setSentPartsResponsibilityForms(await getSignableDocuments("parts_responsibility"));
+    } catch (err) {
+      console.error("Failed to load sent Parts Responsibility forms:", err);
+    }
+  };
+  useEffect(() => {
+    if (activeTab === "partsResponsibility" || activeTab === "jotformDocuments") void loadSentPartsResponsibilityForms();
+  }, [activeTab]);
+  // Technician done, nobody has claimed the manager signature yet — feeds the sidebar tab's count badge.
+  const sentPartsResponsibilityAwaitingManagerCount = useMemo(
+    () => sentPartsResponsibilityForms.filter(isAwaitingEmployerStep).length,
+    [sentPartsResponsibilityForms]
+  );
+
+  const [partsResponsibilityRecipientId, setPartsResponsibilityRecipientId] = useState("");
+  const [partsResponsibilityRecipientSearch, setPartsResponsibilityRecipientSearch] = useState("");
+  const [partsResponsibilityRecipientDropdownOpen, setPartsResponsibilityRecipientDropdownOpen] = useState(false);
+  const [partsResponsibilitySending, setPartsResponsibilitySending] = useState(false);
+  const [partsResponsibilitySendError, setPartsResponsibilitySendError] = useState<string | null>(null);
+  const [partsResponsibilityActionBusyId, setPartsResponsibilityActionBusyId] = useState<string | null>(null);
+  const [partsResponsibilityActionError, setPartsResponsibilityActionError] = useState<string | null>(null);
+  const [partsResponsibilityDocPreview, setPartsResponsibilityDocPreview] = useState<SignableDocument | null>(null);
+  const [partsResponsibilityPreviewExpanded, setPartsResponsibilityPreviewExpanded] = useState(false);
+  const [partsResponsibilityPreviewPdfUrl, setPartsResponsibilityPreviewPdfUrl] = useState<string | null>(null);
+  const [partsResponsibilityPreviewLoading, setPartsResponsibilityPreviewLoading] = useState(false);
+  const [partsResponsibilityExternalName, setPartsResponsibilityExternalName] = useState("");
+  const [partsResponsibilitySentLink, setPartsResponsibilitySentLink] = useState<{ link: string; recipientName: string } | null>(null);
+  const [partsResponsibilitySentLinkCopied, setPartsResponsibilitySentLinkCopied] = useState(false);
+  const filteredPartsResponsibilityRecipients = useMemo(
+    () => employees.filter((e) => e.status === "active" && e.name.toLowerCase().includes(partsResponsibilityRecipientSearch.toLowerCase())),
+    [employees, partsResponsibilityRecipientSearch]
+  );
+
+  const buildPartsResponsibilityPreviewData = (employeeName: string): PartsResponsibilityFormData => {
+    const [firstName = "", ...rest] = employeeName.trim().split(/\s+/).filter(Boolean);
+    const lastName = rest.length ? rest[rest.length - 1] : "";
+    const middleName = rest.length > 1 ? rest.slice(0, -1).join(" ") : "";
+    return {
+      employeeId: "",
+      employeeName,
+      firstName,
+      middleName,
+      lastName,
+      branch: "",
+      technicianDateSigned: "",
+      technicianSignatureDataUrl: "",
+      managerDateSigned: "",
+      managerSignatureDataUrl: "",
+    };
+  };
+
+  /** Toggles the inline collapsible preview panel — collapsing just hides it (and revokes the blob URL); expanding (re)builds a fresh blank-filled sample from the currently-selected recipient's name. */
+  const togglePartsResponsibilityPreview = async () => {
+    if (partsResponsibilityPreviewExpanded) {
+      setPartsResponsibilityPreviewExpanded(false);
+      if (partsResponsibilityPreviewPdfUrl) URL.revokeObjectURL(partsResponsibilityPreviewPdfUrl);
+      setPartsResponsibilityPreviewPdfUrl(null);
+      return;
+    }
+    setPartsResponsibilitySendError(null);
+    setPartsResponsibilityPreviewExpanded(true);
+    setPartsResponsibilityPreviewLoading(true);
+    try {
+      const recipientName = employees.find((e) => e.id === partsResponsibilityRecipientId)?.name || "";
+      const pdfBytes = await fillPartsResponsibilityPdf(buildPartsResponsibilityPreviewData(recipientName));
+      const url = URL.createObjectURL(new Blob([pdfBytes as unknown as BlobPart], { type: "application/pdf" }));
+      setPartsResponsibilityPreviewPdfUrl(url);
+    } catch (err) {
+      setPartsResponsibilitySendError(err instanceof Error ? err.message : "Failed to build preview.");
+    } finally {
+      setPartsResponsibilityPreviewLoading(false);
+    }
+  };
+
+  const handleSendPartsResponsibility = async () => {
+    if (!partsResponsibilityRecipientId || !uid) return;
+    setPartsResponsibilitySending(true);
+    setPartsResponsibilitySendError(null);
+    try {
+      const recipient = employees.find((e) => e.id === partsResponsibilityRecipientId);
+      if (!recipient) throw new Error("Select a recipient first.");
+
+      const doc = await createSignableDocument({
+        documentType: "parts_responsibility",
+        formData: { employeeId: recipient.id, employeeName: recipient.name } as unknown as Record<string, any>,
+        recipientId: partsResponsibilityRecipientId,
+        recipientSlot: "employee",
+        pdfUrl: "",
+      });
+
+      const myProfileId = await getMyProfileId(uid);
+      if (!myProfileId) throw new Error("Could not resolve your profile.");
+      const thread = await getOrCreateDmThread(myProfileId, partsResponsibilityRecipientId);
+      const fillLink = `${getAppUrl()}/fill-parts-responsibility/${doc.id}`;
+      await sendMessage({
+        dmThreadId: thread.id,
+        senderId: myProfileId,
+        senderName: displayName || "HR",
+        body: `📋 Please complete the Parts Responsibility and Technician Floor Protection Acknowledgment Form: ${fillLink}`,
+      });
+
+      void logActivity({ action: "parts_responsibility_sent", targetType: "employee", targetId: recipient.id, targetLabel: recipient.name });
+
+      setPartsResponsibilityRecipientId("");
+      setPartsResponsibilityRecipientSearch("");
+      await loadSentPartsResponsibilityForms();
+    } catch (err) {
+      setPartsResponsibilitySendError(err instanceof Error ? err.message : "Failed to send request.");
+    } finally {
+      setPartsResponsibilitySending(false);
+    }
+  };
+
+  /** No AHS profile to tie this to, so no DM — the link itself (shown in the same panel, right below "Generate Link") is the only way the recipient finds out, same as the Warning Form's "External Link" mode. */
+  const handleGenerateExternalPartsResponsibility = async () => {
+    setPartsResponsibilitySending(true);
+    setPartsResponsibilitySendError(null);
+    try {
+      const name = partsResponsibilityExternalName.trim() || "External Recipient";
+      const doc = await createSignableDocument({
+        documentType: "parts_responsibility",
+        formData: { employeeId: "", employeeName: name } as unknown as Record<string, any>,
+        recipientName: name,
+        recipientSlot: "employee",
+        pdfUrl: "",
+      });
+
+      void logActivity({ action: "parts_responsibility_sent", targetType: "employee", targetLabel: name, details: { external: true } });
+
+      setPartsResponsibilitySentLink({ link: `${getAppUrl()}/fill-parts-responsibility-external/${doc.id}`, recipientName: name });
+      setPartsResponsibilityExternalName("");
+      await loadSentPartsResponsibilityForms();
+    } catch (err) {
+      setPartsResponsibilitySendError(err instanceof Error ? err.message : "Failed to generate link.");
+    } finally {
+      setPartsResponsibilitySending(false);
+    }
+  };
+
+  const handleCopyPartsResponsibilitySentLink = async () => {
+    if (!partsResponsibilitySentLink) return;
+    try {
+      await navigator.clipboard.writeText(partsResponsibilitySentLink.link);
+      setPartsResponsibilitySentLinkCopied(true);
+      setTimeout(() => setPartsResponsibilitySentLinkCopied(false), 1500);
+    } catch (err) {
+      console.error("Failed to copy link:", err);
+    }
+  };
+
+  const handleCopyPartsResponsibilityLink = async (doc: SignableDocument) => {
+    try {
+      const path = doc.recipientId ? "fill-parts-responsibility" : "fill-parts-responsibility-external";
+      await navigator.clipboard.writeText(`${getAppUrl()}/${path}/${doc.id}`);
+    } catch (err) {
+      console.error("Failed to copy link:", err);
+    }
+  };
+
+  const handleDownloadPartsResponsibilityPdf = async (doc: SignableDocument) => {
+    if (!doc.pdfUrl) return;
+    const name = (doc.formData as Partial<PartsResponsibilityFormData>).employeeName || doc.recipientName || "parts-responsibility";
+    try {
+      const res = await fetch(doc.pdfUrl);
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = `Parts Responsibility and Floor Protection Acknowledgment - ${name}.pdf`;
+      a.click();
+      URL.revokeObjectURL(blobUrl);
+    } catch {
+      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
+    }
+  };
+
+  const handleDeletePartsResponsibility = async (doc: SignableDocument) => {
+    if (!window.confirm("Permanently delete this Parts Responsibility Acknowledgment request?")) return;
+    setPartsResponsibilityActionBusyId(doc.id);
+    setPartsResponsibilityActionError(null);
+    try {
+      await deleteSignableDocument(doc.id);
+      await loadSentPartsResponsibilityForms();
+    } catch (err) {
+      setPartsResponsibilityActionError(err instanceof Error ? err.message : "Failed to delete.");
+    } finally {
+      setPartsResponsibilityActionBusyId(null);
+    }
+  };
+
+  // ── Complete Manager Signature — a plain signature pad (no fields to
+  // review), reassigns the document to the current HR user first so the
+  // RLS update policy allows it (same "claim" pattern Wage Ack's/Meal and
+  // Rest Break's own dialogs use), then regenerates the whole PDF fresh
+  // with both signatures. ──
+  const [partsResponsibilityManagerDialog, setPartsResponsibilityManagerDialog] = useState<SignableDocument | null>(null);
+  const [partsResponsibilityManagerSaving, setPartsResponsibilityManagerSaving] = useState(false);
+  const [partsResponsibilityManagerError, setPartsResponsibilityManagerError] = useState<string | null>(null);
+  const partsResponsibilityManagerSigCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const partsResponsibilityManagerDrawingRef = useRef(false);
+  const partsResponsibilityManagerHasDrawnRef = useRef(false);
+
+  const handleOpenPartsResponsibilityManagerDialog = (doc: SignableDocument) => {
+    setPartsResponsibilityManagerDialog(doc);
+    setPartsResponsibilityManagerError(null);
+    partsResponsibilityManagerHasDrawnRef.current = false;
+  };
+
+  const partsResponsibilityManagerPos = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    const c = partsResponsibilityManagerSigCanvasRef.current!;
+    const r = c.getBoundingClientRect();
+    return { x: ((e.clientX - r.left) / r.width) * c.width, y: ((e.clientY - r.top) / r.height) * c.height };
+  };
+  const partsResponsibilityManagerStartDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    partsResponsibilityManagerDrawingRef.current = true;
+    const ctx = partsResponsibilityManagerSigCanvasRef.current!.getContext("2d")!;
+    const { x, y } = partsResponsibilityManagerPos(e);
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+  const partsResponsibilityManagerMoveDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!partsResponsibilityManagerDrawingRef.current) return;
+    const ctx = partsResponsibilityManagerSigCanvasRef.current!.getContext("2d")!;
+    const { x, y } = partsResponsibilityManagerPos(e);
+    ctx.lineTo(x, y);
+    ctx.strokeStyle = "#0f172a";
+    ctx.lineWidth = 2;
+    ctx.lineCap = "round";
+    ctx.stroke();
+    partsResponsibilityManagerHasDrawnRef.current = true;
+  };
+  const partsResponsibilityManagerEndDraw = () => { partsResponsibilityManagerDrawingRef.current = false; };
+  const partsResponsibilityManagerClearSignature = () => {
+    const c = partsResponsibilityManagerSigCanvasRef.current;
+    if (!c) return;
+    c.getContext("2d")!.clearRect(0, 0, c.width, c.height);
+    partsResponsibilityManagerHasDrawnRef.current = false;
+  };
+
+  const handleSavePartsResponsibilityManagerSignature = async () => {
+    if (!partsResponsibilityManagerDialog || !uid) return;
+    if (!partsResponsibilityManagerHasDrawnRef.current) {
+      setPartsResponsibilityManagerError("Please draw your signature.");
+      return;
+    }
+    setPartsResponsibilityManagerSaving(true);
+    setPartsResponsibilityManagerError(null);
+    try {
+      const myProfileId = await getMyProfileId(uid);
+      if (!myProfileId) throw new Error("Could not resolve your profile.");
+
+      await reassignSignableDocument(partsResponsibilityManagerDialog.id, { recipientId: myProfileId, recipientName: displayName || "HR" }, "hr_staff");
+
+      const existing = partsResponsibilityManagerDialog.formData as PartsResponsibilityFormData;
+      const technicianSigBytes = existing.technicianSignatureDataUrl
+        ? new Uint8Array(await (await fetch(existing.technicianSignatureDataUrl)).arrayBuffer())
+        : undefined;
+
+      const dataUrl = partsResponsibilityManagerSigCanvasRef.current!.toDataURL("image/png");
+      const managerSigBytes = new Uint8Array(await (await fetch(dataUrl)).arrayBuffer());
+      const signatureUrl = await uploadSignableDocumentSignature(partsResponsibilityManagerDialog.companyId, partsResponsibilityManagerDialog.id, "hr_staff", dataUrl);
+      const signedAt = new Date().toISOString();
+
+      const merged: PartsResponsibilityFormData = { ...existing, managerSignatureDataUrl: dataUrl, managerDateSigned: signedAt };
+
+      const pdfBytes = await fillPartsResponsibilityPdf(merged, technicianSigBytes, managerSigBytes);
+      const pdfUrl = await uploadPartsResponsibilityForm(partsResponsibilityManagerDialog.companyId, existing.employeeName || "parts-responsibility", new Blob([pdfBytes as unknown as BlobPart], { type: "application/pdf" }));
+
+      const entry = { name: displayName || "HR", url: signatureUrl, signedAt };
+      await signDocument(partsResponsibilityManagerDialog.id, "hr_staff", entry, pdfUrl, merged as unknown as Record<string, any>);
+      await confirmSignableDocument(partsResponsibilityManagerDialog.id, null);
+
+      void logActivity({ action: "parts_responsibility_manager_signed", targetType: "employee", targetLabel: existing.employeeName || "" });
+      setPartsResponsibilityManagerDialog(null);
+      await loadSentPartsResponsibilityForms();
+    } catch (err) {
+      setPartsResponsibilityManagerError(err instanceof Error ? err.message : "Failed to save signature.");
+    } finally {
+      setPartsResponsibilityManagerSaving(false);
+    }
+  };
+
+  // ── Personal Vehicle Mileage and Fuel Policy Agreement — genuine
+  // two-party flow like Acknowledgment of Wage/Parts Responsibility: the
+  // source PDF has no AcroForm fields at all (see
+  // mileageFuelFormTemplate.ts's header comment), and the employer side is
+  // just a signature, no document review section to fill in. HR sends a
+  // link, the employee fills their name/branch and signs
+  // (FillMileageFuelPage.tsx), then it lands back here for HR to add the
+  // "Employer Representative" signature. ──
+  const [sentMileageFuelForms, setSentMileageFuelForms] = useState<SignableDocument[]>([]);
+  const loadSentMileageFuelForms = async () => {
+    try {
+      setSentMileageFuelForms(await getSignableDocuments("mileage_fuel"));
+    } catch (err) {
+      console.error("Failed to load sent Mileage & Fuel forms:", err);
+    }
+  };
+  useEffect(() => {
+    if (activeTab === "mileageFuel" || activeTab === "jotformDocuments") void loadSentMileageFuelForms();
+  }, [activeTab]);
+  // Employee done, nobody has claimed the employer signature yet — feeds the sidebar tab's count badge.
+  const sentMileageFuelAwaitingEmployerCount = useMemo(
+    () => sentMileageFuelForms.filter(isAwaitingEmployerStep).length,
+    [sentMileageFuelForms]
+  );
+
+  const [mileageFuelRecipientId, setMileageFuelRecipientId] = useState("");
+  const [mileageFuelRecipientSearch, setMileageFuelRecipientSearch] = useState("");
+  const [mileageFuelRecipientDropdownOpen, setMileageFuelRecipientDropdownOpen] = useState(false);
+  const [mileageFuelSending, setMileageFuelSending] = useState(false);
+  const [mileageFuelSendError, setMileageFuelSendError] = useState<string | null>(null);
+  const [mileageFuelActionBusyId, setMileageFuelActionBusyId] = useState<string | null>(null);
+  const [mileageFuelActionError, setMileageFuelActionError] = useState<string | null>(null);
+  const [mileageFuelDocPreview, setMileageFuelDocPreview] = useState<SignableDocument | null>(null);
+  const [mileageFuelPreviewExpanded, setMileageFuelPreviewExpanded] = useState(false);
+  const [mileageFuelPreviewPdfUrl, setMileageFuelPreviewPdfUrl] = useState<string | null>(null);
+  const [mileageFuelPreviewLoading, setMileageFuelPreviewLoading] = useState(false);
+  const [mileageFuelExternalName, setMileageFuelExternalName] = useState("");
+  const [mileageFuelSentLink, setMileageFuelSentLink] = useState<{ link: string; recipientName: string } | null>(null);
+  const [mileageFuelSentLinkCopied, setMileageFuelSentLinkCopied] = useState(false);
+  const filteredMileageFuelRecipients = useMemo(
+    () => employees.filter((e) => e.status === "active" && e.name.toLowerCase().includes(mileageFuelRecipientSearch.toLowerCase())),
+    [employees, mileageFuelRecipientSearch]
+  );
+
+  const buildMileageFuelPreviewData = (employeeName: string): MileageFuelFormData => {
+    const [firstName = "", ...rest] = employeeName.trim().split(/\s+/).filter(Boolean);
+    const lastName = rest.length ? rest[rest.length - 1] : "";
+    const middleName = rest.length > 1 ? rest.slice(0, -1).join(" ") : "";
+    return {
+      employeeId: "",
+      employeeName,
+      firstName,
+      middleName,
+      lastName,
+      branch: "",
+      employeeDateSigned: "",
+      employeeSignatureDataUrl: "",
+      employerDateSigned: "",
+      employerSignatureDataUrl: "",
+    };
+  };
+
+  /** Toggles the inline collapsible preview panel — collapsing just hides it (and revokes the blob URL); expanding (re)builds a fresh blank-filled sample from the currently-selected recipient's name. */
+  const toggleMileageFuelPreview = async () => {
+    if (mileageFuelPreviewExpanded) {
+      setMileageFuelPreviewExpanded(false);
+      if (mileageFuelPreviewPdfUrl) URL.revokeObjectURL(mileageFuelPreviewPdfUrl);
+      setMileageFuelPreviewPdfUrl(null);
+      return;
+    }
+    setMileageFuelSendError(null);
+    setMileageFuelPreviewExpanded(true);
+    setMileageFuelPreviewLoading(true);
+    try {
+      const recipientName = employees.find((e) => e.id === mileageFuelRecipientId)?.name || "";
+      const pdfBytes = await fillMileageFuelPdf(buildMileageFuelPreviewData(recipientName));
+      const url = URL.createObjectURL(new Blob([pdfBytes as unknown as BlobPart], { type: "application/pdf" }));
+      setMileageFuelPreviewPdfUrl(url);
+    } catch (err) {
+      setMileageFuelSendError(err instanceof Error ? err.message : "Failed to build preview.");
+    } finally {
+      setMileageFuelPreviewLoading(false);
+    }
+  };
+
+  const handleSendMileageFuel = async () => {
+    if (!mileageFuelRecipientId || !uid) return;
+    setMileageFuelSending(true);
+    setMileageFuelSendError(null);
+    try {
+      const recipient = employees.find((e) => e.id === mileageFuelRecipientId);
+      if (!recipient) throw new Error("Select a recipient first.");
+
+      const doc = await createSignableDocument({
+        documentType: "mileage_fuel",
+        formData: { employeeId: recipient.id, employeeName: recipient.name } as unknown as Record<string, any>,
+        recipientId: mileageFuelRecipientId,
+        recipientSlot: "employee",
+        pdfUrl: "",
+      });
+
+      const myProfileId = await getMyProfileId(uid);
+      if (!myProfileId) throw new Error("Could not resolve your profile.");
+      const thread = await getOrCreateDmThread(myProfileId, mileageFuelRecipientId);
+      const fillLink = `${getAppUrl()}/fill-mileage-fuel/${doc.id}`;
+      await sendMessage({
+        dmThreadId: thread.id,
+        senderId: myProfileId,
+        senderName: displayName || "HR",
+        body: `📋 Please complete the Personal Vehicle Mileage and Fuel Policy Agreement: ${fillLink}`,
+      });
+
+      void logActivity({ action: "mileage_fuel_sent", targetType: "employee", targetId: recipient.id, targetLabel: recipient.name });
+
+      setMileageFuelRecipientId("");
+      setMileageFuelRecipientSearch("");
+      await loadSentMileageFuelForms();
+    } catch (err) {
+      setMileageFuelSendError(err instanceof Error ? err.message : "Failed to send request.");
+    } finally {
+      setMileageFuelSending(false);
+    }
+  };
+
+  /** No AHS profile to tie this to, so no DM — the link itself (shown in the same panel, right below "Generate Link") is the only way the recipient finds out, same as the Warning Form's "External Link" mode. */
+  const handleGenerateExternalMileageFuel = async () => {
+    setMileageFuelSending(true);
+    setMileageFuelSendError(null);
+    try {
+      const name = mileageFuelExternalName.trim() || "External Recipient";
+      const doc = await createSignableDocument({
+        documentType: "mileage_fuel",
+        formData: { employeeId: "", employeeName: name } as unknown as Record<string, any>,
+        recipientName: name,
+        recipientSlot: "employee",
+        pdfUrl: "",
+      });
+
+      void logActivity({ action: "mileage_fuel_sent", targetType: "employee", targetLabel: name, details: { external: true } });
+
+      setMileageFuelSentLink({ link: `${getAppUrl()}/fill-mileage-fuel-external/${doc.id}`, recipientName: name });
+      setMileageFuelExternalName("");
+      await loadSentMileageFuelForms();
+    } catch (err) {
+      setMileageFuelSendError(err instanceof Error ? err.message : "Failed to generate link.");
+    } finally {
+      setMileageFuelSending(false);
+    }
+  };
+
+  const handleCopyMileageFuelSentLink = async () => {
+    if (!mileageFuelSentLink) return;
+    try {
+      await navigator.clipboard.writeText(mileageFuelSentLink.link);
+      setMileageFuelSentLinkCopied(true);
+      setTimeout(() => setMileageFuelSentLinkCopied(false), 1500);
+    } catch (err) {
+      console.error("Failed to copy link:", err);
+    }
+  };
+
+  const handleCopyMileageFuelLink = async (doc: SignableDocument) => {
+    try {
+      const path = doc.recipientId ? "fill-mileage-fuel" : "fill-mileage-fuel-external";
+      await navigator.clipboard.writeText(`${getAppUrl()}/${path}/${doc.id}`);
+    } catch (err) {
+      console.error("Failed to copy link:", err);
+    }
+  };
+
+  const handleDownloadMileageFuelPdf = async (doc: SignableDocument) => {
+    if (!doc.pdfUrl) return;
+    const name = (doc.formData as Partial<MileageFuelFormData>).employeeName || doc.recipientName || "mileage-fuel";
+    try {
+      const res = await fetch(doc.pdfUrl);
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = `Personal Vehicle Mileage and Fuel Policy Agreement - ${name}.pdf`;
+      a.click();
+      URL.revokeObjectURL(blobUrl);
+    } catch {
+      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
+    }
+  };
+
+  const handleDeleteMileageFuel = async (doc: SignableDocument) => {
+    if (!window.confirm("Permanently delete this Mileage & Fuel Policy Agreement request?")) return;
+    setMileageFuelActionBusyId(doc.id);
+    setMileageFuelActionError(null);
+    try {
+      await deleteSignableDocument(doc.id);
+      await loadSentMileageFuelForms();
+    } catch (err) {
+      setMileageFuelActionError(err instanceof Error ? err.message : "Failed to delete.");
+    } finally {
+      setMileageFuelActionBusyId(null);
+    }
+  };
+
+  // ── Complete Employer Signature — a plain signature pad (no fields to
+  // review), reassigns the document to the current HR user first so the
+  // RLS update policy allows it (same "claim" pattern Wage Ack's/Parts
+  // Responsibility's own dialogs use), then regenerates the whole PDF
+  // fresh with both signatures. ──
+  const [mileageFuelEmployerDialog, setMileageFuelEmployerDialog] = useState<SignableDocument | null>(null);
+  const [mileageFuelEmployerSaving, setMileageFuelEmployerSaving] = useState(false);
+  const [mileageFuelEmployerError, setMileageFuelEmployerError] = useState<string | null>(null);
+  const mileageFuelEmployerSigCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const mileageFuelEmployerDrawingRef = useRef(false);
+  const mileageFuelEmployerHasDrawnRef = useRef(false);
+
+  const handleOpenMileageFuelEmployerDialog = (doc: SignableDocument) => {
+    setMileageFuelEmployerDialog(doc);
+    setMileageFuelEmployerError(null);
+    mileageFuelEmployerHasDrawnRef.current = false;
+  };
+
+  const mileageFuelEmployerPos = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    const c = mileageFuelEmployerSigCanvasRef.current!;
+    const r = c.getBoundingClientRect();
+    return { x: ((e.clientX - r.left) / r.width) * c.width, y: ((e.clientY - r.top) / r.height) * c.height };
+  };
+  const mileageFuelEmployerStartDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    mileageFuelEmployerDrawingRef.current = true;
+    const ctx = mileageFuelEmployerSigCanvasRef.current!.getContext("2d")!;
+    const { x, y } = mileageFuelEmployerPos(e);
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+  const mileageFuelEmployerMoveDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!mileageFuelEmployerDrawingRef.current) return;
+    const ctx = mileageFuelEmployerSigCanvasRef.current!.getContext("2d")!;
+    const { x, y } = mileageFuelEmployerPos(e);
+    ctx.lineTo(x, y);
+    ctx.strokeStyle = "#0f172a";
+    ctx.lineWidth = 2;
+    ctx.lineCap = "round";
+    ctx.stroke();
+    mileageFuelEmployerHasDrawnRef.current = true;
+  };
+  const mileageFuelEmployerEndDraw = () => { mileageFuelEmployerDrawingRef.current = false; };
+  const mileageFuelEmployerClearSignature = () => {
+    const c = mileageFuelEmployerSigCanvasRef.current;
+    if (!c) return;
+    c.getContext("2d")!.clearRect(0, 0, c.width, c.height);
+    mileageFuelEmployerHasDrawnRef.current = false;
+  };
+
+  const handleSaveMileageFuelEmployerSignature = async () => {
+    if (!mileageFuelEmployerDialog || !uid) return;
+    if (!mileageFuelEmployerHasDrawnRef.current) {
+      setMileageFuelEmployerError("Please draw your signature.");
+      return;
+    }
+    setMileageFuelEmployerSaving(true);
+    setMileageFuelEmployerError(null);
+    try {
+      const myProfileId = await getMyProfileId(uid);
+      if (!myProfileId) throw new Error("Could not resolve your profile.");
+
+      await reassignSignableDocument(mileageFuelEmployerDialog.id, { recipientId: myProfileId, recipientName: displayName || "HR" }, "hr_staff");
+
+      const existing = mileageFuelEmployerDialog.formData as MileageFuelFormData;
+      const employeeSigBytes = existing.employeeSignatureDataUrl
+        ? new Uint8Array(await (await fetch(existing.employeeSignatureDataUrl)).arrayBuffer())
+        : undefined;
+
+      const dataUrl = mileageFuelEmployerSigCanvasRef.current!.toDataURL("image/png");
+      const employerSigBytes = new Uint8Array(await (await fetch(dataUrl)).arrayBuffer());
+      const signatureUrl = await uploadSignableDocumentSignature(mileageFuelEmployerDialog.companyId, mileageFuelEmployerDialog.id, "hr_staff", dataUrl);
+      const signedAt = new Date().toISOString();
+
+      const merged: MileageFuelFormData = { ...existing, employerSignatureDataUrl: dataUrl, employerDateSigned: signedAt };
+
+      const pdfBytes = await fillMileageFuelPdf(merged, employeeSigBytes, employerSigBytes);
+      const pdfUrl = await uploadMileageFuelForm(mileageFuelEmployerDialog.companyId, existing.employeeName || "mileage-fuel", new Blob([pdfBytes as unknown as BlobPart], { type: "application/pdf" }));
+
+      const entry = { name: displayName || "HR", url: signatureUrl, signedAt };
+      await signDocument(mileageFuelEmployerDialog.id, "hr_staff", entry, pdfUrl, merged as unknown as Record<string, any>);
+      await confirmSignableDocument(mileageFuelEmployerDialog.id, null);
+
+      void logActivity({ action: "mileage_fuel_employer_signed", targetType: "employee", targetLabel: existing.employeeName || "" });
+      setMileageFuelEmployerDialog(null);
+      await loadSentMileageFuelForms();
+    } catch (err) {
+      setMileageFuelEmployerError(err instanceof Error ? err.message : "Failed to save signature.");
+    } finally {
+      setMileageFuelEmployerSaving(false);
+    }
+  };
+
+  // ── Employee Mobile App Location Sharing Consent Agreement — genuine
+  // two-party flow like Acknowledgment of Wage/Mileage & Fuel: the source
+  // PDF has no AcroForm fields at all (see
+  // locationConsentFormTemplate.ts's header comment), and the employer
+  // side is just a signature, no document review section to fill in. HR
+  // sends a link, the employee fills their name/position/effective date
+  // and signs (FillLocationConsentPage.tsx), then it lands back here for
+  // HR to add the "Employer Representative" signature. Unlike every other
+  // form here, there's no Branch field and Employee Name is a single
+  // blank, not split First/Middle/Last. ──
+  const [sentLocationConsentForms, setSentLocationConsentForms] = useState<SignableDocument[]>([]);
+  const loadSentLocationConsentForms = async () => {
+    try {
+      setSentLocationConsentForms(await getSignableDocuments("location_consent"));
+    } catch (err) {
+      console.error("Failed to load sent Location Sharing Consent forms:", err);
+    }
+  };
+  useEffect(() => {
+    if (activeTab === "locationConsent" || activeTab === "jotformDocuments") void loadSentLocationConsentForms();
+  }, [activeTab]);
+  // Employee done, nobody has claimed the employer signature yet — feeds the sidebar tab's count badge.
+  const sentLocationConsentAwaitingEmployerCount = useMemo(
+    () => sentLocationConsentForms.filter(isAwaitingEmployerStep).length,
+    [sentLocationConsentForms]
+  );
+
+  const [locationConsentRecipientId, setLocationConsentRecipientId] = useState("");
+  const [locationConsentRecipientSearch, setLocationConsentRecipientSearch] = useState("");
+  const [locationConsentRecipientDropdownOpen, setLocationConsentRecipientDropdownOpen] = useState(false);
+  const [locationConsentSending, setLocationConsentSending] = useState(false);
+  const [locationConsentSendError, setLocationConsentSendError] = useState<string | null>(null);
+  const [locationConsentActionBusyId, setLocationConsentActionBusyId] = useState<string | null>(null);
+  const [locationConsentActionError, setLocationConsentActionError] = useState<string | null>(null);
+  const [locationConsentDocPreview, setLocationConsentDocPreview] = useState<SignableDocument | null>(null);
+  const [locationConsentPreviewExpanded, setLocationConsentPreviewExpanded] = useState(false);
+  const [locationConsentPreviewPdfUrl, setLocationConsentPreviewPdfUrl] = useState<string | null>(null);
+  const [locationConsentPreviewLoading, setLocationConsentPreviewLoading] = useState(false);
+  const [locationConsentExternalName, setLocationConsentExternalName] = useState("");
+  const [locationConsentSentLink, setLocationConsentSentLink] = useState<{ link: string; recipientName: string } | null>(null);
+  const [locationConsentSentLinkCopied, setLocationConsentSentLinkCopied] = useState(false);
+  const filteredLocationConsentRecipients = useMemo(
+    () => employees.filter((e) => e.status === "active" && e.name.toLowerCase().includes(locationConsentRecipientSearch.toLowerCase())),
+    [employees, locationConsentRecipientSearch]
+  );
+
+  const buildLocationConsentPreviewData = (employeeName: string): LocationConsentFormData => ({
+    employeeId: "",
+    employeeName,
+    positionTitle: "",
+    effectiveDate: "",
+    employeeDateSigned: "",
+    employeeSignatureDataUrl: "",
+    employerDateSigned: "",
+    employerSignatureDataUrl: "",
+  });
+
+  /** Toggles the inline collapsible preview panel — collapsing just hides it (and revokes the blob URL); expanding (re)builds a fresh blank-filled sample from the currently-selected recipient's name. */
+  const toggleLocationConsentPreview = async () => {
+    if (locationConsentPreviewExpanded) {
+      setLocationConsentPreviewExpanded(false);
+      if (locationConsentPreviewPdfUrl) URL.revokeObjectURL(locationConsentPreviewPdfUrl);
+      setLocationConsentPreviewPdfUrl(null);
+      return;
+    }
+    setLocationConsentSendError(null);
+    setLocationConsentPreviewExpanded(true);
+    setLocationConsentPreviewLoading(true);
+    try {
+      const recipientName = employees.find((e) => e.id === locationConsentRecipientId)?.name || "";
+      const pdfBytes = await fillLocationConsentPdf(buildLocationConsentPreviewData(recipientName));
+      const url = URL.createObjectURL(new Blob([pdfBytes as unknown as BlobPart], { type: "application/pdf" }));
+      setLocationConsentPreviewPdfUrl(url);
+    } catch (err) {
+      setLocationConsentSendError(err instanceof Error ? err.message : "Failed to build preview.");
+    } finally {
+      setLocationConsentPreviewLoading(false);
+    }
+  };
+
+  const handleSendLocationConsent = async () => {
+    if (!locationConsentRecipientId || !uid) return;
+    setLocationConsentSending(true);
+    setLocationConsentSendError(null);
+    try {
+      const recipient = employees.find((e) => e.id === locationConsentRecipientId);
+      if (!recipient) throw new Error("Select a recipient first.");
+
+      const doc = await createSignableDocument({
+        documentType: "location_consent",
+        formData: { employeeId: recipient.id, employeeName: recipient.name } as unknown as Record<string, any>,
+        recipientId: locationConsentRecipientId,
+        recipientSlot: "employee",
+        pdfUrl: "",
+      });
+
+      const myProfileId = await getMyProfileId(uid);
+      if (!myProfileId) throw new Error("Could not resolve your profile.");
+      const thread = await getOrCreateDmThread(myProfileId, locationConsentRecipientId);
+      const fillLink = `${getAppUrl()}/fill-location-consent/${doc.id}`;
+      await sendMessage({
+        dmThreadId: thread.id,
+        senderId: myProfileId,
+        senderName: displayName || "HR",
+        body: `📋 Please complete the Employee Mobile App Location Sharing Consent Agreement: ${fillLink}`,
+      });
+
+      void logActivity({ action: "location_consent_sent", targetType: "employee", targetId: recipient.id, targetLabel: recipient.name });
+
+      setLocationConsentRecipientId("");
+      setLocationConsentRecipientSearch("");
+      await loadSentLocationConsentForms();
+    } catch (err) {
+      setLocationConsentSendError(err instanceof Error ? err.message : "Failed to send request.");
+    } finally {
+      setLocationConsentSending(false);
+    }
+  };
+
+  /** No AHS profile to tie this to, so no DM — the link itself (shown in the same panel, right below "Generate Link") is the only way the recipient finds out, same as the Warning Form's "External Link" mode. */
+  const handleGenerateExternalLocationConsent = async () => {
+    setLocationConsentSending(true);
+    setLocationConsentSendError(null);
+    try {
+      const name = locationConsentExternalName.trim() || "External Recipient";
+      const doc = await createSignableDocument({
+        documentType: "location_consent",
+        formData: { employeeId: "", employeeName: name } as unknown as Record<string, any>,
+        recipientName: name,
+        recipientSlot: "employee",
+        pdfUrl: "",
+      });
+
+      void logActivity({ action: "location_consent_sent", targetType: "employee", targetLabel: name, details: { external: true } });
+
+      setLocationConsentSentLink({ link: `${getAppUrl()}/fill-location-consent-external/${doc.id}`, recipientName: name });
+      setLocationConsentExternalName("");
+      await loadSentLocationConsentForms();
+    } catch (err) {
+      setLocationConsentSendError(err instanceof Error ? err.message : "Failed to generate link.");
+    } finally {
+      setLocationConsentSending(false);
+    }
+  };
+
+  const handleCopyLocationConsentSentLink = async () => {
+    if (!locationConsentSentLink) return;
+    try {
+      await navigator.clipboard.writeText(locationConsentSentLink.link);
+      setLocationConsentSentLinkCopied(true);
+      setTimeout(() => setLocationConsentSentLinkCopied(false), 1500);
+    } catch (err) {
+      console.error("Failed to copy link:", err);
+    }
+  };
+
+  const handleCopyLocationConsentLink = async (doc: SignableDocument) => {
+    try {
+      const path = doc.recipientId ? "fill-location-consent" : "fill-location-consent-external";
+      await navigator.clipboard.writeText(`${getAppUrl()}/${path}/${doc.id}`);
+    } catch (err) {
+      console.error("Failed to copy link:", err);
+    }
+  };
+
+  const handleDownloadLocationConsentPdf = async (doc: SignableDocument) => {
+    if (!doc.pdfUrl) return;
+    const name = (doc.formData as Partial<LocationConsentFormData>).employeeName || doc.recipientName || "location-consent";
+    try {
+      const res = await fetch(doc.pdfUrl);
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = `Location Sharing Consent Agreement - ${name}.pdf`;
+      a.click();
+      URL.revokeObjectURL(blobUrl);
+    } catch {
+      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
+    }
+  };
+
+  const handleDeleteLocationConsent = async (doc: SignableDocument) => {
+    if (!window.confirm("Permanently delete this Location Sharing Consent Agreement request?")) return;
+    setLocationConsentActionBusyId(doc.id);
+    setLocationConsentActionError(null);
+    try {
+      await deleteSignableDocument(doc.id);
+      await loadSentLocationConsentForms();
+    } catch (err) {
+      setLocationConsentActionError(err instanceof Error ? err.message : "Failed to delete.");
+    } finally {
+      setLocationConsentActionBusyId(null);
+    }
+  };
+
+  // ── Complete Employer Signature — a plain signature pad (no fields to
+  // review), reassigns the document to the current HR user first so the
+  // RLS update policy allows it (same "claim" pattern Wage Ack's/Mileage &
+  // Fuel's own dialogs use), then regenerates the whole PDF fresh with
+  // both signatures. ──
+  const [locationConsentEmployerDialog, setLocationConsentEmployerDialog] = useState<SignableDocument | null>(null);
+  const [locationConsentEmployerSaving, setLocationConsentEmployerSaving] = useState(false);
+  const [locationConsentEmployerError, setLocationConsentEmployerError] = useState<string | null>(null);
+  const locationConsentEmployerSigCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const locationConsentEmployerDrawingRef = useRef(false);
+  const locationConsentEmployerHasDrawnRef = useRef(false);
+
+  const handleOpenLocationConsentEmployerDialog = (doc: SignableDocument) => {
+    setLocationConsentEmployerDialog(doc);
+    setLocationConsentEmployerError(null);
+    locationConsentEmployerHasDrawnRef.current = false;
+  };
+
+  const locationConsentEmployerPos = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    const c = locationConsentEmployerSigCanvasRef.current!;
+    const r = c.getBoundingClientRect();
+    return { x: ((e.clientX - r.left) / r.width) * c.width, y: ((e.clientY - r.top) / r.height) * c.height };
+  };
+  const locationConsentEmployerStartDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    locationConsentEmployerDrawingRef.current = true;
+    const ctx = locationConsentEmployerSigCanvasRef.current!.getContext("2d")!;
+    const { x, y } = locationConsentEmployerPos(e);
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+  const locationConsentEmployerMoveDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!locationConsentEmployerDrawingRef.current) return;
+    const ctx = locationConsentEmployerSigCanvasRef.current!.getContext("2d")!;
+    const { x, y } = locationConsentEmployerPos(e);
+    ctx.lineTo(x, y);
+    ctx.strokeStyle = "#0f172a";
+    ctx.lineWidth = 2;
+    ctx.lineCap = "round";
+    ctx.stroke();
+    locationConsentEmployerHasDrawnRef.current = true;
+  };
+  const locationConsentEmployerEndDraw = () => { locationConsentEmployerDrawingRef.current = false; };
+  const locationConsentEmployerClearSignature = () => {
+    const c = locationConsentEmployerSigCanvasRef.current;
+    if (!c) return;
+    c.getContext("2d")!.clearRect(0, 0, c.width, c.height);
+    locationConsentEmployerHasDrawnRef.current = false;
+  };
+
+  const handleSaveLocationConsentEmployerSignature = async () => {
+    if (!locationConsentEmployerDialog || !uid) return;
+    if (!locationConsentEmployerHasDrawnRef.current) {
+      setLocationConsentEmployerError("Please draw your signature.");
+      return;
+    }
+    setLocationConsentEmployerSaving(true);
+    setLocationConsentEmployerError(null);
+    try {
+      const myProfileId = await getMyProfileId(uid);
+      if (!myProfileId) throw new Error("Could not resolve your profile.");
+
+      await reassignSignableDocument(locationConsentEmployerDialog.id, { recipientId: myProfileId, recipientName: displayName || "HR" }, "hr_staff");
+
+      const existing = locationConsentEmployerDialog.formData as LocationConsentFormData;
+      const employeeSigBytes = existing.employeeSignatureDataUrl
+        ? new Uint8Array(await (await fetch(existing.employeeSignatureDataUrl)).arrayBuffer())
+        : undefined;
+
+      const dataUrl = locationConsentEmployerSigCanvasRef.current!.toDataURL("image/png");
+      const employerSigBytes = new Uint8Array(await (await fetch(dataUrl)).arrayBuffer());
+      const signatureUrl = await uploadSignableDocumentSignature(locationConsentEmployerDialog.companyId, locationConsentEmployerDialog.id, "hr_staff", dataUrl);
+      const signedAt = new Date().toISOString();
+
+      const merged: LocationConsentFormData = { ...existing, employerSignatureDataUrl: dataUrl, employerDateSigned: signedAt };
+
+      const pdfBytes = await fillLocationConsentPdf(merged, employeeSigBytes, employerSigBytes);
+      const pdfUrl = await uploadLocationConsentForm(locationConsentEmployerDialog.companyId, existing.employeeName || "location-consent", new Blob([pdfBytes as unknown as BlobPart], { type: "application/pdf" }));
+
+      const entry = { name: displayName || "HR", url: signatureUrl, signedAt };
+      await signDocument(locationConsentEmployerDialog.id, "hr_staff", entry, pdfUrl, merged as unknown as Record<string, any>);
+      await confirmSignableDocument(locationConsentEmployerDialog.id, null);
+
+      void logActivity({ action: "location_consent_employer_signed", targetType: "employee", targetLabel: existing.employeeName || "" });
+      setLocationConsentEmployerDialog(null);
+      await loadSentLocationConsentForms();
+    } catch (err) {
+      setLocationConsentEmployerError(err instanceof Error ? err.message : "Failed to save signature.");
+    } finally {
+      setLocationConsentEmployerSaving(false);
+    }
+  };
+
+  // ── Damage, Part Loss, and Tool Penalty Commission Deduction Agreement —
+  // genuine two-party flow, identical shape to Location Sharing Consent
+  // (same template family, see damageFormTemplate.ts's header comment):
+  // the source PDF has no AcroForm fields at all, and the employer side is
+  // just a signature, no document review section to fill in. HR sends a
+  // link, the employee fills their name/position/effective date and signs
+  // (FillDamagePage.tsx), then it lands back here for HR to add the
+  // "Employer Representative" signature. Like Location Consent, there's no
+  // Branch field and Employee Name is a single blank, not split
+  // First/Middle/Last. ──
+  const [sentDamageForms, setSentDamageForms] = useState<SignableDocument[]>([]);
+  const loadSentDamageForms = async () => {
+    try {
+      setSentDamageForms(await getSignableDocuments("damage"));
+    } catch (err) {
+      console.error("Failed to load sent Damage Agreement forms:", err);
+    }
+  };
+  useEffect(() => {
+    if (activeTab === "damage" || activeTab === "jotformDocuments") void loadSentDamageForms();
+  }, [activeTab]);
+  // Employee done, nobody has claimed the employer signature yet — feeds the sidebar tab's count badge.
+  const sentDamageAwaitingEmployerCount = useMemo(
+    () => sentDamageForms.filter(isAwaitingEmployerStep).length,
+    [sentDamageForms]
+  );
+
+  const [damageRecipientId, setDamageRecipientId] = useState("");
+  const [damageRecipientSearch, setDamageRecipientSearch] = useState("");
+  const [damageRecipientDropdownOpen, setDamageRecipientDropdownOpen] = useState(false);
+  const [damageSending, setDamageSending] = useState(false);
+  const [damageSendError, setDamageSendError] = useState<string | null>(null);
+  const [damageActionBusyId, setDamageActionBusyId] = useState<string | null>(null);
+  const [damageActionError, setDamageActionError] = useState<string | null>(null);
+  const [damageDocPreview, setDamageDocPreview] = useState<SignableDocument | null>(null);
+  const [damagePreviewExpanded, setDamagePreviewExpanded] = useState(false);
+  const [damagePreviewPdfUrl, setDamagePreviewPdfUrl] = useState<string | null>(null);
+  const [damagePreviewLoading, setDamagePreviewLoading] = useState(false);
+  const [damageExternalName, setDamageExternalName] = useState("");
+  const [damageSentLink, setDamageSentLink] = useState<{ link: string; recipientName: string } | null>(null);
+  const [damageSentLinkCopied, setDamageSentLinkCopied] = useState(false);
+  const filteredDamageRecipients = useMemo(
+    () => employees.filter((e) => e.status === "active" && e.name.toLowerCase().includes(damageRecipientSearch.toLowerCase())),
+    [employees, damageRecipientSearch]
+  );
+
+  const buildDamagePreviewData = (employeeName: string): DamageFormData => ({
+    employeeId: "",
+    employeeName,
+    positionTitle: "",
+    effectiveDate: "",
+    employeeDateSigned: "",
+    employeeSignatureDataUrl: "",
+    employerDateSigned: "",
+    employerSignatureDataUrl: "",
+  });
+
+  /** Toggles the inline collapsible preview panel — collapsing just hides it (and revokes the blob URL); expanding (re)builds a fresh blank-filled sample from the currently-selected recipient's name. */
+  const toggleDamagePreview = async () => {
+    if (damagePreviewExpanded) {
+      setDamagePreviewExpanded(false);
+      if (damagePreviewPdfUrl) URL.revokeObjectURL(damagePreviewPdfUrl);
+      setDamagePreviewPdfUrl(null);
+      return;
+    }
+    setDamageSendError(null);
+    setDamagePreviewExpanded(true);
+    setDamagePreviewLoading(true);
+    try {
+      const recipientName = employees.find((e) => e.id === damageRecipientId)?.name || "";
+      const pdfBytes = await fillDamagePdf(buildDamagePreviewData(recipientName));
+      const url = URL.createObjectURL(new Blob([pdfBytes as unknown as BlobPart], { type: "application/pdf" }));
+      setDamagePreviewPdfUrl(url);
+    } catch (err) {
+      setDamageSendError(err instanceof Error ? err.message : "Failed to build preview.");
+    } finally {
+      setDamagePreviewLoading(false);
+    }
+  };
+
+  const handleSendDamage = async () => {
+    if (!damageRecipientId || !uid) return;
+    setDamageSending(true);
+    setDamageSendError(null);
+    try {
+      const recipient = employees.find((e) => e.id === damageRecipientId);
+      if (!recipient) throw new Error("Select a recipient first.");
+
+      const doc = await createSignableDocument({
+        documentType: "damage",
+        formData: { employeeId: recipient.id, employeeName: recipient.name } as unknown as Record<string, any>,
+        recipientId: damageRecipientId,
+        recipientSlot: "employee",
+        pdfUrl: "",
+      });
+
+      const myProfileId = await getMyProfileId(uid);
+      if (!myProfileId) throw new Error("Could not resolve your profile.");
+      const thread = await getOrCreateDmThread(myProfileId, damageRecipientId);
+      const fillLink = `${getAppUrl()}/fill-damage/${doc.id}`;
+      await sendMessage({
+        dmThreadId: thread.id,
+        senderId: myProfileId,
+        senderName: displayName || "HR",
+        body: `📋 Please complete the Damage, Part Loss, and Tool Penalty Commission Deduction Agreement: ${fillLink}`,
+      });
+
+      void logActivity({ action: "damage_sent", targetType: "employee", targetId: recipient.id, targetLabel: recipient.name });
+
+      setDamageRecipientId("");
+      setDamageRecipientSearch("");
+      await loadSentDamageForms();
+    } catch (err) {
+      setDamageSendError(err instanceof Error ? err.message : "Failed to send request.");
+    } finally {
+      setDamageSending(false);
+    }
+  };
+
+  /** No AHS profile to tie this to, so no DM — the link itself (shown in the same panel, right below "Generate Link") is the only way the recipient finds out, same as the Warning Form's "External Link" mode. */
+  const handleGenerateExternalDamage = async () => {
+    setDamageSending(true);
+    setDamageSendError(null);
+    try {
+      const name = damageExternalName.trim() || "External Recipient";
+      const doc = await createSignableDocument({
+        documentType: "damage",
+        formData: { employeeId: "", employeeName: name } as unknown as Record<string, any>,
+        recipientName: name,
+        recipientSlot: "employee",
+        pdfUrl: "",
+      });
+
+      void logActivity({ action: "damage_sent", targetType: "employee", targetLabel: name, details: { external: true } });
+
+      setDamageSentLink({ link: `${getAppUrl()}/fill-damage-external/${doc.id}`, recipientName: name });
+      setDamageExternalName("");
+      await loadSentDamageForms();
+    } catch (err) {
+      setDamageSendError(err instanceof Error ? err.message : "Failed to generate link.");
+    } finally {
+      setDamageSending(false);
+    }
+  };
+
+  const handleCopyDamageSentLink = async () => {
+    if (!damageSentLink) return;
+    try {
+      await navigator.clipboard.writeText(damageSentLink.link);
+      setDamageSentLinkCopied(true);
+      setTimeout(() => setDamageSentLinkCopied(false), 1500);
+    } catch (err) {
+      console.error("Failed to copy link:", err);
+    }
+  };
+
+  const handleCopyDamageLink = async (doc: SignableDocument) => {
+    try {
+      const path = doc.recipientId ? "fill-damage" : "fill-damage-external";
+      await navigator.clipboard.writeText(`${getAppUrl()}/${path}/${doc.id}`);
+    } catch (err) {
+      console.error("Failed to copy link:", err);
+    }
+  };
+
+  const handleDownloadDamagePdf = async (doc: SignableDocument) => {
+    if (!doc.pdfUrl) return;
+    const name = (doc.formData as Partial<DamageFormData>).employeeName || doc.recipientName || "damage";
+    try {
+      const res = await fetch(doc.pdfUrl);
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = `Damage Agreement - ${name}.pdf`;
+      a.click();
+      URL.revokeObjectURL(blobUrl);
+    } catch {
+      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
+    }
+  };
+
+  const handleDeleteDamage = async (doc: SignableDocument) => {
+    if (!window.confirm("Permanently delete this Damage Agreement request?")) return;
+    setDamageActionBusyId(doc.id);
+    setDamageActionError(null);
+    try {
+      await deleteSignableDocument(doc.id);
+      await loadSentDamageForms();
+    } catch (err) {
+      setDamageActionError(err instanceof Error ? err.message : "Failed to delete.");
+    } finally {
+      setDamageActionBusyId(null);
+    }
+  };
+
+  // ── Complete Employer Signature — a plain signature pad (no fields to
+  // review), reassigns the document to the current HR user first so the
+  // RLS update policy allows it (same "claim" pattern Location Consent's
+  // own dialog uses), then regenerates the whole PDF fresh with both
+  // signatures. ──
+  const [damageEmployerDialog, setDamageEmployerDialog] = useState<SignableDocument | null>(null);
+  const [damageEmployerSaving, setDamageEmployerSaving] = useState(false);
+  const [damageEmployerError, setDamageEmployerError] = useState<string | null>(null);
+  const damageEmployerSigCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const damageEmployerDrawingRef = useRef(false);
+  const damageEmployerHasDrawnRef = useRef(false);
+
+  const handleOpenDamageEmployerDialog = (doc: SignableDocument) => {
+    setDamageEmployerDialog(doc);
+    setDamageEmployerError(null);
+    damageEmployerHasDrawnRef.current = false;
+  };
+
+  const damageEmployerPos = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    const c = damageEmployerSigCanvasRef.current!;
+    const r = c.getBoundingClientRect();
+    return { x: ((e.clientX - r.left) / r.width) * c.width, y: ((e.clientY - r.top) / r.height) * c.height };
+  };
+  const damageEmployerStartDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    damageEmployerDrawingRef.current = true;
+    const ctx = damageEmployerSigCanvasRef.current!.getContext("2d")!;
+    const { x, y } = damageEmployerPos(e);
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+  const damageEmployerMoveDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!damageEmployerDrawingRef.current) return;
+    const ctx = damageEmployerSigCanvasRef.current!.getContext("2d")!;
+    const { x, y } = damageEmployerPos(e);
+    ctx.lineTo(x, y);
+    ctx.strokeStyle = "#0f172a";
+    ctx.lineWidth = 2;
+    ctx.lineCap = "round";
+    ctx.stroke();
+    damageEmployerHasDrawnRef.current = true;
+  };
+  const damageEmployerEndDraw = () => { damageEmployerDrawingRef.current = false; };
+  const damageEmployerClearSignature = () => {
+    const c = damageEmployerSigCanvasRef.current;
+    if (!c) return;
+    c.getContext("2d")!.clearRect(0, 0, c.width, c.height);
+    damageEmployerHasDrawnRef.current = false;
+  };
+
+  const handleSaveDamageEmployerSignature = async () => {
+    if (!damageEmployerDialog || !uid) return;
+    if (!damageEmployerHasDrawnRef.current) {
+      setDamageEmployerError("Please draw your signature.");
+      return;
+    }
+    setDamageEmployerSaving(true);
+    setDamageEmployerError(null);
+    try {
+      const myProfileId = await getMyProfileId(uid);
+      if (!myProfileId) throw new Error("Could not resolve your profile.");
+
+      await reassignSignableDocument(damageEmployerDialog.id, { recipientId: myProfileId, recipientName: displayName || "HR" }, "hr_staff");
+
+      const existing = damageEmployerDialog.formData as DamageFormData;
+      const employeeSigBytes = existing.employeeSignatureDataUrl
+        ? new Uint8Array(await (await fetch(existing.employeeSignatureDataUrl)).arrayBuffer())
+        : undefined;
+
+      const dataUrl = damageEmployerSigCanvasRef.current!.toDataURL("image/png");
+      const employerSigBytes = new Uint8Array(await (await fetch(dataUrl)).arrayBuffer());
+      const signatureUrl = await uploadSignableDocumentSignature(damageEmployerDialog.companyId, damageEmployerDialog.id, "hr_staff", dataUrl);
+      const signedAt = new Date().toISOString();
+
+      const merged: DamageFormData = { ...existing, employerSignatureDataUrl: dataUrl, employerDateSigned: signedAt };
+
+      const pdfBytes = await fillDamagePdf(merged, employeeSigBytes, employerSigBytes);
+      const pdfUrl = await uploadDamageForm(damageEmployerDialog.companyId, existing.employeeName || "damage", new Blob([pdfBytes as unknown as BlobPart], { type: "application/pdf" }));
+
+      const entry = { name: displayName || "HR", url: signatureUrl, signedAt };
+      await signDocument(damageEmployerDialog.id, "hr_staff", entry, pdfUrl, merged as unknown as Record<string, any>);
+      await confirmSignableDocument(damageEmployerDialog.id, null);
+
+      void logActivity({ action: "damage_employer_signed", targetType: "employee", targetLabel: existing.employeeName || "" });
+      setDamageEmployerDialog(null);
+      await loadSentDamageForms();
+    } catch (err) {
+      setDamageEmployerError(err instanceof Error ? err.message : "Failed to save signature.");
+    } finally {
+      setDamageEmployerSaving(false);
+    }
+  };
+
+  // ── Contractor Data — unlike every other automated form here, there's no
+  // real source PDF (see contractorDataFormTemplate.ts's header comment):
+  // the final document is a from-scratch HTML template captured to PDF,
+  // same technique as the Warning Form/Promotion Form. Single-party, same
+  // shape as Car IQ/Parts Responsibility — one recipient fills in
+  // everything (including two ID-photo uploads, this form's first use of
+  // file uploads in this family) and signs, no employer/HR co-signature
+  // step. ──
+  const [sentContractorDataForms, setSentContractorDataForms] = useState<SignableDocument[]>([]);
+  const loadSentContractorDataForms = async () => {
+    try {
+      setSentContractorDataForms(await getSignableDocuments("contractor_data"));
+    } catch (err) {
+      console.error("Failed to load sent Contractor Data forms:", err);
+    }
+  };
+  useEffect(() => {
+    if (activeTab === "contractorData" || activeTab === "jotformDocuments") void loadSentContractorDataForms();
+  }, [activeTab]);
+
+  const [contractorDataRecipientId, setContractorDataRecipientId] = useState("");
+  const [contractorDataRecipientSearch, setContractorDataRecipientSearch] = useState("");
+  const [contractorDataRecipientDropdownOpen, setContractorDataRecipientDropdownOpen] = useState(false);
+  const [contractorDataSending, setContractorDataSending] = useState(false);
+  const [contractorDataSendError, setContractorDataSendError] = useState<string | null>(null);
+  const [contractorDataActionBusyId, setContractorDataActionBusyId] = useState<string | null>(null);
+  const [contractorDataActionError, setContractorDataActionError] = useState<string | null>(null);
+  const [contractorDataDocPreview, setContractorDataDocPreview] = useState<SignableDocument | null>(null);
+  const [contractorDataPreviewExpanded, setContractorDataPreviewExpanded] = useState(false);
+  const [contractorDataPreviewPdfUrl, setContractorDataPreviewPdfUrl] = useState<string | null>(null);
+  const [contractorDataPreviewLoading, setContractorDataPreviewLoading] = useState(false);
+  const [contractorDataLogoDataUrl, setContractorDataLogoDataUrl] = useState("");
+  const [contractorDataExternalName, setContractorDataExternalName] = useState("");
+  const [contractorDataSentLink, setContractorDataSentLink] = useState<{ link: string; recipientName: string } | null>(null);
+  const [contractorDataSentLinkCopied, setContractorDataSentLinkCopied] = useState(false);
+  const filteredContractorDataRecipients = useMemo(
+    () => employees.filter((e) => e.status === "active" && e.name.toLowerCase().includes(contractorDataRecipientSearch.toLowerCase())),
+    [employees, contractorDataRecipientSearch]
+  );
+
+  const buildContractorDataPreviewData = (employeeName: string): ContractorDataFormData => ({
+    employeeId: "",
+    employeeName,
+    firstName: employeeName,
+    middleName: "",
+    lastName: "",
+    branch: "",
+    streetAddress: "",
+    city: "",
+    state: "",
+    zipCode: "",
+    country: "",
+    phoneNumber: "",
+    otherPhoneNumber: "",
+    startDate: "",
+    birthDate: "",
+    ssn: "",
+    ssnCardUrls: [],
+    driversLicenseNumber: "",
+    driversLicenseState: "",
+    driversLicenseUrls: [],
+    email: "",
+    maritalStatus: "",
+    spouseName: "",
+    spouseEmployer: "",
+    livedInNewYork: "",
+    emergencyContacts: [{ ...BLANK_EMERGENCY_CONTACT }, { ...BLANK_EMERGENCY_CONTACT }, { ...BLANK_EMERGENCY_CONTACT }],
+    dateSigned: "",
+    signatureDataUrl: "",
+  });
+
+  /** Toggles the inline collapsible preview panel — collapsing just hides it (and revokes the blob URL); expanding (re)builds a fresh blank-filled sample from the currently-selected recipient's name via the HTML template (no source PDF here — see contractorDataFormTemplate.ts's header comment), same captureHtmlToPdfBlob technique the Warning Form's own preview uses. */
+  const toggleContractorDataPreview = async () => {
+    if (contractorDataPreviewExpanded) {
+      setContractorDataPreviewExpanded(false);
+      if (contractorDataPreviewPdfUrl) URL.revokeObjectURL(contractorDataPreviewPdfUrl);
+      setContractorDataPreviewPdfUrl(null);
+      return;
+    }
+    setContractorDataSendError(null);
+    setContractorDataPreviewExpanded(true);
+    setContractorDataPreviewLoading(true);
+    try {
+      const logoDataUrl = contractorDataLogoDataUrl || (await loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png")));
+      if (!contractorDataLogoDataUrl) setContractorDataLogoDataUrl(logoDataUrl);
+      const recipientName = employees.find((e) => e.id === contractorDataRecipientId)?.name || "";
+      const pdfBlob = await captureHtmlToPdfBlob(buildContractorDataBodyMarkup(buildContractorDataPreviewData(recipientName), logoDataUrl, undefined), contractorDataStyles);
+      const url = URL.createObjectURL(pdfBlob);
+      setContractorDataPreviewPdfUrl(url);
+    } catch (err) {
+      setContractorDataSendError(err instanceof Error ? err.message : "Failed to build preview.");
+    } finally {
+      setContractorDataPreviewLoading(false);
+    }
+  };
+
+  const handleSendContractorData = async () => {
+    if (!contractorDataRecipientId || !uid) return;
+    setContractorDataSending(true);
+    setContractorDataSendError(null);
+    try {
+      const recipient = employees.find((e) => e.id === contractorDataRecipientId);
+      if (!recipient) throw new Error("Select a recipient first.");
+
+      const doc = await createSignableDocument({
+        documentType: "contractor_data",
+        formData: { employeeId: recipient.id, employeeName: recipient.name } as unknown as Record<string, any>,
+        recipientId: contractorDataRecipientId,
+        recipientSlot: "employee",
+        pdfUrl: "",
+      });
+
+      const myProfileId = await getMyProfileId(uid);
+      if (!myProfileId) throw new Error("Could not resolve your profile.");
+      const thread = await getOrCreateDmThread(myProfileId, contractorDataRecipientId);
+      const fillLink = `${getAppUrl()}/fill-contractor-data/${doc.id}`;
+      await sendMessage({
+        dmThreadId: thread.id,
+        senderId: myProfileId,
+        senderName: displayName || "HR",
+        body: `📋 Please complete the Contractor Data form: ${fillLink}`,
+      });
+
+      void logActivity({ action: "contractor_data_sent", targetType: "employee", targetId: recipient.id, targetLabel: recipient.name });
+
+      setContractorDataRecipientId("");
+      setContractorDataRecipientSearch("");
+      await loadSentContractorDataForms();
+    } catch (err) {
+      setContractorDataSendError(err instanceof Error ? err.message : "Failed to send request.");
+    } finally {
+      setContractorDataSending(false);
+    }
+  };
+
+  /** No AHS profile to tie this to, so no DM — the link itself (shown in the same panel, right below "Generate Link") is the only way the recipient finds out, same as the Warning Form's "External Link" mode. */
+  const handleGenerateExternalContractorData = async () => {
+    setContractorDataSending(true);
+    setContractorDataSendError(null);
+    try {
+      const name = contractorDataExternalName.trim() || "External Recipient";
+      const doc = await createSignableDocument({
+        documentType: "contractor_data",
+        formData: { employeeId: "", employeeName: name } as unknown as Record<string, any>,
+        recipientName: name,
+        recipientSlot: "employee",
+        pdfUrl: "",
+      });
+
+      void logActivity({ action: "contractor_data_sent", targetType: "employee", targetLabel: name, details: { external: true } });
+
+      setContractorDataSentLink({ link: `${getAppUrl()}/fill-contractor-data-external/${doc.id}`, recipientName: name });
+      setContractorDataExternalName("");
+      await loadSentContractorDataForms();
+    } catch (err) {
+      setContractorDataSendError(err instanceof Error ? err.message : "Failed to generate link.");
+    } finally {
+      setContractorDataSending(false);
+    }
+  };
+
+  const handleCopyContractorDataSentLink = async () => {
+    if (!contractorDataSentLink) return;
+    try {
+      await navigator.clipboard.writeText(contractorDataSentLink.link);
+      setContractorDataSentLinkCopied(true);
+      setTimeout(() => setContractorDataSentLinkCopied(false), 1500);
+    } catch (err) {
+      console.error("Failed to copy link:", err);
+    }
+  };
+
+  const handleCopyContractorDataLink = async (doc: SignableDocument) => {
+    try {
+      const path = doc.recipientId ? "fill-contractor-data" : "fill-contractor-data-external";
+      await navigator.clipboard.writeText(`${getAppUrl()}/${path}/${doc.id}`);
+    } catch (err) {
+      console.error("Failed to copy link:", err);
+    }
+  };
+
+  const handleDownloadContractorDataPdf = async (doc: SignableDocument) => {
+    if (!doc.pdfUrl) return;
+    const name = (doc.formData as Partial<ContractorDataFormData>).employeeName || doc.recipientName || "contractor-data";
+    try {
+      const res = await fetch(doc.pdfUrl);
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = `Contractor Data - ${name}.pdf`;
+      a.click();
+      URL.revokeObjectURL(blobUrl);
+    } catch {
+      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
+    }
+  };
+
+  const handleDeleteContractorData = async (doc: SignableDocument) => {
+    if (!window.confirm("Permanently delete this Contractor Data request?")) return;
+    setContractorDataActionBusyId(doc.id);
+    setContractorDataActionError(null);
+    try {
+      await deleteSignableDocument(doc.id);
+      await loadSentContractorDataForms();
+    } catch (err) {
+      setContractorDataActionError(err instanceof Error ? err.message : "Failed to delete.");
+    } finally {
+      setContractorDataActionBusyId(null);
+    }
+  };
+
+  // ── Direct Deposit Authorization — same architecture as Contractor Data:
+  // no real source PDF (see directDepositFormTemplate.ts's header comment),
+  // final document is a from-scratch HTML template captured to PDF.
+  // Single-party, no employer/HR co-signature step, and no file uploads
+  // (unlike Contractor Data) — just contact/bank info plus a signature. ──
+  const [sentDirectDepositForms, setSentDirectDepositForms] = useState<SignableDocument[]>([]);
+  const loadSentDirectDepositForms = async () => {
+    try {
+      setSentDirectDepositForms(await getSignableDocuments("direct_deposit"));
+    } catch (err) {
+      console.error("Failed to load sent Direct Deposit Authorization forms:", err);
+    }
+  };
+  useEffect(() => {
+    if (activeTab === "directDeposit" || activeTab === "jotformDocuments") void loadSentDirectDepositForms();
+  }, [activeTab]);
+
+  const [directDepositRecipientId, setDirectDepositRecipientId] = useState("");
+  const [directDepositRecipientSearch, setDirectDepositRecipientSearch] = useState("");
+  const [directDepositRecipientDropdownOpen, setDirectDepositRecipientDropdownOpen] = useState(false);
+  const [directDepositSending, setDirectDepositSending] = useState(false);
+  const [directDepositSendError, setDirectDepositSendError] = useState<string | null>(null);
+  const [directDepositActionBusyId, setDirectDepositActionBusyId] = useState<string | null>(null);
+  const [directDepositActionError, setDirectDepositActionError] = useState<string | null>(null);
+  const [directDepositDocPreview, setDirectDepositDocPreview] = useState<SignableDocument | null>(null);
+  const [directDepositPreviewExpanded, setDirectDepositPreviewExpanded] = useState(false);
+  const [directDepositPreviewPdfUrl, setDirectDepositPreviewPdfUrl] = useState<string | null>(null);
+  const [directDepositPreviewLoading, setDirectDepositPreviewLoading] = useState(false);
+  const [directDepositLogoDataUrl, setDirectDepositLogoDataUrl] = useState("");
+  const [directDepositExternalName, setDirectDepositExternalName] = useState("");
+  const [directDepositSentLink, setDirectDepositSentLink] = useState<{ link: string; recipientName: string } | null>(null);
+  const [directDepositSentLinkCopied, setDirectDepositSentLinkCopied] = useState(false);
+  const filteredDirectDepositRecipients = useMemo(
+    () => employees.filter((e) => e.status === "active" && e.name.toLowerCase().includes(directDepositRecipientSearch.toLowerCase())),
+    [employees, directDepositRecipientSearch]
+  );
+
+  const buildDirectDepositPreviewData = (employeeName: string): DirectDepositFormData => ({
+    employeeId: "",
+    employeeName,
+    firstName: employeeName,
+    middleName: "",
+    lastName: "",
+    streetAddress: "",
+    city: "",
+    state: "",
+    zipCode: "",
+    country: "",
+    bankName: "",
+    accountNumber: "",
+    routingNumber: "",
+    accountType: "",
+    dateSigned: "",
+    signatureDataUrl: "",
+  });
+
+  /** Toggles the inline collapsible preview panel — collapsing just hides it (and revokes the blob URL); expanding (re)builds a fresh blank-filled sample from the currently-selected recipient's name via the HTML template (no source PDF here — see directDepositFormTemplate.ts's header comment). */
+  const toggleDirectDepositPreview = async () => {
+    if (directDepositPreviewExpanded) {
+      setDirectDepositPreviewExpanded(false);
+      if (directDepositPreviewPdfUrl) URL.revokeObjectURL(directDepositPreviewPdfUrl);
+      setDirectDepositPreviewPdfUrl(null);
+      return;
+    }
+    setDirectDepositSendError(null);
+    setDirectDepositPreviewExpanded(true);
+    setDirectDepositPreviewLoading(true);
+    try {
+      const logoDataUrl = directDepositLogoDataUrl || (await loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png")));
+      if (!directDepositLogoDataUrl) setDirectDepositLogoDataUrl(logoDataUrl);
+      const recipientName = employees.find((e) => e.id === directDepositRecipientId)?.name || "";
+      const pdfBlob = await captureHtmlToPdfBlob(buildDirectDepositBodyMarkup(buildDirectDepositPreviewData(recipientName), logoDataUrl, undefined), directDepositStyles);
+      const url = URL.createObjectURL(pdfBlob);
+      setDirectDepositPreviewPdfUrl(url);
+    } catch (err) {
+      setDirectDepositSendError(err instanceof Error ? err.message : "Failed to build preview.");
+    } finally {
+      setDirectDepositPreviewLoading(false);
+    }
+  };
+
+  const handleSendDirectDeposit = async () => {
+    if (!directDepositRecipientId || !uid) return;
+    setDirectDepositSending(true);
+    setDirectDepositSendError(null);
+    try {
+      const recipient = employees.find((e) => e.id === directDepositRecipientId);
+      if (!recipient) throw new Error("Select a recipient first.");
+
+      const doc = await createSignableDocument({
+        documentType: "direct_deposit",
+        formData: { employeeId: recipient.id, employeeName: recipient.name } as unknown as Record<string, any>,
+        recipientId: directDepositRecipientId,
+        recipientSlot: "employee",
+        pdfUrl: "",
+      });
+
+      const myProfileId = await getMyProfileId(uid);
+      if (!myProfileId) throw new Error("Could not resolve your profile.");
+      const thread = await getOrCreateDmThread(myProfileId, directDepositRecipientId);
+      const fillLink = `${getAppUrl()}/fill-direct-deposit/${doc.id}`;
+      await sendMessage({
+        dmThreadId: thread.id,
+        senderId: myProfileId,
+        senderName: displayName || "HR",
+        body: `📋 Please complete the Direct Deposit Authorization form: ${fillLink}`,
+      });
+
+      void logActivity({ action: "direct_deposit_sent", targetType: "employee", targetId: recipient.id, targetLabel: recipient.name });
+
+      setDirectDepositRecipientId("");
+      setDirectDepositRecipientSearch("");
+      await loadSentDirectDepositForms();
+    } catch (err) {
+      setDirectDepositSendError(err instanceof Error ? err.message : "Failed to send request.");
+    } finally {
+      setDirectDepositSending(false);
+    }
+  };
+
+  /** No AHS profile to tie this to, so no DM — the link itself (shown in the same panel, right below "Generate Link") is the only way the recipient finds out, same as the Warning Form's "External Link" mode. */
+  const handleGenerateExternalDirectDeposit = async () => {
+    setDirectDepositSending(true);
+    setDirectDepositSendError(null);
+    try {
+      const name = directDepositExternalName.trim() || "External Recipient";
+      const doc = await createSignableDocument({
+        documentType: "direct_deposit",
+        formData: { employeeId: "", employeeName: name } as unknown as Record<string, any>,
+        recipientName: name,
+        recipientSlot: "employee",
+        pdfUrl: "",
+      });
+
+      void logActivity({ action: "direct_deposit_sent", targetType: "employee", targetLabel: name, details: { external: true } });
+
+      setDirectDepositSentLink({ link: `${getAppUrl()}/fill-direct-deposit-external/${doc.id}`, recipientName: name });
+      setDirectDepositExternalName("");
+      await loadSentDirectDepositForms();
+    } catch (err) {
+      setDirectDepositSendError(err instanceof Error ? err.message : "Failed to generate link.");
+    } finally {
+      setDirectDepositSending(false);
+    }
+  };
+
+  const handleCopyDirectDepositSentLink = async () => {
+    if (!directDepositSentLink) return;
+    try {
+      await navigator.clipboard.writeText(directDepositSentLink.link);
+      setDirectDepositSentLinkCopied(true);
+      setTimeout(() => setDirectDepositSentLinkCopied(false), 1500);
+    } catch (err) {
+      console.error("Failed to copy link:", err);
+    }
+  };
+
+  const handleCopyDirectDepositLink = async (doc: SignableDocument) => {
+    try {
+      const path = doc.recipientId ? "fill-direct-deposit" : "fill-direct-deposit-external";
+      await navigator.clipboard.writeText(`${getAppUrl()}/${path}/${doc.id}`);
+    } catch (err) {
+      console.error("Failed to copy link:", err);
+    }
+  };
+
+  const handleDownloadDirectDepositPdf = async (doc: SignableDocument) => {
+    if (!doc.pdfUrl) return;
+    const name = (doc.formData as Partial<DirectDepositFormData>).employeeName || doc.recipientName || "direct-deposit";
+    try {
+      const res = await fetch(doc.pdfUrl);
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = `Direct Deposit Authorization - ${name}.pdf`;
+      a.click();
+      URL.revokeObjectURL(blobUrl);
+    } catch {
+      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
+    }
+  };
+
+  const handleDeleteDirectDeposit = async (doc: SignableDocument) => {
+    if (!window.confirm("Permanently delete this Direct Deposit Authorization request?")) return;
+    setDirectDepositActionBusyId(doc.id);
+    setDirectDepositActionError(null);
+    try {
+      await deleteSignableDocument(doc.id);
+      await loadSentDirectDepositForms();
+    } catch (err) {
+      setDirectDepositActionError(err instanceof Error ? err.message : "Failed to delete.");
+    } finally {
+      setDirectDepositActionBusyId(null);
+    }
+  };
+
   // ── Send to Employer — hands off the employer/HR-side completion step
   // (I-9 Section 2, Acknowledgment of Wage's employer signature) to a
   // DIFFERENT AHS teammate instead of the current viewer completing it
@@ -4547,6 +6254,14 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             ? `📋 Please complete Section 2 (document review + employer/AR signature) of Form I-9 for ${employeeName} — open the "Form I-9" tab in the HR Dashboard.`
             : doc.documentType === "meal_rest_break"
             ? `📋 Please add the employer signature to the Employee Meal and Rest Break Policy Acknowledgment for ${employeeName} — open the "Meal & Rest Break Policy" tab in the HR Dashboard.`
+            : doc.documentType === "parts_responsibility"
+            ? `📋 Please add the manager/supervisor signature to the Parts Responsibility and Technician Floor Protection Acknowledgment Form for ${employeeName} — open the "Parts Responsibility Form" tab in the HR Dashboard.`
+            : doc.documentType === "mileage_fuel"
+            ? `📋 Please add the employer/representative signature to the Personal Vehicle Mileage and Fuel Policy Agreement for ${employeeName} — open the "Mileage & Fuel Policy" tab in the HR Dashboard.`
+            : doc.documentType === "location_consent"
+            ? `📋 Please add the employer/representative signature to the Employee Mobile App Location Sharing Consent Agreement for ${employeeName} — open the "Location Sharing Consent" tab in the HR Dashboard.`
+            : doc.documentType === "damage"
+            ? `📋 Please add the employer/representative signature to the Damage, Part Loss, and Tool Penalty Commission Deduction Agreement for ${employeeName} — open the "Damage Agreement" tab in the HR Dashboard.`
             : `📋 Please add the employer/representative signature to the Acknowledgment of Wage & Compensation Structure for ${employeeName} — open the "Acknowledgment of Wage" tab in the HR Dashboard.`;
         await sendMessage({
           dmThreadId: thread.id,
@@ -4559,6 +6274,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       setEmployerReassignDialog(null);
       if (doc.documentType === "i9") await loadSentI9Forms();
       else if (doc.documentType === "meal_rest_break") await loadSentMealRestBreakForms();
+      else if (doc.documentType === "parts_responsibility") await loadSentPartsResponsibilityForms();
+      else if (doc.documentType === "mileage_fuel") await loadSentMileageFuelForms();
+      else if (doc.documentType === "location_consent") await loadSentLocationConsentForms();
+      else if (doc.documentType === "damage") await loadSentDamageForms();
       else await loadSentWageAckForms();
     } catch (err) {
       setEmployerReassignError(err instanceof Error ? err.message : "Failed to send.");
@@ -4596,9 +6315,15 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       ...sentEmployeeConfidentialityForms.map((doc) => ({ doc, formLabel: "Employee Confidentiality Agreement" })),
       ...sentMealRestBreakForms.map((doc) => ({ doc, formLabel: "Meal & Rest Break Acknowledgment" })),
       ...sentPtoAckForms.map((doc) => ({ doc, formLabel: "PTO & Sick Leave Policy Acknowledgment" })),
+      ...sentPartsResponsibilityForms.map((doc) => ({ doc, formLabel: "Parts Responsibility & Floor Protection Acknowledgment" })),
+      ...sentMileageFuelForms.map((doc) => ({ doc, formLabel: "Mileage & Fuel Policy Agreement" })),
+      ...sentLocationConsentForms.map((doc) => ({ doc, formLabel: "Location Sharing Consent Agreement" })),
+      ...sentDamageForms.map((doc) => ({ doc, formLabel: "Damage Agreement" })),
+      ...sentContractorDataForms.map((doc) => ({ doc, formLabel: "Contractor Data" })),
+      ...sentDirectDepositForms.map((doc) => ({ doc, formLabel: "Direct Deposit Authorization" })),
     ];
     return rows.sort((a, b) => new Date(b.doc.createdAt).getTime() - new Date(a.doc.createdAt).getTime());
-  }, [sentW8benForms, sentW4Forms, sentW9Forms, sentW4RForms, sentI9Forms, sentWageAckForms, sentCarIqAgreementForms, sentVehicleAgreementForms, sentEmployeeConfidentialityForms, sentMealRestBreakForms, sentPtoAckForms]);
+  }, [sentW8benForms, sentW4Forms, sentW9Forms, sentW4RForms, sentI9Forms, sentWageAckForms, sentCarIqAgreementForms, sentVehicleAgreementForms, sentEmployeeConfidentialityForms, sentMealRestBreakForms, sentPtoAckForms, sentPartsResponsibilityForms, sentMileageFuelForms, sentLocationConsentForms, sentDamageForms, sentContractorDataForms, sentDirectDepositForms]);
 
   const [signedFormsSearch, setSignedFormsSearch] = useState("");
   const [signedFormsTypeFilter, setSignedFormsTypeFilter] = useState("");
@@ -7951,32 +9676,58 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     return Array.from(byDept.values()).sort((a, b) => (b.Warnings + b.Terminated + b.Resigned) - (a.Warnings + a.Terminated + a.Resigned));
   }, [allNotes, employees, roleByProfileId, trendMode, trendMonth, trendFrom, trendTo]);
 
+  // General/admin forms vs. technician-facing acknowledgment forms — kept as
+  // two separate lists so the "Automated Forms" nav entry below can render
+  // them as two labeled columns in a wide panel, rather than one very tall
+  // single-column list (the group grew past 20 entries and became
+  // unscannable as a plain accordion).
+  const automatedFormsGeneralTabs = [
+    ...(canViewJotformTab ? [{ key: "jotformDocuments", label: "Applicant Documents", count: newJotformSubmissionsCount, icon: Forward }] as const : []),
+    { key: "coe", label: "Certificate of Employment", count: 0, icon: CheckCircle },
+    { key: "customForms", label: "Custom Forms", count: newCustomFormSubmissionsCount, icon: FileText },
+    { key: "promotionForm", label: "Employee Promotion / Role Change", count: 0, icon: FileText },
+    { key: "warningForm", label: "Employee Warning Form", count: 0, icon: FileText },
+    { key: "i9", label: "Form I-9 (Employment Eligibility)", count: sentI9AwaitingSection2Count, icon: FileCheck },
+    { key: "actionPlanForm", label: "Manager's Action Plan Form", count: 0, icon: FileText },
+    { key: "terminationForm", label: "Termination Notice Form", count: 0, icon: FileText },
+    { key: "w8ben", label: "W-8 / W-9 / W-4 / W-4R Forms", count: 0, icon: Landmark },
+  ] as const;
+
+  const automatedFormsTechnicianTabs = [
+    { key: "wageAck", label: "Acknowledgment of Wage", count: sentWageAckAwaitingEmployerCount, icon: FileCheck },
+    { key: "carIqAgreement", label: "Car IQ Technician Agreement", count: 0, icon: FileCheck },
+    { key: "vehicleAgreement", label: "Company Vehicle Use Agreement", count: 0, icon: FileCheck },
+    { key: "contractorData", label: "Contractor Data", count: 0, icon: FileCheck },
+    { key: "damage", label: "Damage Agreement", count: sentDamageAwaitingEmployerCount, icon: FileCheck },
+    { key: "directDeposit", label: "Direct Deposit Authorization", count: 0, icon: FileCheck },
+    { key: "employeeConfidentiality", label: "Employee Confidentiality Agreement", count: 0, icon: FileCheck },
+    { key: "locationConsent", label: "Location Sharing Consent", count: sentLocationConsentAwaitingEmployerCount, icon: FileCheck },
+    { key: "mealRestBreak", label: "Meal & Rest Break Policy", count: sentMealRestBreakAwaitingEmployerCount, icon: FileCheck },
+    { key: "mileageFuel", label: "Mileage & Fuel Policy", count: sentMileageFuelAwaitingEmployerCount, icon: FileCheck },
+    { key: "partsResponsibility", label: "Parts Responsibility Form", count: sentPartsResponsibilityAwaitingManagerCount, icon: FileCheck },
+    { key: "ptoAck", label: "PTO & Sick Leave Policy", count: 0, icon: FileCheck },
+  ] as const;
+
   // ── Tab groups — single source shared by the dropdown header nav and the
   // floating sidebar, so the two stay in sync automatically. Categories and
-  // the tabs within them are kept in alphabetical order. ──
+  // the tabs within them are kept in alphabetical order. A group may
+  // optionally carry `columns` (label + its own tabs subset) — when present,
+  // both render surfaces show a wide multi-column panel instead of a single
+  // list; `columns: undefined` on the other groups keeps every tabGroups
+  // entry's inferred shape consistent so `section.columns` type-checks
+  // uniformly across the array. ──
   const tabGroups = [
-    // Automated Forms (COE, Warning Form, tax forms, Jotform docs) is
-    // AH Solutions-only for now — other companies don't use these forms.
+    // Automated Forms (COE, Warning Form, tax forms, Jotform docs, and the
+    // technician-facing acknowledgment forms) is AH Solutions-only for now —
+    // other companies don't use these forms.
     ...(companyId === "COMP001" ? [{
       group: "Automated Forms",
       icon: Paperclip,
-      tabs: [
-        ...(canViewJotformTab ? [{ key: "jotformDocuments", label: "Applicant Documents", count: newJotformSubmissionsCount, icon: Forward }] as const : []),
-        { key: "customForms", label: "Custom Forms", count: newCustomFormSubmissionsCount, icon: FileText },
-        { key: "coe", label: "Certificate of Employment", count: 0, icon: CheckCircle },
-        { key: "warningForm", label: "Employee Warning Form", count: 0, icon: FileText },
-        { key: "promotionForm", label: "Employee Promotion / Role Change", count: 0, icon: FileText },
-        { key: "actionPlanForm", label: "Manager's Action Plan Form", count: 0, icon: FileText },
-        { key: "terminationForm", label: "Termination Notice Form", count: 0, icon: FileText },
-        { key: "w8ben", label: "W-8 / W-9 / W-4 / W-4R Forms", count: 0, icon: Landmark },
-        { key: "i9", label: "Form I-9 (Employment Eligibility)", count: sentI9AwaitingSection2Count, icon: FileCheck },
-        { key: "wageAck", label: "Acknowledgment of Wage", count: sentWageAckAwaitingEmployerCount, icon: FileCheck },
-        { key: "carIqAgreement", label: "Car IQ Technician Agreement", count: 0, icon: FileCheck },
-        { key: "vehicleAgreement", label: "Company Vehicle Use Agreement", count: 0, icon: FileCheck },
-        { key: "employeeConfidentiality", label: "Employee Confidentiality Agreement", count: 0, icon: FileCheck },
-        { key: "mealRestBreak", label: "Meal & Rest Break Policy", count: sentMealRestBreakAwaitingEmployerCount, icon: FileCheck },
-        { key: "ptoAck", label: "PTO & Sick Leave Policy", count: 0, icon: FileCheck },
-      ] as const,
+      tabs: [...automatedFormsGeneralTabs, ...automatedFormsTechnicianTabs],
+      columns: [
+        { label: "General", tabs: automatedFormsGeneralTabs },
+        { label: "Technician Forms", tabs: automatedFormsTechnicianTabs },
+      ],
     }] : []),
     {
       group: "Generate Reports",
@@ -7984,6 +9735,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       tabs: [
         { key: "report", label: "Generate Report", count: 0, icon: Download },
       ] as const,
+      columns: undefined,
     },
     {
       group: "People Operations",
@@ -7996,14 +9748,60 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         { key: "onboarding", label: "Onboarding Documents", count: 0, icon: Paperclip },
         { key: "warnings", label: "Warnings & Mistakes", count: isHrOrAdmin ? pendingNotes.length : 0, icon: AlertTriangle },
       ] as const,
+      columns: undefined,
     },
   ] as const;
+
+  // A group with `columns` (currently just "Automated Forms") renders as a
+  // wide multi-column panel instead of a single list — while one is
+  // expanded, the whole sidebar widens to fit it, then shrinks back once
+  // collapsed. `collapsedSidebarGroups` starts empty (nothing collapsed by
+  // default), so this is true — and the sidebar opens at the wide size —
+  // from the very first hover-open.
+  const wideSidebarGroupExpanded = tabGroups.some((s) => s.columns && !collapsedSidebarGroups.has(s.group));
+  const sidebarPanelWidthCls = wideSidebarGroupExpanded ? "w-[560px]" : "w-72";
+
+  const renderSidebarTabButton = (tab: NavTabDef) => {
+    const active = activeTab === tab.key;
+    return (
+      <button
+        key={tab.key}
+        type="button"
+        onClick={() => { setActiveTab(tab.key as typeof activeTab); setSidebarOpen(false); }}
+        className={`w-full text-left pl-2.5 pr-2 py-2 rounded-lg text-sm flex items-center justify-between gap-2 transition-colors ${active ? "bg-primary/10 border border-primary/30 text-foreground font-semibold" : "border border-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}
+      >
+        <span className="flex items-center gap-2">
+          <span className={`flex items-center justify-center h-6 w-6 rounded-md shrink-0 ${active ? "bg-primary/20 text-primary" : "bg-white/5 text-muted-foreground"}`}>
+            <tab.icon className="h-3.5 w-3.5" />
+          </span>
+          {tab.label}
+        </span>
+        {tab.count > 0 && (
+          <span className={`px-1.5 py-0.5 rounded-full text-[10px] shrink-0 ${active ? "bg-primary/20 text-primary" : "bg-white/10 text-muted-foreground"}`}>{tab.count}</span>
+        )}
+      </button>
+    );
+  };
+
+  const renderDropdownTabButton = (tab: NavTabDef) => (
+    <button
+      key={tab.key}
+      type="button"
+      onClick={() => { setActiveTab(tab.key as typeof activeTab); setOpenCategory(null); }}
+      className={`w-full text-left px-3.5 py-2 text-sm flex items-center justify-between gap-2 transition-colors ${activeTab === tab.key ? "text-primary bg-primary/10" : "text-muted-foreground hover:text-foreground hover:bg-white/5"}`}
+    >
+      <span className="flex items-center gap-2"><tab.icon className="h-3.5 w-3.5" />{tab.label}</span>
+      {tab.count > 0 && (
+        <span className={`px-1.5 py-0.5 rounded-full text-[10px] ${activeTab === tab.key ? "bg-primary/20 text-primary" : "bg-white/10 text-muted-foreground"}`}>{tab.count}</span>
+      )}
+    </button>
+  );
 
   return (
     <div className="min-h-screen flex flex-col">
       {/* ── Floating sidebar nav — hover the left edge to open, same as the ticket page's "Sections" tab; no click needed ── */}
       <div
-        className={`fixed left-0 top-0 bottom-0 z-40 transition-[width] duration-150 ${sidebarOpen ? "w-72" : "w-8"}`}
+        className={`fixed left-0 top-0 bottom-0 z-40 transition-[width] duration-150 ${sidebarOpen ? sidebarPanelWidthCls : "w-8"}`}
         onMouseEnter={() => setSidebarOpen(true)}
         onMouseLeave={() => setSidebarOpen(false)}
       >
@@ -8015,7 +9813,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         </div>
 
         <div
-          className={`h-full w-72 bg-slate-900 border-r border-white/10 shadow-2xl p-4 overflow-y-auto transition-transform duration-200 ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}`}
+          className={`h-full ${sidebarPanelWidthCls} bg-slate-900 border-r border-white/10 shadow-2xl p-4 overflow-y-auto transition-[width,transform] duration-200 ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}`}
         >
           <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-4">HR Sections</p>
           {tabGroups.map((section) => {
@@ -8032,43 +9830,34 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                 <ChevronDown className={`h-3.5 w-3.5 text-muted-foreground shrink-0 transition-transform ${collapsed ? "-rotate-90" : ""}`} />
               </button>
               {!collapsed && (
-              <div className="flex flex-col gap-0.5 pl-2 border-l border-white/10 ml-4">
-                {section.tabs.map((tab) => {
-                  const active = activeTab === tab.key;
-                  return (
-                    <button
-                      key={tab.key}
-                      type="button"
-                      onClick={() => { setActiveTab(tab.key); setSidebarOpen(false); }}
-                      className={`w-full text-left pl-2.5 pr-2 py-2 rounded-lg text-sm flex items-center justify-between gap-2 transition-colors ${active ? "bg-primary/10 border border-primary/30 text-foreground font-semibold" : "border border-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}
-                    >
-                      <span className="flex items-center gap-2">
-                        <span className={`flex items-center justify-center h-6 w-6 rounded-md shrink-0 ${active ? "bg-primary/20 text-primary" : "bg-white/5 text-muted-foreground"}`}>
-                          <tab.icon className="h-3.5 w-3.5" />
+                section.columns ? (
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-1 pl-2 border-l border-white/10 ml-4">
+                    {section.columns.map((col) => (
+                      <div key={col.label} className="flex flex-col gap-0.5">
+                        <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide px-2.5 pt-1 pb-0.5">{col.label}</p>
+                        {col.tabs.map(renderSidebarTabButton)}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-0.5 pl-2 border-l border-white/10 ml-4">
+                    {section.tabs.map(renderSidebarTabButton)}
+                    {section.group === "People Operations" && (
+                      <Link
+                        to="/m/$module/$submodule"
+                        params={{ module: "admin", submodule: "user-management" }}
+                        onClick={() => setSidebarOpen(false)}
+                        className="w-full text-left pl-2.5 pr-2 py-2 rounded-lg text-sm flex items-center gap-2 border border-transparent text-muted-foreground hover:text-foreground hover:bg-white/5 transition-colors"
+                        title="Jump to the Admin module's User Management page"
+                      >
+                        <span className="flex items-center justify-center h-6 w-6 rounded-md shrink-0 bg-white/5 text-muted-foreground">
+                          <UserCheck className="h-3.5 w-3.5" />
                         </span>
-                        {tab.label}
-                      </span>
-                      {tab.count > 0 && (
-                        <span className={`px-1.5 py-0.5 rounded-full text-[10px] shrink-0 ${active ? "bg-primary/20 text-primary" : "bg-white/10 text-muted-foreground"}`}>{tab.count}</span>
-                      )}
-                    </button>
-                  );
-                })}
-                {section.group === "People Operations" && (
-                  <Link
-                    to="/m/$module/$submodule"
-                    params={{ module: "admin", submodule: "user-management" }}
-                    onClick={() => setSidebarOpen(false)}
-                    className="w-full text-left pl-2.5 pr-2 py-2 rounded-lg text-sm flex items-center gap-2 border border-transparent text-muted-foreground hover:text-foreground hover:bg-white/5 transition-colors"
-                    title="Jump to the Admin module's User Management page"
-                  >
-                    <span className="flex items-center justify-center h-6 w-6 rounded-md shrink-0 bg-white/5 text-muted-foreground">
-                      <UserCheck className="h-3.5 w-3.5" />
-                    </span>
-                    User Management
-                  </Link>
-                )}
-              </div>
+                        User Management
+                      </Link>
+                    )}
+                  </div>
+                )
               )}
             </div>
             );
@@ -8297,30 +10086,31 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                 {isOpen && (
                   <>
                     <div className="fixed inset-0 z-10" onClick={() => setOpenCategory(null)} />
-                    <div className="absolute top-full left-0 mt-1 z-20 min-w-[220px] rounded-md border border-white/10 bg-slate-900 shadow-xl py-1">
-                      {section.tabs.map((tab) => (
-                        <button
-                          key={tab.key}
-                          type="button"
-                          onClick={() => { setActiveTab(tab.key); setOpenCategory(null); }}
-                          className={`w-full text-left px-3.5 py-2 text-sm flex items-center justify-between gap-2 transition-colors ${activeTab === tab.key ? "text-primary bg-primary/10" : "text-muted-foreground hover:text-foreground hover:bg-white/5"}`}
-                        >
-                          <span className="flex items-center gap-2"><tab.icon className="h-3.5 w-3.5" />{tab.label}</span>
-                          {tab.count > 0 && (
-                            <span className={`px-1.5 py-0.5 rounded-full text-[10px] ${activeTab === tab.key ? "bg-primary/20 text-primary" : "bg-white/10 text-muted-foreground"}`}>{tab.count}</span>
+                    <div className={`absolute top-full left-0 mt-1 z-20 rounded-md border border-white/10 bg-slate-900 shadow-xl py-1 ${section.columns ? "w-[min(90vw,560px)]" : "min-w-[220px]"}`}>
+                      {section.columns ? (
+                        <div className="grid grid-cols-2 gap-x-1">
+                          {section.columns.map((col) => (
+                            <div key={col.label} className="flex flex-col py-1">
+                              <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide px-3.5 pt-1 pb-1">{col.label}</p>
+                              {col.tabs.map(renderDropdownTabButton)}
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <>
+                          {section.tabs.map(renderDropdownTabButton)}
+                          {section.group === "People Operations" && (
+                            <Link
+                              to="/m/$module/$submodule"
+                              params={{ module: "admin", submodule: "user-management" }}
+                              onClick={() => setOpenCategory(null)}
+                              className="w-full text-left px-3.5 py-2 text-sm flex items-center gap-2 border-t border-white/10 mt-1 pt-2 text-muted-foreground hover:text-foreground hover:bg-white/5 transition-colors"
+                              title="Jump to the Admin module's User Management page"
+                            >
+                              <UserCheck className="h-3.5 w-3.5" /> User Management
+                            </Link>
                           )}
-                        </button>
-                      ))}
-                      {section.group === "People Operations" && (
-                        <Link
-                          to="/m/$module/$submodule"
-                          params={{ module: "admin", submodule: "user-management" }}
-                          onClick={() => setOpenCategory(null)}
-                          className="w-full text-left px-3.5 py-2 text-sm flex items-center gap-2 border-t border-white/10 mt-1 pt-2 text-muted-foreground hover:text-foreground hover:bg-white/5 transition-colors"
-                          title="Jump to the Admin module's User Management page"
-                        >
-                          <UserCheck className="h-3.5 w-3.5" /> User Management
-                        </Link>
+                        </>
                       )}
                     </div>
                   </>
@@ -11670,101 +13460,115 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <h2 className="font-semibold text-sm">Send W-8BEN Request</h2>
           <p className="text-[10px] text-muted-foreground mt-0.5">Pick a teammate — they'll get a link to fill in and sign their own Form W-8BEN. It comes back to you here automatically once submitted.</p>
         </div>
-        <div className="p-4 flex flex-col gap-3 max-w-md">
-          {w8SentLink ? (
-            <div className="flex flex-col gap-3">
-              <div className="rounded-md border border-green-500/30 bg-green-500/10 px-3 py-2.5">
-                <p className="text-sm font-semibold text-green-300">Link generated for {w8SentLink.recipientName}</p>
-                <p className="text-xs text-muted-foreground mt-1">No AHS account needed — copy the link below and send it any way you like (email, Slack, text).</p>
-              </div>
-              <div>
-                <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Fill-in link</label>
-                <div className="flex gap-2 mt-1">
-                  <input type="text" readOnly value={w8SentLink.link} onFocus={(e) => e.target.select()} className="glass-input text-xs py-1.5 px-3 rounded-md flex-1" />
-                  <button onClick={handleCopyW8SentLink} className="btn text-xs px-3 py-1.5 shrink-0">{w8SentLinkCopied ? "Copied!" : "Copy"}</button>
+        <div className="p-4 flex flex-col md:flex-row gap-6">
+          <div className="flex flex-col gap-3 w-full md:max-w-sm md:shrink-0">
+            <div className="flex flex-col gap-1.5 pb-3 border-b border-white/10">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">External Link (no login needed)</label>
+              {w8SentLink ? (
+                <div className="flex flex-col gap-2">
+                  <div className="rounded-md border border-green-500/30 bg-green-500/10 px-3 py-2.5">
+                    <p className="text-xs font-semibold text-green-300">Link generated for {w8SentLink.recipientName}</p>
+                  </div>
+                  <div className="flex gap-2">
+                    <input type="text" readOnly value={w8SentLink.link} onFocus={(e) => e.target.select()} className="glass-input text-xs py-1.5 px-3 rounded-md flex-1" />
+                    <button onClick={handleCopyW8SentLink} className="btn text-xs px-3 py-1.5 shrink-0">{w8SentLinkCopied ? "Copied!" : "Copy"}</button>
+                  </div>
+                  <button onClick={() => setW8SentLink(null)} className="btn text-xs px-3 py-1.5 w-fit">Done</button>
                 </div>
-              </div>
-              <button onClick={() => setW8SentLink(null)} className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white w-fit">Done</button>
+              ) : (
+                <>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={w8ExternalName}
+                      onChange={(e) => setW8ExternalName(e.target.value)}
+                      placeholder="Type their name (optional)…"
+                      className="glass-input text-sm py-1.5 px-3 rounded-md flex-1"
+                    />
+                    <button
+                      onClick={handleGenerateExternalW8ben}
+                      disabled={w8Sending}
+                      className="btn text-sm px-3 py-1.5 disabled:opacity-50 shrink-0"
+                    >
+                      {w8Sending ? "Generating…" : "Generate Link"}
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground">No AHS account needed — they can open the link and fill it in without logging in.</p>
+                </>
+              )}
             </div>
-          ) : (
-          <>
-          <div className="flex rounded-md overflow-hidden border border-white/15 h-7.5 w-fit">
-            <button type="button" onClick={() => setW8SendMode("teammate")} className={`px-3 text-xs font-medium transition-colors ${w8SendMode === "teammate" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}>AHS Teammate</button>
-            <button type="button" onClick={() => setW8SendMode("external")} className={`px-3 text-xs font-medium transition-colors border-l border-white/15 ${w8SendMode === "external" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}>External Link</button>
+
+            <div className="flex flex-col gap-1 relative">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient (AHS teammate)</label>
+              <input
+                type="text"
+                value={w8RecipientSearch}
+                onChange={(e) => { setW8RecipientSearch(e.target.value); setW8RecipientId(""); setW8RecipientDropdownOpen(true); }}
+                onFocus={() => setW8RecipientDropdownOpen(true)}
+                onBlur={() => setTimeout(() => setW8RecipientDropdownOpen(false), 150)}
+                placeholder="Search a teammate…"
+                className="glass-input text-sm py-1.5 px-3 rounded-md"
+              />
+              {w8RecipientDropdownOpen && (
+                <div className="absolute z-50 top-full mt-1 w-full max-h-96 overflow-y-auto rounded-md border border-white/15 bg-slate-900 shadow-2xl">
+                  {filteredW8Recipients.length === 0 ? (
+                    <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+                  ) : (
+                    filteredW8Recipients.map((e) => (
+                      <button
+                        key={e.id}
+                        type="button"
+                        onMouseDown={(ev) => ev.preventDefault()}
+                        onClick={() => {
+                          setW8RecipientId(e.id);
+                          setW8RecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`);
+                          setW8RecipientDropdownOpen(false);
+                        }}
+                        className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${w8RecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                      >
+                        {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+
+            {w8SendError && (
+              <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{w8SendError}</p>
+            )}
+            <div className="flex items-center gap-2">
+              <button
+                onClick={toggleW8benPreview}
+                className="btn text-sm px-4 py-2 flex items-center gap-1.5"
+              >
+                Preview <ChevronDown className={`h-3.5 w-3.5 transition-transform ${w8PreviewOpen ? "rotate-180" : ""}`} />
+              </button>
+              <button
+                onClick={handleSendW8ben}
+                disabled={!w8RecipientId || w8Sending}
+                className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+              >
+                {w8Sending ? "Sending…" : "Send Request"}
+              </button>
+            </div>
           </div>
 
-          {w8SendMode === "teammate" ? (
-          <div className="flex flex-col gap-1 relative">
-            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient</label>
-            <input
-              type="text"
-              value={w8RecipientSearch}
-              onChange={(e) => { setW8RecipientSearch(e.target.value); setW8RecipientId(""); setW8RecipientDropdownOpen(true); }}
-              onFocus={() => setW8RecipientDropdownOpen(true)}
-              onBlur={() => setTimeout(() => setW8RecipientDropdownOpen(false), 150)}
-              placeholder="Search a teammate…"
-              className="glass-input text-sm py-1.5 px-3 rounded-md"
-            />
-            {w8RecipientDropdownOpen && (
-              <div className="absolute z-50 top-full mt-1 w-full max-h-96 overflow-y-auto rounded-md border border-white/15 bg-slate-900 shadow-2xl">
-                {filteredW8Recipients.length === 0 ? (
-                  <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+          <div className="flex-1 min-w-0">
+            {w8PreviewOpen ? (
+              <div className="border border-white/10 rounded-md overflow-hidden bg-white/5 h-full" style={{ minHeight: 560 }}>
+                {w8PreviewLoading || !w8PreviewPdfUrl ? (
+                  <div className="h-full flex items-center justify-center text-sm text-muted-foreground" style={{ minHeight: 560 }}>Loading preview…</div>
                 ) : (
-                  filteredW8Recipients.map((e) => (
-                    <button
-                      key={e.id}
-                      type="button"
-                      onMouseDown={(ev) => ev.preventDefault()}
-                      onClick={() => {
-                        setW8RecipientId(e.id);
-                        setW8RecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`);
-                        setW8RecipientDropdownOpen(false);
-                      }}
-                      className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${w8RecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
-                    >
-                      {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
-                    </button>
-                  ))
+                  <iframe src={w8PreviewPdfUrl} title="W-8BEN Preview" className="w-full border-0" style={{ height: 560 }} />
                 )}
+              </div>
+            ) : (
+              <div className="border border-dashed border-white/15 rounded-md flex items-center justify-center text-sm text-muted-foreground" style={{ minHeight: 560 }}>
+                Click "Preview" to see the document here.
               </div>
             )}
           </div>
-          ) : (
-          <div>
-            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient name</label>
-            <input
-              type="text"
-              value={w8ExternalName}
-              onChange={(e) => setW8ExternalName(e.target.value)}
-              placeholder="Type their name (optional)…"
-              className="glass-input text-sm py-1.5 px-3 rounded-md w-full mt-1"
-            />
-            <p className="text-[10px] text-muted-foreground mt-1">No AHS account needed — you'll get a link to send them any way you like (email, Slack, text), and they can open it and fill it in without logging in.</p>
-          </div>
-          )}
-
-          {w8SendError && (
-            <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{w8SendError}</p>
-          )}
-          {w8SendMode === "teammate" ? (
-            <button
-              onClick={handleOpenW8benPreview}
-              disabled={!w8RecipientId || w8Sending}
-              className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 w-fit"
-            >
-              Preview & Send
-            </button>
-          ) : (
-            <button
-              onClick={handleGenerateExternalW8ben}
-              disabled={w8Sending}
-              className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 w-fit"
-            >
-              {w8Sending ? "Generating…" : "Generate Link"}
-            </button>
-          )}
-          </>
-          )}
         </div>
       </div>
 
@@ -11858,101 +13662,115 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <h2 className="font-semibold text-sm">Send W-4 Request</h2>
           <p className="text-[10px] text-muted-foreground mt-0.5">Pick a teammate — they'll get a link to fill in and sign their own Form W-4. It comes back to you here automatically once submitted.</p>
         </div>
-        <div className="p-4 flex flex-col gap-3 max-w-md">
-          {w4SentLink ? (
-            <div className="flex flex-col gap-3">
-              <div className="rounded-md border border-green-500/30 bg-green-500/10 px-3 py-2.5">
-                <p className="text-sm font-semibold text-green-300">Link generated for {w4SentLink.recipientName}</p>
-                <p className="text-xs text-muted-foreground mt-1">No AHS account needed — copy the link below and send it any way you like (email, Slack, text).</p>
-              </div>
-              <div>
-                <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Fill-in link</label>
-                <div className="flex gap-2 mt-1">
-                  <input type="text" readOnly value={w4SentLink.link} onFocus={(e) => e.target.select()} className="glass-input text-xs py-1.5 px-3 rounded-md flex-1" />
-                  <button onClick={handleCopyW4SentLink} className="btn text-xs px-3 py-1.5 shrink-0">{w4SentLinkCopied ? "Copied!" : "Copy"}</button>
+        <div className="p-4 flex flex-col md:flex-row gap-6">
+          <div className="flex flex-col gap-3 w-full md:max-w-sm md:shrink-0">
+            <div className="flex flex-col gap-1.5 pb-3 border-b border-white/10">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">External Link (no login needed)</label>
+              {w4SentLink ? (
+                <div className="flex flex-col gap-2">
+                  <div className="rounded-md border border-green-500/30 bg-green-500/10 px-3 py-2.5">
+                    <p className="text-xs font-semibold text-green-300">Link generated for {w4SentLink.recipientName}</p>
+                  </div>
+                  <div className="flex gap-2">
+                    <input type="text" readOnly value={w4SentLink.link} onFocus={(e) => e.target.select()} className="glass-input text-xs py-1.5 px-3 rounded-md flex-1" />
+                    <button onClick={handleCopyW4SentLink} className="btn text-xs px-3 py-1.5 shrink-0">{w4SentLinkCopied ? "Copied!" : "Copy"}</button>
+                  </div>
+                  <button onClick={() => setW4SentLink(null)} className="btn text-xs px-3 py-1.5 w-fit">Done</button>
                 </div>
-              </div>
-              <button onClick={() => setW4SentLink(null)} className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white w-fit">Done</button>
+              ) : (
+                <>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={w4ExternalName}
+                      onChange={(e) => setW4ExternalName(e.target.value)}
+                      placeholder="Type their name (optional)…"
+                      className="glass-input text-sm py-1.5 px-3 rounded-md flex-1"
+                    />
+                    <button
+                      onClick={handleGenerateExternalW4}
+                      disabled={w4Sending}
+                      className="btn text-sm px-3 py-1.5 disabled:opacity-50 shrink-0"
+                    >
+                      {w4Sending ? "Generating…" : "Generate Link"}
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground">No AHS account needed — they can open the link and fill it in without logging in.</p>
+                </>
+              )}
             </div>
-          ) : (
-          <>
-          <div className="flex rounded-md overflow-hidden border border-white/15 h-7.5 w-fit">
-            <button type="button" onClick={() => setW4SendMode("teammate")} className={`px-3 text-xs font-medium transition-colors ${w4SendMode === "teammate" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}>AHS Teammate</button>
-            <button type="button" onClick={() => setW4SendMode("external")} className={`px-3 text-xs font-medium transition-colors border-l border-white/15 ${w4SendMode === "external" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}>External Link</button>
+
+            <div className="flex flex-col gap-1 relative">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient (AHS teammate)</label>
+              <input
+                type="text"
+                value={w4RecipientSearch}
+                onChange={(e) => { setW4RecipientSearch(e.target.value); setW4RecipientId(""); setW4RecipientDropdownOpen(true); }}
+                onFocus={() => setW4RecipientDropdownOpen(true)}
+                onBlur={() => setTimeout(() => setW4RecipientDropdownOpen(false), 150)}
+                placeholder="Search a teammate…"
+                className="glass-input text-sm py-1.5 px-3 rounded-md"
+              />
+              {w4RecipientDropdownOpen && (
+                <div className="absolute z-50 top-full mt-1 w-full max-h-96 overflow-y-auto rounded-md border border-white/15 bg-slate-900 shadow-2xl">
+                  {filteredW4Recipients.length === 0 ? (
+                    <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+                  ) : (
+                    filteredW4Recipients.map((e) => (
+                      <button
+                        key={e.id}
+                        type="button"
+                        onMouseDown={(ev) => ev.preventDefault()}
+                        onClick={() => {
+                          setW4RecipientId(e.id);
+                          setW4RecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`);
+                          setW4RecipientDropdownOpen(false);
+                        }}
+                        className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${w4RecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                      >
+                        {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+
+            {w4SendError && (
+              <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{w4SendError}</p>
+            )}
+            <div className="flex items-center gap-2">
+              <button
+                onClick={toggleW4Preview}
+                className="btn text-sm px-4 py-2 flex items-center gap-1.5"
+              >
+                Preview <ChevronDown className={`h-3.5 w-3.5 transition-transform ${w4PreviewOpen ? "rotate-180" : ""}`} />
+              </button>
+              <button
+                onClick={handleSendW4}
+                disabled={!w4RecipientId || w4Sending}
+                className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+              >
+                {w4Sending ? "Sending…" : "Send Request"}
+              </button>
+            </div>
           </div>
 
-          {w4SendMode === "teammate" ? (
-          <div className="flex flex-col gap-1 relative">
-            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient</label>
-            <input
-              type="text"
-              value={w4RecipientSearch}
-              onChange={(e) => { setW4RecipientSearch(e.target.value); setW4RecipientId(""); setW4RecipientDropdownOpen(true); }}
-              onFocus={() => setW4RecipientDropdownOpen(true)}
-              onBlur={() => setTimeout(() => setW4RecipientDropdownOpen(false), 150)}
-              placeholder="Search a teammate…"
-              className="glass-input text-sm py-1.5 px-3 rounded-md"
-            />
-            {w4RecipientDropdownOpen && (
-              <div className="absolute z-50 top-full mt-1 w-full max-h-96 overflow-y-auto rounded-md border border-white/15 bg-slate-900 shadow-2xl">
-                {filteredW4Recipients.length === 0 ? (
-                  <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+          <div className="flex-1 min-w-0">
+            {w4PreviewOpen ? (
+              <div className="border border-white/10 rounded-md overflow-hidden bg-white/5 h-full" style={{ minHeight: 560 }}>
+                {w4PreviewLoading || !w4PreviewPdfUrl ? (
+                  <div className="h-full flex items-center justify-center text-sm text-muted-foreground" style={{ minHeight: 560 }}>Loading preview…</div>
                 ) : (
-                  filteredW4Recipients.map((e) => (
-                    <button
-                      key={e.id}
-                      type="button"
-                      onMouseDown={(ev) => ev.preventDefault()}
-                      onClick={() => {
-                        setW4RecipientId(e.id);
-                        setW4RecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`);
-                        setW4RecipientDropdownOpen(false);
-                      }}
-                      className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${w4RecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
-                    >
-                      {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
-                    </button>
-                  ))
+                  <iframe src={w4PreviewPdfUrl} title="W-4 Preview" className="w-full border-0" style={{ height: 560 }} />
                 )}
+              </div>
+            ) : (
+              <div className="border border-dashed border-white/15 rounded-md flex items-center justify-center text-sm text-muted-foreground" style={{ minHeight: 560 }}>
+                Click "Preview" to see the document here.
               </div>
             )}
           </div>
-          ) : (
-          <div>
-            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient name</label>
-            <input
-              type="text"
-              value={w4ExternalName}
-              onChange={(e) => setW4ExternalName(e.target.value)}
-              placeholder="Type their name (optional)…"
-              className="glass-input text-sm py-1.5 px-3 rounded-md w-full mt-1"
-            />
-            <p className="text-[10px] text-muted-foreground mt-1">No AHS account needed — you'll get a link to send them any way you like (email, Slack, text), and they can open it and fill it in without logging in.</p>
-          </div>
-          )}
-
-          {w4SendError && (
-            <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{w4SendError}</p>
-          )}
-          {w4SendMode === "teammate" ? (
-            <button
-              onClick={handleOpenW4Preview}
-              disabled={!w4RecipientId || w4Sending}
-              className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 w-fit"
-            >
-              Preview & Send
-            </button>
-          ) : (
-            <button
-              onClick={handleGenerateExternalW4}
-              disabled={w4Sending}
-              className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 w-fit"
-            >
-              {w4Sending ? "Generating…" : "Generate Link"}
-            </button>
-          )}
-          </>
-          )}
         </div>
       </div>
 
@@ -12052,101 +13870,115 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <h2 className="font-semibold text-sm">Send W-9 Request</h2>
           <p className="text-[10px] text-muted-foreground mt-0.5">Pick a teammate — they'll get a link to fill in and sign their own Form W-9. It comes back to you here automatically once submitted.</p>
         </div>
-        <div className="p-4 flex flex-col gap-3 max-w-md">
-          {w9SentLink ? (
-            <div className="flex flex-col gap-3">
-              <div className="rounded-md border border-green-500/30 bg-green-500/10 px-3 py-2.5">
-                <p className="text-sm font-semibold text-green-300">Link generated for {w9SentLink.recipientName}</p>
-                <p className="text-xs text-muted-foreground mt-1">No AHS account needed — copy the link below and send it any way you like (email, Slack, text).</p>
-              </div>
-              <div>
-                <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Fill-in link</label>
-                <div className="flex gap-2 mt-1">
-                  <input type="text" readOnly value={w9SentLink.link} onFocus={(e) => e.target.select()} className="glass-input text-xs py-1.5 px-3 rounded-md flex-1" />
-                  <button onClick={handleCopyW9SentLink} className="btn text-xs px-3 py-1.5 shrink-0">{w9SentLinkCopied ? "Copied!" : "Copy"}</button>
+        <div className="p-4 flex flex-col md:flex-row gap-6">
+          <div className="flex flex-col gap-3 w-full md:max-w-sm md:shrink-0">
+            <div className="flex flex-col gap-1.5 pb-3 border-b border-white/10">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">External Link (no login needed)</label>
+              {w9SentLink ? (
+                <div className="flex flex-col gap-2">
+                  <div className="rounded-md border border-green-500/30 bg-green-500/10 px-3 py-2.5">
+                    <p className="text-xs font-semibold text-green-300">Link generated for {w9SentLink.recipientName}</p>
+                  </div>
+                  <div className="flex gap-2">
+                    <input type="text" readOnly value={w9SentLink.link} onFocus={(e) => e.target.select()} className="glass-input text-xs py-1.5 px-3 rounded-md flex-1" />
+                    <button onClick={handleCopyW9SentLink} className="btn text-xs px-3 py-1.5 shrink-0">{w9SentLinkCopied ? "Copied!" : "Copy"}</button>
+                  </div>
+                  <button onClick={() => setW9SentLink(null)} className="btn text-xs px-3 py-1.5 w-fit">Done</button>
                 </div>
-              </div>
-              <button onClick={() => setW9SentLink(null)} className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white w-fit">Done</button>
+              ) : (
+                <>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={w9ExternalName}
+                      onChange={(e) => setW9ExternalName(e.target.value)}
+                      placeholder="Type their name (optional)…"
+                      className="glass-input text-sm py-1.5 px-3 rounded-md flex-1"
+                    />
+                    <button
+                      onClick={handleGenerateExternalW9}
+                      disabled={w9Sending}
+                      className="btn text-sm px-3 py-1.5 disabled:opacity-50 shrink-0"
+                    >
+                      {w9Sending ? "Generating…" : "Generate Link"}
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground">No AHS account needed — they can open the link and fill it in without logging in.</p>
+                </>
+              )}
             </div>
-          ) : (
-          <>
-          <div className="flex rounded-md overflow-hidden border border-white/15 h-7.5 w-fit">
-            <button type="button" onClick={() => setW9SendMode("teammate")} className={`px-3 text-xs font-medium transition-colors ${w9SendMode === "teammate" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}>AHS Teammate</button>
-            <button type="button" onClick={() => setW9SendMode("external")} className={`px-3 text-xs font-medium transition-colors border-l border-white/15 ${w9SendMode === "external" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}>External Link</button>
+
+            <div className="flex flex-col gap-1 relative">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient (AHS teammate)</label>
+              <input
+                type="text"
+                value={w9RecipientSearch}
+                onChange={(e) => { setW9RecipientSearch(e.target.value); setW9RecipientId(""); setW9RecipientDropdownOpen(true); }}
+                onFocus={() => setW9RecipientDropdownOpen(true)}
+                onBlur={() => setTimeout(() => setW9RecipientDropdownOpen(false), 150)}
+                placeholder="Search a teammate…"
+                className="glass-input text-sm py-1.5 px-3 rounded-md"
+              />
+              {w9RecipientDropdownOpen && (
+                <div className="absolute z-50 top-full mt-1 w-full max-h-96 overflow-y-auto rounded-md border border-white/15 bg-slate-900 shadow-2xl">
+                  {filteredW9Recipients.length === 0 ? (
+                    <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+                  ) : (
+                    filteredW9Recipients.map((e) => (
+                      <button
+                        key={e.id}
+                        type="button"
+                        onMouseDown={(ev) => ev.preventDefault()}
+                        onClick={() => {
+                          setW9RecipientId(e.id);
+                          setW9RecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`);
+                          setW9RecipientDropdownOpen(false);
+                        }}
+                        className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${w9RecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                      >
+                        {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+
+            {w9SendError && (
+              <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{w9SendError}</p>
+            )}
+            <div className="flex items-center gap-2">
+              <button
+                onClick={toggleW9Preview}
+                className="btn text-sm px-4 py-2 flex items-center gap-1.5"
+              >
+                Preview <ChevronDown className={`h-3.5 w-3.5 transition-transform ${w9PreviewOpen ? "rotate-180" : ""}`} />
+              </button>
+              <button
+                onClick={handleSendW9}
+                disabled={!w9RecipientId || w9Sending}
+                className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+              >
+                {w9Sending ? "Sending…" : "Send Request"}
+              </button>
+            </div>
           </div>
 
-          {w9SendMode === "teammate" ? (
-          <div className="flex flex-col gap-1 relative">
-            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient</label>
-            <input
-              type="text"
-              value={w9RecipientSearch}
-              onChange={(e) => { setW9RecipientSearch(e.target.value); setW9RecipientId(""); setW9RecipientDropdownOpen(true); }}
-              onFocus={() => setW9RecipientDropdownOpen(true)}
-              onBlur={() => setTimeout(() => setW9RecipientDropdownOpen(false), 150)}
-              placeholder="Search a teammate…"
-              className="glass-input text-sm py-1.5 px-3 rounded-md"
-            />
-            {w9RecipientDropdownOpen && (
-              <div className="absolute z-50 top-full mt-1 w-full max-h-96 overflow-y-auto rounded-md border border-white/15 bg-slate-900 shadow-2xl">
-                {filteredW9Recipients.length === 0 ? (
-                  <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+          <div className="flex-1 min-w-0">
+            {w9PreviewOpen ? (
+              <div className="border border-white/10 rounded-md overflow-hidden bg-white/5 h-full" style={{ minHeight: 560 }}>
+                {w9PreviewLoading || !w9PreviewPdfUrl ? (
+                  <div className="h-full flex items-center justify-center text-sm text-muted-foreground" style={{ minHeight: 560 }}>Loading preview…</div>
                 ) : (
-                  filteredW9Recipients.map((e) => (
-                    <button
-                      key={e.id}
-                      type="button"
-                      onMouseDown={(ev) => ev.preventDefault()}
-                      onClick={() => {
-                        setW9RecipientId(e.id);
-                        setW9RecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`);
-                        setW9RecipientDropdownOpen(false);
-                      }}
-                      className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${w9RecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
-                    >
-                      {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
-                    </button>
-                  ))
+                  <iframe src={w9PreviewPdfUrl} title="W-9 Preview" className="w-full border-0" style={{ height: 560 }} />
                 )}
+              </div>
+            ) : (
+              <div className="border border-dashed border-white/15 rounded-md flex items-center justify-center text-sm text-muted-foreground" style={{ minHeight: 560 }}>
+                Click "Preview" to see the document here.
               </div>
             )}
           </div>
-          ) : (
-          <div>
-            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient name</label>
-            <input
-              type="text"
-              value={w9ExternalName}
-              onChange={(e) => setW9ExternalName(e.target.value)}
-              placeholder="Type their name (optional)…"
-              className="glass-input text-sm py-1.5 px-3 rounded-md w-full mt-1"
-            />
-            <p className="text-[10px] text-muted-foreground mt-1">No AHS account needed — you'll get a link to send them any way you like (email, Slack, text), and they can open it and fill it in without logging in.</p>
-          </div>
-          )}
-
-          {w9SendError && (
-            <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{w9SendError}</p>
-          )}
-          {w9SendMode === "teammate" ? (
-            <button
-              onClick={handleOpenW9Preview}
-              disabled={!w9RecipientId || w9Sending}
-              className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 w-fit"
-            >
-              Preview & Send
-            </button>
-          ) : (
-            <button
-              onClick={handleGenerateExternalW9}
-              disabled={w9Sending}
-              className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 w-fit"
-            >
-              {w9Sending ? "Generating…" : "Generate Link"}
-            </button>
-          )}
-          </>
-          )}
         </div>
       </div>
 
@@ -12240,101 +14072,115 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <h2 className="font-semibold text-sm">Send W-4R Request</h2>
           <p className="text-[10px] text-muted-foreground mt-0.5">Pick a teammate — they'll get a link to fill in and sign their own Form W-4R (Withholding Certificate for Nonperiodic Payments and Eligible Rollover Distributions). It comes back to you here automatically once submitted.</p>
         </div>
-        <div className="p-4 flex flex-col gap-3 max-w-md">
-          {w4rSentLink ? (
-            <div className="flex flex-col gap-3">
-              <div className="rounded-md border border-green-500/30 bg-green-500/10 px-3 py-2.5">
-                <p className="text-sm font-semibold text-green-300">Link generated for {w4rSentLink.recipientName}</p>
-                <p className="text-xs text-muted-foreground mt-1">No AHS account needed — copy the link below and send it any way you like (email, Slack, text).</p>
-              </div>
-              <div>
-                <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Fill-in link</label>
-                <div className="flex gap-2 mt-1">
-                  <input type="text" readOnly value={w4rSentLink.link} onFocus={(e) => e.target.select()} className="glass-input text-xs py-1.5 px-3 rounded-md flex-1" />
-                  <button onClick={handleCopyW4RSentLink} className="btn text-xs px-3 py-1.5 shrink-0">{w4rSentLinkCopied ? "Copied!" : "Copy"}</button>
+        <div className="p-4 flex flex-col md:flex-row gap-6">
+          <div className="flex flex-col gap-3 w-full md:max-w-sm md:shrink-0">
+            <div className="flex flex-col gap-1.5 pb-3 border-b border-white/10">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">External Link (no login needed)</label>
+              {w4rSentLink ? (
+                <div className="flex flex-col gap-2">
+                  <div className="rounded-md border border-green-500/30 bg-green-500/10 px-3 py-2.5">
+                    <p className="text-xs font-semibold text-green-300">Link generated for {w4rSentLink.recipientName}</p>
+                  </div>
+                  <div className="flex gap-2">
+                    <input type="text" readOnly value={w4rSentLink.link} onFocus={(e) => e.target.select()} className="glass-input text-xs py-1.5 px-3 rounded-md flex-1" />
+                    <button onClick={handleCopyW4RSentLink} className="btn text-xs px-3 py-1.5 shrink-0">{w4rSentLinkCopied ? "Copied!" : "Copy"}</button>
+                  </div>
+                  <button onClick={() => setW4rSentLink(null)} className="btn text-xs px-3 py-1.5 w-fit">Done</button>
                 </div>
-              </div>
-              <button onClick={() => setW4rSentLink(null)} className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white w-fit">Done</button>
+              ) : (
+                <>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={w4rExternalName}
+                      onChange={(e) => setW4rExternalName(e.target.value)}
+                      placeholder="Type their name (optional)…"
+                      className="glass-input text-sm py-1.5 px-3 rounded-md flex-1"
+                    />
+                    <button
+                      onClick={handleGenerateExternalW4R}
+                      disabled={w4rSending}
+                      className="btn text-sm px-3 py-1.5 disabled:opacity-50 shrink-0"
+                    >
+                      {w4rSending ? "Generating…" : "Generate Link"}
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground">No AHS account needed — they can open the link and fill it in without logging in.</p>
+                </>
+              )}
             </div>
-          ) : (
-          <>
-          <div className="flex rounded-md overflow-hidden border border-white/15 h-7.5 w-fit">
-            <button type="button" onClick={() => setW4rSendMode("teammate")} className={`px-3 text-xs font-medium transition-colors ${w4rSendMode === "teammate" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}>AHS Teammate</button>
-            <button type="button" onClick={() => setW4rSendMode("external")} className={`px-3 text-xs font-medium transition-colors border-l border-white/15 ${w4rSendMode === "external" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}>External Link</button>
+
+            <div className="flex flex-col gap-1 relative">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient (AHS teammate)</label>
+              <input
+                type="text"
+                value={w4rRecipientSearch}
+                onChange={(e) => { setW4rRecipientSearch(e.target.value); setW4rRecipientId(""); setW4rRecipientDropdownOpen(true); }}
+                onFocus={() => setW4rRecipientDropdownOpen(true)}
+                onBlur={() => setTimeout(() => setW4rRecipientDropdownOpen(false), 150)}
+                placeholder="Search a teammate…"
+                className="glass-input text-sm py-1.5 px-3 rounded-md"
+              />
+              {w4rRecipientDropdownOpen && (
+                <div className="absolute z-50 top-full mt-1 w-full max-h-96 overflow-y-auto rounded-md border border-white/15 bg-slate-900 shadow-2xl">
+                  {filteredW4RRecipients.length === 0 ? (
+                    <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+                  ) : (
+                    filteredW4RRecipients.map((e) => (
+                      <button
+                        key={e.id}
+                        type="button"
+                        onMouseDown={(ev) => ev.preventDefault()}
+                        onClick={() => {
+                          setW4rRecipientId(e.id);
+                          setW4rRecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`);
+                          setW4rRecipientDropdownOpen(false);
+                        }}
+                        className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${w4rRecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                      >
+                        {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+
+            {w4rSendError && (
+              <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{w4rSendError}</p>
+            )}
+            <div className="flex items-center gap-2">
+              <button
+                onClick={toggleW4RPreview}
+                className="btn text-sm px-4 py-2 flex items-center gap-1.5"
+              >
+                Preview <ChevronDown className={`h-3.5 w-3.5 transition-transform ${w4rPreviewOpen ? "rotate-180" : ""}`} />
+              </button>
+              <button
+                onClick={handleSendW4R}
+                disabled={!w4rRecipientId || w4rSending}
+                className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+              >
+                {w4rSending ? "Sending…" : "Send Request"}
+              </button>
+            </div>
           </div>
 
-          {w4rSendMode === "teammate" ? (
-          <div className="flex flex-col gap-1 relative">
-            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient</label>
-            <input
-              type="text"
-              value={w4rRecipientSearch}
-              onChange={(e) => { setW4rRecipientSearch(e.target.value); setW4rRecipientId(""); setW4rRecipientDropdownOpen(true); }}
-              onFocus={() => setW4rRecipientDropdownOpen(true)}
-              onBlur={() => setTimeout(() => setW4rRecipientDropdownOpen(false), 150)}
-              placeholder="Search a teammate…"
-              className="glass-input text-sm py-1.5 px-3 rounded-md"
-            />
-            {w4rRecipientDropdownOpen && (
-              <div className="absolute z-50 top-full mt-1 w-full max-h-96 overflow-y-auto rounded-md border border-white/15 bg-slate-900 shadow-2xl">
-                {filteredW4RRecipients.length === 0 ? (
-                  <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+          <div className="flex-1 min-w-0">
+            {w4rPreviewOpen ? (
+              <div className="border border-white/10 rounded-md overflow-hidden bg-white/5 h-full" style={{ minHeight: 560 }}>
+                {w4rPreviewLoading || !w4rPreviewPdfUrl ? (
+                  <div className="h-full flex items-center justify-center text-sm text-muted-foreground" style={{ minHeight: 560 }}>Loading preview…</div>
                 ) : (
-                  filteredW4RRecipients.map((e) => (
-                    <button
-                      key={e.id}
-                      type="button"
-                      onMouseDown={(ev) => ev.preventDefault()}
-                      onClick={() => {
-                        setW4rRecipientId(e.id);
-                        setW4rRecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`);
-                        setW4rRecipientDropdownOpen(false);
-                      }}
-                      className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${w4rRecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
-                    >
-                      {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
-                    </button>
-                  ))
+                  <iframe src={w4rPreviewPdfUrl} title="W-4R Preview" className="w-full border-0" style={{ height: 560 }} />
                 )}
+              </div>
+            ) : (
+              <div className="border border-dashed border-white/15 rounded-md flex items-center justify-center text-sm text-muted-foreground" style={{ minHeight: 560 }}>
+                Click "Preview" to see the document here.
               </div>
             )}
           </div>
-          ) : (
-          <div>
-            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient name</label>
-            <input
-              type="text"
-              value={w4rExternalName}
-              onChange={(e) => setW4rExternalName(e.target.value)}
-              placeholder="Type their name (optional)…"
-              className="glass-input text-sm py-1.5 px-3 rounded-md w-full mt-1"
-            />
-            <p className="text-[10px] text-muted-foreground mt-1">No AHS account needed — you'll get a link to send them any way you like (email, Slack, text), and they can open it and fill it in without logging in.</p>
-          </div>
-          )}
-
-          {w4rSendError && (
-            <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{w4rSendError}</p>
-          )}
-          {w4rSendMode === "teammate" ? (
-            <button
-              onClick={handleOpenW4RPreview}
-              disabled={!w4rRecipientId || w4rSending}
-              className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 w-fit"
-            >
-              Preview & Send
-            </button>
-          ) : (
-            <button
-              onClick={handleGenerateExternalW4R}
-              disabled={w4rSending}
-              className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 w-fit"
-            >
-              {w4rSending ? "Generating…" : "Generate Link"}
-            </button>
-          )}
-          </>
-          )}
         </div>
       </div>
 
@@ -12431,101 +14277,115 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <h2 className="font-semibold text-sm">Send I-9 Request</h2>
           <p className="text-[10px] text-muted-foreground mt-0.5">Pick a teammate — they'll get a link to fill in and sign Section 1 (their own information) of Form I-9. Once they submit, it lands back here for HR to complete Section 2 (document review + your own signature).</p>
         </div>
-        <div className="p-4 flex flex-col gap-3 max-w-md">
-          {i9SentLink ? (
-            <div className="flex flex-col gap-3">
-              <div className="rounded-md border border-green-500/30 bg-green-500/10 px-3 py-2.5">
-                <p className="text-sm font-semibold text-green-300">Link generated for {i9SentLink.recipientName}</p>
-                <p className="text-xs text-muted-foreground mt-1">No AHS account needed — copy the link below and send it any way you like (email, Slack, text). Once Section 1 is submitted, it lands in the Sent I-9 Forms table below for you to complete Section 2.</p>
-              </div>
-              <div>
-                <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Fill-in link</label>
-                <div className="flex gap-2 mt-1">
-                  <input type="text" readOnly value={i9SentLink.link} onFocus={(e) => e.target.select()} className="glass-input text-xs py-1.5 px-3 rounded-md flex-1" />
-                  <button onClick={handleCopyI9SentLink} className="btn text-xs px-3 py-1.5 shrink-0">{i9SentLinkCopied ? "Copied!" : "Copy"}</button>
+        <div className="p-4 flex flex-col md:flex-row gap-6">
+          <div className="flex flex-col gap-3 w-full md:max-w-sm md:shrink-0">
+            <div className="flex flex-col gap-1.5 pb-3 border-b border-white/10">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">External Link (no login needed)</label>
+              {i9SentLink ? (
+                <div className="flex flex-col gap-2">
+                  <div className="rounded-md border border-green-500/30 bg-green-500/10 px-3 py-2.5">
+                    <p className="text-xs font-semibold text-green-300">Link generated for {i9SentLink.recipientName}</p>
+                  </div>
+                  <div className="flex gap-2">
+                    <input type="text" readOnly value={i9SentLink.link} onFocus={(e) => e.target.select()} className="glass-input text-xs py-1.5 px-3 rounded-md flex-1" />
+                    <button onClick={handleCopyI9SentLink} className="btn text-xs px-3 py-1.5 shrink-0">{i9SentLinkCopied ? "Copied!" : "Copy"}</button>
+                  </div>
+                  <button onClick={() => setI9SentLink(null)} className="btn text-xs px-3 py-1.5 w-fit">Done</button>
                 </div>
-              </div>
-              <button onClick={() => setI9SentLink(null)} className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white w-fit">Done</button>
+              ) : (
+                <>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={i9ExternalName}
+                      onChange={(e) => setI9ExternalName(e.target.value)}
+                      placeholder="Type their name (optional)…"
+                      className="glass-input text-sm py-1.5 px-3 rounded-md flex-1"
+                    />
+                    <button
+                      onClick={handleGenerateExternalI9}
+                      disabled={i9Sending}
+                      className="btn text-sm px-3 py-1.5 disabled:opacity-50 shrink-0"
+                    >
+                      {i9Sending ? "Generating…" : "Generate Link"}
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground">No AHS account needed — they can open the link and fill in Section 1 without logging in. Once submitted, it lands in the Sent I-9 Forms table below for you to complete Section 2.</p>
+                </>
+              )}
             </div>
-          ) : (
-          <>
-          <div className="flex rounded-md overflow-hidden border border-white/15 h-7.5 w-fit">
-            <button type="button" onClick={() => setI9SendMode("teammate")} className={`px-3 text-xs font-medium transition-colors ${i9SendMode === "teammate" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}>AHS Teammate</button>
-            <button type="button" onClick={() => setI9SendMode("external")} className={`px-3 text-xs font-medium transition-colors border-l border-white/15 ${i9SendMode === "external" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}>External Link</button>
+
+            <div className="flex flex-col gap-1 relative">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient (AHS teammate)</label>
+              <input
+                type="text"
+                value={i9RecipientSearch}
+                onChange={(e) => { setI9RecipientSearch(e.target.value); setI9RecipientId(""); setI9RecipientDropdownOpen(true); }}
+                onFocus={() => setI9RecipientDropdownOpen(true)}
+                onBlur={() => setTimeout(() => setI9RecipientDropdownOpen(false), 150)}
+                placeholder="Search a teammate…"
+                className="glass-input text-sm py-1.5 px-3 rounded-md"
+              />
+              {i9RecipientDropdownOpen && (
+                <div className="absolute z-50 top-full mt-1 w-full max-h-96 overflow-y-auto rounded-md border border-white/15 bg-slate-900 shadow-2xl">
+                  {filteredI9Recipients.length === 0 ? (
+                    <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+                  ) : (
+                    filteredI9Recipients.map((e) => (
+                      <button
+                        key={e.id}
+                        type="button"
+                        onMouseDown={(ev) => ev.preventDefault()}
+                        onClick={() => {
+                          setI9RecipientId(e.id);
+                          setI9RecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`);
+                          setI9RecipientDropdownOpen(false);
+                        }}
+                        className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${i9RecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                      >
+                        {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+
+            {i9SendError && (
+              <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{i9SendError}</p>
+            )}
+            <div className="flex items-center gap-2">
+              <button
+                onClick={toggleI9Preview}
+                className="btn text-sm px-4 py-2 flex items-center gap-1.5"
+              >
+                Preview <ChevronDown className={`h-3.5 w-3.5 transition-transform ${i9PreviewOpen ? "rotate-180" : ""}`} />
+              </button>
+              <button
+                onClick={handleSendI9}
+                disabled={!i9RecipientId || i9Sending}
+                className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+              >
+                {i9Sending ? "Sending…" : "Send Request"}
+              </button>
+            </div>
           </div>
 
-          {i9SendMode === "teammate" ? (
-          <div className="flex flex-col gap-1 relative">
-            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient</label>
-            <input
-              type="text"
-              value={i9RecipientSearch}
-              onChange={(e) => { setI9RecipientSearch(e.target.value); setI9RecipientId(""); setI9RecipientDropdownOpen(true); }}
-              onFocus={() => setI9RecipientDropdownOpen(true)}
-              onBlur={() => setTimeout(() => setI9RecipientDropdownOpen(false), 150)}
-              placeholder="Search a teammate…"
-              className="glass-input text-sm py-1.5 px-3 rounded-md"
-            />
-            {i9RecipientDropdownOpen && (
-              <div className="absolute z-50 top-full mt-1 w-full max-h-96 overflow-y-auto rounded-md border border-white/15 bg-slate-900 shadow-2xl">
-                {filteredI9Recipients.length === 0 ? (
-                  <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+          <div className="flex-1 min-w-0">
+            {i9PreviewOpen ? (
+              <div className="border border-white/10 rounded-md overflow-hidden bg-white/5 h-full" style={{ minHeight: 560 }}>
+                {i9PreviewLoading || !i9PreviewPdfUrl ? (
+                  <div className="h-full flex items-center justify-center text-sm text-muted-foreground" style={{ minHeight: 560 }}>Loading preview…</div>
                 ) : (
-                  filteredI9Recipients.map((e) => (
-                    <button
-                      key={e.id}
-                      type="button"
-                      onMouseDown={(ev) => ev.preventDefault()}
-                      onClick={() => {
-                        setI9RecipientId(e.id);
-                        setI9RecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`);
-                        setI9RecipientDropdownOpen(false);
-                      }}
-                      className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${i9RecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
-                    >
-                      {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
-                    </button>
-                  ))
+                  <iframe src={i9PreviewPdfUrl} title="Form I-9 Preview" className="w-full border-0" style={{ height: 560 }} />
                 )}
+              </div>
+            ) : (
+              <div className="border border-dashed border-white/15 rounded-md flex items-center justify-center text-sm text-muted-foreground" style={{ minHeight: 560 }}>
+                Click "Preview" to see the document here.
               </div>
             )}
           </div>
-          ) : (
-          <div>
-            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient name</label>
-            <input
-              type="text"
-              value={i9ExternalName}
-              onChange={(e) => setI9ExternalName(e.target.value)}
-              placeholder="Type their name (optional)…"
-              className="glass-input text-sm py-1.5 px-3 rounded-md w-full mt-1"
-            />
-            <p className="text-[10px] text-muted-foreground mt-1">No AHS account needed — you'll get a link to send them any way you like (email, Slack, text), and they can open it and fill in Section 1 without logging in.</p>
-          </div>
-          )}
-
-          {i9SendError && (
-            <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{i9SendError}</p>
-          )}
-          {i9SendMode === "teammate" ? (
-            <button
-              onClick={handleOpenI9Preview}
-              disabled={!i9RecipientId || i9Sending}
-              className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 w-fit"
-            >
-              Preview & Send
-            </button>
-          ) : (
-            <button
-              onClick={handleGenerateExternalI9}
-              disabled={i9Sending}
-              className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 w-fit"
-            >
-              {i9Sending ? "Generating…" : "Generate Link"}
-            </button>
-          )}
-          </>
-          )}
         </div>
       </div>
 
@@ -12631,101 +14491,115 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <h2 className="font-semibold text-sm">Send Acknowledgment of Wage Request</h2>
           <p className="text-[10px] text-muted-foreground mt-0.5">Pick a teammate — they'll get a link to fill in their name/effective date and sign the Acknowledgment of Wage & Compensation Structure. Once they submit, it lands back here for HR to add the employer/representative signature.</p>
         </div>
-        <div className="p-4 flex flex-col gap-3 max-w-md">
-          {wageAckSentLink ? (
-            <div className="flex flex-col gap-3">
-              <div className="rounded-md border border-green-500/30 bg-green-500/10 px-3 py-2.5">
-                <p className="text-sm font-semibold text-green-300">Link generated for {wageAckSentLink.recipientName}</p>
-                <p className="text-xs text-muted-foreground mt-1">No AHS account needed — copy the link below and send it any way you like (email, Slack, text). Once submitted, it lands in the table below for you to add the employer signature.</p>
-              </div>
-              <div>
-                <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Fill-in link</label>
-                <div className="flex gap-2 mt-1">
-                  <input type="text" readOnly value={wageAckSentLink.link} onFocus={(e) => e.target.select()} className="glass-input text-xs py-1.5 px-3 rounded-md flex-1" />
-                  <button onClick={handleCopyWageAckSentLink} className="btn text-xs px-3 py-1.5 shrink-0">{wageAckSentLinkCopied ? "Copied!" : "Copy"}</button>
+        <div className="p-4 flex flex-col md:flex-row gap-6">
+          <div className="flex flex-col gap-3 w-full md:max-w-sm md:shrink-0">
+            <div className="flex flex-col gap-1.5 pb-3 border-b border-white/10">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">External Link (no login needed)</label>
+              {wageAckSentLink ? (
+                <div className="flex flex-col gap-2">
+                  <div className="rounded-md border border-green-500/30 bg-green-500/10 px-3 py-2.5">
+                    <p className="text-xs font-semibold text-green-300">Link generated for {wageAckSentLink.recipientName}</p>
+                  </div>
+                  <div className="flex gap-2">
+                    <input type="text" readOnly value={wageAckSentLink.link} onFocus={(e) => e.target.select()} className="glass-input text-xs py-1.5 px-3 rounded-md flex-1" />
+                    <button onClick={handleCopyWageAckSentLink} className="btn text-xs px-3 py-1.5 shrink-0">{wageAckSentLinkCopied ? "Copied!" : "Copy"}</button>
+                  </div>
+                  <button onClick={() => setWageAckSentLink(null)} className="btn text-xs px-3 py-1.5 w-fit">Done</button>
                 </div>
-              </div>
-              <button onClick={() => setWageAckSentLink(null)} className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white w-fit">Done</button>
+              ) : (
+                <>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={wageAckExternalName}
+                      onChange={(e) => setWageAckExternalName(e.target.value)}
+                      placeholder="Type their name (optional)…"
+                      className="glass-input text-sm py-1.5 px-3 rounded-md flex-1"
+                    />
+                    <button
+                      onClick={handleGenerateExternalWageAck}
+                      disabled={wageAckSending}
+                      className="btn text-sm px-3 py-1.5 disabled:opacity-50 shrink-0"
+                    >
+                      {wageAckSending ? "Generating…" : "Generate Link"}
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground">No AHS account needed — they can open the link and fill it in without logging in.</p>
+                </>
+              )}
             </div>
-          ) : (
-          <>
-          <div className="flex rounded-md overflow-hidden border border-white/15 h-7.5 w-fit">
-            <button type="button" onClick={() => setWageAckSendMode("teammate")} className={`px-3 text-xs font-medium transition-colors ${wageAckSendMode === "teammate" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}>AHS Teammate</button>
-            <button type="button" onClick={() => setWageAckSendMode("external")} className={`px-3 text-xs font-medium transition-colors border-l border-white/15 ${wageAckSendMode === "external" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}>External Link</button>
+
+            <div className="flex flex-col gap-1 relative">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient (AHS teammate)</label>
+              <input
+                type="text"
+                value={wageAckRecipientSearch}
+                onChange={(e) => { setWageAckRecipientSearch(e.target.value); setWageAckRecipientId(""); setWageAckRecipientDropdownOpen(true); }}
+                onFocus={() => setWageAckRecipientDropdownOpen(true)}
+                onBlur={() => setTimeout(() => setWageAckRecipientDropdownOpen(false), 150)}
+                placeholder="Search a teammate…"
+                className="glass-input text-sm py-1.5 px-3 rounded-md"
+              />
+              {wageAckRecipientDropdownOpen && (
+                <div className="absolute z-50 top-full mt-1 w-full max-h-96 overflow-y-auto rounded-md border border-white/15 bg-slate-900 shadow-2xl">
+                  {filteredWageAckRecipients.length === 0 ? (
+                    <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+                  ) : (
+                    filteredWageAckRecipients.map((e) => (
+                      <button
+                        key={e.id}
+                        type="button"
+                        onMouseDown={(ev) => ev.preventDefault()}
+                        onClick={() => {
+                          setWageAckRecipientId(e.id);
+                          setWageAckRecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`);
+                          setWageAckRecipientDropdownOpen(false);
+                        }}
+                        className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${wageAckRecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                      >
+                        {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+
+            {wageAckSendError && (
+              <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{wageAckSendError}</p>
+            )}
+            <div className="flex items-center gap-2">
+              <button
+                onClick={toggleWageAckPreview}
+                className="btn text-sm px-4 py-2 flex items-center gap-1.5"
+              >
+                Preview <ChevronDown className={`h-3.5 w-3.5 transition-transform ${wageAckPreviewExpanded ? "rotate-180" : ""}`} />
+              </button>
+              <button
+                onClick={handleSendWageAck}
+                disabled={!wageAckRecipientId || wageAckSending}
+                className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+              >
+                {wageAckSending ? "Sending…" : "Send Request"}
+              </button>
+            </div>
           </div>
 
-          {wageAckSendMode === "teammate" ? (
-          <div className="flex flex-col gap-1 relative">
-            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient</label>
-            <input
-              type="text"
-              value={wageAckRecipientSearch}
-              onChange={(e) => { setWageAckRecipientSearch(e.target.value); setWageAckRecipientId(""); setWageAckRecipientDropdownOpen(true); }}
-              onFocus={() => setWageAckRecipientDropdownOpen(true)}
-              onBlur={() => setTimeout(() => setWageAckRecipientDropdownOpen(false), 150)}
-              placeholder="Search a teammate…"
-              className="glass-input text-sm py-1.5 px-3 rounded-md"
-            />
-            {wageAckRecipientDropdownOpen && (
-              <div className="absolute z-50 top-full mt-1 w-full max-h-96 overflow-y-auto rounded-md border border-white/15 bg-slate-900 shadow-2xl">
-                {filteredWageAckRecipients.length === 0 ? (
-                  <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+          <div className="flex-1 min-w-0">
+            {wageAckPreviewExpanded ? (
+              <div className="border border-white/10 rounded-md overflow-hidden bg-white/5 h-full" style={{ minHeight: 560 }}>
+                {wageAckPreviewLoading || !wageAckPreviewPdfUrl ? (
+                  <div className="h-full flex items-center justify-center text-sm text-muted-foreground" style={{ minHeight: 560 }}>Loading preview…</div>
                 ) : (
-                  filteredWageAckRecipients.map((e) => (
-                    <button
-                      key={e.id}
-                      type="button"
-                      onMouseDown={(ev) => ev.preventDefault()}
-                      onClick={() => {
-                        setWageAckRecipientId(e.id);
-                        setWageAckRecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`);
-                        setWageAckRecipientDropdownOpen(false);
-                      }}
-                      className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${wageAckRecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
-                    >
-                      {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
-                    </button>
-                  ))
+                  <iframe src={wageAckPreviewPdfUrl} title="Acknowledgment of Wage Preview" className="w-full border-0" style={{ height: 560 }} />
                 )}
+              </div>
+            ) : (
+              <div className="border border-dashed border-white/15 rounded-md flex items-center justify-center text-sm text-muted-foreground" style={{ minHeight: 560 }}>
+                Click "Preview" to see the document here.
               </div>
             )}
           </div>
-          ) : (
-          <div>
-            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient name</label>
-            <input
-              type="text"
-              value={wageAckExternalName}
-              onChange={(e) => setWageAckExternalName(e.target.value)}
-              placeholder="Type their name (optional)…"
-              className="glass-input text-sm py-1.5 px-3 rounded-md w-full mt-1"
-            />
-            <p className="text-[10px] text-muted-foreground mt-1">No AHS account needed — you'll get a link to send them any way you like (email, Slack, text), and they can open it and fill it in without logging in.</p>
-          </div>
-          )}
-
-          {wageAckSendError && (
-            <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{wageAckSendError}</p>
-          )}
-          {wageAckSendMode === "teammate" ? (
-            <button
-              onClick={handleSendWageAck}
-              disabled={!wageAckRecipientId || wageAckSending}
-              className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 w-fit"
-            >
-              {wageAckSending ? "Sending…" : "Send Request"}
-            </button>
-          ) : (
-            <button
-              onClick={handleGenerateExternalWageAck}
-              disabled={wageAckSending}
-              className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 w-fit"
-            >
-              {wageAckSending ? "Generating…" : "Generate Link"}
-            </button>
-          )}
-          </>
-          )}
         </div>
       </div>
 
@@ -12831,101 +14705,115 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <h2 className="font-semibold text-sm">Send Car IQ Technician Agreement Request</h2>
           <p className="text-[10px] text-muted-foreground mt-0.5">Pick a teammate — they'll get a link to fill in their name and branch, agree to the usage guidelines, and sign the Car IQ Technician Agreement Form. It comes back to you here automatically once submitted.</p>
         </div>
-        <div className="p-4 flex flex-col gap-3 max-w-md">
-          {carIqSentLink ? (
-            <div className="flex flex-col gap-3">
-              <div className="rounded-md border border-green-500/30 bg-green-500/10 px-3 py-2.5">
-                <p className="text-sm font-semibold text-green-300">Link generated for {carIqSentLink.recipientName}</p>
-                <p className="text-xs text-muted-foreground mt-1">No AHS account needed — copy the link below and send it any way you like (email, Slack, text).</p>
-              </div>
-              <div>
-                <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Fill-in link</label>
-                <div className="flex gap-2 mt-1">
-                  <input type="text" readOnly value={carIqSentLink.link} onFocus={(e) => e.target.select()} className="glass-input text-xs py-1.5 px-3 rounded-md flex-1" />
-                  <button onClick={handleCopyCarIqSentLink} className="btn text-xs px-3 py-1.5 shrink-0">{carIqSentLinkCopied ? "Copied!" : "Copy"}</button>
+        <div className="p-4 flex flex-col md:flex-row gap-6">
+          <div className="flex flex-col gap-3 w-full md:max-w-sm md:shrink-0">
+            <div className="flex flex-col gap-1.5 pb-3 border-b border-white/10">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">External Link (no login needed)</label>
+              {carIqSentLink ? (
+                <div className="flex flex-col gap-2">
+                  <div className="rounded-md border border-green-500/30 bg-green-500/10 px-3 py-2.5">
+                    <p className="text-xs font-semibold text-green-300">Link generated for {carIqSentLink.recipientName}</p>
+                  </div>
+                  <div className="flex gap-2">
+                    <input type="text" readOnly value={carIqSentLink.link} onFocus={(e) => e.target.select()} className="glass-input text-xs py-1.5 px-3 rounded-md flex-1" />
+                    <button onClick={handleCopyCarIqSentLink} className="btn text-xs px-3 py-1.5 shrink-0">{carIqSentLinkCopied ? "Copied!" : "Copy"}</button>
+                  </div>
+                  <button onClick={() => setCarIqSentLink(null)} className="btn text-xs px-3 py-1.5 w-fit">Done</button>
                 </div>
-              </div>
-              <button onClick={() => setCarIqSentLink(null)} className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white w-fit">Done</button>
+              ) : (
+                <>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={carIqExternalName}
+                      onChange={(e) => setCarIqExternalName(e.target.value)}
+                      placeholder="Type their name (optional)…"
+                      className="glass-input text-sm py-1.5 px-3 rounded-md flex-1"
+                    />
+                    <button
+                      onClick={handleGenerateExternalCarIqAgreement}
+                      disabled={carIqSending}
+                      className="btn text-sm px-3 py-1.5 disabled:opacity-50 shrink-0"
+                    >
+                      {carIqSending ? "Generating…" : "Generate Link"}
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground">No AHS account needed — they can open the link and fill it in without logging in.</p>
+                </>
+              )}
             </div>
-          ) : (
-          <>
-          <div className="flex rounded-md overflow-hidden border border-white/15 h-7.5 w-fit">
-            <button type="button" onClick={() => setCarIqSendMode("teammate")} className={`px-3 text-xs font-medium transition-colors ${carIqSendMode === "teammate" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}>AHS Teammate</button>
-            <button type="button" onClick={() => setCarIqSendMode("external")} className={`px-3 text-xs font-medium transition-colors border-l border-white/15 ${carIqSendMode === "external" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}>External Link</button>
+
+            <div className="flex flex-col gap-1 relative">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient (AHS teammate)</label>
+              <input
+                type="text"
+                value={carIqRecipientSearch}
+                onChange={(e) => { setCarIqRecipientSearch(e.target.value); setCarIqRecipientId(""); setCarIqRecipientDropdownOpen(true); }}
+                onFocus={() => setCarIqRecipientDropdownOpen(true)}
+                onBlur={() => setTimeout(() => setCarIqRecipientDropdownOpen(false), 150)}
+                placeholder="Search a teammate…"
+                className="glass-input text-sm py-1.5 px-3 rounded-md"
+              />
+              {carIqRecipientDropdownOpen && (
+                <div className="absolute z-50 top-full mt-1 w-full max-h-96 overflow-y-auto rounded-md border border-white/15 bg-slate-900 shadow-2xl">
+                  {filteredCarIqRecipients.length === 0 ? (
+                    <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+                  ) : (
+                    filteredCarIqRecipients.map((e) => (
+                      <button
+                        key={e.id}
+                        type="button"
+                        onMouseDown={(ev) => ev.preventDefault()}
+                        onClick={() => {
+                          setCarIqRecipientId(e.id);
+                          setCarIqRecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`);
+                          setCarIqRecipientDropdownOpen(false);
+                        }}
+                        className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${carIqRecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                      >
+                        {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+
+            {carIqSendError && (
+              <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{carIqSendError}</p>
+            )}
+            <div className="flex items-center gap-2">
+              <button
+                onClick={toggleCarIqPreview}
+                className="btn text-sm px-4 py-2 flex items-center gap-1.5"
+              >
+                Preview <ChevronDown className={`h-3.5 w-3.5 transition-transform ${carIqPreviewOpen ? "rotate-180" : ""}`} />
+              </button>
+              <button
+                onClick={handleSendCarIqAgreement}
+                disabled={!carIqRecipientId || carIqSending}
+                className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+              >
+                {carIqSending ? "Sending…" : "Send Request"}
+              </button>
+            </div>
           </div>
 
-          {carIqSendMode === "teammate" ? (
-          <div className="flex flex-col gap-1 relative">
-            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient</label>
-            <input
-              type="text"
-              value={carIqRecipientSearch}
-              onChange={(e) => { setCarIqRecipientSearch(e.target.value); setCarIqRecipientId(""); setCarIqRecipientDropdownOpen(true); }}
-              onFocus={() => setCarIqRecipientDropdownOpen(true)}
-              onBlur={() => setTimeout(() => setCarIqRecipientDropdownOpen(false), 150)}
-              placeholder="Search a teammate…"
-              className="glass-input text-sm py-1.5 px-3 rounded-md"
-            />
-            {carIqRecipientDropdownOpen && (
-              <div className="absolute z-50 top-full mt-1 w-full max-h-96 overflow-y-auto rounded-md border border-white/15 bg-slate-900 shadow-2xl">
-                {filteredCarIqRecipients.length === 0 ? (
-                  <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+          <div className="flex-1 min-w-0">
+            {carIqPreviewOpen ? (
+              <div className="border border-white/10 rounded-md overflow-hidden bg-white/5 h-full" style={{ minHeight: 560 }}>
+                {carIqPreviewLoading || !carIqPreviewPdfUrl ? (
+                  <div className="h-full flex items-center justify-center text-sm text-muted-foreground" style={{ minHeight: 560 }}>Loading preview…</div>
                 ) : (
-                  filteredCarIqRecipients.map((e) => (
-                    <button
-                      key={e.id}
-                      type="button"
-                      onMouseDown={(ev) => ev.preventDefault()}
-                      onClick={() => {
-                        setCarIqRecipientId(e.id);
-                        setCarIqRecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`);
-                        setCarIqRecipientDropdownOpen(false);
-                      }}
-                      className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${carIqRecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
-                    >
-                      {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
-                    </button>
-                  ))
+                  <iframe src={carIqPreviewPdfUrl} title="Car IQ Technician Agreement Preview" className="w-full border-0" style={{ height: 560 }} />
                 )}
+              </div>
+            ) : (
+              <div className="border border-dashed border-white/15 rounded-md flex items-center justify-center text-sm text-muted-foreground" style={{ minHeight: 560 }}>
+                Click "Preview" to see the document here.
               </div>
             )}
           </div>
-          ) : (
-          <div>
-            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient name</label>
-            <input
-              type="text"
-              value={carIqExternalName}
-              onChange={(e) => setCarIqExternalName(e.target.value)}
-              placeholder="Type their name (optional)…"
-              className="glass-input text-sm py-1.5 px-3 rounded-md w-full mt-1"
-            />
-            <p className="text-[10px] text-muted-foreground mt-1">No AHS account needed — you'll get a link to send them any way you like (email, Slack, text), and they can open it and fill it in without logging in.</p>
-          </div>
-          )}
-
-          {carIqSendError && (
-            <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{carIqSendError}</p>
-          )}
-          {carIqSendMode === "teammate" ? (
-            <button
-              onClick={handleOpenCarIqPreview}
-              disabled={!carIqRecipientId || carIqSending}
-              className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 w-fit"
-            >
-              Preview & Send
-            </button>
-          ) : (
-            <button
-              onClick={handleGenerateExternalCarIqAgreement}
-              disabled={carIqSending}
-              className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 w-fit"
-            >
-              {carIqSending ? "Generating…" : "Generate Link"}
-            </button>
-          )}
-          </>
-          )}
         </div>
       </div>
 
@@ -13021,101 +14909,115 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <h2 className="font-semibold text-sm">Send Company Vehicle Use Agreement Request</h2>
           <p className="text-[10px] text-muted-foreground mt-0.5">Pick a teammate — they'll get a link to fill in their name and branch and sign the Company Vehicle Use Agreement. It comes back to you here automatically once submitted.</p>
         </div>
-        <div className="p-4 flex flex-col gap-3 max-w-md">
-          {vehicleSentLink ? (
-            <div className="flex flex-col gap-3">
-              <div className="rounded-md border border-green-500/30 bg-green-500/10 px-3 py-2.5">
-                <p className="text-sm font-semibold text-green-300">Link generated for {vehicleSentLink.recipientName}</p>
-                <p className="text-xs text-muted-foreground mt-1">No AHS account needed — copy the link below and send it any way you like (email, Slack, text).</p>
-              </div>
-              <div>
-                <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Fill-in link</label>
-                <div className="flex gap-2 mt-1">
-                  <input type="text" readOnly value={vehicleSentLink.link} onFocus={(e) => e.target.select()} className="glass-input text-xs py-1.5 px-3 rounded-md flex-1" />
-                  <button onClick={handleCopyVehicleSentLink} className="btn text-xs px-3 py-1.5 shrink-0">{vehicleSentLinkCopied ? "Copied!" : "Copy"}</button>
+        <div className="p-4 flex flex-col md:flex-row gap-6">
+          <div className="flex flex-col gap-3 w-full md:max-w-sm md:shrink-0">
+            <div className="flex flex-col gap-1.5 pb-3 border-b border-white/10">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">External Link (no login needed)</label>
+              {vehicleSentLink ? (
+                <div className="flex flex-col gap-2">
+                  <div className="rounded-md border border-green-500/30 bg-green-500/10 px-3 py-2.5">
+                    <p className="text-xs font-semibold text-green-300">Link generated for {vehicleSentLink.recipientName}</p>
+                  </div>
+                  <div className="flex gap-2">
+                    <input type="text" readOnly value={vehicleSentLink.link} onFocus={(e) => e.target.select()} className="glass-input text-xs py-1.5 px-3 rounded-md flex-1" />
+                    <button onClick={handleCopyVehicleSentLink} className="btn text-xs px-3 py-1.5 shrink-0">{vehicleSentLinkCopied ? "Copied!" : "Copy"}</button>
+                  </div>
+                  <button onClick={() => setVehicleSentLink(null)} className="btn text-xs px-3 py-1.5 w-fit">Done</button>
                 </div>
-              </div>
-              <button onClick={() => setVehicleSentLink(null)} className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white w-fit">Done</button>
+              ) : (
+                <>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={vehicleExternalName}
+                      onChange={(e) => setVehicleExternalName(e.target.value)}
+                      placeholder="Type their name (optional)…"
+                      className="glass-input text-sm py-1.5 px-3 rounded-md flex-1"
+                    />
+                    <button
+                      onClick={handleGenerateExternalVehicleAgreement}
+                      disabled={vehicleSending}
+                      className="btn text-sm px-3 py-1.5 disabled:opacity-50 shrink-0"
+                    >
+                      {vehicleSending ? "Generating…" : "Generate Link"}
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground">No AHS account needed — they can open the link and fill it in without logging in.</p>
+                </>
+              )}
             </div>
-          ) : (
-          <>
-          <div className="flex rounded-md overflow-hidden border border-white/15 h-7.5 w-fit">
-            <button type="button" onClick={() => setVehicleSendMode("teammate")} className={`px-3 text-xs font-medium transition-colors ${vehicleSendMode === "teammate" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}>AHS Teammate</button>
-            <button type="button" onClick={() => setVehicleSendMode("external")} className={`px-3 text-xs font-medium transition-colors border-l border-white/15 ${vehicleSendMode === "external" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}>External Link</button>
+
+            <div className="flex flex-col gap-1 relative">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient (AHS teammate)</label>
+              <input
+                type="text"
+                value={vehicleRecipientSearch}
+                onChange={(e) => { setVehicleRecipientSearch(e.target.value); setVehicleRecipientId(""); setVehicleRecipientDropdownOpen(true); }}
+                onFocus={() => setVehicleRecipientDropdownOpen(true)}
+                onBlur={() => setTimeout(() => setVehicleRecipientDropdownOpen(false), 150)}
+                placeholder="Search a teammate…"
+                className="glass-input text-sm py-1.5 px-3 rounded-md"
+              />
+              {vehicleRecipientDropdownOpen && (
+                <div className="absolute z-50 top-full mt-1 w-full max-h-96 overflow-y-auto rounded-md border border-white/15 bg-slate-900 shadow-2xl">
+                  {filteredVehicleRecipients.length === 0 ? (
+                    <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+                  ) : (
+                    filteredVehicleRecipients.map((e) => (
+                      <button
+                        key={e.id}
+                        type="button"
+                        onMouseDown={(ev) => ev.preventDefault()}
+                        onClick={() => {
+                          setVehicleRecipientId(e.id);
+                          setVehicleRecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`);
+                          setVehicleRecipientDropdownOpen(false);
+                        }}
+                        className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${vehicleRecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                      >
+                        {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+
+            {vehicleSendError && (
+              <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{vehicleSendError}</p>
+            )}
+            <div className="flex items-center gap-2">
+              <button
+                onClick={toggleVehiclePreview}
+                className="btn text-sm px-4 py-2 flex items-center gap-1.5"
+              >
+                Preview <ChevronDown className={`h-3.5 w-3.5 transition-transform ${vehiclePreviewOpen ? "rotate-180" : ""}`} />
+              </button>
+              <button
+                onClick={handleSendVehicleAgreement}
+                disabled={!vehicleRecipientId || vehicleSending}
+                className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+              >
+                {vehicleSending ? "Sending…" : "Send Request"}
+              </button>
+            </div>
           </div>
 
-          {vehicleSendMode === "teammate" ? (
-          <div className="flex flex-col gap-1 relative">
-            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient</label>
-            <input
-              type="text"
-              value={vehicleRecipientSearch}
-              onChange={(e) => { setVehicleRecipientSearch(e.target.value); setVehicleRecipientId(""); setVehicleRecipientDropdownOpen(true); }}
-              onFocus={() => setVehicleRecipientDropdownOpen(true)}
-              onBlur={() => setTimeout(() => setVehicleRecipientDropdownOpen(false), 150)}
-              placeholder="Search a teammate…"
-              className="glass-input text-sm py-1.5 px-3 rounded-md"
-            />
-            {vehicleRecipientDropdownOpen && (
-              <div className="absolute z-50 top-full mt-1 w-full max-h-96 overflow-y-auto rounded-md border border-white/15 bg-slate-900 shadow-2xl">
-                {filteredVehicleRecipients.length === 0 ? (
-                  <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+          <div className="flex-1 min-w-0">
+            {vehiclePreviewOpen ? (
+              <div className="border border-white/10 rounded-md overflow-hidden bg-white/5 h-full" style={{ minHeight: 560 }}>
+                {vehiclePreviewLoading || !vehiclePreviewPdfUrl ? (
+                  <div className="h-full flex items-center justify-center text-sm text-muted-foreground" style={{ minHeight: 560 }}>Loading preview…</div>
                 ) : (
-                  filteredVehicleRecipients.map((e) => (
-                    <button
-                      key={e.id}
-                      type="button"
-                      onMouseDown={(ev) => ev.preventDefault()}
-                      onClick={() => {
-                        setVehicleRecipientId(e.id);
-                        setVehicleRecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`);
-                        setVehicleRecipientDropdownOpen(false);
-                      }}
-                      className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${vehicleRecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
-                    >
-                      {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
-                    </button>
-                  ))
+                  <iframe src={vehiclePreviewPdfUrl} title="Company Vehicle Use Agreement Preview" className="w-full border-0" style={{ height: 560 }} />
                 )}
+              </div>
+            ) : (
+              <div className="border border-dashed border-white/15 rounded-md flex items-center justify-center text-sm text-muted-foreground" style={{ minHeight: 560 }}>
+                Click "Preview" to see the document here.
               </div>
             )}
           </div>
-          ) : (
-          <div>
-            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient name</label>
-            <input
-              type="text"
-              value={vehicleExternalName}
-              onChange={(e) => setVehicleExternalName(e.target.value)}
-              placeholder="Type their name (optional)…"
-              className="glass-input text-sm py-1.5 px-3 rounded-md w-full mt-1"
-            />
-            <p className="text-[10px] text-muted-foreground mt-1">No AHS account needed — you'll get a link to send them any way you like (email, Slack, text), and they can open it and fill it in without logging in.</p>
-          </div>
-          )}
-
-          {vehicleSendError && (
-            <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{vehicleSendError}</p>
-          )}
-          {vehicleSendMode === "teammate" ? (
-            <button
-              onClick={handleOpenVehiclePreview}
-              disabled={!vehicleRecipientId || vehicleSending}
-              className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 w-fit"
-            >
-              Preview & Send
-            </button>
-          ) : (
-            <button
-              onClick={handleGenerateExternalVehicleAgreement}
-              disabled={vehicleSending}
-              className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 w-fit"
-            >
-              {vehicleSending ? "Generating…" : "Generate Link"}
-            </button>
-          )}
-          </>
-          )}
         </div>
       </div>
 
@@ -13211,101 +15113,115 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <h2 className="font-semibold text-sm">Send Employee Confidentiality Agreement Request</h2>
           <p className="text-[10px] text-muted-foreground mt-0.5">Pick a teammate — they'll get a link to fill in their information and sign the Employee Confidentiality and Non-Disclosure Agreement. It comes back to you here automatically once submitted.</p>
         </div>
-        <div className="p-4 flex flex-col gap-3 max-w-md">
-          {confidentialitySentLink ? (
-            <div className="flex flex-col gap-3">
-              <div className="rounded-md border border-green-500/30 bg-green-500/10 px-3 py-2.5">
-                <p className="text-sm font-semibold text-green-300">Link generated for {confidentialitySentLink.recipientName}</p>
-                <p className="text-xs text-muted-foreground mt-1">No AHS account needed — copy the link below and send it any way you like (email, Slack, text).</p>
-              </div>
-              <div>
-                <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Fill-in link</label>
-                <div className="flex gap-2 mt-1">
-                  <input type="text" readOnly value={confidentialitySentLink.link} onFocus={(e) => e.target.select()} className="glass-input text-xs py-1.5 px-3 rounded-md flex-1" />
-                  <button onClick={handleCopyConfidentialitySentLink} className="btn text-xs px-3 py-1.5 shrink-0">{confidentialitySentLinkCopied ? "Copied!" : "Copy"}</button>
+        <div className="p-4 flex flex-col md:flex-row gap-6">
+          <div className="flex flex-col gap-3 w-full md:max-w-sm md:shrink-0">
+            <div className="flex flex-col gap-1.5 pb-3 border-b border-white/10">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">External Link (no login needed)</label>
+              {confidentialitySentLink ? (
+                <div className="flex flex-col gap-2">
+                  <div className="rounded-md border border-green-500/30 bg-green-500/10 px-3 py-2.5">
+                    <p className="text-xs font-semibold text-green-300">Link generated for {confidentialitySentLink.recipientName}</p>
+                  </div>
+                  <div className="flex gap-2">
+                    <input type="text" readOnly value={confidentialitySentLink.link} onFocus={(e) => e.target.select()} className="glass-input text-xs py-1.5 px-3 rounded-md flex-1" />
+                    <button onClick={handleCopyConfidentialitySentLink} className="btn text-xs px-3 py-1.5 shrink-0">{confidentialitySentLinkCopied ? "Copied!" : "Copy"}</button>
+                  </div>
+                  <button onClick={() => setConfidentialitySentLink(null)} className="btn text-xs px-3 py-1.5 w-fit">Done</button>
                 </div>
-              </div>
-              <button onClick={() => setConfidentialitySentLink(null)} className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white w-fit">Done</button>
+              ) : (
+                <>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={confidentialityExternalName}
+                      onChange={(e) => setConfidentialityExternalName(e.target.value)}
+                      placeholder="Type their name (optional)…"
+                      className="glass-input text-sm py-1.5 px-3 rounded-md flex-1"
+                    />
+                    <button
+                      onClick={handleGenerateExternalConfidentiality}
+                      disabled={confidentialitySending}
+                      className="btn text-sm px-3 py-1.5 disabled:opacity-50 shrink-0"
+                    >
+                      {confidentialitySending ? "Generating…" : "Generate Link"}
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground">No AHS account needed — they can open the link and fill it in without logging in.</p>
+                </>
+              )}
             </div>
-          ) : (
-          <>
-          <div className="flex rounded-md overflow-hidden border border-white/15 h-7.5 w-fit">
-            <button type="button" onClick={() => setConfidentialitySendMode("teammate")} className={`px-3 text-xs font-medium transition-colors ${confidentialitySendMode === "teammate" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}>AHS Teammate</button>
-            <button type="button" onClick={() => setConfidentialitySendMode("external")} className={`px-3 text-xs font-medium transition-colors border-l border-white/15 ${confidentialitySendMode === "external" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}>External Link</button>
+
+            <div className="flex flex-col gap-1 relative">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient (AHS teammate)</label>
+              <input
+                type="text"
+                value={confidentialityRecipientSearch}
+                onChange={(e) => { setConfidentialityRecipientSearch(e.target.value); setConfidentialityRecipientId(""); setConfidentialityRecipientDropdownOpen(true); }}
+                onFocus={() => setConfidentialityRecipientDropdownOpen(true)}
+                onBlur={() => setTimeout(() => setConfidentialityRecipientDropdownOpen(false), 150)}
+                placeholder="Search a teammate…"
+                className="glass-input text-sm py-1.5 px-3 rounded-md"
+              />
+              {confidentialityRecipientDropdownOpen && (
+                <div className="absolute z-50 top-full mt-1 w-full max-h-96 overflow-y-auto rounded-md border border-white/15 bg-slate-900 shadow-2xl">
+                  {filteredConfidentialityRecipients.length === 0 ? (
+                    <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+                  ) : (
+                    filteredConfidentialityRecipients.map((e) => (
+                      <button
+                        key={e.id}
+                        type="button"
+                        onMouseDown={(ev) => ev.preventDefault()}
+                        onClick={() => {
+                          setConfidentialityRecipientId(e.id);
+                          setConfidentialityRecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`);
+                          setConfidentialityRecipientDropdownOpen(false);
+                        }}
+                        className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${confidentialityRecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                      >
+                        {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+
+            {confidentialitySendError && (
+              <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{confidentialitySendError}</p>
+            )}
+            <div className="flex items-center gap-2">
+              <button
+                onClick={toggleConfidentialityPreview}
+                className="btn text-sm px-4 py-2 flex items-center gap-1.5"
+              >
+                Preview <ChevronDown className={`h-3.5 w-3.5 transition-transform ${confidentialityPreviewOpen ? "rotate-180" : ""}`} />
+              </button>
+              <button
+                onClick={handleSendConfidentiality}
+                disabled={!confidentialityRecipientId || confidentialitySending}
+                className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+              >
+                {confidentialitySending ? "Sending…" : "Send Request"}
+              </button>
+            </div>
           </div>
 
-          {confidentialitySendMode === "teammate" ? (
-          <div className="flex flex-col gap-1 relative">
-            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient</label>
-            <input
-              type="text"
-              value={confidentialityRecipientSearch}
-              onChange={(e) => { setConfidentialityRecipientSearch(e.target.value); setConfidentialityRecipientId(""); setConfidentialityRecipientDropdownOpen(true); }}
-              onFocus={() => setConfidentialityRecipientDropdownOpen(true)}
-              onBlur={() => setTimeout(() => setConfidentialityRecipientDropdownOpen(false), 150)}
-              placeholder="Search a teammate…"
-              className="glass-input text-sm py-1.5 px-3 rounded-md"
-            />
-            {confidentialityRecipientDropdownOpen && (
-              <div className="absolute z-50 top-full mt-1 w-full max-h-96 overflow-y-auto rounded-md border border-white/15 bg-slate-900 shadow-2xl">
-                {filteredConfidentialityRecipients.length === 0 ? (
-                  <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+          <div className="flex-1 min-w-0">
+            {confidentialityPreviewOpen ? (
+              <div className="border border-white/10 rounded-md overflow-hidden bg-white/5 h-full" style={{ minHeight: 560 }}>
+                {confidentialityPreviewLoading || !confidentialityPreviewPdfUrl ? (
+                  <div className="h-full flex items-center justify-center text-sm text-muted-foreground" style={{ minHeight: 560 }}>Loading preview…</div>
                 ) : (
-                  filteredConfidentialityRecipients.map((e) => (
-                    <button
-                      key={e.id}
-                      type="button"
-                      onMouseDown={(ev) => ev.preventDefault()}
-                      onClick={() => {
-                        setConfidentialityRecipientId(e.id);
-                        setConfidentialityRecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`);
-                        setConfidentialityRecipientDropdownOpen(false);
-                      }}
-                      className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${confidentialityRecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
-                    >
-                      {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
-                    </button>
-                  ))
+                  <iframe src={confidentialityPreviewPdfUrl} title="Employee Confidentiality Agreement Preview" className="w-full border-0" style={{ height: 560 }} />
                 )}
+              </div>
+            ) : (
+              <div className="border border-dashed border-white/15 rounded-md flex items-center justify-center text-sm text-muted-foreground" style={{ minHeight: 560 }}>
+                Click "Preview" to see the document here.
               </div>
             )}
           </div>
-          ) : (
-          <div>
-            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient name</label>
-            <input
-              type="text"
-              value={confidentialityExternalName}
-              onChange={(e) => setConfidentialityExternalName(e.target.value)}
-              placeholder="Type their name (optional)…"
-              className="glass-input text-sm py-1.5 px-3 rounded-md w-full mt-1"
-            />
-            <p className="text-[10px] text-muted-foreground mt-1">No AHS account needed — you'll get a link to send them any way you like (email, Slack, text), and they can open it and fill it in without logging in.</p>
-          </div>
-          )}
-
-          {confidentialitySendError && (
-            <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{confidentialitySendError}</p>
-          )}
-          {confidentialitySendMode === "teammate" ? (
-            <button
-              onClick={handleOpenConfidentialityPreview}
-              disabled={!confidentialityRecipientId || confidentialitySending}
-              className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 w-fit"
-            >
-              Preview & Send
-            </button>
-          ) : (
-            <button
-              onClick={handleGenerateExternalConfidentiality}
-              disabled={confidentialitySending}
-              className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 w-fit"
-            >
-              {confidentialitySending ? "Generating…" : "Generate Link"}
-            </button>
-          )}
-          </>
-          )}
         </div>
       </div>
 
@@ -13401,101 +15317,115 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <h2 className="font-semibold text-sm">Send Meal & Rest Break Acknowledgment Request</h2>
           <p className="text-[10px] text-muted-foreground mt-0.5">Pick a teammate — they'll get a link to fill in their name/branch and sign the Employee Meal and Rest Break Policy Acknowledgment. Once they submit, it lands back here for HR to add the employer signature.</p>
         </div>
-        <div className="p-4 flex flex-col gap-3 max-w-md">
-          {mealRestBreakSentLink ? (
-            <div className="flex flex-col gap-3">
-              <div className="rounded-md border border-green-500/30 bg-green-500/10 px-3 py-2.5">
-                <p className="text-sm font-semibold text-green-300">Link generated for {mealRestBreakSentLink.recipientName}</p>
-                <p className="text-xs text-muted-foreground mt-1">No AHS account needed — copy the link below and send it any way you like (email, Slack, text). Once submitted, it lands in the table below for you to add the employer signature.</p>
-              </div>
-              <div>
-                <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Fill-in link</label>
-                <div className="flex gap-2 mt-1">
-                  <input type="text" readOnly value={mealRestBreakSentLink.link} onFocus={(e) => e.target.select()} className="glass-input text-xs py-1.5 px-3 rounded-md flex-1" />
-                  <button onClick={handleCopyMealRestBreakSentLink} className="btn text-xs px-3 py-1.5 shrink-0">{mealRestBreakSentLinkCopied ? "Copied!" : "Copy"}</button>
+        <div className="p-4 flex flex-col md:flex-row gap-6">
+          <div className="flex flex-col gap-3 w-full md:max-w-sm md:shrink-0">
+            <div className="flex flex-col gap-1.5 pb-3 border-b border-white/10">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">External Link (no login needed)</label>
+              {mealRestBreakSentLink ? (
+                <div className="flex flex-col gap-2">
+                  <div className="rounded-md border border-green-500/30 bg-green-500/10 px-3 py-2.5">
+                    <p className="text-xs font-semibold text-green-300">Link generated for {mealRestBreakSentLink.recipientName}</p>
+                  </div>
+                  <div className="flex gap-2">
+                    <input type="text" readOnly value={mealRestBreakSentLink.link} onFocus={(e) => e.target.select()} className="glass-input text-xs py-1.5 px-3 rounded-md flex-1" />
+                    <button onClick={handleCopyMealRestBreakSentLink} className="btn text-xs px-3 py-1.5 shrink-0">{mealRestBreakSentLinkCopied ? "Copied!" : "Copy"}</button>
+                  </div>
+                  <button onClick={() => setMealRestBreakSentLink(null)} className="btn text-xs px-3 py-1.5 w-fit">Done</button>
                 </div>
-              </div>
-              <button onClick={() => setMealRestBreakSentLink(null)} className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white w-fit">Done</button>
+              ) : (
+                <>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={mealRestBreakExternalName}
+                      onChange={(e) => setMealRestBreakExternalName(e.target.value)}
+                      placeholder="Type their name (optional)…"
+                      className="glass-input text-sm py-1.5 px-3 rounded-md flex-1"
+                    />
+                    <button
+                      onClick={handleGenerateExternalMealRestBreak}
+                      disabled={mealRestBreakSending}
+                      className="btn text-sm px-3 py-1.5 disabled:opacity-50 shrink-0"
+                    >
+                      {mealRestBreakSending ? "Generating…" : "Generate Link"}
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground">No AHS account needed — they can open the link and fill it in without logging in.</p>
+                </>
+              )}
             </div>
-          ) : (
-          <>
-          <div className="flex rounded-md overflow-hidden border border-white/15 h-7.5 w-fit">
-            <button type="button" onClick={() => setMealRestBreakSendMode("teammate")} className={`px-3 text-xs font-medium transition-colors ${mealRestBreakSendMode === "teammate" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}>AHS Teammate</button>
-            <button type="button" onClick={() => setMealRestBreakSendMode("external")} className={`px-3 text-xs font-medium transition-colors border-l border-white/15 ${mealRestBreakSendMode === "external" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}>External Link</button>
+
+            <div className="flex flex-col gap-1 relative">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient (AHS teammate)</label>
+              <input
+                type="text"
+                value={mealRestBreakRecipientSearch}
+                onChange={(e) => { setMealRestBreakRecipientSearch(e.target.value); setMealRestBreakRecipientId(""); setMealRestBreakRecipientDropdownOpen(true); }}
+                onFocus={() => setMealRestBreakRecipientDropdownOpen(true)}
+                onBlur={() => setTimeout(() => setMealRestBreakRecipientDropdownOpen(false), 150)}
+                placeholder="Search a teammate…"
+                className="glass-input text-sm py-1.5 px-3 rounded-md"
+              />
+              {mealRestBreakRecipientDropdownOpen && (
+                <div className="absolute z-50 top-full mt-1 w-full max-h-96 overflow-y-auto rounded-md border border-white/15 bg-slate-900 shadow-2xl">
+                  {filteredMealRestBreakRecipients.length === 0 ? (
+                    <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+                  ) : (
+                    filteredMealRestBreakRecipients.map((e) => (
+                      <button
+                        key={e.id}
+                        type="button"
+                        onMouseDown={(ev) => ev.preventDefault()}
+                        onClick={() => {
+                          setMealRestBreakRecipientId(e.id);
+                          setMealRestBreakRecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`);
+                          setMealRestBreakRecipientDropdownOpen(false);
+                        }}
+                        className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${mealRestBreakRecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                      >
+                        {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+
+            {mealRestBreakSendError && (
+              <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{mealRestBreakSendError}</p>
+            )}
+            <div className="flex items-center gap-2">
+              <button
+                onClick={toggleMealRestBreakPreview}
+                className="btn text-sm px-4 py-2 flex items-center gap-1.5"
+              >
+                Preview <ChevronDown className={`h-3.5 w-3.5 transition-transform ${mealRestBreakPreviewExpanded ? "rotate-180" : ""}`} />
+              </button>
+              <button
+                onClick={handleSendMealRestBreak}
+                disabled={!mealRestBreakRecipientId || mealRestBreakSending}
+                className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+              >
+                {mealRestBreakSending ? "Sending…" : "Send Request"}
+              </button>
+            </div>
           </div>
 
-          {mealRestBreakSendMode === "teammate" ? (
-          <div className="flex flex-col gap-1 relative">
-            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient</label>
-            <input
-              type="text"
-              value={mealRestBreakRecipientSearch}
-              onChange={(e) => { setMealRestBreakRecipientSearch(e.target.value); setMealRestBreakRecipientId(""); setMealRestBreakRecipientDropdownOpen(true); }}
-              onFocus={() => setMealRestBreakRecipientDropdownOpen(true)}
-              onBlur={() => setTimeout(() => setMealRestBreakRecipientDropdownOpen(false), 150)}
-              placeholder="Search a teammate…"
-              className="glass-input text-sm py-1.5 px-3 rounded-md"
-            />
-            {mealRestBreakRecipientDropdownOpen && (
-              <div className="absolute z-50 top-full mt-1 w-full max-h-96 overflow-y-auto rounded-md border border-white/15 bg-slate-900 shadow-2xl">
-                {filteredMealRestBreakRecipients.length === 0 ? (
-                  <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+          <div className="flex-1 min-w-0">
+            {mealRestBreakPreviewExpanded ? (
+              <div className="border border-white/10 rounded-md overflow-hidden bg-white/5 h-full" style={{ minHeight: 560 }}>
+                {mealRestBreakPreviewLoading || !mealRestBreakPreviewPdfUrl ? (
+                  <div className="h-full flex items-center justify-center text-sm text-muted-foreground" style={{ minHeight: 560 }}>Loading preview…</div>
                 ) : (
-                  filteredMealRestBreakRecipients.map((e) => (
-                    <button
-                      key={e.id}
-                      type="button"
-                      onMouseDown={(ev) => ev.preventDefault()}
-                      onClick={() => {
-                        setMealRestBreakRecipientId(e.id);
-                        setMealRestBreakRecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`);
-                        setMealRestBreakRecipientDropdownOpen(false);
-                      }}
-                      className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${mealRestBreakRecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
-                    >
-                      {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
-                    </button>
-                  ))
+                  <iframe src={mealRestBreakPreviewPdfUrl} title="Meal & Rest Break Acknowledgment Preview" className="w-full border-0" style={{ height: 560 }} />
                 )}
+              </div>
+            ) : (
+              <div className="border border-dashed border-white/15 rounded-md flex items-center justify-center text-sm text-muted-foreground" style={{ minHeight: 560 }}>
+                Click "Preview" to see the document here.
               </div>
             )}
           </div>
-          ) : (
-          <div>
-            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient name</label>
-            <input
-              type="text"
-              value={mealRestBreakExternalName}
-              onChange={(e) => setMealRestBreakExternalName(e.target.value)}
-              placeholder="Type their name (optional)…"
-              className="glass-input text-sm py-1.5 px-3 rounded-md w-full mt-1"
-            />
-            <p className="text-[10px] text-muted-foreground mt-1">No AHS account needed — you'll get a link to send them any way you like (email, Slack, text), and they can open it and fill it in without logging in.</p>
-          </div>
-          )}
-
-          {mealRestBreakSendError && (
-            <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{mealRestBreakSendError}</p>
-          )}
-          {mealRestBreakSendMode === "teammate" ? (
-            <button
-              onClick={handleSendMealRestBreak}
-              disabled={!mealRestBreakRecipientId || mealRestBreakSending}
-              className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 w-fit"
-            >
-              {mealRestBreakSending ? "Sending…" : "Send Request"}
-            </button>
-          ) : (
-            <button
-              onClick={handleGenerateExternalMealRestBreak}
-              disabled={mealRestBreakSending}
-              className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 w-fit"
-            >
-              {mealRestBreakSending ? "Generating…" : "Generate Link"}
-            </button>
-          )}
-          </>
-          )}
         </div>
       </div>
 
@@ -13603,101 +15533,115 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <h2 className="font-semibold text-sm">Send PTO & Sick Leave Policy Acknowledgment Request</h2>
           <p className="text-[10px] text-muted-foreground mt-0.5">Pick a teammate — they'll get a link to fill in their name/branch and sign the Employee Paid Time Off (PTO) and Sick Leave Policy Acknowledgment. It comes back to you here automatically once submitted.</p>
         </div>
-        <div className="p-4 flex flex-col gap-3 max-w-md">
-          {ptoAckSentLink ? (
-            <div className="flex flex-col gap-3">
-              <div className="rounded-md border border-green-500/30 bg-green-500/10 px-3 py-2.5">
-                <p className="text-sm font-semibold text-green-300">Link generated for {ptoAckSentLink.recipientName}</p>
-                <p className="text-xs text-muted-foreground mt-1">No AHS account needed — copy the link below and send it any way you like (email, Slack, text).</p>
-              </div>
-              <div>
-                <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Fill-in link</label>
-                <div className="flex gap-2 mt-1">
-                  <input type="text" readOnly value={ptoAckSentLink.link} onFocus={(e) => e.target.select()} className="glass-input text-xs py-1.5 px-3 rounded-md flex-1" />
-                  <button onClick={handleCopyPtoAckSentLink} className="btn text-xs px-3 py-1.5 shrink-0">{ptoAckSentLinkCopied ? "Copied!" : "Copy"}</button>
+        <div className="p-4 flex flex-col md:flex-row gap-6">
+          <div className="flex flex-col gap-3 w-full md:max-w-sm md:shrink-0">
+            <div className="flex flex-col gap-1.5 pb-3 border-b border-white/10">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">External Link (no login needed)</label>
+              {ptoAckSentLink ? (
+                <div className="flex flex-col gap-2">
+                  <div className="rounded-md border border-green-500/30 bg-green-500/10 px-3 py-2.5">
+                    <p className="text-xs font-semibold text-green-300">Link generated for {ptoAckSentLink.recipientName}</p>
+                  </div>
+                  <div className="flex gap-2">
+                    <input type="text" readOnly value={ptoAckSentLink.link} onFocus={(e) => e.target.select()} className="glass-input text-xs py-1.5 px-3 rounded-md flex-1" />
+                    <button onClick={handleCopyPtoAckSentLink} className="btn text-xs px-3 py-1.5 shrink-0">{ptoAckSentLinkCopied ? "Copied!" : "Copy"}</button>
+                  </div>
+                  <button onClick={() => setPtoAckSentLink(null)} className="btn text-xs px-3 py-1.5 w-fit">Done</button>
                 </div>
-              </div>
-              <button onClick={() => setPtoAckSentLink(null)} className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white w-fit">Done</button>
+              ) : (
+                <>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={ptoAckExternalName}
+                      onChange={(e) => setPtoAckExternalName(e.target.value)}
+                      placeholder="Type their name (optional)…"
+                      className="glass-input text-sm py-1.5 px-3 rounded-md flex-1"
+                    />
+                    <button
+                      onClick={handleGenerateExternalPtoAck}
+                      disabled={ptoAckSending}
+                      className="btn text-sm px-3 py-1.5 disabled:opacity-50 shrink-0"
+                    >
+                      {ptoAckSending ? "Generating…" : "Generate Link"}
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground">No AHS account needed — they can open the link and fill it in without logging in.</p>
+                </>
+              )}
             </div>
-          ) : (
-          <>
-          <div className="flex rounded-md overflow-hidden border border-white/15 h-7.5 w-fit">
-            <button type="button" onClick={() => setPtoAckSendMode("teammate")} className={`px-3 text-xs font-medium transition-colors ${ptoAckSendMode === "teammate" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}>AHS Teammate</button>
-            <button type="button" onClick={() => setPtoAckSendMode("external")} className={`px-3 text-xs font-medium transition-colors border-l border-white/15 ${ptoAckSendMode === "external" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}>External Link</button>
+
+            <div className="flex flex-col gap-1 relative">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient (AHS teammate)</label>
+              <input
+                type="text"
+                value={ptoAckRecipientSearch}
+                onChange={(e) => { setPtoAckRecipientSearch(e.target.value); setPtoAckRecipientId(""); setPtoAckRecipientDropdownOpen(true); }}
+                onFocus={() => setPtoAckRecipientDropdownOpen(true)}
+                onBlur={() => setTimeout(() => setPtoAckRecipientDropdownOpen(false), 150)}
+                placeholder="Search a teammate…"
+                className="glass-input text-sm py-1.5 px-3 rounded-md"
+              />
+              {ptoAckRecipientDropdownOpen && (
+                <div className="absolute z-50 top-full mt-1 w-full max-h-96 overflow-y-auto rounded-md border border-white/15 bg-slate-900 shadow-2xl">
+                  {filteredPtoAckRecipients.length === 0 ? (
+                    <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+                  ) : (
+                    filteredPtoAckRecipients.map((e) => (
+                      <button
+                        key={e.id}
+                        type="button"
+                        onMouseDown={(ev) => ev.preventDefault()}
+                        onClick={() => {
+                          setPtoAckRecipientId(e.id);
+                          setPtoAckRecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`);
+                          setPtoAckRecipientDropdownOpen(false);
+                        }}
+                        className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${ptoAckRecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                      >
+                        {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+
+            {ptoAckSendError && (
+              <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{ptoAckSendError}</p>
+            )}
+            <div className="flex items-center gap-2">
+              <button
+                onClick={togglePtoAckPreview}
+                className="btn text-sm px-4 py-2 flex items-center gap-1.5"
+              >
+                Preview <ChevronDown className={`h-3.5 w-3.5 transition-transform ${ptoAckPreviewExpanded ? "rotate-180" : ""}`} />
+              </button>
+              <button
+                onClick={handleSendPtoAck}
+                disabled={!ptoAckRecipientId || ptoAckSending}
+                className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+              >
+                {ptoAckSending ? "Sending…" : "Send Request"}
+              </button>
+            </div>
           </div>
 
-          {ptoAckSendMode === "teammate" ? (
-          <div className="flex flex-col gap-1 relative">
-            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient</label>
-            <input
-              type="text"
-              value={ptoAckRecipientSearch}
-              onChange={(e) => { setPtoAckRecipientSearch(e.target.value); setPtoAckRecipientId(""); setPtoAckRecipientDropdownOpen(true); }}
-              onFocus={() => setPtoAckRecipientDropdownOpen(true)}
-              onBlur={() => setTimeout(() => setPtoAckRecipientDropdownOpen(false), 150)}
-              placeholder="Search a teammate…"
-              className="glass-input text-sm py-1.5 px-3 rounded-md"
-            />
-            {ptoAckRecipientDropdownOpen && (
-              <div className="absolute z-50 top-full mt-1 w-full max-h-96 overflow-y-auto rounded-md border border-white/15 bg-slate-900 shadow-2xl">
-                {filteredPtoAckRecipients.length === 0 ? (
-                  <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+          <div className="flex-1 min-w-0">
+            {ptoAckPreviewExpanded ? (
+              <div className="border border-white/10 rounded-md overflow-hidden bg-white/5 h-full" style={{ minHeight: 560 }}>
+                {ptoAckPreviewLoading || !ptoAckPreviewPdfUrl ? (
+                  <div className="h-full flex items-center justify-center text-sm text-muted-foreground" style={{ minHeight: 560 }}>Loading preview…</div>
                 ) : (
-                  filteredPtoAckRecipients.map((e) => (
-                    <button
-                      key={e.id}
-                      type="button"
-                      onMouseDown={(ev) => ev.preventDefault()}
-                      onClick={() => {
-                        setPtoAckRecipientId(e.id);
-                        setPtoAckRecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`);
-                        setPtoAckRecipientDropdownOpen(false);
-                      }}
-                      className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${ptoAckRecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
-                    >
-                      {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
-                    </button>
-                  ))
+                  <iframe src={ptoAckPreviewPdfUrl} title="PTO & Sick Leave Policy Acknowledgment Preview" className="w-full border-0" style={{ height: 560 }} />
                 )}
+              </div>
+            ) : (
+              <div className="border border-dashed border-white/15 rounded-md flex items-center justify-center text-sm text-muted-foreground" style={{ minHeight: 560 }}>
+                Click "Preview" to see the document here.
               </div>
             )}
           </div>
-          ) : (
-          <div>
-            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient name</label>
-            <input
-              type="text"
-              value={ptoAckExternalName}
-              onChange={(e) => setPtoAckExternalName(e.target.value)}
-              placeholder="Type their name (optional)…"
-              className="glass-input text-sm py-1.5 px-3 rounded-md w-full mt-1"
-            />
-            <p className="text-[10px] text-muted-foreground mt-1">No AHS account needed — you'll get a link to send them any way you like (email, Slack, text), and they can open it and fill it in without logging in.</p>
-          </div>
-          )}
-
-          {ptoAckSendError && (
-            <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{ptoAckSendError}</p>
-          )}
-          {ptoAckSendMode === "teammate" ? (
-            <button
-              onClick={handleSendPtoAck}
-              disabled={!ptoAckRecipientId || ptoAckSending}
-              className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 w-fit"
-            >
-              {ptoAckSending ? "Sending…" : "Send Request"}
-            </button>
-          ) : (
-            <button
-              onClick={handleGenerateExternalPtoAck}
-              disabled={ptoAckSending}
-              className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 w-fit"
-            >
-              {ptoAckSending ? "Generating…" : "Generate Link"}
-            </button>
-          )}
-          </>
-          )}
         </div>
       </div>
 
@@ -13786,36 +15730,1276 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       </>
       )}
 
-      {/* Form W-8BEN — preview the REAL official PDF (fillW8benPdf, same function used at submission time) with a blank fill, not a redrawn approximation, before sending the fill-in link */}
-      {w8PreviewOpen && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-          <div className="bg-slate-800 border border-white/10 rounded-lg w-full max-w-4xl h-[90vh] flex flex-col">
-            <div className="flex items-center justify-between px-5 py-3 border-b border-white/10">
-              <h3 className="text-base font-bold">Form W-8BEN — Preview</h3>
-              <button onClick={closeW8benPreview} className="text-muted-foreground hover:text-foreground">✕</button>
-            </div>
-            <div className="flex-1 bg-white/5">
-              {w8PreviewLoading || !w8PreviewPdfUrl ? (
-                <div className="h-full flex items-center justify-center text-sm text-muted-foreground">Loading preview…</div>
+      {activeTab === "partsResponsibility" && (
+      <>
+      <div className="panel p-0 overflow-visible mt-4 relative z-20">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">Send Parts Responsibility Acknowledgment Request</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Pick a teammate — they'll get a link to fill in their name/branch and sign the Parts Responsibility and Technician Floor Protection Acknowledgment Form. Once they submit, it lands back here for HR to add the manager/supervisor signature.</p>
+        </div>
+        <div className="p-4 flex flex-col md:flex-row gap-6">
+          <div className="flex flex-col gap-3 w-full md:max-w-sm md:shrink-0">
+            <div className="flex flex-col gap-1.5 pb-3 border-b border-white/10">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">External Link (no login needed)</label>
+              {partsResponsibilitySentLink ? (
+                <div className="flex flex-col gap-2">
+                  <div className="rounded-md border border-green-500/30 bg-green-500/10 px-3 py-2.5">
+                    <p className="text-xs font-semibold text-green-300">Link generated for {partsResponsibilitySentLink.recipientName}</p>
+                  </div>
+                  <div className="flex gap-2">
+                    <input type="text" readOnly value={partsResponsibilitySentLink.link} onFocus={(e) => e.target.select()} className="glass-input text-xs py-1.5 px-3 rounded-md flex-1" />
+                    <button onClick={handleCopyPartsResponsibilitySentLink} className="btn text-xs px-3 py-1.5 shrink-0">{partsResponsibilitySentLinkCopied ? "Copied!" : "Copy"}</button>
+                  </div>
+                  <button onClick={() => setPartsResponsibilitySentLink(null)} className="btn text-xs px-3 py-1.5 w-fit">Done</button>
+                </div>
               ) : (
-                <iframe src={w8PreviewPdfUrl} title="W-8BEN Preview" className="w-full h-full border-0" />
+                <>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={partsResponsibilityExternalName}
+                      onChange={(e) => setPartsResponsibilityExternalName(e.target.value)}
+                      placeholder="Type their name (optional)…"
+                      className="glass-input text-sm py-1.5 px-3 rounded-md flex-1"
+                    />
+                    <button
+                      onClick={handleGenerateExternalPartsResponsibility}
+                      disabled={partsResponsibilitySending}
+                      className="btn text-sm px-3 py-1.5 disabled:opacity-50 shrink-0"
+                    >
+                      {partsResponsibilitySending ? "Generating…" : "Generate Link"}
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground">No AHS account needed — they can open the link and fill it in without logging in.</p>
+                </>
               )}
             </div>
-            <div className="px-5 py-3 border-t border-white/10 flex items-center justify-end gap-2">
-              {w8SendError && (
-                <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2 mr-auto">{w8SendError}</p>
+
+            <div className="flex flex-col gap-1 relative">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient (AHS teammate)</label>
+              <input
+                type="text"
+                value={partsResponsibilityRecipientSearch}
+                onChange={(e) => { setPartsResponsibilityRecipientSearch(e.target.value); setPartsResponsibilityRecipientId(""); setPartsResponsibilityRecipientDropdownOpen(true); }}
+                onFocus={() => setPartsResponsibilityRecipientDropdownOpen(true)}
+                onBlur={() => setTimeout(() => setPartsResponsibilityRecipientDropdownOpen(false), 150)}
+                placeholder="Search a teammate…"
+                className="glass-input text-sm py-1.5 px-3 rounded-md"
+              />
+              {partsResponsibilityRecipientDropdownOpen && (
+                <div className="absolute z-50 top-full mt-1 w-full max-h-96 overflow-y-auto rounded-md border border-white/15 bg-slate-900 shadow-2xl">
+                  {filteredPartsResponsibilityRecipients.length === 0 ? (
+                    <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+                  ) : (
+                    filteredPartsResponsibilityRecipients.map((e) => (
+                      <button
+                        key={e.id}
+                        type="button"
+                        onMouseDown={(ev) => ev.preventDefault()}
+                        onClick={() => {
+                          setPartsResponsibilityRecipientId(e.id);
+                          setPartsResponsibilityRecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`);
+                          setPartsResponsibilityRecipientDropdownOpen(false);
+                        }}
+                        className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${partsResponsibilityRecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                      >
+                        {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
+                      </button>
+                    ))
+                  )}
+                </div>
               )}
-              <button onClick={closeW8benPreview} className="btn text-sm px-4 py-2">Cancel</button>
+            </div>
+
+            {partsResponsibilitySendError && (
+              <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{partsResponsibilitySendError}</p>
+            )}
+            <div className="flex items-center gap-2">
               <button
-                onClick={handleSendW8ben}
-                disabled={w8Sending}
+                onClick={togglePartsResponsibilityPreview}
+                className="btn text-sm px-4 py-2 flex items-center gap-1.5"
+              >
+                Preview <ChevronDown className={`h-3.5 w-3.5 transition-transform ${partsResponsibilityPreviewExpanded ? "rotate-180" : ""}`} />
+              </button>
+              <button
+                onClick={handleSendPartsResponsibility}
+                disabled={!partsResponsibilityRecipientId || partsResponsibilitySending}
                 className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
               >
-                {w8Sending ? "Sending…" : "Send W-8BEN Request"}
+                {partsResponsibilitySending ? "Sending…" : "Send Request"}
               </button>
             </div>
           </div>
+
+          <div className="flex-1 min-w-0">
+            {partsResponsibilityPreviewExpanded ? (
+              <div className="border border-white/10 rounded-md overflow-hidden bg-white/5 h-full" style={{ minHeight: 560 }}>
+                {partsResponsibilityPreviewLoading || !partsResponsibilityPreviewPdfUrl ? (
+                  <div className="h-full flex items-center justify-center text-sm text-muted-foreground" style={{ minHeight: 560 }}>Loading preview…</div>
+                ) : (
+                  <iframe src={partsResponsibilityPreviewPdfUrl} title="Parts Responsibility Acknowledgment Preview" className="w-full border-0" style={{ height: 560 }} />
+                )}
+              </div>
+            ) : (
+              <div className="border border-dashed border-white/15 rounded-md flex items-center justify-center text-sm text-muted-foreground" style={{ minHeight: 560 }}>
+                Click "Preview" to see the document here.
+              </div>
+            )}
+          </div>
         </div>
+      </div>
+
+      <div className="panel p-0 overflow-hidden mt-4">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">Sent Parts Responsibility Acknowledgment Forms</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status. "Awaiting Manager Signature" means the technician finished — add your signature to finalize.</p>
+        </div>
+        {partsResponsibilityActionError && (
+          <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{partsResponsibilityActionError}</p>
+        )}
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-white/10 bg-white/5">
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Technician</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Branch</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent By</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Status</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sentPartsResponsibilityForms.length === 0 ? (
+                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">No requests sent yet.</td></tr>
+              ) : (
+                sentPartsResponsibilityForms.map((doc) => {
+                  const data = doc.formData as Partial<PartsResponsibilityFormData>;
+                  const recipient = employees.find((e) => e.id === doc.recipientId);
+                  const busy = partsResponsibilityActionBusyId === doc.id;
+                  const awaitingManager = isAwaitingEmployerStep(doc);
+                  return (
+                    <tr key={doc.id} className="border-b border-white/5 hover:bg-white/5">
+                      <td className="px-4 py-3 font-medium">
+                        {doc.pdfUrl ? (
+                          <button type="button" onClick={() => setPartsResponsibilityDocPreview(doc)} className="text-blue-300 hover:text-blue-200 hover:underline text-left">
+                            {data.employeeName || recipient?.name || doc.recipientName || "—"}
+                          </button>
+                        ) : (
+                          data.employeeName || recipient?.name || doc.recipientName || "—"
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-muted-foreground">{data.branch || "—"}</td>
+                      <td className="px-4 py-3 text-muted-foreground">{doc.createdByName ?? "—"}</td>
+                      <td className="px-4 py-3">
+                        <span className={`px-2 py-1 rounded text-xs font-semibold ${
+                          doc.status === "confirmed" ? "bg-green-500/20 text-green-300"
+                          : awaitingManager ? "bg-orange-500/20 text-orange-300"
+                          : doc.status === "cancelled" ? "bg-slate-500/20 text-slate-400"
+                          : "bg-yellow-500/20 text-yellow-300"
+                        }`}>
+                          {doc.status === "confirmed" ? "Completed" : awaitingManager ? "Awaiting Manager Signature" : doc.status === "cancelled" ? "Cancelled" : "Awaiting Technician"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{new Date(doc.createdAt).toLocaleDateString()}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {doc.status === "pending_signature" && doc.recipientSlot === "employee" && (
+                            <button type="button" onClick={() => handleCopyPartsResponsibilityLink(doc)} className="btn text-[10px] px-2 py-1">
+                              Copy Link
+                            </button>
+                          )}
+                          {awaitingManager && (
+                            <>
+                              <button type="button" onClick={() => handleOpenPartsResponsibilityManagerDialog(doc)} className="btn text-[10px] px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white">
+                                Add Manager Signature →
+                              </button>
+                              <button type="button" onClick={() => handleOpenEmployerReassign(doc)} className="btn text-[10px] px-2 py-1">
+                                Send to Manager
+                              </button>
+                            </>
+                          )}
+                          {doc.pdfUrl && (
+                            <button type="button" onClick={() => handleDownloadPartsResponsibilityPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
+                              Download PDF
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => handleDeletePartsResponsibility(doc)}
+                            title="Permanently delete this request"
+                            className="text-muted-foreground hover:text-red-300 disabled:opacity-50"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      </>
+      )}
+
+      {activeTab === "mileageFuel" && (
+      <>
+      <div className="panel p-0 overflow-visible mt-4 relative z-20">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">Send Mileage & Fuel Policy Agreement Request</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Pick a teammate — they'll get a link to fill in their name/branch and sign the Personal Vehicle Mileage and Fuel Policy Agreement. Once they submit, it lands back here for HR to add the employer/representative signature.</p>
+        </div>
+        <div className="p-4 flex flex-col md:flex-row gap-6">
+          <div className="flex flex-col gap-3 w-full md:max-w-sm md:shrink-0">
+            <div className="flex flex-col gap-1.5 pb-3 border-b border-white/10">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">External Link (no login needed)</label>
+              {mileageFuelSentLink ? (
+                <div className="flex flex-col gap-2">
+                  <div className="rounded-md border border-green-500/30 bg-green-500/10 px-3 py-2.5">
+                    <p className="text-xs font-semibold text-green-300">Link generated for {mileageFuelSentLink.recipientName}</p>
+                  </div>
+                  <div className="flex gap-2">
+                    <input type="text" readOnly value={mileageFuelSentLink.link} onFocus={(e) => e.target.select()} className="glass-input text-xs py-1.5 px-3 rounded-md flex-1" />
+                    <button onClick={handleCopyMileageFuelSentLink} className="btn text-xs px-3 py-1.5 shrink-0">{mileageFuelSentLinkCopied ? "Copied!" : "Copy"}</button>
+                  </div>
+                  <button onClick={() => setMileageFuelSentLink(null)} className="btn text-xs px-3 py-1.5 w-fit">Done</button>
+                </div>
+              ) : (
+                <>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={mileageFuelExternalName}
+                      onChange={(e) => setMileageFuelExternalName(e.target.value)}
+                      placeholder="Type their name (optional)…"
+                      className="glass-input text-sm py-1.5 px-3 rounded-md flex-1"
+                    />
+                    <button
+                      onClick={handleGenerateExternalMileageFuel}
+                      disabled={mileageFuelSending}
+                      className="btn text-sm px-3 py-1.5 disabled:opacity-50 shrink-0"
+                    >
+                      {mileageFuelSending ? "Generating…" : "Generate Link"}
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground">No AHS account needed — they can open the link and fill it in without logging in.</p>
+                </>
+              )}
+            </div>
+
+            <div className="flex flex-col gap-1 relative">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient (AHS teammate)</label>
+              <input
+                type="text"
+                value={mileageFuelRecipientSearch}
+                onChange={(e) => { setMileageFuelRecipientSearch(e.target.value); setMileageFuelRecipientId(""); setMileageFuelRecipientDropdownOpen(true); }}
+                onFocus={() => setMileageFuelRecipientDropdownOpen(true)}
+                onBlur={() => setTimeout(() => setMileageFuelRecipientDropdownOpen(false), 150)}
+                placeholder="Search a teammate…"
+                className="glass-input text-sm py-1.5 px-3 rounded-md"
+              />
+              {mileageFuelRecipientDropdownOpen && (
+                <div className="absolute z-50 top-full mt-1 w-full max-h-96 overflow-y-auto rounded-md border border-white/15 bg-slate-900 shadow-2xl">
+                  {filteredMileageFuelRecipients.length === 0 ? (
+                    <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+                  ) : (
+                    filteredMileageFuelRecipients.map((e) => (
+                      <button
+                        key={e.id}
+                        type="button"
+                        onMouseDown={(ev) => ev.preventDefault()}
+                        onClick={() => {
+                          setMileageFuelRecipientId(e.id);
+                          setMileageFuelRecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`);
+                          setMileageFuelRecipientDropdownOpen(false);
+                        }}
+                        className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${mileageFuelRecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                      >
+                        {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+
+            {mileageFuelSendError && (
+              <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{mileageFuelSendError}</p>
+            )}
+            <div className="flex items-center gap-2">
+              <button
+                onClick={toggleMileageFuelPreview}
+                className="btn text-sm px-4 py-2 flex items-center gap-1.5"
+              >
+                Preview <ChevronDown className={`h-3.5 w-3.5 transition-transform ${mileageFuelPreviewExpanded ? "rotate-180" : ""}`} />
+              </button>
+              <button
+                onClick={handleSendMileageFuel}
+                disabled={!mileageFuelRecipientId || mileageFuelSending}
+                className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+              >
+                {mileageFuelSending ? "Sending…" : "Send Request"}
+              </button>
+            </div>
+          </div>
+
+          <div className="flex-1 min-w-0">
+            {mileageFuelPreviewExpanded ? (
+              <div className="border border-white/10 rounded-md overflow-hidden bg-white/5 h-full" style={{ minHeight: 560 }}>
+                {mileageFuelPreviewLoading || !mileageFuelPreviewPdfUrl ? (
+                  <div className="h-full flex items-center justify-center text-sm text-muted-foreground" style={{ minHeight: 560 }}>Loading preview…</div>
+                ) : (
+                  <iframe src={mileageFuelPreviewPdfUrl} title="Mileage & Fuel Policy Agreement Preview" className="w-full border-0" style={{ height: 560 }} />
+                )}
+              </div>
+            ) : (
+              <div className="border border-dashed border-white/15 rounded-md flex items-center justify-center text-sm text-muted-foreground" style={{ minHeight: 560 }}>
+                Click "Preview" to see the document here.
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="panel p-0 overflow-hidden mt-4">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">Sent Mileage & Fuel Policy Agreement Forms</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status. "Awaiting Employer Signature" means the employee finished — add your signature to finalize.</p>
+        </div>
+        {mileageFuelActionError && (
+          <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{mileageFuelActionError}</p>
+        )}
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-white/10 bg-white/5">
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Employee</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Branch</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent By</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Status</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sentMileageFuelForms.length === 0 ? (
+                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">No requests sent yet.</td></tr>
+              ) : (
+                sentMileageFuelForms.map((doc) => {
+                  const data = doc.formData as Partial<MileageFuelFormData>;
+                  const recipient = employees.find((e) => e.id === doc.recipientId);
+                  const busy = mileageFuelActionBusyId === doc.id;
+                  const awaitingEmployer = isAwaitingEmployerStep(doc);
+                  return (
+                    <tr key={doc.id} className="border-b border-white/5 hover:bg-white/5">
+                      <td className="px-4 py-3 font-medium">
+                        {doc.pdfUrl ? (
+                          <button type="button" onClick={() => setMileageFuelDocPreview(doc)} className="text-blue-300 hover:text-blue-200 hover:underline text-left">
+                            {data.employeeName || recipient?.name || doc.recipientName || "—"}
+                          </button>
+                        ) : (
+                          data.employeeName || recipient?.name || doc.recipientName || "—"
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-muted-foreground">{data.branch || "—"}</td>
+                      <td className="px-4 py-3 text-muted-foreground">{doc.createdByName ?? "—"}</td>
+                      <td className="px-4 py-3">
+                        <span className={`px-2 py-1 rounded text-xs font-semibold ${
+                          doc.status === "confirmed" ? "bg-green-500/20 text-green-300"
+                          : awaitingEmployer ? "bg-orange-500/20 text-orange-300"
+                          : doc.status === "cancelled" ? "bg-slate-500/20 text-slate-400"
+                          : "bg-yellow-500/20 text-yellow-300"
+                        }`}>
+                          {doc.status === "confirmed" ? "Completed" : awaitingEmployer ? "Awaiting Employer Signature" : doc.status === "cancelled" ? "Cancelled" : "Awaiting Employee"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{new Date(doc.createdAt).toLocaleDateString()}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {doc.status === "pending_signature" && doc.recipientSlot === "employee" && (
+                            <button type="button" onClick={() => handleCopyMileageFuelLink(doc)} className="btn text-[10px] px-2 py-1">
+                              Copy Link
+                            </button>
+                          )}
+                          {awaitingEmployer && (
+                            <>
+                              <button type="button" onClick={() => handleOpenMileageFuelEmployerDialog(doc)} className="btn text-[10px] px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white">
+                                Add Employer Signature →
+                              </button>
+                              <button type="button" onClick={() => handleOpenEmployerReassign(doc)} className="btn text-[10px] px-2 py-1">
+                                Send to Employer
+                              </button>
+                            </>
+                          )}
+                          {doc.pdfUrl && (
+                            <button type="button" onClick={() => handleDownloadMileageFuelPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
+                              Download PDF
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => handleDeleteMileageFuel(doc)}
+                            title="Permanently delete this request"
+                            className="text-muted-foreground hover:text-red-300 disabled:opacity-50"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      </>
+      )}
+
+      {activeTab === "locationConsent" && (
+      <>
+      <div className="panel p-0 overflow-visible mt-4 relative z-20">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">Send Location Sharing Consent Request</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Pick a teammate — they'll get a link to fill in their name/position/effective date and sign the Employee Mobile App Location Sharing Consent Agreement. Once they submit, it lands back here for HR to add the employer/representative signature.</p>
+        </div>
+        <div className="p-4 flex flex-col md:flex-row gap-6">
+          <div className="flex flex-col gap-3 w-full md:max-w-sm md:shrink-0">
+            <div className="flex flex-col gap-1.5 pb-3 border-b border-white/10">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">External Link (no login needed)</label>
+              {locationConsentSentLink ? (
+                <div className="flex flex-col gap-2">
+                  <div className="rounded-md border border-green-500/30 bg-green-500/10 px-3 py-2.5">
+                    <p className="text-xs font-semibold text-green-300">Link generated for {locationConsentSentLink.recipientName}</p>
+                  </div>
+                  <div className="flex gap-2">
+                    <input type="text" readOnly value={locationConsentSentLink.link} onFocus={(e) => e.target.select()} className="glass-input text-xs py-1.5 px-3 rounded-md flex-1" />
+                    <button onClick={handleCopyLocationConsentSentLink} className="btn text-xs px-3 py-1.5 shrink-0">{locationConsentSentLinkCopied ? "Copied!" : "Copy"}</button>
+                  </div>
+                  <button onClick={() => setLocationConsentSentLink(null)} className="btn text-xs px-3 py-1.5 w-fit">Done</button>
+                </div>
+              ) : (
+                <>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={locationConsentExternalName}
+                      onChange={(e) => setLocationConsentExternalName(e.target.value)}
+                      placeholder="Type their name (optional)…"
+                      className="glass-input text-sm py-1.5 px-3 rounded-md flex-1"
+                    />
+                    <button
+                      onClick={handleGenerateExternalLocationConsent}
+                      disabled={locationConsentSending}
+                      className="btn text-sm px-3 py-1.5 disabled:opacity-50 shrink-0"
+                    >
+                      {locationConsentSending ? "Generating…" : "Generate Link"}
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground">No AHS account needed — they can open the link and fill it in without logging in.</p>
+                </>
+              )}
+            </div>
+
+            <div className="flex flex-col gap-1 relative">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient (AHS teammate)</label>
+              <input
+                type="text"
+                value={locationConsentRecipientSearch}
+                onChange={(e) => { setLocationConsentRecipientSearch(e.target.value); setLocationConsentRecipientId(""); setLocationConsentRecipientDropdownOpen(true); }}
+                onFocus={() => setLocationConsentRecipientDropdownOpen(true)}
+                onBlur={() => setTimeout(() => setLocationConsentRecipientDropdownOpen(false), 150)}
+                placeholder="Search a teammate…"
+                className="glass-input text-sm py-1.5 px-3 rounded-md"
+              />
+              {locationConsentRecipientDropdownOpen && (
+                <div className="absolute z-50 top-full mt-1 w-full max-h-96 overflow-y-auto rounded-md border border-white/15 bg-slate-900 shadow-2xl">
+                  {filteredLocationConsentRecipients.length === 0 ? (
+                    <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+                  ) : (
+                    filteredLocationConsentRecipients.map((e) => (
+                      <button
+                        key={e.id}
+                        type="button"
+                        onMouseDown={(ev) => ev.preventDefault()}
+                        onClick={() => {
+                          setLocationConsentRecipientId(e.id);
+                          setLocationConsentRecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`);
+                          setLocationConsentRecipientDropdownOpen(false);
+                        }}
+                        className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${locationConsentRecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                      >
+                        {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+
+            {locationConsentSendError && (
+              <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{locationConsentSendError}</p>
+            )}
+            <div className="flex items-center gap-2">
+              <button
+                onClick={toggleLocationConsentPreview}
+                className="btn text-sm px-4 py-2 flex items-center gap-1.5"
+              >
+                Preview <ChevronDown className={`h-3.5 w-3.5 transition-transform ${locationConsentPreviewExpanded ? "rotate-180" : ""}`} />
+              </button>
+              <button
+                onClick={handleSendLocationConsent}
+                disabled={!locationConsentRecipientId || locationConsentSending}
+                className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+              >
+                {locationConsentSending ? "Sending…" : "Send Request"}
+              </button>
+            </div>
+          </div>
+
+          <div className="flex-1 min-w-0">
+            {locationConsentPreviewExpanded ? (
+              <div className="border border-white/10 rounded-md overflow-hidden bg-white/5 h-full" style={{ minHeight: 560 }}>
+                {locationConsentPreviewLoading || !locationConsentPreviewPdfUrl ? (
+                  <div className="h-full flex items-center justify-center text-sm text-muted-foreground" style={{ minHeight: 560 }}>Loading preview…</div>
+                ) : (
+                  <iframe src={locationConsentPreviewPdfUrl} title="Location Sharing Consent Agreement Preview" className="w-full border-0" style={{ height: 560 }} />
+                )}
+              </div>
+            ) : (
+              <div className="border border-dashed border-white/15 rounded-md flex items-center justify-center text-sm text-muted-foreground" style={{ minHeight: 560 }}>
+                Click "Preview" to see the document here.
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="panel p-0 overflow-hidden mt-4">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">Sent Location Sharing Consent Forms</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status. "Awaiting Employer Signature" means the employee finished — add your signature to finalize.</p>
+        </div>
+        {locationConsentActionError && (
+          <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{locationConsentActionError}</p>
+        )}
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-white/10 bg-white/5">
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Employee</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Position / Title</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent By</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Status</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sentLocationConsentForms.length === 0 ? (
+                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">No requests sent yet.</td></tr>
+              ) : (
+                sentLocationConsentForms.map((doc) => {
+                  const data = doc.formData as Partial<LocationConsentFormData>;
+                  const recipient = employees.find((e) => e.id === doc.recipientId);
+                  const busy = locationConsentActionBusyId === doc.id;
+                  const awaitingEmployer = isAwaitingEmployerStep(doc);
+                  return (
+                    <tr key={doc.id} className="border-b border-white/5 hover:bg-white/5">
+                      <td className="px-4 py-3 font-medium">
+                        {doc.pdfUrl ? (
+                          <button type="button" onClick={() => setLocationConsentDocPreview(doc)} className="text-blue-300 hover:text-blue-200 hover:underline text-left">
+                            {data.employeeName || recipient?.name || doc.recipientName || "—"}
+                          </button>
+                        ) : (
+                          data.employeeName || recipient?.name || doc.recipientName || "—"
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-muted-foreground">{data.positionTitle || "—"}</td>
+                      <td className="px-4 py-3 text-muted-foreground">{doc.createdByName ?? "—"}</td>
+                      <td className="px-4 py-3">
+                        <span className={`px-2 py-1 rounded text-xs font-semibold ${
+                          doc.status === "confirmed" ? "bg-green-500/20 text-green-300"
+                          : awaitingEmployer ? "bg-orange-500/20 text-orange-300"
+                          : doc.status === "cancelled" ? "bg-slate-500/20 text-slate-400"
+                          : "bg-yellow-500/20 text-yellow-300"
+                        }`}>
+                          {doc.status === "confirmed" ? "Completed" : awaitingEmployer ? "Awaiting Employer Signature" : doc.status === "cancelled" ? "Cancelled" : "Awaiting Employee"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{new Date(doc.createdAt).toLocaleDateString()}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {doc.status === "pending_signature" && doc.recipientSlot === "employee" && (
+                            <button type="button" onClick={() => handleCopyLocationConsentLink(doc)} className="btn text-[10px] px-2 py-1">
+                              Copy Link
+                            </button>
+                          )}
+                          {awaitingEmployer && (
+                            <>
+                              <button type="button" onClick={() => handleOpenLocationConsentEmployerDialog(doc)} className="btn text-[10px] px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white">
+                                Add Employer Signature →
+                              </button>
+                              <button type="button" onClick={() => handleOpenEmployerReassign(doc)} className="btn text-[10px] px-2 py-1">
+                                Send to Employer
+                              </button>
+                            </>
+                          )}
+                          {doc.pdfUrl && (
+                            <button type="button" onClick={() => handleDownloadLocationConsentPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
+                              Download PDF
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => handleDeleteLocationConsent(doc)}
+                            title="Permanently delete this request"
+                            className="text-muted-foreground hover:text-red-300 disabled:opacity-50"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      </>
+      )}
+
+      {activeTab === "damage" && (
+      <>
+      <div className="panel p-0 overflow-visible mt-4 relative z-20">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">Send Damage Agreement Request</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Pick a teammate — they'll get a link to fill in their name/position/effective date and sign the Damage, Part Loss, and Tool Penalty Commission Deduction Agreement. Once they submit, it lands back here for HR to add the employer/representative signature.</p>
+        </div>
+        <div className="p-4 flex flex-col md:flex-row gap-6">
+          <div className="flex flex-col gap-3 w-full md:max-w-sm md:shrink-0">
+            <div className="flex flex-col gap-1.5 pb-3 border-b border-white/10">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">External Link (no login needed)</label>
+              {damageSentLink ? (
+                <div className="flex flex-col gap-2">
+                  <div className="rounded-md border border-green-500/30 bg-green-500/10 px-3 py-2.5">
+                    <p className="text-xs font-semibold text-green-300">Link generated for {damageSentLink.recipientName}</p>
+                  </div>
+                  <div className="flex gap-2">
+                    <input type="text" readOnly value={damageSentLink.link} onFocus={(e) => e.target.select()} className="glass-input text-xs py-1.5 px-3 rounded-md flex-1" />
+                    <button onClick={handleCopyDamageSentLink} className="btn text-xs px-3 py-1.5 shrink-0">{damageSentLinkCopied ? "Copied!" : "Copy"}</button>
+                  </div>
+                  <button onClick={() => setDamageSentLink(null)} className="btn text-xs px-3 py-1.5 w-fit">Done</button>
+                </div>
+              ) : (
+                <>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={damageExternalName}
+                      onChange={(e) => setDamageExternalName(e.target.value)}
+                      placeholder="Type their name (optional)…"
+                      className="glass-input text-sm py-1.5 px-3 rounded-md flex-1"
+                    />
+                    <button
+                      onClick={handleGenerateExternalDamage}
+                      disabled={damageSending}
+                      className="btn text-sm px-3 py-1.5 disabled:opacity-50 shrink-0"
+                    >
+                      {damageSending ? "Generating…" : "Generate Link"}
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground">No AHS account needed — they can open the link and fill it in without logging in.</p>
+                </>
+              )}
+            </div>
+
+            <div className="flex flex-col gap-1 relative">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient (AHS teammate)</label>
+              <input
+                type="text"
+                value={damageRecipientSearch}
+                onChange={(e) => { setDamageRecipientSearch(e.target.value); setDamageRecipientId(""); setDamageRecipientDropdownOpen(true); }}
+                onFocus={() => setDamageRecipientDropdownOpen(true)}
+                onBlur={() => setTimeout(() => setDamageRecipientDropdownOpen(false), 150)}
+                placeholder="Search a teammate…"
+                className="glass-input text-sm py-1.5 px-3 rounded-md"
+              />
+              {damageRecipientDropdownOpen && (
+                <div className="absolute z-50 top-full mt-1 w-full max-h-96 overflow-y-auto rounded-md border border-white/15 bg-slate-900 shadow-2xl">
+                  {filteredDamageRecipients.length === 0 ? (
+                    <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+                  ) : (
+                    filteredDamageRecipients.map((e) => (
+                      <button
+                        key={e.id}
+                        type="button"
+                        onMouseDown={(ev) => ev.preventDefault()}
+                        onClick={() => {
+                          setDamageRecipientId(e.id);
+                          setDamageRecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`);
+                          setDamageRecipientDropdownOpen(false);
+                        }}
+                        className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${damageRecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                      >
+                        {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+
+            {damageSendError && (
+              <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{damageSendError}</p>
+            )}
+            <div className="flex items-center gap-2">
+              <button
+                onClick={toggleDamagePreview}
+                className="btn text-sm px-4 py-2 flex items-center gap-1.5"
+              >
+                Preview <ChevronDown className={`h-3.5 w-3.5 transition-transform ${damagePreviewExpanded ? "rotate-180" : ""}`} />
+              </button>
+              <button
+                onClick={handleSendDamage}
+                disabled={!damageRecipientId || damageSending}
+                className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+              >
+                {damageSending ? "Sending…" : "Send Request"}
+              </button>
+            </div>
+          </div>
+
+          <div className="flex-1 min-w-0">
+            {damagePreviewExpanded ? (
+              <div className="border border-white/10 rounded-md overflow-hidden bg-white/5 h-full" style={{ minHeight: 560 }}>
+                {damagePreviewLoading || !damagePreviewPdfUrl ? (
+                  <div className="h-full flex items-center justify-center text-sm text-muted-foreground" style={{ minHeight: 560 }}>Loading preview…</div>
+                ) : (
+                  <iframe src={damagePreviewPdfUrl} title="Damage Agreement Preview" className="w-full border-0" style={{ height: 560 }} />
+                )}
+              </div>
+            ) : (
+              <div className="border border-dashed border-white/15 rounded-md flex items-center justify-center text-sm text-muted-foreground" style={{ minHeight: 560 }}>
+                Click "Preview" to see the document here.
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="panel p-0 overflow-hidden mt-4">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">Sent Damage Agreement Forms</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status. "Awaiting Employer Signature" means the employee finished — add your signature to finalize.</p>
+        </div>
+        {damageActionError && (
+          <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{damageActionError}</p>
+        )}
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-white/10 bg-white/5">
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Employee</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Position / Title</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent By</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Status</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sentDamageForms.length === 0 ? (
+                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">No requests sent yet.</td></tr>
+              ) : (
+                sentDamageForms.map((doc) => {
+                  const data = doc.formData as Partial<DamageFormData>;
+                  const recipient = employees.find((e) => e.id === doc.recipientId);
+                  const busy = damageActionBusyId === doc.id;
+                  const awaitingEmployer = isAwaitingEmployerStep(doc);
+                  return (
+                    <tr key={doc.id} className="border-b border-white/5 hover:bg-white/5">
+                      <td className="px-4 py-3 font-medium">
+                        {doc.pdfUrl ? (
+                          <button type="button" onClick={() => setDamageDocPreview(doc)} className="text-blue-300 hover:text-blue-200 hover:underline text-left">
+                            {data.employeeName || recipient?.name || doc.recipientName || "—"}
+                          </button>
+                        ) : (
+                          data.employeeName || recipient?.name || doc.recipientName || "—"
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-muted-foreground">{data.positionTitle || "—"}</td>
+                      <td className="px-4 py-3 text-muted-foreground">{doc.createdByName ?? "—"}</td>
+                      <td className="px-4 py-3">
+                        <span className={`px-2 py-1 rounded text-xs font-semibold ${
+                          doc.status === "confirmed" ? "bg-green-500/20 text-green-300"
+                          : awaitingEmployer ? "bg-orange-500/20 text-orange-300"
+                          : doc.status === "cancelled" ? "bg-slate-500/20 text-slate-400"
+                          : "bg-yellow-500/20 text-yellow-300"
+                        }`}>
+                          {doc.status === "confirmed" ? "Completed" : awaitingEmployer ? "Awaiting Employer Signature" : doc.status === "cancelled" ? "Cancelled" : "Awaiting Employee"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{new Date(doc.createdAt).toLocaleDateString()}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {doc.status === "pending_signature" && doc.recipientSlot === "employee" && (
+                            <button type="button" onClick={() => handleCopyDamageLink(doc)} className="btn text-[10px] px-2 py-1">
+                              Copy Link
+                            </button>
+                          )}
+                          {awaitingEmployer && (
+                            <>
+                              <button type="button" onClick={() => handleOpenDamageEmployerDialog(doc)} className="btn text-[10px] px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white">
+                                Add Employer Signature →
+                              </button>
+                              <button type="button" onClick={() => handleOpenEmployerReassign(doc)} className="btn text-[10px] px-2 py-1">
+                                Send to Employer
+                              </button>
+                            </>
+                          )}
+                          {doc.pdfUrl && (
+                            <button type="button" onClick={() => handleDownloadDamagePdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
+                              Download PDF
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => handleDeleteDamage(doc)}
+                            title="Permanently delete this request"
+                            className="text-muted-foreground hover:text-red-300 disabled:opacity-50"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      </>
+      )}
+
+      {activeTab === "contractorData" && (
+      <>
+      <div className="panel p-0 overflow-visible mt-4 relative z-20">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">Send Contractor Data Request</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Pick a teammate — they'll get a link to fill in their contact/address/identity info, upload photos of their SSN card and driver's license, and sign. It comes back to you here automatically once submitted.</p>
+        </div>
+        <div className="p-4 flex flex-col md:flex-row gap-6">
+          <div className="flex flex-col gap-3 w-full md:max-w-sm md:shrink-0">
+            <div className="flex flex-col gap-1.5 pb-3 border-b border-white/10">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">External Link (no login needed)</label>
+              {contractorDataSentLink ? (
+                <div className="flex flex-col gap-2">
+                  <div className="rounded-md border border-green-500/30 bg-green-500/10 px-3 py-2.5">
+                    <p className="text-xs font-semibold text-green-300">Link generated for {contractorDataSentLink.recipientName}</p>
+                  </div>
+                  <div className="flex gap-2">
+                    <input type="text" readOnly value={contractorDataSentLink.link} onFocus={(e) => e.target.select()} className="glass-input text-xs py-1.5 px-3 rounded-md flex-1" />
+                    <button onClick={handleCopyContractorDataSentLink} className="btn text-xs px-3 py-1.5 shrink-0">{contractorDataSentLinkCopied ? "Copied!" : "Copy"}</button>
+                  </div>
+                  <button onClick={() => setContractorDataSentLink(null)} className="btn text-xs px-3 py-1.5 w-fit">Done</button>
+                </div>
+              ) : (
+                <>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={contractorDataExternalName}
+                      onChange={(e) => setContractorDataExternalName(e.target.value)}
+                      placeholder="Type their name (optional)…"
+                      className="glass-input text-sm py-1.5 px-3 rounded-md flex-1"
+                    />
+                    <button
+                      onClick={handleGenerateExternalContractorData}
+                      disabled={contractorDataSending}
+                      className="btn text-sm px-3 py-1.5 disabled:opacity-50 shrink-0"
+                    >
+                      {contractorDataSending ? "Generating…" : "Generate Link"}
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground">No AHS account needed — they can open the link and fill it in without logging in.</p>
+                </>
+              )}
+            </div>
+
+            <div className="flex flex-col gap-1 relative">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient (AHS teammate)</label>
+              <input
+                type="text"
+                value={contractorDataRecipientSearch}
+                onChange={(e) => { setContractorDataRecipientSearch(e.target.value); setContractorDataRecipientId(""); setContractorDataRecipientDropdownOpen(true); }}
+                onFocus={() => setContractorDataRecipientDropdownOpen(true)}
+                onBlur={() => setTimeout(() => setContractorDataRecipientDropdownOpen(false), 150)}
+                placeholder="Search a teammate…"
+                className="glass-input text-sm py-1.5 px-3 rounded-md"
+              />
+              {contractorDataRecipientDropdownOpen && (
+                <div className="absolute z-50 top-full mt-1 w-full max-h-96 overflow-y-auto rounded-md border border-white/15 bg-slate-900 shadow-2xl">
+                  {filteredContractorDataRecipients.length === 0 ? (
+                    <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+                  ) : (
+                    filteredContractorDataRecipients.map((e) => (
+                      <button
+                        key={e.id}
+                        type="button"
+                        onMouseDown={(ev) => ev.preventDefault()}
+                        onClick={() => {
+                          setContractorDataRecipientId(e.id);
+                          setContractorDataRecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`);
+                          setContractorDataRecipientDropdownOpen(false);
+                        }}
+                        className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${contractorDataRecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                      >
+                        {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+
+            {contractorDataSendError && (
+              <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{contractorDataSendError}</p>
+            )}
+            <div className="flex items-center gap-2">
+              <button
+                onClick={toggleContractorDataPreview}
+                className="btn text-sm px-4 py-2 flex items-center gap-1.5"
+              >
+                Preview <ChevronDown className={`h-3.5 w-3.5 transition-transform ${contractorDataPreviewExpanded ? "rotate-180" : ""}`} />
+              </button>
+              <button
+                onClick={handleSendContractorData}
+                disabled={!contractorDataRecipientId || contractorDataSending}
+                className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+              >
+                {contractorDataSending ? "Sending…" : "Send Request"}
+              </button>
+            </div>
+          </div>
+
+          <div className="flex-1 min-w-0">
+            {contractorDataPreviewExpanded ? (
+              <div className="border border-white/10 rounded-md overflow-hidden bg-white/5 h-full" style={{ minHeight: 560 }}>
+                {contractorDataPreviewLoading || !contractorDataPreviewPdfUrl ? (
+                  <div className="h-full flex items-center justify-center text-sm text-muted-foreground" style={{ minHeight: 560 }}>Loading preview…</div>
+                ) : (
+                  <iframe src={contractorDataPreviewPdfUrl} title="Contractor Data Preview" className="w-full border-0" style={{ height: 560 }} />
+                )}
+              </div>
+            ) : (
+              <div className="border border-dashed border-white/15 rounded-md flex items-center justify-center text-sm text-muted-foreground" style={{ minHeight: 560 }}>
+                Click "Preview" to see the document here.
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="panel p-0 overflow-hidden mt-4">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">Sent Contractor Data Forms</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status.</p>
+        </div>
+        {contractorDataActionError && (
+          <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{contractorDataActionError}</p>
+        )}
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-white/10 bg-white/5">
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Employee</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Branch</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent By</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Status</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sentContractorDataForms.length === 0 ? (
+                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">No requests sent yet.</td></tr>
+              ) : (
+                sentContractorDataForms.map((doc) => {
+                  const data = doc.formData as Partial<ContractorDataFormData>;
+                  const recipient = employees.find((e) => e.id === doc.recipientId);
+                  const busy = contractorDataActionBusyId === doc.id;
+                  return (
+                    <tr key={doc.id} className="border-b border-white/5 hover:bg-white/5">
+                      <td className="px-4 py-3 font-medium">
+                        {doc.pdfUrl ? (
+                          <button type="button" onClick={() => setContractorDataDocPreview(doc)} className="text-blue-300 hover:text-blue-200 hover:underline text-left">
+                            {data.employeeName || recipient?.name || doc.recipientName || "—"}
+                          </button>
+                        ) : (
+                          data.employeeName || recipient?.name || doc.recipientName || "—"
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-muted-foreground">{data.branch || "—"}</td>
+                      <td className="px-4 py-3 text-muted-foreground">{doc.createdByName ?? "—"}</td>
+                      <td className="px-4 py-3">
+                        <span className={`px-2 py-1 rounded text-xs font-semibold ${
+                          doc.status === "signed" ? "bg-green-500/20 text-green-300"
+                          : doc.status === "cancelled" ? "bg-slate-500/20 text-slate-400"
+                          : "bg-yellow-500/20 text-yellow-300"
+                        }`}>
+                          {doc.status === "signed" ? "Submitted" : doc.status === "cancelled" ? "Cancelled" : "Awaiting Completion"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{new Date(doc.createdAt).toLocaleDateString()}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {doc.status === "pending_signature" && (
+                            <button type="button" onClick={() => handleCopyContractorDataLink(doc)} className="btn text-[10px] px-2 py-1">
+                              Copy Link
+                            </button>
+                          )}
+                          {doc.pdfUrl && (
+                            <button type="button" onClick={() => handleDownloadContractorDataPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
+                              Download PDF
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => handleDeleteContractorData(doc)}
+                            title="Permanently delete this request"
+                            className="text-muted-foreground hover:text-red-300 disabled:opacity-50"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      </>
+      )}
+
+      {activeTab === "directDeposit" && (
+      <>
+      <div className="panel p-0 overflow-visible mt-4 relative z-20">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">Send Direct Deposit Authorization Request</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Pick a teammate — they'll get a link to fill in their name/address/bank account info and sign. It comes back to you here automatically once submitted.</p>
+        </div>
+        <div className="p-4 flex flex-col md:flex-row gap-6">
+          <div className="flex flex-col gap-3 w-full md:max-w-sm md:shrink-0">
+            <div className="flex flex-col gap-1.5 pb-3 border-b border-white/10">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">External Link (no login needed)</label>
+              {directDepositSentLink ? (
+                <div className="flex flex-col gap-2">
+                  <div className="rounded-md border border-green-500/30 bg-green-500/10 px-3 py-2.5">
+                    <p className="text-xs font-semibold text-green-300">Link generated for {directDepositSentLink.recipientName}</p>
+                  </div>
+                  <div className="flex gap-2">
+                    <input type="text" readOnly value={directDepositSentLink.link} onFocus={(e) => e.target.select()} className="glass-input text-xs py-1.5 px-3 rounded-md flex-1" />
+                    <button onClick={handleCopyDirectDepositSentLink} className="btn text-xs px-3 py-1.5 shrink-0">{directDepositSentLinkCopied ? "Copied!" : "Copy"}</button>
+                  </div>
+                  <button onClick={() => setDirectDepositSentLink(null)} className="btn text-xs px-3 py-1.5 w-fit">Done</button>
+                </div>
+              ) : (
+                <>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={directDepositExternalName}
+                      onChange={(e) => setDirectDepositExternalName(e.target.value)}
+                      placeholder="Type their name (optional)…"
+                      className="glass-input text-sm py-1.5 px-3 rounded-md flex-1"
+                    />
+                    <button
+                      onClick={handleGenerateExternalDirectDeposit}
+                      disabled={directDepositSending}
+                      className="btn text-sm px-3 py-1.5 disabled:opacity-50 shrink-0"
+                    >
+                      {directDepositSending ? "Generating…" : "Generate Link"}
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground">No AHS account needed — they can open the link and fill it in without logging in.</p>
+                </>
+              )}
+            </div>
+
+            <div className="flex flex-col gap-1 relative">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient (AHS teammate)</label>
+              <input
+                type="text"
+                value={directDepositRecipientSearch}
+                onChange={(e) => { setDirectDepositRecipientSearch(e.target.value); setDirectDepositRecipientId(""); setDirectDepositRecipientDropdownOpen(true); }}
+                onFocus={() => setDirectDepositRecipientDropdownOpen(true)}
+                onBlur={() => setTimeout(() => setDirectDepositRecipientDropdownOpen(false), 150)}
+                placeholder="Search a teammate…"
+                className="glass-input text-sm py-1.5 px-3 rounded-md"
+              />
+              {directDepositRecipientDropdownOpen && (
+                <div className="absolute z-50 top-full mt-1 w-full max-h-96 overflow-y-auto rounded-md border border-white/15 bg-slate-900 shadow-2xl">
+                  {filteredDirectDepositRecipients.length === 0 ? (
+                    <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+                  ) : (
+                    filteredDirectDepositRecipients.map((e) => (
+                      <button
+                        key={e.id}
+                        type="button"
+                        onMouseDown={(ev) => ev.preventDefault()}
+                        onClick={() => {
+                          setDirectDepositRecipientId(e.id);
+                          setDirectDepositRecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`);
+                          setDirectDepositRecipientDropdownOpen(false);
+                        }}
+                        className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${directDepositRecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                      >
+                        {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+
+            {directDepositSendError && (
+              <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{directDepositSendError}</p>
+            )}
+            <div className="flex items-center gap-2">
+              <button
+                onClick={toggleDirectDepositPreview}
+                className="btn text-sm px-4 py-2 flex items-center gap-1.5"
+              >
+                Preview <ChevronDown className={`h-3.5 w-3.5 transition-transform ${directDepositPreviewExpanded ? "rotate-180" : ""}`} />
+              </button>
+              <button
+                onClick={handleSendDirectDeposit}
+                disabled={!directDepositRecipientId || directDepositSending}
+                className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+              >
+                {directDepositSending ? "Sending…" : "Send Request"}
+              </button>
+            </div>
+          </div>
+
+          <div className="flex-1 min-w-0">
+            {directDepositPreviewExpanded ? (
+              <div className="border border-white/10 rounded-md overflow-hidden bg-white/5 h-full" style={{ minHeight: 560 }}>
+                {directDepositPreviewLoading || !directDepositPreviewPdfUrl ? (
+                  <div className="h-full flex items-center justify-center text-sm text-muted-foreground" style={{ minHeight: 560 }}>Loading preview…</div>
+                ) : (
+                  <iframe src={directDepositPreviewPdfUrl} title="Direct Deposit Authorization Preview" className="w-full border-0" style={{ height: 560 }} />
+                )}
+              </div>
+            ) : (
+              <div className="border border-dashed border-white/15 rounded-md flex items-center justify-center text-sm text-muted-foreground" style={{ minHeight: 560 }}>
+                Click "Preview" to see the document here.
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="panel p-0 overflow-hidden mt-4">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">Sent Direct Deposit Authorization Forms</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status.</p>
+        </div>
+        {directDepositActionError && (
+          <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{directDepositActionError}</p>
+        )}
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-white/10 bg-white/5">
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Employee</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Bank</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent By</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Status</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sentDirectDepositForms.length === 0 ? (
+                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">No requests sent yet.</td></tr>
+              ) : (
+                sentDirectDepositForms.map((doc) => {
+                  const data = doc.formData as Partial<DirectDepositFormData>;
+                  const recipient = employees.find((e) => e.id === doc.recipientId);
+                  const busy = directDepositActionBusyId === doc.id;
+                  return (
+                    <tr key={doc.id} className="border-b border-white/5 hover:bg-white/5">
+                      <td className="px-4 py-3 font-medium">
+                        {doc.pdfUrl ? (
+                          <button type="button" onClick={() => setDirectDepositDocPreview(doc)} className="text-blue-300 hover:text-blue-200 hover:underline text-left">
+                            {data.employeeName || recipient?.name || doc.recipientName || "—"}
+                          </button>
+                        ) : (
+                          data.employeeName || recipient?.name || doc.recipientName || "—"
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-muted-foreground">{data.bankName || "—"}</td>
+                      <td className="px-4 py-3 text-muted-foreground">{doc.createdByName ?? "—"}</td>
+                      <td className="px-4 py-3">
+                        <span className={`px-2 py-1 rounded text-xs font-semibold ${
+                          doc.status === "signed" ? "bg-green-500/20 text-green-300"
+                          : doc.status === "cancelled" ? "bg-slate-500/20 text-slate-400"
+                          : "bg-yellow-500/20 text-yellow-300"
+                        }`}>
+                          {doc.status === "signed" ? "Submitted" : doc.status === "cancelled" ? "Cancelled" : "Awaiting Completion"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{new Date(doc.createdAt).toLocaleDateString()}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {doc.status === "pending_signature" && (
+                            <button type="button" onClick={() => handleCopyDirectDepositLink(doc)} className="btn text-[10px] px-2 py-1">
+                              Copy Link
+                            </button>
+                          )}
+                          {doc.pdfUrl && (
+                            <button type="button" onClick={() => handleDownloadDirectDepositPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
+                              Download PDF
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => handleDeleteDirectDeposit(doc)}
+                            title="Permanently delete this request"
+                            className="text-muted-foreground hover:text-red-300 disabled:opacity-50"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      </>
       )}
 
       {/* W-8BEN Sent History — PDF preview, same inline-frame pattern used for COE Sent History */}
@@ -13836,38 +17020,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             </div>
             <div className="flex-1 overflow-hidden bg-slate-950">
               {w8DocPreview.pdfUrl && <iframe src={w8DocPreview.pdfUrl} title="Form W-8BEN" className="w-full h-full min-h-[70vh] border-0" />}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Form W-4 — preview the REAL official PDF (fillW4Pdf, same function used at submission time) with a blank fill, before sending the fill-in link */}
-      {w4PreviewOpen && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-          <div className="bg-slate-800 border border-white/10 rounded-lg w-full max-w-4xl h-[90vh] flex flex-col">
-            <div className="flex items-center justify-between px-5 py-3 border-b border-white/10">
-              <h3 className="text-base font-bold">Form W-4 — Preview</h3>
-              <button onClick={closeW4Preview} className="text-muted-foreground hover:text-foreground">✕</button>
-            </div>
-            <div className="flex-1 bg-white/5">
-              {w4PreviewLoading || !w4PreviewPdfUrl ? (
-                <div className="h-full flex items-center justify-center text-sm text-muted-foreground">Loading preview…</div>
-              ) : (
-                <iframe src={w4PreviewPdfUrl} title="W-4 Preview" className="w-full h-full border-0" />
-              )}
-            </div>
-            <div className="px-5 py-3 border-t border-white/10 flex items-center justify-end gap-2">
-              {w4SendError && (
-                <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2 mr-auto">{w4SendError}</p>
-              )}
-              <button onClick={closeW4Preview} className="btn text-sm px-4 py-2">Cancel</button>
-              <button
-                onClick={handleSendW4}
-                disabled={w4Sending}
-                className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
-              >
-                {w4Sending ? "Sending…" : "Send W-4 Request"}
-              </button>
             </div>
           </div>
         </div>
@@ -13901,37 +17053,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         </div>
       )}
 
-      {/* Form W-9 — preview the REAL official PDF (fillW9Pdf, same function used at submission time) with a blank fill, before sending the fill-in link */}
-      {w9PreviewOpen && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-          <div className="bg-slate-800 border border-white/10 rounded-lg w-full max-w-4xl h-[90vh] flex flex-col">
-            <div className="flex items-center justify-between px-5 py-3 border-b border-white/10">
-              <h3 className="text-base font-bold">Form W-9 — Preview</h3>
-              <button onClick={closeW9Preview} className="text-muted-foreground hover:text-foreground">✕</button>
-            </div>
-            <div className="flex-1 bg-white/5">
-              {w9PreviewLoading || !w9PreviewPdfUrl ? (
-                <div className="h-full flex items-center justify-center text-sm text-muted-foreground">Loading preview…</div>
-              ) : (
-                <iframe src={w9PreviewPdfUrl} title="W-9 Preview" className="w-full h-full border-0" />
-              )}
-            </div>
-            <div className="px-5 py-3 border-t border-white/10 flex items-center justify-end gap-2">
-              {w9SendError && (
-                <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2 mr-auto">{w9SendError}</p>
-              )}
-              <button onClick={closeW9Preview} className="btn text-sm px-4 py-2">Cancel</button>
-              <button
-                onClick={handleSendW9}
-                disabled={w9Sending}
-                className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
-              >
-                {w9Sending ? "Sending…" : "Send W-9 Request"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* W-9 Sent History — PDF preview, same inline-frame pattern used for W-8BEN/W-4/COE Sent History */}
       {w9DocPreview && (
@@ -13956,37 +17077,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         </div>
       )}
 
-      {/* Form W-4R — preview the REAL official PDF (fillW4RPdf, same function used at submission time) with a blank fill, before sending the fill-in link */}
-      {w4rPreviewOpen && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-          <div className="bg-slate-800 border border-white/10 rounded-lg w-full max-w-4xl h-[90vh] flex flex-col">
-            <div className="flex items-center justify-between px-5 py-3 border-b border-white/10">
-              <h3 className="text-base font-bold">Form W-4R — Preview</h3>
-              <button onClick={closeW4RPreview} className="text-muted-foreground hover:text-foreground">✕</button>
-            </div>
-            <div className="flex-1 bg-white/5">
-              {w4rPreviewLoading || !w4rPreviewPdfUrl ? (
-                <div className="h-full flex items-center justify-center text-sm text-muted-foreground">Loading preview…</div>
-              ) : (
-                <iframe src={w4rPreviewPdfUrl} title="W-4R Preview" className="w-full h-full border-0" />
-              )}
-            </div>
-            <div className="px-5 py-3 border-t border-white/10 flex items-center justify-end gap-2">
-              {w4rSendError && (
-                <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2 mr-auto">{w4rSendError}</p>
-              )}
-              <button onClick={closeW4RPreview} className="btn text-sm px-4 py-2">Cancel</button>
-              <button
-                onClick={handleSendW4R}
-                disabled={w4rSending}
-                className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
-              >
-                {w4rSending ? "Sending…" : "Send W-4R Request"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* W-4R Sent History — PDF preview, same inline-frame pattern used for W-8BEN/W-4/W-9 Sent History */}
       {w4rDocPreview && (
@@ -14014,37 +17104,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         </div>
       )}
 
-      {/* Form Car IQ Technician Agreement — preview the REAL official PDF (fillCarIqAgreementPdf, same function used at submission time) with a blank fill, before sending the fill-in link */}
-      {carIqPreviewOpen && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-          <div className="bg-slate-800 border border-white/10 rounded-lg w-full max-w-4xl h-[90vh] flex flex-col">
-            <div className="flex items-center justify-between px-5 py-3 border-b border-white/10">
-              <h3 className="text-base font-bold">Car IQ Technician Agreement — Preview</h3>
-              <button onClick={closeCarIqPreview} className="text-muted-foreground hover:text-foreground">✕</button>
-            </div>
-            <div className="flex-1 bg-white/5">
-              {carIqPreviewLoading || !carIqPreviewPdfUrl ? (
-                <div className="h-full flex items-center justify-center text-sm text-muted-foreground">Loading preview…</div>
-              ) : (
-                <iframe src={carIqPreviewPdfUrl} title="Car IQ Technician Agreement Preview" className="w-full h-full border-0" />
-              )}
-            </div>
-            <div className="px-5 py-3 border-t border-white/10 flex items-center justify-end gap-2">
-              {carIqSendError && (
-                <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2 mr-auto">{carIqSendError}</p>
-              )}
-              <button onClick={closeCarIqPreview} className="btn text-sm px-4 py-2">Cancel</button>
-              <button
-                onClick={handleSendCarIqAgreement}
-                disabled={carIqSending}
-                className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
-              >
-                {carIqSending ? "Sending…" : "Send Request"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Car IQ Technician Agreement Sent History — PDF preview, same inline-frame pattern used for W-8BEN/W-4/W-9/W-4R Sent History */}
       {carIqDocPreview && (
@@ -14069,37 +17128,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         </div>
       )}
 
-      {/* Company Vehicle Use Agreement — preview the REAL official PDF (fillVehicleAgreementPdf, same function used at submission time) with a blank fill, before sending the fill-in link */}
-      {vehiclePreviewOpen && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-          <div className="bg-slate-800 border border-white/10 rounded-lg w-full max-w-4xl h-[90vh] flex flex-col">
-            <div className="flex items-center justify-between px-5 py-3 border-b border-white/10">
-              <h3 className="text-base font-bold">Company Vehicle Use Agreement — Preview</h3>
-              <button onClick={closeVehiclePreview} className="text-muted-foreground hover:text-foreground">✕</button>
-            </div>
-            <div className="flex-1 bg-white/5">
-              {vehiclePreviewLoading || !vehiclePreviewPdfUrl ? (
-                <div className="h-full flex items-center justify-center text-sm text-muted-foreground">Loading preview…</div>
-              ) : (
-                <iframe src={vehiclePreviewPdfUrl} title="Company Vehicle Use Agreement Preview" className="w-full h-full border-0" />
-              )}
-            </div>
-            <div className="px-5 py-3 border-t border-white/10 flex items-center justify-end gap-2">
-              {vehicleSendError && (
-                <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2 mr-auto">{vehicleSendError}</p>
-              )}
-              <button onClick={closeVehiclePreview} className="btn text-sm px-4 py-2">Cancel</button>
-              <button
-                onClick={handleSendVehicleAgreement}
-                disabled={vehicleSending}
-                className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
-              >
-                {vehicleSending ? "Sending…" : "Send Request"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Company Vehicle Use Agreement Sent History — PDF preview, same inline-frame pattern used for W-8BEN/W-4/W-9/W-4R/Car IQ Sent History */}
       {vehicleDocPreview && (
@@ -14124,37 +17152,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         </div>
       )}
 
-      {/* Employee Confidentiality and Non-Disclosure Agreement — preview the REAL official PDF (fillEmployeeConfidentialityPdf, same function used at submission time) with a blank fill, before sending the fill-in link */}
-      {confidentialityPreviewOpen && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-          <div className="bg-slate-800 border border-white/10 rounded-lg w-full max-w-4xl h-[90vh] flex flex-col">
-            <div className="flex items-center justify-between px-5 py-3 border-b border-white/10">
-              <h3 className="text-base font-bold">Employee Confidentiality Agreement — Preview</h3>
-              <button onClick={closeConfidentialityPreview} className="text-muted-foreground hover:text-foreground">✕</button>
-            </div>
-            <div className="flex-1 bg-white/5">
-              {confidentialityPreviewLoading || !confidentialityPreviewPdfUrl ? (
-                <div className="h-full flex items-center justify-center text-sm text-muted-foreground">Loading preview…</div>
-              ) : (
-                <iframe src={confidentialityPreviewPdfUrl} title="Employee Confidentiality Agreement Preview" className="w-full h-full border-0" />
-              )}
-            </div>
-            <div className="px-5 py-3 border-t border-white/10 flex items-center justify-end gap-2">
-              {confidentialitySendError && (
-                <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2 mr-auto">{confidentialitySendError}</p>
-              )}
-              <button onClick={closeConfidentialityPreview} className="btn text-sm px-4 py-2">Cancel</button>
-              <button
-                onClick={handleSendConfidentiality}
-                disabled={confidentialitySending}
-                className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
-              >
-                {confidentialitySending ? "Sending…" : "Send Request"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Employee Confidentiality Agreement Sent History — PDF preview, same inline-frame pattern used for W-8BEN/W-4/W-9/W-4R/Car IQ/Vehicle Agreement Sent History */}
       {confidentialityDocPreview && (
@@ -14270,6 +17267,324 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         </div>
       )}
 
+      {/* Parts Responsibility Acknowledgment Sent History PDF preview — same inline-frame pattern used for the other Sent History tables */}
+      {partsResponsibilityDocPreview && (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => setPartsResponsibilityDocPreview(null)}>
+          <div className="bg-slate-900 border border-white/10 rounded-lg shadow-2xl w-full max-w-6xl h-[92vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold">{(partsResponsibilityDocPreview.formData as Partial<PartsResponsibilityFormData>).employeeName || "—"}</p>
+                <p className="text-[10px] text-muted-foreground">
+                  {partsResponsibilityDocPreview.status === "confirmed" ? "Completed" : "Submitted"} {new Date(partsResponsibilityDocPreview.signedAt ?? partsResponsibilityDocPreview.createdAt).toLocaleString()}
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                {partsResponsibilityDocPreview.pdfUrl && (
+                  <a href={partsResponsibilityDocPreview.pdfUrl} target="_blank" rel="noopener noreferrer" className="btn text-xs px-2.5 py-1.5 flex items-center gap-1"><Download className="h-3 w-3" /> Download</a>
+                )}
+                <button type="button" onClick={() => setPartsResponsibilityDocPreview(null)} className="btn text-xs px-2.5 py-1.5">Close</button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-hidden bg-slate-950">
+              {partsResponsibilityDocPreview.pdfUrl && <iframe src={partsResponsibilityDocPreview.pdfUrl} title="Parts Responsibility and Floor Protection Acknowledgment" className="w-full h-full min-h-[70vh] border-0" />}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* HR adding the "Manager/Supervisor" signature after the technician's half comes back signed — plain signature pad, no fields to review, since the source PDF only asks for a signature here. */}
+      {partsResponsibilityManagerDialog && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-800 border border-white/10 rounded-lg p-6 max-w-sm w-full">
+            <h3 className="text-lg font-bold mb-2">Add Manager Signature</h3>
+            <p className="text-sm text-muted-foreground mb-4">
+              Manager/supervisor signature for{" "}
+              <span className="font-semibold text-white">{(partsResponsibilityManagerDialog.formData as Partial<PartsResponsibilityFormData>).employeeName || "—"}</span>'s
+              Parts Responsibility and Technician Floor Protection Acknowledgment Form.
+            </p>
+
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2 block">Draw your signature</label>
+            <canvas
+              ref={partsResponsibilityManagerSigCanvasRef}
+              width={400}
+              height={120}
+              onPointerDown={partsResponsibilityManagerStartDraw}
+              onPointerMove={partsResponsibilityManagerMoveDraw}
+              onPointerUp={partsResponsibilityManagerEndDraw}
+              onPointerLeave={partsResponsibilityManagerEndDraw}
+              className="bg-white rounded-md border border-white/15 w-full touch-none cursor-crosshair"
+            />
+            <div className="flex gap-2 mt-2">
+              <button onClick={partsResponsibilityManagerClearSignature} className="btn text-xs px-3 py-1.5">Clear</button>
+            </div>
+
+            {partsResponsibilityManagerError && (
+              <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2 mt-3">{partsResponsibilityManagerError}</p>
+            )}
+            <div className="flex gap-2 justify-end mt-4">
+              <button onClick={() => setPartsResponsibilityManagerDialog(null)} className="btn text-sm px-4 py-2">Cancel</button>
+              <button
+                onClick={handleSavePartsResponsibilityManagerSignature}
+                disabled={partsResponsibilityManagerSaving}
+                className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+              >
+                {partsResponsibilityManagerSaving ? "Saving…" : "Complete & Sign"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Mileage & Fuel Policy Agreement Sent History PDF preview — same inline-frame pattern used for the other Sent History tables */}
+      {mileageFuelDocPreview && (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => setMileageFuelDocPreview(null)}>
+          <div className="bg-slate-900 border border-white/10 rounded-lg shadow-2xl w-full max-w-6xl h-[92vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold">{(mileageFuelDocPreview.formData as Partial<MileageFuelFormData>).employeeName || "—"}</p>
+                <p className="text-[10px] text-muted-foreground">
+                  {mileageFuelDocPreview.status === "confirmed" ? "Completed" : "Submitted"} {new Date(mileageFuelDocPreview.signedAt ?? mileageFuelDocPreview.createdAt).toLocaleString()}
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                {mileageFuelDocPreview.pdfUrl && (
+                  <a href={mileageFuelDocPreview.pdfUrl} target="_blank" rel="noopener noreferrer" className="btn text-xs px-2.5 py-1.5 flex items-center gap-1"><Download className="h-3 w-3" /> Download</a>
+                )}
+                <button type="button" onClick={() => setMileageFuelDocPreview(null)} className="btn text-xs px-2.5 py-1.5">Close</button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-hidden bg-slate-950">
+              {mileageFuelDocPreview.pdfUrl && <iframe src={mileageFuelDocPreview.pdfUrl} title="Personal Vehicle Mileage and Fuel Policy Agreement" className="w-full h-full min-h-[70vh] border-0" />}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* HR adding the "Employer Representative" signature after the employee's half comes back signed — plain signature pad, no fields to review, since the source PDF only asks for a signature + date here. */}
+      {mileageFuelEmployerDialog && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-800 border border-white/10 rounded-lg p-6 max-w-sm w-full">
+            <h3 className="text-lg font-bold mb-2">Add Employer Signature</h3>
+            <p className="text-sm text-muted-foreground mb-4">
+              Employer/representative signature for{" "}
+              <span className="font-semibold text-white">{(mileageFuelEmployerDialog.formData as Partial<MileageFuelFormData>).employeeName || "—"}</span>'s
+              Personal Vehicle Mileage and Fuel Policy Agreement.
+            </p>
+
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2 block">Draw your signature</label>
+            <canvas
+              ref={mileageFuelEmployerSigCanvasRef}
+              width={400}
+              height={120}
+              onPointerDown={mileageFuelEmployerStartDraw}
+              onPointerMove={mileageFuelEmployerMoveDraw}
+              onPointerUp={mileageFuelEmployerEndDraw}
+              onPointerLeave={mileageFuelEmployerEndDraw}
+              className="bg-white rounded-md border border-white/15 w-full touch-none cursor-crosshair"
+            />
+            <div className="flex gap-2 mt-2">
+              <button onClick={mileageFuelEmployerClearSignature} className="btn text-xs px-3 py-1.5">Clear</button>
+            </div>
+
+            {mileageFuelEmployerError && (
+              <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2 mt-3">{mileageFuelEmployerError}</p>
+            )}
+            <div className="flex gap-2 justify-end mt-4">
+              <button onClick={() => setMileageFuelEmployerDialog(null)} className="btn text-sm px-4 py-2">Cancel</button>
+              <button
+                onClick={handleSaveMileageFuelEmployerSignature}
+                disabled={mileageFuelEmployerSaving}
+                className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+              >
+                {mileageFuelEmployerSaving ? "Saving…" : "Complete & Sign"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Location Sharing Consent Sent History PDF preview — same inline-frame pattern used for the other Sent History tables */}
+      {locationConsentDocPreview && (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => setLocationConsentDocPreview(null)}>
+          <div className="bg-slate-900 border border-white/10 rounded-lg shadow-2xl w-full max-w-6xl h-[92vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold">{(locationConsentDocPreview.formData as Partial<LocationConsentFormData>).employeeName || "—"}</p>
+                <p className="text-[10px] text-muted-foreground">
+                  {locationConsentDocPreview.status === "confirmed" ? "Completed" : "Submitted"} {new Date(locationConsentDocPreview.signedAt ?? locationConsentDocPreview.createdAt).toLocaleString()}
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                {locationConsentDocPreview.pdfUrl && (
+                  <a href={locationConsentDocPreview.pdfUrl} target="_blank" rel="noopener noreferrer" className="btn text-xs px-2.5 py-1.5 flex items-center gap-1"><Download className="h-3 w-3" /> Download</a>
+                )}
+                <button type="button" onClick={() => setLocationConsentDocPreview(null)} className="btn text-xs px-2.5 py-1.5">Close</button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-hidden bg-slate-950">
+              {locationConsentDocPreview.pdfUrl && <iframe src={locationConsentDocPreview.pdfUrl} title="Employee Mobile App Location Sharing Consent Agreement" className="w-full h-full min-h-[70vh] border-0" />}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* HR adding the "Employer Representative" signature after the employee's half comes back signed — plain signature pad, no fields to review, since the source PDF only asks for a signature + date here. */}
+      {locationConsentEmployerDialog && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-800 border border-white/10 rounded-lg p-6 max-w-sm w-full">
+            <h3 className="text-lg font-bold mb-2">Add Employer Signature</h3>
+            <p className="text-sm text-muted-foreground mb-4">
+              Employer/representative signature for{" "}
+              <span className="font-semibold text-white">{(locationConsentEmployerDialog.formData as Partial<LocationConsentFormData>).employeeName || "—"}</span>'s
+              Employee Mobile App Location Sharing Consent Agreement.
+            </p>
+
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2 block">Draw your signature</label>
+            <canvas
+              ref={locationConsentEmployerSigCanvasRef}
+              width={400}
+              height={120}
+              onPointerDown={locationConsentEmployerStartDraw}
+              onPointerMove={locationConsentEmployerMoveDraw}
+              onPointerUp={locationConsentEmployerEndDraw}
+              onPointerLeave={locationConsentEmployerEndDraw}
+              className="bg-white rounded-md border border-white/15 w-full touch-none cursor-crosshair"
+            />
+            <div className="flex gap-2 mt-2">
+              <button onClick={locationConsentEmployerClearSignature} className="btn text-xs px-3 py-1.5">Clear</button>
+            </div>
+
+            {locationConsentEmployerError && (
+              <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2 mt-3">{locationConsentEmployerError}</p>
+            )}
+            <div className="flex gap-2 justify-end mt-4">
+              <button onClick={() => setLocationConsentEmployerDialog(null)} className="btn text-sm px-4 py-2">Cancel</button>
+              <button
+                onClick={handleSaveLocationConsentEmployerSignature}
+                disabled={locationConsentEmployerSaving}
+                className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+              >
+                {locationConsentEmployerSaving ? "Saving…" : "Complete & Sign"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Damage Agreement Sent History PDF preview — same inline-frame pattern used for the other Sent History tables */}
+      {damageDocPreview && (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => setDamageDocPreview(null)}>
+          <div className="bg-slate-900 border border-white/10 rounded-lg shadow-2xl w-full max-w-6xl h-[92vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold">{(damageDocPreview.formData as Partial<DamageFormData>).employeeName || "—"}</p>
+                <p className="text-[10px] text-muted-foreground">
+                  {damageDocPreview.status === "confirmed" ? "Completed" : "Submitted"} {new Date(damageDocPreview.signedAt ?? damageDocPreview.createdAt).toLocaleString()}
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                {damageDocPreview.pdfUrl && (
+                  <a href={damageDocPreview.pdfUrl} target="_blank" rel="noopener noreferrer" className="btn text-xs px-2.5 py-1.5 flex items-center gap-1"><Download className="h-3 w-3" /> Download</a>
+                )}
+                <button type="button" onClick={() => setDamageDocPreview(null)} className="btn text-xs px-2.5 py-1.5">Close</button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-hidden bg-slate-950">
+              {damageDocPreview.pdfUrl && <iframe src={damageDocPreview.pdfUrl} title="Damage, Part Loss, and Tool Penalty Commission Deduction Agreement" className="w-full h-full min-h-[70vh] border-0" />}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* HR adding the "Employer Representative" signature after the employee's half comes back signed — plain signature pad, no fields to review, since the source PDF only asks for a signature + date here. */}
+      {damageEmployerDialog && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-800 border border-white/10 rounded-lg p-6 max-w-sm w-full">
+            <h3 className="text-lg font-bold mb-2">Add Employer Signature</h3>
+            <p className="text-sm text-muted-foreground mb-4">
+              Employer/representative signature for{" "}
+              <span className="font-semibold text-white">{(damageEmployerDialog.formData as Partial<DamageFormData>).employeeName || "—"}</span>'s
+              Damage, Part Loss, and Tool Penalty Commission Deduction Agreement.
+            </p>
+
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2 block">Draw your signature</label>
+            <canvas
+              ref={damageEmployerSigCanvasRef}
+              width={400}
+              height={120}
+              onPointerDown={damageEmployerStartDraw}
+              onPointerMove={damageEmployerMoveDraw}
+              onPointerUp={damageEmployerEndDraw}
+              onPointerLeave={damageEmployerEndDraw}
+              className="bg-white rounded-md border border-white/15 w-full touch-none cursor-crosshair"
+            />
+            <div className="flex gap-2 mt-2">
+              <button onClick={damageEmployerClearSignature} className="btn text-xs px-3 py-1.5">Clear</button>
+            </div>
+
+            {damageEmployerError && (
+              <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2 mt-3">{damageEmployerError}</p>
+            )}
+            <div className="flex gap-2 justify-end mt-4">
+              <button onClick={() => setDamageEmployerDialog(null)} className="btn text-sm px-4 py-2">Cancel</button>
+              <button
+                onClick={handleSaveDamageEmployerSignature}
+                disabled={damageEmployerSaving}
+                className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+              >
+                {damageEmployerSaving ? "Saving…" : "Complete & Sign"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Contractor Data Sent History PDF preview — same inline-frame pattern used for the other Sent History tables */}
+      {contractorDataDocPreview && (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => setContractorDataDocPreview(null)}>
+          <div className="bg-slate-900 border border-white/10 rounded-lg shadow-2xl w-full max-w-6xl h-[92vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold">{(contractorDataDocPreview.formData as Partial<ContractorDataFormData>).employeeName || "—"}</p>
+                <p className="text-[10px] text-muted-foreground">Submitted {new Date(contractorDataDocPreview.signedAt ?? contractorDataDocPreview.createdAt).toLocaleString()}</p>
+              </div>
+              <div className="flex items-center gap-2">
+                {contractorDataDocPreview.pdfUrl && (
+                  <a href={contractorDataDocPreview.pdfUrl} target="_blank" rel="noopener noreferrer" className="btn text-xs px-2.5 py-1.5 flex items-center gap-1"><Download className="h-3 w-3" /> Download</a>
+                )}
+                <button type="button" onClick={() => setContractorDataDocPreview(null)} className="btn text-xs px-2.5 py-1.5">Close</button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-hidden bg-slate-950">
+              {contractorDataDocPreview.pdfUrl && <iframe src={contractorDataDocPreview.pdfUrl} title="Contractor Data" className="w-full h-full min-h-[70vh] border-0" />}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Direct Deposit Authorization Sent History PDF preview — same inline-frame pattern used for the other Sent History tables */}
+      {directDepositDocPreview && (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => setDirectDepositDocPreview(null)}>
+          <div className="bg-slate-900 border border-white/10 rounded-lg shadow-2xl w-full max-w-6xl h-[92vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold">{(directDepositDocPreview.formData as Partial<DirectDepositFormData>).employeeName || "—"}</p>
+                <p className="text-[10px] text-muted-foreground">Submitted {new Date(directDepositDocPreview.signedAt ?? directDepositDocPreview.createdAt).toLocaleString()}</p>
+              </div>
+              <div className="flex items-center gap-2">
+                {directDepositDocPreview.pdfUrl && (
+                  <a href={directDepositDocPreview.pdfUrl} target="_blank" rel="noopener noreferrer" className="btn text-xs px-2.5 py-1.5 flex items-center gap-1"><Download className="h-3 w-3" /> Download</a>
+                )}
+                <button type="button" onClick={() => setDirectDepositDocPreview(null)} className="btn text-xs px-2.5 py-1.5">Close</button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-hidden bg-slate-950">
+              {directDepositDocPreview.pdfUrl && <iframe src={directDepositDocPreview.pdfUrl} title="Direct Deposit Authorization" className="w-full h-full min-h-[70vh] border-0" />}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* HR completing the W-4's "Employers Only" box after the employee has already submitted */}
       {w4EmployerDialog && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
@@ -14316,37 +17631,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         </div>
       )}
 
-      {/* Form I-9 — preview the REAL official PDF (fillI9Pdf, same function used at submission time) with a blank fill, not a redrawn approximation, before sending the Section 1 fill-in link */}
-      {i9PreviewOpen && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-          <div className="bg-slate-800 border border-white/10 rounded-lg w-full max-w-4xl h-[90vh] flex flex-col">
-            <div className="flex items-center justify-between px-5 py-3 border-b border-white/10">
-              <h3 className="text-base font-bold">Form I-9 — Preview</h3>
-              <button onClick={closeI9Preview} className="text-muted-foreground hover:text-foreground">✕</button>
-            </div>
-            <div className="flex-1 bg-white/5">
-              {i9PreviewLoading || !i9PreviewPdfUrl ? (
-                <div className="h-full flex items-center justify-center text-sm text-muted-foreground">Loading preview…</div>
-              ) : (
-                <iframe src={i9PreviewPdfUrl} title="I-9 Preview" className="w-full h-full border-0" />
-              )}
-            </div>
-            <div className="px-5 py-3 border-t border-white/10 flex items-center justify-end gap-2">
-              {i9SendError && (
-                <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2 mr-auto">{i9SendError}</p>
-              )}
-              <button onClick={closeI9Preview} className="btn text-sm px-4 py-2">Cancel</button>
-              <button
-                onClick={handleSendI9}
-                disabled={i9Sending}
-                className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
-              >
-                {i9Sending ? "Sending…" : "Send I-9 Request"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* I-9 Sent History PDF preview — same inline-frame pattern used for W-8BEN/W-4/W-9 Sent History */}
       {i9DocPreview && (
@@ -14576,7 +17860,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <div className="bg-slate-800 border border-white/10 rounded-lg p-6 max-w-sm w-full">
             <h3 className="text-lg font-bold mb-2">Send to Employer</h3>
             <p className="text-sm text-muted-foreground mb-4">
-              Pick the AHS teammate who should {employerReassignDialog.documentType === "i9" ? "complete Section 2 (document review + employer/AR signature)" : employerReassignDialog.documentType === "meal_rest_break" ? "add the employer signature" : "add the employer/representative signature"} for{" "}
+              Pick the AHS teammate who should {employerReassignDialog.documentType === "i9" ? "complete Section 2 (document review + employer/AR signature)" : employerReassignDialog.documentType === "meal_rest_break" ? "add the employer signature" : employerReassignDialog.documentType === "parts_responsibility" ? "add the manager/supervisor signature" : "add the employer/representative signature"} for{" "}
               <span className="font-semibold text-white">{(employerReassignDialog.formData as { employeeName?: string })?.employeeName || employerReassignDialog.recipientName || "—"}</span>.
               They'll be notified in AHS Messages with a link to the right tab.
             </p>

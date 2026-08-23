@@ -516,6 +516,72 @@ export async function uploadPtoAckForm(companyId: string, employeeName: string, 
   return getDownloadURL(snapshot.ref);
 }
 
+export async function uploadPartsResponsibilityForm(companyId: string, employeeName: string, pdfBlob: Blob): Promise<string> {
+  if (!isFirebaseReady() || !storage) {
+    throw new Error("Firebase Storage not configured");
+  }
+  const folder = `companies/${companyId}/parts-responsibility-forms`;
+  const objectName = `${Date.now()}-${sanitizeFileName(employeeName || "parts-responsibility")}.pdf`;
+  const objectRef = ref(storage, `${folder}/${objectName}`);
+  const snapshot = await uploadBytes(objectRef, pdfBlob, { contentType: "application/pdf" });
+  return getDownloadURL(snapshot.ref);
+}
+
+export async function uploadMileageFuelForm(companyId: string, employeeName: string, pdfBlob: Blob): Promise<string> {
+  if (!isFirebaseReady() || !storage) {
+    throw new Error("Firebase Storage not configured");
+  }
+  const folder = `companies/${companyId}/mileage-fuel-forms`;
+  const objectName = `${Date.now()}-${sanitizeFileName(employeeName || "mileage-fuel")}.pdf`;
+  const objectRef = ref(storage, `${folder}/${objectName}`);
+  const snapshot = await uploadBytes(objectRef, pdfBlob, { contentType: "application/pdf" });
+  return getDownloadURL(snapshot.ref);
+}
+
+export async function uploadLocationConsentForm(companyId: string, employeeName: string, pdfBlob: Blob): Promise<string> {
+  if (!isFirebaseReady() || !storage) {
+    throw new Error("Firebase Storage not configured");
+  }
+  const folder = `companies/${companyId}/location-consent-forms`;
+  const objectName = `${Date.now()}-${sanitizeFileName(employeeName || "location-consent")}.pdf`;
+  const objectRef = ref(storage, `${folder}/${objectName}`);
+  const snapshot = await uploadBytes(objectRef, pdfBlob, { contentType: "application/pdf" });
+  return getDownloadURL(snapshot.ref);
+}
+
+export async function uploadDamageForm(companyId: string, employeeName: string, pdfBlob: Blob): Promise<string> {
+  if (!isFirebaseReady() || !storage) {
+    throw new Error("Firebase Storage not configured");
+  }
+  const folder = `companies/${companyId}/damage-forms`;
+  const objectName = `${Date.now()}-${sanitizeFileName(employeeName || "damage")}.pdf`;
+  const objectRef = ref(storage, `${folder}/${objectName}`);
+  const snapshot = await uploadBytes(objectRef, pdfBlob, { contentType: "application/pdf" });
+  return getDownloadURL(snapshot.ref);
+}
+
+export async function uploadContractorDataForm(companyId: string, employeeName: string, pdfBlob: Blob): Promise<string> {
+  if (!isFirebaseReady() || !storage) {
+    throw new Error("Firebase Storage not configured");
+  }
+  const folder = `companies/${companyId}/contractor-data-forms`;
+  const objectName = `${Date.now()}-${sanitizeFileName(employeeName || "contractor-data")}.pdf`;
+  const objectRef = ref(storage, `${folder}/${objectName}`);
+  const snapshot = await uploadBytes(objectRef, pdfBlob, { contentType: "application/pdf" });
+  return getDownloadURL(snapshot.ref);
+}
+
+export async function uploadDirectDepositForm(companyId: string, employeeName: string, pdfBlob: Blob): Promise<string> {
+  if (!isFirebaseReady() || !storage) {
+    throw new Error("Firebase Storage not configured");
+  }
+  const folder = `companies/${companyId}/direct-deposit-forms`;
+  const objectName = `${Date.now()}-${sanitizeFileName(employeeName || "direct-deposit")}.pdf`;
+  const objectRef = ref(storage, `${folder}/${objectName}`);
+  const snapshot = await uploadBytes(objectRef, pdfBlob, { contentType: "application/pdf" });
+  return getDownloadURL(snapshot.ref);
+}
+
 export async function uploadVehicleAgreementForm(companyId: string, employeeName: string, pdfBlob: Blob): Promise<string> {
   if (!isFirebaseReady() || !storage) {
     throw new Error("Firebase Storage not configured");
@@ -563,6 +629,27 @@ export async function uploadSignableDocumentSignature(companyId: string, docId: 
   const folder = `companies/${companyId}/signable-documents/${docId}`;
   const objectRef = ref(storage, `${folder}/${slot}-${Date.now()}.png`);
   const snapshot = await uploadBytes(objectRef, blob, { contentType: "image/png" });
+  return getDownloadURL(snapshot.ref);
+}
+
+/**
+ * Uploads one supporting-document photo (e.g. a Social Security Card or
+ * Driver's License front/back image) for a signable document filled out
+ * while logged in — Contractor Data's first use of file uploads inside
+ * this document family. `fieldName` is the ContractorDataFormData key the
+ * upload belongs to (e.g. "ssnCardUrls"), `index` disambiguates multiple
+ * files under the same field (front=0, back=1). Same storage path
+ * convention/folder as uploadSignableDocumentSignature, and mirrored by
+ * signableDocumentsBridge.ts's generic `attachment_*` handling for the
+ * no-login external path — see that file's header comment.
+ */
+export async function uploadSignableDocumentAttachment(companyId: string, docId: string, fieldName: string, index: number, file: File): Promise<string> {
+  if (!isFirebaseReady() || !storage) {
+    throw new Error("Firebase Storage not configured");
+  }
+  const folder = `companies/${companyId}/signable-documents/${docId}`;
+  const objectRef = ref(storage, `${folder}/${fieldName}-${index}-${Date.now()}.${sanitizeFileName(file.name).split(".").pop() || "bin"}`);
+  const snapshot = await uploadBytes(objectRef, file, { contentType: file.type || "application/octet-stream" });
   return getDownloadURL(snapshot.ref);
 }
 

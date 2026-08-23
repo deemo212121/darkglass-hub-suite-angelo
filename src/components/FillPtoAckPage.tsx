@@ -11,8 +11,10 @@
  *
  * Single-party, same shape as Vehicle Agreement/Car IQ/Confidentiality —
  * no employer co-signature step, and no separate "I AGREE" checkbox
- * (signing itself is the agreement here). Name/branch fields sit on page 1,
- * the signature sits on page 2.
+ * (signing itself is the agreement here). Everything — name/branch fields
+ * and the signature — sits on page 1; the source PDF's second page only
+ * ever held the unused branch checklist plus the signature block, so
+ * loadBlankPtoAckBytes drops it entirely (see that function's comment).
  */
 import { useEffect, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
@@ -47,11 +49,9 @@ const PAGE1_RECT = {
   middleName: { x: 390, y: 325, w: 99, h: 14 },
   lastName: { x: 100, y: 308, w: 99, h: 14 },
   branch: { x: 190, y: 283, w: 240, h: 14 },
-} as const;
-
-const PAGE2_RECT = {
-  signature: { x: 174, y: 243, w: 290, h: 20 },
-  dateSigned: { x: 99, y: 218, w: 220, h: 13 },
+  // Signature/date were moved up onto this page — see ptoAckPdfFill.ts's loadBlankPtoAckBytes.
+  signature: { x: 174, y: 242, w: 290, h: 20 },
+  dateSigned: { x: 99, y: 217, w: 220, h: 13 },
 } as const;
 
 const fmtDateSigned = (d: Date) => `${String(d.getMonth() + 1).padStart(2, "0")} / ${String(d.getDate()).padStart(2, "0")} / ${d.getFullYear()}`;
@@ -341,11 +341,7 @@ export function FillPtoAckPage({ docId }: Props) {
                         <option value="">Select…</option>
                         {PTO_ACK_BRANCHES.map((b) => <option key={b} value={b}>{b}</option>)}
                       </select>
-                    </>
-                  )}
 
-                  {!pageLoading && pageNum === 2 && (
-                    <>
                       <canvas
                         ref={sigCanvasRef}
                         width={440}
@@ -356,13 +352,13 @@ export function FillPtoAckPage({ docId }: Props) {
                         onPointerLeave={endDraw}
                         className="absolute touch-none cursor-crosshair"
                         style={{
-                          left: PAGE2_RECT.signature.x * scale,
-                          top: (PAGE_HEIGHT - PAGE2_RECT.signature.y - PAGE2_RECT.signature.h) * scale,
-                          width: PAGE2_RECT.signature.w * scale,
-                          height: PAGE2_RECT.signature.h * scale,
+                          left: PAGE1_RECT.signature.x * scale,
+                          top: (PAGE_HEIGHT - PAGE1_RECT.signature.y - PAGE1_RECT.signature.h) * scale,
+                          width: PAGE1_RECT.signature.w * scale,
+                          height: PAGE1_RECT.signature.h * scale,
                         }}
                       />
-                      <div style={overlayStyle(PAGE2_RECT.dateSigned)} className="flex items-center font-bold text-[#00008B]">
+                      <div style={overlayStyle(PAGE1_RECT.dateSigned)} className="flex items-center font-bold text-[#00008B]">
                         {fmtDateSigned(new Date())}
                       </div>
                     </>

@@ -31,13 +31,12 @@ const PAGE_HEIGHT = 792;
 // Same field rectangles as FillVehicleAgreementPage.tsx — see that file's
 // header comment for how these were derived.
 const PAGE2_RECT = {
-  employeeName: { x: 74, y: 218, w: 468, h: 14 },
+  firstName: { x: 132.3, y: 215, w: 99.5, h: 14 },
+  lastName: { x: 294.1, y: 215, w: 99.5, h: 14 },
   dateSigned: { x: 102, y: 193, w: 170, h: 13 },
   branch: { x: 114, y: 168, w: 200, h: 14 },
-} as const;
-
-const PAGE3_RECT = {
-  signature: { x: 180, y: 92, w: 300, h: 24 },
+  // "Employee Signature:" was moved up onto this page — see vehicleAgreementPdfFill.ts's loadBlankVehicleAgreementBytes.
+  signature: { x: 180, y: 126, w: 300, h: 24 },
 } as const;
 
 const fmtDateSigned = (d: Date) => `${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getDate()).padStart(2, "0")}/${d.getFullYear()}`;
@@ -45,6 +44,8 @@ const fmtDateSigned = (d: Date) => `${String(d.getMonth() + 1).padStart(2, "0")}
 const BLANK_FORM: VehicleAgreementFormData = {
   employeeId: "",
   employeeName: "",
+  firstName: "",
+  lastName: "",
   branch: "",
   dateSigned: "",
   signatureDataUrl: "",
@@ -83,7 +84,7 @@ export function ExternalFillVehicleAgreementPage({ docId }: Props) {
         } else {
           setDoc(document);
           const existing = document.formData as Partial<VehicleAgreementFormData>;
-          setForm((prev) => ({ ...prev, ...existing, employeeName: existing.employeeName || document.recipientName || "" }));
+          setForm((prev) => ({ ...prev, ...existing }));
         }
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load document.");
@@ -176,7 +177,8 @@ export function ExternalFillVehicleAgreementPage({ docId }: Props) {
   };
 
   const validate = (): string | null => {
-    if (!form.employeeName.trim()) return "Enter your name.";
+    if (!form.firstName.trim()) return "Enter your first name.";
+    if (!form.lastName.trim()) return "Enter your last name.";
     if (!form.branch) return "Select your branch.";
     if (!hasDrawnRef.current) return "Please draw your signature.";
     return null;
@@ -192,10 +194,11 @@ export function ExternalFillVehicleAgreementPage({ docId }: Props) {
     setSubmitting(true);
     setError(null);
     try {
+      const employeeName = [form.firstName, form.lastName].filter(Boolean).join(" ");
       const dataUrl = sigCanvasRef.current.toDataURL("image/png");
       const signatureBlob = await (await fetch(dataUrl)).blob();
       const signedAt = new Date().toISOString();
-      const finalData: VehicleAgreementFormData = { ...form, dateSigned: signedAt, signatureDataUrl: dataUrl };
+      const finalData: VehicleAgreementFormData = { ...form, employeeName, dateSigned: signedAt, signatureDataUrl: dataUrl };
 
       const sigBytes = new Uint8Array(await signatureBlob.arrayBuffer());
       const pdfBytes = await fillVehicleAgreementPdf(finalData, sigBytes);
@@ -265,10 +268,16 @@ export function ExternalFillVehicleAgreementPage({ docId }: Props) {
                   {!pageLoading && pageNum === 2 && (
                     <>
                       <input
-                        style={overlayStyle(PAGE2_RECT.employeeName)}
+                        style={overlayStyle(PAGE2_RECT.firstName)}
                         className={overlayInputCls}
-                        value={form.employeeName}
-                        onChange={(e) => updateField("employeeName", e.target.value)}
+                        value={form.firstName}
+                        onChange={(e) => updateField("firstName", e.target.value)}
+                      />
+                      <input
+                        style={overlayStyle(PAGE2_RECT.lastName)}
+                        className={overlayInputCls}
+                        value={form.lastName}
+                        onChange={(e) => updateField("lastName", e.target.value)}
                       />
 
                       <div style={overlayStyle(PAGE2_RECT.dateSigned)} className="flex items-center font-bold text-[#00008B]">
@@ -284,26 +293,24 @@ export function ExternalFillVehicleAgreementPage({ docId }: Props) {
                         <option value="">Select…</option>
                         {VEHICLE_AGREEMENT_BRANCHES.map((b) => <option key={b} value={b}>{b}</option>)}
                       </select>
-                    </>
-                  )}
 
-                  {!pageLoading && pageNum === 3 && (
-                    <canvas
-                      ref={sigCanvasRef}
-                      width={440}
-                      height={100}
-                      onPointerDown={startDraw}
-                      onPointerMove={moveDraw}
-                      onPointerUp={endDraw}
-                      onPointerLeave={endDraw}
-                      className="absolute touch-none cursor-crosshair"
-                      style={{
-                        left: PAGE3_RECT.signature.x * scale,
-                        top: (PAGE_HEIGHT - PAGE3_RECT.signature.y - PAGE3_RECT.signature.h) * scale,
-                        width: PAGE3_RECT.signature.w * scale,
-                        height: PAGE3_RECT.signature.h * scale,
-                      }}
-                    />
+                      <canvas
+                        ref={sigCanvasRef}
+                        width={440}
+                        height={100}
+                        onPointerDown={startDraw}
+                        onPointerMove={moveDraw}
+                        onPointerUp={endDraw}
+                        onPointerLeave={endDraw}
+                        className="absolute touch-none cursor-crosshair"
+                        style={{
+                          left: PAGE2_RECT.signature.x * scale,
+                          top: (PAGE_HEIGHT - PAGE2_RECT.signature.y - PAGE2_RECT.signature.h) * scale,
+                          width: PAGE2_RECT.signature.w * scale,
+                          height: PAGE2_RECT.signature.h * scale,
+                        }}
+                      />
+                    </>
                   )}
                 </div>
               ))}

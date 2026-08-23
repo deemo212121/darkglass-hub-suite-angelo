@@ -35,15 +35,27 @@ export async function getExternalSignableDocument(id: string): Promise<ExternalS
   return (await res.json()) as ExternalSignableDocument;
 }
 
-/** Uploads the signature PNG + the already-built PDF, and persists formData (the recipient's filled-in answers) — all via the server bridge's service-role key. Throws with the server's own error message on failure. */
+/**
+ * Uploads the signature PNG + the already-built PDF, and persists formData
+ * (the recipient's filled-in answers) — all via the server bridge's
+ * service-role key. `attachments`, if given, is a field-name → File[] map
+ * (e.g. `{ ssnCardUrls: [frontFile, backFile] }`) appended as repeated
+ * `attachment_{fieldName}` entries — the bridge uploads each and merges the
+ * resulting URLs back into that same field name in form_data (see
+ * signableDocumentsBridge.ts's header comment). Throws with the server's
+ * own error message on failure.
+ */
 export async function submitExternalSignature(
   id: string,
-  input: { signatureBlob: Blob; pdfBlob: Blob; formData: Record<string, any> }
+  input: { signatureBlob: Blob; pdfBlob: Blob; formData: Record<string, any>; attachments?: Record<string, File[]> }
 ): Promise<{ pdfUrl: string }> {
   const body = new FormData();
   body.set("signatureFile", input.signatureBlob, "signature.png");
   body.set("pdfFile", input.pdfBlob, "signed.pdf");
   body.set("formData", JSON.stringify(input.formData));
+  for (const [fieldName, files] of Object.entries(input.attachments ?? {})) {
+    for (const file of files) body.append(`attachment_${fieldName}`, file, file.name);
+  }
   const res = await fetch(`/api/signable-documents?id=${encodeURIComponent(id)}&action=sign`, { method: "POST", body });
   if (!res.ok) {
     const errBody = await res.json().catch(() => ({}));
