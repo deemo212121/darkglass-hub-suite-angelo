@@ -6261,7 +6261,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             : doc.documentType === "meal_rest_break"
             ? `📋 Please add the employer signature to the Employee Meal and Rest Break Policy Acknowledgment for ${employeeName} — open the "Meal & Rest Break Policy" tab in the HR Dashboard.`
             : doc.documentType === "parts_responsibility"
-            ? `📋 Please add the manager/supervisor signature to the Parts Responsibility and Technician Floor Protection Acknowledgment Form for ${employeeName} — open the "Parts Responsibility Form" tab in the HR Dashboard.`
+            ? `📋 Please add the manager/supervisor signature to the Parts Responsibility and Technician Floor Protection Acknowledgment Form for ${employeeName} — open the "Parts Responsibility and Technician Floor Protection Acknowledgment Form" tab in the HR Dashboard.`
             : doc.documentType === "mileage_fuel"
             ? `📋 Please add the employer/representative signature to the Personal Vehicle Mileage and Fuel Policy Agreement for ${employeeName} — open the "Mileage & Fuel Policy" tab in the HR Dashboard.`
             : doc.documentType === "location_consent"
@@ -9715,7 +9715,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     { key: "locationConsent", label: "Location Sharing Consent", count: sentLocationConsentAwaitingEmployerCount, icon: FileCheck },
     { key: "mealRestBreak", label: "Meal & Rest Break Policy", count: sentMealRestBreakAwaitingEmployerCount, icon: FileCheck },
     { key: "mileageFuel", label: "Mileage & Fuel Policy", count: sentMileageFuelAwaitingEmployerCount, icon: FileCheck },
-    { key: "partsResponsibility", label: "Parts Responsibility Form", count: sentPartsResponsibilityAwaitingManagerCount, icon: FileCheck },
+    { key: "partsResponsibility", label: "Parts Responsibility and Technician Floor Protection Acknowledgment Form", count: sentPartsResponsibilityAwaitingManagerCount, icon: FileCheck },
     { key: "ptoAck", label: "PTO & Sick Leave Policy", count: 0, icon: FileCheck },
   ] as const;
 
