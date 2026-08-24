@@ -462,6 +462,18 @@ export interface TimecardWarningRow {
   totalWarnings: number;       // sum of all three
 }
 
+// Supabase caps an unbounded select at 1000 rows — a real company (228+
+// active employees here) blows past that within a single month-to-date
+// window (confirmed: 1,276 rows for one 24-day range), and since there's
+// no explicit order, the rows that get silently dropped are effectively
+// arbitrary — in practice the MOST RECENT days, since older rows were
+// inserted first and fill the page before today's does. That's exactly
+// what caused a real employee's today clock-in to vanish from the
+// Attendance Monitoring dashboard despite the underlying row existing.
+// Page through in chunks of 1000 instead, same fix already applied to
+// jotformSubmissions.ts's getJotformSubmissions for the same reason.
+const TIMECARD_ENTRIES_PAGE_SIZE = 1000;
+
 export async function getCompanyTimecardWarnings(
   year: number,
   month: number   // 0-based
@@ -485,15 +497,24 @@ export async function getCompanyTimecardWarnings(
     return [];
   }
 
-  // 2. Fetch all timecard entries for the company in the requested month.
-  const { data: entries, error: eErr } = await supabase
-    .from("timecard_entries")
-    .select("profile_id, work_date, check_in, check_out")
-    .gte("work_date", startDate)
-    .lte("work_date", endDate);
-  if (eErr) {
-    console.error("getCompanyTimecardWarnings entries error:", eErr.message);
-    return [];
+  // 2. Fetch all timecard entries for the company in the requested month —
+  // paginated for the same reason as getCompanyTimecardEntries above (a
+  // full month for this company's 228+ employees comfortably exceeds
+  // Supabase's default 1000-row cap on an unbounded select).
+  const entries: Array<{ profile_id: string; work_date: string; check_in: string | null; check_out: string | null }> = [];
+  for (let from = 0; ; from += TIMECARD_ENTRIES_PAGE_SIZE) {
+    const { data: page, error: eErr } = await supabase
+      .from("timecard_entries")
+      .select("profile_id, work_date, check_in, check_out")
+      .gte("work_date", startDate)
+      .lte("work_date", endDate)
+      .range(from, from + TIMECARD_ENTRIES_PAGE_SIZE - 1);
+    if (eErr) {
+      console.error("getCompanyTimecardWarnings entries error:", eErr.message);
+      return [];
+    }
+    entries.push(...((page ?? []) as any));
+    if (!page || page.length < TIMECARD_ENTRIES_PAGE_SIZE) break;
   }
 
   // Group entries by profile_id.
@@ -576,22 +597,31 @@ export async function getCompanyTimecardEntries(
   startDate: string,
   endDate: string
 ): Promise<CompanyTimecardEntry[]> {
-  const { data, error } = await supabase
-    .from("timecard_entries")
-    .select("profile_id, work_date, check_in, check_out, meal_start, meal_end, clocked_in_by")
-    .gte("work_date", startDate)
-    .lte("work_date", endDate);
-  if (error) {
-    console.error("getCompanyTimecardEntries error:", error.message);
-    return [];
+  const all: CompanyTimecardEntry[] = [];
+  for (let from = 0; ; from += TIMECARD_ENTRIES_PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from("timecard_entries")
+      .select("profile_id, work_date, check_in, check_out, meal_start, meal_end, clocked_in_by")
+      .gte("work_date", startDate)
+      .lte("work_date", endDate)
+      .order("work_date", { ascending: false })
+      .range(from, from + TIMECARD_ENTRIES_PAGE_SIZE - 1);
+    if (error) {
+      console.error("getCompanyTimecardEntries error:", error.message);
+      return all;
+    }
+    all.push(
+      ...(data ?? []).map((row: any) => ({
+        profileId: row.profile_id as string,
+        workDate: row.work_date as string,
+        checkIn: row.check_in ?? "",
+        checkOut: row.check_out ?? "",
+        mealStart: row.meal_start ?? "",
+        mealEnd: row.meal_end ?? "",
+        clockedInBy: row.clocked_in_by ?? null,
+      }))
+    );
+    if (!data || data.length < TIMECARD_ENTRIES_PAGE_SIZE) break;
   }
-  return (data ?? []).map((row: any) => ({
-    profileId: row.profile_id as string,
-    workDate: row.work_date as string,
-    checkIn: row.check_in ?? "",
-    checkOut: row.check_out ?? "",
-    mealStart: row.meal_start ?? "",
-    mealEnd: row.meal_end ?? "",
-    clockedInBy: row.clocked_in_by ?? null,
-  }));
+  return all;
 }
