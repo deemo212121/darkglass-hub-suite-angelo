@@ -12,7 +12,7 @@
 
 import { supabase } from "./client";
 import { getCompanyMapProvider } from "./companySettings";
-import { computeOfficeDistanceMiles, type MileageTicketInput } from "@/lib/mapEngine";
+import { computeDailyRouteMiles, type MileageTicketInput } from "@/lib/mapEngine";
 
 export interface MileageEntry {
   id: string;
@@ -51,13 +51,52 @@ export interface MileageEntry {
    *  automatic rule know never to touch a human's manual hold, and lets a
    *  human's "take it off hold" always win even with no photo. Migration 0177. */
   payrollHoldReason: "manual" | "no_photos" | null;
+  /** This day's manually-set stop sequence (0-based, shared meaning across
+   *  every entry in the same technician+work_date group) — see
+   *  recalculateMileageDayRoute. Null means "use the automatic time-slot/
+   *  created-at heuristic in syncMileageFromTickets" — including after a
+   *  fresh ticket joins an already-manually-ordered day, which resets the
+   *  whole group back to null/heuristic rather than guessing where the new
+   *  stop belongs. Migration 0182. */
+  routeOrder: number | null;
+  /** Whether this day's route ends at the technician's home address or
+   *  loops back to the branch — see recalculateMileageDayRoute. Null means
+   *  "automatic default" (home if one's on file, branch otherwise — the
+   *  same fallback computeDailyRouteMiles already applied before this
+   *  field existed). Resets to null under the same new-ticket-joins-the-day
+   *  rule as routeOrder. Migration 0183. */
+  routeReturnTo: "home" | "branch" | null;
+  /** Full replacement for this day's total, if Finance has set one — see
+   *  mileageEffectiveTotal and setMileageDayAdjustment. Takes precedence
+   *  over mileageAdjustment when both are set. Migration 0182. */
+  mileageOverride: number | null;
+  /** A +/- delta added to totalMileage (ignored when mileageOverride is
+   *  set) — see mileageEffectiveTotal. Migration 0182. */
+  mileageAdjustment: number | null;
+  adjustmentNote: string | null;
+  adjustedByName: string | null;
+  adjustedAt: string | null;
   /** When payrollExcluded last flipped true -> false — the opposite of
    *  payrollExcludedAt, which release always nulls out. Lets the mobile "On
    *  Hold Tickets" screen's Updated sub-tab show what recently cleared,
    *  since payrollExcludedAt/payrollHoldReason no longer carry that once a
    *  hold is released. Cleared again if the entry is ever re-held.
-   *  Migration 0184. */
+   *  Migration 0186. */
   payrollReleasedAt: string | null;
+}
+
+/**
+ * The number that actually counts for display and payroll — a manual
+ * override replaces the calculated total_mileage outright; a manual
+ * adjustment adds/subtracts from it; with neither set, it's just the
+ * calculated total. EVERY read of a day's mileage figure (the Mileage
+ * table, the technician detail modal, getTechAutoMileageTotals) must go
+ * through this rather than entry.totalMileage directly, or a Finance
+ * correction silently won't take effect.
+ */
+export function mileageEffectiveTotal(entry: Pick<MileageEntry, "totalMileage" | "mileageOverride" | "mileageAdjustment">): number {
+  if (entry.mileageOverride != null) return entry.mileageOverride;
+  return entry.totalMileage + (entry.mileageAdjustment ?? 0);
 }
 
 function mapRow(r: any): MileageEntry {
@@ -82,12 +121,19 @@ function mapRow(r: any): MileageEntry {
     payrollExcludedAt: r.payroll_excluded_at ?? null,
     payrollExcludedByName: r.payroll_excluded_by_name ?? null,
     payrollHoldReason: r.payroll_hold_reason === "manual" || r.payroll_hold_reason === "no_photos" ? r.payroll_hold_reason : null,
+    routeOrder: r.route_order ?? null,
+    routeReturnTo: r.route_return_to === "home" || r.route_return_to === "branch" ? r.route_return_to : null,
+    mileageOverride: r.mileage_override != null ? Number(r.mileage_override) : null,
+    mileageAdjustment: r.mileage_adjustment != null ? Number(r.mileage_adjustment) : null,
+    adjustmentNote: r.adjustment_note ?? null,
+    adjustedByName: r.adjusted_by_name ?? null,
+    adjustedAt: r.adjusted_at ?? null,
     payrollReleasedAt: r.payroll_released_at ?? null,
   };
 }
 
 const ENTRY_COLUMNS =
-  "id, profile_id, technician_name, branch, work_date, address, contact_number, email, total_mileage, google_map_link, created_by_name, created_at, ticket_id, ticket_no, ticket_status, source, payroll_excluded, payroll_excluded_at, payroll_excluded_by_name, payroll_hold_reason, payroll_released_at";
+  "id, profile_id, technician_name, branch, work_date, address, contact_number, email, total_mileage, google_map_link, created_by_name, created_at, ticket_id, ticket_no, ticket_status, source, payroll_excluded, payroll_excluded_at, payroll_excluded_by_name, payroll_hold_reason, route_order, route_return_to, mileage_override, mileage_adjustment, adjustment_note, adjusted_by_name, adjusted_at, payroll_released_at";
 
 /** All mileage entries for the caller's company (RLS-scoped), newest first. */
 export async function getMileageEntries(): Promise<MileageEntry[]> {
@@ -172,34 +218,87 @@ export async function reconcileMileageNoPhotoHolds(
   return changed;
 }
 
-export async function addMileageEntry(input: {
-  profileId: string;
-  branch: string;
-  workDate: string;
-  address: string;
-  contactNumber: string;
-  email: string;
-  totalMileage: number;
-  googleMapLink: string;
-  createdByName: string;
-}): Promise<void> {
-  const { error } = await supabase.from("mileage_entries").insert({
-    profile_id: input.profileId,
-    branch: input.branch,
-    work_date: input.workDate,
-    address: input.address,
-    contact_number: input.contactNumber || null,
-    email: input.email || null,
-    total_mileage: input.totalMileage,
-    google_map_link: input.googleMapLink || null,
-    created_by_name: input.createdByName,
-  });
-  if (error) throw new Error(error.message);
-}
-
 export async function deleteMileageEntry(id: string): Promise<void> {
   const { error } = await supabase.from("mileage_entries").delete().eq("id", id);
   if (error) throw new Error(error.message);
+}
+
+/**
+ * Coarse visit-order heuristic, shared by syncMileageFromTickets (below)
+ * and the Day Route view: a time_slot's own leading number as its start
+ * hour (e.g. "8-12" -> 8, "1-5" -> 1) — AM/PM isn't recorded, but this is
+ * only used for RELATIVE ordering within one technician's one day, not an
+ * absolute time, so the ambiguity doesn't matter here. A bare "AM"/"PM"
+ * slot (no digits at all — seen in real ticket data alongside the numeric
+ * ranges) sorts before/after every numeric range rather than at a specific
+ * hour that could tie with (and then get arbitrarily reordered against) a
+ * real numeric slot like "12-4". Missing/unparsable slots sort last of all.
+ */
+export function timeSlotStartHour(slot: unknown): number {
+  const raw = String(slot || "").trim().toUpperCase();
+  if (!raw) return Number.MAX_SAFE_INTEGER;
+  if (raw === "AM") return -1;
+  if (raw === "PM") return 13;
+  const m = raw.match(/(\d{1,2})/);
+  return m ? Number(m[1]) : Number.MAX_SAFE_INTEGER;
+}
+
+/** Orders tickets by timeSlotStartHour, breaking ties with created_at. */
+export function sortStopsByHeuristic<T extends { time_slot?: unknown; created_at: string }>(tickets: T[]): T[] {
+  return [...tickets].sort((a, b) => {
+    const slotDiff = timeSlotStartHour(a.time_slot) - timeSlotStartHour(b.time_slot);
+    if (slotDiff !== 0) return slotDiff;
+    return String(a.created_at).localeCompare(String(b.created_at));
+  });
+}
+
+/** One stop in a technician's day route — Day Route view's stop list/map. */
+export interface MileageDayStop {
+  ticketId: string;
+  ticketNo: string;
+  status: string | null;
+  timeSlot: string | null;
+  address: string;
+  city: string | null;
+  state: string | null;
+  zip: string | null;
+}
+
+/**
+ * Fetches this day's stops in visit order — the saved route_order if every
+ * entry has one (a human has already sequenced this day), else the same
+ * time-slot heuristic syncMileageFromTickets uses. Used to seed the Day
+ * Route view's map/list before any reordering happens.
+ */
+export async function getMileageDayRouteStops(
+  entries: { ticketId: string | null; routeOrder: number | null }[]
+): Promise<MileageDayStop[]> {
+  const ticketIds = entries.map((e) => e.ticketId).filter((id): id is string => !!id);
+  if (ticketIds.length === 0) return [];
+  const { data, error } = await supabase
+    .from("tickets")
+    .select("id, ticket_no, status, time_slot, created_at, customer:customers ( address, city, state, zip )")
+    .in("id", ticketIds);
+  if (error) throw new Error(error.message);
+  const rows = (data ?? []) as any[];
+  const allHaveOrder = entries.every((e) => e.routeOrder != null);
+  const orderIndex = new Map(entries.map((e) => [e.ticketId, e.routeOrder]));
+  const ordered = allHaveOrder
+    ? [...rows].sort((a, b) => (orderIndex.get(a.id) ?? 0) - (orderIndex.get(b.id) ?? 0))
+    : sortStopsByHeuristic(rows);
+  return ordered.map((t: any) => {
+    const customer = t.customer ?? {};
+    return {
+      ticketId: t.id,
+      ticketNo: t.ticket_no,
+      status: t.status ?? null,
+      timeSlot: t.time_slot ?? null,
+      address: customer.address ?? "",
+      city: customer.city ?? null,
+      state: customer.state ?? null,
+      zip: customer.zip ?? null,
+    };
+  });
 }
 
 export interface MileageSyncResult {
@@ -220,14 +319,25 @@ export interface MileageSyncResult {
  * Auto-generates mileage entries from EVERY ticket assigned to a
  * technician — not just completed ones, since a drive happened regardless
  * of whether the job finished, is still open, or got cancelled after the
- * tech arrived — one row per ticket (not a combined daily total), each
- * priced with the same office-to-customer distance calculator already used
- * on the ticket detail page. Always all-time, no date range — every ticket
- * this company has ever logged. Safe to re-run: tickets that already
- * produced a row (tracked via mileage_entries.ticket_id, enforced unique
- * by migration 0141) are skipped rather than duplicated. Tickets with no
- * schedule_date are skipped too (mileage_entries.work_date is required —
- * there's no date to log the drive under).
+ * tech arrived. Still one row per ticket (so each ticket keeps its own
+ * Photos/Hold/Send-message/link), but the total_mileage VALUE on every
+ * ticket a technician had on a given day is the SAME number: that day's
+ * full driving route — branch -> stop 1 -> stop 2 -> ... -> stop N -> home
+ * address (or back to the branch if none on file) — not each ticket's own
+ * independent distance from the branch. Stops within a day are ordered by
+ * time_slot (then ticket creation time as a tiebreaker) since there's no
+ * exact visit-sequence data to do better than that. See
+ * computeDailyRouteMiles (mapEngine.ts) for the actual route math.
+ *
+ * Always all-time, no date range — every ticket this company has ever
+ * logged. Safe to re-run: a day whose every ticket already has a row is
+ * skipped entirely (no new API calls). A day where a NEW ticket joins
+ * an already-partially-synced day gets its whole route recomputed and
+ * EVERY ticket that day (new and pre-existing) is updated to the fresh
+ * total — the route changed, so the old number on the earlier tickets is
+ * now stale. Tickets with no schedule_date are skipped too
+ * (mileage_entries.work_date is required — there's no date to log the
+ * drive under).
  *
  * Matches tickets to technicians by NAME, case/whitespace-insensitive — same
  * convention as every other free-text technician match in this app (e.g.
@@ -238,10 +348,9 @@ export interface MileageSyncResult {
  * technician_name: the raw ticket text (migration 0142) — rather than
  * silently dropped, so mileage isn't lost just because nobody's fixed that
  * person's profile yet. It's surfaced via unmatchedTechnicians either way.
- *
- * Takes every technician at once and does ONE ticket fetch for all of them,
- * rather than one fetch per technician — both fixes the matching bug above
- * and avoids N separate round-trips for N technicians.
+ * Each unmatched name's tickets are still grouped/routed by day the same
+ * way a matched technician's are — just keyed by their raw ticket text
+ * instead of a profileId.
  */
 export async function syncMileageFromTickets(input: {
   technicians: { profileId: string; fullName: string; branch: string; phone?: string; email?: string; homeAddress?: string }[];
@@ -252,20 +361,22 @@ export async function syncMileageFromTickets(input: {
   );
   if (techByNormalizedName.size === 0) return result;
 
-  const [{ data: ticketRows, error: ticketsErr }, { data: syncedRows, error: syncedErr }, mapProvider] = await Promise.all([
+  const [{ data: ticketRows, error: ticketsErr }, { data: existingRows, error: existingErr }, mapProvider] = await Promise.all([
     supabase
       .from("tickets")
-      .select("id, ticket_no, technician, status, schedule_date, location, account, customer:customers ( address, address2, city, state, zip, phone, email )")
+      .select("id, ticket_no, technician, status, schedule_date, time_slot, created_at, location, account, customer:customers ( address, address2, city, state, zip, phone, email )")
       .not("technician", "is", null),
-    supabase.from("mileage_entries").select("ticket_id").not("ticket_id", "is", null),
+    supabase.from("mileage_entries").select("id, ticket_id, total_mileage").eq("source", "auto").not("ticket_id", "is", null),
     getCompanyMapProvider(),
   ]);
   if (ticketsErr) {
     result.errors.push(`Failed to load tickets: ${ticketsErr.message}`);
     return result;
   }
-  if (syncedErr) console.error("syncMileageFromTickets (existing sync check) error:", syncedErr.message);
-  const alreadySynced = new Set((syncedRows ?? []).map((r: any) => r.ticket_id));
+  if (existingErr) console.error("syncMileageFromTickets (existing sync check) error:", existingErr.message);
+  const existingByTicketId = new Map(
+    (existingRows ?? []).map((r: any) => [r.ticket_id as string, { id: r.id as string, totalMileage: Number(r.total_mileage) || 0 }])
+  );
 
   // Every ticket with a technician assigned and an actual date to log the
   // drive under — status doesn't matter, an open/cancelled ticket still
@@ -290,73 +401,199 @@ export async function syncMileageFromTickets(input: {
     .map(([name, count]) => ({ name, count }))
     .sort((a, b) => b.count - a.count);
 
-  const pending = allAssignedTickets.filter((t: any) => !alreadySynced.has(t.id));
-  result.skipped = allAssignedTickets.length - pending.length;
-  if (pending.length === 0) return result;
+  // Group EVERY assigned ticket (already-synced AND pending) by
+  // (technician key, work date) — a day's route depends on ALL of that
+  // day's stops, not just the ones that happen to be new, so an
+  // already-partially-synced day still needs its full stop list to
+  // recompute correctly once a new ticket joins it.
+  const groups = new Map<string, any[]>();
+  for (const t of allAssignedTickets as any[]) {
+    const key = `${String(t.technician).trim().toLowerCase()}|${t.schedule_date}`;
+    const list = groups.get(key) ?? [];
+    list.push(t);
+    groups.set(key, list);
+  }
 
-  for (const ticket of pending as any[]) {
-    const rawName = String(ticket.technician).trim();
-    // undefined = no known technician list was even passed in (shouldn't
-    // happen, guarded above); null (via ?? null below) = a real "no match".
+  // Only touch a group that has at least one ticket without an existing
+  // row — a day where nothing changed since the last sync needs no new
+  // route lookups at all.
+  const groupsToProcess = Array.from(groups.values()).filter((tickets) =>
+    tickets.some((t) => !existingByTicketId.has(t.id))
+  );
+  const untouchedTicketCount = allAssignedTickets.length - groupsToProcess.reduce((s, g) => s + g.length, 0);
+  result.skipped = untouchedTicketCount;
+
+  for (const groupTickets of groupsToProcess) {
+    const orderedTickets = sortStopsByHeuristic(groupTickets);
+
+    const rawName = String(orderedTickets[0].technician).trim();
     const technician = techByNormalizedName.get(rawName.toLowerCase()) ?? null;
-    const customer = ticket.customer ?? {};
-    const mileageInput: MileageTicketInput = {
-      location: ticket.location,
-      city: customer.city,
-      address: customer.address,
-      state: customer.state,
-      zip: customer.zip,
-      account: ticket.account,
-    };
+    const branch = orderedTickets[0].location || technician?.branch || "Unassigned";
+    const routeStops: MileageTicketInput[] = orderedTickets.map((t) => {
+      const customer = t.customer ?? {};
+      return { location: t.location, city: customer.city, address: customer.address, state: customer.state, zip: customer.zip, account: t.account };
+    });
+
     let miles: number | null = null;
     try {
-      miles = await computeOfficeDistanceMiles(mileageInput, mapProvider);
+      miles = await computeDailyRouteMiles(branch, routeStops[0], routeStops, technician?.homeAddress, mapProvider);
     } catch (err) {
-      result.errors.push(`Ticket ${ticket.ticket_no}: ${err instanceof Error ? err.message : "distance lookup failed"}`);
+      result.errors.push(`${orderedTickets[0].schedule_date} (${rawName}): ${err instanceof Error ? err.message : "route lookup failed"}`);
       continue;
     }
     if (miles === null) {
-      result.errors.push(`Ticket ${ticket.ticket_no}: no route found — skipped.`);
+      result.errors.push(`${orderedTickets[0].schedule_date} (${rawName}): no route found — skipped.`);
       continue;
     }
+    const roundedMiles = Math.round(miles * 10) / 10;
 
-    const fullAddress = [customer.address, customer.address2, [customer.city, customer.state].filter(Boolean).join(", "), customer.zip]
-      .filter((part: unknown) => typeof part === "string" && part.trim())
-      .join(", ");
-    const googleMapLink = fullAddress
-      ? `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(fullAddress)}`
-      : "";
-
-    const { error: insertErr } = await supabase.from("mileage_entries").insert({
-      profile_id: technician?.profileId ?? null,
-      technician_name: technician ? null : rawName,
-      branch: ticket.location || technician?.branch || "Unassigned",
-      work_date: ticket.schedule_date,
-      // The technician's OWN contact info, not the customer's — Address/
-      // Contact Number/Email here answer "who drove and how do we reach
-      // them," which the customer's job-site details never were. Google
-      // Map Link below still points at the customer's site (for driving
-      // directions there), unaffected by this.
-      address: technician?.homeAddress || "(no address on file)",
-      contact_number: technician?.phone || null,
-      email: technician?.email || null,
-      total_mileage: Math.round(miles * 10) / 10,
-      google_map_link: googleMapLink || null,
-      created_by_name: "Auto-sync",
-      ticket_id: ticket.id,
-      ticket_no: ticket.ticket_no,
-      ticket_status: ticket.status,
-      source: "auto",
-    });
-    if (insertErr) {
-      // Unique-violation on ticket_id means another sync run already logged
-      // it a moment ago (race) — treat as skipped, not a real failure.
-      if (insertErr.code === "23505") result.skipped++;
-      else result.errors.push(`Ticket ${ticket.ticket_no}: ${insertErr.message}`);
-      continue;
+    // Refresh every already-synced ticket in this group — a new stop
+    // joined, so the whole day's route (and therefore every existing
+    // row's total) is potentially stale, even if this particular round
+    // happens to land on the same number as before. Also clears
+    // route_order: a human-set stop order no longer describes this day
+    // now that its stop list has changed, so it resets to the automatic
+    // heuristic (used above) rather than silently keeping a sequence that
+    // doesn't include the new stop.
+    for (const t of orderedTickets) {
+      const existing = existingByTicketId.get(t.id);
+      if (existing) {
+        const { error: updateErr } = await supabase
+          .from("mileage_entries")
+          .update({ total_mileage: roundedMiles, route_order: null, route_return_to: null })
+          .eq("id", existing.id);
+        if (updateErr) result.errors.push(`Ticket ${t.ticket_no}: failed to refresh mileage — ${updateErr.message}`);
+      }
     }
-    result.created++;
+
+    const newTickets = orderedTickets.filter((t) => !existingByTicketId.has(t.id));
+    for (const ticket of newTickets) {
+      const customer = ticket.customer ?? {};
+      const fullAddress = [customer.address, customer.address2, [customer.city, customer.state].filter(Boolean).join(", "), customer.zip]
+        .filter((part: unknown) => typeof part === "string" && part.trim())
+        .join(", ");
+      const googleMapLink = fullAddress
+        ? `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(fullAddress)}`
+        : "";
+
+      const { error: insertErr } = await supabase.from("mileage_entries").insert({
+        profile_id: technician?.profileId ?? null,
+        technician_name: technician ? null : rawName,
+        branch,
+        work_date: ticket.schedule_date,
+        // The technician's OWN contact info, not the customer's — Address/
+        // Contact Number/Email here answer "who drove and how do we reach
+        // them," which the customer's job-site details never were. Google
+        // Map Link below still points at the customer's site (for driving
+        // directions there), unaffected by this.
+        address: technician?.homeAddress || "(no address on file)",
+        contact_number: technician?.phone || null,
+        email: technician?.email || null,
+        total_mileage: roundedMiles,
+        google_map_link: googleMapLink || null,
+        created_by_name: "Auto-sync",
+        ticket_id: ticket.id,
+        ticket_no: ticket.ticket_no,
+        ticket_status: ticket.status,
+        source: "auto",
+      });
+      if (insertErr) {
+        // Unique-violation on ticket_id means another sync run already logged
+        // it a moment ago (race) — treat as skipped, not a real failure.
+        if (insertErr.code === "23505") result.skipped++;
+        else result.errors.push(`Ticket ${ticket.ticket_no}: ${insertErr.message}`);
+        continue;
+      }
+      result.created++;
+    }
   }
 
   return result;
+}
+
+/**
+ * Recomputes one technician's one day of driving with a HUMAN-CHOSEN stop
+ * order (the Day Route view's drag/reorder controls) instead of the
+ * automatic time-slot heuristic, and saves both the new total and each
+ * row's route_order (its index in orderedTicketIds) so the order sticks
+ * until either a human changes it again or a new ticket joins that day
+ * (which resets it — see syncMileageFromTickets). Throws rather than
+ * returning null on failure so the UI can show a real error instead of
+ * silently leaving the old total in place.
+ */
+export async function recalculateMileageDayRoute(input: {
+  /** This day's existing mileage_entries rows — id + the ticket each one is for. */
+  entries: { id: string; ticketId: string }[];
+  /** The new visit order, by ticket id — must cover every ticket in entries. */
+  orderedTicketIds: string[];
+  branch: string;
+  homeAddress?: string;
+  /** "home" routes the final leg to homeAddress (falls back to branch
+   *  anyway if that's blank); "branch" forces a branch-return route even
+   *  when a home address exists. Saved as route_return_to on every row. */
+  returnTo: "home" | "branch";
+}): Promise<number> {
+  const { data: ticketRows, error: ticketsErr } = await supabase
+    .from("tickets")
+    .select("id, location, account, customer:customers ( address, city, state, zip )")
+    .in("id", input.orderedTicketIds);
+  if (ticketsErr) throw new Error(ticketsErr.message);
+  const ticketById = new Map((ticketRows ?? []).map((t: any) => [t.id, t]));
+
+  const orderedStops: MileageTicketInput[] = input.orderedTicketIds.map((id) => {
+    const t = ticketById.get(id);
+    const customer = t?.customer ?? {};
+    return { location: t?.location, city: customer.city, address: customer.address, state: customer.state, zip: customer.zip, account: t?.account };
+  });
+  if (orderedStops.length === 0) throw new Error("No stops to route.");
+
+  const mapProvider = await getCompanyMapProvider();
+  const effectiveHomeAddress = input.returnTo === "home" ? input.homeAddress : undefined;
+  const miles = await computeDailyRouteMiles(input.branch, orderedStops[0], orderedStops, effectiveHomeAddress, mapProvider);
+  if (miles === null) throw new Error("No route found for this stop order.");
+  const roundedMiles = Math.round(miles * 10) / 10;
+
+  const orderIndexByTicketId = new Map(input.orderedTicketIds.map((id, idx) => [id, idx]));
+  for (const entry of input.entries) {
+    const { error } = await supabase
+      .from("mileage_entries")
+      .update({
+        total_mileage: roundedMiles,
+        route_order: orderIndexByTicketId.get(entry.ticketId) ?? null,
+        route_return_to: input.returnTo,
+      })
+      .eq("id", entry.id);
+    if (error) throw new Error(`Failed to save ticket order: ${error.message}`);
+  }
+  return roundedMiles;
+}
+
+/**
+ * Sets (or clears, when both override and adjustment are null) Finance's
+ * manual correction to a day's mileage total — see mileageEffectiveTotal.
+ * Applied identically across every row of the (technician, work_date)
+ * group, same as total_mileage itself is shared, so the effective total
+ * reads the same no matter which of that day's tickets you're looking at.
+ */
+export async function setMileageDayAdjustment(input: {
+  entryIds: string[];
+  override: number | null;
+  adjustment: number | null;
+  note: string | null;
+  byProfileId: string | null;
+  byName: string | null;
+}): Promise<void> {
+  const hasAdjustment = input.override != null || input.adjustment != null;
+  const { error } = await supabase
+    .from("mileage_entries")
+    .update({
+      mileage_override: input.override,
+      mileage_adjustment: input.adjustment,
+      adjustment_note: input.note,
+      adjusted_by: hasAdjustment ? input.byProfileId : null,
+      adjusted_by_name: hasAdjustment ? input.byName : null,
+      adjusted_at: hasAdjustment ? new Date().toISOString() : null,
+    })
+    .in("id", input.entryIds);
+  if (error) throw new Error(error.message);
 }

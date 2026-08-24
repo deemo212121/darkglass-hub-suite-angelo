@@ -204,7 +204,7 @@ export function MobileTechApp() {
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [loading, setLoading] = useState(true);
   const [users, setUsers] = useState<ProfileRow[]>([]);
-  const isSelfRole = role ? SELF_ROLES.has(role.toUpperCase()) : false;
+  const isSelfRole = [role, ...extraRoles].some((r) => r && SELF_ROLES.has(r.toUpperCase()));
 
   // Resolved once for the whole app shell — needed by DetailView to know
   // which technician is looking at a ticket, for the mobile alert-popup

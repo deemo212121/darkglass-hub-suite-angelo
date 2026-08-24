@@ -844,6 +844,15 @@ export default defineConfig({
             // had finished running. Putting them in the same chunk removes
             // the boundary (and the ordering hazard) entirely.
             if (normalized.includes("/src/lib/")) return "vendor";
+            // Statically imported by src/lib/formElements/factories.tsx
+            // (chunked "vendor" above), which would otherwise create a
+            // backward "vendor -> ui-kit" edge — same class of hazard the
+            // "vendor" merge above already documents. Safe to fold into
+            // "vendor" here since this file's own imports are just React,
+            // Tiptap, and lucide-react (its own "icons" chunk) — nothing
+            // else under src/components/ui/ or src/components/, so this
+            // doesn't just relocate the cycle.
+            if (normalized.includes("/src/components/ui/rich-text-editor.tsx")) return "vendor";
             if (normalized.includes("/src/components/ui/")) return "ui-kit";
             if (normalized.includes("/src/components/")) return "app-components";
             if (normalized.includes("/src/hooks/")) return "app-hooks";

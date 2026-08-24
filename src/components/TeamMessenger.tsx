@@ -104,7 +104,7 @@ export function TeamMessenger({ mod, sub }: Props) {
   const draftRef = useRef<HTMLTextAreaElement>(null);
 
   const currentUserName = displayName || email || "Current User";
-  const canPostAnnouncement = HIGHER_UP_ROLES.has(String(role || "").toUpperCase());
+  const canPostAnnouncement = [role, ...extraRoles].some((r) => HIGHER_UP_ROLES.has(String(r || "").toUpperCase()));
   // Who can create channels and add/remove employees from them (server-side
   // enforced too — RLS's can_manage_channels(), migration 0137).
   const canManageChannels = hasDashboardAccess(CHANNEL_ADMIN_ROLES, role, extraRoles);

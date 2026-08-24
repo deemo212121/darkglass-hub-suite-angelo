@@ -30,13 +30,17 @@ import { ReportAttendanceMonitoring } from "@/components/ReportAttendanceMonitor
 import { WorkHoursPanel } from "@/components/WorkHoursPanel";
 
 const CLAIMS_ROLES = new Set(["CLAIMS", "CLAIMS_MANAGER"]);
-// Module-level (not defined inside the component) so ReportAttendanceMonitoring/
-// WorkHoursPanel's data-fetching effects see a stable reference across
-// renders — same pattern PartsOrderDashboard.tsx's isPartsOrderProfileFilter
-// established. Superset of the plain `staff` filter below (also checks
-// extra_roles), since a Claims role can be held as a secondary role too.
-const isClaimsProfileFilter = (p: ProfileRow) =>
-  CLAIMS_ROLES.has(normalizeRole(p.role)) || (p.extra_roles ?? []).some((r) => CLAIMS_ROLES.has(normalizeRole(r)));
+// Checks both primary role AND extra_roles — this app supports dual-role
+// users (e.g. a CSR Agent who is also a Claims Manager), same convention
+// as ReportOperationsDaily.tsx's isBizOpsProfile / ReportPartsDaily.tsx's
+// isPartsProfile. Module-level (not defined inside the component) so
+// ReportAttendanceMonitoring/WorkHoursPanel's data-fetching effects see a
+// stable reference across renders — same pattern
+// PartsOrderDashboard.tsx's isPartsOrderProfileFilter established.
+function isClaimsProfile(p: ProfileRow): boolean {
+  if (CLAIMS_ROLES.has(normalizeRole(p.role))) return true;
+  return (p.extra_roles || []).some((r) => CLAIMS_ROLES.has(normalizeRole(r)));
+}
 
 const TABS = [
   { id: "overview" as const, label: "Overview", icon: LayoutDashboard },
@@ -109,7 +113,7 @@ export function ClaimsDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModuleDe
         ]);
         if (cancelled) return;
         setTickets(allTickets.filter(isClaimTicket));
-        setStaff(profiles.filter((p) => p.is_active && CLAIMS_ROLES.has(normalizeRole(p.role))));
+        setStaff(profiles.filter((p) => p.is_active && isClaimsProfile(p)));
         setNotes(allNotes);
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load Claims Dashboard.");
@@ -296,11 +300,11 @@ export function ClaimsDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModuleDe
         </div>
 
         {tab === "attendance" && (
-          <ReportAttendanceMonitoring mod={mod} sub={sub} filterProfile={isClaimsProfileFilter} groupBy="employee" embedded />
+          <ReportAttendanceMonitoring mod={mod} sub={sub} filterProfile={isClaimsProfile} groupBy="employee" embedded />
         )}
 
         {tab === "workHours" && (
-          <WorkHoursPanel filterProfile={isClaimsProfileFilter} emptyMessage="No active Claims staff found." />
+          <WorkHoursPanel filterProfile={isClaimsProfile} emptyMessage="No active Claims staff found." />
         )}
 
         {tab === "overview" && (<>

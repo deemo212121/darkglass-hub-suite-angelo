@@ -19,22 +19,41 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Link, useSearch } from "@tanstack/react-router";
-import { ChevronLeft, Loader2, LayoutDashboard, CheckCheck, Building2 } from "lucide-react";
+import { ChevronLeft, Loader2, LayoutDashboard, CheckCheck, Building2, ClipboardList, RotateCcw, Download } from "lucide-react";
 import { Bar, BarChart, ResponsiveContainer, Tooltip, XAxis, YAxis, Legend } from "recharts";
+import * as XLSX from "xlsx";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { getPartsInventoryRows, type PartInventoryRow } from "@/lib/supabase/partsInventory";
 import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
 import { getAllAgentNotes, type CsrAgentNote } from "@/lib/supabase/csrAgentNotes";
 import { normalizeRole } from "@/lib/roleLabels";
 import { getPartsDoneActivity, type PartsDoneActivityRow } from "@/lib/supabase/partsDoneActivityLog";
+import { getBranchProgress, type BranchProgress } from "@/lib/partsBranchProgress";
+import { getPartReturns as getRaCreatedRows, type PartReturnRow as RaCreatedRow } from "@/lib/supabase/partReturnStatus";
+import { getPartReturns as getReturnPendingRows, type PartReturnRow as ReturnPendingRow } from "@/lib/supabase/partReturn";
+import { getPartsForDailyCollection, type PartCollectionRow } from "@/lib/supabase/partDailyCollection";
+import { getPartsToReceive, type PartReceiveRow } from "@/lib/supabase/partReceive";
 
 const PARTS_ROLES = new Set(["PARTS", "PARTS_MANAGER"]);
 const DONE_STATUSES = new Set(["Used", "Claimed"]);
 const TOOLTIP_STYLE = { background: "#ffffff", border: "1px solid #cbd5e1", borderRadius: 6, color: "#0f172a", fontSize: 12, fontWeight: 600, boxShadow: "0 4px 12px rgba(0,0,0,0.3)" } as const;
 const LEGEND_STYLE = { fontSize: 11, color: "#94a3b8" } as const;
 
+// Shared by this page's "Download XLSX" button — same shape as
+// PartsOrderDashboard.tsx's own copy (kept local rather than a shared
+// import; both files' export buttons are one-off enough not to be worth a
+// shared module for a five-line function).
+function downloadSheetXlsx(filename: string, sheetName: string, rows: (string | number)[][]) {
+  const worksheet = XLSX.utils.aoa_to_sheet(rows);
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
+  XLSX.writeFile(workbook, filename);
+}
+
 const TABS = [
   { id: "overview" as const, label: "Overview", icon: LayoutDashboard },
+  { id: "pending-queue" as const, label: "Pending Queue", icon: ClipboardList },
+  { id: "ra-returns" as const, label: "RA & Returns", icon: RotateCcw },
   { id: "done-activity" as const, label: "Done Activity", icon: CheckCheck },
 ];
 type ReportPartsDailyTab = (typeof TABS)[number]["id"];
@@ -173,7 +192,9 @@ export function ReportPartsDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
 
   const [dateFrom, setDateFrom] = useState(daysAgoIso(29));
   const [dateTo, setDateTo] = useState(todayIso());
-  const [branchFilter, setBranchFilter] = useState("");
+  // Multi-select — empty set = no filter (show all), matching
+  // PartsOrderDashboard's dashboard-wide Branch filter convention.
+  const [branchFilter, setBranchFilter] = useState<Set<string>>(new Set());
 
   const [tab, setTab] = useState<ReportPartsDailyTab>("overview");
 
@@ -185,6 +206,45 @@ export function ReportPartsDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
   useEffect(() => {
     if (routeSearch.tab === "done-activity") setTab("done-activity");
   }, [routeSearch.tab]);
+
+  // Pending Queue tab — per-branch Pickup/Collection/Receive pending
+  // counts, reusing the exact same getBranchProgress() the Parts hub's own
+  // "Done" digest already relies on (src/lib/partsBranchProgress.ts) —
+  // "pending" here is just total - done. Loaded lazily, once branchOptions
+  // is available (needs the Overview load to finish first) and this tab
+  // is opened.
+  const [branchProgress, setBranchProgress] = useState<BranchProgress[]>([]);
+  const [branchProgressLoading, setBranchProgressLoading] = useState(false);
+  const [branchProgressLoaded, setBranchProgressLoaded] = useState(false);
+
+  // Pending Queue tab's raw line-item exports — the actual Collections/
+  // Receives export format the team already produces by hand (matching
+  // the reference workbook's own "Sample Exported Data" sheets), not
+  // just the per-branch pending counts above. Loaded alongside
+  // branchProgress, same tab/timing.
+  const [collectionExportRows, setCollectionExportRows] = useState<PartCollectionRow[]>([]);
+  const [receiveExportRows, setReceiveExportRows] = useState<PartReceiveRow[]>([]);
+
+  // RA & Returns tab — RA Created (partReturnStatus.ts) and Return Pending
+  // (partReturn.ts) are two distinct real workflows that happen to share
+  // the same underlying `parts` table, so both load together when this tab
+  // opens (same "load once, lazily" pattern as Done Activity/Pending Queue).
+  const [raCreatedRows, setRaCreatedRows] = useState<RaCreatedRow[]>([]);
+  const [returnPendingRows, setReturnPendingRows] = useState<ReturnPendingRow[]>([]);
+  const [raReturnsLoading, setRaReturnsLoading] = useState(false);
+  const [raReturnsLoaded, setRaReturnsLoaded] = useState(false);
+  const [raReturnTypeFilter, setRaReturnTypeFilter] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (tab !== "ra-returns" || raReturnsLoaded) return;
+    setRaReturnsLoading(true);
+    Promise.all([
+      getRaCreatedRows().catch((err) => { console.error("Failed to load RA Created rows:", err); return []; }),
+      getReturnPendingRows().catch((err) => { console.error("Failed to load Return Pending rows:", err); return []; }),
+    ])
+      .then(([ra, pending]) => { setRaCreatedRows(ra); setReturnPendingRows(pending); setRaReturnsLoaded(true); })
+      .finally(() => setRaReturnsLoading(false));
+  }, [tab, raReturnsLoaded]);
 
   // Done Activity tab — a log of every "Done" button click on the Parts
   // hub (m.$module.tsx), synced with the same "Parts done" notification
@@ -253,8 +313,37 @@ export function ReportPartsDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
 
   const branchOptions = useMemo(() => Array.from(new Set(rows.map((r) => r.location).filter(Boolean))).sort(), [rows]);
 
+  useEffect(() => {
+    if (tab !== "pending-queue" || branchProgressLoaded || branchOptions.length === 0) return;
+    setBranchProgressLoading(true);
+    // Fetched once over a fixed wide window (not the dashboard Date
+    // Range) — same "load once, filter client-side" pattern the rest of
+    // this file already uses (e.g. Done Activity). collectionExportRows/
+    // receiveExportRows get re-filtered against dateFrom/dateTo/branchFilter
+    // at render time instead of re-fetching on every date change.
+    Promise.all([
+      getBranchProgress(branchOptions),
+      getPartsForDailyCollection({
+        dateType: "Collect Date",
+        startDate: daysAgoIso(89),
+        endDate: todayIso(),
+        notCollected: false,
+        collected: true,
+      }).catch((err) => { console.error("Failed to load Collections export:", err); return []; }),
+      getPartsToReceive().catch((err) => { console.error("Failed to load Receives export:", err); return []; }),
+    ])
+      .then(([progress, collections, receives]) => {
+        setBranchProgress(progress);
+        setCollectionExportRows(collections);
+        setReceiveExportRows(receives);
+        setBranchProgressLoaded(true);
+      })
+      .catch((err) => console.error("Failed to load branch progress:", err))
+      .finally(() => setBranchProgressLoading(false));
+  }, [tab, branchProgressLoaded, branchOptions]);
+
   const inWindow = useMemo(
-    () => rows.filter((r) => inRange(r.createdAt, dateFrom, dateTo) && (!branchFilter || r.location === branchFilter)),
+    () => rows.filter((r) => inRange(r.createdAt, dateFrom, dateTo) && (branchFilter.size === 0 || branchFilter.has(r.location))),
     [rows, dateFrom, dateTo, branchFilter],
   );
 
@@ -263,10 +352,18 @@ export function ReportPartsDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
   // part line's createdAt — those can be days apart. Falls back to
   // createdAt for older rows recorded before ra_date was tracked.
   const raRows = useMemo(
-    () => rows.filter((r) => !!r.raNo.trim() && inRange(r.raDate || r.createdAt, dateFrom, dateTo) && (!branchFilter || r.location === branchFilter)),
+    () => rows.filter((r) => !!r.raNo.trim() && inRange(r.raDate || r.createdAt, dateFrom, dateTo) && (branchFilter.size === 0 || branchFilter.has(r.location))),
     [rows, dateFrom, dateTo, branchFilter],
   );
   const receivesRows = useMemo(() => inWindow.filter((r) => !!r.inTracking.trim()), [inWindow]);
+  // Pickups scoped by pickedUpDate (when the technician actually picked it
+  // up), same fallback-to-createdAt convention as RA above — not
+  // getBranchProgress()'s pickup source, which is a single-day, example-
+  // data-backed queue view, not a real date-range-scoped history.
+  const pickupRows = useMemo(
+    () => rows.filter((r) => r.pickedUp && inRange(r.pickedUpDate || r.createdAt, dateFrom, dateTo) && (branchFilter.size === 0 || branchFilter.has(r.location))),
+    [rows, dateFrom, dateTo, branchFilter],
+  );
 
   const warningCountByProfile = useMemo(() => {
     const map = new Map<string, number>();
@@ -281,6 +378,7 @@ export function ReportPartsDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
 
   const kpi = {
     collections: collectionsRows.length,
+    pickups: pickupRows.length,
     ra: raRows.length,
     receives: receivesRows.length,
     warnings: staff.reduce((s, p) => s + (warningCountByProfile.get(p.id) ?? 0), 0),
@@ -288,17 +386,18 @@ export function ReportPartsDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
   };
 
   const branchChartData = useMemo(() => {
-    const map = new Map<string, { collections: number; ra: number; receives: number }>();
-    const bump = (loc: string, key: "collections" | "ra" | "receives") => {
+    const map = new Map<string, { collections: number; pickups: number; ra: number; receives: number }>();
+    const bump = (loc: string, key: "collections" | "pickups" | "ra" | "receives") => {
       const b = loc || "Unspecified";
-      if (!map.has(b)) map.set(b, { collections: 0, ra: 0, receives: 0 });
+      if (!map.has(b)) map.set(b, { collections: 0, pickups: 0, ra: 0, receives: 0 });
       map.get(b)![key]++;
     };
     for (const r of collectionsRows) bump(r.location, "collections");
+    for (const r of pickupRows) bump(r.location, "pickups");
     for (const r of raRows) bump(r.location, "ra");
     for (const r of receivesRows) bump(r.location, "receives");
     return Array.from(map.entries()).map(([name, v]) => ({ name, ...v })).sort((a, b) => b.collections - a.collections).slice(0, 12);
-  }, [collectionsRows, raRows, receivesRows]);
+  }, [collectionsRows, pickupRows, raRows, receivesRows]);
 
   // Real day-by-day Collections count for the 10 days ending at Date To —
   // not the real "today" — so this stays consistent with the KPI tiles when
@@ -307,7 +406,7 @@ export function ReportPartsDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
     const dates = Array.from({ length: 10 }, (_, i) => addDaysToIso(dateTo, i - 9));
     const collected = new Map(dates.map((d) => [d, 0]));
     const received = new Map(dates.map((d) => [d, 0]));
-    const branchScoped = rows.filter((r) => !branchFilter || r.location === branchFilter);
+    const branchScoped = rows.filter((r) => branchFilter.size === 0 || branchFilter.has(r.location));
     for (const r of branchScoped) {
       if (DONE_STATUSES.has(r.status)) { const d = dateOnly(r.createdAt); if (collected.has(d)) collected.set(d, (collected.get(d) ?? 0) + 1); }
       if (r.inTracking.trim()) { const d = dateOnly(r.createdAt); if (received.has(d)) received.set(d, (received.get(d) ?? 0) + 1); }
@@ -338,30 +437,31 @@ export function ReportPartsDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
           ))}
         </div>
 
-        {tab === "overview" && (
-        <>
+        {tab !== "done-activity" && (
         <div className="panel mb-6"><div className="flex flex-wrap items-end gap-4">
           <div className="flex flex-col gap-1"><label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Date From</label>
             <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" /></div>
           <div className="flex flex-col gap-1"><label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Date To</label>
             <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" /></div>
-          <div className="flex flex-col gap-1"><label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Branch</label>
-            <select value={branchFilter} onChange={(e) => setBranchFilter(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md">
-              <option value="">All Branches</option>
-              {branchOptions.map((b) => <option key={b} value={b}>{b}</option>)}
-            </select></div>
-          {branchFilter && <button onClick={() => setBranchFilter("")} className="btn text-sm px-3 mb-0.5">Clear</button>}
+          <div className="flex flex-col gap-1 min-w-45"><label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Branch</label>
+            <CheckboxDropdown options={branchOptions} selected={branchFilter} onChange={setBranchFilter} allLabel="Branches" />
+          </div>
+          {branchFilter.size > 0 && <button onClick={() => setBranchFilter(new Set())} className="btn text-sm px-3 mb-0.5">Clear</button>}
         </div></div>
+        )}
 
         {error && <div className="mb-4 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">{error}</div>}
 
+        {tab === "overview" && (
+        <>
         {loading ? (
           <div className="panel p-8 mb-6 flex items-center justify-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading Part Daily Report…</div>
         ) : (
         <>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
           {[
             ["Collections", kpi.collections, "text-green-300"],
+            ["Pickups", kpi.pickups, "text-purple-300"],
             ["RA Created", kpi.ra, "text-yellow-300"],
             ["Receives", kpi.receives, "text-blue-300"],
             ["Warnings", kpi.warnings, "text-red-300"],
@@ -372,10 +472,27 @@ export function ReportPartsDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
           <div className="panel p-4">
-            <p className="text-sm font-semibold mb-4">Collections / RA / Receives by Branch</p>
+            <div className="flex items-center justify-between mb-4">
+              <p className="text-sm font-semibold">Collections / Pickups / RA / Receives by Branch</p>
+              <button
+                onClick={() => downloadSheetXlsx(
+                  `parts-daily-branch-breakdown_${dateFrom}_to_${dateTo}.xlsx`,
+                  "Branch Breakdown",
+                  [
+                    ["Branch", "Collections", "Pickups", "RA Created", "Receives"],
+                    ...branchChartData.map((b) => [b.name, b.collections, b.pickups, b.ra, b.receives]),
+                  ],
+                )}
+                disabled={branchChartData.length === 0}
+                className="btn text-xs px-2.5 py-1 flex items-center gap-1.5 disabled:opacity-50"
+              >
+                <Download className="h-3 w-3" /> Download XLSX
+              </button>
+            </div>
             {branchChartData.length === 0 ? (
               <p className="text-xs text-muted-foreground py-16 text-center">No part activity in this date range.</p>
             ) : (
+              <>
               <ResponsiveContainer width="100%" height={220} debounce={200}>
                 <BarChart data={branchChartData} margin={{ left: -10 }}>
                   <XAxis dataKey="name" tick={{ fill: "#94a3b8", fontSize: 9 }} angle={-25} textAnchor="end" height={50} />
@@ -383,10 +500,37 @@ export function ReportPartsDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
                   <Tooltip contentStyle={TOOLTIP_STYLE} />
                   <Legend wrapperStyle={LEGEND_STYLE} />
                   <Bar dataKey="collections" fill="#34d399" radius={[4, 4, 0, 0]} name="Collections" />
+                  <Bar dataKey="pickups" fill="#a78bfa" radius={[4, 4, 0, 0]} name="Pickups" />
                   <Bar dataKey="receives" fill="#3b82f6" radius={[4, 4, 0, 0]} name="Receives" />
                   <Bar dataKey="ra" fill="#fb923c" radius={[4, 4, 0, 0]} name="RA Created" />
                 </BarChart>
               </ResponsiveContainer>
+              {/* Raw data under the graph, per the same numbers the chart plots. */}
+              <div className="mt-4 overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b border-white/10 text-muted-foreground">
+                      <th className="text-left font-semibold px-2 py-1.5">Branch</th>
+                      <th className="text-right font-semibold px-2 py-1.5">Collections</th>
+                      <th className="text-right font-semibold px-2 py-1.5">Pickups</th>
+                      <th className="text-right font-semibold px-2 py-1.5">RA Created</th>
+                      <th className="text-right font-semibold px-2 py-1.5">Receives</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {branchChartData.map((b) => (
+                      <tr key={b.name} className="border-b border-white/5">
+                        <td className="px-2 py-1.5 font-medium">{b.name}</td>
+                        <td className="px-2 py-1.5 text-right">{b.collections}</td>
+                        <td className="px-2 py-1.5 text-right">{b.pickups}</td>
+                        <td className="px-2 py-1.5 text-right">{b.ra}</td>
+                        <td className="px-2 py-1.5 text-right">{b.receives}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              </>
             )}
           </div>
           <div className="panel p-4">
@@ -413,6 +557,331 @@ export function ReportPartsDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
             <div key={l as string} className="panel p-3 text-center"><p className={`text-lg font-bold ${c}`}>{v}</p><p className="text-[10px] text-muted-foreground uppercase tracking-wide mt-0.5">{l}</p></div>
           ))}
         </div>
+        </>
+        )}
+        </>
+        )}
+
+        {tab === "pending-queue" && (
+        <>
+        {branchProgressLoading ? (
+          <div className="panel p-8 mb-6 flex items-center justify-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading Pending Queue…</div>
+        ) : (
+        <>
+        <div className="grid grid-cols-3 gap-4 mb-6">
+          {[
+            ["Pending Pickup", branchProgress.reduce((s, b) => s + (b.pickupTotal - b.pickupDone), 0), "text-violet-300"],
+            ["Pending Collection", branchProgress.reduce((s, b) => s + (b.collectionsTotal - b.collectionsDone), 0), "text-cyan-300"],
+            ["Pending Receive", branchProgress.reduce((s, b) => s + (b.receivedTotal - b.receivedDone), 0), "text-emerald-300"],
+          ].map(([l, v, c]) => (
+            <div key={l as string} className="panel p-4 text-center"><p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">{l}</p><p className={`text-3xl font-bold ${c}`}>{v}</p></div>
+          ))}
+        </div>
+
+        <div className="panel p-4 mb-4">
+          <p className="text-sm font-semibold mb-4">Pending by Branch</p>
+          {branchProgress.length === 0 ? (
+            <p className="text-xs text-muted-foreground py-16 text-center">No branch data yet.</p>
+          ) : (
+            <ResponsiveContainer width="100%" height={Math.max(180, branchProgress.length * 26)} debounce={200}>
+              <BarChart
+                data={branchProgress.map((b) => ({ name: b.branch, pickup: b.pickupTotal - b.pickupDone, collections: b.collectionsTotal - b.collectionsDone, receives: b.receivedTotal - b.receivedDone }))}
+                layout="vertical"
+                margin={{ left: 20 }}
+              >
+                <XAxis type="number" tick={{ fill: "#94a3b8", fontSize: 11 }} allowDecimals={false} />
+                <YAxis type="category" dataKey="name" tick={{ fill: "#94a3b8", fontSize: 10 }} width={100} />
+                <Tooltip contentStyle={TOOLTIP_STYLE} />
+                <Legend wrapperStyle={LEGEND_STYLE} />
+                <Bar dataKey="pickup" fill="#a78bfa" radius={[0, 4, 4, 0]} name="Pickup" />
+                <Bar dataKey="collections" fill="#22d3ee" radius={[0, 4, 4, 0]} name="Collection" />
+                <Bar dataKey="receives" fill="#34d399" radius={[0, 4, 4, 0]} name="Receive" />
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+
+        <div className="panel p-0 overflow-hidden">
+          <div className="px-4 py-3 border-b border-white/10 font-semibold text-sm flex items-center gap-2">
+            <ClipboardList className="h-4 w-4 text-blue-400" />Pending by Branch
+            <button
+              type="button"
+              onClick={() => downloadSheetXlsx(
+                `parts-pending-queue_${todayIso()}.xlsx`,
+                "Pending Queue",
+                [["Branch", "Pickup Pending", "Collection Pending", "Receive Pending"], ...branchProgress.map((b) => [b.branch, b.pickupTotal - b.pickupDone, b.collectionsTotal - b.collectionsDone, b.receivedTotal - b.receivedDone])]
+              )}
+              className="ml-auto flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300 transition-colors"
+            >
+              <Download className="h-3.5 w-3.5" />Download XLSX
+            </button>
+          </div>
+          <table className="w-full text-sm">
+            <thead><tr className="border-b border-white/10 bg-white/5">
+              {["Branch", "Pickup Pending", "Collection Pending", "Receive Pending"].map((h) => <th key={h} className="px-4 py-2 text-left text-xs text-muted-foreground uppercase">{h}</th>)}
+            </tr></thead>
+            <tbody>
+              {branchProgress.length === 0 ? (
+                <tr><td colSpan={4} className="px-4 py-8 text-center text-muted-foreground">No data yet.</td></tr>
+              ) : branchProgress.map((b, i) => (
+                <tr key={b.branch} className={`border-b border-white/5 hover:bg-white/5 ${i % 2 !== 0 ? "bg-white/[0.02]" : ""}`}>
+                  <td className="px-4 py-2 font-medium">{b.branch}</td>
+                  <td className="px-4 py-2 text-violet-300">{b.pickupTotal - b.pickupDone}</td>
+                  <td className="px-4 py-2 text-cyan-300">{b.collectionsTotal - b.collectionsDone}</td>
+                  <td className="px-4 py-2 text-emerald-300">{b.receivedTotal - b.receivedDone}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        {(() => {
+          const collectionsScoped = collectionExportRows.filter((r) =>
+            (branchFilter.size === 0 || branchFilter.has(r.location)) && inRange(r.collectedDate, dateFrom, dateTo)
+          );
+          const receivesScoped = receiveExportRows.filter((r) =>
+            (branchFilter.size === 0 || branchFilter.has(r.location)) && inRange(r.receivedDate, dateFrom, dateTo) && r.qtyReceived > 0
+          );
+          return (
+          <>
+          <div className="panel p-0 overflow-hidden mt-4">
+            <div className="px-4 py-3 border-b border-white/10 font-semibold text-sm flex items-center gap-2">
+              <ClipboardList className="h-4 w-4 text-cyan-400" />Collections Export
+              <button
+                type="button"
+                onClick={() => downloadSheetXlsx(
+                  `collections-export_${todayIso()}.xlsx`,
+                  "Collections",
+                  [
+                    ["Run Date", "Branch", "Technician", "Ticket #", "PartNo", "Qty", "Collect Type", "PartStatusDesc"],
+                    ...collectionsScoped.map((r) => [dateOnly(r.collectedDate), r.location, r.techName, r.ticketNo, r.partNo, r.quantity, r.collectType, r.partStatus]),
+                  ]
+                )}
+                className="ml-auto flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300 transition-colors"
+              >
+                <Download className="h-3.5 w-3.5" />Download XLSX
+              </button>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead><tr className="border-b border-white/10 bg-white/5">
+                  {["Run Date", "Branch", "Technician", "Ticket #", "PartNo", "Qty", "Collect Type", "PartStatusDesc"].map((h) => <th key={h} className="px-4 py-2 text-left text-xs text-muted-foreground uppercase whitespace-nowrap">{h}</th>)}
+                </tr></thead>
+                <tbody>
+                  {collectionsScoped.length === 0 ? (
+                    <tr><td colSpan={8} className="px-4 py-8 text-center text-muted-foreground">No collections in this date range.</td></tr>
+                  ) : collectionsScoped.map((r, i) => (
+                    <tr key={r.id} className={`border-b border-white/5 hover:bg-white/5 ${i % 2 !== 0 ? "bg-white/[0.02]" : ""}`}>
+                      <td className="px-4 py-2 text-xs whitespace-nowrap">{dateOnly(r.collectedDate)}</td>
+                      <td className="px-4 py-2 text-xs">{r.location || "—"}</td>
+                      <td className="px-4 py-2 text-xs">{r.techName || "—"}</td>
+                      <td className="px-4 py-2 font-mono text-xs text-blue-300">{r.ticketNo || "—"}</td>
+                      <td className="px-4 py-2 font-mono text-xs">{r.partNo || "—"}</td>
+                      <td className="px-4 py-2 text-right">{r.quantity}</td>
+                      <td className="px-4 py-2 text-xs">{r.collectType || "—"}</td>
+                      <td className="px-4 py-2 text-xs">{r.partStatus || "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="panel p-0 overflow-hidden mt-4">
+            <div className="px-4 py-3 border-b border-white/10 font-semibold text-sm flex items-center gap-2">
+              <ClipboardList className="h-4 w-4 text-emerald-400" />Receives Export
+              <button
+                type="button"
+                onClick={() => downloadSheetXlsx(
+                  `receives-export_${todayIso()}.xlsx`,
+                  "Receives",
+                  [
+                    ["Receive Date", "Branch", "PO Number", "Ticket #", "PartNo", "Unique ID"],
+                    ...receivesScoped.map((r) => [dateOnly(r.receivedDate), r.location, r.poNo, r.ticketNo, r.partNo, `${r.poNo}-${r.partNo}`]),
+                  ]
+                )}
+                className="ml-auto flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300 transition-colors"
+              >
+                <Download className="h-3.5 w-3.5" />Download XLSX
+              </button>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead><tr className="border-b border-white/10 bg-white/5">
+                  {["Receive Date", "Branch", "PO Number", "Ticket #", "PartNo", "Unique ID"].map((h) => <th key={h} className="px-4 py-2 text-left text-xs text-muted-foreground uppercase whitespace-nowrap">{h}</th>)}
+                </tr></thead>
+                <tbody>
+                  {receivesScoped.length === 0 ? (
+                    <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">No receives in this date range.</td></tr>
+                  ) : receivesScoped.map((r, i) => (
+                    <tr key={r.id} className={`border-b border-white/5 hover:bg-white/5 ${i % 2 !== 0 ? "bg-white/[0.02]" : ""}`}>
+                      <td className="px-4 py-2 text-xs whitespace-nowrap">{dateOnly(r.receivedDate)}</td>
+                      <td className="px-4 py-2 text-xs">{r.location || "—"}</td>
+                      <td className="px-4 py-2 font-mono text-xs">{r.poNo || "—"}</td>
+                      <td className="px-4 py-2 font-mono text-xs text-blue-300">{r.ticketNo || "—"}</td>
+                      <td className="px-4 py-2 font-mono text-xs">{r.partNo || "—"}</td>
+                      <td className="px-4 py-2 font-mono text-[11px] text-muted-foreground">{r.poNo}-{r.partNo}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+          </>
+          );
+        })()}
+        </>
+        )}
+        </>
+        )}
+
+        {tab === "ra-returns" && (
+        <>
+        {raReturnsLoading ? (
+          <div className="panel p-8 mb-6 flex items-center justify-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading RA &amp; Returns…</div>
+        ) : (
+        <>
+        {(() => {
+          const raScoped = raCreatedRows.filter((r) =>
+            (branchFilter.size === 0 || branchFilter.has(r.location)) &&
+            inRange(r.raDate, dateFrom, dateTo) &&
+            (raReturnTypeFilter.size === 0 || raReturnTypeFilter.has(r.returnType))
+          );
+          const returnTypeOptions = Array.from(new Set(raCreatedRows.map((r) => r.returnType))).sort();
+          // Branch, not return_reason — that column exists in the schema but
+          // nothing in this app has ever written to it (confirmed against
+          // live data), so it's blank on every real row right now.
+          const raByBranch = (() => {
+            const map = new Map<string, number>();
+            for (const r of raScoped) { const key = r.location || "Unspecified"; map.set(key, (map.get(key) ?? 0) + 1); }
+            return Array.from(map.entries()).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value).slice(0, 10);
+          })();
+          const returnPendingScoped = returnPendingRows.filter((r) =>
+            (branchFilter.size === 0 || branchFilter.has(r.location)) &&
+            inRange(r.invoiceDate, dateFrom, dateTo)
+          );
+
+          return (
+          <>
+          <div className="panel mb-4"><div className="flex flex-wrap items-end gap-4">
+            <div className="flex flex-col gap-1 min-w-45">
+              <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Return Type</label>
+              <CheckboxDropdown options={returnTypeOptions} selected={raReturnTypeFilter} onChange={setRaReturnTypeFilter} allLabel="Return Types" />
+            </div>
+            {raReturnTypeFilter.size > 0 && <button onClick={() => setRaReturnTypeFilter(new Set())} className="btn text-sm px-3 mb-0.5">Clear</button>}
+          </div></div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+            <div className="panel p-4">
+              <p className="text-sm font-semibold mb-4">RA Created</p>
+              <div className="text-3xl font-bold text-yellow-300 text-center py-4">{raScoped.length}</div>
+            </div>
+            <div className="panel p-4">
+              <p className="text-sm font-semibold mb-4">RA Created by Branch</p>
+              {raByBranch.length === 0 ? (
+                <p className="text-xs text-muted-foreground py-16 text-center">No RA activity in this date range.</p>
+              ) : (
+                <ResponsiveContainer width="100%" height={Math.max(140, raByBranch.length * 26)} debounce={200}>
+                  <BarChart data={raByBranch} layout="vertical" margin={{ left: 20 }}>
+                    <XAxis type="number" tick={{ fill: "#94a3b8", fontSize: 11 }} allowDecimals={false} />
+                    <YAxis type="category" dataKey="name" tick={{ fill: "#94a3b8", fontSize: 10 }} width={100} />
+                    <Tooltip contentStyle={TOOLTIP_STYLE} />
+                    <Bar dataKey="value" fill="#facc15" radius={[0, 4, 4, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+          </div>
+
+          <div className="panel p-0 overflow-hidden mb-6">
+            <div className="px-4 py-3 border-b border-white/10 font-semibold text-sm flex items-center gap-2">
+              <RotateCcw className="h-4 w-4 text-yellow-400" />RA Created
+              <button
+                type="button"
+                onClick={() => downloadSheetXlsx(
+                  `ra-created_${todayIso()}.xlsx`,
+                  "RA Created",
+                  [
+                    ["Return Date", "Branch", "RA No", "PO #", "Part No", "Description", "Return Type", "Returned By", "Qty", "Distributor"],
+                    ...raScoped.map((r) => [r.raDate, r.location, r.raNo, r.poNo, r.partNo, r.description, r.returnType, r.returnedBy, r.qty, r.distributor]),
+                  ]
+                )}
+                className="ml-auto flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300 transition-colors"
+              >
+                <Download className="h-3.5 w-3.5" />Download XLSX
+              </button>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead><tr className="border-b border-white/10 bg-white/5">
+                  {["Return Date", "Branch", "RA No", "PO #", "Return Type", "Returned By", "Qty", "Distributor"].map((h) => <th key={h} className="px-4 py-2 text-left text-xs text-muted-foreground uppercase whitespace-nowrap">{h}</th>)}
+                </tr></thead>
+                <tbody>
+                  {raScoped.length === 0 ? (
+                    <tr><td colSpan={8} className="px-4 py-8 text-center text-muted-foreground">No RA records match these filters.</td></tr>
+                  ) : raScoped.map((r, i) => (
+                    <tr key={r.id} className={`border-b border-white/5 hover:bg-white/5 ${i % 2 !== 0 ? "bg-white/[0.02]" : ""}`}>
+                      <td className="px-4 py-2 text-xs whitespace-nowrap">{r.raDate ? dateOnly(r.raDate) : "—"}</td>
+                      <td className="px-4 py-2 text-xs">{r.location || "—"}</td>
+                      <td className="px-4 py-2 font-mono text-xs text-blue-300">{r.raNo || "—"}</td>
+                      <td className="px-4 py-2 font-mono text-xs">{r.poNo || "—"}</td>
+                      <td className="px-4 py-2 text-xs">{r.returnType}</td>
+                      <td className="px-4 py-2 text-xs">{r.returnedBy || "—"}</td>
+                      <td className="px-4 py-2 text-right">{r.qty}</td>
+                      <td className="px-4 py-2 text-xs">{r.distributor || "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="panel p-0 overflow-hidden">
+            <div className="px-4 py-3 border-b border-white/10 font-semibold text-sm flex items-center gap-2">
+              <RotateCcw className="h-4 w-4 text-orange-400" />Return Pending
+              <button
+                type="button"
+                onClick={() => downloadSheetXlsx(
+                  `return-pending_${todayIso()}.xlsx`,
+                  "Return Pending",
+                  [
+                    ["Branch", "Part No", "Description", "Distributor", "Invoice No", "Invoice Date", "Qty", "Aging (days)", "Return Status"],
+                    ...returnPendingScoped.map((r) => [r.location, r.partNo, r.description, r.partDist, r.invoiceNo, r.invoiceDate, r.quantity, r.aging ?? "", r.returnStatus]),
+                  ]
+                )}
+                className="ml-auto flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300 transition-colors"
+              >
+                <Download className="h-3.5 w-3.5" />Download XLSX
+              </button>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead><tr className="border-b border-white/10 bg-white/5">
+                  {["Branch", "Part No", "Description", "Distributor", "Invoice No", "Invoice Date", "Qty", "Aging", "Return Status"].map((h) => <th key={h} className="px-4 py-2 text-left text-xs text-muted-foreground uppercase whitespace-nowrap">{h}</th>)}
+                </tr></thead>
+                <tbody>
+                  {returnPendingScoped.length === 0 ? (
+                    <tr><td colSpan={9} className="px-4 py-8 text-center text-muted-foreground">No pending returns match these filters.</td></tr>
+                  ) : returnPendingScoped.map((r, i) => (
+                    <tr key={r.id} className={`border-b border-white/5 hover:bg-white/5 ${i % 2 !== 0 ? "bg-white/[0.02]" : ""}`}>
+                      <td className="px-4 py-2 text-xs">{r.location || "—"}</td>
+                      <td className="px-4 py-2 font-mono text-xs text-blue-300">{r.partNo || "—"}</td>
+                      <td className="px-4 py-2 text-xs">{r.description || "—"}</td>
+                      <td className="px-4 py-2 text-xs">{r.partDist || "—"}</td>
+                      <td className="px-4 py-2 font-mono text-xs">{r.invoiceNo || "—"}</td>
+                      <td className="px-4 py-2 text-xs whitespace-nowrap">{r.invoiceDate ? dateOnly(r.invoiceDate) : "—"}</td>
+                      <td className="px-4 py-2 text-right">{r.quantity}</td>
+                      <td className="px-4 py-2 text-right text-orange-300">{r.aging ?? "—"}</td>
+                      <td className="px-4 py-2 text-xs">{r.returnStatus || "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+          </>
+          );
+        })()}
         </>
         )}
         </>

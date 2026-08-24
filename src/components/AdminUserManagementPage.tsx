@@ -400,7 +400,11 @@ function RoleMultiSelect({
 // (needed for the delete action and for forcing a password change) and the
 // Firebase Auth uid (needed to target a specific account for the "reset to
 // default password" bridge — see handleConfirmResetToDefault below).
-type UserRow = UserManagementRecord & { profileId: string; firebaseUid: string };
+// `type` (primary role) is for display/title/hierarchy sort only — never
+// the sole basis for an eligibility check. `extraRoles` (held roles, same
+// as canReviewPtoStage's convention) must be checked alongside it anywhere
+// this file asks "does this person hold role X" — see managerCandidates.
+type UserRow = UserManagementRecord & { profileId: string; firebaseUid: string; extraRoles: string[] };
 
 function mapProfilesToRecords(profiles: ProfileRow[]): UserRow[] {
   return profiles.map((p, index) => ({
@@ -410,6 +414,7 @@ function mapProfilesToRecords(profiles: ProfileRow[]): UserRow[] {
     loginName: p.username || p.email.split("@")[0],
     userName: p.display_name || p.email,
     type: p.role,
+    extraRoles: p.extra_roles ?? [],
     email: p.email,
     manager: p.manager_name || "",
     technicianId: p.technician_id || "",
@@ -1003,7 +1008,16 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
   // matched against real profiles by display name — see resolveTeamLeadOrManager
   // in src/lib/notifyRouting.ts), so the option value is the display name.
   const managerCandidates = useMemo(() => {
-    const eligible = users.filter((u) => ["ADMIN", "SUPERADMIN"].includes((u.type || "").toUpperCase()) || (u.type || "").toUpperCase().includes("MANAGER"));
+    // Deactivated accounts shouldn't be selectable as anyone's manager going
+    // forward. Held roles pile up (primary + extraRoles) — someone whose
+    // primary role/title is e.g. Senior Director but who also holds Claims
+    // Manager/Manager as a secondary role is just as eligible as if that
+    // were their primary role; `type` alone is display/hierarchy only.
+    const eligible = users.filter((u) => {
+      if (u.isActive === false) return false;
+      const heldRoles = [u.type, ...(u.extraRoles ?? [])].map((r) => (r || "").toUpperCase());
+      return heldRoles.some((r) => ["ADMIN", "SUPERADMIN"].includes(r) || r.includes("MANAGER"));
+    });
     return Array.from(new Set(eligible.map((u) => u.userName).filter(Boolean))).sort((a, b) => a.localeCompare(b));
   }, [users]);
 

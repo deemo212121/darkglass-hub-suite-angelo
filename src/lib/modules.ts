@@ -19,7 +19,7 @@ export interface SubModuleDef {
   // Custom seed generator; receives index
   seed: (i: number) => Record<string, unknown>;
   count?: number;
-  custom?: "part-return" | "part-return-status" | "claims-pipeline" | "work-map" | "part-order" | "part-receive" | "return-pickup" | "repair-statuses" | "ticket-list" | "user-management" | "account-management" | "location-management" | "csr-daily-report" | "call-tracker" | "csr-status-summary" | "csr-team-leader-dashboard" | "reserved-part-list-custom" | "parts-dashboard" | "claims-dashboard" | "staff-list"; // hook for special pages
+  custom?: "part-return" | "part-return-status" | "claims-pipeline" | "work-map" | "part-order" | "part-receive" | "return-pickup" | "repair-statuses" | "ticket-list" | "user-management" | "account-management" | "location-management" | "csr-daily-report" | "call-tracker" | "csr-status-summary" | "csr-team-leader-dashboard" | "reserved-part-list-custom" | "parts-dashboard" | "claims-dashboard" | "staff-list" | "it-tickets" | "company-settings" | "universal-activity-log"; // hook for special pages
   /** Still a real, routable submodule (role gates, custom dispatch — everything works) — just excluded from the module's own tile grid because another page links to it directly instead (e.g. Flash Tech Calendar via a button on Expense Tracking). Keeps the tile grid from accumulating every niche page. */
   hiddenFromGrid?: boolean;
 }
@@ -1402,10 +1402,21 @@ const adminMod: ModuleDef = {
       seed: () => ({}),
     },
     {
+      slug: "technician-whereabouts",
+      title: "Technician Whereabouts",
+      description: "Each technician's current job site, per branch or company-wide.",
+      custom: "technician-whereabouts" as any,
+      fields: [],
+      seed: () => ({}),
+    },
+    {
       slug: "internal-message-support",
       title: "Internal Message Support",
       description: "Discord-style employee chat and broadcast channels.",
       custom: "internal-message-support" as any,
+      // Reachable via the nav bar's own Messages icon (MessagesMenu.tsx) —
+      // no need for a duplicate tile on the Admin module's grid too.
+      hiddenFromGrid: true,
       fields: [
         { key: "date", label: "Date", type: "date", filterable: true },
         { key: "sender", label: "Sender", type: "select", options: TECHS, filterable: true },
@@ -1507,6 +1518,15 @@ const adminMod: ModuleDef = {
       description: "Edit this company's own record — name, address, subscription plan, login alias. Only available to this company's SuperAdmin.",
       custom: "company-settings" as any,
       fields: [],
+      seed: () => ({}),
+    },
+    {
+      slug: "universal-activity-log",
+      title: "Activity Logs",
+      description: "Every department's recent activity in one feed — Claims, Parts, CSR, Triage, BizOps, Technician, HR, Accounting, IT, Admin, or ALL combined.",
+      custom: "universal-activity-log",
+      fields: [],
+      count: 0,
       seed: () => ({}),
     },
   ],

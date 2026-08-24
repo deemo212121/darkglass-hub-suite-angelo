@@ -24,6 +24,7 @@ import {
   X,
   Ban,
   Columns3,
+  Route as RouteIcon,
   Bell,
 } from "lucide-react";
 import {
@@ -74,7 +75,8 @@ import {
   type TechCategoryOverride,
 } from "@/lib/supabase/techPayroll";
 import { TechActivityReportModal } from "@/components/TechActivityReportModal";
-import { getMileageEntries, addMileageEntry, deleteMileageEntry, syncMileageFromTickets, setMileageEntryPayrollExcluded, reconcileMileageNoPhotoHolds, type MileageEntry } from "@/lib/supabase/mileage";
+import { getMileageEntries, deleteMileageEntry, syncMileageFromTickets, setMileageEntryPayrollExcluded, reconcileMileageNoPhotoHolds, mileageEffectiveTotal, type MileageEntry } from "@/lib/supabase/mileage";
+import { MileageDayRouteModal } from "@/components/MileageDayRouteModal";
 import { getCompanyEmployeeRequests, updateEmployeeRequestStatus, linkPayrollDisputeCustomPayItem, type EmployeeRequestRow } from "@/lib/supabase/employeeRequests";
 import { perCutoffSalary } from "@/lib/supabase/salary";
 import { useAuth } from "@/lib/auth";
@@ -109,7 +111,6 @@ const MILEAGE_COLUMNS = [
   { key: "contactNumber", label: "Contact Number" },
   { key: "email", label: "Email" },
   { key: "totalMileage", label: "Total Mileage" },
-  { key: "googleMapLink", label: "Google Map Link" },
   { key: "payroll", label: "Payroll" },
   { key: "actions", label: "Actions" },
 ] as const;
@@ -152,6 +153,13 @@ export interface SupabaseEmployee {
    *  export, but stays visible in the Payroll tab table so it can be
    *  unchecked again later. See migration 0112. */
   payrollExcluded: boolean;
+  /** profiles.is_active — a deactivated account is excluded from every row
+   *  list on this dashboard (Office/Tech Payroll, Mileage's technician
+   *  picker) since there's nothing left to pay or schedule going forward,
+   *  but `employees` itself still includes them so historical records tied
+   *  to their profile_id (already-synced mileage entries, past payroll line
+   *  items) can still resolve a real name instead of falling back to "—". */
+  isActive: boolean;
 }
 
 interface SalaryEntry {
@@ -684,17 +692,6 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // JSON blob the Employee Information tab edits), not duplicated anywhere.
   const [employeeInfoByProfileId, setEmployeeInfoByProfileId] = useState<Map<string, EmployeeInfo>>(new Map());
 
-  // ── Mileage tab: manual log form state ──────────────────────────────────
-  const [mileageForm, setMileageForm] = useState({
-    workDate: new Date().toISOString().slice(0, 10),
-    profileId: "",
-    address: "",
-    contactNumber: "",
-    email: "",
-    totalMileage: "",
-    googleMapLink: "",
-  });
-  const [savingMileageEntry, setSavingMileageEntry] = useState(false);
   const [deletingMileageEntryId, setDeletingMileageEntryId] = useState<string | null>(null);
   const [payrollExcludingId, setPayrollExcludingId] = useState<string | null>(null);
   const [mileageBranchFilter, setMileageBranchFilter] = useState("");
@@ -702,6 +699,11 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   const [mileageTicketFilter, setMileageTicketFilter] = useState("");
   const [mileageStatusFilter, setMileageStatusFilter] = useState<Set<string>>(new Set());
   const [mileagePayrollFilter, setMileagePayrollFilter] = useState<Set<string>>(new Set());
+  // Which rows actually SHOW in the table below — distinct from the sync's
+  // own scope (always all-time; see handleSyncMileage). Filters on
+  // entry.workDate, same as every other column filter here.
+  const [mileageDateFromFilter, setMileageDateFromFilter] = useState("");
+  const [mileageDateToFilter, setMileageDateToFilter] = useState("");
   const [mileageVisibleColumns, setMileageVisibleColumns] = useState<Record<string, boolean>>(() =>
     typeof window !== "undefined" ? loadMileageVisibleColumns() : Object.fromEntries(MILEAGE_COLUMNS.map((c) => [c.key, true]))
   );
@@ -766,7 +768,9 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // ── Mileage tab: auto-sync-from-completed-tickets state ─────────────────
   // No date range — always all-time, matching Overall Status's Tech
   // Completion Rate table with its date pickers left empty. Every completed
-  // ticket this company has ever logged gets pulled, full stop.
+  // ticket this company has ever logged gets pulled, full stop. (Narrowing
+  // what's actually visible is the separate Date filter in the table's own
+  // filter row below, not a sync-time concern.)
   const [mileageSyncProfileId, setMileageSyncProfileId] = useState("");
   const [syncingMileage, setSyncingMileage] = useState(false);
   const [mileageSyncMessage, setMileageSyncMessage] = useState<string | null>(null);
@@ -782,6 +786,12 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // breakdown modal — same "click a name to see the ticket-by-ticket detail"
   // convention as Overall Status's Tech Completion Rate table.
   const [mileageTechDetailId, setMileageTechDetailId] = useState<string | null>(null);
+  // Opens the Day Route view (map + reorderable stop list + adjustment
+  // panel) for one technician's one day — keyed the same way as
+  // mileageDayKey/mileageHeldDayKeys below (profileId or raw technician
+  // name, plus work date), since that's the natural grouping for "a day's
+  // route" regardless of whether the technician has a linked profile.
+  const [mileageDayRouteKey, setMileageDayRouteKey] = useState<string | null>(null);
 
   // Photos column — the cell itself is just a plain "Photos" link; clicking
   // it opens the modal below, which fetches that ONE ticket's full photo
@@ -789,6 +799,10 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   const [mileagePhotoModalEntry, setMileagePhotoModalEntry] = useState<MileageEntry | null>(null);
   const [mileagePhotoModalPhotos, setMileagePhotoModalPhotos] = useState<TicketPhoto[]>([]);
   const [mileagePhotoModalLoading, setMileagePhotoModalLoading] = useState(false);
+  // Clicking a thumbnail opens this in-app lightbox instead of the raw
+  // Firebase Storage URL in a new tab — closing it returns to the grid
+  // above (mileagePhotoModalEntry stays open, only this closes).
+  const [mileagePhotoLightbox, setMileagePhotoLightbox] = useState<TicketPhoto | null>(null);
 
   // Auto Payroll hold when a ticket has no photos yet — separate from the
   // manual On Hold toggle below (Ban icon), which keeps its own "who/when"
@@ -822,6 +836,18 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     await Promise.all(Array.from({ length: CONCURRENCY }, () => worker()));
     setMileageTicketHasPhotos((prev) => new Map([...prev, ...results]));
 
+    // A day's mileage entries share one route total (see
+    // syncMileageFromTickets) — if ANY ticket that day is missing
+    // photos, the whole day's drive is unproven, so every entry in that
+    // technician's (profile/name, work date) group holds, not just the
+    // one ticket that's missing photos.
+    const dayKey = (e: MileageEntry) => `${e.profileId ?? e.technicianName ?? ""}|${e.workDate}`;
+    const heldDays = new Set(
+      mileageEntries
+        .filter((e) => e.source === "auto" && e.ticketNo && results.get(e.ticketNo) === false)
+        .map(dayKey)
+    );
+
     // Persist the same rule into payroll_excluded — this is what actually
     // makes Tech Payroll (getTechCompletedRepairCounts, and this file's
     // own mileage total default) skip these tickets, not just the badge.
@@ -831,7 +857,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     const hasPhotosByEntryId = new Map(
       mileageEntries
         .filter((e) => e.source === "auto" && e.ticketNo && results.has(e.ticketNo))
-        .map((e) => [e.id, results.get(e.ticketNo as string) as boolean])
+        .map((e) => [e.id, !heldDays.has(dayKey(e))])
     );
     const changed = await reconcileMileageNoPhotoHolds(affectedEntries, hasPhotosByEntryId);
     if (changed > 0) setMileageEntries(await getMileageEntries());
@@ -873,7 +899,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         mileageRes,
         repairStatusRes,
       ] = await Promise.all([
-        supabase.from("profiles").select("id,display_name,username,role,extra_roles,assigned_branch,email,off_days,required_check_in,required_check_out,payroll_excluded").neq("role", "SUPERSUPERADMIN"),
+        supabase.from("profiles").select("id,display_name,username,role,extra_roles,assigned_branch,email,off_days,required_check_in,required_check_out,payroll_excluded,is_active").neq("role", "SUPERSUPERADMIN"),
         supabase.from("salary_entries").select("profile_id,effective_date,compensation_type,hourly_rate,annual_salary,created_at").not("profile_id", "is", null).order("effective_date", { ascending: false }).order("created_at", { ascending: false }),
         supabase.from("payroll_runs").select("id,period_start,period_end,status,generated_at").order("generated_at", { ascending: false }),
         supabase.from("payroll_line_items").select("payroll_run_id,profile_id,hours_worked,overtime_hours,hourly_rate,regular_pay,overtime_pay,gross_pay,net_pay,currency,extra_pay,notes,paid,paid_at,compensation_type,annual_salary"),
@@ -944,6 +970,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         workingHours: workScheduleById.get(p.id)?.working_hours ?? null,
         mealMinutes: workScheduleById.get(p.id)?.meal_minutes ?? null,
         payrollExcluded: p.payroll_excluded ?? false,
+        isActive: p.is_active ?? true,
         };
       }) as SupabaseEmployee[]);
       setSalaryEntries((salRes.data ?? []) as SalaryEntry[]);
@@ -1347,13 +1374,19 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // overtimeHours/hourlyRate/dutyHours stay populated from real
   // punches/schedule (informational, shown for reference) but grossPay is
   // their piece-rate total instead.
-  // employees.flatMap, not .map: a plain TECHNICIAN emits exactly one row
-  // (unchanged from before, just now tagged isTechPortion: true). Everyone
-  // else emits their normal office row, PLUS a second isTechPortion row if
-  // they hold TECHNICIAN as a secondary role AND actually have tech pay to
-  // show (skip a noisy $0 row for someone who merely holds the role but
-  // did no tech work this period).
-  const payrollRows: EmployeePayrollRow[] = employees.flatMap((emp) => {
+  // Deactivated accounts never appear as a row here — nothing left to pay
+  // or schedule going forward. `employees` itself stays unfiltered so
+  // name lookups for THEIR existing historical records (e.g. mileage
+  // entries already synced under their profile_id) still resolve a real
+  // name elsewhere on this dashboard instead of falling back to "—".
+  //
+  // .filter().flatMap(), not .map(): a plain TECHNICIAN emits exactly one
+  // row (unchanged from before, just now tagged isTechPortion: true).
+  // Everyone else emits their normal office row, PLUS a second
+  // isTechPortion row if they hold TECHNICIAN as a secondary role AND
+  // actually have tech pay to show (skip a noisy $0 row for someone who
+  // merely holds the role but did no tech work this period).
+  const payrollRows: EmployeePayrollRow[] = employees.filter((emp) => emp.isActive).flatMap((emp) => {
     const comp = latestCompMap.get(emp.id);
     const isFixed = comp?.compensation_type === "fixed";
     const hourlyRate = isFixed ? 0 : comp?.hourly_rate ?? emp.hourly_rate ?? 0;
@@ -1524,7 +1557,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         phCount: phRows.length,
         avgPayPerEmployee,
         periodLabel: genStart && genEnd ? `${genStart} – ${genEnd} · USD` : "USD",
-        employeeCount: employees.length,
+        employeeCount: payrollRows.length,
         employeeCountLabel: "Active",
       };
     }
@@ -2211,10 +2244,14 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   const mileageTechnicians = [...employees]
     .filter(
       (e) =>
-        MILEAGE_TECH_ROLES.has(normalizeRole(e.role)) ||
-        (e.extraRoles ?? []).some((r) => MILEAGE_TECH_ROLES.has(normalizeRole(r)))
+        e.isActive &&
+        (MILEAGE_TECH_ROLES.has(normalizeRole(e.role)) ||
+          (e.extraRoles ?? []).some((r) => MILEAGE_TECH_ROLES.has(normalizeRole(r))))
     )
     .sort((a, b) => a.full_name.localeCompare(b.full_name));
+  // Unfiltered by isActive, unlike the list above — a deactivated
+  // technician's ALREADY-SYNCED mileage rows still need their real name
+  // resolved here, not just active technicians going forward.
   const employeeNameById = new Map(employees.map((e) => [e.id, e.full_name]));
   // A synced entry with no matching profile (profileId: null) falls back to
   // the raw ticket technician_name text — still filterable/displayable/
@@ -2235,12 +2272,23 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   const mileageBranchOptions = Array.from(new Set(mileageEntries.map((e) => e.branch))).sort((a, b) => a.localeCompare(b));
   const mileageStatusOptions = Array.from(new Set(mileageEntries.map((e) => e.ticketStatus || "").filter(Boolean))).sort((a, b) => a.localeCompare(b));
   const MILEAGE_PAYROLL_OPTIONS = ["Included", "On Hold"];
+  // A day's mileage entries share one route total, so a missing photo on
+  // ANY of a technician's tickets that day holds the WHOLE day, not just
+  // the one ticket that's actually missing photos — same grouping key as
+  // the reconciliation effect above and syncMileageFromTickets.
+  const mileageDayKey = (entry: MileageEntry) => `${entry.profileId ?? entry.technicianName ?? ""}|${entry.workDate}`;
+  const mileageHeldDayKeys = new Set(
+    mileageEntries
+      .filter((e) => e.source === "auto" && e.ticketNo && mileageTicketHasPhotos.get(e.ticketNo) === false)
+      .map(mileageDayKey)
+  );
+  const mileageNoPhotosHold = (entry: MileageEntry) =>
+    entry.source === "auto" && !!entry.ticketNo && mileageHeldDayKeys.has(mileageDayKey(entry));
   // Same rule the Payroll badge itself renders — persisted payroll_excluded
   // (manual OR the automatic no-photos hold once reconciled) OR'd with the
   // live photo-check result for entries not yet reconciled, so the filter
   // and the badge can never disagree about what a row currently shows.
-  const mileageEntryIsOnHold = (entry: MileageEntry) =>
-    entry.payrollExcluded || (entry.source === "auto" && !!entry.ticketNo && mileageTicketHasPhotos.get(entry.ticketNo) === false);
+  const mileageEntryIsOnHold = (entry: MileageEntry) => entry.payrollExcluded || mileageNoPhotosHold(entry);
   // Company-wide (ignores whatever's currently filtered on screen) —
   // "Notify On-Hold" button below. Only entries with a real linked
   // technician (profileId) can be notified; unlinked ones have nobody to
@@ -2264,6 +2312,8 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       if (mileageBranchFilter && entry.branch !== mileageBranchFilter) return false;
       if (nameFilter && !mileageRowName(entry).toLowerCase().includes(nameFilter)) return false;
       if (ticketFilter && !(entry.ticketNo || "").toLowerCase().includes(ticketFilter)) return false;
+      if (mileageDateFromFilter && entry.workDate < mileageDateFromFilter) return false;
+      if (mileageDateToFilter && entry.workDate > mileageDateToFilter) return false;
       if (mileageStatusFilter.size > 0 && !mileageStatusFilter.has(entry.ticketStatus || "")) return false;
       if (mileagePayrollFilter.size > 0) {
         const status = mileageEntryIsOnHold(entry) ? "On Hold" : "Included";
@@ -2284,39 +2334,6 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         entries: [...entries].sort((a, b) => (a.workDate < b.workDate ? 1 : a.workDate > b.workDate ? -1 : 0)),
       }));
   })();
-
-  const handleAddMileageEntry = async () => {
-    const technician = employees.find((e) => e.id === mileageForm.profileId);
-    if (!technician || !mileageForm.workDate || !mileageForm.address.trim() || !mileageForm.totalMileage.trim()) return;
-    setSavingMileageEntry(true);
-    try {
-      await addMileageEntry({
-        profileId: technician.id,
-        branch: technician.assigned_branch || "Unassigned",
-        workDate: mileageForm.workDate,
-        address: mileageForm.address.trim(),
-        contactNumber: mileageForm.contactNumber.trim(),
-        email: mileageForm.email.trim(),
-        totalMileage: Number(mileageForm.totalMileage) || 0,
-        googleMapLink: mileageForm.googleMapLink.trim(),
-        createdByName: displayName || email || "Unknown",
-      });
-      setMileageForm({
-        workDate: new Date().toISOString().slice(0, 10),
-        profileId: "",
-        address: "",
-        contactNumber: "",
-        email: "",
-        totalMileage: "",
-        googleMapLink: "",
-      });
-      setMileageEntries(await getMileageEntries());
-    } catch (err) {
-      alert(`Failed to save mileage entry: ${err instanceof Error ? err.message : "Unknown error"}`);
-    } finally {
-      setSavingMileageEntry(false);
-    }
-  };
 
   // Empty mileageSyncProfileId means "All Technicians". Always all-time —
   // no date range is ever passed to syncMileageFromTickets. One call
@@ -2422,6 +2439,83 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     }
   };
 
+  // Shared by the payroll-hold toggle and the no-photos reminder button
+  // below — a mileage entry's audience is always the technician themselves
+  // plus their resolved manager plus their branch's senior branch manager
+  // (if any), never just the tech alone, since a held ticket's mileage is
+  // as much a manager-visibility issue as a technician to-do.
+  const resolveMileageNotifyRecipients = async (entry: MileageEntry): Promise<Set<string>> => {
+    const allProfiles = await getCompanyUsers();
+    const targetProfile = allProfiles.find((p) => p.id === entry.profileId);
+    const recipientIds = new Set<string>([entry.profileId!]);
+    if (targetProfile) {
+      const manager = await resolveTeamLeadOrManager(targetProfile, allProfiles);
+      if (manager) recipientIds.add(manager.id);
+
+      const branch = (targetProfile.assigned_branch || entry.branch || "").trim().toLowerCase();
+      if (branch) {
+        const seniorBranchManager = allProfiles.find(
+          (p) =>
+            (p.assigned_branch || "").trim().toLowerCase() === branch &&
+            [p.role, ...(p.extra_roles ?? [])].some((r) => normalizeRole(r) === "SENIOR_BRANCH_MANAGER")
+        );
+        if (seniorBranchManager) recipientIds.add(seniorBranchManager.id);
+      }
+    }
+    return recipientIds;
+  };
+
+  // "Send" button on a no-photos-held mileage row — a deliberate, one-off
+  // nudge Accounting sends when THEY notice a hold, not an automatic ping
+  // on every reconciliation pass (reconcileMileageNoPhotoHolds itself stays
+  // silent — it can re-fire many times as photos trickle in, which would
+  // spam the same people repeatedly). Reuses the exact recipient set and
+  // "Accounting"-branded notification convention as the manual hold toggle
+  // above, just with photos-specific wording and no confirm dialog — this
+  // is a low-stakes reminder, not a payroll-affecting action.
+  const [sendingReminderId, setSendingReminderId] = useState<string | null>(null);
+  const [reminderSentIds, setReminderSentIds] = useState<Set<string>>(new Set());
+  const handleSendMileageReminder = async (entry: MileageEntry) => {
+    if (!entry.profileId || !entry.ticketNo) return;
+    setSendingReminderId(entry.id);
+    try {
+      const recipientIds = await resolveMileageNotifyRecipients(entry);
+      const rowLabel = mileageRowName(entry);
+      const body = `📸 Ticket ${entry.ticketNo} still needs photos uploaded — its mileage for ${entry.workDate} is on hold from payroll until photos are added. Please upload photos for this ticket as soon as possible.`;
+      await Promise.all(
+        Array.from(recipientIds).map((id) =>
+          createNotification({
+            recipientId: id,
+            senderId: myProfileId,
+            senderName: "Accounting",
+            body,
+            linkTo: `/m/tickets/ticket-list?ticketNo=${encodeURIComponent(entry.ticketNo!)}`,
+          })
+        )
+      );
+      void logModuleActivity({
+        module: "accounting",
+        actorName: displayName || email || "Admin",
+        action: "mileage_photo_reminder_sent",
+        targetType: "ticket",
+        targetId: entry.ticketId ?? undefined,
+        targetLabel: `${entry.ticketNo} — ${rowLabel}`,
+      });
+      setReminderSentIds((prev) => new Set(prev).add(entry.id));
+      window.setTimeout(() => {
+        setReminderSentIds((prev) => {
+          const next = new Set(prev);
+          next.delete(entry.id);
+          return next;
+        });
+      }, 4000);
+    } catch (err) {
+      alert(`Failed to send reminder: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setSendingReminderId(null);
+    }
+  };
+
   // While on hold, a ticket never counts toward the technician's "Completed
   // Tickets" pay, even if it later becomes completed (see
   // getTechCompletedRepairCounts in techPayroll.ts) — but it's reversible,
@@ -2468,23 +2562,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       if (entry.profileId) {
         (async () => {
           try {
-            const allProfiles = await getCompanyUsers();
-            const targetProfile = allProfiles.find((p) => p.id === entry.profileId);
-            const recipientIds = new Set<string>([entry.profileId!]);
-            if (targetProfile) {
-              const manager = await resolveTeamLeadOrManager(targetProfile, allProfiles);
-              if (manager) recipientIds.add(manager.id);
-
-              const branch = (targetProfile.assigned_branch || entry.branch || "").trim().toLowerCase();
-              if (branch) {
-                const seniorBranchManager = allProfiles.find(
-                  (p) =>
-                    (p.assigned_branch || "").trim().toLowerCase() === branch &&
-                    [p.role, ...(p.extra_roles ?? [])].some((r) => normalizeRole(r) === "SENIOR_BRANCH_MANAGER")
-                );
-                if (seniorBranchManager) recipientIds.add(seniorBranchManager.id);
-              }
-            }
+            const recipientIds = await resolveMileageNotifyRecipients(entry);
             const body = excluding
               ? `🚫 ${entry.ticketNo ? `Ticket ${entry.ticketNo}` : "A ticket"} (${entry.address}) was put on hold for payroll by Accounting.`
               : `✅ ${entry.ticketNo ? `Ticket ${entry.ticketNo}` : "A ticket"} (${entry.address}) was taken off hold for payroll by Accounting — it counts toward pay again.`;
@@ -3310,96 +3388,6 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
           <div className="space-y-6">
             <h2 className="text-lg font-bold text-white">Total Mileage</h2>
 
-            {/* Entry form */}
-            <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                <label className="space-y-1.5 text-sm text-slate-200">
-                  <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Date</span>
-                  <input
-                    type="date"
-                    value={mileageForm.workDate}
-                    onChange={(e) => setMileageForm((f) => ({ ...f, workDate: e.target.value }))}
-                    className="glass-input w-full text-sm px-2 py-1.5"
-                  />
-                </label>
-                <label className="space-y-1.5 text-sm text-slate-200">
-                  <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Technician</span>
-                  <select
-                    value={mileageForm.profileId}
-                    onChange={(e) => setMileageForm((f) => ({ ...f, profileId: e.target.value }))}
-                    className="glass-input w-full text-sm px-2 py-1.5"
-                  >
-                    <option value="">Select technician…</option>
-                    {mileageTechnicians.map((t) => (
-                      <option key={t.id} value={t.id}>{t.full_name} — {t.assigned_branch || "Unassigned"}</option>
-                    ))}
-                  </select>
-                </label>
-                <label className="space-y-1.5 text-sm text-slate-200">
-                  <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Address</span>
-                  <input
-                    type="text"
-                    value={mileageForm.address}
-                    onChange={(e) => setMileageForm((f) => ({ ...f, address: e.target.value }))}
-                    placeholder="Customer/site address"
-                    className="glass-input w-full text-sm px-2 py-1.5"
-                  />
-                </label>
-                <label className="space-y-1.5 text-sm text-slate-200">
-                  <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Contact Number</span>
-                  <input
-                    type="text"
-                    value={mileageForm.contactNumber}
-                    onChange={(e) => setMileageForm((f) => ({ ...f, contactNumber: e.target.value }))}
-                    placeholder="Contact number"
-                    className="glass-input w-full text-sm px-2 py-1.5"
-                  />
-                </label>
-                <label className="space-y-1.5 text-sm text-slate-200">
-                  <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Email</span>
-                  <input
-                    type="email"
-                    value={mileageForm.email}
-                    onChange={(e) => setMileageForm((f) => ({ ...f, email: e.target.value }))}
-                    placeholder="Contact email"
-                    className="glass-input w-full text-sm px-2 py-1.5"
-                  />
-                </label>
-                <label className="space-y-1.5 text-sm text-slate-200">
-                  <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Total Mileage</span>
-                  <input
-                    type="number"
-                    min={0}
-                    step={0.1}
-                    value={mileageForm.totalMileage}
-                    onChange={(e) => setMileageForm((f) => ({ ...f, totalMileage: e.target.value }))}
-                    placeholder="0.0"
-                    className="glass-input w-full text-sm px-2 py-1.5"
-                  />
-                </label>
-                <label className="space-y-1.5 text-sm text-slate-200 sm:col-span-2">
-                  <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Google Map Link</span>
-                  <input
-                    type="text"
-                    value={mileageForm.googleMapLink}
-                    onChange={(e) => setMileageForm((f) => ({ ...f, googleMapLink: e.target.value }))}
-                    placeholder="https://maps.app.goo.gl/…"
-                    className="glass-input w-full text-sm px-2 py-1.5"
-                  />
-                </label>
-              </div>
-              <div className="mt-4 flex justify-end">
-                <button
-                  onClick={handleAddMileageEntry}
-                  disabled={savingMileageEntry || !mileageForm.profileId || !mileageForm.address.trim() || !mileageForm.totalMileage.trim()}
-                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white rounded-lg text-sm font-semibold transition flex items-center gap-2"
-                >
-                  {savingMileageEntry && <Loader2 className="h-4 w-4 animate-spin" />}
-                  Add Entry
-                </button>
-              </div>
-            </div>
-
             {/* Auto-sync from tickets */}
             <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
               <p className="text-sm font-semibold text-white mb-1">Sync from Tickets</p>
@@ -3482,6 +3470,24 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                   </select>
                 </label>
                 <label className="space-y-1.5 text-sm text-slate-200">
+                  <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Date From</span>
+                  <input
+                    type="date"
+                    value={mileageDateFromFilter}
+                    onChange={(e) => setMileageDateFromFilter(e.target.value)}
+                    className="glass-input h-9 text-sm px-2 py-1.5"
+                  />
+                </label>
+                <label className="space-y-1.5 text-sm text-slate-200">
+                  <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Date To</span>
+                  <input
+                    type="date"
+                    value={mileageDateToFilter}
+                    onChange={(e) => setMileageDateToFilter(e.target.value)}
+                    className="glass-input h-9 text-sm px-2 py-1.5"
+                  />
+                </label>
+                <label className="space-y-1.5 text-sm text-slate-200">
                   <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Name</span>
                   <input
                     type="text"
@@ -3521,12 +3527,14 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                     <TicketColumnFilter options={MILEAGE_PAYROLL_OPTIONS} selected={mileagePayrollFilter} onChange={setMileagePayrollFilter} label="Filter by Payroll" />
                   </span>
                 </label>
-                {(mileageBranchFilter || mileageNameFilter || mileageTicketFilter || mileageStatusFilter.size > 0 || mileagePayrollFilter.size > 0) && (
+                {(mileageBranchFilter || mileageNameFilter || mileageTicketFilter || mileageDateFromFilter || mileageDateToFilter || mileageStatusFilter.size > 0 || mileagePayrollFilter.size > 0) && (
                   <button
                     onClick={() => {
                       setMileageBranchFilter("");
                       setMileageNameFilter("");
                       setMileageTicketFilter("");
+                      setMileageDateFromFilter("");
+                      setMileageDateToFilter("");
                       setMileageStatusFilter(new Set());
                       setMileagePayrollFilter(new Set());
                     }}
@@ -3612,7 +3620,6 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                           {isMileageColVisible("contactNumber") && <th className="px-3 py-3 text-xs font-semibold text-slate-200 text-left">Contact Number</th>}
                           {isMileageColVisible("email") && <th className="px-3 py-3 text-xs font-semibold text-slate-200 text-left">Email</th>}
                           {isMileageColVisible("totalMileage") && <th className="px-3 py-3 text-xs font-semibold text-slate-200 text-left">Total Mileage</th>}
-                          {isMileageColVisible("googleMapLink") && <th className="px-3 py-3 text-xs font-semibold text-slate-200 text-left">Google Map Link</th>}
                           {isMileageColVisible("payroll") && <th className="px-3 py-3 text-xs font-semibold text-slate-200 text-left">Payroll</th>}
                           {isMileageColVisible("actions") && <th className="px-3 py-3 text-xs font-semibold text-slate-200 text-left">Actions</th>}
                         </tr>
@@ -3655,7 +3662,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                             {isMileageColVisible("ticketNo") && (
                             <td className="px-3 py-2.5 text-slate-300">
                               {entry.ticketNo ? (
-                                <Link to="/ticket/$ticketNo" params={{ ticketNo: entry.ticketNo }} className="font-mono text-blue-400 hover:text-blue-300 hover:underline">
+                                <Link to="/ticket/$ticketNo" params={{ ticketNo: entry.ticketNo }} target="_blank" rel="noreferrer" className="font-mono text-blue-400 hover:text-blue-300 hover:underline">
                                   {entry.ticketNo}
                                 </Link>
                               ) : (
@@ -3685,22 +3692,23 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                             {isMileageColVisible("address") && <td className="px-3 py-2.5 text-slate-300">{entry.address}</td>}
                             {isMileageColVisible("contactNumber") && <td className="px-3 py-2.5 text-slate-300">{entry.contactNumber || "—"}</td>}
                             {isMileageColVisible("email") && <td className="px-3 py-2.5 text-slate-300">{entry.email || "—"}</td>}
-                            {isMileageColVisible("totalMileage") && <td className="px-3 py-2.5 text-slate-300">{entry.totalMileage}</td>}
-                            {isMileageColVisible("googleMapLink") && (
-                            <td className="px-3 py-2.5">
-                              {entry.googleMapLink ? (
-                                <a href={entry.googleMapLink} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 underline">
-                                  Map link
-                                </a>
-                              ) : (
-                                <span className="text-slate-500">—</span>
+                            {isMileageColVisible("totalMileage") && (
+                            <td className="px-3 py-2.5 text-slate-300">
+                              {mileageEffectiveTotal(entry).toFixed(1)}
+                              {(entry.mileageOverride != null || entry.mileageAdjustment != null) && (
+                                <span
+                                  className="ml-1.5 text-[9px] px-1 py-0.5 rounded-full font-semibold uppercase tracking-wide bg-amber-500/20 text-amber-300"
+                                  title={`Adjusted from the calculated ${entry.totalMileage.toFixed(1)} mi by ${entry.adjustedByName || "someone"}${entry.adjustmentNote ? ` — "${entry.adjustmentNote}"` : ""}`}
+                                >
+                                  adj
+                                </span>
                               )}
                             </td>
                             )}
                             {isMileageColVisible("payroll") && (
                             <td className="px-3 py-2.5">
                               {(() => {
-                                const noPhotosHold = entry.source === "auto" && !!entry.ticketNo && mileageTicketHasPhotos.get(entry.ticketNo) === false;
+                                const noPhotosHold = mileageNoPhotosHold(entry);
                                 if (entry.payrollExcluded) {
                                   return (
                                     <span
@@ -3712,10 +3720,15 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                                   );
                                 }
                                 if (noPhotosHold) {
+                                  const ownTicketMissing = mileageTicketHasPhotos.get(entry.ticketNo as string) === false;
                                   return (
                                     <span
                                       className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold uppercase tracking-wide bg-red-500/20 text-red-300"
-                                      title="No photos uploaded for this ticket yet — switches to Included automatically once photos are added."
+                                      title={
+                                        ownTicketMissing
+                                          ? "No photos uploaded for this ticket yet — switches to Included automatically once photos are added."
+                                          : "Another ticket on this technician's route that day has no photos yet — the whole day's mileage holds until it's added."
+                                      }
                                     >
                                       On Hold
                                     </span>
@@ -3732,6 +3745,25 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                             {isMileageColVisible("actions") && (
                             <td className="px-3 py-2.5">
                               <div className="flex items-center gap-2">
+                                {entry.source === "auto" && entry.ticketId && (
+                                  <button
+                                    onClick={() => setMileageDayRouteKey(mileageDayKey(entry))}
+                                    title="View this day's route"
+                                    className="text-slate-400 hover:text-blue-300"
+                                  >
+                                    <RouteIcon className="h-3.5 w-3.5" />
+                                  </button>
+                                )}
+                                {entry.source === "auto" && entry.profileId && entry.ticketNo && mileageTicketHasPhotos.get(entry.ticketNo) === false && (
+                                  <button
+                                    onClick={() => handleSendMileageReminder(entry)}
+                                    disabled={sendingReminderId === entry.id}
+                                    title={reminderSentIds.has(entry.id) ? "Reminder sent" : `Remind ${mileageRowName(entry)} to upload photos for this ticket`}
+                                    className={`disabled:opacity-40 ${reminderSentIds.has(entry.id) ? "text-emerald-400" : "text-slate-400 hover:text-blue-300"}`}
+                                  >
+                                    {sendingReminderId === entry.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+                                  </button>
+                                )}
                                 <button
                                   onClick={() => handleTogglePayrollExclude(entry)}
                                   disabled={payrollExcludingId === entry.id}
@@ -4215,7 +4247,12 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
               const techEntries = mileageEntries
                 .filter((e) => mileageRowKey(e) === mileageTechDetailId)
                 .sort((a, b) => b.workDate.localeCompare(a.workDate));
-              const totalMiles = techEntries.reduce((s, e) => s + e.totalMileage, 0);
+              // Every ticket on the same day shares that day's route total —
+              // sum each distinct work_date once, not once per ticket, or a
+              // multi-ticket day gets counted several times over here.
+              const milesByDay = new Map<string, number>();
+              for (const e of techEntries) milesByDay.set(e.workDate, mileageEffectiveTotal(e));
+              const totalMiles = Array.from(milesByDay.values()).reduce((s, m) => s + m, 0);
               const detailName = techEntries[0] ? mileageRowName(techEntries[0]) : "Technician";
               return (
                 <>
@@ -4256,6 +4293,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                             <th className="px-2 py-1.5 text-right font-semibold text-slate-400">Mileage</th>
                             <th className="px-2 py-1.5 text-left font-semibold text-slate-400">Source</th>
                             <th className="px-2 py-1.5 text-left font-semibold text-slate-400">Map</th>
+                            <th className="px-2 py-1.5 text-left font-semibold text-slate-400">Route</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -4264,7 +4302,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                               <td className="px-2 py-1.5 text-slate-300 whitespace-nowrap">{entry.workDate}</td>
                               <td className="px-2 py-1.5">
                                 {entry.ticketNo ? (
-                                  <Link to="/ticket/$ticketNo" params={{ ticketNo: entry.ticketNo }} className="font-mono text-blue-400 hover:text-blue-300 hover:underline">
+                                  <Link to="/ticket/$ticketNo" params={{ ticketNo: entry.ticketNo }} target="_blank" rel="noreferrer" className="font-mono text-blue-400 hover:text-blue-300 hover:underline">
                                     {entry.ticketNo}
                                   </Link>
                                 ) : (
@@ -4274,7 +4312,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                               <td className="px-2 py-1.5" style={entry.ticketStatus ? mileageStatusStyle(entry.ticketStatus, repairStatusRows) : { color: "#64748b" }}>{entry.ticketStatus || "—"}</td>
                               <td className="px-2 py-1.5 text-slate-300">{entry.branch}</td>
                               <td className="px-2 py-1.5 text-slate-300">{entry.address}</td>
-                              <td className="px-2 py-1.5 text-right text-slate-300">{entry.totalMileage}</td>
+                              <td className="px-2 py-1.5 text-right text-slate-300">{mileageEffectiveTotal(entry).toFixed(1)}</td>
                               <td className="px-2 py-1.5">
                                 <span
                                   className={`text-[10px] px-1.5 py-0.5 rounded-full font-semibold uppercase tracking-wide ${
@@ -4293,6 +4331,19 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                                   <span className="text-slate-500">—</span>
                                 )}
                               </td>
+                              <td className="px-2 py-1.5">
+                                {entry.source === "auto" && entry.ticketId ? (
+                                  <button
+                                    onClick={() => setMileageDayRouteKey(mileageDayKey(entry))}
+                                    title="View this day's route"
+                                    className="text-slate-400 hover:text-blue-300"
+                                  >
+                                    <RouteIcon className="h-3.5 w-3.5" />
+                                  </button>
+                                ) : (
+                                  <span className="text-slate-500">—</span>
+                                )}
+                              </td>
                             </tr>
                           ))}
                         </tbody>
@@ -4305,6 +4356,27 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
           </div>
         </div>
       )}
+
+      {mileageDayRouteKey && (() => {
+        const dayEntries = mileageEntries.filter((e) => mileageDayKey(e) === mileageDayRouteKey);
+        if (dayEntries.length === 0) return null;
+        const first = dayEntries[0];
+        return (
+          <MileageDayRouteModal
+            technicianName={mileageRowName(first)}
+            workDate={first.workDate}
+            branch={first.branch}
+            homeAddress={first.address && first.address !== "(no address on file)" ? first.address : undefined}
+            entries={dayEntries}
+            myProfileId={myProfileId}
+            actorName={displayName || email || "Admin"}
+            onClose={() => setMileageDayRouteKey(null)}
+            onSaved={() => {
+              void getMileageEntries().then(setMileageEntries);
+            }}
+          />
+        );
+      })()}
 
       {notifyOnHoldModalOpen && (
         <div
@@ -4406,22 +4478,58 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                   ) : (
                     <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                       {photos.map((photo) => (
-                        <a
+                        <button
                           key={photo.fullPath}
-                          href={photo.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
+                          type="button"
+                          onClick={() => setMileagePhotoLightbox(photo)}
                           title={photo.uploadedBy ? `Uploaded by ${photo.uploadedBy}` : undefined}
-                          className="block overflow-hidden rounded-lg border border-white/10 bg-black/20 hover:border-blue-400/50 transition"
+                          className="block overflow-hidden rounded-lg border border-white/10 bg-black/20 hover:border-blue-400/50 transition text-left"
                         >
                           <img src={photo.url} alt="" className="h-32 w-full object-cover" loading="lazy" />
-                        </a>
+                          {photo.uploadedAt && (
+                            <div className="px-2 py-1 text-[10px] text-slate-400">
+                              {new Date(photo.uploadedAt).toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" })}
+                            </div>
+                          )}
+                        </button>
                       ))}
                     </div>
                   )}
                 </>
               );
             })()}
+          </div>
+        </div>
+      )}
+
+      {mileagePhotoLightbox && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 p-4"
+          onClick={() => setMileagePhotoLightbox(null)}
+        >
+          <div className="flex h-[90vh] w-full max-w-4xl flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-2 flex items-center justify-between gap-3 text-xs text-slate-300">
+              <span>
+                {mileagePhotoLightbox.uploadedAt &&
+                  `Uploaded ${new Date(mileagePhotoLightbox.uploadedAt).toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" })}`}
+                {mileagePhotoLightbox.uploadedBy && ` · by ${mileagePhotoLightbox.uploadedBy}`}
+              </span>
+              <button
+                className="rounded-md border border-white/15 bg-slate-800/70 p-1.5 text-slate-300 hover:bg-slate-700"
+                onClick={() => setMileagePhotoLightbox(null)}
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            {/* w-full + flex-1 (not w-auto) so a small source image scales UP
+                to fill the available space too, not just shrinks large ones
+                down — object-contain still preserves its aspect ratio either
+                way. */}
+            <img
+              src={mileagePhotoLightbox.url}
+              alt=""
+              className="w-full flex-1 min-h-0 rounded-lg border border-white/10 object-contain"
+            />
           </div>
         </div>
       )}

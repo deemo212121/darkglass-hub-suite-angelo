@@ -146,7 +146,11 @@ export function PartManagementPage({ mod, sub }: { mod: ModuleDef; sub: SubModul
 
   const { repairValues, partValues } = useMemo(() => defaultFilterOptions(rows), [rows]);
 
-  const allLocSelected = locations.length === 0 || locations.length === LOCATIONS.length;
+  // Empty means NOTHING selected (see the comment above locations'
+  // useState), not "everything" — including it here made toggleAllLocations
+  // a no-op on first click: clicking "All Branches" from the empty initial
+  // state saw allLocSelected already true and reset locations back to [].
+  const allLocSelected = locations.length === LOCATIONS.length;
   const toggleLocation = (l: string) =>
     setLocations((prev) => (prev.includes(l) ? prev.filter((x) => x !== l) : [...prev, l]));
   const toggleAllLocations = () => setLocations(allLocSelected ? [] : [...LOCATIONS]);

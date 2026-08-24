@@ -134,9 +134,13 @@ function normalizeRole(role: string | null | undefined): string {
   return String(role ?? "").trim().toUpperCase().replace(/\s+/g, "_");
 }
 
-function isCsrRole(role: string | null | undefined): boolean {
-  const n = normalizeRole(role);
-  return n === "CSR" || n.startsWith("CSR");
+// Held roles pile up — mirrors resolveTeamLeadOrManager's CSR branch in
+// src/lib/notifyRouting.ts, which checks [profile.role, ...(profile.extra_roles ?? [])].
+function isCsrRole(role: string | null | undefined, extraRoles?: string[] | null): boolean {
+  return [role, ...(extraRoles ?? [])].some((r) => {
+    const n = normalizeRole(r);
+    return n === "CSR" || n.startsWith("CSR");
+  });
 }
 
 // Technicians are commission/piece-rate (paid per completed repair ticket),
@@ -270,7 +274,7 @@ export async function runAttendanceAlertCheck(
   });
 
   function resolveManagerId(p: ServerProfile): string | null {
-    if (isCsrRole(p.role)) {
+    if (isCsrRole(p.role, p.extra_roles)) {
       const leaderId = resolveCsrLeaderId(p.id);
       if (leaderId) return leaderId;
     }

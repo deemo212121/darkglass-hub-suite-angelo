@@ -1730,16 +1730,22 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // covered by COE_OFFICE_USE_ROLES's fixed BizOps-only list above.
   const isCoeOfficeUseEligible = (role: string) => role.includes("MANAGER") || role === "ADMIN" || role === "SUPERADMIN" || role === "HR" || role.includes("BIZOPS");
   const [coeOfficeUseNameDropdownOpen, setCoeOfficeUseNameDropdownOpen] = useState(false);
+  // Held roles pile up: a secondary Manager/Admin/HR/BizOps role makes
+  // someone just as eligible a signer as if it were their primary position.
   const filteredCoeOfficeUseNameOptions = (query: string) => {
     const q = query.trim().toLowerCase();
-    const candidates = employees.filter((e) => isCoeOfficeUseEligible(normalizeRole(e.position))).sort((a, b) => a.name.localeCompare(b.name));
+    const candidates = employees
+      .filter((e) => [e.position, ...e.extraRoles].some((r) => isCoeOfficeUseEligible(normalizeRole(r))))
+      .sort((a, b) => a.name.localeCompare(b.name));
     return q ? candidates.filter((e) => e.name.toLowerCase().includes(q)) : candidates;
   };
 
   const [coeAuthorizedRepDropdownOpen, setCoeAuthorizedRepDropdownOpen] = useState(false);
   const filteredCoeAuthorizedRepOptions = (query: string) => {
     const q = query.trim().toLowerCase();
-    const candidates = employees.filter((e) => COE_OFFICE_USE_ROLES.has(normalizeRole(e.position))).sort((a, b) => a.name.localeCompare(b.name));
+    const candidates = employees
+      .filter((e) => [e.position, ...e.extraRoles].some((r) => COE_OFFICE_USE_ROLES.has(normalizeRole(r))))
+      .sort((a, b) => a.name.localeCompare(b.name));
     return q ? candidates.filter((e) => e.name.toLowerCase().includes(q)) : candidates;
   };
 
@@ -2252,6 +2258,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [w8PreviewPdfUrl, setW8PreviewPdfUrl] = useState<string | null>(null);
   const [w8DocPreview, setW8DocPreview] = useState<SignableDocument | null>(null);
   const [w8PreviewLoading, setW8PreviewLoading] = useState(false);
+  const [w8SendMode, setW8SendMode] = useState<"teammate" | "external">("teammate");
   const [w8ExternalName, setW8ExternalName] = useState("");
   const [w8SentLink, setW8SentLink] = useState<{ link: string; recipientName: string } | null>(null);
   const [w8SentLinkCopied, setW8SentLinkCopied] = useState(false);
@@ -2463,6 +2470,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [w4PreviewPdfUrl, setW4PreviewPdfUrl] = useState<string | null>(null);
   const [w4PreviewLoading, setW4PreviewLoading] = useState(false);
   const [w4DocPreview, setW4DocPreview] = useState<SignableDocument | null>(null);
+  const [w4SendMode, setW4SendMode] = useState<"teammate" | "external">("teammate");
   const [w4ExternalName, setW4ExternalName] = useState("");
   const [w4SentLink, setW4SentLink] = useState<{ link: string; recipientName: string } | null>(null);
   const [w4SentLinkCopied, setW4SentLinkCopied] = useState(false);
@@ -2694,6 +2702,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [w9PreviewPdfUrl, setW9PreviewPdfUrl] = useState<string | null>(null);
   const [w9PreviewLoading, setW9PreviewLoading] = useState(false);
   const [w9DocPreview, setW9DocPreview] = useState<SignableDocument | null>(null);
+  const [w9SendMode, setW9SendMode] = useState<"teammate" | "external">("teammate");
   const [w9ExternalName, setW9ExternalName] = useState("");
   const [w9SentLink, setW9SentLink] = useState<{ link: string; recipientName: string } | null>(null);
   const [w9SentLinkCopied, setW9SentLinkCopied] = useState(false);
@@ -2892,6 +2901,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [w4rPreviewPdfUrl, setW4rPreviewPdfUrl] = useState<string | null>(null);
   const [w4rPreviewLoading, setW4rPreviewLoading] = useState(false);
   const [w4rDocPreview, setW4rDocPreview] = useState<SignableDocument | null>(null);
+  const [w4rSendMode, setW4rSendMode] = useState<"teammate" | "external">("teammate");
   const [w4rExternalName, setW4rExternalName] = useState("");
   const [w4rSentLink, setW4rSentLink] = useState<{ link: string; recipientName: string } | null>(null);
   const [w4rSentLinkCopied, setW4rSentLinkCopied] = useState(false);
@@ -2920,6 +2930,28 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       setW4rPreviewPdfUrl(null);
       return;
     }
+    setW4rSendError(null);
+    setW4rPreviewOpen(true);
+    setW4rPreviewLoading(true);
+    try {
+      const recipientName = employees.find((e) => e.id === w4rRecipientId)?.name || "";
+      const pdfBytes = await fillW4RPdf(buildW4RPreviewData(recipientName, ""));
+      const url = URL.createObjectURL(new Blob([pdfBytes as unknown as BlobPart], { type: "application/pdf" }));
+      setW4rPreviewPdfUrl(url);
+    } catch (err) {
+      setW4rSendError(err instanceof Error ? err.message : "Failed to build preview.");
+    } finally {
+      setW4rPreviewLoading(false);
+    }
+  };
+
+  const closeW4RPreview = () => {
+    setW4rPreviewOpen(false);
+    if (w4rPreviewPdfUrl) URL.revokeObjectURL(w4rPreviewPdfUrl);
+    setW4rPreviewPdfUrl(null);
+  };
+
+  const handleOpenW4RPreview = async () => {
     setW4rSendError(null);
     setW4rPreviewOpen(true);
     setW4rPreviewLoading(true);
@@ -2964,6 +2996,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
       void logActivity({ action: "w4r_form_sent", targetType: "employee", targetId: recipient.id, targetLabel: recipient.name });
 
+      closeW4RPreview();
       setW4rRecipientId("");
       setW4rRecipientSearch("");
       await loadSentW4RForms();
@@ -3135,6 +3168,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [i9ActionBusyId, setI9ActionBusyId] = useState<string | null>(null);
   const [i9ActionError, setI9ActionError] = useState<string | null>(null);
   const [i9DocPreview, setI9DocPreview] = useState<SignableDocument | null>(null);
+  const [i9SendMode, setI9SendMode] = useState<"teammate" | "external">("teammate");
   const [i9ExternalName, setI9ExternalName] = useState("");
   const [i9SentLink, setI9SentLink] = useState<{ link: string; recipientName: string } | null>(null);
   const [i9SentLinkCopied, setI9SentLinkCopied] = useState(false);
@@ -3211,6 +3245,29 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
 
+  const closeI9Preview = () => {
+    setI9PreviewOpen(false);
+    if (i9PreviewPdfUrl) URL.revokeObjectURL(i9PreviewPdfUrl);
+    setI9PreviewPdfUrl(null);
+  };
+
+  /** Renders the SAME real official PDF (fillI9Pdf, no HTML redraw) with a blank preview fill, so what HR previews is exactly what gets generated when the recipient actually submits Section 1. */
+  const handleOpenI9Preview = async () => {
+    setI9SendError(null);
+    setI9PreviewOpen(true);
+    setI9PreviewLoading(true);
+    try {
+      const recipientName = employees.find((e) => e.id === i9RecipientId)?.name || "";
+      const pdfBytes = await fillI9Pdf(buildI9PreviewData(recipientName));
+      const url = URL.createObjectURL(new Blob([pdfBytes as unknown as BlobPart], { type: "application/pdf" }));
+      setI9PreviewPdfUrl(url);
+    } catch (err) {
+      setI9SendError(err instanceof Error ? err.message : "Failed to build preview.");
+    } finally {
+      setI9PreviewLoading(false);
+    }
+  };
+
   const handleSendI9 = async () => {
     if (!i9RecipientId || !uid) return;
     setI9Sending(true);
@@ -3240,6 +3297,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
       void logActivity({ action: "i9_form_sent", targetType: "employee", targetId: recipient.id, targetLabel: recipient.name });
 
+      closeI9Preview();
       setI9RecipientId("");
       setI9RecipientSearch("");
       await loadSentI9Forms();
@@ -3323,6 +3381,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [wageAckPreviewExpanded, setWageAckPreviewExpanded] = useState(false);
   const [wageAckPreviewPdfUrl, setWageAckPreviewPdfUrl] = useState<string | null>(null);
   const [wageAckPreviewLoading, setWageAckPreviewLoading] = useState(false);
+  const [wageAckSendMode, setWageAckSendMode] = useState<"teammate" | "external">("teammate");
   const [wageAckExternalName, setWageAckExternalName] = useState("");
   const [wageAckSentLink, setWageAckSentLink] = useState<{ link: string; recipientName: string } | null>(null);
   const [wageAckSentLinkCopied, setWageAckSentLinkCopied] = useState(false);
@@ -3610,6 +3669,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [mealRestBreakPreviewExpanded, setMealRestBreakPreviewExpanded] = useState(false);
   const [mealRestBreakPreviewPdfUrl, setMealRestBreakPreviewPdfUrl] = useState<string | null>(null);
   const [mealRestBreakPreviewLoading, setMealRestBreakPreviewLoading] = useState(false);
+  const [mealRestBreakSendMode, setMealRestBreakSendMode] = useState<"teammate" | "external">("teammate");
   const [mealRestBreakExternalName, setMealRestBreakExternalName] = useState("");
   const [mealRestBreakSentLink, setMealRestBreakSentLink] = useState<{ link: string; recipientName: string } | null>(null);
   const [mealRestBreakSentLinkCopied, setMealRestBreakSentLinkCopied] = useState(false);
@@ -3897,6 +3957,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [carIqPreviewOpen, setCarIqPreviewOpen] = useState(false);
   const [carIqPreviewPdfUrl, setCarIqPreviewPdfUrl] = useState<string | null>(null);
   const [carIqPreviewLoading, setCarIqPreviewLoading] = useState(false);
+  const [carIqSendMode, setCarIqSendMode] = useState<"teammate" | "external">("teammate");
   const [carIqExternalName, setCarIqExternalName] = useState("");
   const [carIqSentLink, setCarIqSentLink] = useState<{ link: string; recipientName: string } | null>(null);
   const [carIqSentLinkCopied, setCarIqSentLinkCopied] = useState(false);
@@ -3942,6 +4003,28 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
 
+  const closeCarIqPreview = () => {
+    setCarIqPreviewOpen(false);
+    if (carIqPreviewPdfUrl) URL.revokeObjectURL(carIqPreviewPdfUrl);
+    setCarIqPreviewPdfUrl(null);
+  };
+
+  const handleOpenCarIqPreview = async () => {
+    setCarIqSendError(null);
+    setCarIqPreviewOpen(true);
+    setCarIqPreviewLoading(true);
+    try {
+      const recipientName = employees.find((e) => e.id === carIqRecipientId)?.name || "";
+      const pdfBytes = await fillCarIqAgreementPdf(buildCarIqPreviewData(recipientName));
+      const url = URL.createObjectURL(new Blob([pdfBytes as unknown as BlobPart], { type: "application/pdf" }));
+      setCarIqPreviewPdfUrl(url);
+    } catch (err) {
+      setCarIqSendError(err instanceof Error ? err.message : "Failed to build preview.");
+    } finally {
+      setCarIqPreviewLoading(false);
+    }
+  };
+
   const handleSendCarIqAgreement = async () => {
     if (!carIqRecipientId || !uid) return;
     setCarIqSending(true);
@@ -3971,6 +4054,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
       void logActivity({ action: "car_iq_agreement_sent", targetType: "employee", targetId: recipient.id, targetLabel: recipient.name });
 
+      closeCarIqPreview();
       setCarIqRecipientId("");
       setCarIqRecipientSearch("");
       await loadSentCarIqAgreementForms();
@@ -4088,6 +4172,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [vehiclePreviewOpen, setVehiclePreviewOpen] = useState(false);
   const [vehiclePreviewPdfUrl, setVehiclePreviewPdfUrl] = useState<string | null>(null);
   const [vehiclePreviewLoading, setVehiclePreviewLoading] = useState(false);
+  const [vehicleSendMode, setVehicleSendMode] = useState<"teammate" | "external">("teammate");
   const [vehicleExternalName, setVehicleExternalName] = useState("");
   const [vehicleSentLink, setVehicleSentLink] = useState<{ link: string; recipientName: string } | null>(null);
   const [vehicleSentLinkCopied, setVehicleSentLinkCopied] = useState(false);
@@ -4132,6 +4217,28 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
 
+  const closeVehiclePreview = () => {
+    setVehiclePreviewOpen(false);
+    if (vehiclePreviewPdfUrl) URL.revokeObjectURL(vehiclePreviewPdfUrl);
+    setVehiclePreviewPdfUrl(null);
+  };
+
+  const handleOpenVehiclePreview = async () => {
+    setVehicleSendError(null);
+    setVehiclePreviewOpen(true);
+    setVehiclePreviewLoading(true);
+    try {
+      const recipientName = employees.find((e) => e.id === vehicleRecipientId)?.name || "";
+      const pdfBytes = await fillVehicleAgreementPdf(buildVehiclePreviewData(recipientName));
+      const url = URL.createObjectURL(new Blob([pdfBytes as unknown as BlobPart], { type: "application/pdf" }));
+      setVehiclePreviewPdfUrl(url);
+    } catch (err) {
+      setVehicleSendError(err instanceof Error ? err.message : "Failed to build preview.");
+    } finally {
+      setVehiclePreviewLoading(false);
+    }
+  };
+
   const handleSendVehicleAgreement = async () => {
     if (!vehicleRecipientId || !uid) return;
     setVehicleSending(true);
@@ -4161,6 +4268,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
       void logActivity({ action: "vehicle_agreement_sent", targetType: "employee", targetId: recipient.id, targetLabel: recipient.name });
 
+      closeVehiclePreview();
       setVehicleRecipientId("");
       setVehicleRecipientSearch("");
       await loadSentVehicleAgreementForms();
@@ -4278,6 +4386,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [confidentialityPreviewOpen, setConfidentialityPreviewOpen] = useState(false);
   const [confidentialityPreviewPdfUrl, setConfidentialityPreviewPdfUrl] = useState<string | null>(null);
   const [confidentialityPreviewLoading, setConfidentialityPreviewLoading] = useState(false);
+  const [confidentialitySendMode, setConfidentialitySendMode] = useState<"teammate" | "external">("teammate");
   const [confidentialityExternalName, setConfidentialityExternalName] = useState("");
   const [confidentialitySentLink, setConfidentialitySentLink] = useState<{ link: string; recipientName: string } | null>(null);
   const [confidentialitySentLinkCopied, setConfidentialitySentLinkCopied] = useState(false);
@@ -4306,6 +4415,28 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       setConfidentialityPreviewPdfUrl(null);
       return;
     }
+    setConfidentialitySendError(null);
+    setConfidentialityPreviewOpen(true);
+    setConfidentialityPreviewLoading(true);
+    try {
+      const recipientName = employees.find((e) => e.id === confidentialityRecipientId)?.name || "";
+      const pdfBytes = await fillEmployeeConfidentialityPdf(buildConfidentialityPreviewData(recipientName));
+      const url = URL.createObjectURL(new Blob([pdfBytes as unknown as BlobPart], { type: "application/pdf" }));
+      setConfidentialityPreviewPdfUrl(url);
+    } catch (err) {
+      setConfidentialitySendError(err instanceof Error ? err.message : "Failed to build preview.");
+    } finally {
+      setConfidentialityPreviewLoading(false);
+    }
+  };
+
+  const closeConfidentialityPreview = () => {
+    setConfidentialityPreviewOpen(false);
+    if (confidentialityPreviewPdfUrl) URL.revokeObjectURL(confidentialityPreviewPdfUrl);
+    setConfidentialityPreviewPdfUrl(null);
+  };
+
+  const handleOpenConfidentialityPreview = async () => {
     setConfidentialitySendError(null);
     setConfidentialityPreviewOpen(true);
     setConfidentialityPreviewLoading(true);
@@ -4350,6 +4481,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
       void logActivity({ action: "employee_confidentiality_sent", targetType: "employee", targetId: recipient.id, targetLabel: recipient.name });
 
+      closeConfidentialityPreview();
       setConfidentialityRecipientId("");
       setConfidentialityRecipientSearch("");
       await loadSentEmployeeConfidentialityForms();
@@ -4469,6 +4601,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [ptoAckPreviewExpanded, setPtoAckPreviewExpanded] = useState(false);
   const [ptoAckPreviewPdfUrl, setPtoAckPreviewPdfUrl] = useState<string | null>(null);
   const [ptoAckPreviewLoading, setPtoAckPreviewLoading] = useState(false);
+  const [ptoAckSendMode, setPtoAckSendMode] = useState<"teammate" | "external">("teammate");
   const [ptoAckExternalName, setPtoAckExternalName] = useState("");
   const [ptoAckSentLink, setPtoAckSentLink] = useState<{ link: string; recipientName: string } | null>(null);
   const [ptoAckSentLinkCopied, setPtoAckSentLinkCopied] = useState(false);
@@ -8568,8 +8701,13 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // Manager, CSR Manager, Technician Manager, etc.) — matches the same
   // substring convention already used elsewhere in this file/app rather
   // than a hardcoded list, so it stays correct as new manager roles appear.
+  // Held roles pile up: a secondary manager role counts the same as
+  // holding it as the primary position — position is display/title only.
   const managerRecipients = useMemo(
-    () => employees.filter((e) => e.status === "active" && normalizeRole(e.position).includes("MANAGER")).sort((a, b) => a.name.localeCompare(b.name)),
+    () =>
+      employees
+        .filter((e) => e.status === "active" && [e.position, ...e.extraRoles].some((r) => normalizeRole(r).includes("MANAGER")))
+        .sort((a, b) => a.name.localeCompare(b.name)),
     [employees]
   );
   const [forwardCvDialog, setForwardCvDialog] = useState<Candidate | null>(null);
@@ -17077,7 +17215,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         </div>
       )}
 
-
       {/* W-4R Sent History — PDF preview, same inline-frame pattern used for W-8BEN/W-4/W-9 Sent History */}
       {w4rDocPreview && (
         <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => setW4rDocPreview(null)}>
@@ -17104,7 +17241,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         </div>
       )}
 
-
       {/* Car IQ Technician Agreement Sent History — PDF preview, same inline-frame pattern used for W-8BEN/W-4/W-9/W-4R Sent History */}
       {carIqDocPreview && (
         <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => setCarIqDocPreview(null)}>
@@ -17128,7 +17264,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         </div>
       )}
 
-
       {/* Company Vehicle Use Agreement Sent History — PDF preview, same inline-frame pattern used for W-8BEN/W-4/W-9/W-4R/Car IQ Sent History */}
       {vehicleDocPreview && (
         <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => setVehicleDocPreview(null)}>
@@ -17151,7 +17286,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           </div>
         </div>
       )}
-
 
       {/* Employee Confidentiality Agreement Sent History — PDF preview, same inline-frame pattern used for W-8BEN/W-4/W-9/W-4R/Car IQ/Vehicle Agreement Sent History */}
       {confidentialityDocPreview && (
@@ -17630,7 +17764,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           </div>
         </div>
       )}
-
 
       {/* I-9 Sent History PDF preview — same inline-frame pattern used for W-8BEN/W-4/W-9 Sent History */}
       {i9DocPreview && (

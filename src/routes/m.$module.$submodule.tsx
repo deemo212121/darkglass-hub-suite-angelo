@@ -5,6 +5,7 @@ import { OverallStatusPage } from "@/components/OverallStatusPage";
 import { RepairForecastPage } from "@/components/RepairForecastPage";
 import { DailyActivityPage } from "@/components/DailyActivityPage";
 import { TriageDashboardPage } from "@/components/TriageDashboardPage";
+import { UniversalActivityLogPage } from "@/components/UniversalActivityLogPage";
 import { useAuth } from "@/lib/auth";
 import { getModule, getSubModule } from "@/lib/modules";
 import { GenericModulePage } from "@/components/GenericModulePage";
@@ -73,6 +74,7 @@ import { TodoListPage } from "@/components/TodoListPage";
 import { AdminUserManagementPage } from "@/components/AdminUserManagementPage";
 import { AccountManagementPage } from "@/components/AccountManagementPage";
 import { LocationManagementPage } from "@/components/LocationManagementPage";
+import { TechnicianWhereaboutsPage } from "@/components/TechnicianWhereaboutsPage";
 import { AddBranchPage } from "@/components/AddBranchPage";
 import { canAccessUserManagement, getUserManagementRecord, canAccessAdminModule } from "@/lib/user-management";
 import { isSubmoduleAllowed, isCompanySuperAdminRole, isCsrRestrictedRole } from "@/lib/roleLabels";
@@ -584,6 +586,10 @@ function SubModule() {
         ? <AccountManagementPage mod={mod} sub={sub} />
         : sub.custom === "location-management"
         ? <LocationManagementPage mod={mod} sub={sub} />
+        : (sub as any).custom === "technician-whereabouts"
+        ? <TechnicianWhereaboutsPage mod={mod} sub={sub} />
+        : (sub as any).custom === "universal-activity-log"
+        ? <UniversalActivityLogPage mod={mod} sub={sub} />
         : (sub as any).custom === "add-branch"
         ? <AddBranchPage mod={mod} sub={sub} />
         : <GenericModulePage mod={mod} sub={sub} />}

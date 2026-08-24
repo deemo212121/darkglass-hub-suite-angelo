@@ -82,8 +82,15 @@ export function ManageWorkingHoursModal({ branches, onClose, onApplied, changedB
     setSelectedBranches(allBranchesSelected ? new Set() : new Set(branches));
   };
 
+  // Held roles pile up: someone holding roleCode only as a secondary role
+  // is just as eligible for that role's bulk schedule as a primary holder.
   const employeesFor = (roleCode: string) =>
-    users.filter((u) => u.assigned_branch && selectedBranches.has(u.assigned_branch) && normalizeRole(u.role) === roleCode);
+    users.filter(
+      (u) =>
+        u.assigned_branch &&
+        selectedBranches.has(u.assigned_branch) &&
+        [u.role, ...(u.extra_roles ?? [])].some((r) => normalizeRole(r) === roleCode)
+    );
 
   // Multiple branches can already have different saved hours for this role —
   // prefill from whichever selected branch has a template first, just as a
