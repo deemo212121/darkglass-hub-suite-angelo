@@ -27,15 +27,10 @@
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import type { CarIqAgreementFormData } from "./carIqAgreementFormTemplate";
 import { addLogoHeader } from "./pdfLogoHeader";
+import { dateBlankPositions, fmtDateParts } from "./pdfDateBlankSplit";
 
-const fmtDate = (v: string) => {
-  if (!v) return "";
-  const d = new Date(v);
-  if (isNaN(d.getTime())) return v;
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${mm}/${dd}/${d.getFullYear()}`;
-};
+/** x position of each of the three date blanks on the "Today's Date:" line (y=285.94) — see pdfDateBlankSplit.ts; the label starts at x=140.93. */
+const CAR_IQ_DATE_X = dateBlankPositions(140.93);
 
 /** Where the redrawn "Employee Signature:" label sits on page 1, and where the signature image gets drawn beside it — exported so the fill pages' overlay rect can match exactly. */
 export const CAR_IQ_SIGNATURE_LABEL_Y = 225;
@@ -61,7 +56,7 @@ export async function loadBlankCarIqAgreementBytes(): Promise<Uint8Array> {
   const page1 = pdfDoc.getPage(0);
   page1.drawRectangle({ x: 0, y: 0, width: 612, height: 253, color: rgb(1, 1, 1) });
   page1.drawText("Employee Signature:", { x: 72.024, y: CAR_IQ_SIGNATURE_LABEL_Y, size: 12, font: boldFont, color: rgb(0, 0, 0) });
-  page1.drawRectangle({ x: 108, y: 356, width: 60, height: 18, color: rgb(1, 1, 1) });
+  page1.drawRectangle({ x: 108, y: 353, width: 220, height: 22, color: rgb(1, 1, 1) });
   page1.drawRectangle({ x: 112, y: 359, width: 12, height: 12, borderWidth: 1, borderColor: rgb(0, 0, 0) });
   pdfDoc.removePage(1);
   await addLogoHeader(pdfDoc);
@@ -81,7 +76,10 @@ export async function fillCarIqAgreementPdf(data: CarIqAgreementFormData, signat
   draw(page1, data.firstName, 135.5, 310.9);
   draw(page1, data.lastName, 321.3, 310.9);
   draw(page1, data.branch, 118, 264);
-  draw(page1, fmtDate(data.dateSigned), 145, 289, 9);
+  const { mm, dd, yyyy } = fmtDateParts(data.dateSigned);
+  draw(page1, mm, CAR_IQ_DATE_X.mm, 289, 9);
+  draw(page1, dd, CAR_IQ_DATE_X.dd, 289, 9);
+  draw(page1, yyyy, CAR_IQ_DATE_X.yyyy, 289, 9);
   if (data.agreed) draw(page1, "X", 115, 362, 10);
 
   if (signatureBytes) {

@@ -21,6 +21,7 @@ import { getSignableDocument, signDocument, type SignableDocument } from "@/lib/
 import { uploadSignableDocumentSignature, uploadCarIqAgreementForm } from "@/lib/firebase/storage";
 import { fillCarIqAgreementPdf, loadBlankCarIqAgreementBytes } from "@/lib/carIqAgreementPdfFill";
 import { CAR_IQ_BRANCHES, type CarIqAgreementFormData } from "@/lib/carIqAgreementFormTemplate";
+import { dateBlankPositions } from "@/lib/pdfDateBlankSplit";
 import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
 import { logActivity } from "@/lib/supabase/hrActivityLog";
 import { getHrNotificationSettings } from "@/lib/supabase/companySettings";
@@ -39,17 +40,31 @@ const PAGE_HEIGHT = 792;
 // see carIqAgreementPdfFill.ts's header comment for how the merged
 // "First Name: ___ Last Name: ___" line was split. This PDF has no real
 // AcroForm fields at all.
+// The "Today's Date:" line is one source-PDF text run with three separate
+// blanks ("_____ / _____ / __________ (MM/DD/YYYY)"), not one blank for
+// the whole date — carIqAgreementPdfFill.ts's CAR_IQ_DATE_X computes the
+// same split for the final PDF; DATE_X mirrors it here so the live
+// overlay lines up with the exact same blanks instead of one date string
+// overlapping all three.
+const DATE_X = dateBlankPositions(140.93);
+
 const PAGE1_RECT = {
   firstName: { x: 132.5, y: 307.9, w: 123.4, h: 14 },
   lastName: { x: 318.3, y: 307.9, w: 123.4, h: 14 },
   branch: { x: 116, y: 261, w: 200, h: 14 },
-  dateSigned: { x: 141, y: 286, w: 170, h: 13 },
+  dateSignedMM: { x: DATE_X.mm, y: 286, w: 30, h: 13 },
+  dateSignedDD: { x: DATE_X.dd, y: 286, w: 30, h: 13 },
+  dateSignedYYYY: { x: DATE_X.yyyy, y: 286, w: 50, h: 13 },
   agreeCheckbox: { x: 112, y: 359, w: 12, h: 12 },
   // "Employee Signature:" was moved up onto this page — see carIqAgreementPdfFill.ts's loadBlankCarIqAgreementBytes.
   signature: { x: 180, y: 219, w: 280, h: 24 },
 } as const;
 
-const fmtDateSigned = (d: Date) => `${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getDate()).padStart(2, "0")}/${d.getFullYear()}`;
+const fmtDateSignedParts = (d: Date) => ({
+  mm: String(d.getMonth() + 1).padStart(2, "0"),
+  dd: String(d.getDate()).padStart(2, "0"),
+  yyyy: String(d.getFullYear()),
+});
 
 const BLANK_FORM: CarIqAgreementFormData = {
   employeeId: "",
@@ -266,6 +281,7 @@ export function FillCarIqAgreementPage({ docId }: Props) {
 
   const overlayInputCls = "bg-blue-50/60 border border-blue-300/70 rounded-[2px] outline-none p-0 font-bold font-sans text-[#00008B] focus:bg-blue-100/80 focus:border-blue-400";
   const checkboxCls = "border border-black/60 bg-blue-50/60 flex items-center justify-center leading-none text-[#00008B] font-bold hover:bg-blue-100/80";
+  const todayParts = fmtDateSignedParts(new Date());
 
   return (
     <div className="min-h-screen bg-background">
@@ -332,9 +348,9 @@ export function FillCarIqAgreementPage({ docId }: Props) {
                         onChange={(e) => updateField("lastName", e.target.value)}
                       />
 
-                      <div style={overlayStyle(PAGE1_RECT.dateSigned)} className="flex items-center font-bold text-[#00008B]">
-                        {fmtDateSigned(new Date())}
-                      </div>
+                      <div style={overlayStyle(PAGE1_RECT.dateSignedMM)} className="flex items-center font-bold text-[#00008B]">{todayParts.mm}</div>
+                      <div style={overlayStyle(PAGE1_RECT.dateSignedDD)} className="flex items-center font-bold text-[#00008B]">{todayParts.dd}</div>
+                      <div style={overlayStyle(PAGE1_RECT.dateSignedYYYY)} className="flex items-center font-bold text-[#00008B]">{todayParts.yyyy}</div>
 
                       <select
                         style={overlayStyle(PAGE1_RECT.branch)}

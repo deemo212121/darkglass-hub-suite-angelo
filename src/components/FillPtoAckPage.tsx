@@ -26,6 +26,7 @@ import { getSignableDocument, signDocument, type SignableDocument } from "@/lib/
 import { uploadSignableDocumentSignature, uploadPtoAckForm } from "@/lib/firebase/storage";
 import { fillPtoAckPdf, loadBlankPtoAckBytes } from "@/lib/ptoAckPdfFill";
 import { PTO_ACK_BRANCHES, type PtoAckFormData } from "@/lib/ptoAckFormTemplate";
+import { dateBlankPositions } from "@/lib/pdfDateBlankSplit";
 import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
 import { logActivity } from "@/lib/supabase/hrActivityLog";
 import { getHrNotificationSettings } from "@/lib/supabase/companySettings";
@@ -44,6 +45,8 @@ const PAGE_HEIGHT = 792;
 // on src/assets/EMPLOYEE PAID TIME OFF.pdf — the exact numbers
 // ptoAckPdfFill.ts's draw coordinates were derived from. This PDF has no
 // real AcroForm fields at all.
+const DATE_X = dateBlankPositions(101.57);
+
 const PAGE1_RECT = {
   firstName: { x: 218, y: 325, w: 99, h: 14 },
   middleName: { x: 390, y: 325, w: 99, h: 14 },
@@ -51,10 +54,16 @@ const PAGE1_RECT = {
   branch: { x: 190, y: 283, w: 240, h: 14 },
   // Signature/date were moved up onto this page — see ptoAckPdfFill.ts's loadBlankPtoAckBytes.
   signature: { x: 174, y: 242, w: 290, h: 20 },
-  dateSigned: { x: 99, y: 217, w: 220, h: 13 },
+  dateSignedMM: { x: DATE_X.mm, y: 217, w: 30, h: 13 },
+  dateSignedDD: { x: DATE_X.dd, y: 217, w: 30, h: 13 },
+  dateSignedYYYY: { x: DATE_X.yyyy, y: 217, w: 50, h: 13 },
 } as const;
 
-const fmtDateSigned = (d: Date) => `${String(d.getMonth() + 1).padStart(2, "0")} / ${String(d.getDate()).padStart(2, "0")} / ${d.getFullYear()}`;
+const fmtDateSignedParts = (d: Date) => ({
+  mm: String(d.getMonth() + 1).padStart(2, "0"),
+  dd: String(d.getDate()).padStart(2, "0"),
+  yyyy: String(d.getFullYear()),
+});
 
 const BLANK_FORM: PtoAckFormData = {
   employeeId: "",
@@ -269,6 +278,7 @@ export function FillPtoAckPage({ docId }: Props) {
   });
 
   const overlayInputCls = "bg-blue-50/60 border border-blue-300/70 rounded-[2px] outline-none p-0 font-bold font-sans text-[#00008B] focus:bg-blue-100/80 focus:border-blue-400";
+  const todayParts = fmtDateSignedParts(new Date());
 
   return (
     <div className="min-h-screen bg-background">
@@ -358,9 +368,9 @@ export function FillPtoAckPage({ docId }: Props) {
                           height: PAGE1_RECT.signature.h * scale,
                         }}
                       />
-                      <div style={overlayStyle(PAGE1_RECT.dateSigned)} className="flex items-center font-bold text-[#00008B]">
-                        {fmtDateSigned(new Date())}
-                      </div>
+                      <div style={overlayStyle(PAGE1_RECT.dateSignedMM)} className="flex items-center font-bold text-[#00008B]">{todayParts.mm}</div>
+                      <div style={overlayStyle(PAGE1_RECT.dateSignedDD)} className="flex items-center font-bold text-[#00008B]">{todayParts.dd}</div>
+                      <div style={overlayStyle(PAGE1_RECT.dateSignedYYYY)} className="flex items-center font-bold text-[#00008B]">{todayParts.yyyy}</div>
                     </>
                   )}
                 </div>

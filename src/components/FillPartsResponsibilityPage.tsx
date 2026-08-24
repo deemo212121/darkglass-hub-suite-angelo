@@ -27,6 +27,7 @@ import { getSignableDocument, signDocument, type SignableDocument } from "@/lib/
 import { uploadSignableDocumentSignature, uploadPartsResponsibilityForm } from "@/lib/firebase/storage";
 import { fillPartsResponsibilityPdf, loadBlankPartsResponsibilityBytes } from "@/lib/partsResponsibilityPdfFill";
 import { PARTS_RESPONSIBILITY_BRANCHES, type PartsResponsibilityFormData } from "@/lib/partsResponsibilityFormTemplate";
+import { dateBlankPositions } from "@/lib/pdfDateBlankSplit";
 import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
 import { logActivity } from "@/lib/supabase/hrActivityLog";
 import { getHrNotificationSettings } from "@/lib/supabase/companySettings";
@@ -53,13 +54,21 @@ const PAGE1_RECT = {
   branch: { x: 233.8, y: 600.7, w: 220, h: 14 },
 } as const;
 
+const TECHNICIAN_DATE_X = dateBlankPositions(101.5);
+
 const PAGE2_RECT = {
-  dateSigned: { x: 101.5, y: 650.6, w: 217.4, h: 13 },
+  dateSignedMM: { x: TECHNICIAN_DATE_X.mm, y: 650.6, w: 30, h: 13 },
+  dateSignedDD: { x: TECHNICIAN_DATE_X.dd, y: 650.6, w: 30, h: 13 },
+  dateSignedYYYY: { x: TECHNICIAN_DATE_X.yyyy, y: 650.6, w: 50, h: 13 },
   printedName: { x: 208, y: 625.7, w: 290, h: 14 },
   signature: { x: 187.9, y: 600.7, w: 298.5, h: 20 },
 } as const;
 
-const fmtDateSigned = (d: Date) => `${String(d.getMonth() + 1).padStart(2, "0")} / ${String(d.getDate()).padStart(2, "0")} / ${d.getFullYear()}`;
+const fmtDateSignedParts = (d: Date) => ({
+  mm: String(d.getMonth() + 1).padStart(2, "0"),
+  dd: String(d.getDate()).padStart(2, "0"),
+  yyyy: String(d.getFullYear()),
+});
 
 const BLANK_FORM: PartsResponsibilityFormData = {
   employeeId: "",
@@ -276,6 +285,7 @@ export function FillPartsResponsibilityPage({ docId }: Props) {
   });
 
   const overlayInputCls = "bg-blue-50/60 border border-blue-300/70 rounded-[2px] outline-none p-0 font-bold font-sans text-[#00008B] focus:bg-blue-100/80 focus:border-blue-400";
+  const todayParts = fmtDateSignedParts(new Date());
 
   return (
     <div className="min-h-screen bg-background">
@@ -354,9 +364,9 @@ export function FillPartsResponsibilityPage({ docId }: Props) {
 
                   {!pageLoading && pageNum === 2 && (
                     <>
-                      <div style={overlayStyle(PAGE2_RECT.dateSigned)} className="flex items-center font-bold text-[#00008B]">
-                        {fmtDateSigned(new Date())}
-                      </div>
+                      <div style={overlayStyle(PAGE2_RECT.dateSignedMM)} className="flex items-center font-bold text-[#00008B]">{todayParts.mm}</div>
+                      <div style={overlayStyle(PAGE2_RECT.dateSignedDD)} className="flex items-center font-bold text-[#00008B]">{todayParts.dd}</div>
+                      <div style={overlayStyle(PAGE2_RECT.dateSignedYYYY)} className="flex items-center font-bold text-[#00008B]">{todayParts.yyyy}</div>
                       <div style={overlayStyle(PAGE2_RECT.printedName)} className="flex items-center font-bold text-[#00008B]">
                         {[form.firstName, form.middleName, form.lastName].filter(Boolean).join(" ")}
                       </div>

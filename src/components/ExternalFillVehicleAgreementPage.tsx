@@ -19,6 +19,7 @@ import logo from "@/assets/Admin Hub Solutions Logo no Text.png";
 import { getExternalSignableDocument, submitExternalSignature, type ExternalSignableDocument } from "@/lib/supabase/externalSignableDocuments";
 import { fillVehicleAgreementPdf, loadBlankVehicleAgreementBytes } from "@/lib/vehicleAgreementPdfFill";
 import { VEHICLE_AGREEMENT_BRANCHES, type VehicleAgreementFormData } from "@/lib/vehicleAgreementFormTemplate";
+import { dateBlankPositions } from "@/lib/pdfDateBlankSplit";
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 
 interface Props {
@@ -30,16 +31,24 @@ const PAGE_HEIGHT = 792;
 
 // Same field rectangles as FillVehicleAgreementPage.tsx — see that file's
 // header comment for how these were derived.
+const DATE_X = dateBlankPositions(101.57);
+
 const PAGE2_RECT = {
   firstName: { x: 132.3, y: 215, w: 99.5, h: 14 },
   lastName: { x: 294.1, y: 215, w: 99.5, h: 14 },
-  dateSigned: { x: 102, y: 193, w: 170, h: 13 },
+  dateSignedMM: { x: DATE_X.mm, y: 193, w: 30, h: 13 },
+  dateSignedDD: { x: DATE_X.dd, y: 193, w: 30, h: 13 },
+  dateSignedYYYY: { x: DATE_X.yyyy, y: 193, w: 50, h: 13 },
   branch: { x: 114, y: 168, w: 200, h: 14 },
   // "Employee Signature:" was moved up onto this page — see vehicleAgreementPdfFill.ts's loadBlankVehicleAgreementBytes.
   signature: { x: 180, y: 126, w: 300, h: 24 },
 } as const;
 
-const fmtDateSigned = (d: Date) => `${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getDate()).padStart(2, "0")}/${d.getFullYear()}`;
+const fmtDateSignedParts = (d: Date) => ({
+  mm: String(d.getMonth() + 1).padStart(2, "0"),
+  dd: String(d.getDate()).padStart(2, "0"),
+  yyyy: String(d.getFullYear()),
+});
 
 const BLANK_FORM: VehicleAgreementFormData = {
   employeeId: "",
@@ -225,6 +234,7 @@ export function ExternalFillVehicleAgreementPage({ docId }: Props) {
   });
 
   const overlayInputCls = "bg-blue-50/60 border border-blue-300/70 rounded-[2px] outline-none p-0 font-bold font-sans text-[#00008B] focus:bg-blue-100/80 focus:border-blue-400";
+  const todayParts = fmtDateSignedParts(new Date());
 
   return (
     <div className="min-h-screen bg-background">
@@ -280,9 +290,9 @@ export function ExternalFillVehicleAgreementPage({ docId }: Props) {
                         onChange={(e) => updateField("lastName", e.target.value)}
                       />
 
-                      <div style={overlayStyle(PAGE2_RECT.dateSigned)} className="flex items-center font-bold text-[#00008B]">
-                        {fmtDateSigned(new Date())}
-                      </div>
+                      <div style={overlayStyle(PAGE2_RECT.dateSignedMM)} className="flex items-center font-bold text-[#00008B]">{todayParts.mm}</div>
+                      <div style={overlayStyle(PAGE2_RECT.dateSignedDD)} className="flex items-center font-bold text-[#00008B]">{todayParts.dd}</div>
+                      <div style={overlayStyle(PAGE2_RECT.dateSignedYYYY)} className="flex items-center font-bold text-[#00008B]">{todayParts.yyyy}</div>
 
                       <select
                         style={overlayStyle(PAGE2_RECT.branch)}

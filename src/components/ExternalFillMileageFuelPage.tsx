@@ -19,6 +19,7 @@ import logo from "@/assets/Admin Hub Solutions Logo no Text.png";
 import { getExternalSignableDocument, submitExternalSignature, type ExternalSignableDocument } from "@/lib/supabase/externalSignableDocuments";
 import { fillMileageFuelPdf, loadBlankMileageFuelBytes } from "@/lib/mileageFuelPdfFill";
 import { MILEAGE_FUEL_BRANCHES, type MileageFuelFormData } from "@/lib/mileageFuelFormTemplate";
+import { dateBlankPositions } from "@/lib/pdfDateBlankSplit";
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 
 interface Props {
@@ -30,16 +31,24 @@ const PAGE_HEIGHT = 792;
 
 // Same field rectangles as FillMileageFuelPage.tsx — see that file's
 // header comment for how these were derived.
+const EMPLOYEE_DATE_X = dateBlankPositions(101.6);
+
 const PAGE1_RECT = {
   firstName: { x: 219.8, y: 667.5, w: 99.6, h: 14 },
   middleName: { x: 393.3, y: 667.5, w: 99.6, h: 14 },
   lastName: { x: 107.3, y: 650.5, w: 101.4, h: 14 },
   branch: { x: 112.8, y: 625.5, w: 260, h: 14 },
   signature: { x: 177.2, y: 115.1, w: 298.8, h: 20 },
-  dateSigned: { x: 101.6, y: 90.2, w: 217.3, h: 13 },
+  dateSignedMM: { x: EMPLOYEE_DATE_X.mm, y: 90.2, w: 30, h: 13 },
+  dateSignedDD: { x: EMPLOYEE_DATE_X.dd, y: 90.2, w: 30, h: 13 },
+  dateSignedYYYY: { x: EMPLOYEE_DATE_X.yyyy, y: 90.2, w: 50, h: 13 },
 } as const;
 
-const fmtDateSigned = (d: Date) => `${String(d.getMonth() + 1).padStart(2, "0")} / ${String(d.getDate()).padStart(2, "0")} / ${d.getFullYear()}`;
+const fmtDateSignedParts = (d: Date) => ({
+  mm: String(d.getMonth() + 1).padStart(2, "0"),
+  dd: String(d.getDate()).padStart(2, "0"),
+  yyyy: String(d.getFullYear()),
+});
 
 const BLANK_FORM: MileageFuelFormData = {
   employeeId: "",
@@ -228,6 +237,7 @@ export function ExternalFillMileageFuelPage({ docId }: Props) {
   });
 
   const overlayInputCls = "bg-blue-50/60 border border-blue-300/70 rounded-[2px] outline-none p-0 font-bold font-sans text-[#00008B] focus:bg-blue-100/80 focus:border-blue-400";
+  const todayParts = fmtDateSignedParts(new Date());
 
   return (
     <div className="min-h-screen bg-background">
@@ -317,9 +327,9 @@ export function ExternalFillMileageFuelPage({ docId }: Props) {
                         }}
                       />
 
-                      <div style={overlayStyle(PAGE1_RECT.dateSigned)} className="flex items-center font-bold text-[#00008B]">
-                        {fmtDateSigned(new Date())}
-                      </div>
+                      <div style={overlayStyle(PAGE1_RECT.dateSignedMM)} className="flex items-center font-bold text-[#00008B]">{todayParts.mm}</div>
+                      <div style={overlayStyle(PAGE1_RECT.dateSignedDD)} className="flex items-center font-bold text-[#00008B]">{todayParts.dd}</div>
+                      <div style={overlayStyle(PAGE1_RECT.dateSignedYYYY)} className="flex items-center font-bold text-[#00008B]">{todayParts.yyyy}</div>
                     </>
                   )}
                 </div>

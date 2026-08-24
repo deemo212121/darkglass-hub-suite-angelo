@@ -16,15 +16,10 @@
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import type { MileageFuelFormData } from "./mileageFuelFormTemplate";
 import { addLogoHeader } from "./pdfLogoHeader";
+import { dateBlankPositions, fmtDateParts } from "./pdfDateBlankSplit";
 
-const fmtDate = (v: string) => {
-  if (!v) return "";
-  const d = new Date(v);
-  if (isNaN(d.getTime())) return v;
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${mm} / ${dd} / ${d.getFullYear()}`;
-};
+/** x position of each of the three date blanks on the two "Date:" lines (employee page1 y=93.17, employer page2 y=670.54) — see pdfDateBlankSplit.ts; both labels start at x=101.57. */
+const MILEAGE_FUEL_DATE_X = dateBlankPositions(101.57);
 
 /** Stamps the company logo into the header of every page — see pdfLogoHeader.ts. Applied here, not just in fillMileageFuelPdf, so the interactive fill page (which renders these same blank bytes straight to canvas via pdf.js) shows it too. */
 export async function loadBlankMileageFuelBytes(): Promise<Uint8Array> {
@@ -61,7 +56,10 @@ export async function fillMileageFuelPdf(
     const scale = Math.min(maxW / png.width, maxH / png.height, 1);
     page1.drawImage(png, { x: 180, y: 118.1, width: png.width * scale, height: png.height * scale });
   }
-  draw1(fmtDate(data.employeeDateSigned), 105, 93.2, 9);
+  const employeeDateParts = fmtDateParts(data.employeeDateSigned);
+  draw1(employeeDateParts.mm, MILEAGE_FUEL_DATE_X.mm, 93.2, 9);
+  draw1(employeeDateParts.dd, MILEAGE_FUEL_DATE_X.dd, 93.2, 9);
+  draw1(employeeDateParts.yyyy, MILEAGE_FUEL_DATE_X.yyyy, 93.2, 9);
 
   const page2 = pdfDoc.getPage(1);
   const draw2 = (text: string, x: number, y: number, size = 10) => {
@@ -74,7 +72,10 @@ export async function fillMileageFuelPdf(
     const scale = Math.min(maxW / png.width, maxH / png.height, 1);
     page2.drawImage(png, { x: 256, y: 695.5, width: png.width * scale, height: png.height * scale });
   }
-  draw2(fmtDate(data.employerDateSigned), 105, 670.5, 9);
+  const employerDateParts = fmtDateParts(data.employerDateSigned);
+  draw2(employerDateParts.mm, MILEAGE_FUEL_DATE_X.mm, 670.5, 9);
+  draw2(employerDateParts.dd, MILEAGE_FUEL_DATE_X.dd, 670.5, 9);
+  draw2(employerDateParts.yyyy, MILEAGE_FUEL_DATE_X.yyyy, 670.5, 9);
 
   return pdfDoc.save();
 }

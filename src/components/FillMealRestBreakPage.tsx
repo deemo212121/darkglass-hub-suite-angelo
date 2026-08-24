@@ -27,6 +27,7 @@ import { getSignableDocument, signDocument, type SignableDocument } from "@/lib/
 import { uploadSignableDocumentSignature, uploadMealRestBreakForm } from "@/lib/firebase/storage";
 import { fillMealRestBreakPdf, loadBlankMealRestBreakBytes } from "@/lib/mealRestBreakPdfFill";
 import { MEAL_REST_BREAK_BRANCHES, type MealRestBreakFormData } from "@/lib/mealRestBreakFormTemplate";
+import { dateBlankPositions } from "@/lib/pdfDateBlankSplit";
 import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
 import { logActivity } from "@/lib/supabase/hrActivityLog";
 import { getHrNotificationSettings } from "@/lib/supabase/companySettings";
@@ -45,16 +46,24 @@ const PAGE_HEIGHT = 792;
 // on src/assets/EMPLOYEE MEAL AND REST BREAK POLICY ACKNOWLEDGMENT.pdf —
 // the exact numbers mealRestBreakPdfFill.ts's draw coordinates were derived
 // from. This PDF has no real AcroForm fields at all.
+const EMPLOYEE_DATE_X = dateBlankPositions(101.57);
+
 const PAGE_RECT = {
   firstName: { x: 218, y: 668, w: 99, h: 14 },
   middleName: { x: 390, y: 668, w: 99, h: 14 },
   lastName: { x: 100, y: 650, w: 99, h: 14 },
   branch: { x: 110, y: 626, w: 260, h: 14 },
   signature: { x: 174, y: 264, w: 260, h: 20 },
-  dateSigned: { x: 99, y: 240, w: 220, h: 13 },
+  dateSignedMM: { x: EMPLOYEE_DATE_X.mm, y: 240, w: 30, h: 13 },
+  dateSignedDD: { x: EMPLOYEE_DATE_X.dd, y: 240, w: 30, h: 13 },
+  dateSignedYYYY: { x: EMPLOYEE_DATE_X.yyyy, y: 240, w: 50, h: 13 },
 } as const;
 
-const fmtDateSigned = (d: Date) => `${String(d.getMonth() + 1).padStart(2, "0")} / ${String(d.getDate()).padStart(2, "0")} / ${d.getFullYear()}`;
+const fmtDateSignedParts = (d: Date) => ({
+  mm: String(d.getMonth() + 1).padStart(2, "0"),
+  dd: String(d.getDate()).padStart(2, "0"),
+  yyyy: String(d.getFullYear()),
+});
 
 const BLANK_FORM: MealRestBreakFormData = {
   employeeId: "",
@@ -253,6 +262,7 @@ export function FillMealRestBreakPage({ docId }: Props) {
   });
 
   const overlayInputCls = "bg-blue-50/60 border border-blue-300/70 rounded-[2px] outline-none p-0 font-bold font-sans text-[#00008B] focus:bg-blue-100/80 focus:border-blue-400";
+  const todayParts = fmtDateSignedParts(new Date());
 
   return (
     <div className="min-h-screen bg-background">
@@ -343,9 +353,9 @@ export function FillMealRestBreakPage({ docId }: Props) {
                       }}
                     />
 
-                    <div style={overlayStyle(PAGE_RECT.dateSigned)} className="flex items-center font-bold text-[#00008B]">
-                      {fmtDateSigned(new Date())}
-                    </div>
+                    <div style={overlayStyle(PAGE_RECT.dateSignedMM)} className="flex items-center font-bold text-[#00008B]">{todayParts.mm}</div>
+                    <div style={overlayStyle(PAGE_RECT.dateSignedDD)} className="flex items-center font-bold text-[#00008B]">{todayParts.dd}</div>
+                    <div style={overlayStyle(PAGE_RECT.dateSignedYYYY)} className="flex items-center font-bold text-[#00008B]">{todayParts.yyyy}</div>
                   </>
                 )}
               </div>

@@ -27,6 +27,7 @@ import { getSignableDocument, signDocument, type SignableDocument } from "@/lib/
 import { uploadSignableDocumentSignature, uploadMileageFuelForm } from "@/lib/firebase/storage";
 import { fillMileageFuelPdf, loadBlankMileageFuelBytes } from "@/lib/mileageFuelPdfFill";
 import { MILEAGE_FUEL_BRANCHES, type MileageFuelFormData } from "@/lib/mileageFuelFormTemplate";
+import { dateBlankPositions } from "@/lib/pdfDateBlankSplit";
 import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
 import { logActivity } from "@/lib/supabase/hrActivityLog";
 import { getHrNotificationSettings } from "@/lib/supabase/companySettings";
@@ -45,16 +46,24 @@ const PAGE_HEIGHT = 792;
 // AGREEMENT.pdf — see mileageFuelPdfFill.ts's header comment for how the
 // merged First/Middle/Last Name line was split. This PDF has no real
 // AcroForm fields at all.
+const EMPLOYEE_DATE_X = dateBlankPositions(101.6);
+
 const PAGE1_RECT = {
   firstName: { x: 219.8, y: 667.5, w: 99.6, h: 14 },
   middleName: { x: 393.3, y: 667.5, w: 99.6, h: 14 },
   lastName: { x: 107.3, y: 650.5, w: 101.4, h: 14 },
   branch: { x: 112.8, y: 625.5, w: 260, h: 14 },
   signature: { x: 177.2, y: 115.1, w: 298.8, h: 20 },
-  dateSigned: { x: 101.6, y: 90.2, w: 217.3, h: 13 },
+  dateSignedMM: { x: EMPLOYEE_DATE_X.mm, y: 90.2, w: 30, h: 13 },
+  dateSignedDD: { x: EMPLOYEE_DATE_X.dd, y: 90.2, w: 30, h: 13 },
+  dateSignedYYYY: { x: EMPLOYEE_DATE_X.yyyy, y: 90.2, w: 50, h: 13 },
 } as const;
 
-const fmtDateSigned = (d: Date) => `${String(d.getMonth() + 1).padStart(2, "0")} / ${String(d.getDate()).padStart(2, "0")} / ${d.getFullYear()}`;
+const fmtDateSignedParts = (d: Date) => ({
+  mm: String(d.getMonth() + 1).padStart(2, "0"),
+  dd: String(d.getDate()).padStart(2, "0"),
+  yyyy: String(d.getFullYear()),
+});
 
 const BLANK_FORM: MileageFuelFormData = {
   employeeId: "",
@@ -271,6 +280,7 @@ export function FillMileageFuelPage({ docId }: Props) {
   });
 
   const overlayInputCls = "bg-blue-50/60 border border-blue-300/70 rounded-[2px] outline-none p-0 font-bold font-sans text-[#00008B] focus:bg-blue-100/80 focus:border-blue-400";
+  const todayParts = fmtDateSignedParts(new Date());
 
   return (
     <div className="min-h-screen bg-background">
@@ -362,9 +372,9 @@ export function FillMileageFuelPage({ docId }: Props) {
                         }}
                       />
 
-                      <div style={overlayStyle(PAGE1_RECT.dateSigned)} className="flex items-center font-bold text-[#00008B]">
-                        {fmtDateSigned(new Date())}
-                      </div>
+                      <div style={overlayStyle(PAGE1_RECT.dateSignedMM)} className="flex items-center font-bold text-[#00008B]">{todayParts.mm}</div>
+                      <div style={overlayStyle(PAGE1_RECT.dateSignedDD)} className="flex items-center font-bold text-[#00008B]">{todayParts.dd}</div>
+                      <div style={overlayStyle(PAGE1_RECT.dateSignedYYYY)} className="flex items-center font-bold text-[#00008B]">{todayParts.yyyy}</div>
                     </>
                   )}
                 </div>
