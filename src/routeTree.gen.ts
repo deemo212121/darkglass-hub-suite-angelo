@@ -15,6 +15,7 @@ import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as ServicepowerTestRouteImport } from './routes/servicepower-test'
 import { Route as ProfileRouteImport } from './routes/profile'
 import { Route as PrivacyRouteImport } from './routes/privacy'
+import { Route as NotificationsRouteImport } from './routes/notifications'
 import { Route as MobileRouteImport } from './routes/mobile'
 import { Route as LandingRouteImport } from './routes/landing'
 import { Route as ItTicketsRouteImport } from './routes/it-tickets'
@@ -105,6 +106,11 @@ const ProfileRoute = ProfileRouteImport.update({
 const PrivacyRoute = PrivacyRouteImport.update({
   id: '/privacy',
   path: '/privacy',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const NotificationsRoute = NotificationsRouteImport.update({
+  id: '/notifications',
+  path: '/notifications',
   getParentRoute: () => rootRouteImport,
 } as any)
 const MobileRoute = MobileRouteImport.update({
@@ -441,6 +447,7 @@ export interface FileRoutesByFullPath {
   '/it-tickets': typeof ItTicketsRoute
   '/landing': typeof LandingRoute
   '/mobile': typeof MobileRoute
+  '/notifications': typeof NotificationsRoute
   '/privacy': typeof PrivacyRoute
   '/profile': typeof ProfileRoute
   '/servicepower-test': typeof ServicepowerTestRoute
@@ -510,6 +517,7 @@ export interface FileRoutesByTo {
   '/it-tickets': typeof ItTicketsRoute
   '/landing': typeof LandingRoute
   '/mobile': typeof MobileRoute
+  '/notifications': typeof NotificationsRoute
   '/privacy': typeof PrivacyRoute
   '/profile': typeof ProfileRoute
   '/servicepower-test': typeof ServicepowerTestRoute
@@ -580,6 +588,7 @@ export interface FileRoutesById {
   '/it-tickets': typeof ItTicketsRoute
   '/landing': typeof LandingRoute
   '/mobile': typeof MobileRoute
+  '/notifications': typeof NotificationsRoute
   '/privacy': typeof PrivacyRoute
   '/profile': typeof ProfileRoute
   '/servicepower-test': typeof ServicepowerTestRoute
@@ -651,6 +660,7 @@ export interface FileRouteTypes {
     | '/it-tickets'
     | '/landing'
     | '/mobile'
+    | '/notifications'
     | '/privacy'
     | '/profile'
     | '/servicepower-test'
@@ -720,6 +730,7 @@ export interface FileRouteTypes {
     | '/it-tickets'
     | '/landing'
     | '/mobile'
+    | '/notifications'
     | '/privacy'
     | '/profile'
     | '/servicepower-test'
@@ -789,6 +800,7 @@ export interface FileRouteTypes {
     | '/it-tickets'
     | '/landing'
     | '/mobile'
+    | '/notifications'
     | '/privacy'
     | '/profile'
     | '/servicepower-test'
@@ -859,6 +871,7 @@ export interface RootRouteChildren {
   ItTicketsRoute: typeof ItTicketsRoute
   LandingRoute: typeof LandingRoute
   MobileRoute: typeof MobileRoute
+  NotificationsRoute: typeof NotificationsRoute
   PrivacyRoute: typeof PrivacyRoute
   ProfileRoute: typeof ProfileRoute
   ServicepowerTestRoute: typeof ServicepowerTestRoute
@@ -959,6 +972,13 @@ declare module '@tanstack/react-router' {
       path: '/privacy'
       fullPath: '/privacy'
       preLoaderRoute: typeof PrivacyRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/notifications': {
+      id: '/notifications'
+      path: '/notifications'
+      fullPath: '/notifications'
+      preLoaderRoute: typeof NotificationsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/mobile': {
@@ -1434,6 +1454,7 @@ const rootRouteChildren: RootRouteChildren = {
   ItTicketsRoute: ItTicketsRoute,
   LandingRoute: LandingRoute,
   MobileRoute: MobileRoute,
+  NotificationsRoute: NotificationsRoute,
   PrivacyRoute: PrivacyRoute,
   ProfileRoute: ProfileRoute,
   ServicepowerTestRoute: ServicepowerTestRoute,

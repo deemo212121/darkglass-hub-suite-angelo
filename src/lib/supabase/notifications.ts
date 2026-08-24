@@ -15,6 +15,8 @@ export interface NotificationRow {
   body: string;
   linkTo: string | null;
   isRead: boolean;
+  /** Gmail-style flag to come back to later — independent of read/unread. See migration 0189. */
+  starred: boolean;
   createdAt: string;
 }
 
@@ -27,11 +29,12 @@ function mapRow(row: any): NotificationRow {
     body: row.body,
     linkTo: row.link_to ?? null,
     isRead: Boolean(row.read_at),
+    starred: Boolean(row.starred),
     createdAt: row.created_at,
   };
 }
 
-const SELECT_COLUMNS = "id, recipient_id, sender_id, sender_name, body, link_to, read_at, created_at";
+const SELECT_COLUMNS = "id, recipient_id, sender_id, sender_name, body, link_to, read_at, starred, created_at";
 
 /** The bell-icon feed for the caller, newest first. */
 export async function getMyNotifications(profileId: string, limit = 30): Promise<NotificationRow[]> {
@@ -79,6 +82,14 @@ export async function markNotificationRead(id: string): Promise<void> {
   if (error) console.warn("markNotificationRead:", error.message);
 }
 
+export async function markNotificationUnread(id: string): Promise<void> {
+  const { error } = await supabase
+    .from("notifications")
+    .update({ read_at: null })
+    .eq("id", id);
+  if (error) console.warn("markNotificationUnread:", error.message);
+}
+
 export async function markAllNotificationsRead(profileId: string): Promise<void> {
   const { error } = await supabase
     .from("notifications")
@@ -86,6 +97,17 @@ export async function markAllNotificationsRead(profileId: string): Promise<void>
     .eq("recipient_id", profileId)
     .is("read_at", null);
   if (error) console.warn("markAllNotificationsRead:", error.message);
+}
+
+export async function setNotificationStarred(id: string, starred: boolean): Promise<void> {
+  const { error } = await supabase.from("notifications").update({ starred }).eq("id", id);
+  if (error) console.warn("setNotificationStarred:", error.message);
+}
+
+/** Permanently removes one notification — RLS (migration 0035) already scopes this to the caller's own recipient_id, so no profileId check is needed here. */
+export async function deleteNotification(id: string): Promise<void> {
+  const { error } = await supabase.from("notifications").delete().eq("id", id);
+  if (error) console.warn("deleteNotification:", error.message);
 }
 
 /** Live-append any new notification addressed to me. Returns an unsubscribe function. */
