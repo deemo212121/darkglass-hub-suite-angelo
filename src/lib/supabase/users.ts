@@ -738,7 +738,11 @@ export async function createCompanyUser(input: {
   // company_id is stamped server-side by the trg_profiles_stamp_company trigger
   // from the calling admin's company (auth_company_id()), so we don't send it.
   // This avoids the client passing the wrong format (e.g. legacy "COMP001").
-  const username = generateUsername(input.displayName);
+  // Username is the full name itself (not the old "FirstName.LastName" dotted
+  // form) — it's also what getUserByUsername/login_email_for_username match
+  // against for username-based login, so this is what an employee actually
+  // types at the login screen.
+  const username = input.displayName.trim().replace(/\s+/g, " ");
   // De-duplicate extra roles and strip the primary one so it isn't double-stored.
   const extras = Array.from(new Set((input.extraRoles ?? []).filter((r) => r && r !== input.role)));
   const { error: insertErr } = await supabase.from("profiles").insert({

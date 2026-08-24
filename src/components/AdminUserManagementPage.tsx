@@ -1778,7 +1778,7 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
                 <p className="mb-2"><span className="font-semibold">Note:</span> Fields marked with * are required.</p>
                 <p className="mb-2">• User will be created with company ID: <span className="text-blue-300 font-mono">{auth.companyLoginAlias || auth.companyId || "N/A"}</span></p>
                 <p className="mb-2">• Default password: <span className="text-blue-300 font-mono">Welcome2024!</span> (user should change on first login)</p>
-                <p>• Username will be auto-generated from display name (FirstName.LastName format)</p>
+                <p>• Username (for username-based login) will match the User Name entered above</p>
               </div>
             </div>
           </div>
