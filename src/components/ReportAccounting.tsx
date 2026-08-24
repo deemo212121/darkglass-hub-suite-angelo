@@ -18,6 +18,12 @@ import { calcWorkedHours } from "@/lib/supabase/timecards";
 
 const EXCHANGE_RATE = 57; // 1 USD = 57 PHP — same convention as AccountingDashboard.tsx
 const REGULAR_HOURS_PER_DAY = 8;
+
+// Supabase caps an unbounded select at 1000 rows — the profiles,
+// salary_entries, and payroll_line_items queries below have no row limit
+// (payroll_line_items has no filter at all). Page through each in chunks of
+// 1000 instead, same fix as AccountingDashboard.tsx's fetchData.
+const PAGE_SIZE = 1000;
 const TOOLTIP_STYLE = { background: "#ffffff", border: "1px solid #cbd5e1", borderRadius: 6, color: "#0f172a", fontSize: 12, fontWeight: 600, boxShadow: "0 4px 12px rgba(0,0,0,0.3)" } as const;
 const LEGEND_STYLE = { fontSize: 11, color: "#94a3b8" } as const;
 
@@ -99,10 +105,50 @@ export function ReportAccounting({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
         setLoading(true);
         setError(null);
         const [empRes, salRes, runsRes, lineRes] = await Promise.all([
-          supabase.from("profiles").select("id,display_name,username,role,assigned_branch").neq("role", "SUPERSUPERADMIN"),
-          supabase.from("salary_entries").select("profile_id,effective_date,hourly_rate,created_at").not("profile_id", "is", null).order("effective_date", { ascending: false }).order("created_at", { ascending: false }),
+          (async () => {
+            const all: any[] = [];
+            for (let from = 0; ; from += PAGE_SIZE) {
+              const { data, error } = await supabase
+                .from("profiles")
+                .select("id,display_name,username,role,assigned_branch")
+                .neq("role", "SUPERSUPERADMIN")
+                .range(from, from + PAGE_SIZE - 1);
+              if (error) return { data: null, error };
+              all.push(...(data ?? []));
+              if (!data || data.length < PAGE_SIZE) break;
+            }
+            return { data: all, error: null };
+          })(),
+          (async () => {
+            const all: any[] = [];
+            for (let from = 0; ; from += PAGE_SIZE) {
+              const { data, error } = await supabase
+                .from("salary_entries")
+                .select("profile_id,effective_date,hourly_rate,created_at")
+                .not("profile_id", "is", null)
+                .order("effective_date", { ascending: false })
+                .order("created_at", { ascending: false })
+                .range(from, from + PAGE_SIZE - 1);
+              if (error) return { data: null, error };
+              all.push(...(data ?? []));
+              if (!data || data.length < PAGE_SIZE) break;
+            }
+            return { data: all, error: null };
+          })(),
           supabase.from("payroll_runs").select("id,period_start,period_end,status,generated_at").order("generated_at", { ascending: false }),
-          supabase.from("payroll_line_items").select("payroll_run_id,profile_id,gross_pay,currency"),
+          (async () => {
+            const all: any[] = [];
+            for (let from = 0; ; from += PAGE_SIZE) {
+              const { data, error } = await supabase
+                .from("payroll_line_items")
+                .select("payroll_run_id,profile_id,gross_pay,currency")
+                .range(from, from + PAGE_SIZE - 1);
+              if (error) return { data: null, error };
+              all.push(...(data ?? []));
+              if (!data || data.length < PAGE_SIZE) break;
+            }
+            return { data: all, error: null };
+          })(),
         ]);
         for (const res of [empRes, salRes, runsRes, lineRes]) if (res.error) throw new Error(res.error.message);
         const runs = (runsRes.data ?? []) as PayrollRun[];

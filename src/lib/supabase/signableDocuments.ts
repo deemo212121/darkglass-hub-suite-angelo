@@ -94,15 +94,25 @@ export async function getSignableDocument(id: string): Promise<SignableDocument 
   return data ? mapRow(data) : null;
 }
 
+// Supabase caps an unbounded select at 1000 rows — a company's full
+// signable-document history can exceed that. Page through in chunks of 1000.
+const PAGE_SIZE = 1000;
+
 /** Every warning-form document company-wide, most recent first — feeds the "Sent Warning Forms" tracking table in ReportHRDaily.tsx. */
 export async function getSignableDocuments(documentType: SignableDocumentType = "warning_form"): Promise<SignableDocument[]> {
-  const { data, error } = await supabase
-    .from("hr_signable_documents")
-    .select(SELECT)
-    .eq("document_type", documentType)
-    .order("created_at", { ascending: false });
-  if (error) throw new Error(error.message);
-  return (data ?? []).map(mapRow);
+  const all: SignableDocument[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from("hr_signable_documents")
+      .select(SELECT)
+      .eq("document_type", documentType)
+      .order("created_at", { ascending: false })
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) throw new Error(error.message);
+    all.push(...(data ?? []).map(mapRow));
+    if (!data || data.length < PAGE_SIZE) break;
+  }
+  return all;
 }
 
 /**

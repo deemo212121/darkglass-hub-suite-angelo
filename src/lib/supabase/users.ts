@@ -390,21 +390,30 @@ export async function getMyFullProfile(firebaseUid: string): Promise<{
   };
 }
 
-export async function getCompanyUsers(): Promise<ProfileRow[]> {
-  const { data, error } = await supabase
-    .from("profiles")
-    .select("id, firebase_uid, company_id, email, username, display_name, role, extra_roles, phone_number, department, manager_name, assigned_branch, branch_access, technician_id, po_initials, off_days, work_plan, required_check_in, required_check_out, is_active, must_change_password, failed_login_count, locked_until, created_at")
-    // Only the platform-level SUPERSUPERADMIN is excluded here — the new
-    // per-company SUPERADMIN role is a real company employee and should
-    // show up in the roster like any ADMIN.
-    .neq("role", "SUPERSUPERADMIN")
-    .order("display_name", { ascending: true });
+// Supabase caps an unbounded select at 1000 rows — a company's full
+// profiles roster can exceed that. Page through in chunks of 1000.
+const PAGE_SIZE = 1000;
 
-  if (error) {
-    console.error("getCompanyUsers error:", error.message);
-    throw new Error(error.message);
+export async function getCompanyUsers(): Promise<ProfileRow[]> {
+  const rows: ProfileRow[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("id, firebase_uid, company_id, email, username, display_name, role, extra_roles, phone_number, department, manager_name, assigned_branch, branch_access, technician_id, po_initials, off_days, work_plan, required_check_in, required_check_out, is_active, must_change_password, failed_login_count, locked_until, created_at")
+      // Only the platform-level SUPERSUPERADMIN is excluded here — the new
+      // per-company SUPERADMIN role is a real company employee and should
+      // show up in the roster like any ADMIN.
+      .neq("role", "SUPERSUPERADMIN")
+      .order("display_name", { ascending: true })
+      .range(from, from + PAGE_SIZE - 1);
+
+    if (error) {
+      console.error("getCompanyUsers error:", error.message);
+      throw new Error(error.message);
+    }
+    rows.push(...((data ?? []) as ProfileRow[]));
+    if (!data || data.length < PAGE_SIZE) break;
   }
-  const rows = (data ?? []) as ProfileRow[];
 
   // Fetched separately, best-effort — see getMyFullProfile's comment on why
   // working_hours/meal_minutes (migration 0109) must never be combined into

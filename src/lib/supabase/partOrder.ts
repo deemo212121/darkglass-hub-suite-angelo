@@ -27,26 +27,50 @@ export interface PartOrderRow {
   repairStatus: string;
 }
 
+// Supabase caps an unbounded select at 1000 rows — both `parts` and
+// `tickets` here are queried with no filter at all before the "Need PO"
+// filter is applied client-side. Page through each in chunks of 1000.
+const PAGE_SIZE = 1000;
+
 export async function getPartOrderRows(): Promise<PartOrderRow[]> {
-  const [partsRes, ticketsRes] = await Promise.all([
-    supabase
-      .from("parts")
-      .select("id, ticket_id, part_no, part_dist, part_desc, quantity, status, po_no, eta")
-      .order("created_at", { ascending: false }),
-    supabase.from("tickets").select("id, ticket_no, location, schedule_date, warranty, status"),
+  const [partsAll, ticketsAll] = await Promise.all([
+    (async () => {
+      const all: any[] = [];
+      for (let from = 0; ; from += PAGE_SIZE) {
+        const { data, error } = await supabase
+          .from("parts")
+          .select("id, ticket_id, part_no, part_dist, part_desc, quantity, status, po_no, eta")
+          .order("created_at", { ascending: false })
+          .range(from, from + PAGE_SIZE - 1);
+        if (error) {
+          console.error("getPartOrderRows parts error:", error.message);
+          throw new Error(error.message);
+        }
+        all.push(...(data ?? []));
+        if (!data || data.length < PAGE_SIZE) break;
+      }
+      return all;
+    })(),
+    (async () => {
+      const all: any[] = [];
+      for (let from = 0; ; from += PAGE_SIZE) {
+        const { data, error } = await supabase
+          .from("tickets")
+          .select("id, ticket_no, location, schedule_date, warranty, status")
+          .range(from, from + PAGE_SIZE - 1);
+        if (error) {
+          console.error("getPartOrderRows tickets error:", error.message);
+          throw new Error(error.message);
+        }
+        all.push(...(data ?? []));
+        if (!data || data.length < PAGE_SIZE) break;
+      }
+      return all;
+    })(),
   ]);
 
-  if (partsRes.error) {
-    console.error("getPartOrderRows parts error:", partsRes.error.message);
-    throw new Error(partsRes.error.message);
-  }
-  if (ticketsRes.error) {
-    console.error("getPartOrderRows tickets error:", ticketsRes.error.message);
-    throw new Error(ticketsRes.error.message);
-  }
-
   const ticketById = new Map<string, { ticketNo: string; location: string; scheduleDate: string; warranty: string; repairStatus: string }>();
-  for (const t of ticketsRes.data ?? []) {
+  for (const t of ticketsAll) {
     ticketById.set((t as any).id, {
       ticketNo: (t as any).ticket_no ?? "",
       location: (t as any).location ?? "",
@@ -56,7 +80,7 @@ export async function getPartOrderRows(): Promise<PartOrderRow[]> {
     });
   }
 
-  return (partsRes.data ?? [])
+  return partsAll
     .filter((row: any) => {
       const status = row.status || "";
       const poNo = row.po_no || "";

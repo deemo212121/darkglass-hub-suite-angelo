@@ -23,31 +23,44 @@ export interface LoginEvent {
   createdAt: string;
 }
 
+// Supabase caps an unbounded select at 1000 rows — an active company's
+// login history within the window can exceed that. Page through in chunks
+// of 1000.
+const PAGE_SIZE = 1000;
+
 /** Login events across the caller's company from the last `sinceDays` days, most recent first. */
 export async function getCompanyLoginEvents(sinceDays = 90): Promise<LoginEvent[]> {
   const since = new Date(Date.now() - sinceDays * 24 * 60 * 60 * 1000).toISOString();
-  const { data, error } = await supabase
-    .from("login_events")
-    .select("id, profile_id, ip, country, region, city, latitude, longitude, browser, device, created_at")
-    .gte("created_at", since)
-    .order("created_at", { ascending: false });
+  const all: LoginEvent[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from("login_events")
+      .select("id, profile_id, ip, country, region, city, latitude, longitude, browser, device, created_at")
+      .gte("created_at", since)
+      .order("created_at", { ascending: false })
+      .range(from, from + PAGE_SIZE - 1);
 
-  if (error) {
-    console.error("getCompanyLoginEvents error:", error.message);
-    throw new Error(error.message);
+    if (error) {
+      console.error("getCompanyLoginEvents error:", error.message);
+      throw new Error(error.message);
+    }
+
+    all.push(
+      ...(data ?? []).map((r: any) => ({
+        id: r.id,
+        profileId: r.profile_id,
+        ip: r.ip,
+        country: r.country,
+        region: r.region,
+        city: r.city,
+        latitude: r.latitude,
+        longitude: r.longitude,
+        browser: r.browser,
+        device: r.device,
+        createdAt: r.created_at,
+      }))
+    );
+    if (!data || data.length < PAGE_SIZE) break;
   }
-
-  return (data ?? []).map((r: any) => ({
-    id: r.id,
-    profileId: r.profile_id,
-    ip: r.ip,
-    country: r.country,
-    region: r.region,
-    city: r.city,
-    latitude: r.latitude,
-    longitude: r.longitude,
-    browser: r.browser,
-    device: r.device,
-    createdAt: r.created_at,
-  }));
+  return all;
 }

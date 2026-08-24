@@ -188,20 +188,31 @@ export interface TechRepairCount {
  * PostgREST embed (no embed pattern is used anywhere else in this file for
  * visits->tickets).
  */
+// Supabase caps an unbounded select at 1000 rows — a single semi-monthly
+// payroll period's visits for a whole company can exceed that. Page
+// through in chunks of 1000.
+const PAGE_SIZE = 1000;
+
 export async function getTechCompletedRepairCounts(
   startDate: string,
   endDate: string
 ): Promise<TechRepairCount[]> {
   if (!startDate || !endDate) return [];
-  const { data, error } = await supabase
-    .from("visits")
-    .select("ticket_id, technician, repair_type, repair_status")
-    .gte("schedule_date", startDate)
-    .lte("schedule_date", endDate)
-    .not("technician", "is", null);
-  if (error) {
-    console.error("getTechCompletedRepairCounts error:", error.message);
-    return [];
+  const data: any[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data: page, error } = await supabase
+      .from("visits")
+      .select("ticket_id, technician, repair_type, repair_status")
+      .gte("schedule_date", startDate)
+      .lte("schedule_date", endDate)
+      .not("technician", "is", null)
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) {
+      console.error("getTechCompletedRepairCounts error:", error.message);
+      return [];
+    }
+    data.push(...(page ?? []));
+    if (!page || page.length < PAGE_SIZE) break;
   }
   const completed = (data ?? []).filter(
     (r: any) => String(r.technician || "").trim() && statusGroupOf(r.repair_status || "") === "completed"
@@ -254,15 +265,21 @@ export interface TechRedoTicket {
 export async function getTechRedoTickets(startDate: string, endDate: string): Promise<Map<string, TechRedoTicket[]>> {
   const out = new Map<string, TechRedoTicket[]>();
   if (!startDate || !endDate) return out;
-  const { data, error } = await supabase
-    .from("visits")
-    .select("ticket_id, technician, repair_status")
-    .gte("schedule_date", startDate)
-    .lte("schedule_date", endDate)
-    .not("technician", "is", null);
-  if (error) {
-    console.error("getTechRedoTickets error:", error.message);
-    return out;
+  const data: any[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data: page, error } = await supabase
+      .from("visits")
+      .select("ticket_id, technician, repair_status")
+      .gte("schedule_date", startDate)
+      .lte("schedule_date", endDate)
+      .not("technician", "is", null)
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) {
+      console.error("getTechRedoTickets error:", error.message);
+      return out;
+    }
+    data.push(...(page ?? []));
+    if (!page || page.length < PAGE_SIZE) break;
   }
   const completed = (data ?? []).filter(
     (r: any) => String(r.technician || "").trim() && statusGroupOf(r.repair_status || "") === "completed"
@@ -303,15 +320,21 @@ export async function getTechRedoTickets(startDate: string, endDate: string): Pr
 export async function getTechSecondCounts(startDate: string, endDate: string): Promise<Map<string, number>> {
   const counts = new Map<string, number>();
   if (!startDate || !endDate) return counts;
-  const { data, error } = await supabase
-    .from("visits")
-    .select("ticket_id, second_technician, repair_status")
-    .gte("schedule_date", startDate)
-    .lte("schedule_date", endDate)
-    .not("second_technician", "is", null);
-  if (error) {
-    console.error("getTechSecondCounts error:", error.message);
-    return counts;
+  const data: any[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data: page, error } = await supabase
+      .from("visits")
+      .select("ticket_id, second_technician, repair_status")
+      .gte("schedule_date", startDate)
+      .lte("schedule_date", endDate)
+      .not("second_technician", "is", null)
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) {
+      console.error("getTechSecondCounts error:", error.message);
+      return counts;
+    }
+    data.push(...(page ?? []));
+    if (!page || page.length < PAGE_SIZE) break;
   }
   const completed = (data ?? []).filter(
     (r: any) => String(r.second_technician || "").trim() && statusGroupOf(r.repair_status || "") === "completed"
@@ -348,16 +371,22 @@ export interface TechAssistedTicket {
 export async function getTechAssistedTickets(startDate: string, endDate: string): Promise<Map<string, TechAssistedTicket[]>> {
   const out = new Map<string, TechAssistedTicket[]>();
   if (!startDate || !endDate) return out;
-  const { data, error } = await supabase
-    .from("visits")
-    .select("ticket_id, technician, second_technician, repair_status")
-    .gte("schedule_date", startDate)
-    .lte("schedule_date", endDate)
-    .not("technician", "is", null)
-    .not("second_technician", "is", null);
-  if (error) {
-    console.error("getTechAssistedTickets error:", error.message);
-    return out;
+  const data: any[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data: page, error } = await supabase
+      .from("visits")
+      .select("ticket_id, technician, second_technician, repair_status")
+      .gte("schedule_date", startDate)
+      .lte("schedule_date", endDate)
+      .not("technician", "is", null)
+      .not("second_technician", "is", null)
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) {
+      console.error("getTechAssistedTickets error:", error.message);
+      return out;
+    }
+    data.push(...(page ?? []));
+    if (!page || page.length < PAGE_SIZE) break;
   }
   const completed = (data ?? []).filter(
     (r: any) => String(r.second_technician || "").trim() && statusGroupOf(r.repair_status || "") === "completed"
@@ -393,17 +422,23 @@ export async function getTechAssistedTickets(startDate: string, endDate: string)
 export async function getTechAssignedCounts(startDate: string, endDate: string): Promise<Map<string, number>> {
   const counts = new Map<string, number>();
   if (!startDate || !endDate) return counts;
-  const { data, error } = await supabase
-    .from("visits")
-    .select("technician")
-    .gte("schedule_date", startDate)
-    .lte("schedule_date", endDate)
-    .not("technician", "is", null);
-  if (error) {
-    console.error("getTechAssignedCounts error:", error.message);
-    return counts;
+  const data: any[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data: page, error } = await supabase
+      .from("visits")
+      .select("technician")
+      .gte("schedule_date", startDate)
+      .lte("schedule_date", endDate)
+      .not("technician", "is", null)
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) {
+      console.error("getTechAssignedCounts error:", error.message);
+      return counts;
+    }
+    data.push(...(page ?? []));
+    if (!page || page.length < PAGE_SIZE) break;
   }
-  for (const r of (data ?? []) as any[]) {
+  for (const r of data as any[]) {
     const technician = String(r.technician || "").trim().toLowerCase();
     if (!technician) continue;
     counts.set(technician, (counts.get(technician) ?? 0) + 1);
@@ -427,15 +462,21 @@ export async function getTechAssignedCounts(startDate: string, endDate: string):
 export async function getTechAutoMileageTotals(periodStart: string, periodEnd: string): Promise<Map<string, number>> {
   const totals = new Map<string, number>();
   if (!periodStart || !periodEnd) return totals;
-  const { data, error } = await supabase
-    .from("mileage_entries")
-    .select("profile_id, work_date, total_mileage, mileage_override, mileage_adjustment, payroll_excluded")
-    .not("profile_id", "is", null)
-    .gte("work_date", periodStart)
-    .lte("work_date", periodEnd);
-  if (error) {
-    console.error("getTechAutoMileageTotals error:", error.message);
-    return totals;
+  const data: any[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data: page, error } = await supabase
+      .from("mileage_entries")
+      .select("profile_id, work_date, total_mileage, mileage_override, mileage_adjustment, payroll_excluded")
+      .not("profile_id", "is", null)
+      .gte("work_date", periodStart)
+      .lte("work_date", periodEnd)
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) {
+      console.error("getTechAutoMileageTotals error:", error.message);
+      return totals;
+    }
+    data.push(...(page ?? []));
+    if (!page || page.length < PAGE_SIZE) break;
   }
   // Every ticket a technician had on one day shares that day's SAME route
   // total (see syncMileageFromTickets) — sum per (profile, day) FIRST, one

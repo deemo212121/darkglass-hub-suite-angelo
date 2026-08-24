@@ -26,33 +26,45 @@ export interface PartFootprintRow {
   location: string;
 }
 
+// Supabase caps an unbounded select at 1000 rows — a company's full
+// received-parts footprint can exceed that. Page through in chunks of 1000.
+const PAGE_SIZE = 1000;
+
 export async function getPartFootprint(): Promise<PartFootprintRow[]> {
-  const { data, error } = await supabase
-    .from("parts")
-    .select(
-      "id, received_date, part_no, part_desc, qty_received, part_price, quantity, status, ra_no, tickets!inner(ticket_no, location, aging, manufacturer, model)"
-    )
-    .gt("qty_received", 0);
+  const all: PartFootprintRow[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from("parts")
+      .select(
+        "id, received_date, part_no, part_desc, qty_received, part_price, quantity, status, ra_no, tickets!inner(ticket_no, location, aging, manufacturer, model)"
+      )
+      .gt("qty_received", 0)
+      .range(from, from + PAGE_SIZE - 1);
 
-  if (error) {
-    console.error("getPartFootprint error:", error.message);
-    throw new Error(error.message);
+    if (error) {
+      console.error("getPartFootprint error:", error.message);
+      throw new Error(error.message);
+    }
+
+    all.push(
+      ...(data ?? []).map((row: any) => ({
+        id: row.id,
+        receiveDate: row.received_date || "",
+        partNo: row.part_no || "",
+        description: row.part_desc || "",
+        received: Number(row.qty_received ?? 0),
+        price: Number(row.part_price ?? 0),
+        total: Number(row.part_price ?? 0) * Number(row.quantity ?? 0),
+        status: row.status || "",
+        ticketNo: row.tickets?.ticket_no || "",
+        aging: Number(row.tickets?.aging ?? 0),
+        brand: row.tickets?.manufacturer || "",
+        modelCode: row.tickets?.model || "",
+        raNo: row.ra_no || "",
+        location: row.tickets?.location || "",
+      }))
+    );
+    if (!data || data.length < PAGE_SIZE) break;
   }
-
-  return (data ?? []).map((row: any) => ({
-    id: row.id,
-    receiveDate: row.received_date || "",
-    partNo: row.part_no || "",
-    description: row.part_desc || "",
-    received: Number(row.qty_received ?? 0),
-    price: Number(row.part_price ?? 0),
-    total: Number(row.part_price ?? 0) * Number(row.quantity ?? 0),
-    status: row.status || "",
-    ticketNo: row.tickets?.ticket_no || "",
-    aging: Number(row.tickets?.aging ?? 0),
-    brand: row.tickets?.manufacturer || "",
-    modelCode: row.tickets?.model || "",
-    raNo: row.ra_no || "",
-    location: row.tickets?.location || "",
-  }));
+  return all;
 }

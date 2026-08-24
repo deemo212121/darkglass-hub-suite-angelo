@@ -551,21 +551,30 @@ export async function listMyDmInbox(profileId: string): Promise<DmInboxEntry[]> 
   if (threadRows.length === 0) return [];
   const threadIds = threadRows.map((t: any) => t.id as string);
 
-  const [readsRes, messagesRes] = await Promise.all([
-    supabase
-      .from("message_reads")
-      .select("dm_thread_id, last_read_at")
-      .eq("profile_id", profileId)
-      .in("dm_thread_id", threadIds),
-    supabase
+  const readsRes = await supabase
+    .from("message_reads")
+    .select("dm_thread_id, last_read_at")
+    .eq("profile_id", profileId)
+    .in("dm_thread_id", threadIds);
+  if (readsRes.error) throw new Error(readsRes.error.message);
+
+  // Supabase caps an unbounded select at 1000 rows — a long-tenured user's
+  // full DM history across every thread they're part of can exceed that.
+  // Page through in chunks of 1000.
+  const DM_INBOX_MESSAGES_PAGE_SIZE = 1000;
+  const messages: any[] = [];
+  for (let from = 0; ; from += DM_INBOX_MESSAGES_PAGE_SIZE) {
+    const { data: page, error } = await supabase
       .from("messages")
       .select("dm_thread_id, sender_id, body, created_at")
       .in("dm_thread_id", threadIds)
       .is("deleted_at", null)
-      .order("created_at", { ascending: false }),
-  ]);
-  if (readsRes.error) throw new Error(readsRes.error.message);
-  if (messagesRes.error) throw new Error(messagesRes.error.message);
+      .order("created_at", { ascending: false })
+      .range(from, from + DM_INBOX_MESSAGES_PAGE_SIZE - 1);
+    if (error) throw new Error(error.message);
+    messages.push(...(page ?? []));
+    if (!page || page.length < DM_INBOX_MESSAGES_PAGE_SIZE) break;
+  }
 
   const readAt = new Map<string, string>();
   for (const r of readsRes.data || []) {
@@ -576,7 +585,7 @@ export async function listMyDmInbox(profileId: string): Promise<DmInboxEntry[]> 
   // latest message.
   const lastByThread = new Map<string, any>();
   const unreadByThread = new Map<string, number>();
-  for (const m of messagesRes.data || []) {
+  for (const m of messages) {
     const tid = m.dm_thread_id as string | null;
     if (!tid) continue;
     if (!lastByThread.has(tid)) lastByThread.set(tid, m);

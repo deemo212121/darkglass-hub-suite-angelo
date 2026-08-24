@@ -37,11 +37,24 @@ function fromRow(r: any): CoeDocument {
   };
 }
 
+// Supabase caps an unbounded select at 1000 rows — a company's full COE
+// send history can exceed that. Page through in chunks of 1000.
+const PAGE_SIZE = 1000;
+
 /** All COE sends for the caller's company (RLS-scoped), newest first. */
 export async function getCompanyCoeDocuments(): Promise<CoeDocument[]> {
-  const { data, error } = await supabase.from("hr_coe_documents").select(SELECT).order("created_at", { ascending: false });
-  if (error) throw error;
-  return (data ?? []).map(fromRow);
+  const all: CoeDocument[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from("hr_coe_documents")
+      .select(SELECT)
+      .order("created_at", { ascending: false })
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) throw error;
+    all.push(...(data ?? []).map(fromRow));
+    if (!data || data.length < PAGE_SIZE) break;
+  }
+  return all;
 }
 
 export interface AddCoeDocumentInput {

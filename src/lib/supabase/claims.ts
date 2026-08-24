@@ -68,22 +68,36 @@ function fromAuthRow(r: any): ClaimAuthorization {
   };
 }
 
+// Supabase caps an unbounded select at 1000 rows — a company's full claims
+// history can exceed that. Page through in chunks of 1000.
+const PAGE_SIZE = 1000;
+
 export async function getCompanyClaims(filters?: { startDate?: string; endDate?: string }): Promise<Claim[]> {
-  let query = supabase.from("claims").select("*").order("created_at", { ascending: false });
-  if (filters?.startDate) query = query.gte("created_at", filters.startDate);
-  if (filters?.endDate) query = query.lte("created_at", `${filters.endDate}T23:59:59`);
-  const { data, error } = await query;
-  if (error) throw new Error(error.message);
-  return (data ?? []).map(fromClaimRow);
+  const all: Claim[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    let query = supabase.from("claims").select("*").order("created_at", { ascending: false });
+    if (filters?.startDate) query = query.gte("created_at", filters.startDate);
+    if (filters?.endDate) query = query.lte("created_at", `${filters.endDate}T23:59:59`);
+    const { data, error } = await query.range(from, from + PAGE_SIZE - 1);
+    if (error) throw new Error(error.message);
+    all.push(...(data ?? []).map(fromClaimRow));
+    if (!data || data.length < PAGE_SIZE) break;
+  }
+  return all;
 }
 
 export async function getCompanyClaimAuthorizations(filters?: { startDate?: string; endDate?: string }): Promise<ClaimAuthorization[]> {
-  let query = supabase.from("claim_authorizations").select("*").order("created_at", { ascending: false });
-  if (filters?.startDate) query = query.gte("created_at", filters.startDate);
-  if (filters?.endDate) query = query.lte("created_at", `${filters.endDate}T23:59:59`);
-  const { data, error } = await query;
-  if (error) throw new Error(error.message);
-  return (data ?? []).map(fromAuthRow);
+  const all: ClaimAuthorization[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    let query = supabase.from("claim_authorizations").select("*").order("created_at", { ascending: false });
+    if (filters?.startDate) query = query.gte("created_at", filters.startDate);
+    if (filters?.endDate) query = query.lte("created_at", `${filters.endDate}T23:59:59`);
+    const { data, error } = await query.range(from, from + PAGE_SIZE - 1);
+    if (error) throw new Error(error.message);
+    all.push(...(data ?? []).map(fromAuthRow));
+    if (!data || data.length < PAGE_SIZE) break;
+  }
+  return all;
 }
 
 export async function addClaim(input: { claimNo?: string; brand?: string; status?: string; amount?: number; ticketId?: string }): Promise<void> {

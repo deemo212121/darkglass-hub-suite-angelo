@@ -71,27 +71,51 @@ function agingFrom(dateStr: string): number {
   return Math.max(0, Math.floor((Date.now() - start) / 86400000));
 }
 
+// Supabase caps an unbounded select at 1000 rows — both `parts` and
+// `tickets` here are queried with no filter at all. Page through each in
+// chunks of 1000 instead.
+const PAGE_SIZE = 1000;
+
 /** Get every part-order line item across all of the company's tickets. */
 export async function getPartsInventoryRows(): Promise<PartInventoryRow[]> {
-  const [partsRes, ticketsRes] = await Promise.all([
-    supabase
-      .from("parts")
-      .select("id, ticket_id, part_no, part_dist, part_desc, quantity, part_price, status, po_no, po_date, invoice_no, order_no, eta, ra_no, ra_date, in_tracking, picked_up, picked_up_date, created_at")
-      .order("created_at", { ascending: false }),
-    supabase.from("tickets").select("id, ticket_no, location, technician, warranty, claim_company, aging"),
+  const [partsAll, ticketsAll] = await Promise.all([
+    (async () => {
+      const all: any[] = [];
+      for (let from = 0; ; from += PAGE_SIZE) {
+        const { data, error } = await supabase
+          .from("parts")
+          .select("id, ticket_id, part_no, part_dist, part_desc, quantity, part_price, status, po_no, po_date, invoice_no, order_no, eta, ra_no, ra_date, in_tracking, picked_up, picked_up_date, created_at")
+          .order("created_at", { ascending: false })
+          .range(from, from + PAGE_SIZE - 1);
+        if (error) {
+          console.error("getPartsInventoryRows parts error:", error.message);
+          throw new Error(error.message);
+        }
+        all.push(...(data ?? []));
+        if (!data || data.length < PAGE_SIZE) break;
+      }
+      return all;
+    })(),
+    (async () => {
+      const all: any[] = [];
+      for (let from = 0; ; from += PAGE_SIZE) {
+        const { data, error } = await supabase
+          .from("tickets")
+          .select("id, ticket_no, location, technician, warranty, claim_company, aging")
+          .range(from, from + PAGE_SIZE - 1);
+        if (error) {
+          console.error("getPartsInventoryRows tickets error:", error.message);
+          throw new Error(error.message);
+        }
+        all.push(...(data ?? []));
+        if (!data || data.length < PAGE_SIZE) break;
+      }
+      return all;
+    })(),
   ]);
 
-  if (partsRes.error) {
-    console.error("getPartsInventoryRows parts error:", partsRes.error.message);
-    throw new Error(partsRes.error.message);
-  }
-  if (ticketsRes.error) {
-    console.error("getPartsInventoryRows tickets error:", ticketsRes.error.message);
-    throw new Error(ticketsRes.error.message);
-  }
-
   const ticketById = new Map<string, { ticketNo: string; location: string; technician: string; warranty: string; claimCompany: string }>();
-  for (const t of ticketsRes.data ?? []) {
+  for (const t of ticketsAll) {
     ticketById.set((t as any).id, {
       ticketNo: (t as any).ticket_no ?? "",
       location: (t as any).location ?? "",
@@ -101,7 +125,7 @@ export async function getPartsInventoryRows(): Promise<PartInventoryRow[]> {
     });
   }
 
-  return (partsRes.data ?? []).map((row: any) => {
+  return partsAll.map((row: any) => {
     const ticket = ticketById.get(row.ticket_id);
     return {
       id: row.id,

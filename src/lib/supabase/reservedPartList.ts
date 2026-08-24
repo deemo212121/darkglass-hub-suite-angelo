@@ -33,19 +33,29 @@ export interface ReservedPartRow {
   statusChangedAt: string;
 }
 
-export async function getReservedPartRows(): Promise<ReservedPartRow[]> {
-  const { data, error } = await supabase
-    .from("parts")
-    .select(
-      "id, part_no, part_desc, status, invoice_no, quantity, received_date, tickets!inner(ticket_no, technician, location, schedule_date, status, status_changed_at, model)"
-    );
+// Supabase caps an unbounded select at 1000 rows — this query has no
+// filter at all. Page through in chunks of 1000 instead.
+const PAGE_SIZE = 1000;
 
-  if (error) {
-    console.error("getReservedPartRows error:", error.message);
-    throw new Error(error.message);
+export async function getReservedPartRows(): Promise<ReservedPartRow[]> {
+  const all: any[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from("parts")
+      .select(
+        "id, part_no, part_desc, status, invoice_no, quantity, received_date, tickets!inner(ticket_no, technician, location, schedule_date, status, status_changed_at, model)"
+      )
+      .range(from, from + PAGE_SIZE - 1);
+
+    if (error) {
+      console.error("getReservedPartRows error:", error.message);
+      throw new Error(error.message);
+    }
+    all.push(...(data ?? []));
+    if (!data || data.length < PAGE_SIZE) break;
   }
 
-  return (data ?? []).map((row: any) => ({
+  return all.map((row: any) => ({
     id: row.id,
     partNo: row.part_no || "",
     description: row.part_desc || "",

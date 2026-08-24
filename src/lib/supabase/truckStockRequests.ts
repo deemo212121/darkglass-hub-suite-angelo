@@ -104,15 +104,24 @@ export async function createTruckStockPullRequest(input: {
   return data.id as string;
 }
 
+// Supabase caps an unbounded select at 1000 rows — a company's full pull-
+// request history can exceed that. Page through in chunks of 1000.
+const PAGE_SIZE = 1000;
+
 export async function getTruckStockPullRequests(status?: TruckStockPullRequestStatus): Promise<TruckStockPullRequestRow[]> {
-  let query = supabase.from("truck_stock_pull_requests").select(SELECT).order("requested_at", { ascending: false });
-  if (status) query = query.eq("status", status);
-  const { data, error } = await query;
-  if (error) {
-    console.error("getTruckStockPullRequests error:", error.message);
-    throw new Error(error.message);
+  const all: TruckStockPullRequestRow[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    let query = supabase.from("truck_stock_pull_requests").select(SELECT).order("requested_at", { ascending: false });
+    if (status) query = query.eq("status", status);
+    const { data, error } = await query.range(from, from + PAGE_SIZE - 1);
+    if (error) {
+      console.error("getTruckStockPullRequests error:", error.message);
+      throw new Error(error.message);
+    }
+    all.push(...(data ?? []).map(fromRow));
+    if (!data || data.length < PAGE_SIZE) break;
   }
-  return (data ?? []).map(fromRow);
+  return all;
 }
 
 /** Approve a pending request — caller is responsible for also updating the linked Part Transaction row. */

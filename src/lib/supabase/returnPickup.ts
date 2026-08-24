@@ -45,18 +45,28 @@ function rowFromDb(row: any): ReturnPickupRow {
   };
 }
 
-export async function getReturnPickupRows(): Promise<ReturnPickupRow[]> {
-  const { data, error } = await supabase
-    .from("parts")
-    .select(SELECT_FIELDS)
-    .not("ra_no", "is", null)
-    .neq("ra_no", "");
+// Supabase caps an unbounded select at 1000 rows — a company's full
+// return-and-pickup queue can exceed that. Page through in chunks of 1000.
+const PAGE_SIZE = 1000;
 
-  if (error) {
-    console.error("getReturnPickupRows error:", error.message);
-    throw new Error(error.message);
+export async function getReturnPickupRows(): Promise<ReturnPickupRow[]> {
+  const all: ReturnPickupRow[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from("parts")
+      .select(SELECT_FIELDS)
+      .not("ra_no", "is", null)
+      .neq("ra_no", "")
+      .range(from, from + PAGE_SIZE - 1);
+
+    if (error) {
+      console.error("getReturnPickupRows error:", error.message);
+      throw new Error(error.message);
+    }
+    all.push(...(data ?? []).map(rowFromDb));
+    if (!data || data.length < PAGE_SIZE) break;
   }
-  return (data ?? []).map(rowFromDb);
+  return all;
 }
 
 export async function updateReturnPickupRow(

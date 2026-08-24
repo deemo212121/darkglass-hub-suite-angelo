@@ -95,14 +95,24 @@ export async function getNotesSubmittedBy(createdByProfileId: string): Promise<C
   return (data ?? []).map(fromRow);
 }
 
+// Supabase caps an unbounded select at 1000 rows — this is company-wide,
+// no filter. Page through in chunks of 1000 instead.
+const PAGE_SIZE = 1000;
+
 /** Every note company-wide regardless of status — feeds report-level Warnings/Mistakes totals. */
 export async function getAllAgentNotes(): Promise<CsrAgentNote[]> {
-  const { data, error } = await supabase
-    .from(TABLE)
-    .select(SELECT)
-    .order("created_at", { ascending: false });
-  if (error) throw new Error(error.message);
-  return (data ?? []).map(fromRow);
+  const all: CsrAgentNote[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from(TABLE)
+      .select(SELECT)
+      .order("created_at", { ascending: false })
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) throw new Error(error.message);
+    all.push(...(data ?? []).map(fromRow));
+    if (!data || data.length < PAGE_SIZE) break;
+  }
+  return all;
 }
 
 /**

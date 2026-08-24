@@ -281,20 +281,31 @@ export async function backfillTicketLocations(): Promise<{ scanned: number; upda
   return { scanned: rows.length, updated };
 }
 
+// Supabase caps an unbounded select at 1000 rows — tickets is the single
+// biggest table in the app. Page through in chunks of 1000 instead, same
+// fix as jotformSubmissions.ts's getJotformSubmissions.
+const PAGE_SIZE = 1000;
+
 /**
  * Get all tickets for the caller's company (RLS-scoped).
  */
 export async function getCompanyTickets(): Promise<Ticket[]> {
-  const { data, error } = await supabase
-    .from("tickets")
-    .select(SELECT)
-    .order("created_at", { ascending: false });
+  const all: Ticket[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from("tickets")
+      .select(SELECT)
+      .order("created_at", { ascending: false })
+      .range(from, from + PAGE_SIZE - 1);
 
-  if (error) {
-    console.error("getCompanyTickets error:", error.message);
-    throw new Error(error.message);
+    if (error) {
+      console.error("getCompanyTickets error:", error.message);
+      throw new Error(error.message);
+    }
+    all.push(...(data ?? []).map(rowToTicket));
+    if (!data || data.length < PAGE_SIZE) break;
   }
-  return (data ?? []).map(rowToTicket);
+  return all;
 }
 
 /**
@@ -1670,29 +1681,37 @@ export interface TicketAuditEntry {
  * detail page's Change Log). Pass `ticketId` to scope to one ticket.
  */
 export async function getTicketAuditLog(opts?: { ticketId?: string; startDate?: string; endDate?: string }): Promise<TicketAuditEntry[]> {
-  let query = supabase
-    .from("ticket_audit_log")
-    .select("id, ticket_id, action, field, before_value, after_value, changed_by, created_at")
-    .order("created_at", { ascending: false });
-  if (opts?.ticketId) query = query.eq("ticket_id", opts.ticketId);
-  if (opts?.startDate) query = query.gte("created_at", opts.startDate);
-  if (opts?.endDate) query = query.lte("created_at", `${opts.endDate}T23:59:59.999Z`);
+  const all: TicketAuditEntry[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    let query = supabase
+      .from("ticket_audit_log")
+      .select("id, ticket_id, action, field, before_value, after_value, changed_by, created_at")
+      .order("created_at", { ascending: false })
+      .range(from, from + PAGE_SIZE - 1);
+    if (opts?.ticketId) query = query.eq("ticket_id", opts.ticketId);
+    if (opts?.startDate) query = query.gte("created_at", opts.startDate);
+    if (opts?.endDate) query = query.lte("created_at", `${opts.endDate}T23:59:59.999Z`);
 
-  const { data, error } = await query;
-  if (error) {
-    console.error("getTicketAuditLog error:", error.message);
-    throw new Error(error.message);
+    const { data, error } = await query;
+    if (error) {
+      console.error("getTicketAuditLog error:", error.message);
+      throw new Error(error.message);
+    }
+    all.push(
+      ...(data ?? []).map((r: any) => ({
+        id: r.id,
+        ticketId: r.ticket_id,
+        action: r.action ?? "",
+        field: r.field ?? "",
+        beforeValue: r.before_value,
+        afterValue: r.after_value,
+        changedBy: r.changed_by,
+        createdAt: r.created_at,
+      }))
+    );
+    if (!data || data.length < PAGE_SIZE) break;
   }
-  return (data ?? []).map((r: any) => ({
-    id: r.id,
-    ticketId: r.ticket_id,
-    action: r.action ?? "",
-    field: r.field ?? "",
-    beforeValue: r.before_value,
-    afterValue: r.after_value,
-    changedBy: r.changed_by,
-    createdAt: r.created_at,
-  }));
+  return all;
 }
 
 /**

@@ -43,6 +43,10 @@ export function suggestCollectType(partStatus: string): string {
   return USED_STATUSES.has(partStatus) ? "Used" : "Restock";
 }
 
+// Supabase caps an unbounded select at 1000 rows — a company's full
+// picked-up-parts queue can exceed that. Page through in chunks of 1000.
+const PAGE_SIZE = 1000;
+
 export async function getPartsForDailyCollection(filters: {
   location?: string;
   technician?: string;
@@ -54,46 +58,52 @@ export async function getPartsForDailyCollection(filters: {
   collected: boolean;
   collectType?: string;
 }): Promise<PartCollectionRow[]> {
-  let query = supabase
-    .from("parts")
-    .select(
-      "id, part_no, part_desc, quantity, core_value, status, note, picked_up, picked_up_date, collected, collected_date, used_qty, restock_qty, collect_type, collect_note, lot_no, tickets!inner(ticket_no, technician, status, location, schedule_date)"
-    )
-    .eq("picked_up", true);
+  const rows: PartCollectionRow[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    let query = supabase
+      .from("parts")
+      .select(
+        "id, part_no, part_desc, quantity, core_value, status, note, picked_up, picked_up_date, collected, collected_date, used_qty, restock_qty, collect_type, collect_note, lot_no, tickets!inner(ticket_no, technician, status, location, schedule_date)"
+      )
+      .eq("picked_up", true);
 
-  if (filters.location) query = query.eq("tickets.location", filters.location);
-  if (filters.technician) query = query.eq("tickets.technician", filters.technician);
-  if (filters.collectType) query = query.eq("collect_type", filters.collectType);
+    if (filters.location) query = query.eq("tickets.location", filters.location);
+    if (filters.technician) query = query.eq("tickets.technician", filters.technician);
+    if (filters.collectType) query = query.eq("collect_type", filters.collectType);
 
-  const { data, error } = await query;
-  if (error) {
-    console.error("getPartsForDailyCollection error:", error.message);
-    throw new Error(error.message);
+    const { data, error } = await query.range(from, from + PAGE_SIZE - 1);
+    if (error) {
+      console.error("getPartsForDailyCollection error:", error.message);
+      throw new Error(error.message);
+    }
+
+    rows.push(
+      ...(data ?? []).map((row: any) => ({
+        id: row.id,
+        techName: row.tickets?.technician || "",
+        ticketNo: row.tickets?.ticket_no || "",
+        repairStatus: row.tickets?.status || "",
+        partNo: row.part_no || "",
+        description: row.part_desc || "",
+        uniqueId: String(row.id).slice(0, 8),
+        coreValue: Number(row.core_value ?? 0),
+        quantity: Number(row.quantity ?? 0),
+        usedQty: Number(row.used_qty ?? 0),
+        restockQty: Number(row.restock_qty ?? 0),
+        collectType: row.collect_type || "",
+        lotNo: row.lot_no || "",
+        comment: row.collect_note || "",
+        partStatus: row.status || "",
+        pickedUp: row.picked_up === true,
+        pickedUpDate: row.picked_up_date || "",
+        collected: row.collected === true,
+        collectedDate: row.collected_date || "",
+        scheduleDate: row.tickets?.schedule_date || "",
+        location: row.tickets?.location || "",
+      }))
+    );
+    if (!data || data.length < PAGE_SIZE) break;
   }
-
-  const rows: PartCollectionRow[] = (data ?? []).map((row: any) => ({
-    id: row.id,
-    techName: row.tickets?.technician || "",
-    ticketNo: row.tickets?.ticket_no || "",
-    repairStatus: row.tickets?.status || "",
-    partNo: row.part_no || "",
-    description: row.part_desc || "",
-    uniqueId: String(row.id).slice(0, 8),
-    coreValue: Number(row.core_value ?? 0),
-    quantity: Number(row.quantity ?? 0),
-    usedQty: Number(row.used_qty ?? 0),
-    restockQty: Number(row.restock_qty ?? 0),
-    collectType: row.collect_type || "",
-    lotNo: row.lot_no || "",
-    comment: row.collect_note || "",
-    partStatus: row.status || "",
-    pickedUp: row.picked_up === true,
-    pickedUpDate: row.picked_up_date || "",
-    collected: row.collected === true,
-    collectedDate: row.collected_date || "",
-    scheduleDate: row.tickets?.schedule_date || "",
-    location: row.tickets?.location || "",
-  }));
 
   return rows.filter((r) => {
     const dateVal = filters.dateType === "Collect Date" ? r.collectedDate : r.scheduleDate;
