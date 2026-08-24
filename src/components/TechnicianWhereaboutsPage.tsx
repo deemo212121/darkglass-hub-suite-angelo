@@ -1,9 +1,10 @@
 /**
  * Admin > Technician Whereabouts — where each active technician's current
- * job site is, per branch or company-wide. Not live GPS (see
- * technicianWhereabouts.ts's own header) — inferred from today's ticket
- * schedule, the same real data Mileage's day-route view and Work Map
- * already read.
+ * job site is, per branch or company-wide. Real live GPS (see
+ * technicianWhereabouts.ts's own header) when a technician is clocked in,
+ * has a confirmed Location Consent document on file, and has a fresh ping —
+ * otherwise inferred from today's ticket schedule, the same real data
+ * Mileage's day-route view and Work Map already read.
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -24,6 +25,17 @@ import {
   OSM_ATTRIBUTION,
   type LatLng,
 } from "@/lib/mapEngine";
+
+/** "12s ago" / "3m ago" / "2h ago" — for the live-GPS sidebar/tooltip timestamp. */
+function timeAgo(iso: string): string {
+  const seconds = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000));
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  return `${Math.round(minutes / 60)}h ago`;
+}
+
+const LIVE_COLOR = "#3b82f6";
 
 const STATUS_STYLE: Record<TechnicianWhereabouts["status"], { color: string; label: string }> = {
   current: { color: "#22c55e", label: "At job now" },
@@ -194,9 +206,11 @@ export function TechnicianWhereaboutsPage({ mod, sub }: { mod: ModuleDef; sub: S
       let misses = 0;
 
       for (const tech of filtered) {
-        const addressPt = tech.address ? await geocode(tech.address) : null;
+        // A fresh live GPS ping is exact — skip geocoding the ticket
+        // address entirely when one's available.
+        const addressPt = tech.liveLocation ? null : tech.address ? await geocode(tech.address) : null;
         if (cancelled) return;
-        const pt = addressPt ?? getOfficeCoordinates(tech.branch);
+        const pt = tech.liveLocation ?? addressPt ?? getOfficeCoordinates(tech.branch);
         if (pt) points.push({ pt, tech });
         else misses++;
       }
@@ -218,6 +232,19 @@ export function TechnicianWhereaboutsPage({ mod, sub }: { mod: ModuleDef; sub: S
       if (mapProvider === "leaflet" && L) {
         const map = leafletMapRef.current!;
         spread.forEach(({ pt, tech }) => {
+          const tooltipText = tech.liveLocation
+            ? `${tech.name} — 📍 Live · updated ${timeAgo(tech.liveLocation.updatedAt)}`
+            : `${tech.name} — ${STATUS_STYLE[tech.status].label}`;
+          if (tech.liveLocation) {
+            const halo = L.circleMarker([pt.lat, pt.lng], {
+              radius: 13,
+              fillOpacity: 0,
+              color: LIVE_COLOR,
+              weight: 2,
+              className: "whereabouts-live-halo",
+            }).addTo(map);
+            leafletLayersRef.current.push(halo);
+          }
           const marker = L.circleMarker([pt.lat, pt.lng], {
             radius: 8,
             fillColor: technicianColor(tech.name),
@@ -226,7 +253,7 @@ export function TechnicianWhereaboutsPage({ mod, sub }: { mod: ModuleDef; sub: S
             weight: 3,
             className: "whereabouts-marker",
           }).addTo(map);
-          marker.bindTooltip(`${tech.name} — ${STATUS_STYLE[tech.status].label}`, { direction: "top", offset: [0, -8] });
+          marker.bindTooltip(tooltipText, { direction: "top", offset: [0, -8] });
           marker.on("click", () => setRouteModalTech(tech));
           leafletLayersRef.current.push(marker);
         });
@@ -236,6 +263,19 @@ export function TechnicianWhereaboutsPage({ mod, sub }: { mod: ModuleDef; sub: S
         const map = googleMapRef.current;
         const bounds = new g.maps.LatLngBounds();
         spread.forEach(({ pt, tech }) => {
+          const title = tech.liveLocation
+            ? `${tech.name} — 📍 Live · updated ${timeAgo(tech.liveLocation.updatedAt)}`
+            : `${tech.name} — ${STATUS_STYLE[tech.status].label}`;
+          if (tech.liveLocation) {
+            const halo = new g.maps.Marker({
+              map,
+              position: pt,
+              icon: { path: g.maps.SymbolPath.CIRCLE, scale: 13, fillOpacity: 0, strokeColor: LIVE_COLOR, strokeWeight: 2 },
+              clickable: false,
+              zIndex: 1,
+            });
+            googleOverlaysRef.current.push(halo);
+          }
           const marker = new g.maps.Marker({
             map,
             position: pt,
@@ -247,7 +287,8 @@ export function TechnicianWhereaboutsPage({ mod, sub }: { mod: ModuleDef; sub: S
               strokeColor: STATUS_STYLE[tech.status].color,
               strokeWeight: 3,
             },
-            title: `${tech.name} — ${STATUS_STYLE[tech.status].label}`,
+            title,
+            zIndex: 2,
           });
           marker.addListener("click", () => setRouteModalTech(tech));
           googleOverlaysRef.current.push(marker);
@@ -262,7 +303,7 @@ export function TechnicianWhereaboutsPage({ mod, sub }: { mod: ModuleDef; sub: S
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mapProvider, mapReady, L, filtered.map((r) => `${r.name}|${r.address ?? r.branch}`).join(",")]);
+  }, [mapProvider, mapReady, L, filtered.map((r) => `${r.name}|${r.liveLocation ? `${r.liveLocation.lat},${r.liveLocation.lng}` : r.address ?? r.branch}`).join(",")]);
 
   return (
     <main className="flex-1 bg-slate-950 py-6">
@@ -275,7 +316,7 @@ export function TechnicianWhereaboutsPage({ mod, sub }: { mod: ModuleDef; sub: S
           <div>
             <h1 className="text-3xl font-bold tracking-tight">{sub.title}</h1>
             <p className="mt-1 text-sm text-slate-300">
-              Each technician's current job site, inferred from today's schedule — not live GPS.
+              Live GPS while a technician is clocked in and sharing — otherwise inferred from today's schedule.
             </p>
           </div>
         </div>
@@ -340,6 +381,10 @@ export function TechnicianWhereaboutsPage({ mod, sub }: { mod: ModuleDef; sub: S
                     {STATUS_STYLE[s].label}
                   </span>
                 ))}
+                <span className="flex items-center gap-1.5">
+                  <span className="h-2.5 w-2.5 rounded-full bg-slate-600" style={{ boxShadow: `0 0 0 2px ${LIVE_COLOR}` }} />
+                  Live GPS (blue halo)
+                </span>
               </div>
             </div>
 
@@ -379,7 +424,12 @@ export function TechnicianWhereaboutsPage({ mod, sub }: { mod: ModuleDef; sub: S
                 >
                   <span
                     className="h-2.5 w-2.5 rounded-full mt-1 shrink-0"
-                    style={{ background: technicianColor(tech.name), boxShadow: `0 0 0 2px ${STATUS_STYLE[tech.status].color}` }}
+                    style={{
+                      background: technicianColor(tech.name),
+                      boxShadow: tech.liveLocation
+                        ? `0 0 0 2px ${STATUS_STYLE[tech.status].color}, 0 0 0 4px ${LIVE_COLOR}`
+                        : `0 0 0 2px ${STATUS_STYLE[tech.status].color}`,
+                    }}
                   />
                   <div className="flex-1 min-w-0">
                     <p className="text-white font-medium">
@@ -404,7 +454,13 @@ export function TechnicianWhereaboutsPage({ mod, sub }: { mod: ModuleDef; sub: S
                       )}
                       {tech.timeSlot && ` · ${tech.timeSlot}`}
                     </p>
-                    {tech.address && <p className="text-slate-500 mt-0.5 truncate flex items-center gap-1"><MapPin className="h-3 w-3 shrink-0" />{tech.address}</p>}
+                    {tech.liveLocation ? (
+                      <p className="mt-0.5 flex items-center gap-1" style={{ color: LIVE_COLOR }}>
+                        <MapPin className="h-3 w-3 shrink-0" />📍 Live · updated {timeAgo(tech.liveLocation.updatedAt)}
+                      </p>
+                    ) : (
+                      tech.address && <p className="text-slate-500 mt-0.5 truncate flex items-center gap-1"><MapPin className="h-3 w-3 shrink-0" />{tech.address}</p>
+                    )}
                   </div>
                 </div>
               ))}
@@ -420,10 +476,18 @@ export function TechnicianWhereaboutsPage({ mod, sub }: { mod: ModuleDef; sub: S
                     >
                       <span
                         className="h-2.5 w-2.5 rounded-full shrink-0"
-                        style={{ background: technicianColor(tech.name), boxShadow: `0 0 0 2px ${STATUS_STYLE.none.color}` }}
+                        style={{
+                          background: technicianColor(tech.name),
+                          boxShadow: tech.liveLocation
+                            ? `0 0 0 2px ${STATUS_STYLE.none.color}, 0 0 0 4px ${LIVE_COLOR}`
+                            : `0 0 0 2px ${STATUS_STYLE.none.color}`,
+                        }}
                       />
                       <span className="text-slate-300">{tech.name}</span>
                       <span className="text-slate-500">· {tech.branch || "No branch"}</span>
+                      {tech.liveLocation && (
+                        <span className="ml-auto shrink-0" style={{ color: LIVE_COLOR }}>📍 Live</span>
+                      )}
                     </div>
                   ))}
                 </>

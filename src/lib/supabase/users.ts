@@ -479,6 +479,8 @@ export async function getCompanyUsers(): Promise<ProfileRow[]> {
 
 /** One real, active technician — canonical shape returned by getCompanyTechnicians(). */
 export interface TechnicianOption {
+  /** Real profile id — used by TechnicianWhereaboutsPage to match a live GPS ping (technicianLocationPings.ts), which has no better key than this since it's the app's own table, unlike the ticket-derived side of that page which only has technician name text to go on. */
+  id: string;
   name: string;
   /** assigned_branch, for branch-scoped views (Work Planner columns, Work Map's per-location list). "" if unset. */
   branch: string;
@@ -500,7 +502,7 @@ export async function getCompanyTechnicians(): Promise<TechnicianOption[]> {
       const roles = [u.role, ...(u.extra_roles ?? [])].map((r) => (r || "").toUpperCase());
       return u.is_active && (roles.includes("TECHNICIAN") || roles.includes("TECHNICIAN_MANAGER"));
     })
-    .map((u) => ({ name: u.display_name || u.email, branch: u.assigned_branch || "" }))
+    .map((u) => ({ id: u.id, name: u.display_name || u.email, branch: u.assigned_branch || "" }))
     .filter((t) => t.name)
     .sort((a, b) => a.name.localeCompare(b.name));
 }

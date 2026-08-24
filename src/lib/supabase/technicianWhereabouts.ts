@@ -1,17 +1,24 @@
 /**
- * Technician Whereabouts — a "current job site" proxy, not live GPS. There's
- * no device-location tracking in this app (no mobile-app permission flow,
- * no consent capture), so this infers each technician's location from their
- * own today's ticket schedule, the same real data Mileage's day-route view
- * and Work Map already read.
+ * Technician Whereabouts — primarily a "current job site" proxy inferred
+ * from today's ticket schedule (the same real data Mileage's day-route view
+ * and Work Map already read), enriched with real live GPS when available
+ * (see technicianLocationPings.ts / TechnicianLocationTracker.tsx) — a
+ * technician only ever shows a live point while they're actually clocked in
+ * AND have a confirmed Location Consent document on file; everyone else
+ * (or anyone whose last ping has gone stale) falls back to the schedule
+ * proxy exactly as before this existed.
  */
 
 import { supabase } from "./client";
-import { getCompanyTechnicians, type TechnicianOption } from "./users";
+import { getCompanyTechnicians } from "./users";
+import { getCompanyLocationPings } from "./technicianLocationPings";
 import { statusGroupOf } from "@/lib/ticketData";
 import { normalizeTimePeriod, FRAME_START_TIME } from "@/lib/timeframes";
 
 export type WhereaboutsStatus = "current" | "last" | "none";
+
+/** A live ping is only trusted for this long before falling back to the schedule proxy — covers a technician who closed the tab/lost signal without formally clocking out. */
+const LIVE_STALE_MS = 15 * 60 * 1000;
 
 export interface TechnicianWhereabouts {
   name: string;
@@ -21,6 +28,8 @@ export interface TechnicianWhereabouts {
   repairStatus: string | null;
   timeSlot: string | null;
   address: string | null;
+  /** Real GPS, when a fresh one exists — see LIVE_STALE_MS. Additive: `status` above still reflects today's job-schedule state regardless of whether this is set. */
+  liveLocation: { lat: number; lng: number; updatedAt: string } | null;
 }
 
 function formatAddress(row: any): string {
@@ -48,10 +57,19 @@ export async function getTechnicianWhereabouts(): Promise<TechnicianWhereabouts[
   if (technicians.length === 0) return [];
 
   const today = new Date().toISOString().slice(0, 10);
-  const { data, error } = await supabase
-    .from("tickets")
-    .select("ticket_no, technician, status, time_slot, customer:customers ( address, address2, city, state, zip )")
-    .eq("schedule_date", today);
+  const [{ data, error }, pings] = await Promise.all([
+    supabase
+      .from("tickets")
+      .select("ticket_no, technician, status, time_slot, customer:customers ( address, address2, city, state, zip )")
+      .eq("schedule_date", today),
+    // Best-effort: a non-Admin/SuperAdmin caller would get an RLS-empty
+    // result here, not an error, but this function itself is only ever
+    // reached from the Admin-gated Whereabouts page.
+    getCompanyLocationPings().catch((err) => {
+      console.error("getCompanyLocationPings error:", err instanceof Error ? err.message : err);
+      return [];
+    }),
+  ]);
   if (error) {
     console.error("getTechnicianWhereabouts error:", error.message);
     throw new Error(error.message);
@@ -65,9 +83,16 @@ export async function getTechnicianWhereabouts(): Promise<TechnicianWhereabouts[
     byTech.get(key)!.push(row);
   }
 
+  const now = Date.now();
+  const liveByProfileId = new Map(
+    pings
+      .filter((p) => now - new Date(p.updatedAt).getTime() < LIVE_STALE_MS)
+      .map((p) => [p.profileId, { lat: p.lat, lng: p.lng, updatedAt: p.updatedAt }])
+  );
+
   return technicians.map((tech): TechnicianWhereabouts => {
     const rows = byTech.get(tech.name.trim().toLowerCase()) ?? [];
-    const base = { name: tech.name, branch: tech.branch };
+    const base = { name: tech.name, branch: tech.branch, liveLocation: liveByProfileId.get(tech.id) ?? null };
     if (rows.length === 0) {
       return { ...base, status: "none", ticketNo: null, repairStatus: null, timeSlot: null, address: null };
     }
@@ -88,7 +113,8 @@ export async function getTechnicianWhereabouts(): Promise<TechnicianWhereabouts[
   });
 }
 
-export function distinctBranches(rows: TechnicianOption[]): string[] {
+/** Only reads `.branch` — accepts any row shape that has one (TechnicianOption, TechnicianWhereabouts, ...) rather than a specific one. */
+export function distinctBranches(rows: Array<{ branch: string }>): string[] {
   return Array.from(new Set(rows.map((r) => r.branch).filter((b) => b.trim()))).sort((a, b) => a.localeCompare(b));
 }
 

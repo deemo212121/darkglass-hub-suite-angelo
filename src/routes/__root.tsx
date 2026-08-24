@@ -17,6 +17,7 @@ import { PasswordChangeReminder } from "@/components/PasswordChangeReminder";
 import { TicketSearchFab } from "@/components/TicketSearchFab";
 import { ModuleNavigator } from "@/components/ModuleNavigator";
 import { SessionKickedOutBanner } from "@/components/SessionKickedOutBanner";
+import { TechnicianLocationTracker } from "@/components/TechnicianLocationTracker";
 
 import appCss from "../styles.css?url";
 
@@ -150,6 +151,10 @@ function RootComponent() {
       <ThemeProvider>
         <AuthProvider>
           <SuperSuperAdminGuard />
+          {/* Unconditional, same as SuperSuperAdminGuard above — must run
+              on /mobile too, since that's exactly where technicians clock
+              in/out day to day. */}
+          <TechnicianLocationTracker />
           <SessionKickedOutBanner />
           <MustChangePasswordGate hideChrome={hideChrome} />
           {!hideChrome && <AnnouncementBanner />}
