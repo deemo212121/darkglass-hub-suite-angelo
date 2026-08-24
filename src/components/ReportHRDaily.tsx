@@ -6255,20 +6255,33 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       if (myProfileId) {
         const employeeName = (doc.formData as { employeeName?: string })?.employeeName || doc.recipientName || "an employee";
         const thread = await getOrCreateDmThread(myProfileId, recipient.id);
+        // Deep-links straight to the right Automated Forms tab (same
+        // ?tab= param VALID_HR_TABS/hrSearchParams already reads on load) —
+        // a real clickable link, not just an instruction to go find the
+        // tab manually.
+        const tabKey =
+          doc.documentType === "i9" ? "i9"
+          : doc.documentType === "meal_rest_break" ? "mealRestBreak"
+          : doc.documentType === "parts_responsibility" ? "partsResponsibility"
+          : doc.documentType === "mileage_fuel" ? "mileageFuel"
+          : doc.documentType === "location_consent" ? "locationConsent"
+          : doc.documentType === "damage" ? "damage"
+          : "wageAck";
+        const tabLink = `${getAppUrl()}/m/dashboard/hr-dashboard?tab=${tabKey}`;
         const body =
           doc.documentType === "i9"
-            ? `📋 Please complete Section 2 (document review + employer/AR signature) of Form I-9 for ${employeeName} — open the "Form I-9" tab in the HR Dashboard.`
+            ? `📋 Please complete Section 2 (document review + employer/AR signature) of Form I-9 for ${employeeName} — [open the Form I-9 tab](${tabLink}) in the HR Dashboard.`
             : doc.documentType === "meal_rest_break"
-            ? `📋 Please add the employer signature to the Employee Meal and Rest Break Policy Acknowledgment for ${employeeName} — open the "Meal & Rest Break Policy" tab in the HR Dashboard.`
+            ? `📋 Please add the employer signature to the Employee Meal and Rest Break Policy Acknowledgment for ${employeeName} — [open the Meal & Rest Break Policy tab](${tabLink}) in the HR Dashboard.`
             : doc.documentType === "parts_responsibility"
-            ? `📋 Please add the manager/supervisor signature to the Parts Responsibility and Technician Floor Protection Acknowledgment Form for ${employeeName} — open the "Parts Responsibility and Technician Floor Protection Acknowledgment Form" tab in the HR Dashboard.`
+            ? `📋 Please add the manager/supervisor signature to the Parts Responsibility and Technician Floor Protection Acknowledgment Form for ${employeeName} — [open the Parts Responsibility and Technician Floor Protection Acknowledgment Form tab](${tabLink}) in the HR Dashboard.`
             : doc.documentType === "mileage_fuel"
-            ? `📋 Please add the employer/representative signature to the Personal Vehicle Mileage and Fuel Policy Agreement for ${employeeName} — open the "Mileage & Fuel Policy" tab in the HR Dashboard.`
+            ? `📋 Please add the employer/representative signature to the Personal Vehicle Mileage and Fuel Policy Agreement for ${employeeName} — [open the Mileage & Fuel Policy tab](${tabLink}) in the HR Dashboard.`
             : doc.documentType === "location_consent"
-            ? `📋 Please add the employer/representative signature to the Employee Mobile App Location Sharing Consent Agreement for ${employeeName} — open the "Location Sharing Consent" tab in the HR Dashboard.`
+            ? `📋 Please add the employer/representative signature to the Employee Mobile App Location Sharing Consent Agreement for ${employeeName} — [open the Location Sharing Consent tab](${tabLink}) in the HR Dashboard.`
             : doc.documentType === "damage"
-            ? `📋 Please add the employer/representative signature to the Damage, Part Loss, and Tool Penalty Commission Deduction Agreement for ${employeeName} — open the "Damage Agreement" tab in the HR Dashboard.`
-            : `📋 Please add the employer/representative signature to the Acknowledgment of Wage & Compensation Structure for ${employeeName} — open the "Acknowledgment of Wage" tab in the HR Dashboard.`;
+            ? `📋 Please add the employer/representative signature to the Damage, Part Loss, and Tool Penalty Commission Deduction Agreement for ${employeeName} — [open the Damage Agreement tab](${tabLink}) in the HR Dashboard.`
+            : `📋 Please add the employer/representative signature to the Acknowledgment of Wage & Compensation Structure for ${employeeName} — [open the Acknowledgment of Wage tab](${tabLink}) in the HR Dashboard.`;
         await sendMessage({
           dmThreadId: thread.id,
           senderId: myProfileId,
