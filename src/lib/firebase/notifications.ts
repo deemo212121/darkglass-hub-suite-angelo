@@ -43,6 +43,8 @@ export interface AppNotification {
   link?: string;         // optional route to navigate to
   ticketNo?: string;     // attach a ticket number for deep-link
   isRead: boolean;
+  /** Gmail-style flag to come back to later — independent of isRead. Absent on existing docs written before this field existed; treat as false. */
+  starred?: boolean;
   createdAt: string;     // ISO string
   // Jotform's "Label: value, Label: value…" summary of every submitted
   // answer — only present on kind: "jotform_submission" notifications.
@@ -179,6 +181,16 @@ export function subscribeNotifications(
 export async function markNotificationRead(uid: string, notifId: string): Promise<void> {
   if (!isFirebaseReady() || !db) return;
   await updateDoc(doc(db!, "notifications", uid, "items", notifId), { isRead: true });
+}
+
+export async function markNotificationUnread(uid: string, notifId: string): Promise<void> {
+  if (!isFirebaseReady() || !db) return;
+  await updateDoc(doc(db!, "notifications", uid, "items", notifId), { isRead: false });
+}
+
+export async function setNotificationStarred(uid: string, notifId: string, starred: boolean): Promise<void> {
+  if (!isFirebaseReady() || !db) return;
+  await updateDoc(doc(db!, "notifications", uid, "items", notifId), { starred });
 }
 
 export async function deleteNotification(uid: string, notifId: string): Promise<void> {

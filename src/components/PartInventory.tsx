@@ -115,6 +115,7 @@ export function PartInventory({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         kind: "cross_inventory_request",
         title: "Cross-branch inventory request",
         body: `${email ?? "A user"} is attempting to use "${partDesc}" from branch ${ownerBranch}'s inventory. Please locate and ship the part.`,
+        link: "/m/parts/part-inventory",
       });
     } catch (err) {
       console.error("Cross-inventory notification failed:", err);

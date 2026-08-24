@@ -65,6 +65,7 @@ import { createNotification } from "@/lib/supabase/notifications";
 import { getMileageEntries, type MileageEntry } from "@/lib/supabase/mileage";
 import { resolveTeamLeadOrManager } from "@/lib/notifyRouting";
 import { NotificationsMenu } from "@/components/NotificationsMenu";
+import { NotificationCenterPanel } from "@/components/NotificationCenterPage";
 import {
   parseServicePerformed,
   composeServicePerformed,
@@ -89,7 +90,8 @@ type View =
   | "payrolldispute"
   | "timeoff"
   | "attendancedispute"
-  | "correction";
+  | "correction"
+  | "notifications";
 type DetailTab = "general" | "tracking" | "parts" | "billing";
 
 // Zero-padded "HH:MM"/"HH:MM:SS" strings sort chronologically as plain
@@ -647,6 +649,7 @@ export function MobileTechApp() {
         onOpenAttendanceDispute={() => setView("attendancedispute")}
         onOpenCorrection={() => setView("correction")}
         onNotificationLink={handleNotificationLink}
+        onOpenNotifications={() => setView("notifications")}
         onSwitchToDesktop={() => {
           setDesktopOverride(true);
           navigate({ to: "/home", replace: true });
@@ -783,6 +786,16 @@ export function MobileTechApp() {
           <MobileTimeCorrectionView userName={headerName} profileId={profileId} />
         )}
 
+        {view === "notifications" && (
+          <div className="mtech-scroll">
+            <div className="mtech-payroll-heading">
+              <div className="mtech-payroll-name">Notifications</div>
+              <div className="mtech-payroll-sub">Everything sent to you, in one place</div>
+            </div>
+            <NotificationCenterPanel onLinkClick={handleNotificationLink} />
+          </div>
+        )}
+
         {/* home / parts sub-views still reachable but not in bottom nav — redirect to tickets */}
         {view === "home" && (
           <MobileHomeView
@@ -831,6 +844,7 @@ function AppHeaderMobile({
   onOpenAttendanceDispute,
   onOpenCorrection,
   onNotificationLink,
+  onOpenNotifications,
   onSwitchToDesktop,
   onLogout,
 }: {
@@ -847,6 +861,7 @@ function AppHeaderMobile({
   onOpenAttendanceDispute: () => void;
   onOpenCorrection: () => void;
   onNotificationLink: (linkTo: string) => void;
+  onOpenNotifications: () => void;
   onSwitchToDesktop: () => void;
   onLogout: () => void;
 }) {
@@ -878,7 +893,7 @@ function AppHeaderMobile({
 
       {/* Right: notification bell + profile bubble → logout dropdown */}
       <div className="mtech-app-header-right">
-        <NotificationsMenu onLinkClick={onNotificationLink} />
+        <NotificationsMenu onLinkClick={onNotificationLink} onViewAll={onOpenNotifications} />
         <button
           type="button"
           className="mtech-app-profile-btn"
