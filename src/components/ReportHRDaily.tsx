@@ -48,7 +48,7 @@ import {
   type OnboardingDocumentColumn,
   type OnboardingGroupKey,
 } from "@/lib/supabase/onboardingDocumentColumns";
-import { uploadCoeCertificate, uploadWarningForm, uploadPromotionForm, uploadActionPlanForm, uploadTerminationForm, uploadW8benForm, uploadW4Form, uploadW4RForm, uploadI9Form, uploadWageAckForm, uploadCarIqAgreementForm, uploadVehicleAgreementForm, uploadEmployeeConfidentialityForm, uploadMealRestBreakForm, uploadPtoAckForm, uploadPartsResponsibilityForm, uploadMileageFuelForm, uploadLocationConsentForm, uploadDamageForm, uploadContractorDataForm, uploadDirectDepositForm, uploadSignableDocumentSignature } from "@/lib/firebase/storage";
+import { uploadCoeCertificate, uploadWarningForm, uploadPromotionForm, uploadActionPlanForm, uploadTerminationForm, uploadW8benForm, uploadW4Form, uploadW4RForm, uploadI9Form, uploadWageAckForm, uploadCarIqAgreementForm, uploadVehicleAgreementForm, uploadEmployeeConfidentialityForm, uploadMealRestBreakForm, uploadPtoAckForm, uploadPartsResponsibilityForm, uploadMileageFuelForm, uploadLocationConsentForm, uploadDamageForm, uploadContractorDataForm, uploadDirectDepositForm, uploadSubstanceScreeningForm, uploadSignableDocumentSignature } from "@/lib/firebase/storage";
 import { captureHtmlToPdfBlob, loadAssetDataUrl as loadImageDataUrl } from "@/lib/pdfCapture";
 import {
   createSignableDocument,
@@ -101,6 +101,8 @@ import { buildContractorDataBodyMarkup, contractorDataStyles, BLANK_EMERGENCY_CO
 import { buildDirectDepositBodyMarkup, directDepositStyles, type DirectDepositFormData } from "@/lib/directDepositFormTemplate";
 import type { I9FormData } from "@/lib/i9FormTemplate";
 import { fillI9Pdf } from "@/lib/i9PdfFill";
+import type { SubstanceScreeningFormData } from "@/lib/substanceScreeningFormTemplate";
+import { fillSubstanceScreeningPdf } from "@/lib/substanceScreeningPdfFill";
 import { logActivity, getActivityLog, activityActionLabel, type HrActivityLogEntry } from "@/lib/supabase/hrActivityLog";
 import { HrActivityLogPanel } from "@/components/HrActivityLogPage";
 import { subscribeTableChanges } from "@/lib/supabase/realtime";
@@ -679,7 +681,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // Reviews, the Approved log, the department trend chart, and the full
   // Employee Directory all on top of each other, forcing a long scroll to
   // reach anything below Hiring.
-  const [activeTab, setActiveTab] = useState<"hiring" | "warnings" | "masterList" | "leaders" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "promotionForm" | "actionPlanForm" | "terminationForm" | "employeeRequestManager" | "w8ben" | "i9" | "wageAck" | "carIqAgreement" | "vehicleAgreement" | "employeeConfidentiality" | "mealRestBreak" | "ptoAck" | "partsResponsibility" | "mileageFuel" | "locationConsent" | "damage" | "contractorData" | "directDeposit">("hiring");
+  const [activeTab, setActiveTab] = useState<"hiring" | "warnings" | "masterList" | "leaders" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "promotionForm" | "actionPlanForm" | "terminationForm" | "employeeRequestManager" | "w8ben" | "i9" | "wageAck" | "carIqAgreement" | "vehicleAgreement" | "employeeConfidentiality" | "mealRestBreak" | "ptoAck" | "partsResponsibility" | "mileageFuel" | "locationConsent" | "damage" | "contractorData" | "directDeposit" | "substanceScreening">("hiring");
   const [openCategory, setOpenCategory] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   // Which floating-sidebar section headers (Automated Forms/Generate
@@ -703,7 +705,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const navigate = useNavigate();
   const hrSearchParams = (useSearch({ strict: false }) as { tab?: string; submissionId?: string; profileId?: string }) ?? {};
   const initialHrSearchRef = useRef(hrSearchParams);
-  const VALID_HR_TABS = ["hiring", "warnings", "masterList", "leaders", "jotform", "jotformDocuments", "customForms", "onboarding", "hiringReports", "report", "coe", "warningForm", "promotionForm", "actionPlanForm", "terminationForm", "employeeRequestManager", "w8ben", "i9", "wageAck", "carIqAgreement", "vehicleAgreement", "employeeConfidentiality", "mealRestBreak", "ptoAck", "partsResponsibility", "mileageFuel", "locationConsent", "damage", "contractorData", "directDeposit"] as const;
+  const VALID_HR_TABS = ["hiring", "warnings", "masterList", "leaders", "jotform", "jotformDocuments", "customForms", "onboarding", "hiringReports", "report", "coe", "warningForm", "promotionForm", "actionPlanForm", "terminationForm", "employeeRequestManager", "w8ben", "i9", "wageAck", "carIqAgreement", "vehicleAgreement", "employeeConfidentiality", "mealRestBreak", "ptoAck", "partsResponsibility", "mileageFuel", "locationConsent", "damage", "contractorData", "directDeposit", "substanceScreening"] as const;
   useEffect(() => {
     const tab = initialHrSearchRef.current.tab;
     if (tab && (VALID_HR_TABS as readonly string[]).includes(tab)) setActiveTab(tab as typeof activeTab);
@@ -1378,7 +1380,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     const unsubs = [
       subscribeTableChanges("hr_candidates", () => void loadCandidates(), `company_id=eq.${companyId}`),
       subscribeTableChanges("employee_conduct_notes", () => void loadNotes(), `company_id=eq.${companyId}`),
-      subscribeTableChanges("hr_signable_documents", () => { void loadSentWarningForms(); void loadSentW8benForms(); void loadSentW4Forms(); void loadSentW9Forms(); void loadSentW4RForms(); void loadSentI9Forms(); void loadSentWageAckForms(); void loadSentCarIqAgreementForms(); void loadSentVehicleAgreementForms(); void loadSentEmployeeConfidentialityForms(); void loadSentMealRestBreakForms(); void loadSentPtoAckForms(); void loadSentPartsResponsibilityForms(); void loadSentMileageFuelForms(); void loadSentLocationConsentForms(); }, `company_id=eq.${companyId}`),
+      subscribeTableChanges("hr_signable_documents", () => { void loadSentWarningForms(); void loadSentW8benForms(); void loadSentW4Forms(); void loadSentW9Forms(); void loadSentW4RForms(); void loadSentI9Forms(); void loadSentWageAckForms(); void loadSentCarIqAgreementForms(); void loadSentVehicleAgreementForms(); void loadSentEmployeeConfidentialityForms(); void loadSentMealRestBreakForms(); void loadSentPtoAckForms(); void loadSentPartsResponsibilityForms(); void loadSentMileageFuelForms(); void loadSentLocationConsentForms(); void loadSentSubstanceScreeningForms(); }, `company_id=eq.${companyId}`),
       subscribeTableChanges("pto_requests", () => void loadPtoRequests(), `company_id=eq.${companyId}`),
       subscribeTableChanges("timecard_entries", () => void loadTodayTimecardEntries(), `company_id=eq.${companyId}`),
       subscribeTableChanges("timecard_corrections", () => void loadRequestManagerData(), `company_id=eq.${companyId}`),
@@ -4443,6 +4445,189 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
 
+  // ── Substance Screening & Conduct Agreement — same pattern as Employee
+  // Confidentiality above: single recipient, the recipient fills in
+  // everything themselves on FillSubstanceScreeningPage.tsx. No employer/HR
+  // co-signature step. The source PDF has no AcroForm fields at all (see
+  // substanceScreeningFormTemplate.ts's header comment) — every value is
+  // drawn directly onto the page. No branch field on this one. ──
+  const [sentSubstanceScreeningForms, setSentSubstanceScreeningForms] = useState<SignableDocument[]>([]);
+  const loadSentSubstanceScreeningForms = async () => {
+    try {
+      setSentSubstanceScreeningForms(await getSignableDocuments("substance_screening"));
+    } catch (err) {
+      console.error("Failed to load sent Substance Screening & Conduct Agreement forms:", err);
+    }
+  };
+  useEffect(() => {
+    if (activeTab === "substanceScreening" || activeTab === "jotformDocuments") void loadSentSubstanceScreeningForms();
+  }, [activeTab]);
+
+  const [substanceScreeningRecipientId, setSubstanceScreeningRecipientId] = useState("");
+  const [substanceScreeningRecipientSearch, setSubstanceScreeningRecipientSearch] = useState("");
+  const [substanceScreeningRecipientDropdownOpen, setSubstanceScreeningRecipientDropdownOpen] = useState(false);
+  const [substanceScreeningSending, setSubstanceScreeningSending] = useState(false);
+  const [substanceScreeningSendError, setSubstanceScreeningSendError] = useState<string | null>(null);
+  const [substanceScreeningActionBusyId, setSubstanceScreeningActionBusyId] = useState<string | null>(null);
+  const [substanceScreeningActionError, setSubstanceScreeningActionError] = useState<string | null>(null);
+  const [substanceScreeningDocPreview, setSubstanceScreeningDocPreview] = useState<SignableDocument | null>(null);
+  const [substanceScreeningPreviewOpen, setSubstanceScreeningPreviewOpen] = useState(false);
+  const [substanceScreeningPreviewPdfUrl, setSubstanceScreeningPreviewPdfUrl] = useState<string | null>(null);
+  const [substanceScreeningPreviewLoading, setSubstanceScreeningPreviewLoading] = useState(false);
+  const [substanceScreeningExternalName, setSubstanceScreeningExternalName] = useState("");
+  const [substanceScreeningSentLink, setSubstanceScreeningSentLink] = useState<{ link: string; recipientName: string } | null>(null);
+  const [substanceScreeningSentLinkCopied, setSubstanceScreeningSentLinkCopied] = useState(false);
+  const filteredSubstanceScreeningRecipients = useMemo(
+    () => employees.filter((e) => e.status === "active" && e.name.toLowerCase().includes(substanceScreeningRecipientSearch.toLowerCase())),
+    [employees, substanceScreeningRecipientSearch]
+  );
+
+  const buildSubstanceScreeningPreviewData = (employeeName: string): SubstanceScreeningFormData => ({
+    employeeId: "",
+    employeeName,
+    dateSigned: "",
+    signatureDataUrl: "",
+  });
+
+  /** Toggles the inline collapsible preview panel — collapsing just hides it (and revokes the blob URL); expanding (re)builds a fresh blank-filled sample from the currently-selected recipient's name. */
+  const toggleSubstanceScreeningPreview = async () => {
+    if (substanceScreeningPreviewOpen) {
+      setSubstanceScreeningPreviewOpen(false);
+      if (substanceScreeningPreviewPdfUrl) URL.revokeObjectURL(substanceScreeningPreviewPdfUrl);
+      setSubstanceScreeningPreviewPdfUrl(null);
+      return;
+    }
+    setSubstanceScreeningSendError(null);
+    setSubstanceScreeningPreviewOpen(true);
+    setSubstanceScreeningPreviewLoading(true);
+    try {
+      const recipientName = employees.find((e) => e.id === substanceScreeningRecipientId)?.name || "";
+      const pdfBytes = await fillSubstanceScreeningPdf(buildSubstanceScreeningPreviewData(recipientName));
+      const url = URL.createObjectURL(new Blob([pdfBytes as unknown as BlobPart], { type: "application/pdf" }));
+      setSubstanceScreeningPreviewPdfUrl(url);
+    } catch (err) {
+      setSubstanceScreeningSendError(err instanceof Error ? err.message : "Failed to build preview.");
+    } finally {
+      setSubstanceScreeningPreviewLoading(false);
+    }
+  };
+
+  const handleSendSubstanceScreening = async () => {
+    if (!substanceScreeningRecipientId || !uid) return;
+    setSubstanceScreeningSending(true);
+    setSubstanceScreeningSendError(null);
+    try {
+      const recipient = employees.find((e) => e.id === substanceScreeningRecipientId);
+      if (!recipient) throw new Error("Select a recipient first.");
+
+      const doc = await createSignableDocument({
+        documentType: "substance_screening",
+        formData: { employeeId: recipient.id, employeeName: recipient.name } as unknown as Record<string, any>,
+        recipientId: substanceScreeningRecipientId,
+        recipientSlot: "employee",
+        pdfUrl: "",
+      });
+
+      const myProfileId = await getMyProfileId(uid);
+      if (!myProfileId) throw new Error("Could not resolve your profile.");
+      const thread = await getOrCreateDmThread(myProfileId, substanceScreeningRecipientId);
+      const fillLink = `${getAppUrl()}/fill-substance-screening/${doc.id}`;
+      await sendMessage({
+        dmThreadId: thread.id,
+        senderId: myProfileId,
+        senderName: displayName || "HR",
+        body: `📋 Please complete the Substance Screening & Conduct Agreement: ${fillLink}`,
+      });
+
+      void logActivity({ action: "substance_screening_sent", targetType: "employee", targetId: recipient.id, targetLabel: recipient.name });
+
+      setSubstanceScreeningRecipientId("");
+      setSubstanceScreeningRecipientSearch("");
+      await loadSentSubstanceScreeningForms();
+    } catch (err) {
+      setSubstanceScreeningSendError(err instanceof Error ? err.message : "Failed to send request.");
+    } finally {
+      setSubstanceScreeningSending(false);
+    }
+  };
+
+  /** No AHS profile to tie this to, so no DM — the link itself (shown in the same panel, right below "Generate Link") is the only way the recipient finds out, same as the Warning Form's "External Link" mode. */
+  const handleGenerateExternalSubstanceScreening = async () => {
+    setSubstanceScreeningSending(true);
+    setSubstanceScreeningSendError(null);
+    try {
+      const name = substanceScreeningExternalName.trim() || "External Recipient";
+      const doc = await createSignableDocument({
+        documentType: "substance_screening",
+        formData: { employeeId: "", employeeName: name } as unknown as Record<string, any>,
+        recipientName: name,
+        recipientSlot: "employee",
+        pdfUrl: "",
+      });
+
+      void logActivity({ action: "substance_screening_sent", targetType: "employee", targetLabel: name, details: { external: true } });
+
+      setSubstanceScreeningSentLink({ link: `${getAppUrl()}/fill-substance-screening-external/${doc.id}`, recipientName: name });
+      setSubstanceScreeningExternalName("");
+      await loadSentSubstanceScreeningForms();
+    } catch (err) {
+      setSubstanceScreeningSendError(err instanceof Error ? err.message : "Failed to generate link.");
+    } finally {
+      setSubstanceScreeningSending(false);
+    }
+  };
+
+  const handleCopySubstanceScreeningSentLink = async () => {
+    if (!substanceScreeningSentLink) return;
+    try {
+      await navigator.clipboard.writeText(substanceScreeningSentLink.link);
+      setSubstanceScreeningSentLinkCopied(true);
+      setTimeout(() => setSubstanceScreeningSentLinkCopied(false), 1500);
+    } catch (err) {
+      console.error("Failed to copy link:", err);
+    }
+  };
+
+  const handleCopySubstanceScreeningLink = async (doc: SignableDocument) => {
+    try {
+      const path = doc.recipientId ? "fill-substance-screening" : "fill-substance-screening-external";
+      await navigator.clipboard.writeText(`${getAppUrl()}/${path}/${doc.id}`);
+    } catch (err) {
+      console.error("Failed to copy link:", err);
+    }
+  };
+
+  const handleDownloadSubstanceScreeningPdf = async (doc: SignableDocument) => {
+    if (!doc.pdfUrl) return;
+    const name = (doc.formData as Partial<SubstanceScreeningFormData>).employeeName || doc.recipientName || "substance-screening";
+    try {
+      const res = await fetch(doc.pdfUrl);
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = `Substance Screening & Conduct Agreement - ${name}.pdf`;
+      a.click();
+      URL.revokeObjectURL(blobUrl);
+    } catch {
+      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
+    }
+  };
+
+  const handleDeleteSubstanceScreening = async (doc: SignableDocument) => {
+    if (!window.confirm("Permanently delete this Substance Screening & Conduct Agreement request?")) return;
+    setSubstanceScreeningActionBusyId(doc.id);
+    setSubstanceScreeningActionError(null);
+    try {
+      await deleteSignableDocument(doc.id);
+      await loadSentSubstanceScreeningForms();
+    } catch (err) {
+      setSubstanceScreeningActionError(err instanceof Error ? err.message : "Failed to delete.");
+    } finally {
+      setSubstanceScreeningActionBusyId(null);
+    }
+  };
+
   // ── Employee Paid Time Off (PTO) and Sick Leave Policy Acknowledgment —
   // same pattern as Employee Confidentiality above: single recipient, the
   // recipient fills in everything themselves on FillPtoAckPage.tsx. No
@@ -6340,9 +6525,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       ...sentDamageForms.map((doc) => ({ doc, formLabel: "Damage Agreement" })),
       ...sentContractorDataForms.map((doc) => ({ doc, formLabel: "Employee Data" })),
       ...sentDirectDepositForms.map((doc) => ({ doc, formLabel: "Direct Deposit Authorization" })),
+      ...sentSubstanceScreeningForms.map((doc) => ({ doc, formLabel: "Substance Screening & Conduct Agreement" })),
     ];
     return rows.sort((a, b) => new Date(b.doc.createdAt).getTime() - new Date(a.doc.createdAt).getTime());
-  }, [sentW8benForms, sentW4Forms, sentW9Forms, sentW4RForms, sentI9Forms, sentWageAckForms, sentCarIqAgreementForms, sentVehicleAgreementForms, sentEmployeeConfidentialityForms, sentMealRestBreakForms, sentPtoAckForms, sentPartsResponsibilityForms, sentMileageFuelForms, sentLocationConsentForms, sentDamageForms, sentContractorDataForms, sentDirectDepositForms]);
+  }, [sentW8benForms, sentW4Forms, sentW9Forms, sentW4RForms, sentI9Forms, sentWageAckForms, sentCarIqAgreementForms, sentVehicleAgreementForms, sentEmployeeConfidentialityForms, sentMealRestBreakForms, sentPtoAckForms, sentPartsResponsibilityForms, sentMileageFuelForms, sentLocationConsentForms, sentDamageForms, sentContractorDataForms, sentDirectDepositForms, sentSubstanceScreeningForms]);
 
   const [signedFormsSearch, setSignedFormsSearch] = useState("");
   const [signedFormsTypeFilter, setSignedFormsTypeFilter] = useState("");
@@ -9730,6 +9916,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     { key: "mileageFuel", label: "Mileage & Fuel Policy", count: sentMileageFuelAwaitingEmployerCount, icon: FileCheck },
     { key: "partsResponsibility", label: "Parts Responsibility and Technician Floor Protection Acknowledgment Form", count: sentPartsResponsibilityAwaitingManagerCount, icon: FileCheck },
     { key: "ptoAck", label: "PTO & Sick Leave Policy", count: 0, icon: FileCheck },
+    { key: "substanceScreening", label: "Substance Screening & Conduct Agreement", count: 0, icon: FileCheck },
   ] as const;
 
   // ── Tab groups — single source shared by the dropdown header nav and the
@@ -11155,6 +11342,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               <option value="Acknowledgment of Wage">Acknowledgment of Wage</option>
               <option value="Car IQ Technician Agreement">Car IQ Technician Agreement</option>
               <option value="Company Vehicle Use Agreement">Company Vehicle Use Agreement</option>
+              <option value="Substance Screening & Conduct Agreement">Substance Screening & Conduct Agreement</option>
             </select>
           </div>
           {(signedFormsSearch || signedFormsTypeFilter) && (
@@ -15334,6 +15522,208 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       </>
       )}
 
+      {activeTab === "substanceScreening" && (
+      <>
+      <div className="panel p-0 overflow-visible mt-4 relative z-20">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">Send Substance Screening & Conduct Agreement Request</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Pick a teammate — they'll get a link to fill in their name and sign the Substance Screening & Conduct Agreement. It comes back to you here automatically once submitted.</p>
+        </div>
+        <div className="p-4 flex flex-col md:flex-row gap-6">
+          <div className="flex flex-col gap-3 w-full md:max-w-sm md:shrink-0">
+            <div className="flex flex-col gap-1.5 pb-3 border-b border-white/10">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">External Link (no login needed)</label>
+              {substanceScreeningSentLink ? (
+                <div className="flex flex-col gap-2">
+                  <div className="rounded-md border border-green-500/30 bg-green-500/10 px-3 py-2.5">
+                    <p className="text-xs font-semibold text-green-300">Link generated for {substanceScreeningSentLink.recipientName}</p>
+                  </div>
+                  <div className="flex gap-2">
+                    <input type="text" readOnly value={substanceScreeningSentLink.link} onFocus={(e) => e.target.select()} className="glass-input text-xs py-1.5 px-3 rounded-md flex-1" />
+                    <button onClick={handleCopySubstanceScreeningSentLink} className="btn text-xs px-3 py-1.5 shrink-0">{substanceScreeningSentLinkCopied ? "Copied!" : "Copy"}</button>
+                  </div>
+                  <button onClick={() => setSubstanceScreeningSentLink(null)} className="btn text-xs px-3 py-1.5 w-fit">Done</button>
+                </div>
+              ) : (
+                <>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={substanceScreeningExternalName}
+                      onChange={(e) => setSubstanceScreeningExternalName(e.target.value)}
+                      placeholder="Type their name (optional)…"
+                      className="glass-input text-sm py-1.5 px-3 rounded-md flex-1"
+                    />
+                    <button
+                      onClick={handleGenerateExternalSubstanceScreening}
+                      disabled={substanceScreeningSending}
+                      className="btn text-sm px-3 py-1.5 disabled:opacity-50 shrink-0"
+                    >
+                      {substanceScreeningSending ? "Generating…" : "Generate Link"}
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground">No AHS account needed — they can open the link and fill it in without logging in.</p>
+                </>
+              )}
+            </div>
+
+            <div className="flex flex-col gap-1 relative">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient (AHS teammate)</label>
+              <input
+                type="text"
+                value={substanceScreeningRecipientSearch}
+                onChange={(e) => { setSubstanceScreeningRecipientSearch(e.target.value); setSubstanceScreeningRecipientId(""); setSubstanceScreeningRecipientDropdownOpen(true); }}
+                onFocus={() => setSubstanceScreeningRecipientDropdownOpen(true)}
+                onBlur={() => setTimeout(() => setSubstanceScreeningRecipientDropdownOpen(false), 150)}
+                placeholder="Search a teammate…"
+                className="glass-input text-sm py-1.5 px-3 rounded-md"
+              />
+              {substanceScreeningRecipientDropdownOpen && (
+                <div className="absolute z-50 top-full mt-1 w-full max-h-96 overflow-y-auto rounded-md border border-white/15 bg-slate-900 shadow-2xl">
+                  {filteredSubstanceScreeningRecipients.length === 0 ? (
+                    <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+                  ) : (
+                    filteredSubstanceScreeningRecipients.map((e) => (
+                      <button
+                        key={e.id}
+                        type="button"
+                        onMouseDown={(ev) => ev.preventDefault()}
+                        onClick={() => {
+                          setSubstanceScreeningRecipientId(e.id);
+                          setSubstanceScreeningRecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`);
+                          setSubstanceScreeningRecipientDropdownOpen(false);
+                        }}
+                        className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${substanceScreeningRecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                      >
+                        {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+
+            {substanceScreeningSendError && (
+              <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{substanceScreeningSendError}</p>
+            )}
+            <div className="flex items-center gap-2">
+              <button
+                onClick={toggleSubstanceScreeningPreview}
+                className="btn text-sm px-4 py-2 flex items-center gap-1.5"
+              >
+                Preview <ChevronDown className={`h-3.5 w-3.5 transition-transform ${substanceScreeningPreviewOpen ? "rotate-180" : ""}`} />
+              </button>
+              <button
+                onClick={handleSendSubstanceScreening}
+                disabled={!substanceScreeningRecipientId || substanceScreeningSending}
+                className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+              >
+                {substanceScreeningSending ? "Sending…" : "Send Request"}
+              </button>
+            </div>
+          </div>
+
+          <div className="flex-1 min-w-0">
+            {substanceScreeningPreviewOpen ? (
+              <div className="border border-white/10 rounded-md overflow-hidden bg-white/5 h-full" style={{ minHeight: 560 }}>
+                {substanceScreeningPreviewLoading || !substanceScreeningPreviewPdfUrl ? (
+                  <div className="h-full flex items-center justify-center text-sm text-muted-foreground" style={{ minHeight: 560 }}>Loading preview…</div>
+                ) : (
+                  <iframe src={substanceScreeningPreviewPdfUrl} title="Substance Screening & Conduct Agreement Preview" className="w-full border-0" style={{ height: 560 }} />
+                )}
+              </div>
+            ) : (
+              <div className="border border-dashed border-white/15 rounded-md flex items-center justify-center text-sm text-muted-foreground" style={{ minHeight: 560 }}>
+                Click "Preview" to see the document here.
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="panel p-0 overflow-hidden mt-4">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">Sent Substance Screening & Conduct Agreement Forms</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status.</p>
+        </div>
+        {substanceScreeningActionError && (
+          <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{substanceScreeningActionError}</p>
+        )}
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-white/10 bg-white/5">
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Employee</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent By</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Status</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sentSubstanceScreeningForms.length === 0 ? (
+                <tr><td colSpan={5} className="px-4 py-8 text-center text-muted-foreground text-sm">No requests sent yet.</td></tr>
+              ) : (
+                sentSubstanceScreeningForms.map((doc) => {
+                  const data = doc.formData as Partial<SubstanceScreeningFormData>;
+                  const recipient = employees.find((e) => e.id === doc.recipientId);
+                  const busy = substanceScreeningActionBusyId === doc.id;
+                  return (
+                    <tr key={doc.id} className="border-b border-white/5 hover:bg-white/5">
+                      <td className="px-4 py-3 font-medium">
+                        {doc.pdfUrl ? (
+                          <button type="button" onClick={() => setSubstanceScreeningDocPreview(doc)} className="text-blue-300 hover:text-blue-200 hover:underline text-left">
+                            {data.employeeName || recipient?.name || doc.recipientName || "—"}
+                          </button>
+                        ) : (
+                          data.employeeName || recipient?.name || doc.recipientName || "—"
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-muted-foreground">{doc.createdByName ?? "—"}</td>
+                      <td className="px-4 py-3">
+                        <span className={`px-2 py-1 rounded text-xs font-semibold ${
+                          doc.status === "signed" ? "bg-green-500/20 text-green-300"
+                          : doc.status === "cancelled" ? "bg-slate-500/20 text-slate-400"
+                          : "bg-yellow-500/20 text-yellow-300"
+                        }`}>
+                          {doc.status === "signed" ? "Submitted" : doc.status === "cancelled" ? "Cancelled" : "Awaiting Completion"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{new Date(doc.createdAt).toLocaleDateString()}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {doc.status === "pending_signature" && (
+                            <button type="button" onClick={() => handleCopySubstanceScreeningLink(doc)} className="btn text-[10px] px-2 py-1">
+                              Copy Link
+                            </button>
+                          )}
+                          {doc.pdfUrl && (
+                            <button type="button" onClick={() => handleDownloadSubstanceScreeningPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
+                              Download PDF
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => handleDeleteSubstanceScreening(doc)}
+                            title="Permanently delete this request"
+                            className="text-muted-foreground hover:text-red-300 disabled:opacity-50"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      </>
+      )}
+
       {activeTab === "mealRestBreak" && (
       <>
       <div className="panel p-0 overflow-visible mt-4 relative z-20">
@@ -17195,6 +17585,29 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             </div>
             <div className="flex-1 overflow-hidden bg-slate-950">
               {confidentialityDocPreview.pdfUrl && <iframe src={confidentialityDocPreview.pdfUrl} title="Employee Confidentiality Agreement" className="w-full h-full min-h-[70vh] border-0" />}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Substance Screening & Conduct Agreement Sent History — PDF preview, same inline-frame pattern used for W-8BEN/W-4/W-9/W-4R/Car IQ/Vehicle Agreement/Employee Confidentiality Sent History */}
+      {substanceScreeningDocPreview && (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => setSubstanceScreeningDocPreview(null)}>
+          <div className="bg-slate-900 border border-white/10 rounded-lg shadow-2xl w-full max-w-6xl h-[92vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold">{(substanceScreeningDocPreview.formData as Partial<SubstanceScreeningFormData>).employeeName || "—"}</p>
+                <p className="text-[10px] text-muted-foreground">Submitted {new Date(substanceScreeningDocPreview.signedAt ?? substanceScreeningDocPreview.createdAt).toLocaleString()}</p>
+              </div>
+              <div className="flex items-center gap-2">
+                {substanceScreeningDocPreview.pdfUrl && (
+                  <a href={substanceScreeningDocPreview.pdfUrl} target="_blank" rel="noopener noreferrer" className="btn text-xs px-2.5 py-1.5 flex items-center gap-1"><Download className="h-3 w-3" /> Download</a>
+                )}
+                <button type="button" onClick={() => setSubstanceScreeningDocPreview(null)} className="btn text-xs px-2.5 py-1.5">Close</button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-hidden bg-slate-950">
+              {substanceScreeningDocPreview.pdfUrl && <iframe src={substanceScreeningDocPreview.pdfUrl} title="Substance Screening & Conduct Agreement" className="w-full h-full min-h-[70vh] border-0" />}
             </div>
           </div>
         </div>

@@ -39,6 +39,8 @@ export const ACTIVITY_ACTION_LABELS: Record<string, string> = {
   vehicle_agreement_signed: "Signed Company Vehicle Use Agreement",
   employee_confidentiality_sent: "Sent Employee Confidentiality Agreement",
   employee_confidentiality_signed: "Signed Employee Confidentiality Agreement",
+  substance_screening_sent: "Sent Substance Screening & Conduct Agreement",
+  substance_screening_signed: "Signed Substance Screening & Conduct Agreement",
   meal_rest_break_sent: "Sent Meal & Rest Break Acknowledgment",
   meal_rest_break_signed: "Signed Meal & Rest Break Acknowledgment",
   meal_rest_break_employer_signed: "Completed Meal & Rest Break Acknowledgment (employer signature)",

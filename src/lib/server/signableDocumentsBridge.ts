@@ -312,6 +312,7 @@ export async function handleSignableDocumentsRequest(request: Request, env?: Rec
         damage: { name: "Damage, Part Loss, and Tool Penalty Commission Deduction Agreement", tab: "damage" },
         contractor_data: { name: "Employee Data", tab: "contractorData" },
         direct_deposit: { name: "Direct Deposit Authorization", tab: "directDeposit" },
+        substance_screening: { name: "Substance Screening & Conduct Agreement", tab: "substanceScreening" },
       };
       const docLabel = DOC_TYPE_LABELS[doc.document_type] ?? DOC_TYPE_LABELS.warning_form;
       const notifyFields = {
