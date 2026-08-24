@@ -1392,8 +1392,8 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
                     </span>
                   </th>
                   <th className="px-2.5 py-2 text-left">
-                    <span className="inline-flex items-center">User Name
-                      <ColumnFilter field="userName" label="User Name" options={columnOptions["userName"] || []}
+                    <span className="inline-flex items-center">Full Name
+                      <ColumnFilter field="userName" label="Full Name" options={columnOptions["userName"] || []}
                         selected={colFilters["userName"] || new Set()} onChange={(n) => setColFilter("userName", n)} />
                     </span>
                   </th>
@@ -1608,7 +1608,7 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
                     />
                   </label>
                   <label className="space-y-2 text-sm text-slate-200">
-                    <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">User Name *</span>
+                    <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Full Name *</span>
                     <input
                       placeholder="Enter user name"
                       className="glass-input w-full text-[11px] px-2 py-1"
