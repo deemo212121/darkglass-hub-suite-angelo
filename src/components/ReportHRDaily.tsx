@@ -65,7 +65,7 @@ import {
   type SignableDocument,
   type SignableDocumentType,
 } from "@/lib/supabase/signableDocuments";
-import { buildWarningFormBodyMarkup, warningFormStyles, type WarningFormData, type SignatureSlot } from "@/lib/warningFormTemplate";
+import { buildWarningFormBodyMarkup, buildWarnNoteText, warningFormStyles, type WarningFormData, type SignatureSlot } from "@/lib/warningFormTemplate";
 import { buildWarningFormDocxBlob } from "@/lib/warningFormDocx";
 import { buildPromotionFormBodyMarkup, promotionFormStyles, type PromotionFormData, type PromotionSignatureSlot } from "@/lib/promotionFormTemplate";
 import { buildPromotionFormDocxBlob } from "@/lib/promotionFormDocx";
@@ -685,7 +685,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // Reviews, the Approved log, the department trend chart, and the full
   // Employee Directory all on top of each other, forcing a long scroll to
   // reach anything below Hiring.
-  const [activeTab, setActiveTab] = useState<"hiring" | "warnings" | "masterList" | "leaders" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "promotionForm" | "actionPlanForm" | "terminationForm" | "employeeRequestManager" | "w8ben" | "i9" | "wageAck" | "carIqAgreement" | "vehicleAgreement" | "employeeConfidentiality" | "mealRestBreak" | "ptoAck" | "partsResponsibility" | "mileageFuel" | "locationConsent" | "damage" | "contractorData" | "directDeposit" | "substanceScreening" | "combineForms">("hiring");
+  const [activeTab, setActiveTab] = useState<"hiring" | "warnings" | "masterList" | "leaders" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "promotionForm" | "actionPlanForm" | "terminationForm" | "employeeRequestManager" | "w8ben" | "i9" | "wageAck" | "carIqAgreement" | "vehicleAgreement" | "employeeConfidentiality" | "mealRestBreak" | "ptoAck" | "partsResponsibility" | "mileageFuel" | "locationConsent" | "damage" | "contractorData" | "directDeposit" | "substanceScreening" | "combineForms" | "employerQueue">("hiring");
   const [openCategory, setOpenCategory] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   // Which floating-sidebar section headers (Automated Forms/Generate
@@ -709,7 +709,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const navigate = useNavigate();
   const hrSearchParams = (useSearch({ strict: false }) as { tab?: string; submissionId?: string; profileId?: string }) ?? {};
   const initialHrSearchRef = useRef(hrSearchParams);
-  const VALID_HR_TABS = ["hiring", "warnings", "masterList", "leaders", "jotform", "jotformDocuments", "customForms", "onboarding", "hiringReports", "report", "coe", "warningForm", "promotionForm", "actionPlanForm", "terminationForm", "employeeRequestManager", "w8ben", "i9", "wageAck", "carIqAgreement", "vehicleAgreement", "employeeConfidentiality", "mealRestBreak", "ptoAck", "partsResponsibility", "mileageFuel", "locationConsent", "damage", "contractorData", "directDeposit", "substanceScreening", "combineForms"] as const;
+  const VALID_HR_TABS = ["hiring", "warnings", "masterList", "leaders", "jotform", "jotformDocuments", "customForms", "onboarding", "hiringReports", "report", "coe", "warningForm", "promotionForm", "actionPlanForm", "terminationForm", "employeeRequestManager", "w8ben", "i9", "wageAck", "carIqAgreement", "vehicleAgreement", "employeeConfidentiality", "mealRestBreak", "ptoAck", "partsResponsibility", "mileageFuel", "locationConsent", "damage", "contractorData", "directDeposit", "substanceScreening", "combineForms", "employerQueue"] as const;
   useEffect(() => {
     const tab = initialHrSearchRef.current.tab;
     if (tab && (VALID_HR_TABS as readonly string[]).includes(tab)) setActiveTab(tab as typeof activeTab);
@@ -2168,23 +2168,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
 
-  // Shared between Confirm Warning (below) and — previously — the initial
-  // send. Built from a frozen WarningFormData snapshot (not live `warnForm`
-  // state) so it works correctly however long after the original send
-  // Confirm actually happens.
-  const buildWarnNoteText = (data: Pick<WarningFormData, "level" | "reasons" | "description">) => {
-    const reasonLabels: string[] = [];
-    if (data.reasons.absence) reasonLabels.push("Absence");
-    if (data.reasons.tardiness) reasonLabels.push("Tardiness");
-    if (data.reasons.inappropriateBehavior) reasonLabels.push("Inappropriate Behavior");
-    if (data.reasons.insubordination) reasonLabels.push("Insubordination");
-    if (data.reasons.policyViolation) reasonLabels.push("Policy Violation");
-    if (data.reasons.equipmentDamage) reasonLabels.push("Equipment Damage");
-    if (data.reasons.other && data.reasons.otherText?.trim()) reasonLabels.push(data.reasons.otherText.trim());
-    const levelLabel = data.level ? `${data.level} Warning` : "Warning";
-    return `${levelLabel}${reasonLabels.length ? ` — ${reasonLabels.join(", ")}` : ""}${data.description.trim() ? `. ${data.description.trim()}` : ""}`;
-  };
-
   const [sentWarningForms, setSentWarningForms] = useState<SignableDocument[]>([]);
   const loadSentWarningForms = async () => {
     try {
@@ -2199,7 +2182,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     // Form) separately from "Submitted" (whoever actually clicked Confirm,
     // which can be a different person) in the Approved Warnings & Mistakes
     // table there.
-    if (activeTab === "warningForm" || activeTab === "warnings") void loadSentWarningForms();
+    if (activeTab === "warningForm" || activeTab === "warnings" || activeTab === "employerQueue") void loadSentWarningForms();
   }, [activeTab]);
 
   const issuerNameByNoteId = useMemo(() => {
@@ -3316,7 +3299,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
   useEffect(() => {
-    if (activeTab === "wageAck" || activeTab === "jotformDocuments" || activeTab === "combineForms") void loadSentWageAckForms();
+    if (activeTab === "wageAck" || activeTab === "jotformDocuments" || activeTab === "combineForms" || activeTab === "employerQueue") void loadSentWageAckForms();
   }, [activeTab]);
   // Employee done, nobody has claimed the employer signature yet — feeds the sidebar tab's count badge.
   const sentWageAckAwaitingEmployerCount = useMemo(
@@ -3572,7 +3555,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
   useEffect(() => {
-    if (activeTab === "mealRestBreak" || activeTab === "jotformDocuments" || activeTab === "combineForms") void loadSentMealRestBreakForms();
+    if (activeTab === "mealRestBreak" || activeTab === "jotformDocuments" || activeTab === "combineForms" || activeTab === "employerQueue") void loadSentMealRestBreakForms();
   }, [activeTab]);
   // Employee done, nobody has claimed the employer signature yet — feeds the sidebar tab's count badge.
   const sentMealRestBreakAwaitingEmployerCount = useMemo(
@@ -4782,7 +4765,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
   useEffect(() => {
-    if (activeTab === "partsResponsibility" || activeTab === "jotformDocuments" || activeTab === "combineForms") void loadSentPartsResponsibilityForms();
+    if (activeTab === "partsResponsibility" || activeTab === "jotformDocuments" || activeTab === "combineForms" || activeTab === "employerQueue") void loadSentPartsResponsibilityForms();
   }, [activeTab]);
   // Technician done, nobody has claimed the manager signature yet — feeds the sidebar tab's count badge.
   const sentPartsResponsibilityAwaitingManagerCount = useMemo(
@@ -5045,7 +5028,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
   useEffect(() => {
-    if (activeTab === "mileageFuel" || activeTab === "jotformDocuments" || activeTab === "combineForms") void loadSentMileageFuelForms();
+    if (activeTab === "mileageFuel" || activeTab === "jotformDocuments" || activeTab === "combineForms" || activeTab === "employerQueue") void loadSentMileageFuelForms();
   }, [activeTab]);
   // Employee done, nobody has claimed the employer signature yet — feeds the sidebar tab's count badge.
   const sentMileageFuelAwaitingEmployerCount = useMemo(
@@ -5310,7 +5293,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
   useEffect(() => {
-    if (activeTab === "locationConsent" || activeTab === "jotformDocuments" || activeTab === "combineForms") void loadSentLocationConsentForms();
+    if (activeTab === "locationConsent" || activeTab === "jotformDocuments" || activeTab === "combineForms" || activeTab === "employerQueue") void loadSentLocationConsentForms();
   }, [activeTab]);
   // Employee done, nobody has claimed the employer signature yet — feeds the sidebar tab's count badge.
   const sentLocationConsentAwaitingEmployerCount = useMemo(
@@ -5568,7 +5551,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
   useEffect(() => {
-    if (activeTab === "damage" || activeTab === "jotformDocuments" || activeTab === "combineForms") void loadSentDamageForms();
+    if (activeTab === "damage" || activeTab === "jotformDocuments" || activeTab === "combineForms" || activeTab === "employerQueue") void loadSentDamageForms();
   }, [activeTab]);
   // Employee done, nobody has claimed the employer signature yet — feeds the sidebar tab's count badge.
   const sentDamageAwaitingEmployerCount = useMemo(
@@ -6431,6 +6414,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     { type: "mileage_fuel", label: "Mileage & Fuel Policy" },
     { type: "parts_responsibility", label: "Parts Responsibility Form" },
     { type: "pto_ack", label: "PTO & Sick Leave Policy" },
+    { type: "substance_screening", label: "Substance Screening & Conduct Agreement" },
   ];
 
   const [combineFormsRecipientId, setCombineFormsRecipientId] = useState("");
@@ -7082,7 +7066,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
   useEffect(() => {
-    if (activeTab === "promotionForm") void loadSentPromotionForms();
+    if (activeTab === "promotionForm" || activeTab === "employerQueue") void loadSentPromotionForms();
   }, [activeTab]);
 
   const [promoViewDoc, setPromoViewDoc] = useState<SignableDocument | null>(null);
@@ -7490,7 +7474,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
   useEffect(() => {
-    if (activeTab === "actionPlanForm") void loadSentActionPlanForms();
+    if (activeTab === "actionPlanForm" || activeTab === "employerQueue") void loadSentActionPlanForms();
   }, [activeTab]);
 
   const [actionPlanViewDoc, setActionPlanViewDoc] = useState<SignableDocument | null>(null);
@@ -7874,7 +7858,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
   useEffect(() => {
-    if (activeTab === "terminationForm") void loadSentTerminationForms();
+    if (activeTab === "terminationForm" || activeTab === "employerQueue") void loadSentTerminationForms();
   }, [activeTab]);
 
   const [terminationViewDoc, setTerminationViewDoc] = useState<SignableDocument | null>(null);
@@ -8250,6 +8234,143 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         </body>
       </html>
     `);
+  };
+
+  // ── Sign as Employer (bulk) — the inverse of Combine Forms: instead of
+  // bundling forms to SEND to a technician, this bundles forms technicians
+  // have already signed and are now sitting in HR's own queue awaiting the
+  // employer's confirm/signature. Same mechanism as Combine Forms: pick a
+  // recipient, combine selected documents into one link, send it — the
+  // recipient opens that link and does each one for real, one at a time
+  // (Next/Back + a timeline in /sign-bundle-employer), nothing is
+  // rubber-stamped in bulk just by generating the link.
+  //
+  // Phase 1 (this): only the 4 "General" confirm-only types are actually
+  // actionable through the wizard the link opens. The 6 signature-required
+  // types show up in this queue too (for visibility) and DO get reassigned
+  // to the chosen recipient, but the wizard step for those currently just
+  // points back to their own tab — turning their existing employer-
+  // signature dialogs into proper wizard steps is separate follow-up work.
+  const EMPLOYER_QUEUE_LABELS: Record<string, string> = {
+    warning_form: "Employee Warning Form",
+    promotion_form: "Promotion / Role Change Form",
+    action_plan_form: "Manager's Action Plan Form",
+    termination_form: "Notice of Termination",
+    wage_ack: "Acknowledgment of Wage",
+    meal_rest_break: "Meal & Rest Break Policy",
+    parts_responsibility: "Parts Responsibility Form",
+    location_consent: "Location Sharing Consent",
+    damage: "Damage Agreement",
+    mileage_fuel: "Mileage & Fuel Policy",
+  };
+  const EMPLOYER_QUEUE_CONFIRM_ONLY_TYPES = new Set(["warning_form", "promotion_form", "action_plan_form", "termination_form"]);
+
+  const employerAwaitingRows = useMemo(() => {
+    const rows: { doc: SignableDocument; formLabel: string }[] = [
+      ...sentWarningForms.filter((d) => d.status === "signed").map((doc) => ({ doc, formLabel: EMPLOYER_QUEUE_LABELS.warning_form })),
+      ...sentPromotionForms.filter((d) => d.status === "signed").map((doc) => ({ doc, formLabel: EMPLOYER_QUEUE_LABELS.promotion_form })),
+      ...sentActionPlanForms.filter((d) => d.status === "signed").map((doc) => ({ doc, formLabel: EMPLOYER_QUEUE_LABELS.action_plan_form })),
+      ...sentTerminationForms.filter((d) => d.status === "signed").map((doc) => ({ doc, formLabel: EMPLOYER_QUEUE_LABELS.termination_form })),
+      ...sentWageAckForms.filter(isAwaitingEmployerStep).map((doc) => ({ doc, formLabel: EMPLOYER_QUEUE_LABELS.wage_ack })),
+      ...sentMealRestBreakForms.filter(isAwaitingEmployerStep).map((doc) => ({ doc, formLabel: EMPLOYER_QUEUE_LABELS.meal_rest_break })),
+      ...sentPartsResponsibilityForms.filter(isAwaitingEmployerStep).map((doc) => ({ doc, formLabel: EMPLOYER_QUEUE_LABELS.parts_responsibility })),
+      ...sentLocationConsentForms.filter(isAwaitingEmployerStep).map((doc) => ({ doc, formLabel: EMPLOYER_QUEUE_LABELS.location_consent })),
+      ...sentDamageForms.filter(isAwaitingEmployerStep).map((doc) => ({ doc, formLabel: EMPLOYER_QUEUE_LABELS.damage })),
+      ...sentMileageFuelForms.filter(isAwaitingEmployerStep).map((doc) => ({ doc, formLabel: EMPLOYER_QUEUE_LABELS.mileage_fuel })),
+    ];
+    return rows.sort((a, b) => new Date(a.doc.createdAt).getTime() - new Date(b.doc.createdAt).getTime());
+  }, [
+    sentWarningForms, sentPromotionForms, sentActionPlanForms, sentTerminationForms,
+    sentWageAckForms, sentMealRestBreakForms, sentPartsResponsibilityForms, sentLocationConsentForms, sentDamageForms, sentMileageFuelForms,
+  ]);
+
+  const [employerQueueSelected, setEmployerQueueSelected] = useState<Set<string>>(new Set());
+  const toggleEmployerQueueSelected = (docId: string) => {
+    setEmployerQueueSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(docId)) next.delete(docId); else next.add(docId);
+      return next;
+    });
+  };
+  const [employerQueueSearch, setEmployerQueueSearch] = useState("");
+  const [employerQueueTypeFilter, setEmployerQueueTypeFilter] = useState("");
+  const filteredEmployerAwaitingRows = useMemo(() => {
+    const q = employerQueueSearch.trim().toLowerCase();
+    return employerAwaitingRows.filter(({ doc, formLabel }) => {
+      if (employerQueueTypeFilter && formLabel !== employerQueueTypeFilter) return false;
+      if (!q) return true;
+      const name = ((doc.formData as any)?.employeeName || employees.find((e) => e.id === doc.recipientId)?.name || doc.recipientName || "").toLowerCase();
+      return name.includes(q);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [employerAwaitingRows, employerQueueSearch, employerQueueTypeFilter, employees]);
+
+  const [employerQueueRecipientId, setEmployerQueueRecipientId] = useState("");
+  const [employerQueueRecipientSearch, setEmployerQueueRecipientSearch] = useState("");
+  const [employerQueueRecipientDropdownOpen, setEmployerQueueRecipientDropdownOpen] = useState(false);
+  const filteredEmployerQueueRecipients = useMemo(
+    () => employees.filter((e) => e.status === "active" && e.name.toLowerCase().includes(employerQueueRecipientSearch.toLowerCase())),
+    [employees, employerQueueRecipientSearch]
+  );
+  const [employerQueueBusy, setEmployerQueueBusy] = useState(false);
+  const [employerQueueError, setEmployerQueueError] = useState<string | null>(null);
+  const [employerQueueSentNotice, setEmployerQueueSentNotice] = useState<string | null>(null);
+  const [employerQueueCopyLink, setEmployerQueueCopyLink] = useState<string | null>(null);
+
+  const handleGenerateEmployerBundle = async (deliver: "message" | "copyLink") => {
+    const recipient = employees.find((e) => e.id === employerQueueRecipientId);
+    if (employerQueueSelected.size === 0 || !uid || !recipient) return;
+    setEmployerQueueBusy(true);
+    setEmployerQueueError(null);
+    setEmployerQueueSentNotice(null);
+    setEmployerQueueCopyLink(null);
+    try {
+      const rows = employerAwaitingRows.filter((r) => employerQueueSelected.has(r.doc.id));
+      // The 6 signature-required types need to actually be handed to
+      // whoever's about to sign them — same "Send to Employer" reassignment
+      // their own dialogs already do. The 4 confirm-only types don't have a
+      // recipient concept for this step; the link itself is what carries
+      // those to the recipient, no reassignment needed.
+      await Promise.all(
+        rows
+          .filter((r) => !EMPLOYER_QUEUE_CONFIRM_ONLY_TYPES.has(r.doc.documentType))
+          .map((r) => reassignSignableDocument(r.doc.id, { recipientId: recipient.id, recipientName: recipient.name }, "hr_staff"))
+      );
+
+      const bundleOrigin = import.meta.env.DEV ? window.location.origin : getAppUrl();
+      const bundleLink = `${bundleOrigin}/sign-bundle-employer?ids=${rows.map((r) => r.doc.id).join(",")}`;
+
+      if (deliver === "message") {
+        const senderProfileId = myProfileId ?? (await getMyProfileId(uid));
+        if (!senderProfileId) throw new Error("Could not resolve your profile.");
+        const thread = await getOrCreateDmThread(senderProfileId, recipient.id);
+        await sendMessage({
+          dmThreadId: thread.id,
+          senderId: senderProfileId,
+          senderName: displayName || "HR",
+          body: `📋 ${rows.length} form${rows.length === 1 ? "" : "s"} need your signature as employer: ${bundleLink}`,
+        });
+        setEmployerQueueSentNotice(`Link sent to ${recipient.name} for ${rows.length} form${rows.length === 1 ? "" : "s"}.`);
+      } else {
+        try { await navigator.clipboard.writeText(bundleLink); } catch { /* clipboard permission denied — link is still shown below to copy manually */ }
+        setEmployerQueueCopyLink(bundleLink);
+      }
+
+      void logActivity({ action: "employer_bundle_sent", targetType: "employee", targetId: recipient.id, targetLabel: recipient.name, details: { count: rows.length, deliver } });
+
+      setEmployerQueueSelected(new Set());
+      setEmployerQueueRecipientId("");
+      setEmployerQueueRecipientSearch("");
+      await Promise.all([
+        loadSentWarningForms(), loadSentPromotionForms(), loadSentActionPlanForms(), loadSentTerminationForms(),
+        loadSentWageAckForms(), loadSentMealRestBreakForms(), loadSentPartsResponsibilityForms(),
+        loadSentLocationConsentForms(), loadSentDamageForms(), loadSentMileageFuelForms(),
+      ]);
+    } catch (err) {
+      setEmployerQueueError(err instanceof Error ? err.message : "Failed to combine these forms.");
+    } finally {
+      setEmployerQueueBusy(false);
+    }
   };
 
   // ── Generate Report: EOD / EOM Hiring Grid — same Position → Branch table
@@ -9860,7 +9981,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // unscannable as a plain accordion).
   const automatedFormsGeneralTabs = [
     ...(canViewJotformTab ? [{ key: "jotformDocuments", label: "Applicant Documents", count: newJotformSubmissionsCount, icon: Forward }] as const : []),
-    { key: "combineForms", label: "Combine Forms", count: 0, icon: Link2 },
+    { key: "combineForms", label: "Bulk Form Send", count: 0, icon: Link2 },
+    { key: "employerQueue", label: "Bulk Sign", count: employerAwaitingRows.length, icon: CheckCircle },
     { key: "coe", label: "Certificate of Employment", count: 0, icon: CheckCircle },
     { key: "customForms", label: "Custom Forms", count: newCustomFormSubmissionsCount, icon: FileText },
     { key: "promotionForm", label: "Employee Promotion / Role Change", count: 0, icon: FileText },
@@ -11452,7 +11574,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       {activeTab === "combineForms" && (
       <div className="panel p-0 overflow-hidden">
         <div className="px-4 py-4 border-b border-white/10">
-          <h2 className="font-semibold text-sm flex items-center gap-1.5"><Link2 className="h-4 w-4 text-blue-300" /> Combine Forms</h2>
+          <h2 className="font-semibold text-sm flex items-center gap-1.5"><Link2 className="h-4 w-4 text-blue-300" /> Bulk Form Send</h2>
           <p className="text-[10px] text-muted-foreground mt-0.5">Pick a technician, check off the forms they need, then generate one link that walks them through all of it — instead of sending each form separately.</p>
         </div>
 
@@ -11599,6 +11721,163 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             <code className="px-1.5 py-0.5 bg-black/30 rounded break-all">{combineFormsCopyLink}</code>
             <button type="button" onClick={() => navigator.clipboard.writeText(combineFormsCopyLink)} className="btn text-xs px-2 py-1">Copy Again</button>
             <button type="button" onClick={() => setCombineFormsCopyLink(null)} className="btn text-xs px-2 py-1">Dismiss</button>
+          </div>
+        )}
+      </div>
+      )}
+
+      {/* ── Sign as Employer (bulk) — the inverse of Combine Forms: everything sitting in HR's own queue (technician already signed, employer confirm/signature still pending). Check boxes, pick who's signing, combine into one link — same mechanism as Combine Forms, just pointed the other direction. ── */}
+      {activeTab === "employerQueue" && (
+      <div className="panel p-0 overflow-hidden">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm flex items-center gap-1.5"><CheckCircle className="h-4 w-4 text-blue-300" /> Bulk Sign</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Forms technicians/employees have already signed and are now waiting on an employer signature. Check the ones you want handled, pick who's signing, then combine them into one link — they open it and do each one for real, one at a time.</p>
+        </div>
+
+        <div className="p-4 border-b border-white/10 flex flex-col gap-1 relative max-w-md">
+          <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Who's signing</label>
+          <input
+            type="text"
+            value={employerQueueRecipientSearch}
+            onChange={(e) => { setEmployerQueueRecipientSearch(e.target.value); setEmployerQueueRecipientId(""); setEmployerQueueRecipientDropdownOpen(true); }}
+            onFocus={() => setEmployerQueueRecipientDropdownOpen(true)}
+            onBlur={() => setTimeout(() => setEmployerQueueRecipientDropdownOpen(false), 150)}
+            placeholder="Search a teammate…"
+            className="glass-input text-sm py-1.5 px-3 rounded-md"
+          />
+          {employerQueueRecipientDropdownOpen && (
+            <div className="absolute z-50 top-full mt-1 w-full max-h-96 overflow-y-auto rounded-md border border-white/15 bg-slate-900 shadow-2xl">
+              {filteredEmployerQueueRecipients.length === 0 ? (
+                <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+              ) : (
+                filteredEmployerQueueRecipients.map((e) => (
+                  <button
+                    key={e.id}
+                    type="button"
+                    onMouseDown={(ev) => ev.preventDefault()}
+                    onClick={() => {
+                      setEmployerQueueRecipientId(e.id);
+                      setEmployerQueueRecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`);
+                      setEmployerQueueRecipientDropdownOpen(false);
+                    }}
+                    className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${employerQueueRecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                  >
+                    {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
+                  </button>
+                ))
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="px-4 py-3 border-b border-white/10 bg-white/5 flex flex-wrap items-end gap-3">
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+            <input
+              type="text"
+              value={employerQueueSearch}
+              onChange={(e) => setEmployerQueueSearch(e.target.value)}
+              placeholder="Name…"
+              className="glass-input text-sm py-1.5 pl-8 pr-3 rounded-md w-56"
+            />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Form</label>
+            <select value={employerQueueTypeFilter} onChange={(e) => setEmployerQueueTypeFilter(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md">
+              <option value="">All</option>
+              {Object.entries(EMPLOYER_QUEUE_LABELS).map(([type, label]) => (
+                <option
+                  key={label}
+                  value={label}
+                  // Flagged urgent — same set as the Bulk Form Send checkbox grid.
+                  style={ROUTE_REQUIRED_DOCUMENT_TYPES.includes(type as SignableDocumentType) ? { backgroundColor: "#7f1d1d", color: "#fff" } : undefined}
+                >
+                  {label}
+                </option>
+              ))}
+            </select>
+          </div>
+          {(employerQueueSearch || employerQueueTypeFilter) && (
+            <button onClick={() => { setEmployerQueueSearch(""); setEmployerQueueTypeFilter(""); }} className="btn text-sm px-3 py-1.5">Clear Filters</button>
+          )}
+          <span className="text-xs text-muted-foreground mb-1.5 ml-auto">
+            {filteredEmployerAwaitingRows.length}{(employerQueueSearch || employerQueueTypeFilter) ? ` of ${employerAwaitingRows.length}` : ""} forms
+          </span>
+        </div>
+
+        <div className="p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          {filteredEmployerAwaitingRows.length === 0 ? (
+            <p className="col-span-full text-center text-muted-foreground text-sm py-8">{employerAwaitingRows.length === 0 ? "Nothing waiting on an employer signature right now." : "No forms match these filters."}</p>
+          ) : (
+            filteredEmployerAwaitingRows.map(({ doc, formLabel }) => {
+              const checked = employerQueueSelected.has(doc.id);
+              const name =
+                (doc.formData as any)?.employeeName ||
+                employees.find((e) => e.id === doc.recipientId)?.name ||
+                doc.recipientName ||
+                "—";
+              return (
+                <label
+                  key={doc.id}
+                  className={`flex items-start gap-2.5 rounded-lg border p-3 cursor-pointer transition-colors ${
+                    checked
+                      ? "border-primary/50 bg-primary/10"
+                      : ROUTE_REQUIRED_DOCUMENT_TYPES.includes(doc.documentType)
+                      ? "border-red-500/40 bg-red-500/10 hover:bg-red-500/20"
+                      : "border-white/10 bg-white/5 hover:bg-white/10"
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => toggleEmployerQueueSelected(doc.id)}
+                    className="mt-0.5 h-3.5 w-3.5 shrink-0"
+                  />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium truncate">{name}</p>
+                    <p className="text-xs text-muted-foreground truncate">{formLabel}</p>
+                  </div>
+                </label>
+              );
+            })
+          )}
+        </div>
+
+        <div className="px-4 py-4 border-t border-white/10 flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            disabled={employerQueueSelected.size === 0 || !employerQueueRecipientId || employerQueueBusy}
+            onClick={() => handleGenerateEmployerBundle("message")}
+            className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-40 flex items-center gap-1.5"
+          >
+            <Link2 className="h-3.5 w-3.5" /> {employerQueueBusy ? "Generating…" : "Generate Link for Selected Forms"}
+          </button>
+          <button
+            type="button"
+            disabled={employerQueueSelected.size === 0 || !employerQueueRecipientId || employerQueueBusy}
+            onClick={() => handleGenerateEmployerBundle("copyLink")}
+            title="Combine the same forms but just copy the link — nothing gets sent as a message"
+            className="btn text-sm px-4 py-2 disabled:opacity-40 flex items-center gap-1.5"
+          >
+            <Copy className="h-3.5 w-3.5" /> Copy Link Instead
+          </button>
+          {employerQueueSelected.size > 0 && (
+            <span className="text-xs text-muted-foreground">{employerQueueSelected.size} form{employerQueueSelected.size === 1 ? "" : "s"} selected</span>
+          )}
+        </div>
+
+        {employerQueueError && (
+          <p className="mx-4 mb-4 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{employerQueueError}</p>
+        )}
+        {employerQueueSentNotice && (
+          <p className="mx-4 mb-4 text-xs text-green-300 bg-green-500/10 border border-green-500/30 rounded-md px-2.5 py-2">{employerQueueSentNotice}</p>
+        )}
+        {employerQueueCopyLink && (
+          <div className="mx-4 mb-4 text-xs bg-blue-500/10 border border-blue-500/30 rounded-md px-2.5 py-2 flex flex-wrap items-center gap-2">
+            <span>Copied to clipboard — share it however you'd like:</span>
+            <code className="px-1.5 py-0.5 bg-black/30 rounded break-all">{employerQueueCopyLink}</code>
+            <button type="button" onClick={() => navigator.clipboard.writeText(employerQueueCopyLink)} className="btn text-xs px-2 py-1">Copy Again</button>
+            <button type="button" onClick={() => setEmployerQueueCopyLink(null)} className="btn text-xs px-2 py-1">Dismiss</button>
           </div>
         )}
       </div>

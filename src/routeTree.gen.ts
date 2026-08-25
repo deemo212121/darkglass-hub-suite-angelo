@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as TimecardRouteImport } from './routes/timecard'
 import { Route as SuperadminRouteImport } from './routes/superadmin'
 import { Route as SignBundleExternalRouteImport } from './routes/sign-bundle-external'
+import { Route as SignBundleEmployerRouteImport } from './routes/sign-bundle-employer'
 import { Route as SignBundleRouteImport } from './routes/sign-bundle'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as ServicepowerTestRouteImport } from './routes/servicepower-test'
@@ -95,6 +96,11 @@ const SuperadminRoute = SuperadminRouteImport.update({
 const SignBundleExternalRoute = SignBundleExternalRouteImport.update({
   id: '/sign-bundle-external',
   path: '/sign-bundle-external',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SignBundleEmployerRoute = SignBundleEmployerRouteImport.update({
+  id: '/sign-bundle-employer',
+  path: '/sign-bundle-employer',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SignBundleRoute = SignBundleRouteImport.update({
@@ -479,6 +485,7 @@ export interface FileRoutesByFullPath {
   '/servicepower-test': typeof ServicepowerTestRoute
   '/settings': typeof SettingsRoute
   '/sign-bundle': typeof SignBundleRoute
+  '/sign-bundle-employer': typeof SignBundleEmployerRoute
   '/sign-bundle-external': typeof SignBundleExternalRoute
   '/superadmin': typeof SuperadminRouteWithChildren
   '/timecard': typeof TimecardRoute
@@ -553,6 +560,7 @@ export interface FileRoutesByTo {
   '/servicepower-test': typeof ServicepowerTestRoute
   '/settings': typeof SettingsRoute
   '/sign-bundle': typeof SignBundleRoute
+  '/sign-bundle-employer': typeof SignBundleEmployerRoute
   '/sign-bundle-external': typeof SignBundleExternalRoute
   '/superadmin': typeof SuperadminRouteWithChildren
   '/timecard': typeof TimecardRoute
@@ -628,6 +636,7 @@ export interface FileRoutesById {
   '/servicepower-test': typeof ServicepowerTestRoute
   '/settings': typeof SettingsRoute
   '/sign-bundle': typeof SignBundleRoute
+  '/sign-bundle-employer': typeof SignBundleEmployerRoute
   '/sign-bundle-external': typeof SignBundleExternalRoute
   '/superadmin': typeof SuperadminRouteWithChildren
   '/timecard': typeof TimecardRoute
@@ -704,6 +713,7 @@ export interface FileRouteTypes {
     | '/servicepower-test'
     | '/settings'
     | '/sign-bundle'
+    | '/sign-bundle-employer'
     | '/sign-bundle-external'
     | '/superadmin'
     | '/timecard'
@@ -778,6 +788,7 @@ export interface FileRouteTypes {
     | '/servicepower-test'
     | '/settings'
     | '/sign-bundle'
+    | '/sign-bundle-employer'
     | '/sign-bundle-external'
     | '/superadmin'
     | '/timecard'
@@ -852,6 +863,7 @@ export interface FileRouteTypes {
     | '/servicepower-test'
     | '/settings'
     | '/sign-bundle'
+    | '/sign-bundle-employer'
     | '/sign-bundle-external'
     | '/superadmin'
     | '/timecard'
@@ -927,6 +939,7 @@ export interface RootRouteChildren {
   ServicepowerTestRoute: typeof ServicepowerTestRoute
   SettingsRoute: typeof SettingsRoute
   SignBundleRoute: typeof SignBundleRoute
+  SignBundleEmployerRoute: typeof SignBundleEmployerRoute
   SignBundleExternalRoute: typeof SignBundleExternalRoute
   SuperadminRoute: typeof SuperadminRouteWithChildren
   TimecardRoute: typeof TimecardRoute
@@ -1005,6 +1018,13 @@ declare module '@tanstack/react-router' {
       path: '/sign-bundle-external'
       fullPath: '/sign-bundle-external'
       preLoaderRoute: typeof SignBundleExternalRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/sign-bundle-employer': {
+      id: '/sign-bundle-employer'
+      path: '/sign-bundle-employer'
+      fullPath: '/sign-bundle-employer'
+      preLoaderRoute: typeof SignBundleEmployerRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/sign-bundle': {
@@ -1542,6 +1562,7 @@ const rootRouteChildren: RootRouteChildren = {
   ServicepowerTestRoute: ServicepowerTestRoute,
   SettingsRoute: SettingsRoute,
   SignBundleRoute: SignBundleRoute,
+  SignBundleEmployerRoute: SignBundleEmployerRoute,
   SignBundleExternalRoute: SignBundleExternalRoute,
   SuperadminRoute: SuperadminRouteWithChildren,
   TimecardRoute: TimecardRoute,
