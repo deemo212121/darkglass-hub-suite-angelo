@@ -9160,18 +9160,27 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
 
+  // TECHNICIAN as a secondary/extra role counts the same as primary here —
+  // someone who's e.g. primarily a Parts Manager but also holds TECHNICIAN
+  // still needs the technician-specific onboarding paperwork (Car IQ,
+  // floor protection, parts responsibility, etc.), same "pile up" semantics
+  // getCompanyTechnicians() already uses for route-assignment dropdowns.
+  const isOnboardingTechnician = (employee: { position: string; extraRoles: string[] }) =>
+    normalizeRole(employee.position) === "TECHNICIAN" ||
+    employee.extraRoles.some((r) => normalizeRole(r) === "TECHNICIAN");
+
   // Same US-Technician/US-other/PH split as onboardingEmployees above, just evaluated for one specific employee — used to pick their document list regardless of whichever group tab happens to be selected at click-time.
-  const getOnboardingDocListForEmployee = (employee: { country: string; position: string }) =>
+  const getOnboardingDocListForEmployee = (employee: { country: string; position: string; extraRoles: string[] }) =>
     onboardingDocsForGroup(
       employee.country === "PH" ? "PH"
-      : normalizeRole(employee.position) === "TECHNICIAN" ? "TECHNICIAN"
+      : isOnboardingTechnician(employee) ? "TECHNICIAN"
       : "PARTS_MANAGER"
     );
   const onboardingEmployees = useMemo(() => {
     const byGroup =
       onboardingGroup === "PH" ? employees.filter((e) => e.country === "PH")
-      : onboardingGroup === "TECHNICIAN" ? employees.filter((e) => e.country === "US" && normalizeRole(e.position) === "TECHNICIAN")
-      : employees.filter((e) => e.country === "US" && normalizeRole(e.position) !== "TECHNICIAN");
+      : onboardingGroup === "TECHNICIAN" ? employees.filter((e) => e.country === "US" && isOnboardingTechnician(e))
+      : employees.filter((e) => e.country === "US" && !isOnboardingTechnician(e));
     const q = onboardingSearch.trim().toLowerCase();
     return q ? byGroup.filter((e) => e.name.toLowerCase().includes(q)) : byGroup;
   }, [employees, onboardingGroup, onboardingSearch]);
