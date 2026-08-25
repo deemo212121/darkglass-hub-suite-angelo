@@ -98,6 +98,60 @@ export async function getSignableDocument(id: string): Promise<SignableDocument 
 // signable-document history can exceed that. Page through in chunks of 1000.
 const PAGE_SIZE = 1000;
 
+/**
+ * A technician missing any of these can't be dispatched on a route — see
+ * getTechnicianIdsMissingRouteDocuments below and its callers in
+ * ticket.$ticketNo.tsx (the Technician / 2nd Technician assignment
+ * dropdowns). Also drives the red "urgent" highlight on these form types in
+ * ReportHRDaily.tsx's Automated Forms list.
+ */
+export const ROUTE_REQUIRED_DOCUMENT_TYPES: SignableDocumentType[] = [
+  "substance_screening",
+  "parts_responsibility",
+  "damage",
+  "location_consent",
+  "mileage_fuel",
+  "i9",
+  "w4r",
+  "car_iq_agreement",
+  "meal_rest_break",
+];
+
+/**
+ * Of the given technician profile ids, which are missing at least one of
+ * ROUTE_REQUIRED_DOCUMENT_TYPES (no row with status "signed" or "confirmed"
+ * for that type)? Company-wide via RLS, paginated the same way as
+ * getSignableDocuments below since a technician can have several rows per
+ * document type (resent/re-signed) once history accumulates.
+ */
+export async function getTechnicianIdsMissingRouteDocuments(technicianIds: string[]): Promise<Set<string>> {
+  if (technicianIds.length === 0) return new Set();
+  const completedByTech = new Map<string, Set<SignableDocumentType>>();
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from("hr_signable_documents")
+      .select("recipient_id, document_type")
+      .in("recipient_id", technicianIds)
+      .in("document_type", ROUTE_REQUIRED_DOCUMENT_TYPES)
+      .in("status", ["signed", "confirmed"])
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) throw new Error(error.message);
+    for (const r of (data ?? []) as Array<{ recipient_id: string; document_type: SignableDocumentType }>) {
+      const set = completedByTech.get(r.recipient_id) ?? new Set<SignableDocumentType>();
+      set.add(r.document_type);
+      completedByTech.set(r.recipient_id, set);
+    }
+    if (!data || data.length < PAGE_SIZE) break;
+  }
+  const missing = new Set<string>();
+  for (const id of technicianIds) {
+    const completed = completedByTech.get(id);
+    const isComplete = !!completed && ROUTE_REQUIRED_DOCUMENT_TYPES.every((t) => completed.has(t));
+    if (!isComplete) missing.add(id);
+  }
+  return missing;
+}
+
 /** Every warning-form document company-wide, most recent first — feeds the "Sent Warning Forms" tracking table in ReportHRDaily.tsx. */
 export async function getSignableDocuments(documentType: SignableDocumentType = "warning_form"): Promise<SignableDocument[]> {
   const all: SignableDocument[] = [];

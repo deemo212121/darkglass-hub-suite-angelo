@@ -61,6 +61,7 @@ import {
   reassignSignableDocument,
   updateSignableDocumentPdfUrl,
   signDocument,
+  ROUTE_REQUIRED_DOCUMENT_TYPES,
   type SignableDocument,
   type SignableDocumentType,
 } from "@/lib/supabase/signableDocuments";
@@ -9812,6 +9813,26 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     return Array.from(byDept.values()).sort((a, b) => (b.Warnings + b.Terminated + b.Resigned) - (a.Warnings + a.Terminated + a.Resigned));
   }, [allNotes, employees, roleByProfileId, trendMode, trendMonth, trendFrom, trendTo]);
 
+  // Nav tab `key`s (not SignableDocumentType values — these are the UI's own
+  // ad-hoc camelCase ids below) covering every document in
+  // ROUTE_REQUIRED_DOCUMENT_TYPES, so a technician can't get a route without
+  // it and HR can see at a glance which of these forms still need chasing.
+  // "w8ben" stands in for w4r: that form doesn't have its own nav tab here —
+  // it's bundled into the combined "W-8 / W-9 / W-4 / W-4R Forms" tab, so
+  // that whole tab is flagged rather than leaving W-4R with no visual signal
+  // anywhere in this list.
+  const URGENT_AUTOMATED_FORM_TAB_KEYS = new Set([
+    "substanceScreening",
+    "partsResponsibility",
+    "damage",
+    "locationConsent",
+    "mileageFuel",
+    "i9",
+    "w8ben",
+    "carIqAgreement",
+    "mealRestBreak",
+  ]);
+
   // General/admin forms vs. technician-facing acknowledgment forms — kept as
   // two separate lists so the "Automated Forms" nav entry below can render
   // them as two labeled columns in a wide panel, rather than one very tall
@@ -9901,39 +9922,52 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
   const renderSidebarTabButton = (tab: NavTabDef) => {
     const active = activeTab === tab.key;
+    const urgent = URGENT_AUTOMATED_FORM_TAB_KEYS.has(tab.key);
     return (
       <button
         key={tab.key}
         type="button"
         onClick={() => { setActiveTab(tab.key as typeof activeTab); setSidebarOpen(false); }}
-        className={`w-full text-left pl-2.5 pr-2 py-2 rounded-lg text-sm flex items-center justify-between gap-2 transition-colors ${active ? "bg-primary/10 border border-primary/30 text-foreground font-semibold" : "border border-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}
+        className={`w-full text-left pl-2.5 pr-2 py-2 rounded-lg text-sm flex items-center justify-between gap-2 transition-colors ${
+          active
+            ? "bg-primary/10 border border-primary/30 text-foreground font-semibold"
+            : urgent
+            ? "bg-red-500/20 border border-red-500/40 text-foreground hover:bg-red-500/30"
+            : "border border-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"
+        }`}
       >
         <span className="flex items-center gap-2">
-          <span className={`flex items-center justify-center h-6 w-6 rounded-md shrink-0 ${active ? "bg-primary/20 text-primary" : "bg-white/5 text-muted-foreground"}`}>
+          <span className={`flex items-center justify-center h-6 w-6 rounded-md shrink-0 ${active ? "bg-primary/20 text-primary" : urgent ? "bg-red-500/20 text-red-300" : "bg-white/5 text-muted-foreground"}`}>
             <tab.icon className="h-3.5 w-3.5" />
           </span>
           {tab.label}
         </span>
         {tab.count > 0 && (
-          <span className={`px-1.5 py-0.5 rounded-full text-[10px] shrink-0 ${active ? "bg-primary/20 text-primary" : "bg-white/10 text-muted-foreground"}`}>{tab.count}</span>
+          <span className={`px-1.5 py-0.5 rounded-full text-[10px] shrink-0 ${active ? "bg-primary/20 text-primary" : urgent ? "bg-red-500/30 text-red-200" : "bg-white/10 text-muted-foreground"}`}>{tab.count}</span>
         )}
       </button>
     );
   };
 
-  const renderDropdownTabButton = (tab: NavTabDef) => (
-    <button
-      key={tab.key}
-      type="button"
-      onClick={() => { setActiveTab(tab.key as typeof activeTab); setOpenCategory(null); }}
-      className={`w-full text-left px-3.5 py-2 text-sm flex items-center justify-between gap-2 transition-colors ${activeTab === tab.key ? "text-primary bg-primary/10" : "text-muted-foreground hover:text-foreground hover:bg-white/5"}`}
-    >
-      <span className="flex items-center gap-2"><tab.icon className="h-3.5 w-3.5" />{tab.label}</span>
-      {tab.count > 0 && (
-        <span className={`px-1.5 py-0.5 rounded-full text-[10px] ${activeTab === tab.key ? "bg-primary/20 text-primary" : "bg-white/10 text-muted-foreground"}`}>{tab.count}</span>
-      )}
-    </button>
-  );
+  const renderDropdownTabButton = (tab: NavTabDef) => {
+    const active = activeTab === tab.key;
+    const urgent = URGENT_AUTOMATED_FORM_TAB_KEYS.has(tab.key);
+    return (
+      <button
+        key={tab.key}
+        type="button"
+        onClick={() => { setActiveTab(tab.key as typeof activeTab); setOpenCategory(null); }}
+        className={`w-full text-left px-3.5 py-2 text-sm flex items-center justify-between gap-2 transition-colors ${
+          active ? "text-primary bg-primary/10" : urgent ? "text-red-100 bg-red-500/20 hover:bg-red-500/30" : "text-muted-foreground hover:text-foreground hover:bg-white/5"
+        }`}
+      >
+        <span className="flex items-center gap-2"><tab.icon className="h-3.5 w-3.5" />{tab.label}</span>
+        {tab.count > 0 && (
+          <span className={`px-1.5 py-0.5 rounded-full text-[10px] ${active ? "bg-primary/20 text-primary" : urgent ? "bg-red-500/30 text-red-200" : "bg-white/10 text-muted-foreground"}`}>{tab.count}</span>
+        )}
+      </button>
+    );
+  };
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -11456,11 +11490,16 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         <div className="p-4 pt-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 border-b border-white/10">
           {GENERAL_FORM_TYPES.map(({ type, label }) => {
             const checked = selectedFormTypes.has(type);
+            const urgent = ROUTE_REQUIRED_DOCUMENT_TYPES.includes(type);
             return (
               <label
                 key={type}
                 className={`flex items-start gap-2.5 rounded-lg border p-3 cursor-pointer transition-colors ${
-                  checked ? "border-primary/50 bg-primary/10" : "border-white/10 bg-white/5 hover:bg-white/10"
+                  checked
+                    ? "border-primary/50 bg-primary/10"
+                    : urgent
+                    ? "border-red-500/40 bg-red-500/20 hover:bg-red-500/30"
+                    : "border-white/10 bg-white/5 hover:bg-white/10"
                 }`}
               >
                 <input
@@ -11481,11 +11520,16 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         <div className="p-4 pt-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
           {TECHNICIAN_FORM_TYPES.map(({ type, label }) => {
             const checked = selectedFormTypes.has(type);
+            const urgent = ROUTE_REQUIRED_DOCUMENT_TYPES.includes(type);
             return (
               <label
                 key={type}
                 className={`flex items-start gap-2.5 rounded-lg border p-3 cursor-pointer transition-colors ${
-                  checked ? "border-primary/50 bg-primary/10" : "border-white/10 bg-white/5 hover:bg-white/10"
+                  checked
+                    ? "border-primary/50 bg-primary/10"
+                    : urgent
+                    ? "border-red-500/40 bg-red-500/20 hover:bg-red-500/30"
+                    : "border-white/10 bg-white/5 hover:bg-white/10"
                 }`}
               >
                 <input
