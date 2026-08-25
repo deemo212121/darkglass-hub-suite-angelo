@@ -275,6 +275,17 @@ export async function getDmMessages(dmThreadId: string, limit = 200): Promise<Me
   return (data as MessageRow[]) ?? [];
 }
 
+/** Cheap "did anything change?" check for a poll fallback — the latest message id/timestamp for one thread, so callers only pay for a full getChannelMessages/getDmMessages when something actually moved. */
+export async function peekLatestThreadMessage(
+  args: { channelId: string } | { dmThreadId: string }
+): Promise<{ id: string; created_at: string } | null> {
+  let q = supabase.from("messages").select("id, created_at").is("deleted_at", null);
+  q = "channelId" in args ? q.eq("channel_id", args.channelId) : q.eq("dm_thread_id", args.dmThreadId);
+  const { data, error } = await q.order("created_at", { ascending: false }).limit(1);
+  if (error) throw new Error(error.message);
+  return (data ?? [])[0] ?? null;
+}
+
 /**
  * Send a message to either a channel or a DM thread.
  * `senderId` and `senderName` are stored verbatim on the row for cheap display
@@ -451,6 +462,12 @@ export async function markThreadRead(params: {
  * Strategy: read all my message_reads rows (cheap, one per channel/dm),
  * then for each thread count messages newer than that timestamp.
  */
+// Cap on how many unread candidate rows getUnreadCounts will ever pull back
+// in its one batched query — nobody needs an exact count once it's this
+// high, and it guarantees the query stays bounded even for an account that
+// hasn't opened a channel in a year. Badges just show "50+" past this.
+const UNREAD_COUNT_ROW_CAP = 500;
+
 export async function getUnreadCounts(profileId: string): Promise<{
   perChannel: Record<string, number>;
   perDm: Record<string, number>;
@@ -477,42 +494,51 @@ export async function getUnreadCounts(profileId: string): Promise<{
     if (r.dm_thread_id) dmReadAt.set(r.dm_thread_id as string, r.last_read_at as string);
   }
 
-  // 2. Count queries for every thread — issue them all at once.
-  const channelCountPromises = channels.map(async (ch) => {
-    const since = channelReadAt.get(ch.id);
-    let q = supabase
-      .from("messages")
-      .select("id", { count: "exact", head: true })
-      .eq("channel_id", ch.id)
-      .is("deleted_at", null)
-      .neq("sender_id", profileId);
-    if (since) q = q.gt("created_at", since);
-    const { count, error } = await q;
-    if (error) throw new Error(error.message);
-    return [ch.id, count ?? 0] as const;
-  });
+  const channelIds = channels.map((c) => c.id);
+  if (channelIds.length === 0 && dmIds.length === 0) return empty;
 
-  const dmCountPromises = dmIds.map(async (id) => {
-    const since = dmReadAt.get(id);
-    let q = supabase
-      .from("messages")
-      .select("id", { count: "exact", head: true })
-      .eq("dm_thread_id", id)
-      .is("deleted_at", null)
-      .neq("sender_id", profileId);
-    if (since) q = q.gt("created_at", since);
-    const { count, error } = await q;
-    if (error) throw new Error(error.message);
-    return [id, count ?? 0] as const;
-  });
+  // 2. One query instead of one `count:exact` per channel/DM (was N+1 — a
+  // user with 10 channels + 20 DMs fired 30 count queries every time this
+  // ran). A single lower bound (the oldest of everyone's read pointers)
+  // covers every thread; each row is then attributed to its own thread and
+  // checked against THAT thread's own last_read_at client-side below, so
+  // the per-thread cutoff logic is unchanged — only the number of queries is.
+  const allReadTimes = [...channelReadAt.values(), ...dmReadAt.values()];
+  const earliestSince = allReadTimes.length > 0 ? allReadTimes.reduce((min, t) => (t < min ? t : min)) : null;
 
-  const [channelCounts, dmCounts] = await Promise.all([
-    Promise.all(channelCountPromises),
-    Promise.all(dmCountPromises),
-  ]);
+  const orParts = [
+    channelIds.length > 0 ? `channel_id.in.(${channelIds.join(",")})` : null,
+    dmIds.length > 0 ? `dm_thread_id.in.(${dmIds.join(",")})` : null,
+  ].filter(Boolean) as string[];
 
-  const perChannel: Record<string, number> = Object.fromEntries(channelCounts);
-  const perDm: Record<string, number> = Object.fromEntries(dmCounts);
+  let query = supabase
+    .from("messages")
+    .select("channel_id, dm_thread_id, created_at")
+    .is("deleted_at", null)
+    .neq("sender_id", profileId)
+    .or(orParts.join(","))
+    .order("created_at", { ascending: false })
+    .limit(UNREAD_COUNT_ROW_CAP);
+  if (earliestSince) query = query.gt("created_at", earliestSince);
+
+  const { data, error } = await query;
+  if (error) throw new Error(error.message);
+
+  const perChannel: Record<string, number> = {};
+  const perDm: Record<string, number> = {};
+  for (const row of data || []) {
+    const chId = row.channel_id as string | null;
+    const dmId = row.dm_thread_id as string | null;
+    const createdAt = row.created_at as string;
+    if (chId) {
+      const since = channelReadAt.get(chId);
+      if (!since || createdAt > since) perChannel[chId] = (perChannel[chId] ?? 0) + 1;
+    } else if (dmId) {
+      const since = dmReadAt.get(dmId);
+      if (!since || createdAt > since) perDm[dmId] = (perDm[dmId] ?? 0) + 1;
+    }
+  }
+
   const total =
     Object.values(perChannel).reduce((a, b) => a + b, 0) +
     Object.values(perDm).reduce((a, b) => a + b, 0);

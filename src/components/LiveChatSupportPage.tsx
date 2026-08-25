@@ -52,6 +52,8 @@ import {
   getLiveChatMessages,
   getSavedReplies,
   listLiveChatSessions,
+  peekLatestLiveChatMessageId,
+  peekLiveChatSessionsSignature,
   proposeLiveChatCallback,
   releaseLiveChatSession,
   requestLiveChatAppointment,
@@ -347,7 +349,21 @@ export function LiveChatSupportPage({ mod, sub }: Props) {
   useEffect(() => {
     loadSessions();
     const unsubscribe = subscribeTableChanges("live_chat_sessions", loadSessions);
-    const pollId = window.setInterval(loadSessions, 5000);
+    // The poll itself stays cheap: every tick just compares a small-column
+    // signature (id/status/last_message_at/assigned_to across all sessions)
+    // against what we last saw, and only pays for the full
+    // listLiveChatSessions() (row set + inbox-previews RPC) on the rare tick
+    // where something actually changed — realtime is the fast path, this is
+    // just the safety net for tenants without it enabled.
+    let lastSignature: string | null = null;
+    const pollId = window.setInterval(async () => {
+      try {
+        const sig = await peekLiveChatSessionsSignature();
+        if (sig === lastSignature) return;
+        lastSignature = sig;
+        loadSessions();
+      } catch { /* ignore */ }
+    }, 5000);
     return () => {
       unsubscribe();
       window.clearInterval(pollId);
@@ -378,7 +394,20 @@ export function LiveChatSupportPage({ mod, sub }: Props) {
       getLiveChatMessages(activeId).then((rows) => { if (!cancelled) setMessages(rows); }).catch(() => {});
     };
     const unsubscribe = subscribeTableChanges("live_chat_messages", refetch, `session_id=eq.${activeId}`);
-    const pollId = window.setInterval(refetch, 4000);
+    // Cheap peek every tick (just the latest message id for this session);
+    // getLiveChatMessages also marks visitor messages read/delivered, so
+    // calling it unconditionally every 4s was writing to the DB that often
+    // regardless of whether anything was actually new.
+    let lastPeekedId: string | null = null;
+    const pollId = window.setInterval(async () => {
+      if (cancelled) return;
+      try {
+        const id = await peekLatestLiveChatMessageId(activeId);
+        if (id === lastPeekedId) return;
+        lastPeekedId = id;
+        refetch();
+      } catch { /* ignore */ }
+    }, 4000);
     return () => {
       cancelled = true;
       unsubscribe();
