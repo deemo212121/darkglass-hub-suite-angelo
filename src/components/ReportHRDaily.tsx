@@ -9081,6 +9081,26 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, onboardingSelectedEmployee?.id]);
   const onboardingDocColumns = onboardingDocsForGroup(onboardingGroup);
+  // Same 9 documents ROUTE_REQUIRED_DOCUMENT_TYPES (signableDocuments.ts)
+  // gates route assignment on, matched by the exact column label text since
+  // these onboarding columns are free-text (hr_onboarding_document_columns
+  // has no typed document reference) rather than real SignableDocumentTypes.
+  // "Parts Responsibility & Technician Floor Protection" only — the
+  // separate "Acknowledgement Form" column next to it in the live data is
+  // too generic to confidently flag as the same document; those two look
+  // like one column that got split into two by accident and are worth
+  // merging back into one.
+  const URGENT_ONBOARDING_COLUMN_LABELS = new Set([
+    "Substance Screening & Conduct Agreement",
+    "Parts Responsibility & Technician Floor Protection",
+    "Damage Agreement",
+    "Employee Mobile App Location Sharing Consent Agreement",
+    "Personal Vehicle Mileage & Fuel Policy Agreement",
+    "I-9",
+    "W-4R",
+    "Car IQ Technician Agreement",
+    "Employee Meal & Rest Break Policy",
+  ]);
 
   // Custom columns are company-wide (not filtered by the currently visible
   // employee list), so just load them once when the tab is first opened.
@@ -11998,8 +12018,14 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                 <th className="px-1.5 py-2 text-left text-[10px] text-muted-foreground uppercase w-[7%]">{onboardingGroup === "PH" ? "Dept." : "Branch"}</th>
                 {onboardingDocColumns.map((doc) => {
                   const customCol = customOnboardingColumns.find((c) => c.groupKey === onboardingGroup && c.label === doc);
+                  const urgent = URGENT_ONBOARDING_COLUMN_LABELS.has(doc);
                   return (
-                    <th key={doc} className="px-1 py-2 text-center text-[9px] leading-tight text-muted-foreground uppercase break-words">
+                    <th
+                      key={doc}
+                      className={`px-1 py-2 text-center text-[9px] leading-tight uppercase break-words ${
+                        urgent ? "bg-red-500/20 text-red-200" : "text-muted-foreground"
+                      }`}
+                    >
                       {doc}
                       {customCol && (
                         <button
