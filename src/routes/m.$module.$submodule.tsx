@@ -7,7 +7,7 @@ import { DailyActivityPage } from "@/components/DailyActivityPage";
 import { TriageDashboardPage } from "@/components/TriageDashboardPage";
 import { UniversalActivityLogPage } from "@/components/UniversalActivityLogPage";
 import { useAuth } from "@/lib/auth";
-import { getModule, getSubModule } from "@/lib/modules";
+import { getModule, getSubModule, type ModuleDef, type SubModuleDef } from "@/lib/modules";
 import { GenericModulePage } from "@/components/GenericModulePage";
 import { PartReturnStatusPage } from "@/components/PartReturnStatus";
 import { ClaimsPipeline } from "@/components/ClaimsPipeline";
@@ -132,7 +132,7 @@ export const Route = createFileRoute("/m/$module/$submodule")({
       title: `${getSubModule(params.module, params.submodule)?.title ?? "Sub-module"} — Admin Hub Solutions`,
     }],
   }),
-  loader: ({ params }) => {
+  loader: async ({ params }) => {
     const m = getModule(params.module);
     const s = getSubModule(params.module, params.submodule);
     if (!m || !s) throw notFound();
@@ -159,7 +159,11 @@ export const Route = createFileRoute("/m/$module/$submodule")({
 
 function SubModule() {
   const { ready, email, companyId, role, uid } = useAuth();
-  const { mod, sub } = Route.useLoaderData();
+  // Route.useLoaderData()'s type resolves to `undefined` for this route in
+  // the current @tanstack/react-router version — a known inference gap for
+  // parent routes with children, not a real runtime issue (the loader
+  // always returns { mod, sub } or throws notFound() first).
+  const { mod, sub } = Route.useLoaderData() as { mod: ModuleDef; sub: SubModuleDef };
   const location = useLocation();
 
   // Role gates that also need to honor a secondary role (profiles.

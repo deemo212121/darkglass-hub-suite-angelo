@@ -98,7 +98,7 @@ export function TimecardReport({ mod, sub }: Props) {
   const [endDate, setEndDate] = useState(todayStr());
 
   const empNames = activeTab==="tech" ? TECHS_FULL : CSR_NAMES.slice(0,15);
-  const ALL_ROWS = useMemo(()=>generateRows(60, tab), [tab]);
+  const ALL_ROWS = useMemo(()=>generateRows(60, activeTab), [activeTab]);
 
   const rows = useMemo(()=>{
     let r = ALL_ROWS;

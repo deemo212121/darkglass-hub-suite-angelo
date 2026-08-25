@@ -228,12 +228,13 @@ export async function syncNsaToSupabase(
 
   let dispatches: NsaDispatch[];
   try {
-    dispatches = await getNsaDispatches({
-      startDate,
-      endDate,
+    const result = await getNsaDispatches({
+      createStartDate: startDate,
+      createEndDate: endDate,
       status: options.status,
-      limit: options.limit,
+      pageSize: options.limit,
     });
+    dispatches = result.dispatches;
   } catch (err) {
     return {
       success: false,

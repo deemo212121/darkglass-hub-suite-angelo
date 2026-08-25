@@ -30,14 +30,19 @@ const PAGE_HEIGHT = 792;
 
 // Same field rectangles as FillEmployeeConfidentialityPage.tsx — see that
 // file's header comment for how these were derived.
+// Re-measured against the real PDF text runs (pdf.js getTextContent(),
+// calibrated with @napi-rs/canvas's Calibri metrics against each line's
+// known total width) — the previous numbers were eyeballed and drifted far
+// enough right/wide to overlap neighboring labels (City spilling into
+// "State:", Zip landing past its own blank entirely).
 const PAGE1_RECT = {
   dateSigned: { x: 327, y: 646, w: 150, h: 13 },
-  employeeName: { x: 215, y: 529, w: 330, h: 14 },
-  address: { x: 201, y: 504, w: 344, h: 14 },
-  city: { x: 175, y: 479, w: 120, h: 13 },
-  state: { x: 313, y: 479, w: 60, h: 13 },
-  zip: { x: 403, y: 479, w: 80, h: 13 },
-  branch: { x: 193, y: 454, w: 250, h: 14 },
+  employeeName: { x: 199, y: 529, w: 299, h: 14 },
+  address: { x: 189, y: 504, w: 311, h: 14 },
+  city: { x: 169, y: 479, w: 90, h: 13 },
+  state: { x: 292, y: 479, w: 54, h: 13 },
+  zip: { x: 369, y: 479, w: 66, h: 13 },
+  branch: { x: 184, y: 454, w: 248, h: 14 },
 } as const;
 
 const PAGE2_RECT = {
@@ -140,6 +145,25 @@ export function ExternalFillEmployeeConfidentialityPage({ docId }: Props) {
           const ctx = canvas.getContext("2d")!;
           ctx.scale(dpr, dpr);
           await page.render({ canvas, canvasContext: ctx, viewport }).promise;
+
+          // Page 1's printed Branch line has no blank of its own — it's
+          // "Branch: [Please Select Branch from the list provided below]",
+          // with the bracketed instruction sitting exactly where the select
+          // overlay needs to go. A CSS background on that overlay only
+          // approximates covering the printed text underneath (and visibly
+          // didn't fully hide it), so paint over that exact region directly
+          // on the canvas instead — guaranteed opaque, pixel-precise,
+          // painted before the select ever sits on top of it.
+          if (i === 1) {
+            const r = PAGE1_RECT.branch;
+            ctx.fillStyle = "#ffffff";
+            ctx.fillRect(
+              r.x * scale - 4,
+              (PAGE_HEIGHT - r.y - r.h) * scale - 4,
+              r.w * scale + 8,
+              r.h * scale + 10
+            );
+          }
         }
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : "Failed to render the form.");

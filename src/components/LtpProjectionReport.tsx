@@ -101,7 +101,7 @@ export function LtpProjectionReport({ mod, sub }: Props) {
     warrantyTypes.includes(r.warrantyType) &&
     (location ? r.location === location : true) &&
     (activeTab === "imported" ? !r.isLateScheduled : r.isLateScheduled)
-  ), [applied, activeTab]);
+  ), [accounts, serviceTypes, warrantyTypes, location, activeTab]);
 
   const filtered = search ? rows.filter(r => Object.values(r).some(v => String(v).toLowerCase().includes(search.toLowerCase()))) : rows;
   const paged = filtered.slice(0, pageSize);

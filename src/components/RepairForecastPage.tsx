@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { ChevronLeft } from "lucide-react";
 import { getLocationRanking, getOverallStatus, getTechRanking, getTickets } from "@/lib/db-api";
-import type { DashboardOverallStatus, LocationRankingRecord, ModuleDef, SubModuleDef, TechRankingRecord, Ticket } from "@/lib/db";
+import type { DashboardOverallStatus, LocationRankingRecord, TechRankingRecord, Ticket } from "@/lib/db";
+import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 
 type ForecastRow = {

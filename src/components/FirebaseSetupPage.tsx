@@ -169,19 +169,9 @@ export default function FirebaseSetupPage() {
                 size="lg"
                 className="w-full"
                 onClick={runSetup}
-                disabled={setupStatus === "running"}
               >
-                {setupStatus === "running" ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Running Setup...
-                  </>
-                ) : (
-                  <>
-                    <Database className="mr-2 h-4 w-4" />
-                    Run Initial Setup
-                  </>
-                )}
+                <Database className="mr-2 h-4 w-4" />
+                Run Initial Setup
               </Button>
             )}
 

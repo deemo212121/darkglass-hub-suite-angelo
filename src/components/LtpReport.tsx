@@ -197,7 +197,7 @@ export function LtpReport({ mod, sub }: Props) {
     serviceTypes.includes(r.serviceType) &&
     warrantyTypes.includes(r.warrantyType) &&
     r.aging >= ltpAging
-  ), [applied]);
+  ), [accounts, serviceTypes, warrantyTypes, ltpAging]);
 
   const avgAging = rows.length ? Math.round(rows.reduce((s,r)=>s+r.aging,0)/rows.length) : 0;
 

@@ -274,7 +274,9 @@ export interface RFAWhyAdditionalManQuestion {
 }
 
 export interface CreateRFARequest {
-  manufacturerName: string;
+  // Optional here — createRFA() falls back to the client's configured
+  // manufacturerName (then "") when the caller doesn't supply one.
+  manufacturerName?: string;
   callNumber: string;
   coreInfo?: RFACoreInfo;
   whyAdditionalManOnTheJobQuestions?: RFAWhyAdditionalManQuestion[];

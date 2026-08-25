@@ -275,7 +275,7 @@ export function AttendanceDetailsPage() {
         <div className="max-w-[1600px] mx-auto px-6 py-6 flex items-center justify-between">
           <div className="flex items-center gap-4">
             <button
-              onClick={() => navigate({ to: "/m/dashboard" })}
+              onClick={() => navigate({ to: "/home" })}
               className="hover:bg-white/15 p-2 rounded-md transition"
             >
               <ChevronLeft className="h-5 w-5" />

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import { Link } from "@tanstack/react-router";
 import type * as Leaflet from "leaflet";
@@ -991,7 +991,7 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
                       const bgColor = techName === "Unassigned"
                         ? statusMarkerColor(ticket.status)
                         : getTechColor(techName);
-                      const cardStyle = { 
+                      const cardStyle: CSSProperties = {
                         backgroundColor: `${bgColor}15`, // 15 = ~8% opacity
                         borderLeftColor: bgColor,
                         borderLeftWidth: '4px',

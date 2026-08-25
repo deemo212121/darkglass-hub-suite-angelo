@@ -121,7 +121,7 @@ export async function verifyFirebaseToken(idToken: string, projectId: string): P
   const valid = await crypto.subtle.verify(
     "RSASSA-PKCS1-v1_5",
     key,
-    b64urlToBytes(signatureB64),
+    b64urlToBytes(signatureB64) as BufferSource,
     new TextEncoder().encode(`${headerB64}.${payloadB64}`)
   );
   if (!valid) throw new Error("Invalid token signature");
