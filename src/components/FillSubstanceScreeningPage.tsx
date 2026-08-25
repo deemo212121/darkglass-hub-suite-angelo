@@ -31,6 +31,8 @@ import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
 import { logActivity } from "@/lib/supabase/hrActivityLog";
 import { getHrNotificationSettings } from "@/lib/supabase/companySettings";
 import { notifyHrRoleUsers } from "@/lib/supabase/hrRoleNotify";
+import { useSignaturePad } from "@/hooks/useSignaturePad";
+import { SignaturePadControls } from "@/components/SignaturePad";
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 
 interface Props {
@@ -84,9 +86,7 @@ export function FillSubstanceScreeningPage({ docId }: Props) {
 
   const [form, setForm] = useState<SubstanceScreeningFormData>({ ...BLANK_FORM });
 
-  const sigCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const drawingRef = useRef(false);
-  const hasDrawnRef = useRef(false);
+  const sigPad = useSignaturePad({ defaultName: form.employeeName, width: 430, height: 100 });
 
   useEffect(() => {
     if (!ready || !uid) return;
@@ -163,56 +163,28 @@ export function FillSubstanceScreeningPage({ docId }: Props) {
 
   const updateField = <K extends keyof SubstanceScreeningFormData>(key: K, value: SubstanceScreeningFormData[K]) => setForm((f) => ({ ...f, [key]: value }));
 
-  const pos = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    const c = sigCanvasRef.current!;
-    const r = c.getBoundingClientRect();
-    return { x: ((e.clientX - r.left) / r.width) * c.width, y: ((e.clientY - r.top) / r.height) * c.height };
-  };
-  const startDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    drawingRef.current = true;
-    const ctx = sigCanvasRef.current!.getContext("2d")!;
-    const { x, y } = pos(e);
-    ctx.beginPath();
-    ctx.moveTo(x, y);
-    e.currentTarget.setPointerCapture(e.pointerId);
-  };
-  const moveDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!drawingRef.current) return;
-    const ctx = sigCanvasRef.current!.getContext("2d")!;
-    const { x, y } = pos(e);
-    ctx.lineTo(x, y);
-    ctx.strokeStyle = "#0f172a";
-    ctx.lineWidth = 2;
-    ctx.lineCap = "round";
-    ctx.stroke();
-    hasDrawnRef.current = true;
-  };
-  const endDraw = () => { drawingRef.current = false; };
-  const clearSignature = () => {
-    const c = sigCanvasRef.current;
-    if (!c) return;
-    c.getContext("2d")!.clearRect(0, 0, c.width, c.height);
-    hasDrawnRef.current = false;
-  };
-
   const validate = (): string | null => {
     if (!form.employeeName.trim()) return "Enter your full name.";
-    if (!hasDrawnRef.current) return "Please draw your signature.";
+    if (!sigPad.hasContent()) return "Please add your signature.";
     return null;
   };
 
   const handleSubmit = async () => {
-    if (!doc || !myProfileId || !sigCanvasRef.current) return;
+    if (!doc || !myProfileId) return;
     const validationError = validate();
     if (validationError) {
       setError(validationError);
+      return;
+    }
+    const dataUrl = sigPad.toDataURL();
+    if (!dataUrl) {
+      setError("Please add your signature.");
       return;
     }
     setSubmitting(true);
     setError(null);
     try {
       const companyId = doc.companyId;
-      const dataUrl = sigCanvasRef.current.toDataURL("image/png");
       const sigBytes = new Uint8Array(await (await fetch(dataUrl)).arrayBuffer());
       const signatureUrl = await uploadSignableDocumentSignature(companyId, doc.id, "employee", dataUrl);
       const signedAt = new Date().toISOString();
@@ -295,7 +267,7 @@ export function FillSubstanceScreeningPage({ docId }: Props) {
         ) : (
           <div className="panel p-4">
             <p className="text-xs text-muted-foreground mb-3">
-              Read the agreement below, fill in your information, draw your signature, then submit.
+              Read the agreement below, fill in your information, add your signature, then submit.
             </p>
 
             <div className="overflow-x-auto flex flex-col items-center bg-white/5 rounded-md p-4 gap-4">
@@ -330,15 +302,9 @@ export function FillSubstanceScreeningPage({ docId }: Props) {
                       </div>
 
                       <canvas
-                        ref={sigCanvasRef}
-                        width={430}
-                        height={100}
-                        onPointerDown={startDraw}
-                        onPointerMove={moveDraw}
-                        onPointerUp={endDraw}
-                        onPointerLeave={endDraw}
-                        className="absolute touch-none cursor-crosshair"
+                        {...sigPad.canvasProps}
                         style={{
+                          position: "absolute",
                           left: PAGE2_RECT.signature.x * scale,
                           top: (PAGE_HEIGHT - PAGE2_RECT.signature.y - PAGE2_RECT.signature.h) * scale,
                           width: PAGE2_RECT.signature.w * scale,
@@ -351,8 +317,8 @@ export function FillSubstanceScreeningPage({ docId }: Props) {
               ))}
             </div>
 
-            <div className="flex items-center gap-2 mt-2 justify-center">
-              <button onClick={clearSignature} className="btn text-xs px-3 py-1.5">Clear signature</button>
+            <div className="flex items-center justify-center mt-2">
+              <SignaturePadControls pad={sigPad} />
             </div>
 
             {error && (
