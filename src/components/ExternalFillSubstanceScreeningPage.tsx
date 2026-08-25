@@ -32,7 +32,7 @@ const PAGE_HEIGHT = 792;
 // file's header comment for how these were derived.
 const PAGE1_RECT = {
   employeeName: { x: 168, y: 636.5, w: 200, h: 14 },
-  dateSigned: { x: 76, y: 624, w: 130, h: 13 },
+  dateSigned: { x: 422, y: 636.5, w: 118, h: 13 },
 } as const;
 
 const PAGE2_RECT = {

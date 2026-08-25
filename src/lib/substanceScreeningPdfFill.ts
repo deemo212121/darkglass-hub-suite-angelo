@@ -60,11 +60,14 @@ export async function fillSubstanceScreeningPdf(
   const page1 = pdfDoc.getPage(0);
   const dateText = fmtDate(data.dateSigned);
   draw(page1, data.employeeName, 168, 642);
-  // The "Date:" label sits at the end of the Employee Name row, but its own
-  // blank wraps to the line below (confirmed via pdf.js text-item
-  // coordinates — the wrapped blank starts back at the paragraph's left
-  // margin, x=72.02 y=626.86, not indented under the "Date:" label itself).
-  draw(page1, dateText, 76, 629, 9);
+  // The source PDF's own underscore blank for this date wraps down to the
+  // line below "Employee Name:" (confirmed via pdf.js text-item
+  // coordinates) — a real artifact of the original document, but it reads
+  // as "wrong" to anyone looking at the filled form since the value ends
+  // up nowhere near the "Date:" label. Drawn here instead, directly after
+  // the label on the same row (x=389.35 + label width 28.85 ≈ 418, with
+  // ~122pt of clearance to the right margin before the page edge).
+  draw(page1, dateText, 422, 642, 9);
 
   const page2 = pdfDoc.getPage(1);
   draw(page2, dateText, 360, 491, 9);

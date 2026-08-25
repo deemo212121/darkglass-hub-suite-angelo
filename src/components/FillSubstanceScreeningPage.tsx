@@ -44,12 +44,13 @@ const PAGE_HEIGHT = 792;
 // via pdf.js's text-position API against the actual label/blank positions
 // on src/assets/SUBSTANCE SCREENING & CONDUCT AGREEMENT.pdf — the exact
 // numbers substanceScreeningPdfFill.ts's draw coordinates were derived
-// from. This PDF has no real AcroForm fields at all. The "Date:" label
-// sits at the end of the Employee Name row, but its own blank wraps to the
-// line below (confirmed via the same text-item inspection).
+// from. This PDF has no real AcroForm fields at all. dateSigned sits
+// directly after the "Date:" label on the same row as Employee Name —
+// see substanceScreeningPdfFill.ts's header comment for why that's NOT
+// where the source PDF's own underscore blank for it actually is.
 const PAGE1_RECT = {
   employeeName: { x: 168, y: 636.5, w: 200, h: 14 },
-  dateSigned: { x: 76, y: 624, w: 130, h: 13 },
+  dateSigned: { x: 422, y: 636.5, w: 118, h: 13 },
 } as const;
 
 const PAGE2_RECT = {
