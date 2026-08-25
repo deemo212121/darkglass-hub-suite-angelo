@@ -53,6 +53,7 @@ export function TechnicianLocationTracker() {
   const lastUploadRef = useRef(0);
   const promptHandledThisShiftRef = useRef(false);
   const loadedDateKeyRef = useRef<string>(todayKey());
+  const wakeLockRef = useRef<{ release: () => Promise<void> } | null>(null);
 
   const eligible = ready && !!uid && isTechnicianRole(role, extraRoles);
 
@@ -136,6 +137,46 @@ export function TechnicianLocationTracker() {
       { enableHighAccuracy: false, maximumAge: 30_000, timeout: 20_000 }
     );
   };
+
+  const releaseWakeLock = () => {
+    wakeLockRef.current?.release().catch(() => {});
+    wakeLockRef.current = null;
+  };
+
+  const requestWakeLock = () => {
+    const wakeLock = (navigator as any).wakeLock;
+    if (!wakeLock?.request || wakeLockRef.current) return;
+    wakeLock
+      .request("screen")
+      .then((sentinel: any) => {
+        wakeLockRef.current = sentinel;
+        sentinel.addEventListener("release", () => {
+          wakeLockRef.current = null;
+        });
+      })
+      .catch(() => {
+        // Battery Saver, OS-level denial, etc. — best-effort, tracking itself is unaffected.
+      });
+  };
+
+  // Screen Wake Lock is released by the browser the instant the tab is
+  // hidden, so it must be re-requested on every return to foreground —
+  // this only keeps the screen from auto-locking while actively watching
+  // AND visible; it can't survive the tab actually being backgrounded.
+  useEffect(() => {
+    if (!watching) {
+      releaseWakeLock();
+      return;
+    }
+    requestWakeLock();
+    const onVisible = () => {
+      if (document.visibilityState === "visible") requestWakeLock();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [watching]);
+
+  useEffect(() => () => releaseWakeLock(), []);
 
   // Start/stop tracking as the clocked-in state itself flips.
   useEffect(() => {
