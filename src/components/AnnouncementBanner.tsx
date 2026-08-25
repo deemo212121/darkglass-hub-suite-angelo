@@ -107,9 +107,17 @@ export function AnnouncementBanner() {
   //       realtime is off in the project settings.
   // In both cases we filter against the user's `last_read_at` so previously
   // read announcements never re-pop.
+  //
+  // The poll itself stays cheap: every tick just peeks at the single latest
+  // row's id (one indexed row, no join). This runs in every open tab for
+  // every logged-in user all day, so only the (rare) tick where the peeked
+  // id actually changes pays for the heavier refreshLastRead +
+  // getChannelMessages pair — mirrors the same peek-first shape
+  // MessagesMenu.tsx already uses for its own fallback poll.
   useEffect(() => {
     if (!channel || !profileId) return;
     let cancelled = false;
+    let lastPeekedId = "";
 
     const handleRow = (row: MessageRow) => {
       if (row.kind !== "user") return;
@@ -129,6 +137,17 @@ export function AnnouncementBanner() {
     const poll = window.setInterval(async () => {
       if (cancelled) return;
       try {
+        const { data } = await supabase
+          .from("messages")
+          .select("id, created_at")
+          .eq("channel_id", channel.id)
+          .is("deleted_at", null)
+          .order("created_at", { ascending: false })
+          .limit(1);
+        const top = (data || [])[0] as { id: string; created_at: string } | undefined;
+        if (!top || top.id === lastPeekedId) return;
+        lastPeekedId = top.id;
+
         // Refresh the read pointer first so other tabs / a fresh "mark all
         // read" elsewhere is honored before we decide to pop.
         await refreshLastRead(profileId, channel.id);
