@@ -20,6 +20,9 @@ import logo from "@/assets/Admin Hub Solutions Logo no Text.png";
 import { getExternalSignableDocument, submitExternalSignature, type ExternalSignableDocument } from "@/lib/supabase/externalSignableDocuments";
 import { fillPartsResponsibilityPdf, loadBlankPartsResponsibilityBytes } from "@/lib/partsResponsibilityPdfFill";
 import { PARTS_RESPONSIBILITY_BRANCHES, type PartsResponsibilityFormData } from "@/lib/partsResponsibilityFormTemplate";
+import { dateBlankPositions } from "@/lib/pdfDateBlankSplit";
+import { useSignaturePad } from "@/hooks/useSignaturePad";
+import { SignaturePadControls } from "@/components/SignaturePad";
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 
 interface Props {
@@ -38,12 +41,21 @@ const PAGE1_RECT = {
   branch: { x: 233.8, y: 600.7, w: 220, h: 14 },
 } as const;
 
+const TECHNICIAN_DATE_X = dateBlankPositions(101.5);
+
 const PAGE2_RECT = {
-  dateSigned: { x: 101.5, y: 650.6, w: 217.4, h: 13 },
+  dateSignedMM: { x: TECHNICIAN_DATE_X.mm, y: 650.6, w: 30, h: 13 },
+  dateSignedDD: { x: TECHNICIAN_DATE_X.dd, y: 650.6, w: 30, h: 13 },
+  dateSignedYYYY: { x: TECHNICIAN_DATE_X.yyyy, y: 650.6, w: 50, h: 13 },
+  printedName: { x: 208, y: 625.7, w: 290, h: 14 },
   signature: { x: 187.9, y: 600.7, w: 298.5, h: 20 },
 } as const;
 
-const fmtDateSigned = (d: Date) => `${String(d.getMonth() + 1).padStart(2, "0")} / ${String(d.getDate()).padStart(2, "0")} / ${d.getFullYear()}`;
+const fmtDateSignedParts = (d: Date) => ({
+  mm: String(d.getMonth() + 1).padStart(2, "0"),
+  dd: String(d.getDate()).padStart(2, "0"),
+  yyyy: String(d.getFullYear()),
+});
 
 const BLANK_FORM: PartsResponsibilityFormData = {
   employeeId: "",
@@ -74,9 +86,7 @@ export function ExternalFillPartsResponsibilityPage({ docId }: Props) {
 
   const [form, setForm] = useState<PartsResponsibilityFormData>({ ...BLANK_FORM });
 
-  const sigCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const drawingRef = useRef(false);
-  const hasDrawnRef = useRef(false);
+  const sigPad = useSignaturePad({ width: 440, height: 100 });
 
   useEffect(() => {
     let cancelled = false;
@@ -151,58 +161,30 @@ export function ExternalFillPartsResponsibilityPage({ docId }: Props) {
 
   const updateField = <K extends keyof PartsResponsibilityFormData>(key: K, value: PartsResponsibilityFormData[K]) => setForm((f) => ({ ...f, [key]: value }));
 
-  const pos = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    const c = sigCanvasRef.current!;
-    const r = c.getBoundingClientRect();
-    return { x: ((e.clientX - r.left) / r.width) * c.width, y: ((e.clientY - r.top) / r.height) * c.height };
-  };
-  const startDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    drawingRef.current = true;
-    const ctx = sigCanvasRef.current!.getContext("2d")!;
-    const { x, y } = pos(e);
-    ctx.beginPath();
-    ctx.moveTo(x, y);
-    e.currentTarget.setPointerCapture(e.pointerId);
-  };
-  const moveDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!drawingRef.current) return;
-    const ctx = sigCanvasRef.current!.getContext("2d")!;
-    const { x, y } = pos(e);
-    ctx.lineTo(x, y);
-    ctx.strokeStyle = "#0f172a";
-    ctx.lineWidth = 2;
-    ctx.lineCap = "round";
-    ctx.stroke();
-    hasDrawnRef.current = true;
-  };
-  const endDraw = () => { drawingRef.current = false; };
-  const clearSignature = () => {
-    const c = sigCanvasRef.current;
-    if (!c) return;
-    c.getContext("2d")!.clearRect(0, 0, c.width, c.height);
-    hasDrawnRef.current = false;
-  };
-
   const validate = (): string | null => {
     if (!form.firstName.trim()) return "Enter your first name.";
     if (!form.lastName.trim()) return "Enter your last name.";
     if (!form.branch) return "Select your branch.";
-    if (!hasDrawnRef.current) return "Please draw your signature.";
+    if (!sigPad.hasContent()) return "Please add your signature.";
     return null;
   };
 
   const handleSubmit = async () => {
-    if (!doc || !sigCanvasRef.current) return;
+    if (!doc) return;
     const validationError = validate();
     if (validationError) {
       setError(validationError);
+      return;
+    }
+    const dataUrl = sigPad.toDataURL();
+    if (!dataUrl) {
+      setError("Please add your signature.");
       return;
     }
     setSubmitting(true);
     setError(null);
     try {
       const employeeName = [form.firstName, form.middleName, form.lastName].filter(Boolean).join(" ");
-      const dataUrl = sigCanvasRef.current.toDataURL("image/png");
       const signatureBlob = await (await fetch(dataUrl)).blob();
       const signedAt = new Date().toISOString();
       const finalData: PartsResponsibilityFormData = { ...form, employeeName, technicianDateSigned: signedAt, technicianSignatureDataUrl: dataUrl };
@@ -232,6 +214,7 @@ export function ExternalFillPartsResponsibilityPage({ docId }: Props) {
   });
 
   const overlayInputCls = "bg-blue-50/60 border border-blue-300/70 rounded-[2px] outline-none p-0 font-bold font-sans text-[#00008B] focus:bg-blue-100/80 focus:border-blue-400";
+  const todayParts = fmtDateSignedParts(new Date());
 
   return (
     <div className="min-h-screen bg-background">
@@ -260,7 +243,7 @@ export function ExternalFillPartsResponsibilityPage({ docId }: Props) {
         ) : (
           <div className="panel p-4">
             <p className="text-xs text-muted-foreground mb-3">
-              Read the parts responsibility and floor protection policy below, fill in your name and branch, draw your signature, then submit.
+              Read the parts responsibility and floor protection policy below, fill in your name and branch, add your signature, then submit.
             </p>
 
             <div className="overflow-x-auto flex flex-col items-center bg-white/5 rounded-md p-4 gap-4">
@@ -308,20 +291,17 @@ export function ExternalFillPartsResponsibilityPage({ docId }: Props) {
 
                   {!pageLoading && pageNum === 2 && (
                     <>
-                      <div style={overlayStyle(PAGE2_RECT.dateSigned)} className="flex items-center font-bold text-[#00008B]">
-                        {fmtDateSigned(new Date())}
+                      <div style={overlayStyle(PAGE2_RECT.dateSignedMM)} className="flex items-center font-bold text-[#00008B]">{todayParts.mm}</div>
+                      <div style={overlayStyle(PAGE2_RECT.dateSignedDD)} className="flex items-center font-bold text-[#00008B]">{todayParts.dd}</div>
+                      <div style={overlayStyle(PAGE2_RECT.dateSignedYYYY)} className="flex items-center font-bold text-[#00008B]">{todayParts.yyyy}</div>
+                      <div style={overlayStyle(PAGE2_RECT.printedName)} className="flex items-center font-bold text-[#00008B]">
+                        {[form.firstName, form.middleName, form.lastName].filter(Boolean).join(" ")}
                       </div>
 
                       <canvas
-                        ref={sigCanvasRef}
-                        width={440}
-                        height={100}
-                        onPointerDown={startDraw}
-                        onPointerMove={moveDraw}
-                        onPointerUp={endDraw}
-                        onPointerLeave={endDraw}
-                        className="absolute touch-none cursor-crosshair"
+                        {...sigPad.canvasProps}
                         style={{
+                          position: "absolute",
                           left: PAGE2_RECT.signature.x * scale,
                           top: (PAGE_HEIGHT - PAGE2_RECT.signature.y - PAGE2_RECT.signature.h) * scale,
                           width: PAGE2_RECT.signature.w * scale,
@@ -334,8 +314,8 @@ export function ExternalFillPartsResponsibilityPage({ docId }: Props) {
               ))}
             </div>
 
-            <div className="flex items-center gap-2 mt-2 justify-center">
-              <button onClick={clearSignature} className="btn text-xs px-3 py-1.5">Clear signature</button>
+            <div className="flex items-center justify-center mt-2">
+              <SignaturePadControls pad={sigPad} />
             </div>
 
             {error && (

@@ -142,7 +142,9 @@ type UMFilterableField = (typeof UM_FILTERABLE_FIELDS)[number];
 function colValue(record: { id: string; loginName: string; userName: string; type: string; email?: string; manager?: string; technicianId?: string; office?: string; isActive?: boolean }, field: string): string {
   switch (field as UMFilterableField) {
     case "id":            return String(record.id ?? "");
-    case "loginName":     return String(record.loginName ?? "");
+    // The cell now displays the full name (userName), same as the User
+    // Name column — see the "Login Name" <td> comment above.
+    case "loginName":     return String(record.userName ?? "");
     case "userName":      return String(record.userName ?? "");
     // Readable label, not the raw role code/legacy free-text value - two
     // rows stored differently (e.g. "PARTS_MANAGER" vs legacy "Parts
@@ -1390,8 +1392,8 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
                     </span>
                   </th>
                   <th className="px-2.5 py-2 text-left">
-                    <span className="inline-flex items-center">User Name
-                      <ColumnFilter field="userName" label="User Name" options={columnOptions["userName"] || []}
+                    <span className="inline-flex items-center">Full Name
+                      <ColumnFilter field="userName" label="Full Name" options={columnOptions["userName"] || []}
                         selected={colFilters["userName"] || new Set()} onChange={(n) => setColFilter("userName", n)} />
                     </span>
                   </th>
@@ -1456,7 +1458,8 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
                     return (
                     <tr key={rowKey} className="hover:bg-white/5">
                       <td className="px-2.5 py-2 align-top">{record.id}</td>
-                      <td className="px-2.5 py-2 align-top break-words"><UserLink moduleSlug={mod.slug} submoduleSlug={sub.slug} userId={record.loginName}>{record.loginName}</UserLink></td>
+                      {/* Displays the full name, same as User Name — but userId stays record.loginName (the real username) since that's what the detail page's getProfileByUsername lookup resolves by; only the visible text changes here. */}
+                      <td className="px-2.5 py-2 align-top break-words"><UserLink moduleSlug={mod.slug} submoduleSlug={sub.slug} userId={record.loginName}>{record.userName}</UserLink></td>
                       <td className="px-2.5 py-2 align-top break-words"><UserLink moduleSlug={mod.slug} submoduleSlug={sub.slug} userId={record.loginName}>{record.userName}</UserLink></td>
                       <td className="px-2.5 py-2 align-top break-words">{roleDisplay(record.type)}</td>
                       <td className="px-2.5 py-2 align-top break-words text-slate-300">{record.email || "—"}</td>
@@ -1597,17 +1600,17 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
                 <div className="grid gap-4 lg:grid-cols-2">
                   <label className="space-y-2 text-sm text-slate-200">
                     <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Login Name *</span>
-                    <input 
-                      placeholder="Enter login name" 
+                    <input
+                      placeholder="Enter login name"
                       className="glass-input w-full text-[11px] px-2 py-1"
                       value={newUserForm.loginName}
                       onChange={(e) => handleAddUserFormChange("loginName", e.target.value)}
                     />
                   </label>
                   <label className="space-y-2 text-sm text-slate-200">
-                    <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">User Name *</span>
-                    <input 
-                      placeholder="Enter user name" 
+                    <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Full Name *</span>
+                    <input
+                      placeholder="Enter user name"
                       className="glass-input w-full text-[11px] px-2 py-1"
                       value={newUserForm.userName}
                       onChange={(e) => handleAddUserFormChange("userName", e.target.value)}
@@ -1778,7 +1781,7 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
                 <p className="mb-2"><span className="font-semibold">Note:</span> Fields marked with * are required.</p>
                 <p className="mb-2">• User will be created with company ID: <span className="text-blue-300 font-mono">{auth.companyLoginAlias || auth.companyId || "N/A"}</span></p>
                 <p className="mb-2">• Default password: <span className="text-blue-300 font-mono">Welcome2024!</span> (user should change on first login)</p>
-                <p>• Username will be auto-generated from display name (FirstName.LastName format)</p>
+                <p>• Username (for username-based login) will match the User Name entered above</p>
               </div>
             </div>
           </div>

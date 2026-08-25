@@ -7,11 +7,13 @@
  * actionPlanFormTemplate.ts's header comment for why this form differs
  * from the Warning/Promotion forms.
  */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 import logo from "@/assets/Admin Hub Solutions Logo no Text.png";
 import { captureHtmlToPdfBlob, loadAssetDataUrl } from "@/lib/pdfCapture";
 import { buildActionPlanFormBodyMarkup, actionPlanFormStyles, type ActionPlanFormData, type ActionPlanSignatureSlot } from "@/lib/actionPlanFormTemplate";
+import { useSignaturePad } from "@/hooks/useSignaturePad";
+import { SignaturePadControls } from "@/components/SignaturePad";
 
 interface Props {
   docId: string;
@@ -58,9 +60,7 @@ export function ExternalSignActionPlanFormPage({ docId }: Props) {
     managerComments: "",
   });
 
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const drawingRef = useRef(false);
-  const hasDrawnRef = useRef(false);
+  const sigPad = useSignaturePad({ width: 500, height: 150 });
 
   useEffect(() => {
     let cancelled = false;
@@ -100,44 +100,17 @@ export function ExternalSignActionPlanFormPage({ docId }: Props) {
     return () => { cancelled = true; };
   }, [docId]);
 
-  const pos = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    const c = canvasRef.current!;
-    const r = c.getBoundingClientRect();
-    return { x: ((e.clientX - r.left) / r.width) * c.width, y: ((e.clientY - r.top) / r.height) * c.height };
-  };
-  const startDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    drawingRef.current = true;
-    const ctx = canvasRef.current!.getContext("2d")!;
-    const { x, y } = pos(e);
-    ctx.beginPath();
-    ctx.moveTo(x, y);
-    e.currentTarget.setPointerCapture(e.pointerId);
-  };
-  const moveDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!drawingRef.current) return;
-    const ctx = canvasRef.current!.getContext("2d")!;
-    const { x, y } = pos(e);
-    ctx.lineTo(x, y);
-    ctx.strokeStyle = "#0f172a";
-    ctx.lineWidth = 2;
-    ctx.lineCap = "round";
-    ctx.stroke();
-    hasDrawnRef.current = true;
-  };
-  const endDraw = () => { drawingRef.current = false; };
-  const clearSignature = () => {
-    const c = canvasRef.current;
-    if (!c) return;
-    c.getContext("2d")!.clearRect(0, 0, c.width, c.height);
-    hasDrawnRef.current = false;
-  };
-
   const isManagerSlot = doc?.recipientSlot === "manager";
 
   const handleConfirmSign = async () => {
-    if (!doc || !canvasRef.current) return;
-    if (!hasDrawnRef.current) {
-      setError("Please draw your signature first.");
+    if (!doc) return;
+    if (!sigPad.hasContent()) {
+      setError("Please add your signature first.");
+      return;
+    }
+    const dataUrl = sigPad.toDataURL();
+    if (!dataUrl) {
+      setError("Please add your signature first.");
       return;
     }
     setSigning(true);
@@ -145,7 +118,6 @@ export function ExternalSignActionPlanFormPage({ docId }: Props) {
     try {
       const formData: ActionPlanFormData = isManagerSlot ? { ...doc.formData, ...planFields } : doc.formData;
 
-      const dataUrl = canvasRef.current.toDataURL("image/png");
       const signatureBlob = await (await fetch(dataUrl)).blob();
       const signedAt = new Date().toISOString();
       const captureSignatures = { ...doc.signatures, [doc.recipientSlot]: { name: doc.recipientName ?? "Signed", url: dataUrl, signedAt } };
@@ -232,19 +204,13 @@ export function ExternalSignActionPlanFormPage({ docId }: Props) {
             )}
 
             <div className="p-4 border-t border-white/10">
-              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2 block">Draw your signature</label>
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2 block">Signature</label>
               <canvas
-                ref={canvasRef}
-                width={500}
-                height={150}
-                onPointerDown={startDraw}
-                onPointerMove={moveDraw}
-                onPointerUp={endDraw}
-                onPointerLeave={endDraw}
-                className="bg-white rounded-md border border-white/15 w-full max-w-md touch-none"
+                {...sigPad.canvasProps}
+                className={`bg-white rounded-md border border-white/15 w-full max-w-md ${sigPad.canvasProps.className}`}
               />
-              <div className="flex gap-2 mt-2">
-                <button onClick={clearSignature} className="btn text-xs px-3 py-1.5">Clear</button>
+              <div className="mt-2">
+                <SignaturePadControls pad={sigPad} />
               </div>
 
               {error && (

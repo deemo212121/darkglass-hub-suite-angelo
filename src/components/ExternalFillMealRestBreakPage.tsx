@@ -19,6 +19,9 @@ import logo from "@/assets/Admin Hub Solutions Logo no Text.png";
 import { getExternalSignableDocument, submitExternalSignature, type ExternalSignableDocument } from "@/lib/supabase/externalSignableDocuments";
 import { fillMealRestBreakPdf, loadBlankMealRestBreakBytes } from "@/lib/mealRestBreakPdfFill";
 import { MEAL_REST_BREAK_BRANCHES, type MealRestBreakFormData } from "@/lib/mealRestBreakFormTemplate";
+import { dateBlankPositions } from "@/lib/pdfDateBlankSplit";
+import { useSignaturePad } from "@/hooks/useSignaturePad";
+import { SignaturePadControls } from "@/components/SignaturePad";
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 
 interface Props {
@@ -30,16 +33,24 @@ const PAGE_HEIGHT = 792;
 
 // Same field rectangles as FillMealRestBreakPage.tsx — see that file's
 // header comment for how these were derived.
+const EMPLOYEE_DATE_X = dateBlankPositions(101.57);
+
 const PAGE_RECT = {
   firstName: { x: 218, y: 668, w: 99, h: 14 },
   middleName: { x: 390, y: 668, w: 99, h: 14 },
   lastName: { x: 100, y: 650, w: 99, h: 14 },
   branch: { x: 110, y: 626, w: 260, h: 14 },
   signature: { x: 174, y: 264, w: 260, h: 20 },
-  dateSigned: { x: 99, y: 240, w: 220, h: 13 },
+  dateSignedMM: { x: EMPLOYEE_DATE_X.mm, y: 240, w: 30, h: 13 },
+  dateSignedDD: { x: EMPLOYEE_DATE_X.dd, y: 240, w: 30, h: 13 },
+  dateSignedYYYY: { x: EMPLOYEE_DATE_X.yyyy, y: 240, w: 50, h: 13 },
 } as const;
 
-const fmtDateSigned = (d: Date) => `${String(d.getMonth() + 1).padStart(2, "0")} / ${String(d.getDate()).padStart(2, "0")} / ${d.getFullYear()}`;
+const fmtDateSignedParts = (d: Date) => ({
+  mm: String(d.getMonth() + 1).padStart(2, "0"),
+  dd: String(d.getDate()).padStart(2, "0"),
+  yyyy: String(d.getFullYear()),
+});
 
 const BLANK_FORM: MealRestBreakFormData = {
   employeeId: "",
@@ -68,9 +79,7 @@ export function ExternalFillMealRestBreakPage({ docId }: Props) {
 
   const [form, setForm] = useState<MealRestBreakFormData>({ ...BLANK_FORM });
 
-  const sigCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const drawingRef = useRef(false);
-  const hasDrawnRef = useRef(false);
+  const sigPad = useSignaturePad({ width: 440, height: 100 });
 
   useEffect(() => {
     let cancelled = false;
@@ -129,58 +138,30 @@ export function ExternalFillMealRestBreakPage({ docId }: Props) {
 
   const updateField = <K extends keyof MealRestBreakFormData>(key: K, value: MealRestBreakFormData[K]) => setForm((f) => ({ ...f, [key]: value }));
 
-  const pos = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    const c = sigCanvasRef.current!;
-    const r = c.getBoundingClientRect();
-    return { x: ((e.clientX - r.left) / r.width) * c.width, y: ((e.clientY - r.top) / r.height) * c.height };
-  };
-  const startDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    drawingRef.current = true;
-    const ctx = sigCanvasRef.current!.getContext("2d")!;
-    const { x, y } = pos(e);
-    ctx.beginPath();
-    ctx.moveTo(x, y);
-    e.currentTarget.setPointerCapture(e.pointerId);
-  };
-  const moveDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!drawingRef.current) return;
-    const ctx = sigCanvasRef.current!.getContext("2d")!;
-    const { x, y } = pos(e);
-    ctx.lineTo(x, y);
-    ctx.strokeStyle = "#0f172a";
-    ctx.lineWidth = 2;
-    ctx.lineCap = "round";
-    ctx.stroke();
-    hasDrawnRef.current = true;
-  };
-  const endDraw = () => { drawingRef.current = false; };
-  const clearSignature = () => {
-    const c = sigCanvasRef.current;
-    if (!c) return;
-    c.getContext("2d")!.clearRect(0, 0, c.width, c.height);
-    hasDrawnRef.current = false;
-  };
-
   const validate = (): string | null => {
     if (!form.firstName.trim()) return "Enter your first name.";
     if (!form.lastName.trim()) return "Enter your last name.";
     if (!form.branch) return "Select your branch.";
-    if (!hasDrawnRef.current) return "Please draw your signature.";
+    if (!sigPad.hasContent()) return "Please add your signature.";
     return null;
   };
 
   const handleSubmit = async () => {
-    if (!doc || !sigCanvasRef.current) return;
+    if (!doc) return;
     const validationError = validate();
     if (validationError) {
       setError(validationError);
+      return;
+    }
+    const dataUrl = sigPad.toDataURL();
+    if (!dataUrl) {
+      setError("Please add your signature.");
       return;
     }
     setSubmitting(true);
     setError(null);
     try {
       const employeeName = [form.firstName, form.middleName, form.lastName].filter(Boolean).join(" ");
-      const dataUrl = sigCanvasRef.current.toDataURL("image/png");
       const signatureBlob = await (await fetch(dataUrl)).blob();
       const signedAt = new Date().toISOString();
       const finalData: MealRestBreakFormData = { ...form, employeeName, employeeDateSigned: signedAt, employeeSignatureDataUrl: dataUrl };
@@ -210,6 +191,7 @@ export function ExternalFillMealRestBreakPage({ docId }: Props) {
   });
 
   const overlayInputCls = "bg-blue-50/60 border border-blue-300/70 rounded-[2px] outline-none p-0 font-bold font-sans text-[#00008B] focus:bg-blue-100/80 focus:border-blue-400";
+  const todayParts = fmtDateSignedParts(new Date());
 
   return (
     <div className="min-h-screen bg-background">
@@ -238,7 +220,7 @@ export function ExternalFillMealRestBreakPage({ docId }: Props) {
         ) : (
           <div className="panel p-4">
             <p className="text-xs text-muted-foreground mb-3">
-              Read the break policy below, fill in your name and branch, draw your signature, then submit.
+              Read the break policy below, fill in your name and branch, add your signature, then submit.
             </p>
 
             <div className="overflow-x-auto flex flex-col items-center bg-white/5 rounded-md p-4 gap-4">
@@ -282,15 +264,9 @@ export function ExternalFillMealRestBreakPage({ docId }: Props) {
                     </select>
 
                     <canvas
-                      ref={sigCanvasRef}
-                      width={440}
-                      height={100}
-                      onPointerDown={startDraw}
-                      onPointerMove={moveDraw}
-                      onPointerUp={endDraw}
-                      onPointerLeave={endDraw}
-                      className="absolute touch-none cursor-crosshair"
+                      {...sigPad.canvasProps}
                       style={{
+                        position: "absolute",
                         left: PAGE_RECT.signature.x * scale,
                         top: (PAGE_HEIGHT - PAGE_RECT.signature.y - PAGE_RECT.signature.h) * scale,
                         width: PAGE_RECT.signature.w * scale,
@@ -298,16 +274,16 @@ export function ExternalFillMealRestBreakPage({ docId }: Props) {
                       }}
                     />
 
-                    <div style={overlayStyle(PAGE_RECT.dateSigned)} className="flex items-center font-bold text-[#00008B]">
-                      {fmtDateSigned(new Date())}
-                    </div>
+                    <div style={overlayStyle(PAGE_RECT.dateSignedMM)} className="flex items-center font-bold text-[#00008B]">{todayParts.mm}</div>
+                    <div style={overlayStyle(PAGE_RECT.dateSignedDD)} className="flex items-center font-bold text-[#00008B]">{todayParts.dd}</div>
+                    <div style={overlayStyle(PAGE_RECT.dateSignedYYYY)} className="flex items-center font-bold text-[#00008B]">{todayParts.yyyy}</div>
                   </>
                 )}
               </div>
             </div>
 
-            <div className="flex items-center gap-2 mt-2 justify-center">
-              <button onClick={clearSignature} className="btn text-xs px-3 py-1.5">Clear signature</button>
+            <div className="flex items-center justify-center mt-2">
+              <SignaturePadControls pad={sigPad} />
             </div>
 
             {error && (

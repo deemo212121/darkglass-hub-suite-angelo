@@ -11,15 +11,10 @@
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import type { MealRestBreakFormData } from "./mealRestBreakFormTemplate";
 import { addLogoHeader } from "./pdfLogoHeader";
+import { dateBlankPositions, fmtDateParts } from "./pdfDateBlankSplit";
 
-const fmtDate = (v: string) => {
-  if (!v) return "";
-  const d = new Date(v);
-  if (isNaN(d.getTime())) return v;
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${mm} / ${dd} / ${d.getFullYear()}`;
-};
+/** x position of each of the three date blanks on the two "Date:" lines (employee y=242.95, employer y=193.03) — see pdfDateBlankSplit.ts; both labels start at x=101.57. */
+const MEAL_REST_BREAK_DATE_X = dateBlankPositions(101.57);
 
 /** Stamps the company logo into the header of every page — see pdfLogoHeader.ts. Applied here, not just in fillMealRestBreakPdf, so the interactive fill page (which renders these same blank bytes straight to canvas via pdf.js) shows it too. */
 export async function loadBlankMealRestBreakBytes(): Promise<Uint8Array> {
@@ -56,7 +51,10 @@ export async function fillMealRestBreakPdf(
     const scale = Math.min(maxW / png.width, maxH / png.height, 1);
     page.drawImage(png, { x: 177, y: 267, width: png.width * scale, height: png.height * scale });
   }
-  draw(fmtDate(data.employeeDateSigned), 102, 246, 9);
+  const employeeDateParts = fmtDateParts(data.employeeDateSigned);
+  draw(employeeDateParts.mm, MEAL_REST_BREAK_DATE_X.mm, 246, 9);
+  draw(employeeDateParts.dd, MEAL_REST_BREAK_DATE_X.dd, 246, 9);
+  draw(employeeDateParts.yyyy, MEAL_REST_BREAK_DATE_X.yyyy, 246, 9);
 
   if (employerSigBytes) {
     const png = await pdfDoc.embedPng(employerSigBytes);
@@ -64,7 +62,10 @@ export async function fillMealRestBreakPdf(
     const scale = Math.min(maxW / png.width, maxH / png.height, 1);
     page.drawImage(png, { x: 253, y: 217, width: png.width * scale, height: png.height * scale });
   }
-  draw(fmtDate(data.employerDateSigned), 102, 196, 9);
+  const employerDateParts = fmtDateParts(data.employerDateSigned);
+  draw(employerDateParts.mm, MEAL_REST_BREAK_DATE_X.mm, 196, 9);
+  draw(employerDateParts.dd, MEAL_REST_BREAK_DATE_X.dd, 196, 9);
+  draw(employerDateParts.yyyy, MEAL_REST_BREAK_DATE_X.yyyy, 196, 9);
 
   return pdfDoc.save();
 }

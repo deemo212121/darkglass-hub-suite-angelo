@@ -30,19 +30,29 @@ export interface PartManagementRow {
   qty: number;
 }
 
-export async function getPartManagementRows(): Promise<PartManagementRow[]> {
-  const { data, error } = await supabase
-    .from("parts")
-    .select(
-      "id, part_no, part_desc, part_dist, part_price, quantity, status, po_no, note, tickets!inner(ticket_no, status, location, call_received_date)"
-    );
+// Supabase caps an unbounded select at 1000 rows — this query has no
+// filter at all. Page through in chunks of 1000 instead.
+const PAGE_SIZE = 1000;
 
-  if (error) {
-    console.error("getPartManagementRows error:", error.message);
-    throw new Error(error.message);
+export async function getPartManagementRows(): Promise<PartManagementRow[]> {
+  const all: any[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from("parts")
+      .select(
+        "id, part_no, part_desc, part_dist, part_price, quantity, status, po_no, note, tickets!inner(ticket_no, status, location, call_received_date)"
+      )
+      .range(from, from + PAGE_SIZE - 1);
+
+    if (error) {
+      console.error("getPartManagementRows error:", error.message);
+      throw new Error(error.message);
+    }
+    all.push(...(data ?? []));
+    if (!data || data.length < PAGE_SIZE) break;
   }
 
-  return (data ?? []).map((row: any) => ({
+  return all.map((row: any) => ({
     id: row.id,
     ticketNo: row.tickets?.ticket_no || "",
     repairStatus: row.tickets?.status || "",

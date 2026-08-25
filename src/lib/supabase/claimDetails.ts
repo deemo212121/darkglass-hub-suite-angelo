@@ -96,18 +96,27 @@ export async function getTicketClaimDetails(ticketNo: string): Promise<TicketCla
   return data ? rowToClaimDetails(data) : null;
 }
 
+// Supabase caps an unbounded select at 1000 rows — a company's full ticket
+// claim-details table can exceed that. Page through in chunks of 1000.
+const PAGE_SIZE = 1000;
+
 /**
  * Bulk fetch for every ticket currently shown on Need Claim List, so its
  * Pre-Claim Status column reads real saved data instead of resetting on
  * every reload. Keyed by ticket_id.
  */
 export async function getCompanyTicketClaimDetails(): Promise<Map<string, TicketClaimDetails>> {
-  const { data, error } = await supabase.from("ticket_claim_details").select("*");
-  if (error) {
-    console.error("getCompanyTicketClaimDetails error:", error.message);
-    return new Map();
+  const map = new Map<string, TicketClaimDetails>();
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await supabase.from("ticket_claim_details").select("*").range(from, from + PAGE_SIZE - 1);
+    if (error) {
+      console.error("getCompanyTicketClaimDetails error:", error.message);
+      return new Map();
+    }
+    for (const row of (data ?? []) as any[]) map.set(row.ticket_id as string, rowToClaimDetails(row));
+    if (!data || data.length < PAGE_SIZE) break;
   }
-  return new Map((data ?? []).map((row: any) => [row.ticket_id as string, rowToClaimDetails(row)]));
+  return map;
 }
 
 /** Create or update a ticket's claim details (upsert on the ticket_id unique key). */

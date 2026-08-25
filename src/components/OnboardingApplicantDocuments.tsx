@@ -202,7 +202,7 @@ export function OnboardingApplicantDocuments({ companyId, profileId, profileName
   // set) is submitted, same as W-4's "signed" status not yet meaning
   // Employers Only is filled in — HR can re-drag a later version once
   // Section 2 is done, same accepted staleness the W-4 case already has. ──
-  const SIGNABLE_TAX_FORM_TYPES: SignableDocumentType[] = ["w4", "w8ben", "w9", "w4r", "i9", "wage_ack", "car_iq_agreement", "vehicle_agreement", "employee_confidentiality", "meal_rest_break", "pto_ack", "parts_responsibility", "mileage_fuel", "location_consent", "damage", "contractor_data", "direct_deposit"];
+  const SIGNABLE_TAX_FORM_TYPES: SignableDocumentType[] = ["w4", "w8ben", "w9", "w4r", "i9", "wage_ack", "car_iq_agreement", "vehicle_agreement", "employee_confidentiality", "meal_rest_break", "pto_ack", "parts_responsibility", "mileage_fuel", "location_consent", "damage", "contractor_data", "direct_deposit", "substance_screening"];
   const SIGNABLE_FORM_LABEL: Partial<Record<SignableDocumentType, string>> = {
     w4: "Form W-4",
     w8ben: "Form W-8BEN",
@@ -219,8 +219,9 @@ export function OnboardingApplicantDocuments({ companyId, profileId, profileName
     mileage_fuel: "Mileage & Fuel Policy Agreement",
     location_consent: "Location Sharing Consent Agreement",
     damage: "Damage, Part Loss, and Tool Penalty Commission Deduction Agreement",
-    contractor_data: "Contractor Data",
+    contractor_data: "Employee Data",
     direct_deposit: "Direct Deposit Authorization",
+    substance_screening: "Substance Screening & Conduct Agreement",
   };
   const signableDocApplicantName = (doc: SignableDocument): string => {
     const fd = doc.formData ?? {};
@@ -241,6 +242,7 @@ export function OnboardingApplicantDocuments({ companyId, profileId, profileName
     if (doc.documentType === "damage") return fd.employeeName || "Applicant";
     if (doc.documentType === "contractor_data") return fd.employeeName || "Applicant";
     if (doc.documentType === "direct_deposit") return fd.employeeName || "Applicant";
+    if (doc.documentType === "substance_screening") return fd.employeeName || "Applicant";
     return "Applicant";
   };
 

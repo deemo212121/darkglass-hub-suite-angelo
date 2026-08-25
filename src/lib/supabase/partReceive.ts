@@ -38,43 +38,55 @@ export interface PartReceiveRow {
   shipMethod: string;
 }
 
+// Supabase caps an unbounded select at 1000 rows — a company's full
+// awaiting-receipt queue can exceed that. Page through in chunks of 1000.
+const PAGE_SIZE = 1000;
+
 export async function getPartsToReceive(): Promise<PartReceiveRow[]> {
-  const { data, error } = await supabase
-    .from("parts")
-    .select(
-      "id, po_no, po_date, order_no, invoice_no, note, part_no, part_desc, eta, received_date, in_tracking, part_dist, ship_method, quantity, qty_received, part_price, core_value, tickets!inner(ticket_no, technician, status, location, schedule_date)"
-    )
-    .eq("status", "PO Made");
+  const all: PartReceiveRow[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from("parts")
+      .select(
+        "id, po_no, po_date, order_no, invoice_no, note, part_no, part_desc, eta, received_date, in_tracking, part_dist, ship_method, quantity, qty_received, part_price, core_value, tickets!inner(ticket_no, technician, status, location, schedule_date)"
+      )
+      .eq("status", "PO Made")
+      .range(from, from + PAGE_SIZE - 1);
 
-  if (error) {
-    console.error("getPartsToReceive error:", error.message);
-    throw new Error(error.message);
+    if (error) {
+      console.error("getPartsToReceive error:", error.message);
+      throw new Error(error.message);
+    }
+
+    all.push(
+      ...(data ?? []).map((row: any) => ({
+        id: row.id,
+        poNo: row.po_no || "",
+        poDate: row.po_date || "",
+        orderNo: row.order_no || "",
+        invoiceNo: row.invoice_no || "",
+        note: row.note || "",
+        partNo: row.part_no || "",
+        partDesc: row.part_desc || "",
+        eta: row.eta || "",
+        receivedDate: row.received_date || "",
+        tracking: row.in_tracking || "",
+        ticketNo: row.tickets?.ticket_no || "",
+        ticketStatus: row.tickets?.status || "",
+        tech: row.tickets?.technician || "",
+        schedule: row.tickets?.schedule_date || "",
+        quantity: Number(row.quantity ?? 0),
+        qtyReceived: Number(row.qty_received ?? 0),
+        partPrice: Number(row.part_price ?? 0),
+        coreValue: Number(row.core_value ?? 0),
+        location: row.tickets?.location || "",
+        partFrom: row.part_dist || "",
+        shipMethod: row.ship_method || "",
+      }))
+    );
+    if (!data || data.length < PAGE_SIZE) break;
   }
-
-  return (data ?? []).map((row: any) => ({
-    id: row.id,
-    poNo: row.po_no || "",
-    poDate: row.po_date || "",
-    orderNo: row.order_no || "",
-    invoiceNo: row.invoice_no || "",
-    note: row.note || "",
-    partNo: row.part_no || "",
-    partDesc: row.part_desc || "",
-    eta: row.eta || "",
-    receivedDate: row.received_date || "",
-    tracking: row.in_tracking || "",
-    ticketNo: row.tickets?.ticket_no || "",
-    ticketStatus: row.tickets?.status || "",
-    tech: row.tickets?.technician || "",
-    schedule: row.tickets?.schedule_date || "",
-    quantity: Number(row.quantity ?? 0),
-    qtyReceived: Number(row.qty_received ?? 0),
-    partPrice: Number(row.part_price ?? 0),
-    coreValue: Number(row.core_value ?? 0),
-    location: row.tickets?.location || "",
-    partFrom: row.part_dist || "",
-    shipMethod: row.ship_method || "",
-  }));
+  return all;
 }
 
 export async function updatePartReceiveRow(

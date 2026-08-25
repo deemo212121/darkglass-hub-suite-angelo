@@ -249,19 +249,28 @@ export async function getCompanyAdminAccounts(legacyCode: string): Promise<Compa
  * bulk query instead of N getCompanyAdminAccounts calls so the page
  * doesn't fire a request per company.
  */
-export async function getAllCompanyAdminAccountCounts(): Promise<Record<string, number>> {
-  // Held roles pile up, same as getCompanyAdminAccounts above.
-  const { data, error } = await supabase
-    .from("profiles")
-    .select("company:company_id(legacy_code)")
-    .or("role.in.(ADMIN,SUPERADMIN),extra_roles.cs.{ADMIN},extra_roles.cs.{SUPERADMIN}");
-  if (error) throw new Error(error.message);
+// Supabase caps an unbounded select at 1000 rows — the platform-wide count
+// of ADMIN/SUPERADMIN accounts across every company can exceed that. Page
+// through in chunks of 1000.
+const PAGE_SIZE = 1000;
 
+export async function getAllCompanyAdminAccountCounts(): Promise<Record<string, number>> {
   const counts: Record<string, number> = {};
-  for (const row of (data ?? []) as any[]) {
-    const code = row.company?.legacy_code;
-    if (!code) continue;
-    counts[code] = (counts[code] ?? 0) + 1;
+  for (let from = 0; ; from += PAGE_SIZE) {
+    // Held roles pile up, same as getCompanyAdminAccounts above.
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("company:company_id(legacy_code)")
+      .or("role.in.(ADMIN,SUPERADMIN),extra_roles.cs.{ADMIN},extra_roles.cs.{SUPERADMIN}")
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) throw new Error(error.message);
+
+    for (const row of (data ?? []) as any[]) {
+      const code = row.company?.legacy_code;
+      if (!code) continue;
+      counts[code] = (counts[code] ?? 0) + 1;
+    }
+    if (!data || data.length < PAGE_SIZE) break;
   }
   return counts;
 }

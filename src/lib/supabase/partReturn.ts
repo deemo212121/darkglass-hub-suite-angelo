@@ -100,20 +100,31 @@ function daysSince(dateStr: string | null): number | null {
   return Math.round((utcToday - utcThen) / 86400000);
 }
 
-export async function getPartReturns(): Promise<PartReturnRow[]> {
-  const { data, error } = await supabase
-    .from("parts")
-    .select(
-      "id, part_no, part_dist, part_desc, po_no, invoice_no, invoice_date, quantity, core_value, scan_out_qty, status, ra_no, ra_date, claim_to, return_status, return_reason, return_qty, tickets!inner(ticket_no, location, schedule_date, technician, status)"
-    )
-    .not("status", "in", `(${NOT_YET_RECEIVED_STATUSES.join(",")})`);
+// Supabase caps an unbounded select at 1000 rows — this excludes only 2
+// statuses (Need PO/PO Made), so nearly the whole table remains. Page
+// through in chunks of 1000 instead.
+const PAGE_SIZE = 1000;
 
-  if (error) {
-    console.error("getPartReturns error:", error.message);
-    throw new Error(error.message);
+export async function getPartReturns(): Promise<PartReturnRow[]> {
+  const all: any[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from("parts")
+      .select(
+        "id, part_no, part_dist, part_desc, po_no, invoice_no, invoice_date, quantity, core_value, scan_out_qty, status, ra_no, ra_date, claim_to, return_status, return_reason, return_qty, tickets!inner(ticket_no, location, schedule_date, technician, status)"
+      )
+      .not("status", "in", `(${NOT_YET_RECEIVED_STATUSES.join(",")})`)
+      .range(from, from + PAGE_SIZE - 1);
+
+    if (error) {
+      console.error("getPartReturns error:", error.message);
+      throw new Error(error.message);
+    }
+    all.push(...(data ?? []));
+    if (!data || data.length < PAGE_SIZE) break;
   }
 
-  return (data ?? []).map((row: any) => ({
+  return all.map((row: any) => ({
     id: row.id,
     ticketNo: row.tickets?.ticket_no || "",
     location: row.tickets?.location || "",

@@ -260,18 +260,28 @@ function mapRow(row: any): PtoRequestRow {
   };
 }
 
+// Supabase caps an unbounded select at 1000 rows — a company's full PTO
+// request history can exceed that. Page through in chunks of 1000.
+const PAGE_SIZE = 1000;
+
 /** All PTO requests for the caller's company (RLS-scoped), newest first. */
 export async function getCompanyPtoRequests(): Promise<PtoRequestRow[]> {
-  const { data, error } = await supabase
-    .from("pto_requests")
-    .select(SELECT_COLUMNS)
-    .not("profile_id", "is", null)
-    .order("created_at", { ascending: false });
-  if (error) {
-    console.error("getCompanyPtoRequests error:", error.message);
-    return [];
+  const all: PtoRequestRow[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from("pto_requests")
+      .select(SELECT_COLUMNS)
+      .not("profile_id", "is", null)
+      .order("created_at", { ascending: false })
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) {
+      console.error("getCompanyPtoRequests error:", error.message);
+      return [];
+    }
+    all.push(...(data ?? []).map(mapRow));
+    if (!data || data.length < PAGE_SIZE) break;
   }
-  return (data ?? []).map(mapRow);
+  return all;
 }
 
 /**

@@ -55,18 +55,28 @@ function mapRow(row: any): ExpenseRow {
   };
 }
 
+// Supabase caps an unbounded select at 1000 rows — a company's full expense
+// history can exceed that. Page through in chunks of 1000.
+const PAGE_SIZE = 1000;
+
 /** All expenses for the caller's company (RLS-scoped), newest first. */
 export async function getCompanyExpenses(): Promise<ExpenseRow[]> {
-  const { data, error } = await supabase
-    .from("expenses")
-    .select("id, profile_id, category, expense_date, amount, description, status, created_by, reviewed_by, reviewed_at, receipt_url, receipt_path, or_number, from_location, to_location, flash_tech_trip_id, created_at")
-    .not("profile_id", "is", null)
-    .order("expense_date", { ascending: false });
-  if (error) {
-    console.error("getCompanyExpenses error:", error.message);
-    return [];
+  const all: ExpenseRow[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from("expenses")
+      .select("id, profile_id, category, expense_date, amount, description, status, created_by, reviewed_by, reviewed_at, receipt_url, receipt_path, or_number, from_location, to_location, flash_tech_trip_id, created_at")
+      .not("profile_id", "is", null)
+      .order("expense_date", { ascending: false })
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) {
+      console.error("getCompanyExpenses error:", error.message);
+      return [];
+    }
+    all.push(...(data ?? []).map(mapRow));
+    if (!data || data.length < PAGE_SIZE) break;
   }
-  return (data ?? []).map(mapRow);
+  return all;
 }
 
 /** File a new expense on behalf of an employee (profileId). */

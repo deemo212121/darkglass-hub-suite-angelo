@@ -135,17 +135,27 @@ function mapRow(r: any): MileageEntry {
 const ENTRY_COLUMNS =
   "id, profile_id, technician_name, branch, work_date, address, contact_number, email, total_mileage, google_map_link, created_by_name, created_at, ticket_id, ticket_no, ticket_status, source, payroll_excluded, payroll_excluded_at, payroll_excluded_by_name, payroll_hold_reason, route_order, route_return_to, mileage_override, mileage_adjustment, adjustment_note, adjusted_by_name, adjusted_at, payroll_released_at";
 
+// Supabase caps an unbounded select at 1000 rows — mileage_entries is
+// queried all-time, no date range. Page through in chunks of 1000 instead.
+const PAGE_SIZE = 1000;
+
 /** All mileage entries for the caller's company (RLS-scoped), newest first. */
 export async function getMileageEntries(): Promise<MileageEntry[]> {
-  const { data, error } = await supabase
-    .from("mileage_entries")
-    .select(ENTRY_COLUMNS)
-    .order("work_date", { ascending: false });
-  if (error) {
-    console.error("getMileageEntries error:", error.message);
-    return [];
+  const all: MileageEntry[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from("mileage_entries")
+      .select(ENTRY_COLUMNS)
+      .order("work_date", { ascending: false })
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) {
+      console.error("getMileageEntries error:", error.message);
+      return all;
+    }
+    all.push(...(data ?? []).map(mapRow));
+    if (!data || data.length < PAGE_SIZE) break;
   }
-  return (data ?? []).map(mapRow);
+  return all;
 }
 
 /**
@@ -362,10 +372,22 @@ export async function syncMileageFromTickets(input: {
   if (techByNormalizedName.size === 0) return result;
 
   const [{ data: ticketRows, error: ticketsErr }, { data: existingRows, error: existingErr }, mapProvider] = await Promise.all([
-    supabase
-      .from("tickets")
-      .select("id, ticket_no, technician, status, schedule_date, time_slot, created_at, location, account, customer:customers ( address, address2, city, state, zip, phone, email )")
-      .not("technician", "is", null),
+    // Always all-time, no date range — every ticket this company has ever
+    // logged. Page through in chunks of 1000 instead of one unbounded select.
+    (async () => {
+      const all: any[] = [];
+      for (let from = 0; ; from += PAGE_SIZE) {
+        const { data, error } = await supabase
+          .from("tickets")
+          .select("id, ticket_no, technician, status, schedule_date, time_slot, created_at, location, account, customer:customers ( address, address2, city, state, zip, phone, email )")
+          .not("technician", "is", null)
+          .range(from, from + PAGE_SIZE - 1);
+        if (error) return { data: null, error };
+        all.push(...(data ?? []));
+        if (!data || data.length < PAGE_SIZE) break;
+      }
+      return { data: all, error: null };
+    })(),
     supabase.from("mileage_entries").select("id, ticket_id, total_mileage").eq("source", "auto").not("ticket_id", "is", null),
     getCompanyMapProvider(),
   ]);

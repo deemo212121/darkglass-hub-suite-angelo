@@ -73,16 +73,32 @@ const MESSAGE_COLUMNS =
  * independent of any one staff member opening a specific thread, which is
  * what "read" (see getLiveChatMessages) is reserved for.
  */
+// Supabase caps an unbounded select at 1000 rows — this fetches every
+// session (open+closed), no filter. Page through in chunks of 1000 instead.
+const PAGE_SIZE = 1000;
+
 export async function listLiveChatSessions(): Promise<LiveChatSessionRow[]> {
-  const [sessionsRes, previewsRes] = await Promise.all([
-    supabase.from("live_chat_sessions").select(SESSION_COLUMNS).order("last_message_at", { ascending: false }),
+  const [sessionsAll, previewsRes] = await Promise.all([
+    (async () => {
+      const all: any[] = [];
+      for (let from = 0; ; from += PAGE_SIZE) {
+        const { data, error } = await supabase
+          .from("live_chat_sessions")
+          .select(SESSION_COLUMNS)
+          .order("last_message_at", { ascending: false })
+          .range(from, from + PAGE_SIZE - 1);
+        if (error) throw new Error(error.message);
+        all.push(...(data ?? []));
+        if (!data || data.length < PAGE_SIZE) break;
+      }
+      return all;
+    })(),
     supabase.rpc("live_chat_inbox_previews"),
   ]);
-  if (sessionsRes.error) throw new Error(sessionsRes.error.message);
   if (previewsRes.error) console.error("Failed to load inbox previews:", previewsRes.error.message);
 
   const previewsById = new Map((previewsRes.data as InboxPreviewRow[] | null ?? []).map((p) => [p.session_id, p]));
-  const sessions = ((sessionsRes.data as Omit<LiveChatSessionRow, "unreadCount" | "lastMessageBody" | "lastMessageSender">[]) ?? []).map((s) => {
+  const sessions = ((sessionsAll as Omit<LiveChatSessionRow, "unreadCount" | "lastMessageBody" | "lastMessageSender">[]) ?? []).map((s) => {
     const preview = previewsById.get(s.id);
     return {
       ...s,

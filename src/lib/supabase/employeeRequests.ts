@@ -83,17 +83,27 @@ function mapRow(row: any): EmployeeRequestRow {
 const SELECT_COLUMNS =
   "id, profile_id, request_type, details, status, requested_by, reviewed_by, reviewed_at, review_note, created_at, pay_period, total_received, total_expected, missing_amount, dispute_reason, attachments, ticket_no, period_start, period_end, custom_pay_item_id";
 
+// Supabase caps an unbounded select at 1000 rows — a company's full request
+// history can exceed that. Page through in chunks of 1000.
+const PAGE_SIZE = 1000;
+
 /** All attendance-dispute/payroll-inquiry requests for the caller's company (RLS-scoped), newest first. */
 export async function getCompanyEmployeeRequests(): Promise<EmployeeRequestRow[]> {
-  const { data, error } = await supabase
-    .from("employee_requests")
-    .select(SELECT_COLUMNS)
-    .order("created_at", { ascending: false });
-  if (error) {
-    console.error("getCompanyEmployeeRequests error:", error.message);
-    return [];
+  const all: EmployeeRequestRow[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from("employee_requests")
+      .select(SELECT_COLUMNS)
+      .order("created_at", { ascending: false })
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) {
+      console.error("getCompanyEmployeeRequests error:", error.message);
+      return [];
+    }
+    all.push(...(data ?? []).map(mapRow));
+    if (!data || data.length < PAGE_SIZE) break;
   }
-  return (data ?? []).map(mapRow);
+  return all;
 }
 
 /**

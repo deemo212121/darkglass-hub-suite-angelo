@@ -17,8 +17,10 @@ import { PasswordChangeReminder } from "@/components/PasswordChangeReminder";
 import { TicketSearchFab } from "@/components/TicketSearchFab";
 import { ModuleNavigator } from "@/components/ModuleNavigator";
 import { SessionKickedOutBanner } from "@/components/SessionKickedOutBanner";
+import { TechnicianLocationTracker } from "@/components/TechnicianLocationTracker";
 
 import appCss from "../styles.css?url";
+import faviconUrl from "@/assets/Admin Hub Solutions Logo no Text.png";
 
 function NotFoundComponent() {
   return (
@@ -65,9 +67,10 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     ],
     links: [
       { rel: "stylesheet", href: appCss },
+      { rel: "icon", href: faviconUrl },
       { rel: "preconnect", href: "https://fonts.googleapis.com" },
       { rel: "preconnect", href: "https://fonts.gstatic.com", crossOrigin: "anonymous" },
-      { rel: "stylesheet", href: "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap" },
+      { rel: "stylesheet", href: "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&family=Dancing+Script:wght@700&family=Great+Vibes&family=Pacifico&family=Sacramento&display=swap" },
     ],
   }),
   shellComponent: RootShell,
@@ -150,6 +153,10 @@ function RootComponent() {
       <ThemeProvider>
         <AuthProvider>
           <SuperSuperAdminGuard />
+          {/* Unconditional, same as SuperSuperAdminGuard above — must run
+              on /mobile too, since that's exactly where technicians clock
+              in/out day to day. */}
+          <TechnicianLocationTracker />
           <SessionKickedOutBanner />
           <MustChangePasswordGate hideChrome={hideChrome} />
           {!hideChrome && <AnnouncementBanner />}

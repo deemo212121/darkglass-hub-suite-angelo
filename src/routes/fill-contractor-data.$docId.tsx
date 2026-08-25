@@ -4,7 +4,7 @@ import { FillContractorDataPage } from "@/components/FillContractorDataPage";
 export const Route = createFileRoute("/fill-contractor-data/$docId")({
   ssr: false,
   head: () => ({
-    meta: [{ title: `Contractor Data — Admin Hub Solutions` }],
+    meta: [{ title: `Employee Data — Admin Hub Solutions` }],
   }),
   component: RouteComponent,
 });

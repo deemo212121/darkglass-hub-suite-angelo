@@ -390,21 +390,30 @@ export async function getMyFullProfile(firebaseUid: string): Promise<{
   };
 }
 
-export async function getCompanyUsers(): Promise<ProfileRow[]> {
-  const { data, error } = await supabase
-    .from("profiles")
-    .select("id, firebase_uid, company_id, email, username, display_name, role, extra_roles, phone_number, department, manager_name, assigned_branch, branch_access, technician_id, po_initials, off_days, work_plan, required_check_in, required_check_out, is_active, must_change_password, failed_login_count, locked_until, created_at")
-    // Only the platform-level SUPERSUPERADMIN is excluded here — the new
-    // per-company SUPERADMIN role is a real company employee and should
-    // show up in the roster like any ADMIN.
-    .neq("role", "SUPERSUPERADMIN")
-    .order("display_name", { ascending: true });
+// Supabase caps an unbounded select at 1000 rows — a company's full
+// profiles roster can exceed that. Page through in chunks of 1000.
+const PAGE_SIZE = 1000;
 
-  if (error) {
-    console.error("getCompanyUsers error:", error.message);
-    throw new Error(error.message);
+export async function getCompanyUsers(): Promise<ProfileRow[]> {
+  const rows: ProfileRow[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("id, firebase_uid, company_id, email, username, display_name, role, extra_roles, phone_number, department, manager_name, assigned_branch, branch_access, technician_id, po_initials, off_days, work_plan, required_check_in, required_check_out, is_active, must_change_password, failed_login_count, locked_until, created_at")
+      // Only the platform-level SUPERSUPERADMIN is excluded here — the new
+      // per-company SUPERADMIN role is a real company employee and should
+      // show up in the roster like any ADMIN.
+      .neq("role", "SUPERSUPERADMIN")
+      .order("display_name", { ascending: true })
+      .range(from, from + PAGE_SIZE - 1);
+
+    if (error) {
+      console.error("getCompanyUsers error:", error.message);
+      throw new Error(error.message);
+    }
+    rows.push(...((data ?? []) as ProfileRow[]));
+    if (!data || data.length < PAGE_SIZE) break;
   }
-  const rows = (data ?? []) as ProfileRow[];
 
   // Fetched separately, best-effort — see getMyFullProfile's comment on why
   // working_hours/meal_minutes (migration 0109) must never be combined into
@@ -479,6 +488,8 @@ export async function getCompanyUsers(): Promise<ProfileRow[]> {
 
 /** One real, active technician — canonical shape returned by getCompanyTechnicians(). */
 export interface TechnicianOption {
+  /** Real profile id — used by TechnicianWhereaboutsPage to match a live GPS ping (technicianLocationPings.ts), which has no better key than this since it's the app's own table, unlike the ticket-derived side of that page which only has technician name text to go on. */
+  id: string;
   name: string;
   /** assigned_branch, for branch-scoped views (Work Planner columns, Work Map's per-location list). "" if unset. */
   branch: string;
@@ -500,7 +511,7 @@ export async function getCompanyTechnicians(): Promise<TechnicianOption[]> {
       const roles = [u.role, ...(u.extra_roles ?? [])].map((r) => (r || "").toUpperCase());
       return u.is_active && (roles.includes("TECHNICIAN") || roles.includes("TECHNICIAN_MANAGER"));
     })
-    .map((u) => ({ name: u.display_name || u.email, branch: u.assigned_branch || "" }))
+    .map((u) => ({ id: u.id, name: u.display_name || u.email, branch: u.assigned_branch || "" }))
     .filter((t) => t.name)
     .sort((a, b) => a.name.localeCompare(b.name));
 }
@@ -736,7 +747,11 @@ export async function createCompanyUser(input: {
   // company_id is stamped server-side by the trg_profiles_stamp_company trigger
   // from the calling admin's company (auth_company_id()), so we don't send it.
   // This avoids the client passing the wrong format (e.g. legacy "COMP001").
-  const username = generateUsername(input.displayName);
+  // Username is the full name itself (not the old "FirstName.LastName" dotted
+  // form) — it's also what getUserByUsername/login_email_for_username match
+  // against for username-based login, so this is what an employee actually
+  // types at the login screen.
+  const username = input.displayName.trim().replace(/\s+/g, " ");
   // De-duplicate extra roles and strip the primary one so it isn't double-stored.
   const extras = Array.from(new Set((input.extraRoles ?? []).filter((r) => r && r !== input.role)));
   const { error: insertErr } = await supabase.from("profiles").insert({

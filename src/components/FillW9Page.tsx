@@ -23,6 +23,8 @@ import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
 import { logActivity } from "@/lib/supabase/hrActivityLog";
 import { getHrNotificationSettings } from "@/lib/supabase/companySettings";
 import { notifyHrRoleUsers } from "@/lib/supabase/hrRoleNotify";
+import { useSignaturePad } from "@/hooks/useSignaturePad";
+import { SignaturePadControls } from "@/components/SignaturePad";
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 
 interface Props {
@@ -110,9 +112,7 @@ export function FillW9Page({ docId }: Props) {
 
   const [form, setForm] = useState<W9FormData>({ ...BLANK_FORM });
 
-  const sigCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const drawingRef = useRef(false);
-  const hasDrawnRef = useRef(false);
+  const sigPad = useSignaturePad({ defaultName: form.name, width: 420, height: 80 });
 
   useEffect(() => {
     if (!ready || !uid) return;
@@ -189,60 +189,32 @@ export function FillW9Page({ docId }: Props) {
 
   const updateField = <K extends keyof W9FormData>(key: K, value: W9FormData[K]) => setForm((f) => ({ ...f, [key]: value }));
 
-  const pos = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    const c = sigCanvasRef.current!;
-    const r = c.getBoundingClientRect();
-    return { x: ((e.clientX - r.left) / r.width) * c.width, y: ((e.clientY - r.top) / r.height) * c.height };
-  };
-  const startDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    drawingRef.current = true;
-    const ctx = sigCanvasRef.current!.getContext("2d")!;
-    const { x, y } = pos(e);
-    ctx.beginPath();
-    ctx.moveTo(x, y);
-    e.currentTarget.setPointerCapture(e.pointerId);
-  };
-  const moveDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!drawingRef.current) return;
-    const ctx = sigCanvasRef.current!.getContext("2d")!;
-    const { x, y } = pos(e);
-    ctx.lineTo(x, y);
-    ctx.strokeStyle = "#0f172a";
-    ctx.lineWidth = 2;
-    ctx.lineCap = "round";
-    ctx.stroke();
-    hasDrawnRef.current = true;
-  };
-  const endDraw = () => { drawingRef.current = false; };
-  const clearSignature = () => {
-    const c = sigCanvasRef.current;
-    if (!c) return;
-    c.getContext("2d")!.clearRect(0, 0, c.width, c.height);
-    hasDrawnRef.current = false;
-  };
-
   const validate = (): string | null => {
     if (!form.name.trim()) return "Enter your name.";
     if (!form.taxClassification) return "Select a federal tax classification.";
     if (form.taxClassification === "llc" && !form.llcTaxClassificationCode.trim()) return "Enter the LLC's tax classification code (C, S, or P).";
     if (!form.address.trim() || !form.cityStateZip.trim()) return "Fill in your address.";
     if (!form.ssnPart1.trim() && !form.einPart1.trim()) return "Enter either your SSN or EIN.";
-    if (!hasDrawnRef.current) return "Please draw your signature.";
+    if (!sigPad.hasContent()) return "Please add your signature.";
     return null;
   };
 
   const handleSubmit = async () => {
-    if (!doc || !myProfileId || !sigCanvasRef.current) return;
+    if (!doc || !myProfileId) return;
     const validationError = validate();
     if (validationError) {
       setError(validationError);
+      return;
+    }
+    const dataUrl = sigPad.toDataURL();
+    if (!dataUrl) {
+      setError("Please add your signature.");
       return;
     }
     setSubmitting(true);
     setError(null);
     try {
       const companyId = doc.companyId;
-      const dataUrl = sigCanvasRef.current.toDataURL("image/png");
       const sigBytes = new Uint8Array(await (await fetch(dataUrl)).arrayBuffer());
       const signatureUrl = await uploadSignableDocumentSignature(companyId, doc.id, "employee", dataUrl);
       const signedAt = new Date().toISOString();
@@ -385,7 +357,7 @@ export function FillW9Page({ docId }: Props) {
           </div>
         ) : (
           <div className="panel p-4">
-            <p className="text-xs text-muted-foreground mb-3">Fill in your information directly on the form below, draw your signature, then submit. Enter either your SSN or EIN, whichever applies.</p>
+            <p className="text-xs text-muted-foreground mb-3">Fill in your information directly on the form below, add your signature, then submit. Enter either your SSN or EIN, whichever applies.</p>
 
             <div className="overflow-x-auto flex flex-col items-center bg-white/5 rounded-md p-4 gap-4">
               {Array.from({ length: numPages || 1 }, (_, i) => i + 1).map((pageNum) => (
@@ -429,15 +401,9 @@ export function FillW9Page({ docId }: Props) {
                       {digitBoxes("einPart2", RECT.einPart2, 7)}
 
                       <canvas
-                        ref={sigCanvasRef}
-                        width={420}
-                        height={80}
-                        onPointerDown={startDraw}
-                        onPointerMove={moveDraw}
-                        onPointerUp={endDraw}
-                        onPointerLeave={endDraw}
-                        className="absolute touch-none cursor-crosshair"
+                        {...sigPad.canvasProps}
                         style={{
+                          position: "absolute",
                           left: RECT.signature.x * scale,
                           top: (PAGE_HEIGHT - RECT.signature.y - RECT.signature.h - SIG_EXTRA_HEIGHT) * scale,
                           width: RECT.signature.w * scale,
@@ -453,8 +419,8 @@ export function FillW9Page({ docId }: Props) {
               ))}
             </div>
 
-            <div className="flex items-center gap-2 mt-2 justify-center">
-              <button onClick={clearSignature} className="btn text-xs px-3 py-1.5">Clear signature</button>
+            <div className="flex items-center justify-center mt-2">
+              <SignaturePadControls pad={sigPad} />
             </div>
 
             {error && (

@@ -36,37 +36,49 @@ export interface PartReturnRow {
   distributor: string;
 }
 
+// Supabase caps an unbounded select at 1000 rows — a company's full return
+// history can exceed that. Page through in chunks of 1000.
+const PAGE_SIZE = 1000;
+
 export async function getPartReturns(): Promise<PartReturnRow[]> {
-  const { data, error } = await supabase
-    .from("parts")
-    .select(
-      "id, ra_no, po_no, part_no, part_desc, quantity, part_price, core_value, status, return_status, return_reason, ra_date, returned_by, part_dist, tickets!inner(location)"
-    )
-    .not("ra_no", "is", null)
-    .neq("ra_no", "");
+  const all: PartReturnRow[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from("parts")
+      .select(
+        "id, ra_no, po_no, part_no, part_desc, quantity, part_price, core_value, status, return_status, return_reason, ra_date, returned_by, part_dist, tickets!inner(location)"
+      )
+      .not("ra_no", "is", null)
+      .neq("ra_no", "")
+      .range(from, from + PAGE_SIZE - 1);
 
-  if (error) {
-    console.error("getPartReturns error:", error.message);
-    throw new Error(error.message);
+    if (error) {
+      console.error("getPartReturns error:", error.message);
+      throw new Error(error.message);
+    }
+
+    all.push(
+      ...(data ?? []).map((row: any): PartReturnRow => ({
+        id: row.id,
+        raNo: row.ra_no || "",
+        poNo: row.po_no || "",
+        partNo: row.part_no || "",
+        description: row.part_desc || "",
+        returnType: Number(row.core_value) > 0 ? "CORE RETURN" : "RETURN",
+        returnReason: row.return_reason || "",
+        raDate: row.ra_date || "",
+        returnStatus: row.return_status || "NOT RECEIVED",
+        returnedBy: row.returned_by || "",
+        qty: Number(row.quantity ?? 0),
+        unitPrice: Number(row.part_price ?? 0),
+        coreValue: Number(row.core_value ?? 0),
+        location: row.tickets?.location || "",
+        distributor: row.part_dist || "",
+      }))
+    );
+    if (!data || data.length < PAGE_SIZE) break;
   }
-
-  return (data ?? []).map((row: any) => ({
-    id: row.id,
-    raNo: row.ra_no || "",
-    poNo: row.po_no || "",
-    partNo: row.part_no || "",
-    description: row.part_desc || "",
-    returnType: Number(row.core_value) > 0 ? "CORE RETURN" : "RETURN",
-    returnReason: row.return_reason || "",
-    raDate: row.ra_date || "",
-    returnStatus: row.return_status || "NOT RECEIVED",
-    returnedBy: row.returned_by || "",
-    qty: Number(row.quantity ?? 0),
-    unitPrice: Number(row.part_price ?? 0),
-    coreValue: Number(row.core_value ?? 0),
-    location: row.tickets?.location || "",
-    distributor: row.part_dist || "",
-  }));
+  return all;
 }
 
 export async function updatePartReturnRow(

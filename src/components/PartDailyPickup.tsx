@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { Link } from "@tanstack/react-router";
 import { ChevronLeft, Printer, Save, Check, History } from "lucide-react";
 import { LOCATIONS } from "@/lib/locations";
+import { useAuth } from "@/lib/auth";
 import { getCompanyUsers } from "@/lib/supabase/users";
 import { getPartsForDailyPickup, updatePartPickupRow, type PartPickupRow } from "@/lib/supabase/partDailyPickup";
 import { addPendingDoneItem, removePendingDoneItem } from "@/lib/partsDoneQueue";
@@ -46,6 +47,13 @@ export const EXAMPLE_PICKUP_ROWS: PartPickupRow[] = [
 ];
 
 export function PartDailyPickup({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
+  // Notes is Parts Order's own working column — everyone else with access
+  // to this page sees the rest of the table, just not this. Held roles
+  // pile up (secondary PARTS_ORDER counts the same as primary); SUPERADMIN
+  // always bypasses, same convention as everywhere else in this app.
+  const { role, extraRoles } = useAuth();
+  const heldRoles = [role, ...(extraRoles ?? [])].map((r) => String(r || "").toUpperCase());
+  const canSeeNotes = heldRoles.includes("PARTS_ORDER") || heldRoles.includes("SUPERADMIN");
   const [location,setLocation]=useState("");const [locOpen,setLocOpen]=useState(false);
   const [tech,setTech]=useState("");const [techOpen,setTechOpen]=useState(false);
   const [pickupDate,setPickupDate]=useState(TODAY);
@@ -165,7 +173,7 @@ export function PartDailyPickup({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
     }
   };
 
-  const COLS=["Tech Name","Ticket #","Repair Status","Part No","Description","PO","Unique ID","Qty","Core Value","Part Status","Picked Up","Action","Notes","In Transit"];
+  const COLS=["Tech Name","Ticket #","Repair Status","Part No","Description","PO","Unique ID","Qty","Core Value","Part Status","Picked Up","Action",...(canSeeNotes?["Notes"]:[]),"In Transit"];
 
   return(<div className="min-h-screen flex flex-col"><main className="flex-1 max-w-[1600px] mx-auto w-full px-4 py-8">
     <div className="flex items-center justify-between gap-3 mb-6">
@@ -250,9 +258,11 @@ export function PartDailyPickup({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
                 <td className="px-2 py-2">
                   <input value={r.action} onChange={e=>updateRow(r.id,"action",e.target.value)} placeholder="—" className="glass-input text-xs py-0.5 px-2 rounded w-24"/>
                 </td>
+                {canSeeNotes && (
                 <td className="px-2 py-2">
                   <input value={r.comment} onChange={e=>updateRow(r.id,"comment",e.target.value)} placeholder="—" className="glass-input text-xs py-0.5 px-2 rounded w-28"/>
                 </td>
+                )}
                 <td className="px-2 py-2 text-center">
                   <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${r.inTransit?"bg-amber-500/20 text-amber-300":"bg-slate-500/10 text-slate-500"}`}>{r.inTransit?"Yes":"No"}</span>
                 </td>

@@ -29,15 +29,10 @@
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import type { VehicleAgreementFormData } from "./vehicleAgreementFormTemplate";
 import { addLogoHeader } from "./pdfLogoHeader";
+import { dateBlankPositions, fmtDateParts } from "./pdfDateBlankSplit";
 
-const fmtDate = (v: string) => {
-  if (!v) return "";
-  const d = new Date(v);
-  if (isNaN(d.getTime())) return v;
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${mm}/${dd}/${d.getFullYear()}`;
-};
+/** x position of each of the three date blanks on the "Date:" line (page 2, y=193.03) — see pdfDateBlankSplit.ts; the label starts at x=101.57. */
+const VEHICLE_AGREEMENT_DATE_X = dateBlankPositions(101.57);
 
 /** Where the redrawn "Employee Signature:" label sits on page 2, and where the signature image gets drawn beside it — exported so the fill pages' overlay rect can match exactly. */
 export const VEHICLE_AGREEMENT_SIGNATURE_LABEL_Y = 130;
@@ -72,7 +67,10 @@ export async function fillVehicleAgreementPdf(data: VehicleAgreementFormData, si
   const page2 = pdfDoc.getPage(1);
   draw(page2, data.firstName, 135.3, 218);
   draw(page2, data.lastName, 297.1, 218);
-  draw(page2, fmtDate(data.dateSigned), 105, 196, 9);
+  const dateParts = fmtDateParts(data.dateSigned);
+  draw(page2, dateParts.mm, VEHICLE_AGREEMENT_DATE_X.mm, 196, 9);
+  draw(page2, dateParts.dd, VEHICLE_AGREEMENT_DATE_X.dd, 196, 9);
+  draw(page2, dateParts.yyyy, VEHICLE_AGREEMENT_DATE_X.yyyy, 196, 9);
   draw(page2, data.branch, 116, 171);
 
   if (signatureBytes) {

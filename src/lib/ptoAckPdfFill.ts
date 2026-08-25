@@ -23,19 +23,13 @@
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import type { PtoAckFormData } from "./ptoAckFormTemplate";
 import { addLogoHeader } from "./pdfLogoHeader";
-
-const fmtDate = (v: string) => {
-  if (!v) return "";
-  const d = new Date(v);
-  if (isNaN(d.getTime())) return v;
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${mm} / ${dd} / ${d.getFullYear()}`;
-};
+import { dateBlankPositions, fmtDateParts } from "./pdfDateBlankSplit";
 
 /** Where the redrawn signature/date/employer block sits on page 1 — exported so the fill pages' overlay rects can match exactly. */
 export const PTO_ACK_SIGNATURE_DRAW = { x: 177, y: 245, maxW: 285, maxH: 20 } as const;
 export const PTO_ACK_DATE_SIGNED_DRAW = { x: 102, y: 220 } as const;
+/** x position of each of the three date blanks on the redrawn "Date:" line — see pdfDateBlankSplit.ts. */
+const PTO_ACK_DATE_X = dateBlankPositions(101.57);
 
 /** Returns the source PDF's bytes with the unused branch checklist whited out (page 1, below "Branch:") and page 2 dropped entirely — with the checklist gone, page 2 held nothing but the signature/date/employer block, which is redrawn here into the freed-up space on page 1 instead. Applied here, not just in fillPtoAckPdf, so the interactive fill pages (which render these same blank bytes straight to canvas via pdf.js) show the same single-page layout. */
 export async function loadBlankPtoAckBytes(): Promise<Uint8Array> {
@@ -80,7 +74,10 @@ export async function fillPtoAckPdf(data: PtoAckFormData, signatureBytes?: Uint8
     const scale = Math.min(maxW / png.width, maxH / png.height, 1);
     page1.drawImage(png, { x, y, width: png.width * scale, height: png.height * scale });
   }
-  draw1(fmtDate(data.dateSigned), PTO_ACK_DATE_SIGNED_DRAW.x, PTO_ACK_DATE_SIGNED_DRAW.y, 9);
+  const dateParts = fmtDateParts(data.dateSigned);
+  draw1(dateParts.mm, PTO_ACK_DATE_X.mm, PTO_ACK_DATE_SIGNED_DRAW.y, 9);
+  draw1(dateParts.dd, PTO_ACK_DATE_X.dd, PTO_ACK_DATE_SIGNED_DRAW.y, 9);
+  draw1(dateParts.yyyy, PTO_ACK_DATE_X.yyyy, PTO_ACK_DATE_SIGNED_DRAW.y, 9);
 
   return pdfDoc.save();
 }

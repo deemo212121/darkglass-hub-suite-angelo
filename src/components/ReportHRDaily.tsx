@@ -1,6 +1,8 @@
 import { useState, useMemo, useEffect, useRef, Fragment } from "react";
 import { Link, useSearch, useNavigate } from "@tanstack/react-router";
 import { ChevronLeft, ChevronDown, ChevronRight, Plus, Trash2, AlertTriangle, CheckCircle, XCircle, Paperclip, Users, Clock, UserCheck, UserX, UserMinus, Search, Bell, Download, Forward, History, FileText, ClipboardList, Landmark, GripVertical, FileCheck, Link2, Copy } from "lucide-react";
+import { useSignaturePad } from "@/hooks/useSignaturePad";
+import { SignaturePadControls } from "@/components/SignaturePad";
 
 /** Shared shape for a sidebar/header-dropdown nav tab entry — broad enough to structurally match every tabGroups[].tabs literal (they all share this key/label/count/icon shape, just with different literal `key`/`label` string types per group), so renderSidebarTabButton/renderDropdownTabButton can be called with tabs from any group. */
 type NavTabDef = { key: string; label: string; count: number; icon: typeof FileCheck };
@@ -48,7 +50,7 @@ import {
   type OnboardingDocumentColumn,
   type OnboardingGroupKey,
 } from "@/lib/supabase/onboardingDocumentColumns";
-import { uploadCoeCertificate, uploadWarningForm, uploadPromotionForm, uploadActionPlanForm, uploadTerminationForm, uploadW8benForm, uploadW4Form, uploadW4RForm, uploadI9Form, uploadWageAckForm, uploadCarIqAgreementForm, uploadVehicleAgreementForm, uploadEmployeeConfidentialityForm, uploadMealRestBreakForm, uploadPtoAckForm, uploadPartsResponsibilityForm, uploadMileageFuelForm, uploadLocationConsentForm, uploadDamageForm, uploadContractorDataForm, uploadDirectDepositForm, uploadSignableDocumentSignature } from "@/lib/firebase/storage";
+import { uploadCoeCertificate, uploadWarningForm, uploadPromotionForm, uploadActionPlanForm, uploadTerminationForm, uploadW8benForm, uploadW4Form, uploadW4RForm, uploadI9Form, uploadWageAckForm, uploadCarIqAgreementForm, uploadVehicleAgreementForm, uploadEmployeeConfidentialityForm, uploadMealRestBreakForm, uploadPtoAckForm, uploadPartsResponsibilityForm, uploadMileageFuelForm, uploadLocationConsentForm, uploadDamageForm, uploadContractorDataForm, uploadDirectDepositForm, uploadSubstanceScreeningForm, uploadSignableDocumentSignature } from "@/lib/firebase/storage";
 import { captureHtmlToPdfBlob, loadAssetDataUrl as loadImageDataUrl } from "@/lib/pdfCapture";
 import {
   createSignableDocument,
@@ -102,6 +104,8 @@ import { buildContractorDataBodyMarkup, contractorDataStyles, BLANK_EMERGENCY_CO
 import { buildDirectDepositBodyMarkup, directDepositStyles, type DirectDepositFormData } from "@/lib/directDepositFormTemplate";
 import type { I9FormData } from "@/lib/i9FormTemplate";
 import { fillI9Pdf } from "@/lib/i9PdfFill";
+import type { SubstanceScreeningFormData } from "@/lib/substanceScreeningFormTemplate";
+import { fillSubstanceScreeningPdf } from "@/lib/substanceScreeningPdfFill";
 import { logActivity, getActivityLog, activityActionLabel, type HrActivityLogEntry } from "@/lib/supabase/hrActivityLog";
 import { HrActivityLogPanel } from "@/components/HrActivityLogPage";
 import { subscribeTableChanges } from "@/lib/supabase/realtime";
@@ -680,7 +684,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // Reviews, the Approved log, the department trend chart, and the full
   // Employee Directory all on top of each other, forcing a long scroll to
   // reach anything below Hiring.
-  const [activeTab, setActiveTab] = useState<"hiring" | "warnings" | "masterList" | "leaders" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "promotionForm" | "actionPlanForm" | "terminationForm" | "employeeRequestManager" | "w8ben" | "i9" | "wageAck" | "carIqAgreement" | "vehicleAgreement" | "employeeConfidentiality" | "mealRestBreak" | "ptoAck" | "partsResponsibility" | "mileageFuel" | "locationConsent" | "damage" | "contractorData" | "directDeposit" | "combineForms">("hiring");
+  const [activeTab, setActiveTab] = useState<"hiring" | "warnings" | "masterList" | "leaders" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "promotionForm" | "actionPlanForm" | "terminationForm" | "employeeRequestManager" | "w8ben" | "i9" | "wageAck" | "carIqAgreement" | "vehicleAgreement" | "employeeConfidentiality" | "mealRestBreak" | "ptoAck" | "partsResponsibility" | "mileageFuel" | "locationConsent" | "damage" | "contractorData" | "directDeposit" | "substanceScreening" | "combineForms">("hiring");
   const [openCategory, setOpenCategory] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   // Which floating-sidebar section headers (Automated Forms/Generate
@@ -704,7 +708,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const navigate = useNavigate();
   const hrSearchParams = (useSearch({ strict: false }) as { tab?: string; submissionId?: string; profileId?: string }) ?? {};
   const initialHrSearchRef = useRef(hrSearchParams);
-  const VALID_HR_TABS = ["hiring", "warnings", "masterList", "leaders", "jotform", "jotformDocuments", "customForms", "onboarding", "hiringReports", "report", "coe", "warningForm", "promotionForm", "actionPlanForm", "terminationForm", "employeeRequestManager", "w8ben", "i9", "wageAck", "carIqAgreement", "vehicleAgreement", "employeeConfidentiality", "mealRestBreak", "ptoAck", "partsResponsibility", "mileageFuel", "locationConsent", "damage", "contractorData", "directDeposit", "combineForms"] as const;
+  const VALID_HR_TABS = ["hiring", "warnings", "masterList", "leaders", "jotform", "jotformDocuments", "customForms", "onboarding", "hiringReports", "report", "coe", "warningForm", "promotionForm", "actionPlanForm", "terminationForm", "employeeRequestManager", "w8ben", "i9", "wageAck", "carIqAgreement", "vehicleAgreement", "employeeConfidentiality", "mealRestBreak", "ptoAck", "partsResponsibility", "mileageFuel", "locationConsent", "damage", "contractorData", "directDeposit", "substanceScreening", "combineForms"] as const;
   useEffect(() => {
     const tab = initialHrSearchRef.current.tab;
     if (tab && (VALID_HR_TABS as readonly string[]).includes(tab)) setActiveTab(tab as typeof activeTab);
@@ -1379,7 +1383,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     const unsubs = [
       subscribeTableChanges("hr_candidates", () => void loadCandidates(), `company_id=eq.${companyId}`),
       subscribeTableChanges("employee_conduct_notes", () => void loadNotes(), `company_id=eq.${companyId}`),
-      subscribeTableChanges("hr_signable_documents", () => { void loadSentWarningForms(); void loadSentW8benForms(); void loadSentW4Forms(); void loadSentW9Forms(); void loadSentW4RForms(); void loadSentI9Forms(); void loadSentWageAckForms(); void loadSentCarIqAgreementForms(); void loadSentVehicleAgreementForms(); void loadSentEmployeeConfidentialityForms(); void loadSentMealRestBreakForms(); void loadSentPtoAckForms(); void loadSentPartsResponsibilityForms(); void loadSentMileageFuelForms(); void loadSentLocationConsentForms(); }, `company_id=eq.${companyId}`),
+      subscribeTableChanges("hr_signable_documents", () => { void loadSentWarningForms(); void loadSentW8benForms(); void loadSentW4Forms(); void loadSentW9Forms(); void loadSentW4RForms(); void loadSentI9Forms(); void loadSentWageAckForms(); void loadSentCarIqAgreementForms(); void loadSentVehicleAgreementForms(); void loadSentEmployeeConfidentialityForms(); void loadSentMealRestBreakForms(); void loadSentPtoAckForms(); void loadSentPartsResponsibilityForms(); void loadSentMileageFuelForms(); void loadSentLocationConsentForms(); void loadSentSubstanceScreeningForms(); }, `company_id=eq.${companyId}`),
       subscribeTableChanges("pto_requests", () => void loadPtoRequests(), `company_id=eq.${companyId}`),
       subscribeTableChanges("timecard_entries", () => void loadTodayTimecardEntries(), `company_id=eq.${companyId}`),
       subscribeTableChanges("timecard_corrections", () => void loadRequestManagerData(), `company_id=eq.${companyId}`),
@@ -2259,7 +2263,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [w8PreviewPdfUrl, setW8PreviewPdfUrl] = useState<string | null>(null);
   const [w8DocPreview, setW8DocPreview] = useState<SignableDocument | null>(null);
   const [w8PreviewLoading, setW8PreviewLoading] = useState(false);
-  const [w8SendMode, setW8SendMode] = useState<"teammate" | "external">("teammate");
   const [w8ExternalName, setW8ExternalName] = useState("");
   const [w8SentLink, setW8SentLink] = useState<{ link: string; recipientName: string } | null>(null);
   const [w8SentLinkCopied, setW8SentLinkCopied] = useState(false);
@@ -2471,7 +2474,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [w4PreviewPdfUrl, setW4PreviewPdfUrl] = useState<string | null>(null);
   const [w4PreviewLoading, setW4PreviewLoading] = useState(false);
   const [w4DocPreview, setW4DocPreview] = useState<SignableDocument | null>(null);
-  const [w4SendMode, setW4SendMode] = useState<"teammate" | "external">("teammate");
   const [w4ExternalName, setW4ExternalName] = useState("");
   const [w4SentLink, setW4SentLink] = useState<{ link: string; recipientName: string } | null>(null);
   const [w4SentLinkCopied, setW4SentLinkCopied] = useState(false);
@@ -2703,7 +2705,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [w9PreviewPdfUrl, setW9PreviewPdfUrl] = useState<string | null>(null);
   const [w9PreviewLoading, setW9PreviewLoading] = useState(false);
   const [w9DocPreview, setW9DocPreview] = useState<SignableDocument | null>(null);
-  const [w9SendMode, setW9SendMode] = useState<"teammate" | "external">("teammate");
   const [w9ExternalName, setW9ExternalName] = useState("");
   const [w9SentLink, setW9SentLink] = useState<{ link: string; recipientName: string } | null>(null);
   const [w9SentLinkCopied, setW9SentLinkCopied] = useState(false);
@@ -2902,7 +2903,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [w4rPreviewPdfUrl, setW4rPreviewPdfUrl] = useState<string | null>(null);
   const [w4rPreviewLoading, setW4rPreviewLoading] = useState(false);
   const [w4rDocPreview, setW4rDocPreview] = useState<SignableDocument | null>(null);
-  const [w4rSendMode, setW4rSendMode] = useState<"teammate" | "external">("teammate");
   const [w4rExternalName, setW4rExternalName] = useState("");
   const [w4rSentLink, setW4rSentLink] = useState<{ link: string; recipientName: string } | null>(null);
   const [w4rSentLinkCopied, setW4rSentLinkCopied] = useState(false);
@@ -2931,28 +2931,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       setW4rPreviewPdfUrl(null);
       return;
     }
-    setW4rSendError(null);
-    setW4rPreviewOpen(true);
-    setW4rPreviewLoading(true);
-    try {
-      const recipientName = employees.find((e) => e.id === w4rRecipientId)?.name || "";
-      const pdfBytes = await fillW4RPdf(buildW4RPreviewData(recipientName, ""));
-      const url = URL.createObjectURL(new Blob([pdfBytes as unknown as BlobPart], { type: "application/pdf" }));
-      setW4rPreviewPdfUrl(url);
-    } catch (err) {
-      setW4rSendError(err instanceof Error ? err.message : "Failed to build preview.");
-    } finally {
-      setW4rPreviewLoading(false);
-    }
-  };
-
-  const closeW4RPreview = () => {
-    setW4rPreviewOpen(false);
-    if (w4rPreviewPdfUrl) URL.revokeObjectURL(w4rPreviewPdfUrl);
-    setW4rPreviewPdfUrl(null);
-  };
-
-  const handleOpenW4RPreview = async () => {
     setW4rSendError(null);
     setW4rPreviewOpen(true);
     setW4rPreviewLoading(true);
@@ -2997,7 +2975,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
       void logActivity({ action: "w4r_form_sent", targetType: "employee", targetId: recipient.id, targetLabel: recipient.name });
 
-      closeW4RPreview();
       setW4rRecipientId("");
       setW4rRecipientSearch("");
       await loadSentW4RForms();
@@ -3169,7 +3146,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [i9ActionBusyId, setI9ActionBusyId] = useState<string | null>(null);
   const [i9ActionError, setI9ActionError] = useState<string | null>(null);
   const [i9DocPreview, setI9DocPreview] = useState<SignableDocument | null>(null);
-  const [i9SendMode, setI9SendMode] = useState<"teammate" | "external">("teammate");
   const [i9ExternalName, setI9ExternalName] = useState("");
   const [i9SentLink, setI9SentLink] = useState<{ link: string; recipientName: string } | null>(null);
   const [i9SentLinkCopied, setI9SentLinkCopied] = useState(false);
@@ -3246,29 +3222,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
 
-  const closeI9Preview = () => {
-    setI9PreviewOpen(false);
-    if (i9PreviewPdfUrl) URL.revokeObjectURL(i9PreviewPdfUrl);
-    setI9PreviewPdfUrl(null);
-  };
-
-  /** Renders the SAME real official PDF (fillI9Pdf, no HTML redraw) with a blank preview fill, so what HR previews is exactly what gets generated when the recipient actually submits Section 1. */
-  const handleOpenI9Preview = async () => {
-    setI9SendError(null);
-    setI9PreviewOpen(true);
-    setI9PreviewLoading(true);
-    try {
-      const recipientName = employees.find((e) => e.id === i9RecipientId)?.name || "";
-      const pdfBytes = await fillI9Pdf(buildI9PreviewData(recipientName));
-      const url = URL.createObjectURL(new Blob([pdfBytes as unknown as BlobPart], { type: "application/pdf" }));
-      setI9PreviewPdfUrl(url);
-    } catch (err) {
-      setI9SendError(err instanceof Error ? err.message : "Failed to build preview.");
-    } finally {
-      setI9PreviewLoading(false);
-    }
-  };
-
   const handleSendI9 = async () => {
     if (!i9RecipientId || !uid) return;
     setI9Sending(true);
@@ -3298,7 +3251,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
       void logActivity({ action: "i9_form_sent", targetType: "employee", targetId: recipient.id, targetLabel: recipient.name });
 
-      closeI9Preview();
       setI9RecipientId("");
       setI9RecipientSearch("");
       await loadSentI9Forms();
@@ -3382,7 +3334,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [wageAckPreviewExpanded, setWageAckPreviewExpanded] = useState(false);
   const [wageAckPreviewPdfUrl, setWageAckPreviewPdfUrl] = useState<string | null>(null);
   const [wageAckPreviewLoading, setWageAckPreviewLoading] = useState(false);
-  const [wageAckSendMode, setWageAckSendMode] = useState<"teammate" | "external">("teammate");
   const [wageAckExternalName, setWageAckExternalName] = useState("");
   const [wageAckSentLink, setWageAckSentLink] = useState<{ link: string; recipientName: string } | null>(null);
   const [wageAckSentLinkCopied, setWageAckSentLinkCopied] = useState(false);
@@ -3549,52 +3500,17 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [wageAckEmployerDialog, setWageAckEmployerDialog] = useState<SignableDocument | null>(null);
   const [wageAckEmployerSaving, setWageAckEmployerSaving] = useState(false);
   const [wageAckEmployerError, setWageAckEmployerError] = useState<string | null>(null);
-  const wageAckEmployerSigCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const wageAckEmployerDrawingRef = useRef(false);
-  const wageAckEmployerHasDrawnRef = useRef(false);
+  const wageAckEmployerSigPad = useSignaturePad({ width: 400, height: 120 });
 
   const handleOpenWageAckEmployerDialog = (doc: SignableDocument) => {
     setWageAckEmployerDialog(doc);
     setWageAckEmployerError(null);
-    wageAckEmployerHasDrawnRef.current = false;
-  };
-
-  const wageAckEmployerPos = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    const c = wageAckEmployerSigCanvasRef.current!;
-    const r = c.getBoundingClientRect();
-    return { x: ((e.clientX - r.left) / r.width) * c.width, y: ((e.clientY - r.top) / r.height) * c.height };
-  };
-  const wageAckEmployerStartDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    wageAckEmployerDrawingRef.current = true;
-    const ctx = wageAckEmployerSigCanvasRef.current!.getContext("2d")!;
-    const { x, y } = wageAckEmployerPos(e);
-    ctx.beginPath();
-    ctx.moveTo(x, y);
-    e.currentTarget.setPointerCapture(e.pointerId);
-  };
-  const wageAckEmployerMoveDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!wageAckEmployerDrawingRef.current) return;
-    const ctx = wageAckEmployerSigCanvasRef.current!.getContext("2d")!;
-    const { x, y } = wageAckEmployerPos(e);
-    ctx.lineTo(x, y);
-    ctx.strokeStyle = "#0f172a";
-    ctx.lineWidth = 2;
-    ctx.lineCap = "round";
-    ctx.stroke();
-    wageAckEmployerHasDrawnRef.current = true;
-  };
-  const wageAckEmployerEndDraw = () => { wageAckEmployerDrawingRef.current = false; };
-  const wageAckEmployerClearSignature = () => {
-    const c = wageAckEmployerSigCanvasRef.current;
-    if (!c) return;
-    c.getContext("2d")!.clearRect(0, 0, c.width, c.height);
-    wageAckEmployerHasDrawnRef.current = false;
   };
 
   const handleSaveWageAckEmployerSignature = async () => {
     if (!wageAckEmployerDialog || !uid) return;
-    if (!wageAckEmployerHasDrawnRef.current) {
-      setWageAckEmployerError("Please draw your signature.");
+    if (!wageAckEmployerSigPad.hasContent()) {
+      setWageAckEmployerError("Please add your signature.");
       return;
     }
     setWageAckEmployerSaving(true);
@@ -3610,7 +3526,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         ? new Uint8Array(await (await fetch(existing.employeeSignatureDataUrl)).arrayBuffer())
         : undefined;
 
-      const dataUrl = wageAckEmployerSigCanvasRef.current!.toDataURL("image/png");
+      const dataUrl = wageAckEmployerSigPad.toDataURL();
+      if (!dataUrl) {
+        setWageAckEmployerError("Please add your signature.");
+        return;
+      }
       const employerSigBytes = new Uint8Array(await (await fetch(dataUrl)).arrayBuffer());
       const signatureUrl = await uploadSignableDocumentSignature(wageAckEmployerDialog.companyId, wageAckEmployerDialog.id, "hr_staff", dataUrl);
       const signedAt = new Date().toISOString();
@@ -3670,7 +3590,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [mealRestBreakPreviewExpanded, setMealRestBreakPreviewExpanded] = useState(false);
   const [mealRestBreakPreviewPdfUrl, setMealRestBreakPreviewPdfUrl] = useState<string | null>(null);
   const [mealRestBreakPreviewLoading, setMealRestBreakPreviewLoading] = useState(false);
-  const [mealRestBreakSendMode, setMealRestBreakSendMode] = useState<"teammate" | "external">("teammate");
   const [mealRestBreakExternalName, setMealRestBreakExternalName] = useState("");
   const [mealRestBreakSentLink, setMealRestBreakSentLink] = useState<{ link: string; recipientName: string } | null>(null);
   const [mealRestBreakSentLinkCopied, setMealRestBreakSentLinkCopied] = useState(false);
@@ -3843,52 +3762,17 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [mealRestBreakEmployerDialog, setMealRestBreakEmployerDialog] = useState<SignableDocument | null>(null);
   const [mealRestBreakEmployerSaving, setMealRestBreakEmployerSaving] = useState(false);
   const [mealRestBreakEmployerError, setMealRestBreakEmployerError] = useState<string | null>(null);
-  const mealRestBreakEmployerSigCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const mealRestBreakEmployerDrawingRef = useRef(false);
-  const mealRestBreakEmployerHasDrawnRef = useRef(false);
+  const mealRestBreakEmployerSigPad = useSignaturePad({ width: 400, height: 120 });
 
   const handleOpenMealRestBreakEmployerDialog = (doc: SignableDocument) => {
     setMealRestBreakEmployerDialog(doc);
     setMealRestBreakEmployerError(null);
-    mealRestBreakEmployerHasDrawnRef.current = false;
-  };
-
-  const mealRestBreakEmployerPos = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    const c = mealRestBreakEmployerSigCanvasRef.current!;
-    const r = c.getBoundingClientRect();
-    return { x: ((e.clientX - r.left) / r.width) * c.width, y: ((e.clientY - r.top) / r.height) * c.height };
-  };
-  const mealRestBreakEmployerStartDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    mealRestBreakEmployerDrawingRef.current = true;
-    const ctx = mealRestBreakEmployerSigCanvasRef.current!.getContext("2d")!;
-    const { x, y } = mealRestBreakEmployerPos(e);
-    ctx.beginPath();
-    ctx.moveTo(x, y);
-    e.currentTarget.setPointerCapture(e.pointerId);
-  };
-  const mealRestBreakEmployerMoveDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!mealRestBreakEmployerDrawingRef.current) return;
-    const ctx = mealRestBreakEmployerSigCanvasRef.current!.getContext("2d")!;
-    const { x, y } = mealRestBreakEmployerPos(e);
-    ctx.lineTo(x, y);
-    ctx.strokeStyle = "#0f172a";
-    ctx.lineWidth = 2;
-    ctx.lineCap = "round";
-    ctx.stroke();
-    mealRestBreakEmployerHasDrawnRef.current = true;
-  };
-  const mealRestBreakEmployerEndDraw = () => { mealRestBreakEmployerDrawingRef.current = false; };
-  const mealRestBreakEmployerClearSignature = () => {
-    const c = mealRestBreakEmployerSigCanvasRef.current;
-    if (!c) return;
-    c.getContext("2d")!.clearRect(0, 0, c.width, c.height);
-    mealRestBreakEmployerHasDrawnRef.current = false;
   };
 
   const handleSaveMealRestBreakEmployerSignature = async () => {
     if (!mealRestBreakEmployerDialog || !uid) return;
-    if (!mealRestBreakEmployerHasDrawnRef.current) {
-      setMealRestBreakEmployerError("Please draw your signature.");
+    if (!mealRestBreakEmployerSigPad.hasContent()) {
+      setMealRestBreakEmployerError("Please add your signature.");
       return;
     }
     setMealRestBreakEmployerSaving(true);
@@ -3904,7 +3788,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         ? new Uint8Array(await (await fetch(existing.employeeSignatureDataUrl)).arrayBuffer())
         : undefined;
 
-      const dataUrl = mealRestBreakEmployerSigCanvasRef.current!.toDataURL("image/png");
+      const dataUrl = mealRestBreakEmployerSigPad.toDataURL();
+      if (!dataUrl) {
+        setMealRestBreakEmployerError("Please add your signature.");
+        return;
+      }
       const employerSigBytes = new Uint8Array(await (await fetch(dataUrl)).arrayBuffer());
       const signatureUrl = await uploadSignableDocumentSignature(mealRestBreakEmployerDialog.companyId, mealRestBreakEmployerDialog.id, "hr_staff", dataUrl);
       const signedAt = new Date().toISOString();
@@ -3958,7 +3846,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [carIqPreviewOpen, setCarIqPreviewOpen] = useState(false);
   const [carIqPreviewPdfUrl, setCarIqPreviewPdfUrl] = useState<string | null>(null);
   const [carIqPreviewLoading, setCarIqPreviewLoading] = useState(false);
-  const [carIqSendMode, setCarIqSendMode] = useState<"teammate" | "external">("teammate");
   const [carIqExternalName, setCarIqExternalName] = useState("");
   const [carIqSentLink, setCarIqSentLink] = useState<{ link: string; recipientName: string } | null>(null);
   const [carIqSentLinkCopied, setCarIqSentLinkCopied] = useState(false);
@@ -4004,28 +3891,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
 
-  const closeCarIqPreview = () => {
-    setCarIqPreviewOpen(false);
-    if (carIqPreviewPdfUrl) URL.revokeObjectURL(carIqPreviewPdfUrl);
-    setCarIqPreviewPdfUrl(null);
-  };
-
-  const handleOpenCarIqPreview = async () => {
-    setCarIqSendError(null);
-    setCarIqPreviewOpen(true);
-    setCarIqPreviewLoading(true);
-    try {
-      const recipientName = employees.find((e) => e.id === carIqRecipientId)?.name || "";
-      const pdfBytes = await fillCarIqAgreementPdf(buildCarIqPreviewData(recipientName));
-      const url = URL.createObjectURL(new Blob([pdfBytes as unknown as BlobPart], { type: "application/pdf" }));
-      setCarIqPreviewPdfUrl(url);
-    } catch (err) {
-      setCarIqSendError(err instanceof Error ? err.message : "Failed to build preview.");
-    } finally {
-      setCarIqPreviewLoading(false);
-    }
-  };
-
   const handleSendCarIqAgreement = async () => {
     if (!carIqRecipientId || !uid) return;
     setCarIqSending(true);
@@ -4055,7 +3920,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
       void logActivity({ action: "car_iq_agreement_sent", targetType: "employee", targetId: recipient.id, targetLabel: recipient.name });
 
-      closeCarIqPreview();
       setCarIqRecipientId("");
       setCarIqRecipientSearch("");
       await loadSentCarIqAgreementForms();
@@ -4173,7 +4037,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [vehiclePreviewOpen, setVehiclePreviewOpen] = useState(false);
   const [vehiclePreviewPdfUrl, setVehiclePreviewPdfUrl] = useState<string | null>(null);
   const [vehiclePreviewLoading, setVehiclePreviewLoading] = useState(false);
-  const [vehicleSendMode, setVehicleSendMode] = useState<"teammate" | "external">("teammate");
   const [vehicleExternalName, setVehicleExternalName] = useState("");
   const [vehicleSentLink, setVehicleSentLink] = useState<{ link: string; recipientName: string } | null>(null);
   const [vehicleSentLinkCopied, setVehicleSentLinkCopied] = useState(false);
@@ -4218,28 +4081,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
 
-  const closeVehiclePreview = () => {
-    setVehiclePreviewOpen(false);
-    if (vehiclePreviewPdfUrl) URL.revokeObjectURL(vehiclePreviewPdfUrl);
-    setVehiclePreviewPdfUrl(null);
-  };
-
-  const handleOpenVehiclePreview = async () => {
-    setVehicleSendError(null);
-    setVehiclePreviewOpen(true);
-    setVehiclePreviewLoading(true);
-    try {
-      const recipientName = employees.find((e) => e.id === vehicleRecipientId)?.name || "";
-      const pdfBytes = await fillVehicleAgreementPdf(buildVehiclePreviewData(recipientName));
-      const url = URL.createObjectURL(new Blob([pdfBytes as unknown as BlobPart], { type: "application/pdf" }));
-      setVehiclePreviewPdfUrl(url);
-    } catch (err) {
-      setVehicleSendError(err instanceof Error ? err.message : "Failed to build preview.");
-    } finally {
-      setVehiclePreviewLoading(false);
-    }
-  };
-
   const handleSendVehicleAgreement = async () => {
     if (!vehicleRecipientId || !uid) return;
     setVehicleSending(true);
@@ -4269,7 +4110,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
       void logActivity({ action: "vehicle_agreement_sent", targetType: "employee", targetId: recipient.id, targetLabel: recipient.name });
 
-      closeVehiclePreview();
       setVehicleRecipientId("");
       setVehicleRecipientSearch("");
       await loadSentVehicleAgreementForms();
@@ -4387,7 +4227,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [confidentialityPreviewOpen, setConfidentialityPreviewOpen] = useState(false);
   const [confidentialityPreviewPdfUrl, setConfidentialityPreviewPdfUrl] = useState<string | null>(null);
   const [confidentialityPreviewLoading, setConfidentialityPreviewLoading] = useState(false);
-  const [confidentialitySendMode, setConfidentialitySendMode] = useState<"teammate" | "external">("teammate");
   const [confidentialityExternalName, setConfidentialityExternalName] = useState("");
   const [confidentialitySentLink, setConfidentialitySentLink] = useState<{ link: string; recipientName: string } | null>(null);
   const [confidentialitySentLinkCopied, setConfidentialitySentLinkCopied] = useState(false);
@@ -4416,28 +4255,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       setConfidentialityPreviewPdfUrl(null);
       return;
     }
-    setConfidentialitySendError(null);
-    setConfidentialityPreviewOpen(true);
-    setConfidentialityPreviewLoading(true);
-    try {
-      const recipientName = employees.find((e) => e.id === confidentialityRecipientId)?.name || "";
-      const pdfBytes = await fillEmployeeConfidentialityPdf(buildConfidentialityPreviewData(recipientName));
-      const url = URL.createObjectURL(new Blob([pdfBytes as unknown as BlobPart], { type: "application/pdf" }));
-      setConfidentialityPreviewPdfUrl(url);
-    } catch (err) {
-      setConfidentialitySendError(err instanceof Error ? err.message : "Failed to build preview.");
-    } finally {
-      setConfidentialityPreviewLoading(false);
-    }
-  };
-
-  const closeConfidentialityPreview = () => {
-    setConfidentialityPreviewOpen(false);
-    if (confidentialityPreviewPdfUrl) URL.revokeObjectURL(confidentialityPreviewPdfUrl);
-    setConfidentialityPreviewPdfUrl(null);
-  };
-
-  const handleOpenConfidentialityPreview = async () => {
     setConfidentialitySendError(null);
     setConfidentialityPreviewOpen(true);
     setConfidentialityPreviewLoading(true);
@@ -4482,7 +4299,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
       void logActivity({ action: "employee_confidentiality_sent", targetType: "employee", targetId: recipient.id, targetLabel: recipient.name });
 
-      closeConfidentialityPreview();
       setConfidentialityRecipientId("");
       setConfidentialityRecipientSearch("");
       await loadSentEmployeeConfidentialityForms();
@@ -4570,6 +4386,189 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
 
+  // ── Substance Screening & Conduct Agreement — same pattern as Employee
+  // Confidentiality above: single recipient, the recipient fills in
+  // everything themselves on FillSubstanceScreeningPage.tsx. No employer/HR
+  // co-signature step. The source PDF has no AcroForm fields at all (see
+  // substanceScreeningFormTemplate.ts's header comment) — every value is
+  // drawn directly onto the page. No branch field on this one. ──
+  const [sentSubstanceScreeningForms, setSentSubstanceScreeningForms] = useState<SignableDocument[]>([]);
+  const loadSentSubstanceScreeningForms = async () => {
+    try {
+      setSentSubstanceScreeningForms(await getSignableDocuments("substance_screening"));
+    } catch (err) {
+      console.error("Failed to load sent Substance Screening & Conduct Agreement forms:", err);
+    }
+  };
+  useEffect(() => {
+    if (activeTab === "substanceScreening" || activeTab === "jotformDocuments") void loadSentSubstanceScreeningForms();
+  }, [activeTab]);
+
+  const [substanceScreeningRecipientId, setSubstanceScreeningRecipientId] = useState("");
+  const [substanceScreeningRecipientSearch, setSubstanceScreeningRecipientSearch] = useState("");
+  const [substanceScreeningRecipientDropdownOpen, setSubstanceScreeningRecipientDropdownOpen] = useState(false);
+  const [substanceScreeningSending, setSubstanceScreeningSending] = useState(false);
+  const [substanceScreeningSendError, setSubstanceScreeningSendError] = useState<string | null>(null);
+  const [substanceScreeningActionBusyId, setSubstanceScreeningActionBusyId] = useState<string | null>(null);
+  const [substanceScreeningActionError, setSubstanceScreeningActionError] = useState<string | null>(null);
+  const [substanceScreeningDocPreview, setSubstanceScreeningDocPreview] = useState<SignableDocument | null>(null);
+  const [substanceScreeningPreviewOpen, setSubstanceScreeningPreviewOpen] = useState(false);
+  const [substanceScreeningPreviewPdfUrl, setSubstanceScreeningPreviewPdfUrl] = useState<string | null>(null);
+  const [substanceScreeningPreviewLoading, setSubstanceScreeningPreviewLoading] = useState(false);
+  const [substanceScreeningExternalName, setSubstanceScreeningExternalName] = useState("");
+  const [substanceScreeningSentLink, setSubstanceScreeningSentLink] = useState<{ link: string; recipientName: string } | null>(null);
+  const [substanceScreeningSentLinkCopied, setSubstanceScreeningSentLinkCopied] = useState(false);
+  const filteredSubstanceScreeningRecipients = useMemo(
+    () => employees.filter((e) => e.status === "active" && e.name.toLowerCase().includes(substanceScreeningRecipientSearch.toLowerCase())),
+    [employees, substanceScreeningRecipientSearch]
+  );
+
+  const buildSubstanceScreeningPreviewData = (employeeName: string): SubstanceScreeningFormData => ({
+    employeeId: "",
+    employeeName,
+    dateSigned: "",
+    signatureDataUrl: "",
+  });
+
+  /** Toggles the inline collapsible preview panel — collapsing just hides it (and revokes the blob URL); expanding (re)builds a fresh blank-filled sample from the currently-selected recipient's name. */
+  const toggleSubstanceScreeningPreview = async () => {
+    if (substanceScreeningPreviewOpen) {
+      setSubstanceScreeningPreviewOpen(false);
+      if (substanceScreeningPreviewPdfUrl) URL.revokeObjectURL(substanceScreeningPreviewPdfUrl);
+      setSubstanceScreeningPreviewPdfUrl(null);
+      return;
+    }
+    setSubstanceScreeningSendError(null);
+    setSubstanceScreeningPreviewOpen(true);
+    setSubstanceScreeningPreviewLoading(true);
+    try {
+      const recipientName = employees.find((e) => e.id === substanceScreeningRecipientId)?.name || "";
+      const pdfBytes = await fillSubstanceScreeningPdf(buildSubstanceScreeningPreviewData(recipientName));
+      const url = URL.createObjectURL(new Blob([pdfBytes as unknown as BlobPart], { type: "application/pdf" }));
+      setSubstanceScreeningPreviewPdfUrl(url);
+    } catch (err) {
+      setSubstanceScreeningSendError(err instanceof Error ? err.message : "Failed to build preview.");
+    } finally {
+      setSubstanceScreeningPreviewLoading(false);
+    }
+  };
+
+  const handleSendSubstanceScreening = async () => {
+    if (!substanceScreeningRecipientId || !uid) return;
+    setSubstanceScreeningSending(true);
+    setSubstanceScreeningSendError(null);
+    try {
+      const recipient = employees.find((e) => e.id === substanceScreeningRecipientId);
+      if (!recipient) throw new Error("Select a recipient first.");
+
+      const doc = await createSignableDocument({
+        documentType: "substance_screening",
+        formData: { employeeId: recipient.id, employeeName: recipient.name } as unknown as Record<string, any>,
+        recipientId: substanceScreeningRecipientId,
+        recipientSlot: "employee",
+        pdfUrl: "",
+      });
+
+      const myProfileId = await getMyProfileId(uid);
+      if (!myProfileId) throw new Error("Could not resolve your profile.");
+      const thread = await getOrCreateDmThread(myProfileId, substanceScreeningRecipientId);
+      const fillLink = `${getAppUrl()}/fill-substance-screening/${doc.id}`;
+      await sendMessage({
+        dmThreadId: thread.id,
+        senderId: myProfileId,
+        senderName: displayName || "HR",
+        body: `📋 Please complete the Substance Screening & Conduct Agreement: ${fillLink}`,
+      });
+
+      void logActivity({ action: "substance_screening_sent", targetType: "employee", targetId: recipient.id, targetLabel: recipient.name });
+
+      setSubstanceScreeningRecipientId("");
+      setSubstanceScreeningRecipientSearch("");
+      await loadSentSubstanceScreeningForms();
+    } catch (err) {
+      setSubstanceScreeningSendError(err instanceof Error ? err.message : "Failed to send request.");
+    } finally {
+      setSubstanceScreeningSending(false);
+    }
+  };
+
+  /** No AHS profile to tie this to, so no DM — the link itself (shown in the same panel, right below "Generate Link") is the only way the recipient finds out, same as the Warning Form's "External Link" mode. */
+  const handleGenerateExternalSubstanceScreening = async () => {
+    setSubstanceScreeningSending(true);
+    setSubstanceScreeningSendError(null);
+    try {
+      const name = substanceScreeningExternalName.trim() || "External Recipient";
+      const doc = await createSignableDocument({
+        documentType: "substance_screening",
+        formData: { employeeId: "", employeeName: name } as unknown as Record<string, any>,
+        recipientName: name,
+        recipientSlot: "employee",
+        pdfUrl: "",
+      });
+
+      void logActivity({ action: "substance_screening_sent", targetType: "employee", targetLabel: name, details: { external: true } });
+
+      setSubstanceScreeningSentLink({ link: `${getAppUrl()}/fill-substance-screening-external/${doc.id}`, recipientName: name });
+      setSubstanceScreeningExternalName("");
+      await loadSentSubstanceScreeningForms();
+    } catch (err) {
+      setSubstanceScreeningSendError(err instanceof Error ? err.message : "Failed to generate link.");
+    } finally {
+      setSubstanceScreeningSending(false);
+    }
+  };
+
+  const handleCopySubstanceScreeningSentLink = async () => {
+    if (!substanceScreeningSentLink) return;
+    try {
+      await navigator.clipboard.writeText(substanceScreeningSentLink.link);
+      setSubstanceScreeningSentLinkCopied(true);
+      setTimeout(() => setSubstanceScreeningSentLinkCopied(false), 1500);
+    } catch (err) {
+      console.error("Failed to copy link:", err);
+    }
+  };
+
+  const handleCopySubstanceScreeningLink = async (doc: SignableDocument) => {
+    try {
+      const path = doc.recipientId ? "fill-substance-screening" : "fill-substance-screening-external";
+      await navigator.clipboard.writeText(`${getAppUrl()}/${path}/${doc.id}`);
+    } catch (err) {
+      console.error("Failed to copy link:", err);
+    }
+  };
+
+  const handleDownloadSubstanceScreeningPdf = async (doc: SignableDocument) => {
+    if (!doc.pdfUrl) return;
+    const name = (doc.formData as Partial<SubstanceScreeningFormData>).employeeName || doc.recipientName || "substance-screening";
+    try {
+      const res = await fetch(doc.pdfUrl);
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = `Substance Screening & Conduct Agreement - ${name}.pdf`;
+      a.click();
+      URL.revokeObjectURL(blobUrl);
+    } catch {
+      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
+    }
+  };
+
+  const handleDeleteSubstanceScreening = async (doc: SignableDocument) => {
+    if (!window.confirm("Permanently delete this Substance Screening & Conduct Agreement request?")) return;
+    setSubstanceScreeningActionBusyId(doc.id);
+    setSubstanceScreeningActionError(null);
+    try {
+      await deleteSignableDocument(doc.id);
+      await loadSentSubstanceScreeningForms();
+    } catch (err) {
+      setSubstanceScreeningActionError(err instanceof Error ? err.message : "Failed to delete.");
+    } finally {
+      setSubstanceScreeningActionBusyId(null);
+    }
+  };
+
   // ── Employee Paid Time Off (PTO) and Sick Leave Policy Acknowledgment —
   // same pattern as Employee Confidentiality above: single recipient, the
   // recipient fills in everything themselves on FillPtoAckPage.tsx. No
@@ -4602,7 +4601,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [ptoAckPreviewExpanded, setPtoAckPreviewExpanded] = useState(false);
   const [ptoAckPreviewPdfUrl, setPtoAckPreviewPdfUrl] = useState<string | null>(null);
   const [ptoAckPreviewLoading, setPtoAckPreviewLoading] = useState(false);
-  const [ptoAckSendMode, setPtoAckSendMode] = useState<"teammate" | "external">("teammate");
   const [ptoAckExternalName, setPtoAckExternalName] = useState("");
   const [ptoAckSentLink, setPtoAckSentLink] = useState<{ link: string; recipientName: string } | null>(null);
   const [ptoAckSentLinkCopied, setPtoAckSentLinkCopied] = useState(false);
@@ -4975,52 +4973,17 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [partsResponsibilityManagerDialog, setPartsResponsibilityManagerDialog] = useState<SignableDocument | null>(null);
   const [partsResponsibilityManagerSaving, setPartsResponsibilityManagerSaving] = useState(false);
   const [partsResponsibilityManagerError, setPartsResponsibilityManagerError] = useState<string | null>(null);
-  const partsResponsibilityManagerSigCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const partsResponsibilityManagerDrawingRef = useRef(false);
-  const partsResponsibilityManagerHasDrawnRef = useRef(false);
+  const partsResponsibilityManagerSigPad = useSignaturePad({ width: 400, height: 120 });
 
   const handleOpenPartsResponsibilityManagerDialog = (doc: SignableDocument) => {
     setPartsResponsibilityManagerDialog(doc);
     setPartsResponsibilityManagerError(null);
-    partsResponsibilityManagerHasDrawnRef.current = false;
-  };
-
-  const partsResponsibilityManagerPos = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    const c = partsResponsibilityManagerSigCanvasRef.current!;
-    const r = c.getBoundingClientRect();
-    return { x: ((e.clientX - r.left) / r.width) * c.width, y: ((e.clientY - r.top) / r.height) * c.height };
-  };
-  const partsResponsibilityManagerStartDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    partsResponsibilityManagerDrawingRef.current = true;
-    const ctx = partsResponsibilityManagerSigCanvasRef.current!.getContext("2d")!;
-    const { x, y } = partsResponsibilityManagerPos(e);
-    ctx.beginPath();
-    ctx.moveTo(x, y);
-    e.currentTarget.setPointerCapture(e.pointerId);
-  };
-  const partsResponsibilityManagerMoveDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!partsResponsibilityManagerDrawingRef.current) return;
-    const ctx = partsResponsibilityManagerSigCanvasRef.current!.getContext("2d")!;
-    const { x, y } = partsResponsibilityManagerPos(e);
-    ctx.lineTo(x, y);
-    ctx.strokeStyle = "#0f172a";
-    ctx.lineWidth = 2;
-    ctx.lineCap = "round";
-    ctx.stroke();
-    partsResponsibilityManagerHasDrawnRef.current = true;
-  };
-  const partsResponsibilityManagerEndDraw = () => { partsResponsibilityManagerDrawingRef.current = false; };
-  const partsResponsibilityManagerClearSignature = () => {
-    const c = partsResponsibilityManagerSigCanvasRef.current;
-    if (!c) return;
-    c.getContext("2d")!.clearRect(0, 0, c.width, c.height);
-    partsResponsibilityManagerHasDrawnRef.current = false;
   };
 
   const handleSavePartsResponsibilityManagerSignature = async () => {
     if (!partsResponsibilityManagerDialog || !uid) return;
-    if (!partsResponsibilityManagerHasDrawnRef.current) {
-      setPartsResponsibilityManagerError("Please draw your signature.");
+    if (!partsResponsibilityManagerSigPad.hasContent()) {
+      setPartsResponsibilityManagerError("Please add your signature.");
       return;
     }
     setPartsResponsibilityManagerSaving(true);
@@ -5036,7 +4999,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         ? new Uint8Array(await (await fetch(existing.technicianSignatureDataUrl)).arrayBuffer())
         : undefined;
 
-      const dataUrl = partsResponsibilityManagerSigCanvasRef.current!.toDataURL("image/png");
+      const dataUrl = partsResponsibilityManagerSigPad.toDataURL();
+      if (!dataUrl) {
+        setPartsResponsibilityManagerError("Please add your signature.");
+        return;
+      }
       const managerSigBytes = new Uint8Array(await (await fetch(dataUrl)).arrayBuffer());
       const signatureUrl = await uploadSignableDocumentSignature(partsResponsibilityManagerDialog.companyId, partsResponsibilityManagerDialog.id, "hr_staff", dataUrl);
       const signedAt = new Date().toISOString();
@@ -5269,52 +5236,17 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [mileageFuelEmployerDialog, setMileageFuelEmployerDialog] = useState<SignableDocument | null>(null);
   const [mileageFuelEmployerSaving, setMileageFuelEmployerSaving] = useState(false);
   const [mileageFuelEmployerError, setMileageFuelEmployerError] = useState<string | null>(null);
-  const mileageFuelEmployerSigCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const mileageFuelEmployerDrawingRef = useRef(false);
-  const mileageFuelEmployerHasDrawnRef = useRef(false);
+  const mileageFuelEmployerSigPad = useSignaturePad({ width: 400, height: 120 });
 
   const handleOpenMileageFuelEmployerDialog = (doc: SignableDocument) => {
     setMileageFuelEmployerDialog(doc);
     setMileageFuelEmployerError(null);
-    mileageFuelEmployerHasDrawnRef.current = false;
-  };
-
-  const mileageFuelEmployerPos = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    const c = mileageFuelEmployerSigCanvasRef.current!;
-    const r = c.getBoundingClientRect();
-    return { x: ((e.clientX - r.left) / r.width) * c.width, y: ((e.clientY - r.top) / r.height) * c.height };
-  };
-  const mileageFuelEmployerStartDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    mileageFuelEmployerDrawingRef.current = true;
-    const ctx = mileageFuelEmployerSigCanvasRef.current!.getContext("2d")!;
-    const { x, y } = mileageFuelEmployerPos(e);
-    ctx.beginPath();
-    ctx.moveTo(x, y);
-    e.currentTarget.setPointerCapture(e.pointerId);
-  };
-  const mileageFuelEmployerMoveDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!mileageFuelEmployerDrawingRef.current) return;
-    const ctx = mileageFuelEmployerSigCanvasRef.current!.getContext("2d")!;
-    const { x, y } = mileageFuelEmployerPos(e);
-    ctx.lineTo(x, y);
-    ctx.strokeStyle = "#0f172a";
-    ctx.lineWidth = 2;
-    ctx.lineCap = "round";
-    ctx.stroke();
-    mileageFuelEmployerHasDrawnRef.current = true;
-  };
-  const mileageFuelEmployerEndDraw = () => { mileageFuelEmployerDrawingRef.current = false; };
-  const mileageFuelEmployerClearSignature = () => {
-    const c = mileageFuelEmployerSigCanvasRef.current;
-    if (!c) return;
-    c.getContext("2d")!.clearRect(0, 0, c.width, c.height);
-    mileageFuelEmployerHasDrawnRef.current = false;
   };
 
   const handleSaveMileageFuelEmployerSignature = async () => {
     if (!mileageFuelEmployerDialog || !uid) return;
-    if (!mileageFuelEmployerHasDrawnRef.current) {
-      setMileageFuelEmployerError("Please draw your signature.");
+    if (!mileageFuelEmployerSigPad.hasContent()) {
+      setMileageFuelEmployerError("Please add your signature.");
       return;
     }
     setMileageFuelEmployerSaving(true);
@@ -5330,7 +5262,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         ? new Uint8Array(await (await fetch(existing.employeeSignatureDataUrl)).arrayBuffer())
         : undefined;
 
-      const dataUrl = mileageFuelEmployerSigCanvasRef.current!.toDataURL("image/png");
+      const dataUrl = mileageFuelEmployerSigPad.toDataURL();
+      if (!dataUrl) {
+        setMileageFuelEmployerError("Please add your signature.");
+        return;
+      }
       const employerSigBytes = new Uint8Array(await (await fetch(dataUrl)).arrayBuffer());
       const signatureUrl = await uploadSignableDocumentSignature(mileageFuelEmployerDialog.companyId, mileageFuelEmployerDialog.id, "hr_staff", dataUrl);
       const signedAt = new Date().toISOString();
@@ -5558,52 +5494,17 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [locationConsentEmployerDialog, setLocationConsentEmployerDialog] = useState<SignableDocument | null>(null);
   const [locationConsentEmployerSaving, setLocationConsentEmployerSaving] = useState(false);
   const [locationConsentEmployerError, setLocationConsentEmployerError] = useState<string | null>(null);
-  const locationConsentEmployerSigCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const locationConsentEmployerDrawingRef = useRef(false);
-  const locationConsentEmployerHasDrawnRef = useRef(false);
+  const locationConsentEmployerSigPad = useSignaturePad({ width: 400, height: 120 });
 
   const handleOpenLocationConsentEmployerDialog = (doc: SignableDocument) => {
     setLocationConsentEmployerDialog(doc);
     setLocationConsentEmployerError(null);
-    locationConsentEmployerHasDrawnRef.current = false;
-  };
-
-  const locationConsentEmployerPos = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    const c = locationConsentEmployerSigCanvasRef.current!;
-    const r = c.getBoundingClientRect();
-    return { x: ((e.clientX - r.left) / r.width) * c.width, y: ((e.clientY - r.top) / r.height) * c.height };
-  };
-  const locationConsentEmployerStartDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    locationConsentEmployerDrawingRef.current = true;
-    const ctx = locationConsentEmployerSigCanvasRef.current!.getContext("2d")!;
-    const { x, y } = locationConsentEmployerPos(e);
-    ctx.beginPath();
-    ctx.moveTo(x, y);
-    e.currentTarget.setPointerCapture(e.pointerId);
-  };
-  const locationConsentEmployerMoveDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!locationConsentEmployerDrawingRef.current) return;
-    const ctx = locationConsentEmployerSigCanvasRef.current!.getContext("2d")!;
-    const { x, y } = locationConsentEmployerPos(e);
-    ctx.lineTo(x, y);
-    ctx.strokeStyle = "#0f172a";
-    ctx.lineWidth = 2;
-    ctx.lineCap = "round";
-    ctx.stroke();
-    locationConsentEmployerHasDrawnRef.current = true;
-  };
-  const locationConsentEmployerEndDraw = () => { locationConsentEmployerDrawingRef.current = false; };
-  const locationConsentEmployerClearSignature = () => {
-    const c = locationConsentEmployerSigCanvasRef.current;
-    if (!c) return;
-    c.getContext("2d")!.clearRect(0, 0, c.width, c.height);
-    locationConsentEmployerHasDrawnRef.current = false;
   };
 
   const handleSaveLocationConsentEmployerSignature = async () => {
     if (!locationConsentEmployerDialog || !uid) return;
-    if (!locationConsentEmployerHasDrawnRef.current) {
-      setLocationConsentEmployerError("Please draw your signature.");
+    if (!locationConsentEmployerSigPad.hasContent()) {
+      setLocationConsentEmployerError("Please add your signature.");
       return;
     }
     setLocationConsentEmployerSaving(true);
@@ -5619,7 +5520,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         ? new Uint8Array(await (await fetch(existing.employeeSignatureDataUrl)).arrayBuffer())
         : undefined;
 
-      const dataUrl = locationConsentEmployerSigCanvasRef.current!.toDataURL("image/png");
+      const dataUrl = locationConsentEmployerSigPad.toDataURL();
+      if (!dataUrl) {
+        setLocationConsentEmployerError("Please add your signature.");
+        return;
+      }
       const employerSigBytes = new Uint8Array(await (await fetch(dataUrl)).arrayBuffer());
       const signatureUrl = await uploadSignableDocumentSignature(locationConsentEmployerDialog.companyId, locationConsentEmployerDialog.id, "hr_staff", dataUrl);
       const signedAt = new Date().toISOString();
@@ -5847,52 +5752,17 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [damageEmployerDialog, setDamageEmployerDialog] = useState<SignableDocument | null>(null);
   const [damageEmployerSaving, setDamageEmployerSaving] = useState(false);
   const [damageEmployerError, setDamageEmployerError] = useState<string | null>(null);
-  const damageEmployerSigCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const damageEmployerDrawingRef = useRef(false);
-  const damageEmployerHasDrawnRef = useRef(false);
+  const damageEmployerSigPad = useSignaturePad({ width: 400, height: 120 });
 
   const handleOpenDamageEmployerDialog = (doc: SignableDocument) => {
     setDamageEmployerDialog(doc);
     setDamageEmployerError(null);
-    damageEmployerHasDrawnRef.current = false;
-  };
-
-  const damageEmployerPos = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    const c = damageEmployerSigCanvasRef.current!;
-    const r = c.getBoundingClientRect();
-    return { x: ((e.clientX - r.left) / r.width) * c.width, y: ((e.clientY - r.top) / r.height) * c.height };
-  };
-  const damageEmployerStartDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    damageEmployerDrawingRef.current = true;
-    const ctx = damageEmployerSigCanvasRef.current!.getContext("2d")!;
-    const { x, y } = damageEmployerPos(e);
-    ctx.beginPath();
-    ctx.moveTo(x, y);
-    e.currentTarget.setPointerCapture(e.pointerId);
-  };
-  const damageEmployerMoveDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!damageEmployerDrawingRef.current) return;
-    const ctx = damageEmployerSigCanvasRef.current!.getContext("2d")!;
-    const { x, y } = damageEmployerPos(e);
-    ctx.lineTo(x, y);
-    ctx.strokeStyle = "#0f172a";
-    ctx.lineWidth = 2;
-    ctx.lineCap = "round";
-    ctx.stroke();
-    damageEmployerHasDrawnRef.current = true;
-  };
-  const damageEmployerEndDraw = () => { damageEmployerDrawingRef.current = false; };
-  const damageEmployerClearSignature = () => {
-    const c = damageEmployerSigCanvasRef.current;
-    if (!c) return;
-    c.getContext("2d")!.clearRect(0, 0, c.width, c.height);
-    damageEmployerHasDrawnRef.current = false;
   };
 
   const handleSaveDamageEmployerSignature = async () => {
     if (!damageEmployerDialog || !uid) return;
-    if (!damageEmployerHasDrawnRef.current) {
-      setDamageEmployerError("Please draw your signature.");
+    if (!damageEmployerSigPad.hasContent()) {
+      setDamageEmployerError("Please add your signature.");
       return;
     }
     setDamageEmployerSaving(true);
@@ -5908,7 +5778,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         ? new Uint8Array(await (await fetch(existing.employeeSignatureDataUrl)).arrayBuffer())
         : undefined;
 
-      const dataUrl = damageEmployerSigCanvasRef.current!.toDataURL("image/png");
+      const dataUrl = damageEmployerSigPad.toDataURL();
+      if (!dataUrl) {
+        setDamageEmployerError("Please add your signature.");
+        return;
+      }
       const employerSigBytes = new Uint8Array(await (await fetch(dataUrl)).arrayBuffer());
       const signatureUrl = await uploadSignableDocumentSignature(damageEmployerDialog.companyId, damageEmployerDialog.id, "hr_staff", dataUrl);
       const signedAt = new Date().toISOString();
@@ -6052,7 +5926,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         dmThreadId: thread.id,
         senderId: myProfileId,
         senderName: displayName || "HR",
-        body: `📋 Please complete the Contractor Data form: ${fillLink}`,
+        body: `📋 Please complete the Employee Data form: ${fillLink}`,
       });
 
       void logActivity({ action: "contractor_data_sent", targetType: "employee", targetId: recipient.id, targetLabel: recipient.name });
@@ -6115,14 +5989,14 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
   const handleDownloadContractorDataPdf = async (doc: SignableDocument) => {
     if (!doc.pdfUrl) return;
-    const name = (doc.formData as Partial<ContractorDataFormData>).employeeName || doc.recipientName || "contractor-data";
+    const name = (doc.formData as Partial<ContractorDataFormData>).employeeName || doc.recipientName || "employee-data";
     try {
       const res = await fetch(doc.pdfUrl);
       const blob = await res.blob();
       const blobUrl = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = blobUrl;
-      a.download = `Contractor Data - ${name}.pdf`;
+      a.download = `Employee Data - ${name}.pdf`;
       a.click();
       URL.revokeObjectURL(blobUrl);
     } catch {
@@ -6131,7 +6005,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   };
 
   const handleDeleteContractorData = async (doc: SignableDocument) => {
-    if (!window.confirm("Permanently delete this Contractor Data request?")) return;
+    if (!window.confirm("Permanently delete this Employee Data request?")) return;
     setContractorDataActionBusyId(doc.id);
     setContractorDataActionError(null);
     try {
@@ -6383,20 +6257,33 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       if (myProfileId) {
         const employeeName = (doc.formData as { employeeName?: string })?.employeeName || doc.recipientName || "an employee";
         const thread = await getOrCreateDmThread(myProfileId, recipient.id);
+        // Deep-links straight to the right Automated Forms tab (same
+        // ?tab= param VALID_HR_TABS/hrSearchParams already reads on load) —
+        // a real clickable link, not just an instruction to go find the
+        // tab manually.
+        const tabKey =
+          doc.documentType === "i9" ? "i9"
+          : doc.documentType === "meal_rest_break" ? "mealRestBreak"
+          : doc.documentType === "parts_responsibility" ? "partsResponsibility"
+          : doc.documentType === "mileage_fuel" ? "mileageFuel"
+          : doc.documentType === "location_consent" ? "locationConsent"
+          : doc.documentType === "damage" ? "damage"
+          : "wageAck";
+        const tabLink = `${getAppUrl()}/m/dashboard/hr-dashboard?tab=${tabKey}`;
         const body =
           doc.documentType === "i9"
-            ? `📋 Please complete Section 2 (document review + employer/AR signature) of Form I-9 for ${employeeName} — open the "Form I-9" tab in the HR Dashboard.`
+            ? `📋 Please complete Section 2 (document review + employer/AR signature) of Form I-9 for ${employeeName} — [open the Form I-9 tab](${tabLink}) in the HR Dashboard.`
             : doc.documentType === "meal_rest_break"
-            ? `📋 Please add the employer signature to the Employee Meal and Rest Break Policy Acknowledgment for ${employeeName} — open the "Meal & Rest Break Policy" tab in the HR Dashboard.`
+            ? `📋 Please add the employer signature to the Employee Meal and Rest Break Policy Acknowledgment for ${employeeName} — [open the Meal & Rest Break Policy tab](${tabLink}) in the HR Dashboard.`
             : doc.documentType === "parts_responsibility"
-            ? `📋 Please add the manager/supervisor signature to the Parts Responsibility and Technician Floor Protection Acknowledgment Form for ${employeeName} — open the "Parts Responsibility Form" tab in the HR Dashboard.`
+            ? `📋 Please add the manager/supervisor signature to the Parts Responsibility and Technician Floor Protection Acknowledgment Form for ${employeeName} — [open the Parts Responsibility and Technician Floor Protection Acknowledgment Form tab](${tabLink}) in the HR Dashboard.`
             : doc.documentType === "mileage_fuel"
-            ? `📋 Please add the employer/representative signature to the Personal Vehicle Mileage and Fuel Policy Agreement for ${employeeName} — open the "Mileage & Fuel Policy" tab in the HR Dashboard.`
+            ? `📋 Please add the employer/representative signature to the Personal Vehicle Mileage and Fuel Policy Agreement for ${employeeName} — [open the Mileage & Fuel Policy tab](${tabLink}) in the HR Dashboard.`
             : doc.documentType === "location_consent"
-            ? `📋 Please add the employer/representative signature to the Employee Mobile App Location Sharing Consent Agreement for ${employeeName} — open the "Location Sharing Consent" tab in the HR Dashboard.`
+            ? `📋 Please add the employer/representative signature to the Employee Mobile App Location Sharing Consent Agreement for ${employeeName} — [open the Location Sharing Consent tab](${tabLink}) in the HR Dashboard.`
             : doc.documentType === "damage"
-            ? `📋 Please add the employer/representative signature to the Damage, Part Loss, and Tool Penalty Commission Deduction Agreement for ${employeeName} — open the "Damage Agreement" tab in the HR Dashboard.`
-            : `📋 Please add the employer/representative signature to the Acknowledgment of Wage & Compensation Structure for ${employeeName} — open the "Acknowledgment of Wage" tab in the HR Dashboard.`;
+            ? `📋 Please add the employer/representative signature to the Damage, Part Loss, and Tool Penalty Commission Deduction Agreement for ${employeeName} — [open the Damage Agreement tab](${tabLink}) in the HR Dashboard.`
+            : `📋 Please add the employer/representative signature to the Acknowledgment of Wage & Compensation Structure for ${employeeName} — [open the Acknowledgment of Wage tab](${tabLink}) in the HR Dashboard.`;
         await sendMessage({
           dmThreadId: thread.id,
           senderId: myProfileId,
@@ -6453,11 +6340,12 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       ...sentMileageFuelForms.map((doc) => ({ doc, formLabel: "Mileage & Fuel Policy Agreement" })),
       ...sentLocationConsentForms.map((doc) => ({ doc, formLabel: "Location Sharing Consent Agreement" })),
       ...sentDamageForms.map((doc) => ({ doc, formLabel: "Damage Agreement" })),
-      ...sentContractorDataForms.map((doc) => ({ doc, formLabel: "Contractor Data" })),
+      ...sentContractorDataForms.map((doc) => ({ doc, formLabel: "Employee Data" })),
       ...sentDirectDepositForms.map((doc) => ({ doc, formLabel: "Direct Deposit Authorization" })),
+      ...sentSubstanceScreeningForms.map((doc) => ({ doc, formLabel: "Substance Screening & Conduct Agreement" })),
     ];
     return rows.sort((a, b) => new Date(b.doc.createdAt).getTime() - new Date(a.doc.createdAt).getTime());
-  }, [sentW8benForms, sentW4Forms, sentW9Forms, sentW4RForms, sentI9Forms, sentWageAckForms, sentCarIqAgreementForms, sentVehicleAgreementForms, sentEmployeeConfidentialityForms, sentMealRestBreakForms, sentPtoAckForms, sentPartsResponsibilityForms, sentMileageFuelForms, sentLocationConsentForms, sentDamageForms, sentContractorDataForms, sentDirectDepositForms]);
+  }, [sentW8benForms, sentW4Forms, sentW9Forms, sentW4RForms, sentI9Forms, sentWageAckForms, sentCarIqAgreementForms, sentVehicleAgreementForms, sentEmployeeConfidentialityForms, sentMealRestBreakForms, sentPtoAckForms, sentPartsResponsibilityForms, sentMileageFuelForms, sentLocationConsentForms, sentDamageForms, sentContractorDataForms, sentDirectDepositForms, sentSubstanceScreeningForms]);
 
   const [signedFormsSearch, setSignedFormsSearch] = useState("");
   const [signedFormsTypeFilter, setSignedFormsTypeFilter] = useState("");
@@ -6707,47 +6595,13 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [i9Section2Form, setI9Section2Form] = useState(I9_SECTION2_BLANK);
   const [i9Section2Saving, setI9Section2Saving] = useState(false);
   const [i9Section2Error, setI9Section2Error] = useState<string | null>(null);
-  const i9Section2SigCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const i9Section2DrawingRef = useRef(false);
-  const i9Section2HasDrawnRef = useRef(false);
+  const i9Section2SigPad = useSignaturePad({ width: 440, height: 100 });
 
   const handleOpenI9Section2 = (doc: SignableDocument) => {
     setI9Section2Dialog(doc);
     setI9Section2Form(I9_SECTION2_BLANK);
     setI9Section2Error(null);
-    i9Section2HasDrawnRef.current = false;
-  };
-
-  const i9Section2Pos = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    const c = i9Section2SigCanvasRef.current!;
-    const r = c.getBoundingClientRect();
-    return { x: ((e.clientX - r.left) / r.width) * c.width, y: ((e.clientY - r.top) / r.height) * c.height };
-  };
-  const i9Section2StartDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    i9Section2DrawingRef.current = true;
-    const ctx = i9Section2SigCanvasRef.current!.getContext("2d")!;
-    const { x, y } = i9Section2Pos(e);
-    ctx.beginPath();
-    ctx.moveTo(x, y);
-    e.currentTarget.setPointerCapture(e.pointerId);
-  };
-  const i9Section2MoveDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!i9Section2DrawingRef.current) return;
-    const ctx = i9Section2SigCanvasRef.current!.getContext("2d")!;
-    const { x, y } = i9Section2Pos(e);
-    ctx.lineTo(x, y);
-    ctx.strokeStyle = "#0f172a";
-    ctx.lineWidth = 2;
-    ctx.lineCap = "round";
-    ctx.stroke();
-    i9Section2HasDrawnRef.current = true;
-  };
-  const i9Section2EndDraw = () => { i9Section2DrawingRef.current = false; };
-  const i9Section2ClearSignature = () => {
-    const c = i9Section2SigCanvasRef.current;
-    if (!c) return;
-    c.getContext("2d")!.clearRect(0, 0, c.width, c.height);
-    i9Section2HasDrawnRef.current = false;
+    i9Section2SigPad.clear();
   };
 
   const handleSaveI9Section2 = async () => {
@@ -6772,8 +6626,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       setI9Section2Error("Fill in the employer/authorized representative and business info.");
       return;
     }
-    if (!i9Section2HasDrawnRef.current) {
-      setI9Section2Error("Please draw your signature.");
+    if (!i9Section2SigPad.hasContent()) {
+      setI9Section2Error("Please add your signature.");
       return;
     }
     setI9Section2Saving(true);
@@ -6789,7 +6643,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         ? new Uint8Array(await (await fetch(existing.employeeSignatureDataUrl)).arrayBuffer())
         : undefined;
 
-      const dataUrl = i9Section2SigCanvasRef.current!.toDataURL("image/png");
+      const dataUrl = i9Section2SigPad.toDataURL();
+      if (!dataUrl) {
+        setI9Section2Error("Please add your signature.");
+        return;
+      }
       const employerSigBytes = new Uint8Array(await (await fetch(dataUrl)).arrayBuffer());
       const signatureUrl = await uploadSignableDocumentSignature(i9Section2Dialog.companyId, i9Section2Dialog.id, "hr_staff", dataUrl);
       const signedAt = new Date().toISOString();
@@ -9976,15 +9834,16 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     { key: "wageAck", label: "Acknowledgment of Wage", count: sentWageAckAwaitingEmployerCount, icon: FileCheck },
     { key: "carIqAgreement", label: "Car IQ Technician Agreement", count: 0, icon: FileCheck },
     { key: "vehicleAgreement", label: "Company Vehicle Use Agreement", count: 0, icon: FileCheck },
-    { key: "contractorData", label: "Contractor Data", count: 0, icon: FileCheck },
     { key: "damage", label: "Damage Agreement", count: sentDamageAwaitingEmployerCount, icon: FileCheck },
     { key: "directDeposit", label: "Direct Deposit Authorization", count: 0, icon: FileCheck },
     { key: "employeeConfidentiality", label: "Employee Confidentiality Agreement", count: 0, icon: FileCheck },
+    { key: "contractorData", label: "Employee Data", count: 0, icon: FileCheck },
     { key: "locationConsent", label: "Location Sharing Consent", count: sentLocationConsentAwaitingEmployerCount, icon: FileCheck },
     { key: "mealRestBreak", label: "Meal & Rest Break Policy", count: sentMealRestBreakAwaitingEmployerCount, icon: FileCheck },
     { key: "mileageFuel", label: "Mileage & Fuel Policy", count: sentMileageFuelAwaitingEmployerCount, icon: FileCheck },
-    { key: "partsResponsibility", label: "Parts Responsibility Form", count: sentPartsResponsibilityAwaitingManagerCount, icon: FileCheck },
+    { key: "partsResponsibility", label: "Parts Responsibility and Technician Floor Protection Acknowledgment Form", count: sentPartsResponsibilityAwaitingManagerCount, icon: FileCheck },
     { key: "ptoAck", label: "PTO & Sick Leave Policy", count: 0, icon: FileCheck },
+    { key: "substanceScreening", label: "Substance Screening & Conduct Agreement", count: 0, icon: FileCheck },
   ] as const;
 
   // ── Tab groups — single source shared by the dropdown header nav and the
@@ -11410,6 +11269,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               <option value="Acknowledgment of Wage">Acknowledgment of Wage</option>
               <option value="Car IQ Technician Agreement">Car IQ Technician Agreement</option>
               <option value="Company Vehicle Use Agreement">Company Vehicle Use Agreement</option>
+              <option value="Substance Screening & Conduct Agreement">Substance Screening & Conduct Agreement</option>
             </select>
           </div>
           {(signedFormsSearch || signedFormsTypeFilter) && (
@@ -15735,6 +15595,208 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       </>
       )}
 
+      {activeTab === "substanceScreening" && (
+      <>
+      <div className="panel p-0 overflow-visible mt-4 relative z-20">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">Send Substance Screening & Conduct Agreement Request</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Pick a teammate — they'll get a link to fill in their name and sign the Substance Screening & Conduct Agreement. It comes back to you here automatically once submitted.</p>
+        </div>
+        <div className="p-4 flex flex-col md:flex-row gap-6">
+          <div className="flex flex-col gap-3 w-full md:max-w-sm md:shrink-0">
+            <div className="flex flex-col gap-1.5 pb-3 border-b border-white/10">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">External Link (no login needed)</label>
+              {substanceScreeningSentLink ? (
+                <div className="flex flex-col gap-2">
+                  <div className="rounded-md border border-green-500/30 bg-green-500/10 px-3 py-2.5">
+                    <p className="text-xs font-semibold text-green-300">Link generated for {substanceScreeningSentLink.recipientName}</p>
+                  </div>
+                  <div className="flex gap-2">
+                    <input type="text" readOnly value={substanceScreeningSentLink.link} onFocus={(e) => e.target.select()} className="glass-input text-xs py-1.5 px-3 rounded-md flex-1" />
+                    <button onClick={handleCopySubstanceScreeningSentLink} className="btn text-xs px-3 py-1.5 shrink-0">{substanceScreeningSentLinkCopied ? "Copied!" : "Copy"}</button>
+                  </div>
+                  <button onClick={() => setSubstanceScreeningSentLink(null)} className="btn text-xs px-3 py-1.5 w-fit">Done</button>
+                </div>
+              ) : (
+                <>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={substanceScreeningExternalName}
+                      onChange={(e) => setSubstanceScreeningExternalName(e.target.value)}
+                      placeholder="Type their name (optional)…"
+                      className="glass-input text-sm py-1.5 px-3 rounded-md flex-1"
+                    />
+                    <button
+                      onClick={handleGenerateExternalSubstanceScreening}
+                      disabled={substanceScreeningSending}
+                      className="btn text-sm px-3 py-1.5 disabled:opacity-50 shrink-0"
+                    >
+                      {substanceScreeningSending ? "Generating…" : "Generate Link"}
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground">No AHS account needed — they can open the link and fill it in without logging in.</p>
+                </>
+              )}
+            </div>
+
+            <div className="flex flex-col gap-1 relative">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient (AHS teammate)</label>
+              <input
+                type="text"
+                value={substanceScreeningRecipientSearch}
+                onChange={(e) => { setSubstanceScreeningRecipientSearch(e.target.value); setSubstanceScreeningRecipientId(""); setSubstanceScreeningRecipientDropdownOpen(true); }}
+                onFocus={() => setSubstanceScreeningRecipientDropdownOpen(true)}
+                onBlur={() => setTimeout(() => setSubstanceScreeningRecipientDropdownOpen(false), 150)}
+                placeholder="Search a teammate…"
+                className="glass-input text-sm py-1.5 px-3 rounded-md"
+              />
+              {substanceScreeningRecipientDropdownOpen && (
+                <div className="absolute z-50 top-full mt-1 w-full max-h-96 overflow-y-auto rounded-md border border-white/15 bg-slate-900 shadow-2xl">
+                  {filteredSubstanceScreeningRecipients.length === 0 ? (
+                    <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+                  ) : (
+                    filteredSubstanceScreeningRecipients.map((e) => (
+                      <button
+                        key={e.id}
+                        type="button"
+                        onMouseDown={(ev) => ev.preventDefault()}
+                        onClick={() => {
+                          setSubstanceScreeningRecipientId(e.id);
+                          setSubstanceScreeningRecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`);
+                          setSubstanceScreeningRecipientDropdownOpen(false);
+                        }}
+                        className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${substanceScreeningRecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                      >
+                        {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+
+            {substanceScreeningSendError && (
+              <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{substanceScreeningSendError}</p>
+            )}
+            <div className="flex items-center gap-2">
+              <button
+                onClick={toggleSubstanceScreeningPreview}
+                className="btn text-sm px-4 py-2 flex items-center gap-1.5"
+              >
+                Preview <ChevronDown className={`h-3.5 w-3.5 transition-transform ${substanceScreeningPreviewOpen ? "rotate-180" : ""}`} />
+              </button>
+              <button
+                onClick={handleSendSubstanceScreening}
+                disabled={!substanceScreeningRecipientId || substanceScreeningSending}
+                className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+              >
+                {substanceScreeningSending ? "Sending…" : "Send Request"}
+              </button>
+            </div>
+          </div>
+
+          <div className="flex-1 min-w-0">
+            {substanceScreeningPreviewOpen ? (
+              <div className="border border-white/10 rounded-md overflow-hidden bg-white/5 h-full" style={{ minHeight: 560 }}>
+                {substanceScreeningPreviewLoading || !substanceScreeningPreviewPdfUrl ? (
+                  <div className="h-full flex items-center justify-center text-sm text-muted-foreground" style={{ minHeight: 560 }}>Loading preview…</div>
+                ) : (
+                  <iframe src={substanceScreeningPreviewPdfUrl} title="Substance Screening & Conduct Agreement Preview" className="w-full border-0" style={{ height: 560 }} />
+                )}
+              </div>
+            ) : (
+              <div className="border border-dashed border-white/15 rounded-md flex items-center justify-center text-sm text-muted-foreground" style={{ minHeight: 560 }}>
+                Click "Preview" to see the document here.
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="panel p-0 overflow-hidden mt-4">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">Sent Substance Screening & Conduct Agreement Forms</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status.</p>
+        </div>
+        {substanceScreeningActionError && (
+          <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{substanceScreeningActionError}</p>
+        )}
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-white/10 bg-white/5">
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Employee</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent By</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Status</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sentSubstanceScreeningForms.length === 0 ? (
+                <tr><td colSpan={5} className="px-4 py-8 text-center text-muted-foreground text-sm">No requests sent yet.</td></tr>
+              ) : (
+                sentSubstanceScreeningForms.map((doc) => {
+                  const data = doc.formData as Partial<SubstanceScreeningFormData>;
+                  const recipient = employees.find((e) => e.id === doc.recipientId);
+                  const busy = substanceScreeningActionBusyId === doc.id;
+                  return (
+                    <tr key={doc.id} className="border-b border-white/5 hover:bg-white/5">
+                      <td className="px-4 py-3 font-medium">
+                        {doc.pdfUrl ? (
+                          <button type="button" onClick={() => setSubstanceScreeningDocPreview(doc)} className="text-blue-300 hover:text-blue-200 hover:underline text-left">
+                            {data.employeeName || recipient?.name || doc.recipientName || "—"}
+                          </button>
+                        ) : (
+                          data.employeeName || recipient?.name || doc.recipientName || "—"
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-muted-foreground">{doc.createdByName ?? "—"}</td>
+                      <td className="px-4 py-3">
+                        <span className={`px-2 py-1 rounded text-xs font-semibold ${
+                          doc.status === "signed" ? "bg-green-500/20 text-green-300"
+                          : doc.status === "cancelled" ? "bg-slate-500/20 text-slate-400"
+                          : "bg-yellow-500/20 text-yellow-300"
+                        }`}>
+                          {doc.status === "signed" ? "Submitted" : doc.status === "cancelled" ? "Cancelled" : "Awaiting Completion"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{new Date(doc.createdAt).toLocaleDateString()}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {doc.status === "pending_signature" && (
+                            <button type="button" onClick={() => handleCopySubstanceScreeningLink(doc)} className="btn text-[10px] px-2 py-1">
+                              Copy Link
+                            </button>
+                          )}
+                          {doc.pdfUrl && (
+                            <button type="button" onClick={() => handleDownloadSubstanceScreeningPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
+                              Download PDF
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => handleDeleteSubstanceScreening(doc)}
+                            title="Permanently delete this request"
+                            className="text-muted-foreground hover:text-red-300 disabled:opacity-50"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      </>
+      )}
+
       {activeTab === "mealRestBreak" && (
       <>
       <div className="panel p-0 overflow-visible mt-4 relative z-20">
@@ -17023,7 +17085,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       <>
       <div className="panel p-0 overflow-visible mt-4 relative z-20">
         <div className="px-4 py-4 border-b border-white/10">
-          <h2 className="font-semibold text-sm">Send Contractor Data Request</h2>
+          <h2 className="font-semibold text-sm">Send Employee Data Request</h2>
           <p className="text-[10px] text-muted-foreground mt-0.5">Pick a teammate — they'll get a link to fill in their contact/address/identity info, upload photos of their SSN card and driver's license, and sign. It comes back to you here automatically once submitted.</p>
         </div>
         <div className="p-4 flex flex-col md:flex-row gap-6">
@@ -17126,7 +17188,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                 {contractorDataPreviewLoading || !contractorDataPreviewPdfUrl ? (
                   <div className="h-full flex items-center justify-center text-sm text-muted-foreground" style={{ minHeight: 560 }}>Loading preview…</div>
                 ) : (
-                  <iframe src={contractorDataPreviewPdfUrl} title="Contractor Data Preview" className="w-full border-0" style={{ height: 560 }} />
+                  <iframe src={contractorDataPreviewPdfUrl} title="Employee Data Preview" className="w-full border-0" style={{ height: 560 }} />
                 )}
               </div>
             ) : (
@@ -17140,7 +17202,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
       <div className="panel p-0 overflow-hidden mt-4">
         <div className="px-4 py-4 border-b border-white/10">
-          <h2 className="font-semibold text-sm">Sent Contractor Data Forms</h2>
+          <h2 className="font-semibold text-sm">Sent Employee Data Forms</h2>
           <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status.</p>
         </div>
         {contractorDataActionError && (
@@ -17502,6 +17564,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         </div>
       )}
 
+
       {/* W-4R Sent History — PDF preview, same inline-frame pattern used for W-8BEN/W-4/W-9 Sent History */}
       {w4rDocPreview && (
         <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => setW4rDocPreview(null)}>
@@ -17528,6 +17591,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         </div>
       )}
 
+
       {/* Car IQ Technician Agreement Sent History — PDF preview, same inline-frame pattern used for W-8BEN/W-4/W-9/W-4R Sent History */}
       {carIqDocPreview && (
         <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => setCarIqDocPreview(null)}>
@@ -17550,6 +17614,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           </div>
         </div>
       )}
+
 
       {/* Company Vehicle Use Agreement Sent History — PDF preview, same inline-frame pattern used for W-8BEN/W-4/W-9/W-4R/Car IQ Sent History */}
       {vehicleDocPreview && (
@@ -17574,6 +17639,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         </div>
       )}
 
+
       {/* Employee Confidentiality Agreement Sent History — PDF preview, same inline-frame pattern used for W-8BEN/W-4/W-9/W-4R/Car IQ/Vehicle Agreement Sent History */}
       {confidentialityDocPreview && (
         <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => setConfidentialityDocPreview(null)}>
@@ -17592,6 +17658,29 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             </div>
             <div className="flex-1 overflow-hidden bg-slate-950">
               {confidentialityDocPreview.pdfUrl && <iframe src={confidentialityDocPreview.pdfUrl} title="Employee Confidentiality Agreement" className="w-full h-full min-h-[70vh] border-0" />}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Substance Screening & Conduct Agreement Sent History — PDF preview, same inline-frame pattern used for W-8BEN/W-4/W-9/W-4R/Car IQ/Vehicle Agreement/Employee Confidentiality Sent History */}
+      {substanceScreeningDocPreview && (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => setSubstanceScreeningDocPreview(null)}>
+          <div className="bg-slate-900 border border-white/10 rounded-lg shadow-2xl w-full max-w-6xl h-[92vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold">{(substanceScreeningDocPreview.formData as Partial<SubstanceScreeningFormData>).employeeName || "—"}</p>
+                <p className="text-[10px] text-muted-foreground">Submitted {new Date(substanceScreeningDocPreview.signedAt ?? substanceScreeningDocPreview.createdAt).toLocaleString()}</p>
+              </div>
+              <div className="flex items-center gap-2">
+                {substanceScreeningDocPreview.pdfUrl && (
+                  <a href={substanceScreeningDocPreview.pdfUrl} target="_blank" rel="noopener noreferrer" className="btn text-xs px-2.5 py-1.5 flex items-center gap-1"><Download className="h-3 w-3" /> Download</a>
+                )}
+                <button type="button" onClick={() => setSubstanceScreeningDocPreview(null)} className="btn text-xs px-2.5 py-1.5">Close</button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-hidden bg-slate-950">
+              {substanceScreeningDocPreview.pdfUrl && <iframe src={substanceScreeningDocPreview.pdfUrl} title="Substance Screening & Conduct Agreement" className="w-full h-full min-h-[70vh] border-0" />}
             </div>
           </div>
         </div>
@@ -17633,19 +17722,13 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               Employee Meal and Rest Break Policy Acknowledgment.
             </p>
 
-            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2 block">Draw your signature</label>
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2 block">Add your signature</label>
             <canvas
-              ref={mealRestBreakEmployerSigCanvasRef}
-              width={400}
-              height={120}
-              onPointerDown={mealRestBreakEmployerStartDraw}
-              onPointerMove={mealRestBreakEmployerMoveDraw}
-              onPointerUp={mealRestBreakEmployerEndDraw}
-              onPointerLeave={mealRestBreakEmployerEndDraw}
-              className="bg-white rounded-md border border-white/15 w-full touch-none cursor-crosshair"
+              {...mealRestBreakEmployerSigPad.canvasProps}
+              className={`bg-white rounded-md border border-white/15 w-full ${mealRestBreakEmployerSigPad.canvasProps.className}`}
             />
-            <div className="flex gap-2 mt-2">
-              <button onClick={mealRestBreakEmployerClearSignature} className="btn text-xs px-3 py-1.5">Clear</button>
+            <div className="flex justify-center mt-2">
+              <SignaturePadControls pad={mealRestBreakEmployerSigPad} />
             </div>
 
             {mealRestBreakEmployerError && (
@@ -17724,19 +17807,13 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               Parts Responsibility and Technician Floor Protection Acknowledgment Form.
             </p>
 
-            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2 block">Draw your signature</label>
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2 block">Add your signature</label>
             <canvas
-              ref={partsResponsibilityManagerSigCanvasRef}
-              width={400}
-              height={120}
-              onPointerDown={partsResponsibilityManagerStartDraw}
-              onPointerMove={partsResponsibilityManagerMoveDraw}
-              onPointerUp={partsResponsibilityManagerEndDraw}
-              onPointerLeave={partsResponsibilityManagerEndDraw}
-              className="bg-white rounded-md border border-white/15 w-full touch-none cursor-crosshair"
+              {...partsResponsibilityManagerSigPad.canvasProps}
+              className={`bg-white rounded-md border border-white/15 w-full ${partsResponsibilityManagerSigPad.canvasProps.className}`}
             />
-            <div className="flex gap-2 mt-2">
-              <button onClick={partsResponsibilityManagerClearSignature} className="btn text-xs px-3 py-1.5">Clear</button>
+            <div className="flex justify-center mt-2">
+              <SignaturePadControls pad={partsResponsibilityManagerSigPad} />
             </div>
 
             {partsResponsibilityManagerError && (
@@ -17792,19 +17869,13 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               Personal Vehicle Mileage and Fuel Policy Agreement.
             </p>
 
-            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2 block">Draw your signature</label>
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2 block">Add your signature</label>
             <canvas
-              ref={mileageFuelEmployerSigCanvasRef}
-              width={400}
-              height={120}
-              onPointerDown={mileageFuelEmployerStartDraw}
-              onPointerMove={mileageFuelEmployerMoveDraw}
-              onPointerUp={mileageFuelEmployerEndDraw}
-              onPointerLeave={mileageFuelEmployerEndDraw}
-              className="bg-white rounded-md border border-white/15 w-full touch-none cursor-crosshair"
+              {...mileageFuelEmployerSigPad.canvasProps}
+              className={`bg-white rounded-md border border-white/15 w-full ${mileageFuelEmployerSigPad.canvasProps.className}`}
             />
-            <div className="flex gap-2 mt-2">
-              <button onClick={mileageFuelEmployerClearSignature} className="btn text-xs px-3 py-1.5">Clear</button>
+            <div className="flex justify-center mt-2">
+              <SignaturePadControls pad={mileageFuelEmployerSigPad} />
             </div>
 
             {mileageFuelEmployerError && (
@@ -17860,19 +17931,13 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               Employee Mobile App Location Sharing Consent Agreement.
             </p>
 
-            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2 block">Draw your signature</label>
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2 block">Add your signature</label>
             <canvas
-              ref={locationConsentEmployerSigCanvasRef}
-              width={400}
-              height={120}
-              onPointerDown={locationConsentEmployerStartDraw}
-              onPointerMove={locationConsentEmployerMoveDraw}
-              onPointerUp={locationConsentEmployerEndDraw}
-              onPointerLeave={locationConsentEmployerEndDraw}
-              className="bg-white rounded-md border border-white/15 w-full touch-none cursor-crosshair"
+              {...locationConsentEmployerSigPad.canvasProps}
+              className={`bg-white rounded-md border border-white/15 w-full ${locationConsentEmployerSigPad.canvasProps.className}`}
             />
-            <div className="flex gap-2 mt-2">
-              <button onClick={locationConsentEmployerClearSignature} className="btn text-xs px-3 py-1.5">Clear</button>
+            <div className="flex justify-center mt-2">
+              <SignaturePadControls pad={locationConsentEmployerSigPad} />
             </div>
 
             {locationConsentEmployerError && (
@@ -17928,19 +17993,13 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               Damage, Part Loss, and Tool Penalty Commission Deduction Agreement.
             </p>
 
-            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2 block">Draw your signature</label>
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2 block">Add your signature</label>
             <canvas
-              ref={damageEmployerSigCanvasRef}
-              width={400}
-              height={120}
-              onPointerDown={damageEmployerStartDraw}
-              onPointerMove={damageEmployerMoveDraw}
-              onPointerUp={damageEmployerEndDraw}
-              onPointerLeave={damageEmployerEndDraw}
-              className="bg-white rounded-md border border-white/15 w-full touch-none cursor-crosshair"
+              {...damageEmployerSigPad.canvasProps}
+              className={`bg-white rounded-md border border-white/15 w-full ${damageEmployerSigPad.canvasProps.className}`}
             />
-            <div className="flex gap-2 mt-2">
-              <button onClick={damageEmployerClearSignature} className="btn text-xs px-3 py-1.5">Clear</button>
+            <div className="flex justify-center mt-2">
+              <SignaturePadControls pad={damageEmployerSigPad} />
             </div>
 
             {damageEmployerError && (
@@ -17977,7 +18036,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               </div>
             </div>
             <div className="flex-1 overflow-hidden bg-slate-950">
-              {contractorDataDocPreview.pdfUrl && <iframe src={contractorDataDocPreview.pdfUrl} title="Contractor Data" className="w-full h-full min-h-[70vh] border-0" />}
+              {contractorDataDocPreview.pdfUrl && <iframe src={contractorDataDocPreview.pdfUrl} title="Employee Data" className="w-full h-full min-h-[70vh] border-0" />}
             </div>
           </div>
         </div>
@@ -18051,6 +18110,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           </div>
         </div>
       )}
+
 
       {/* I-9 Sent History PDF preview — same inline-frame pattern used for W-8BEN/W-4/W-9 Sent History */}
       {i9DocPreview && (
@@ -18176,16 +18236,12 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               <div className="flex flex-col gap-1">
                 <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Employer/AR signature</label>
                 <canvas
-                  ref={i9Section2SigCanvasRef}
-                  width={440}
-                  height={100}
-                  onPointerDown={i9Section2StartDraw}
-                  onPointerMove={i9Section2MoveDraw}
-                  onPointerUp={i9Section2EndDraw}
-                  onPointerLeave={i9Section2EndDraw}
-                  className="touch-none cursor-crosshair bg-white rounded-md border border-white/20 w-full max-w-[440px] h-[100px]"
+                  {...i9Section2SigPad.canvasProps}
+                  className={`bg-white rounded-md border border-white/20 w-full max-w-[440px] h-[100px] ${i9Section2SigPad.canvasProps.className}`}
                 />
-                <button type="button" onClick={i9Section2ClearSignature} className="btn text-xs px-3 py-1.5 w-fit mt-1">Clear signature</button>
+                <div className="flex justify-center mt-1">
+                  <SignaturePadControls pad={i9Section2SigPad} />
+                </div>
               </div>
             </div>
 
@@ -18242,19 +18298,13 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               Acknowledgment of Wage & Compensation Structure.
             </p>
 
-            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2 block">Draw your signature</label>
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2 block">Add your signature</label>
             <canvas
-              ref={wageAckEmployerSigCanvasRef}
-              width={400}
-              height={120}
-              onPointerDown={wageAckEmployerStartDraw}
-              onPointerMove={wageAckEmployerMoveDraw}
-              onPointerUp={wageAckEmployerEndDraw}
-              onPointerLeave={wageAckEmployerEndDraw}
-              className="bg-white rounded-md border border-white/15 w-full touch-none cursor-crosshair"
+              {...wageAckEmployerSigPad.canvasProps}
+              className={`bg-white rounded-md border border-white/15 w-full ${wageAckEmployerSigPad.canvasProps.className}`}
             />
-            <div className="flex gap-2 mt-2">
-              <button onClick={wageAckEmployerClearSignature} className="btn text-xs px-3 py-1.5">Clear</button>
+            <div className="flex justify-center mt-2">
+              <SignaturePadControls pad={wageAckEmployerSigPad} />
             </div>
 
             {wageAckEmployerError && (

@@ -63,19 +63,31 @@ export async function getSalaryHistory(profileId: string): Promise<SalaryEntryRo
   return (data ?? []).map(mapRow);
 }
 
+// Supabase caps an unbounded select at 1000 rows — this builds the
+// "current pay rate per employee" map, so truncation here could silently
+// apply the wrong pay rate to some employees in payroll math. Page through
+// in chunks of 1000 instead.
+const PAGE_SIZE = 1000;
+
 /** Every rate-change row for the caller's company — used to build a current-rate map for every employee in one query. */
 export async function getCompanySalaryEntries(): Promise<SalaryEntryRow[]> {
-  const { data, error } = await supabase
-    .from("salary_entries")
-    .select(SELECT_COLUMNS)
-    .not("profile_id", "is", null)
-    .order("effective_date", { ascending: false })
-    .order("created_at", { ascending: false });
-  if (error) {
-    console.error("getCompanySalaryEntries error:", error.message);
-    return [];
+  const all: SalaryEntryRow[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from("salary_entries")
+      .select(SELECT_COLUMNS)
+      .not("profile_id", "is", null)
+      .order("effective_date", { ascending: false })
+      .order("created_at", { ascending: false })
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) {
+      console.error("getCompanySalaryEntries error:", error.message);
+      return all;
+    }
+    all.push(...(data ?? []).map(mapRow));
+    if (!data || data.length < PAGE_SIZE) break;
   }
-  return (data ?? []).map(mapRow);
+  return all;
 }
 
 /** Record a new rate/salary — a raise/promotion/demotion/adjustment effective from a given date. */

@@ -17,15 +17,10 @@
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import type { PartsResponsibilityFormData } from "./partsResponsibilityFormTemplate";
 import { addLogoHeader } from "./pdfLogoHeader";
+import { dateBlankPositions, fmtDateParts } from "./pdfDateBlankSplit";
 
-const fmtDate = (v: string) => {
-  if (!v) return "";
-  const d = new Date(v);
-  if (isNaN(d.getTime())) return v;
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${mm} / ${dd} / ${d.getFullYear()}`;
-};
+/** x position of each of the three date blanks on page 2's two "Date:" lines (technician y=653.62, manager y=519.79) — see pdfDateBlankSplit.ts; both labels start at x=101.54. */
+const PARTS_RESP_DATE_X = dateBlankPositions(101.54);
 
 /** Stamps the company logo into the header of every page — see pdfLogoHeader.ts. Applied here, not just in fillPartsResponsibilityPdf, so the interactive fill page (which renders these same blank bytes straight to canvas via pdf.js) shows it too. */
 export async function loadBlankPartsResponsibilityBytes(): Promise<Uint8Array> {
@@ -61,7 +56,10 @@ export async function fillPartsResponsibilityPdf(
     if (!text) return;
     page2.drawText(text, { x, y, size, font, color: rgb(0, 0, 0.545) });
   };
-  draw2(fmtDate(data.technicianDateSigned), 105, 653.6, 9);
+  const technicianDateParts = fmtDateParts(data.technicianDateSigned);
+  draw2(technicianDateParts.mm, PARTS_RESP_DATE_X.mm, 653.6, 9);
+  draw2(technicianDateParts.dd, PARTS_RESP_DATE_X.dd, 653.6, 9);
+  draw2(technicianDateParts.yyyy, PARTS_RESP_DATE_X.yyyy, 653.6, 9);
   draw2(data.employeeName, 212, 628.7);
 
   if (technicianSigBytes) {
@@ -77,7 +75,10 @@ export async function fillPartsResponsibilityPdf(
     const scale = Math.min(maxW / png.width, maxH / png.height, 1);
     page2.drawImage(png, { x: 234, y: 561.7, width: png.width * scale, height: png.height * scale });
   }
-  draw2(fmtDate(data.managerDateSigned), 105, 519.8, 9);
+  const managerDateParts = fmtDateParts(data.managerDateSigned);
+  draw2(managerDateParts.mm, PARTS_RESP_DATE_X.mm, 519.8, 9);
+  draw2(managerDateParts.dd, PARTS_RESP_DATE_X.dd, 519.8, 9);
+  draw2(managerDateParts.yyyy, PARTS_RESP_DATE_X.yyyy, 519.8, 9);
 
   return pdfDoc.save();
 }

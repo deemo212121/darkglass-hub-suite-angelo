@@ -155,7 +155,7 @@ export function buildContractorDataBodyMarkup(data: ContractorDataFormData, logo
   return `
     <div class="cdata-container">
       <div class="cdata-header">
-        <h1>CONTRACTOR DATA</h1>
+        <h1>EMPLOYEE DATA</h1>
         ${logoDataUrl ? `<img src="${logoDataUrl}" alt="US In Home Services" />` : ""}
       </div>
 

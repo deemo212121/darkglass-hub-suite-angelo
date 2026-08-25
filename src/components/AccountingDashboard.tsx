@@ -98,6 +98,12 @@ const EXCHANGE_RATE = 57; // 1 USD = 57 PHP
 // clock-in/out save flow) — same convention as PayrollCalculationPage.tsx.
 const REGULAR_HOURS_PER_DAY = 8;
 
+// Supabase caps an unbounded select at 1000 rows — the profiles,
+// salary_entries, and payroll_line_items queries in fetchData below have no
+// row limit (payroll_line_items has no filter at all). Page through each in
+// chunks of 1000 instead.
+const PAGE_SIZE = 1000;
+
 // Mileage tab's column visibility picker — same pattern as Part Receive's
 // own Columns3 button (PartReceive.tsx): a checklist of every column,
 // persisted to localStorage so it stays put between visits.
@@ -899,10 +905,50 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         mileageRes,
         repairStatusRes,
       ] = await Promise.all([
-        supabase.from("profiles").select("id,display_name,username,role,extra_roles,assigned_branch,email,off_days,required_check_in,required_check_out,payroll_excluded,is_active").neq("role", "SUPERSUPERADMIN"),
-        supabase.from("salary_entries").select("profile_id,effective_date,compensation_type,hourly_rate,annual_salary,created_at").not("profile_id", "is", null).order("effective_date", { ascending: false }).order("created_at", { ascending: false }),
+        (async () => {
+          const all: any[] = [];
+          for (let from = 0; ; from += PAGE_SIZE) {
+            const { data, error } = await supabase
+              .from("profiles")
+              .select("id,display_name,username,role,extra_roles,assigned_branch,email,off_days,required_check_in,required_check_out,payroll_excluded,is_active")
+              .neq("role", "SUPERSUPERADMIN")
+              .range(from, from + PAGE_SIZE - 1);
+            if (error) return { data: null, error };
+            all.push(...(data ?? []));
+            if (!data || data.length < PAGE_SIZE) break;
+          }
+          return { data: all, error: null };
+        })(),
+        (async () => {
+          const all: any[] = [];
+          for (let from = 0; ; from += PAGE_SIZE) {
+            const { data, error } = await supabase
+              .from("salary_entries")
+              .select("profile_id,effective_date,compensation_type,hourly_rate,annual_salary,created_at")
+              .not("profile_id", "is", null)
+              .order("effective_date", { ascending: false })
+              .order("created_at", { ascending: false })
+              .range(from, from + PAGE_SIZE - 1);
+            if (error) return { data: null, error };
+            all.push(...(data ?? []));
+            if (!data || data.length < PAGE_SIZE) break;
+          }
+          return { data: all, error: null };
+        })(),
         supabase.from("payroll_runs").select("id,period_start,period_end,status,generated_at").order("generated_at", { ascending: false }),
-        supabase.from("payroll_line_items").select("payroll_run_id,profile_id,hours_worked,overtime_hours,hourly_rate,regular_pay,overtime_pay,gross_pay,net_pay,currency,extra_pay,notes,paid,paid_at,compensation_type,annual_salary"),
+        (async () => {
+          const all: any[] = [];
+          for (let from = 0; ; from += PAGE_SIZE) {
+            const { data, error } = await supabase
+              .from("payroll_line_items")
+              .select("payroll_run_id,profile_id,hours_worked,overtime_hours,hourly_rate,regular_pay,overtime_pay,gross_pay,net_pay,currency,extra_pay,notes,paid,paid_at,compensation_type,annual_salary")
+              .range(from, from + PAGE_SIZE - 1);
+            if (error) return { data: null, error };
+            all.push(...(data ?? []));
+            if (!data || data.length < PAGE_SIZE) break;
+          }
+          return { data: all, error: null };
+        })(),
         supabase.from("payroll_audit_log").select("action,employee_name,details,amount,created_at").order("created_at", { ascending: false }).limit(100),
         getCompanyPtoRequests().catch((err) => { console.error("Failed to load PTO requests:", err); return [] as PtoRequestRow[]; }),
         // Best-effort — generatePayroll's pending-corrections gate just has

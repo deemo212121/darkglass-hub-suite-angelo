@@ -1,8 +1,8 @@
 import { supabase } from "./client";
 import { deleteAgentNote } from "./csrAgentNotes";
 
-export type SignableDocumentType = "warning_form" | "w8ben" | "w4" | "w9" | "w4r" | "i9" | "wage_ack" | "car_iq_agreement" | "vehicle_agreement" | "employee_confidentiality" | "meal_rest_break" | "pto_ack" | "parts_responsibility" | "mileage_fuel" | "location_consent" | "damage" | "contractor_data" | "direct_deposit" | "promotion_form" | "action_plan_form" | "termination_form";
-/** "executive" only applies to promotion_form documents (see migration 0165) — every other document type just never uses that slot. */
+export type SignableDocumentType = "warning_form" | "w8ben" | "w4" | "w9" | "w4r" | "i9" | "wage_ack" | "car_iq_agreement" | "vehicle_agreement" | "employee_confidentiality" | "meal_rest_break" | "pto_ack" | "parts_responsibility" | "mileage_fuel" | "location_consent" | "damage" | "contractor_data" | "direct_deposit" | "promotion_form" | "action_plan_form" | "termination_form" | "substance_screening";
+/** "executive" only applies to promotion_form documents (see migration 0166) — every other document type just never uses that slot. */
 export type SignatureSlot = "employee" | "manager" | "senior_manager" | "hr_staff" | "executive";
 export type SignableDocumentStatus = "pending_signature" | "signed" | "confirmed" | "cancelled";
 
@@ -94,15 +94,25 @@ export async function getSignableDocument(id: string): Promise<SignableDocument 
   return data ? mapRow(data) : null;
 }
 
+// Supabase caps an unbounded select at 1000 rows — a company's full
+// signable-document history can exceed that. Page through in chunks of 1000.
+const PAGE_SIZE = 1000;
+
 /** Every warning-form document company-wide, most recent first — feeds the "Sent Warning Forms" tracking table in ReportHRDaily.tsx. */
 export async function getSignableDocuments(documentType: SignableDocumentType = "warning_form"): Promise<SignableDocument[]> {
-  const { data, error } = await supabase
-    .from("hr_signable_documents")
-    .select(SELECT)
-    .eq("document_type", documentType)
-    .order("created_at", { ascending: false });
-  if (error) throw new Error(error.message);
-  return (data ?? []).map(mapRow);
+  const all: SignableDocument[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from("hr_signable_documents")
+      .select(SELECT)
+      .eq("document_type", documentType)
+      .order("created_at", { ascending: false })
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) throw new Error(error.message);
+    all.push(...(data ?? []).map(mapRow));
+    if (!data || data.length < PAGE_SIZE) break;
+  }
+  return all;
 }
 
 /**

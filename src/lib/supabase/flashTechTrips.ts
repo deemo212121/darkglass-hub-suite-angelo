@@ -63,19 +63,29 @@ function mapExpenseRow(row: any): ExpenseRow {
   };
 }
 
+// Supabase caps an unbounded select at 1000 rows — a company's full Flash
+// Tech trip history can exceed that. Page through in chunks of 1000.
+const PAGE_SIZE = 1000;
+
 /** Every Flash Tech trip for the caller's company, with its linked expenses (if any) attached. */
 export async function getCompanyFlashTechTrips(): Promise<FlashTechTrip[]> {
-  const { data: tripRows, error } = await supabase
-    .from("flash_tech_trips")
-    .select(
-      "id, technician_profile_id, technician_name, origin_location, destination_location, start_date, end_date, notes, created_by, created_by_name, created_at"
-    )
-    .order("start_date", { ascending: true });
-  if (error) {
-    console.error("getCompanyFlashTechTrips error:", error.message);
-    return [];
+  const tripRows: any[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data: page, error } = await supabase
+      .from("flash_tech_trips")
+      .select(
+        "id, technician_profile_id, technician_name, origin_location, destination_location, start_date, end_date, notes, created_by, created_by_name, created_at"
+      )
+      .order("start_date", { ascending: true })
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) {
+      console.error("getCompanyFlashTechTrips error:", error.message);
+      return [];
+    }
+    tripRows.push(...(page ?? []));
+    if (!page || page.length < PAGE_SIZE) break;
   }
-  const trips = (tripRows ?? []).map(mapTripRow);
+  const trips = tripRows.map(mapTripRow);
   if (trips.length === 0) return [];
 
   const tripIds = trips.map((t) => t.id);

@@ -11,6 +11,7 @@
  */
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { CheckCircle2, ChevronLeft, ChevronRight, Circle, Loader2, Menu, X } from "lucide-react";
+import { useAuth } from "@/lib/auth";
 import { getSignableDocument, type SignableDocument } from "@/lib/supabase/signableDocuments";
 import { signableDocumentLabel } from "@/lib/signableDocumentRegistry";
 import { INTERNAL_SIGNABLE_DOCUMENT_COMPONENTS } from "@/lib/signableDocumentComponents";
@@ -26,6 +27,7 @@ function isFinished(doc: SignableDocument): boolean {
 }
 
 export function SignBundlePage() {
+  const { ready, uid } = useAuth();
   const ids = useMemo(parseIds, []);
   const [docs, setDocs] = useState<Record<string, SignableDocument | null>>({});
   const [loading, setLoading] = useState(true);
@@ -42,6 +44,12 @@ export function SignBundlePage() {
       setLoading(false);
       return;
     }
+    // Every link into this page opens a fresh tab where Firebase auth (and the
+    // Supabase token exchange it feeds) has to rehydrate from scratch — fetching
+    // before that finishes runs the query unauthenticated, so RLS silently
+    // returns zero rows instead of erroring (see FillCarIqAgreementPage.tsx etc.
+    // for the same gate).
+    if (!ready || !uid) return;
     let cancelled = false;
     (async () => {
       setLoading(true);
@@ -62,7 +70,7 @@ export function SignBundlePage() {
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [ready, uid]);
 
   const currentId = ids[index];
   const currentDoc = currentId ? docs[currentId] : null;

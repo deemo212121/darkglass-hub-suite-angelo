@@ -72,16 +72,34 @@ function fromRow(r: any): Candidate {
   };
 }
 
+// Supabase caps an unbounded select at 1000 rows — a company's full
+// candidate pipeline can exceed that. Page through in chunks of 1000.
+// (Named distinctly from getEomHiringReport's own PAGE_SIZE further down —
+// same file, same fix, but a separate function's constant.)
+const CANDIDATES_PAGE_SIZE = 1000;
+
 export async function getCandidates(): Promise<Candidate[]> {
-  let { data, error }: { data: any[] | null; error: any } = await supabase
-    .from("hr_candidates")
-    .select(SELECT)
-    .order("created_at", { ascending: false });
-  if (isMissingColumnError(error)) {
-    ({ data, error } = await supabase.from("hr_candidates").select(SELECT_LEGACY).order("created_at", { ascending: false }));
+  const all: any[] = [];
+  let select = SELECT;
+  for (let from = 0; ; from += CANDIDATES_PAGE_SIZE) {
+    let { data, error }: { data: any[] | null; error: any } = await supabase
+      .from("hr_candidates")
+      .select(select)
+      .order("created_at", { ascending: false })
+      .range(from, from + CANDIDATES_PAGE_SIZE - 1);
+    if (isMissingColumnError(error)) {
+      select = SELECT_LEGACY;
+      ({ data, error } = await supabase
+        .from("hr_candidates")
+        .select(select)
+        .order("created_at", { ascending: false })
+        .range(from, from + CANDIDATES_PAGE_SIZE - 1));
+    }
+    if (error) throw new Error(error.message);
+    all.push(...(data ?? []));
+    if (!data || data.length < CANDIDATES_PAGE_SIZE) break;
   }
-  if (error) throw new Error(error.message);
-  return (data ?? []).map(fromRow);
+  return all.map(fromRow);
 }
 
 export async function addCandidate(input: {
@@ -357,27 +375,44 @@ async function getCvForwardDetails(rangeStart?: string, rangeEnd?: string): Prom
  * month still shows up this month if nothing has changed since — a real
  * point-in-time snapshot, not a tally of this month's events.
  */
+// Supabase caps an unbounded select at 1000 rows — this only has an upper
+// bound (created_at < nextMonth), no lower bound, so it fetches all history
+// since day one. Page through in chunks of 1000 instead.
+const PAGE_SIZE = 1000;
+
 export async function getEomHiringReport(yearMonth: string): Promise<EodHiringRow[]> {
   const [y, m] = yearMonth.split("-").map(Number);
   const start = `${yearMonth}-01T00:00:00`;
   const nextMonth = m === 12 ? `${y + 1}-01-01T00:00:00` : `${y}-${String(m + 1).padStart(2, "0")}-01T00:00:00`;
 
-  const [{ data, error }, targets, forwards] = await Promise.all([
-    supabase
-      .from("hr_candidate_status_history")
-      .select("candidate_id, position, branch, to_status, effective_date, created_at, candidate:candidate_id (full_name)")
-      .lt("created_at", nextMonth)
-      .order("created_at", { ascending: true }),
+  const [data, targets, forwards] = await Promise.all([
+    (async () => {
+      const all: any[] = [];
+      for (let from = 0; ; from += PAGE_SIZE) {
+        const { data, error } = await supabase
+          .from("hr_candidate_status_history")
+          .select("candidate_id, position, branch, to_status, effective_date, created_at, candidate:candidate_id (full_name)")
+          .lt("created_at", nextMonth)
+          .order("created_at", { ascending: true })
+          .range(from, from + PAGE_SIZE - 1);
+        // 42P01 = table doesn't exist yet (0047 not applied) — treat as no activity yet rather than erroring.
+        if (error) {
+          if (error.code === "42P01") break;
+          throw new Error(error.message);
+        }
+        all.push(...(data ?? []));
+        if (!data || data.length < PAGE_SIZE) break;
+      }
+      return all;
+    })(),
     getStaffingTargets(),
     getCvForwardDetails(start, nextMonth),
   ]);
-  // 42P01 = table doesn't exist yet (0047 not applied) — treat as no activity yet rather than erroring.
-  if (error && error.code !== "42P01") throw new Error(error.message);
 
   // Rows come back oldest-first, so the last write per candidate_id is their
   // status as of the end of this month.
   const latestByCandidate = new Map<string, any>();
-  for (const r of (data ?? []) as any[]) latestByCandidate.set(r.candidate_id, r);
+  for (const r of data as any[]) latestByCandidate.set(r.candidate_id, r);
 
   const map = new Map<string, EodHiringRow>();
   const keyOf = (p: string, b: string) => `${p}||${b}`;

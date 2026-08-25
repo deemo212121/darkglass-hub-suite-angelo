@@ -2,7 +2,7 @@
  * Lazy-loaded page components for every SignableDocumentType, keyed the
  * same way as signableDocumentRegistry.ts. Used only by the bundle wizard
  * (SignBundlePage/ExternalSignBundlePage) so stepping through a bundle
- * code-splits per document type on demand instead of pulling in all 22
+ * code-splits per document type on demand instead of pulling in all 23
  * fill/sign pages up front. Every one of these already takes a plain
  * `docId` prop and does its own data fetching/signing — see e.g.
  * SignDocumentPage.tsx — so rendering them here needs no changes to the
@@ -33,6 +33,7 @@ export const INTERNAL_SIGNABLE_DOCUMENT_COMPONENTS: Record<SignableDocumentType,
   damage: lazy(() => import("@/components/FillDamagePage").then((m) => ({ default: m.FillDamagePage }))),
   contractor_data: lazy(() => import("@/components/FillContractorDataPage").then((m) => ({ default: m.FillContractorDataPage }))),
   direct_deposit: lazy(() => import("@/components/FillDirectDepositPage").then((m) => ({ default: m.FillDirectDepositPage }))),
+  substance_screening: lazy(() => import("@/components/FillSubstanceScreeningPage").then((m) => ({ default: m.FillSubstanceScreeningPage }))),
 };
 
 export const EXTERNAL_SIGNABLE_DOCUMENT_COMPONENTS: Record<SignableDocumentType, ReturnType<typeof lazy>> = {
@@ -57,4 +58,5 @@ export const EXTERNAL_SIGNABLE_DOCUMENT_COMPONENTS: Record<SignableDocumentType,
   damage: lazy(() => import("@/components/ExternalFillDamagePage").then((m) => ({ default: m.ExternalFillDamagePage }))),
   contractor_data: lazy(() => import("@/components/ExternalFillContractorDataPage").then((m) => ({ default: m.ExternalFillContractorDataPage }))),
   direct_deposit: lazy(() => import("@/components/ExternalFillDirectDepositPage").then((m) => ({ default: m.ExternalFillDirectDepositPage }))),
+  substance_screening: lazy(() => import("@/components/ExternalFillSubstanceScreeningPage").then((m) => ({ default: m.ExternalFillSubstanceScreeningPage }))),
 };

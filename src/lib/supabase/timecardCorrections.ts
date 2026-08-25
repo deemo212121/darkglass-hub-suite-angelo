@@ -94,38 +94,57 @@ function mapRow(row: any): TimecardCorrectionRow {
   };
 }
 
+// Supabase caps an unbounded select at 1000 rows — a company's full
+// correction (or correction-history) log can exceed that. Page through in
+// chunks of 1000.
+const PAGE_SIZE = 1000;
+
 /** All timecard corrections for the caller's company (RLS-scoped), newest first. */
 export async function getCompanyTimecardCorrections(): Promise<TimecardCorrectionRow[]> {
-  const { data, error } = await supabase
-    .from("timecard_corrections")
-    .select(SELECT_COLUMNS)
-    .order("created_at", { ascending: false });
-  if (error) {
-    console.error("getCompanyTimecardCorrections error:", error.message);
-    return [];
+  const all: TimecardCorrectionRow[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from("timecard_corrections")
+      .select(SELECT_COLUMNS)
+      .order("created_at", { ascending: false })
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) {
+      console.error("getCompanyTimecardCorrections error:", error.message);
+      return [];
+    }
+    all.push(...(data ?? []).map(mapRow));
+    if (!data || data.length < PAGE_SIZE) break;
   }
-  return (data ?? []).map(mapRow);
+  return all;
 }
 
 /** The full correction-history audit trail for the company, newest first. */
 export async function getCompanyTimecardCorrectionHistory(): Promise<TimecardCorrectionHistoryRow[]> {
-  const { data, error } = await supabase
-    .from("timecard_correction_history")
-    .select("id, correction_id, action, changed_by, previous_status, new_status, created_at")
-    .order("created_at", { ascending: false });
-  if (error) {
-    console.error("getCompanyTimecardCorrectionHistory error:", error.message);
-    return [];
+  const all: TimecardCorrectionHistoryRow[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from("timecard_correction_history")
+      .select("id, correction_id, action, changed_by, previous_status, new_status, created_at")
+      .order("created_at", { ascending: false })
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) {
+      console.error("getCompanyTimecardCorrectionHistory error:", error.message);
+      return [];
+    }
+    all.push(
+      ...(data ?? []).map((row: any) => ({
+        id: row.id,
+        correctionId: row.correction_id,
+        action: row.action,
+        changedBy: row.changed_by ?? null,
+        previousStatus: row.previous_status ?? null,
+        newStatus: row.new_status ?? null,
+        createdAt: row.created_at,
+      }))
+    );
+    if (!data || data.length < PAGE_SIZE) break;
   }
-  return (data ?? []).map((row: any) => ({
-    id: row.id,
-    correctionId: row.correction_id,
-    action: row.action,
-    changedBy: row.changed_by ?? null,
-    previousStatus: row.previous_status ?? null,
-    newStatus: row.new_status ?? null,
-    createdAt: row.created_at,
-  }));
+  return all;
 }
 
 /**

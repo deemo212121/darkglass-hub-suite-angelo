@@ -29,6 +29,8 @@ import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
 import { logActivity } from "@/lib/supabase/hrActivityLog";
 import { getHrNotificationSettings } from "@/lib/supabase/companySettings";
 import { notifyHrRoleUsers } from "@/lib/supabase/hrRoleNotify";
+import { useSignaturePad } from "@/hooks/useSignaturePad";
+import { SignaturePadControls } from "@/components/SignaturePad";
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 
 interface Props {
@@ -43,14 +45,18 @@ const PAGE_HEIGHT = 792;
 // on src/assets/EMPLOYEE CONFIDENTIALITY AND NON (1).pdf — the exact
 // numbers employeeConfidentialityPdfFill.ts's draw coordinates were derived
 // from. This PDF has no real AcroForm fields at all.
+// Re-measured against the real PDF text runs — the previous numbers were
+// eyeballed and drifted far enough right/wide to overlap neighboring
+// labels (City spilling into "State:", Zip landing past its own blank
+// entirely).
 const PAGE1_RECT = {
   dateSigned: { x: 327, y: 646, w: 150, h: 13 },
-  employeeName: { x: 215, y: 529, w: 330, h: 14 },
-  address: { x: 201, y: 504, w: 344, h: 14 },
-  city: { x: 175, y: 479, w: 120, h: 13 },
-  state: { x: 313, y: 479, w: 60, h: 13 },
-  zip: { x: 403, y: 479, w: 80, h: 13 },
-  branch: { x: 193, y: 454, w: 250, h: 14 },
+  employeeName: { x: 199, y: 529, w: 299, h: 14 },
+  address: { x: 189, y: 504, w: 311, h: 14 },
+  city: { x: 169, y: 479, w: 90, h: 13 },
+  state: { x: 292, y: 479, w: 54, h: 13 },
+  zip: { x: 369, y: 479, w: 66, h: 13 },
+  branch: { x: 184, y: 454, w: 248, h: 14 },
 } as const;
 
 const PAGE2_RECT = {
@@ -89,9 +95,7 @@ export function FillEmployeeConfidentialityPage({ docId }: Props) {
 
   const [form, setForm] = useState<EmployeeConfidentialityFormData>({ ...BLANK_FORM });
 
-  const sigCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const drawingRef = useRef(false);
-  const hasDrawnRef = useRef(false);
+  const sigPad = useSignaturePad({ defaultName: form.employeeName, width: 440, height: 100 });
 
   useEffect(() => {
     if (!ready || !uid) return;
@@ -156,6 +160,25 @@ export function FillEmployeeConfidentialityPage({ docId }: Props) {
           const ctx = canvas.getContext("2d")!;
           ctx.scale(dpr, dpr);
           await page.render({ canvas, canvasContext: ctx, viewport }).promise;
+
+          // Page 1's printed Branch line has no blank of its own — it's
+          // "Branch: [Please Select Branch from the list provided below]",
+          // with the bracketed instruction sitting exactly where the select
+          // overlay needs to go. A CSS background on that overlay only
+          // approximates covering the printed text underneath (and visibly
+          // didn't fully hide it), so paint over that exact region directly
+          // on the canvas instead — guaranteed opaque, pixel-precise,
+          // painted before the select ever sits on top of it.
+          if (i === 1) {
+            const r = PAGE1_RECT.branch;
+            ctx.fillStyle = "#ffffff";
+            ctx.fillRect(
+              r.x * scale - 4,
+              (PAGE_HEIGHT - r.y - r.h) * scale - 4,
+              r.w * scale + 8,
+              r.h * scale + 10
+            );
+          }
         }
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : "Failed to render the form.");
@@ -168,38 +191,6 @@ export function FillEmployeeConfidentialityPage({ docId }: Props) {
 
   const updateField = <K extends keyof EmployeeConfidentialityFormData>(key: K, value: EmployeeConfidentialityFormData[K]) => setForm((f) => ({ ...f, [key]: value }));
 
-  const pos = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    const c = sigCanvasRef.current!;
-    const r = c.getBoundingClientRect();
-    return { x: ((e.clientX - r.left) / r.width) * c.width, y: ((e.clientY - r.top) / r.height) * c.height };
-  };
-  const startDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    drawingRef.current = true;
-    const ctx = sigCanvasRef.current!.getContext("2d")!;
-    const { x, y } = pos(e);
-    ctx.beginPath();
-    ctx.moveTo(x, y);
-    e.currentTarget.setPointerCapture(e.pointerId);
-  };
-  const moveDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!drawingRef.current) return;
-    const ctx = sigCanvasRef.current!.getContext("2d")!;
-    const { x, y } = pos(e);
-    ctx.lineTo(x, y);
-    ctx.strokeStyle = "#0f172a";
-    ctx.lineWidth = 2;
-    ctx.lineCap = "round";
-    ctx.stroke();
-    hasDrawnRef.current = true;
-  };
-  const endDraw = () => { drawingRef.current = false; };
-  const clearSignature = () => {
-    const c = sigCanvasRef.current;
-    if (!c) return;
-    c.getContext("2d")!.clearRect(0, 0, c.width, c.height);
-    hasDrawnRef.current = false;
-  };
-
   const validate = (): string | null => {
     if (!form.employeeName.trim()) return "Enter your full name.";
     if (!form.address.trim()) return "Enter your address.";
@@ -207,22 +198,26 @@ export function FillEmployeeConfidentialityPage({ docId }: Props) {
     if (!form.state.trim()) return "Enter your state.";
     if (!form.zip.trim()) return "Enter your zip code.";
     if (!form.branch) return "Select your branch.";
-    if (!hasDrawnRef.current) return "Please draw your signature.";
+    if (!sigPad.hasContent()) return "Please add your signature.";
     return null;
   };
 
   const handleSubmit = async () => {
-    if (!doc || !myProfileId || !sigCanvasRef.current) return;
+    if (!doc || !myProfileId) return;
     const validationError = validate();
     if (validationError) {
       setError(validationError);
+      return;
+    }
+    const dataUrl = sigPad.toDataURL();
+    if (!dataUrl) {
+      setError("Please add your signature.");
       return;
     }
     setSubmitting(true);
     setError(null);
     try {
       const companyId = doc.companyId;
-      const dataUrl = sigCanvasRef.current.toDataURL("image/png");
       const sigBytes = new Uint8Array(await (await fetch(dataUrl)).arrayBuffer());
       const signatureUrl = await uploadSignableDocumentSignature(companyId, doc.id, "employee", dataUrl);
       const signedAt = new Date().toISOString();
@@ -305,7 +300,7 @@ export function FillEmployeeConfidentialityPage({ docId }: Props) {
         ) : (
           <div className="panel p-4">
             <p className="text-xs text-muted-foreground mb-3">
-              Read the agreement below, fill in your information, draw your signature, then submit.
+              Read the agreement below, fill in your information, add your signature, then submit.
             </p>
 
             <div className="overflow-x-auto flex flex-col items-center bg-white/5 rounded-md p-4 gap-4">
@@ -378,15 +373,9 @@ export function FillEmployeeConfidentialityPage({ docId }: Props) {
                       </div>
 
                       <canvas
-                        ref={sigCanvasRef}
-                        width={440}
-                        height={100}
-                        onPointerDown={startDraw}
-                        onPointerMove={moveDraw}
-                        onPointerUp={endDraw}
-                        onPointerLeave={endDraw}
-                        className="absolute touch-none cursor-crosshair"
+                        {...sigPad.canvasProps}
                         style={{
+                          position: "absolute",
                           left: PAGE2_RECT.signature.x * scale,
                           top: (PAGE_HEIGHT - PAGE2_RECT.signature.y - PAGE2_RECT.signature.h) * scale,
                           width: PAGE2_RECT.signature.w * scale,
@@ -399,8 +388,8 @@ export function FillEmployeeConfidentialityPage({ docId }: Props) {
               ))}
             </div>
 
-            <div className="flex items-center gap-2 mt-2 justify-center">
-              <button onClick={clearSignature} className="btn text-xs px-3 py-1.5">Clear signature</button>
+            <div className="flex items-center justify-center mt-2">
+              <SignaturePadControls pad={sigPad} />
             </div>
 
             {error && (
