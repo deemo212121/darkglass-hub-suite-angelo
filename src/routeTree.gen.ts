@@ -11,6 +11,8 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as TimecardRouteImport } from './routes/timecard'
 import { Route as SuperadminRouteImport } from './routes/superadmin'
+import { Route as SignBundleExternalRouteImport } from './routes/sign-bundle-external'
+import { Route as SignBundleRouteImport } from './routes/sign-bundle'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as ServicepowerTestRouteImport } from './routes/servicepower-test'
 import { Route as ProfileRouteImport } from './routes/profile'
@@ -88,6 +90,16 @@ const TimecardRoute = TimecardRouteImport.update({
 const SuperadminRoute = SuperadminRouteImport.update({
   id: '/superadmin',
   path: '/superadmin',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SignBundleExternalRoute = SignBundleExternalRouteImport.update({
+  id: '/sign-bundle-external',
+  path: '/sign-bundle-external',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SignBundleRoute = SignBundleRouteImport.update({
+  id: '/sign-bundle',
+  path: '/sign-bundle',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SettingsRoute = SettingsRouteImport.update({
@@ -466,6 +478,8 @@ export interface FileRoutesByFullPath {
   '/profile': typeof ProfileRoute
   '/servicepower-test': typeof ServicepowerTestRoute
   '/settings': typeof SettingsRoute
+  '/sign-bundle': typeof SignBundleRoute
+  '/sign-bundle-external': typeof SignBundleExternalRoute
   '/superadmin': typeof SuperadminRouteWithChildren
   '/timecard': typeof TimecardRoute
   '/admin/users': typeof AdminUsersRoute
@@ -538,6 +552,8 @@ export interface FileRoutesByTo {
   '/profile': typeof ProfileRoute
   '/servicepower-test': typeof ServicepowerTestRoute
   '/settings': typeof SettingsRoute
+  '/sign-bundle': typeof SignBundleRoute
+  '/sign-bundle-external': typeof SignBundleExternalRoute
   '/superadmin': typeof SuperadminRouteWithChildren
   '/timecard': typeof TimecardRoute
   '/admin/users': typeof AdminUsersRoute
@@ -611,6 +627,8 @@ export interface FileRoutesById {
   '/profile': typeof ProfileRoute
   '/servicepower-test': typeof ServicepowerTestRoute
   '/settings': typeof SettingsRoute
+  '/sign-bundle': typeof SignBundleRoute
+  '/sign-bundle-external': typeof SignBundleExternalRoute
   '/superadmin': typeof SuperadminRouteWithChildren
   '/timecard': typeof TimecardRoute
   '/admin/users': typeof AdminUsersRoute
@@ -685,6 +703,8 @@ export interface FileRouteTypes {
     | '/profile'
     | '/servicepower-test'
     | '/settings'
+    | '/sign-bundle'
+    | '/sign-bundle-external'
     | '/superadmin'
     | '/timecard'
     | '/admin/users'
@@ -757,6 +777,8 @@ export interface FileRouteTypes {
     | '/profile'
     | '/servicepower-test'
     | '/settings'
+    | '/sign-bundle'
+    | '/sign-bundle-external'
     | '/superadmin'
     | '/timecard'
     | '/admin/users'
@@ -829,6 +851,8 @@ export interface FileRouteTypes {
     | '/profile'
     | '/servicepower-test'
     | '/settings'
+    | '/sign-bundle'
+    | '/sign-bundle-external'
     | '/superadmin'
     | '/timecard'
     | '/admin/users'
@@ -902,6 +926,8 @@ export interface RootRouteChildren {
   ProfileRoute: typeof ProfileRoute
   ServicepowerTestRoute: typeof ServicepowerTestRoute
   SettingsRoute: typeof SettingsRoute
+  SignBundleRoute: typeof SignBundleRoute
+  SignBundleExternalRoute: typeof SignBundleExternalRoute
   SuperadminRoute: typeof SuperadminRouteWithChildren
   TimecardRoute: typeof TimecardRoute
   AdminUsersRoute: typeof AdminUsersRoute
@@ -972,6 +998,20 @@ declare module '@tanstack/react-router' {
       path: '/superadmin'
       fullPath: '/superadmin'
       preLoaderRoute: typeof SuperadminRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/sign-bundle-external': {
+      id: '/sign-bundle-external'
+      path: '/sign-bundle-external'
+      fullPath: '/sign-bundle-external'
+      preLoaderRoute: typeof SignBundleExternalRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/sign-bundle': {
+      id: '/sign-bundle'
+      path: '/sign-bundle'
+      fullPath: '/sign-bundle'
+      preLoaderRoute: typeof SignBundleRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/settings': {
@@ -1501,6 +1541,8 @@ const rootRouteChildren: RootRouteChildren = {
   ProfileRoute: ProfileRoute,
   ServicepowerTestRoute: ServicepowerTestRoute,
   SettingsRoute: SettingsRoute,
+  SignBundleRoute: SignBundleRoute,
+  SignBundleExternalRoute: SignBundleExternalRoute,
   SuperadminRoute: SuperadminRouteWithChildren,
   TimecardRoute: TimecardRoute,
   AdminUsersRoute: AdminUsersRoute,
