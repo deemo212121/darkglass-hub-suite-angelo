@@ -66,6 +66,20 @@ export interface SignatureEntry {
 
 export type WarningFormSignatures = Partial<Record<SignatureSlot, SignatureEntry>>;
 
+/** Plain-text summary of a warning, used as the conduct-note body when a confirmed warning form is attached to the employee's record — shared by ReportHRDaily.tsx's own confirm flow and the employer-sign-bundle wizard. */
+export function buildWarnNoteText(data: Pick<WarningFormData, "level" | "reasons" | "description">): string {
+  const reasonLabels: string[] = [];
+  if (data.reasons.absence) reasonLabels.push("Absence");
+  if (data.reasons.tardiness) reasonLabels.push("Tardiness");
+  if (data.reasons.inappropriateBehavior) reasonLabels.push("Inappropriate Behavior");
+  if (data.reasons.insubordination) reasonLabels.push("Insubordination");
+  if (data.reasons.policyViolation) reasonLabels.push("Policy Violation");
+  if (data.reasons.equipmentDamage) reasonLabels.push("Equipment Damage");
+  if (data.reasons.other && data.reasons.otherText?.trim()) reasonLabels.push(data.reasons.otherText.trim());
+  const levelLabel = data.level ? `${data.level} Warning` : "Warning";
+  return `${levelLabel}${reasonLabels.length ? ` — ${reasonLabels.join(", ")}` : ""}${data.description.trim() ? `. ${data.description.trim()}` : ""}`;
+}
+
 const escapeHtml = (s: string) =>
   String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 
