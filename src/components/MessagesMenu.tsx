@@ -227,7 +227,7 @@ export function MessagesMenu() {
           }
         }
       } catch { /* ignore */ }
-    }, 4000);
+    }, 8000);
     const onChanged = () => { refresh(profileId); };
     window.addEventListener("ahs:unread-changed", onChanged);
     return () => {

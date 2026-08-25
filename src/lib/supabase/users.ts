@@ -394,7 +394,38 @@ export async function getMyFullProfile(firebaseUid: string): Promise<{
 // profiles roster can exceed that. Page through in chunks of 1000.
 const PAGE_SIZE = 1000;
 
+// getCompanyUsers is called independently from 50+ components (every one of
+// them mounts, needs the roster, and fetches it fresh — there's no shared
+// data layer between them). Each call is itself 5 sequential/parallel
+// queries (see the best-effort column-isolation comments below), so an
+// uncached roster fetch is one of the single largest sustained load sources
+// in the whole app. A short TTL cache shared across every caller — plus
+// in-flight dedup so N components mounting in the same tick share one fetch
+// instead of firing N — turns most of those calls into free cache hits.
+// invalidateCompanyUsersCache() is called by every mutation below so an
+// admin's own edit is never hidden behind a stale cache.
+const COMPANY_USERS_CACHE_TTL_MS = 30_000;
+let companyUsersCache: { data: ProfileRow[]; expiresAt: number } | null = null;
+let companyUsersInFlight: Promise<ProfileRow[]> | null = null;
+
+export function invalidateCompanyUsersCache(): void {
+  companyUsersCache = null;
+}
+
 export async function getCompanyUsers(): Promise<ProfileRow[]> {
+  if (companyUsersCache && companyUsersCache.expiresAt > Date.now()) {
+    return companyUsersCache.data;
+  }
+  if (companyUsersInFlight) return companyUsersInFlight;
+  companyUsersInFlight = fetchCompanyUsersUncached().finally(() => {
+    companyUsersInFlight = null;
+  });
+  const rows = await companyUsersInFlight;
+  companyUsersCache = { data: rows, expiresAt: Date.now() + COMPANY_USERS_CACHE_TTL_MS };
+  return rows;
+}
+
+async function fetchCompanyUsersUncached(): Promise<ProfileRow[]> {
   const rows: ProfileRow[] = [];
   for (let from = 0; ; from += PAGE_SIZE) {
     const { data, error } = await supabase
@@ -780,6 +811,7 @@ export async function createCompanyUser(input: {
     throw new Error(`Login created, but profile save failed: ${insertErr.message}`);
   }
 
+  invalidateCompanyUsersCache();
   return newUid;
 }
 
@@ -834,6 +866,7 @@ export async function createSupabaseAdminProfile(input: {
     is_active: true,
   });
   if (error) throw new Error(error.message);
+  invalidateCompanyUsersCache();
 }
 
 /**
@@ -871,6 +904,7 @@ export async function deleteCompanyUser(profileId: string): Promise<void> {
       console.warn("deleteCompanyUser: failed to clear manager_name references:", clearErr.message);
     }
   }
+  invalidateCompanyUsersCache();
 }
 
 
@@ -1005,6 +1039,7 @@ export async function updateCompanyUser(
   if (!data || data.length === 0) {
     throw new Error("This change wasn't saved — you may not have permission to edit this profile.");
   }
+  invalidateCompanyUsersCache();
 }
 
 
