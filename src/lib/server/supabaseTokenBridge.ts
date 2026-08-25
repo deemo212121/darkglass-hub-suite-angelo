@@ -600,20 +600,19 @@ export async function handleSupabaseTokenRequest(
     // the real login() path) still record it, but only if today doesn't
     // already have a captured IP for them, so a normal day's routine
     // refreshes don't grow the table beyond that one first capture.
-    if (recordLogin) {
-      await recordLoginEvent(claims.sub, request, getEnv("VITE_SUPABASE_URL"), getEnv("SUPABASE_SERVICE_KEY"));
-    } else {
-      await recordLoginEvent(claims.sub, request, getEnv("VITE_SUPABASE_URL"), getEnv("SUPABASE_SERVICE_KEY"), {
-        onlyIfFirstToday: true,
-      });
-    }
-
-    const sessionId = await mintOrReadSessionId(
-      claims.sub,
-      !!recordLogin,
-      getEnv("VITE_SUPABASE_URL"),
-      getEnv("SUPABASE_SERVICE_KEY")
-    );
+    // Independent of each other (neither reads the other's result) — run
+    // concurrently instead of back-to-back so this endpoint, which every
+    // open tab hits on login, 45-min heartbeat, tab-focus, and page-load
+    // restore, doesn't pay for two serial round trips (each itself several
+    // sequential queries deep) when one would do.
+    const [, sessionId] = await Promise.all([
+      recordLogin
+        ? recordLoginEvent(claims.sub, request, getEnv("VITE_SUPABASE_URL"), getEnv("SUPABASE_SERVICE_KEY"))
+        : recordLoginEvent(claims.sub, request, getEnv("VITE_SUPABASE_URL"), getEnv("SUPABASE_SERVICE_KEY"), {
+            onlyIfFirstToday: true,
+          }),
+      mintOrReadSessionId(claims.sub, !!recordLogin, getEnv("VITE_SUPABASE_URL"), getEnv("SUPABASE_SERVICE_KEY")),
+    ]);
 
     return json({ token, expiresAt, uid: claims.sub, sessionId });
   } catch (error) {

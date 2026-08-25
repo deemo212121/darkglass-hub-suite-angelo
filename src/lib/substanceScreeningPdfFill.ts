@@ -40,6 +40,14 @@ export async function loadBlankSubstanceScreeningBytes(): Promise<Uint8Array> {
   const pdfDoc = await PDFDocument.load(bytes);
   const boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
   const page1 = pdfDoc.getPage(0);
+  // The source PDF's own underscore blank for the date (x=72.02 y=626.86
+  // w=138.50) sits on its own orphaned row between "Employee Name:" and
+  // "Company Name:" — now that the date itself is drawn next to the
+  // "Date:" label instead (see fillSubstanceScreeningPdf below), this line
+  // has nothing pointing to it and just reads as a stray blank. Whited out
+  // here so it never renders, same technique as
+  // employeeConfidentialityPdfFill.ts's BRANCH_PLACEHOLDER_COVER.
+  page1.drawRectangle({ x: 70, y: 623, width: 150, height: 10, color: rgb(1, 1, 1) });
   page1.drawText("US IN HOME SERVICES", { x: 168, y: 617, size: 10, font: boldFont, color: rgb(0, 0, 0) });
   await addLogoHeader(pdfDoc);
   return pdfDoc.save();
@@ -60,11 +68,14 @@ export async function fillSubstanceScreeningPdf(
   const page1 = pdfDoc.getPage(0);
   const dateText = fmtDate(data.dateSigned);
   draw(page1, data.employeeName, 168, 642);
-  // The "Date:" label sits at the end of the Employee Name row, but its own
-  // blank wraps to the line below (confirmed via pdf.js text-item
-  // coordinates — the wrapped blank starts back at the paragraph's left
-  // margin, x=72.02 y=626.86, not indented under the "Date:" label itself).
-  draw(page1, dateText, 76, 629, 9);
+  // The source PDF's own underscore blank for this date wraps down to the
+  // line below "Employee Name:" (confirmed via pdf.js text-item
+  // coordinates) — a real artifact of the original document, but it reads
+  // as "wrong" to anyone looking at the filled form since the value ends
+  // up nowhere near the "Date:" label. Drawn here instead, directly after
+  // the label on the same row (x=389.35 + label width 28.85 ≈ 418, with
+  // ~122pt of clearance to the right margin before the page edge).
+  draw(page1, dateText, 422, 642, 9);
 
   const page2 = pdfDoc.getPage(1);
   draw(page2, dateText, 360, 491, 9);

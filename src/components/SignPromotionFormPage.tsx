@@ -7,7 +7,7 @@
  * convention of one dedicated fill/sign page per document type (see
  * FillW4Page.tsx, FillW8benPage.tsx, FillW9Page.tsx).
  */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { ChevronLeft, Loader2 } from "lucide-react";
 import { AppHeader } from "@/components/Header";
@@ -21,6 +21,8 @@ import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
 import { logActivity } from "@/lib/supabase/hrActivityLog";
 import { getHrNotificationSettings } from "@/lib/supabase/companySettings";
 import { notifyHrRoleUsers } from "@/lib/supabase/hrRoleNotify";
+import { useSignaturePad } from "@/hooks/useSignaturePad";
+import { SignaturePadControls } from "@/components/SignaturePad";
 
 interface Props {
   docId: string;
@@ -44,9 +46,7 @@ export function SignPromotionFormPage({ docId }: Props) {
   const [signing, setSigning] = useState(false);
   const [signed, setSigned] = useState(false);
 
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const drawingRef = useRef(false);
-  const hasDrawnRef = useRef(false);
+  const sigPad = useSignaturePad({ width: 500, height: 150 });
 
   useEffect(() => {
     if (!ready || !uid) return;
@@ -77,49 +77,21 @@ export function SignPromotionFormPage({ docId }: Props) {
     return () => { cancelled = true; };
   }, [ready, uid, docId]);
 
-  const pos = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    const c = canvasRef.current!;
-    const r = c.getBoundingClientRect();
-    return { x: ((e.clientX - r.left) / r.width) * c.width, y: ((e.clientY - r.top) / r.height) * c.height };
-  };
-  const startDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    drawingRef.current = true;
-    const ctx = canvasRef.current!.getContext("2d")!;
-    const { x, y } = pos(e);
-    ctx.beginPath();
-    ctx.moveTo(x, y);
-    e.currentTarget.setPointerCapture(e.pointerId);
-  };
-  const moveDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!drawingRef.current) return;
-    const ctx = canvasRef.current!.getContext("2d")!;
-    const { x, y } = pos(e);
-    ctx.lineTo(x, y);
-    ctx.strokeStyle = "#0f172a";
-    ctx.lineWidth = 2;
-    ctx.lineCap = "round";
-    ctx.stroke();
-    hasDrawnRef.current = true;
-  };
-  const endDraw = () => { drawingRef.current = false; };
-  const clearSignature = () => {
-    const c = canvasRef.current;
-    if (!c) return;
-    c.getContext("2d")!.clearRect(0, 0, c.width, c.height);
-    hasDrawnRef.current = false;
-  };
-
   const handleConfirmSign = async () => {
-    if (!doc || !myProfileId || !canvasRef.current) return;
-    if (!hasDrawnRef.current) {
-      setError("Please draw your signature first.");
+    if (!doc || !myProfileId) return;
+    if (!sigPad.hasContent()) {
+      setError("Please add your signature first.");
+      return;
+    }
+    const dataUrl = sigPad.toDataURL();
+    if (!dataUrl) {
+      setError("Please add your signature first.");
       return;
     }
     setSigning(true);
     setError(null);
     try {
       const companyId = doc.companyId;
-      const dataUrl = canvasRef.current.toDataURL("image/png");
       const signatureUrl = await uploadSignableDocumentSignature(companyId, doc.id, doc.recipientSlot, dataUrl);
       const entry = { name: displayName || "Signed", url: signatureUrl, signedAt: new Date().toISOString() };
 
@@ -215,19 +187,13 @@ export function SignPromotionFormPage({ docId }: Props) {
             </div>
 
             <div className="p-4 border-t border-white/10">
-              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2 block">Draw your signature</label>
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2 block">Signature</label>
               <canvas
-                ref={canvasRef}
-                width={500}
-                height={150}
-                onPointerDown={startDraw}
-                onPointerMove={moveDraw}
-                onPointerUp={endDraw}
-                onPointerLeave={endDraw}
-                className="bg-white rounded-md border border-white/15 w-full max-w-md touch-none"
+                {...sigPad.canvasProps}
+                className={`bg-white rounded-md border border-white/15 w-full max-w-md ${sigPad.canvasProps.className}`}
               />
-              <div className="flex gap-2 mt-2">
-                <button onClick={clearSignature} className="btn text-xs px-3 py-1.5">Clear</button>
+              <div className="mt-2">
+                <SignaturePadControls pad={sigPad} />
               </div>
 
               {error && (

@@ -1,6 +1,8 @@
 import { useState, useMemo, useEffect, useRef, Fragment } from "react";
 import { Link, useSearch, useNavigate } from "@tanstack/react-router";
-import { ChevronLeft, ChevronDown, ChevronRight, Plus, Trash2, AlertTriangle, CheckCircle, XCircle, Paperclip, Users, Clock, UserCheck, UserX, UserMinus, Search, Bell, Download, Forward, History, FileText, ClipboardList, Landmark, GripVertical, FileCheck } from "lucide-react";
+import { ChevronLeft, ChevronDown, ChevronRight, Plus, Trash2, AlertTriangle, CheckCircle, XCircle, Paperclip, Users, Clock, UserCheck, UserX, UserMinus, Search, Bell, Download, Forward, History, FileText, ClipboardList, Landmark, GripVertical, FileCheck, Link2, Copy } from "lucide-react";
+import { useSignaturePad } from "@/hooks/useSignaturePad";
+import { SignaturePadControls } from "@/components/SignaturePad";
 
 /** Shared shape for a sidebar/header-dropdown nav tab entry — broad enough to structurally match every tabGroups[].tabs literal (they all share this key/label/count/icon shape, just with different literal `key`/`label` string types per group), so renderSidebarTabButton/renderDropdownTabButton can be called with tabs from any group. */
 type NavTabDef = { key: string; label: string; count: number; icon: typeof FileCheck };
@@ -60,6 +62,7 @@ import {
   updateSignableDocumentPdfUrl,
   signDocument,
   type SignableDocument,
+  type SignableDocumentType,
 } from "@/lib/supabase/signableDocuments";
 import { buildWarningFormBodyMarkup, warningFormStyles, type WarningFormData, type SignatureSlot } from "@/lib/warningFormTemplate";
 import { buildWarningFormDocxBlob } from "@/lib/warningFormDocx";
@@ -681,7 +684,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // Reviews, the Approved log, the department trend chart, and the full
   // Employee Directory all on top of each other, forcing a long scroll to
   // reach anything below Hiring.
-  const [activeTab, setActiveTab] = useState<"hiring" | "warnings" | "masterList" | "leaders" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "promotionForm" | "actionPlanForm" | "terminationForm" | "employeeRequestManager" | "w8ben" | "i9" | "wageAck" | "carIqAgreement" | "vehicleAgreement" | "employeeConfidentiality" | "mealRestBreak" | "ptoAck" | "partsResponsibility" | "mileageFuel" | "locationConsent" | "damage" | "contractorData" | "directDeposit" | "substanceScreening">("hiring");
+  const [activeTab, setActiveTab] = useState<"hiring" | "warnings" | "masterList" | "leaders" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "promotionForm" | "actionPlanForm" | "terminationForm" | "employeeRequestManager" | "w8ben" | "i9" | "wageAck" | "carIqAgreement" | "vehicleAgreement" | "employeeConfidentiality" | "mealRestBreak" | "ptoAck" | "partsResponsibility" | "mileageFuel" | "locationConsent" | "damage" | "contractorData" | "directDeposit" | "substanceScreening" | "combineForms">("hiring");
   const [openCategory, setOpenCategory] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   // Which floating-sidebar section headers (Automated Forms/Generate
@@ -705,7 +708,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const navigate = useNavigate();
   const hrSearchParams = (useSearch({ strict: false }) as { tab?: string; submissionId?: string; profileId?: string }) ?? {};
   const initialHrSearchRef = useRef(hrSearchParams);
-  const VALID_HR_TABS = ["hiring", "warnings", "masterList", "leaders", "jotform", "jotformDocuments", "customForms", "onboarding", "hiringReports", "report", "coe", "warningForm", "promotionForm", "actionPlanForm", "terminationForm", "employeeRequestManager", "w8ben", "i9", "wageAck", "carIqAgreement", "vehicleAgreement", "employeeConfidentiality", "mealRestBreak", "ptoAck", "partsResponsibility", "mileageFuel", "locationConsent", "damage", "contractorData", "directDeposit", "substanceScreening"] as const;
+  const VALID_HR_TABS = ["hiring", "warnings", "masterList", "leaders", "jotform", "jotformDocuments", "customForms", "onboarding", "hiringReports", "report", "coe", "warningForm", "promotionForm", "actionPlanForm", "terminationForm", "employeeRequestManager", "w8ben", "i9", "wageAck", "carIqAgreement", "vehicleAgreement", "employeeConfidentiality", "mealRestBreak", "ptoAck", "partsResponsibility", "mileageFuel", "locationConsent", "damage", "contractorData", "directDeposit", "substanceScreening", "combineForms"] as const;
   useEffect(() => {
     const tab = initialHrSearchRef.current.tab;
     if (tab && (VALID_HR_TABS as readonly string[]).includes(tab)) setActiveTab(tab as typeof activeTab);
@@ -2246,7 +2249,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
   useEffect(() => {
-    if (activeTab === "w8ben" || activeTab === "jotformDocuments") void loadSentW8benForms();
+    if (activeTab === "w8ben" || activeTab === "jotformDocuments" || activeTab === "combineForms") void loadSentW8benForms();
   }, [activeTab]);
 
   const [w8RecipientId, setW8RecipientId] = useState("");
@@ -2457,7 +2460,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
   useEffect(() => {
-    if (activeTab === "w8ben" || activeTab === "jotformDocuments") void loadSentW4Forms();
+    if (activeTab === "w8ben" || activeTab === "jotformDocuments" || activeTab === "combineForms") void loadSentW4Forms();
   }, [activeTab]);
 
   const [w4RecipientId, setW4RecipientId] = useState("");
@@ -2688,7 +2691,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
   useEffect(() => {
-    if (activeTab === "w8ben" || activeTab === "jotformDocuments") void loadSentW9Forms();
+    if (activeTab === "w8ben" || activeTab === "jotformDocuments" || activeTab === "combineForms") void loadSentW9Forms();
   }, [activeTab]);
 
   const [w9RecipientId, setW9RecipientId] = useState("");
@@ -2886,7 +2889,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
   useEffect(() => {
-    if (activeTab === "w8ben" || activeTab === "jotformDocuments") void loadSentW4RForms();
+    if (activeTab === "w8ben" || activeTab === "jotformDocuments" || activeTab === "combineForms") void loadSentW4RForms();
   }, [activeTab]);
 
   const [w4rRecipientId, setW4rRecipientId] = useState("");
@@ -3127,7 +3130,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
   useEffect(() => {
-    if (activeTab === "i9" || activeTab === "jotformDocuments") void loadSentI9Forms();
+    if (activeTab === "i9" || activeTab === "jotformDocuments" || activeTab === "combineForms") void loadSentI9Forms();
   }, [activeTab]);
   // Section 1 done, nobody has claimed Section 2 yet — feeds the "Form I-9" sidebar tab's count badge.
   const sentI9AwaitingSection2Count = useMemo(
@@ -3312,7 +3315,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
   useEffect(() => {
-    if (activeTab === "wageAck" || activeTab === "jotformDocuments") void loadSentWageAckForms();
+    if (activeTab === "wageAck" || activeTab === "jotformDocuments" || activeTab === "combineForms") void loadSentWageAckForms();
   }, [activeTab]);
   // Employee done, nobody has claimed the employer signature yet — feeds the sidebar tab's count badge.
   const sentWageAckAwaitingEmployerCount = useMemo(
@@ -3497,52 +3500,17 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [wageAckEmployerDialog, setWageAckEmployerDialog] = useState<SignableDocument | null>(null);
   const [wageAckEmployerSaving, setWageAckEmployerSaving] = useState(false);
   const [wageAckEmployerError, setWageAckEmployerError] = useState<string | null>(null);
-  const wageAckEmployerSigCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const wageAckEmployerDrawingRef = useRef(false);
-  const wageAckEmployerHasDrawnRef = useRef(false);
+  const wageAckEmployerSigPad = useSignaturePad({ width: 400, height: 120 });
 
   const handleOpenWageAckEmployerDialog = (doc: SignableDocument) => {
     setWageAckEmployerDialog(doc);
     setWageAckEmployerError(null);
-    wageAckEmployerHasDrawnRef.current = false;
-  };
-
-  const wageAckEmployerPos = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    const c = wageAckEmployerSigCanvasRef.current!;
-    const r = c.getBoundingClientRect();
-    return { x: ((e.clientX - r.left) / r.width) * c.width, y: ((e.clientY - r.top) / r.height) * c.height };
-  };
-  const wageAckEmployerStartDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    wageAckEmployerDrawingRef.current = true;
-    const ctx = wageAckEmployerSigCanvasRef.current!.getContext("2d")!;
-    const { x, y } = wageAckEmployerPos(e);
-    ctx.beginPath();
-    ctx.moveTo(x, y);
-    e.currentTarget.setPointerCapture(e.pointerId);
-  };
-  const wageAckEmployerMoveDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!wageAckEmployerDrawingRef.current) return;
-    const ctx = wageAckEmployerSigCanvasRef.current!.getContext("2d")!;
-    const { x, y } = wageAckEmployerPos(e);
-    ctx.lineTo(x, y);
-    ctx.strokeStyle = "#0f172a";
-    ctx.lineWidth = 2;
-    ctx.lineCap = "round";
-    ctx.stroke();
-    wageAckEmployerHasDrawnRef.current = true;
-  };
-  const wageAckEmployerEndDraw = () => { wageAckEmployerDrawingRef.current = false; };
-  const wageAckEmployerClearSignature = () => {
-    const c = wageAckEmployerSigCanvasRef.current;
-    if (!c) return;
-    c.getContext("2d")!.clearRect(0, 0, c.width, c.height);
-    wageAckEmployerHasDrawnRef.current = false;
   };
 
   const handleSaveWageAckEmployerSignature = async () => {
     if (!wageAckEmployerDialog || !uid) return;
-    if (!wageAckEmployerHasDrawnRef.current) {
-      setWageAckEmployerError("Please draw your signature.");
+    if (!wageAckEmployerSigPad.hasContent()) {
+      setWageAckEmployerError("Please add your signature.");
       return;
     }
     setWageAckEmployerSaving(true);
@@ -3558,7 +3526,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         ? new Uint8Array(await (await fetch(existing.employeeSignatureDataUrl)).arrayBuffer())
         : undefined;
 
-      const dataUrl = wageAckEmployerSigCanvasRef.current!.toDataURL("image/png");
+      const dataUrl = wageAckEmployerSigPad.toDataURL();
+      if (!dataUrl) {
+        setWageAckEmployerError("Please add your signature.");
+        return;
+      }
       const employerSigBytes = new Uint8Array(await (await fetch(dataUrl)).arrayBuffer());
       const signatureUrl = await uploadSignableDocumentSignature(wageAckEmployerDialog.companyId, wageAckEmployerDialog.id, "hr_staff", dataUrl);
       const signedAt = new Date().toISOString();
@@ -3599,7 +3571,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
   useEffect(() => {
-    if (activeTab === "mealRestBreak" || activeTab === "jotformDocuments") void loadSentMealRestBreakForms();
+    if (activeTab === "mealRestBreak" || activeTab === "jotformDocuments" || activeTab === "combineForms") void loadSentMealRestBreakForms();
   }, [activeTab]);
   // Employee done, nobody has claimed the employer signature yet — feeds the sidebar tab's count badge.
   const sentMealRestBreakAwaitingEmployerCount = useMemo(
@@ -3790,52 +3762,17 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [mealRestBreakEmployerDialog, setMealRestBreakEmployerDialog] = useState<SignableDocument | null>(null);
   const [mealRestBreakEmployerSaving, setMealRestBreakEmployerSaving] = useState(false);
   const [mealRestBreakEmployerError, setMealRestBreakEmployerError] = useState<string | null>(null);
-  const mealRestBreakEmployerSigCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const mealRestBreakEmployerDrawingRef = useRef(false);
-  const mealRestBreakEmployerHasDrawnRef = useRef(false);
+  const mealRestBreakEmployerSigPad = useSignaturePad({ width: 400, height: 120 });
 
   const handleOpenMealRestBreakEmployerDialog = (doc: SignableDocument) => {
     setMealRestBreakEmployerDialog(doc);
     setMealRestBreakEmployerError(null);
-    mealRestBreakEmployerHasDrawnRef.current = false;
-  };
-
-  const mealRestBreakEmployerPos = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    const c = mealRestBreakEmployerSigCanvasRef.current!;
-    const r = c.getBoundingClientRect();
-    return { x: ((e.clientX - r.left) / r.width) * c.width, y: ((e.clientY - r.top) / r.height) * c.height };
-  };
-  const mealRestBreakEmployerStartDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    mealRestBreakEmployerDrawingRef.current = true;
-    const ctx = mealRestBreakEmployerSigCanvasRef.current!.getContext("2d")!;
-    const { x, y } = mealRestBreakEmployerPos(e);
-    ctx.beginPath();
-    ctx.moveTo(x, y);
-    e.currentTarget.setPointerCapture(e.pointerId);
-  };
-  const mealRestBreakEmployerMoveDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!mealRestBreakEmployerDrawingRef.current) return;
-    const ctx = mealRestBreakEmployerSigCanvasRef.current!.getContext("2d")!;
-    const { x, y } = mealRestBreakEmployerPos(e);
-    ctx.lineTo(x, y);
-    ctx.strokeStyle = "#0f172a";
-    ctx.lineWidth = 2;
-    ctx.lineCap = "round";
-    ctx.stroke();
-    mealRestBreakEmployerHasDrawnRef.current = true;
-  };
-  const mealRestBreakEmployerEndDraw = () => { mealRestBreakEmployerDrawingRef.current = false; };
-  const mealRestBreakEmployerClearSignature = () => {
-    const c = mealRestBreakEmployerSigCanvasRef.current;
-    if (!c) return;
-    c.getContext("2d")!.clearRect(0, 0, c.width, c.height);
-    mealRestBreakEmployerHasDrawnRef.current = false;
   };
 
   const handleSaveMealRestBreakEmployerSignature = async () => {
     if (!mealRestBreakEmployerDialog || !uid) return;
-    if (!mealRestBreakEmployerHasDrawnRef.current) {
-      setMealRestBreakEmployerError("Please draw your signature.");
+    if (!mealRestBreakEmployerSigPad.hasContent()) {
+      setMealRestBreakEmployerError("Please add your signature.");
       return;
     }
     setMealRestBreakEmployerSaving(true);
@@ -3851,7 +3788,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         ? new Uint8Array(await (await fetch(existing.employeeSignatureDataUrl)).arrayBuffer())
         : undefined;
 
-      const dataUrl = mealRestBreakEmployerSigCanvasRef.current!.toDataURL("image/png");
+      const dataUrl = mealRestBreakEmployerSigPad.toDataURL();
+      if (!dataUrl) {
+        setMealRestBreakEmployerError("Please add your signature.");
+        return;
+      }
       const employerSigBytes = new Uint8Array(await (await fetch(dataUrl)).arrayBuffer());
       const signatureUrl = await uploadSignableDocumentSignature(mealRestBreakEmployerDialog.companyId, mealRestBreakEmployerDialog.id, "hr_staff", dataUrl);
       const signedAt = new Date().toISOString();
@@ -3891,7 +3832,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
   useEffect(() => {
-    if (activeTab === "carIqAgreement" || activeTab === "jotformDocuments") void loadSentCarIqAgreementForms();
+    if (activeTab === "carIqAgreement" || activeTab === "jotformDocuments" || activeTab === "combineForms") void loadSentCarIqAgreementForms();
   }, [activeTab]);
 
   const [carIqRecipientId, setCarIqRecipientId] = useState("");
@@ -4082,7 +4023,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
   useEffect(() => {
-    if (activeTab === "vehicleAgreement" || activeTab === "jotformDocuments") void loadSentVehicleAgreementForms();
+    if (activeTab === "vehicleAgreement" || activeTab === "jotformDocuments" || activeTab === "combineForms") void loadSentVehicleAgreementForms();
   }, [activeTab]);
 
   const [vehicleRecipientId, setVehicleRecipientId] = useState("");
@@ -4272,7 +4213,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
   useEffect(() => {
-    if (activeTab === "employeeConfidentiality" || activeTab === "jotformDocuments") void loadSentEmployeeConfidentialityForms();
+    if (activeTab === "employeeConfidentiality" || activeTab === "jotformDocuments" || activeTab === "combineForms") void loadSentEmployeeConfidentialityForms();
   }, [activeTab]);
 
   const [confidentialityRecipientId, setConfidentialityRecipientId] = useState("");
@@ -4646,7 +4587,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
   useEffect(() => {
-    if (activeTab === "ptoAck" || activeTab === "jotformDocuments") void loadSentPtoAckForms();
+    if (activeTab === "ptoAck" || activeTab === "jotformDocuments" || activeTab === "combineForms") void loadSentPtoAckForms();
   }, [activeTab]);
 
   const [ptoAckRecipientId, setPtoAckRecipientId] = useState("");
@@ -4840,7 +4781,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
   useEffect(() => {
-    if (activeTab === "partsResponsibility" || activeTab === "jotformDocuments") void loadSentPartsResponsibilityForms();
+    if (activeTab === "partsResponsibility" || activeTab === "jotformDocuments" || activeTab === "combineForms") void loadSentPartsResponsibilityForms();
   }, [activeTab]);
   // Technician done, nobody has claimed the manager signature yet — feeds the sidebar tab's count badge.
   const sentPartsResponsibilityAwaitingManagerCount = useMemo(
@@ -5032,52 +4973,17 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [partsResponsibilityManagerDialog, setPartsResponsibilityManagerDialog] = useState<SignableDocument | null>(null);
   const [partsResponsibilityManagerSaving, setPartsResponsibilityManagerSaving] = useState(false);
   const [partsResponsibilityManagerError, setPartsResponsibilityManagerError] = useState<string | null>(null);
-  const partsResponsibilityManagerSigCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const partsResponsibilityManagerDrawingRef = useRef(false);
-  const partsResponsibilityManagerHasDrawnRef = useRef(false);
+  const partsResponsibilityManagerSigPad = useSignaturePad({ width: 400, height: 120 });
 
   const handleOpenPartsResponsibilityManagerDialog = (doc: SignableDocument) => {
     setPartsResponsibilityManagerDialog(doc);
     setPartsResponsibilityManagerError(null);
-    partsResponsibilityManagerHasDrawnRef.current = false;
-  };
-
-  const partsResponsibilityManagerPos = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    const c = partsResponsibilityManagerSigCanvasRef.current!;
-    const r = c.getBoundingClientRect();
-    return { x: ((e.clientX - r.left) / r.width) * c.width, y: ((e.clientY - r.top) / r.height) * c.height };
-  };
-  const partsResponsibilityManagerStartDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    partsResponsibilityManagerDrawingRef.current = true;
-    const ctx = partsResponsibilityManagerSigCanvasRef.current!.getContext("2d")!;
-    const { x, y } = partsResponsibilityManagerPos(e);
-    ctx.beginPath();
-    ctx.moveTo(x, y);
-    e.currentTarget.setPointerCapture(e.pointerId);
-  };
-  const partsResponsibilityManagerMoveDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!partsResponsibilityManagerDrawingRef.current) return;
-    const ctx = partsResponsibilityManagerSigCanvasRef.current!.getContext("2d")!;
-    const { x, y } = partsResponsibilityManagerPos(e);
-    ctx.lineTo(x, y);
-    ctx.strokeStyle = "#0f172a";
-    ctx.lineWidth = 2;
-    ctx.lineCap = "round";
-    ctx.stroke();
-    partsResponsibilityManagerHasDrawnRef.current = true;
-  };
-  const partsResponsibilityManagerEndDraw = () => { partsResponsibilityManagerDrawingRef.current = false; };
-  const partsResponsibilityManagerClearSignature = () => {
-    const c = partsResponsibilityManagerSigCanvasRef.current;
-    if (!c) return;
-    c.getContext("2d")!.clearRect(0, 0, c.width, c.height);
-    partsResponsibilityManagerHasDrawnRef.current = false;
   };
 
   const handleSavePartsResponsibilityManagerSignature = async () => {
     if (!partsResponsibilityManagerDialog || !uid) return;
-    if (!partsResponsibilityManagerHasDrawnRef.current) {
-      setPartsResponsibilityManagerError("Please draw your signature.");
+    if (!partsResponsibilityManagerSigPad.hasContent()) {
+      setPartsResponsibilityManagerError("Please add your signature.");
       return;
     }
     setPartsResponsibilityManagerSaving(true);
@@ -5093,7 +4999,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         ? new Uint8Array(await (await fetch(existing.technicianSignatureDataUrl)).arrayBuffer())
         : undefined;
 
-      const dataUrl = partsResponsibilityManagerSigCanvasRef.current!.toDataURL("image/png");
+      const dataUrl = partsResponsibilityManagerSigPad.toDataURL();
+      if (!dataUrl) {
+        setPartsResponsibilityManagerError("Please add your signature.");
+        return;
+      }
       const managerSigBytes = new Uint8Array(await (await fetch(dataUrl)).arrayBuffer());
       const signatureUrl = await uploadSignableDocumentSignature(partsResponsibilityManagerDialog.companyId, partsResponsibilityManagerDialog.id, "hr_staff", dataUrl);
       const signedAt = new Date().toISOString();
@@ -5134,7 +5044,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
   useEffect(() => {
-    if (activeTab === "mileageFuel" || activeTab === "jotformDocuments") void loadSentMileageFuelForms();
+    if (activeTab === "mileageFuel" || activeTab === "jotformDocuments" || activeTab === "combineForms") void loadSentMileageFuelForms();
   }, [activeTab]);
   // Employee done, nobody has claimed the employer signature yet — feeds the sidebar tab's count badge.
   const sentMileageFuelAwaitingEmployerCount = useMemo(
@@ -5326,52 +5236,17 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [mileageFuelEmployerDialog, setMileageFuelEmployerDialog] = useState<SignableDocument | null>(null);
   const [mileageFuelEmployerSaving, setMileageFuelEmployerSaving] = useState(false);
   const [mileageFuelEmployerError, setMileageFuelEmployerError] = useState<string | null>(null);
-  const mileageFuelEmployerSigCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const mileageFuelEmployerDrawingRef = useRef(false);
-  const mileageFuelEmployerHasDrawnRef = useRef(false);
+  const mileageFuelEmployerSigPad = useSignaturePad({ width: 400, height: 120 });
 
   const handleOpenMileageFuelEmployerDialog = (doc: SignableDocument) => {
     setMileageFuelEmployerDialog(doc);
     setMileageFuelEmployerError(null);
-    mileageFuelEmployerHasDrawnRef.current = false;
-  };
-
-  const mileageFuelEmployerPos = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    const c = mileageFuelEmployerSigCanvasRef.current!;
-    const r = c.getBoundingClientRect();
-    return { x: ((e.clientX - r.left) / r.width) * c.width, y: ((e.clientY - r.top) / r.height) * c.height };
-  };
-  const mileageFuelEmployerStartDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    mileageFuelEmployerDrawingRef.current = true;
-    const ctx = mileageFuelEmployerSigCanvasRef.current!.getContext("2d")!;
-    const { x, y } = mileageFuelEmployerPos(e);
-    ctx.beginPath();
-    ctx.moveTo(x, y);
-    e.currentTarget.setPointerCapture(e.pointerId);
-  };
-  const mileageFuelEmployerMoveDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!mileageFuelEmployerDrawingRef.current) return;
-    const ctx = mileageFuelEmployerSigCanvasRef.current!.getContext("2d")!;
-    const { x, y } = mileageFuelEmployerPos(e);
-    ctx.lineTo(x, y);
-    ctx.strokeStyle = "#0f172a";
-    ctx.lineWidth = 2;
-    ctx.lineCap = "round";
-    ctx.stroke();
-    mileageFuelEmployerHasDrawnRef.current = true;
-  };
-  const mileageFuelEmployerEndDraw = () => { mileageFuelEmployerDrawingRef.current = false; };
-  const mileageFuelEmployerClearSignature = () => {
-    const c = mileageFuelEmployerSigCanvasRef.current;
-    if (!c) return;
-    c.getContext("2d")!.clearRect(0, 0, c.width, c.height);
-    mileageFuelEmployerHasDrawnRef.current = false;
   };
 
   const handleSaveMileageFuelEmployerSignature = async () => {
     if (!mileageFuelEmployerDialog || !uid) return;
-    if (!mileageFuelEmployerHasDrawnRef.current) {
-      setMileageFuelEmployerError("Please draw your signature.");
+    if (!mileageFuelEmployerSigPad.hasContent()) {
+      setMileageFuelEmployerError("Please add your signature.");
       return;
     }
     setMileageFuelEmployerSaving(true);
@@ -5387,7 +5262,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         ? new Uint8Array(await (await fetch(existing.employeeSignatureDataUrl)).arrayBuffer())
         : undefined;
 
-      const dataUrl = mileageFuelEmployerSigCanvasRef.current!.toDataURL("image/png");
+      const dataUrl = mileageFuelEmployerSigPad.toDataURL();
+      if (!dataUrl) {
+        setMileageFuelEmployerError("Please add your signature.");
+        return;
+      }
       const employerSigBytes = new Uint8Array(await (await fetch(dataUrl)).arrayBuffer());
       const signatureUrl = await uploadSignableDocumentSignature(mileageFuelEmployerDialog.companyId, mileageFuelEmployerDialog.id, "hr_staff", dataUrl);
       const signedAt = new Date().toISOString();
@@ -5430,7 +5309,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
   useEffect(() => {
-    if (activeTab === "locationConsent" || activeTab === "jotformDocuments") void loadSentLocationConsentForms();
+    if (activeTab === "locationConsent" || activeTab === "jotformDocuments" || activeTab === "combineForms") void loadSentLocationConsentForms();
   }, [activeTab]);
   // Employee done, nobody has claimed the employer signature yet — feeds the sidebar tab's count badge.
   const sentLocationConsentAwaitingEmployerCount = useMemo(
@@ -5615,52 +5494,17 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [locationConsentEmployerDialog, setLocationConsentEmployerDialog] = useState<SignableDocument | null>(null);
   const [locationConsentEmployerSaving, setLocationConsentEmployerSaving] = useState(false);
   const [locationConsentEmployerError, setLocationConsentEmployerError] = useState<string | null>(null);
-  const locationConsentEmployerSigCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const locationConsentEmployerDrawingRef = useRef(false);
-  const locationConsentEmployerHasDrawnRef = useRef(false);
+  const locationConsentEmployerSigPad = useSignaturePad({ width: 400, height: 120 });
 
   const handleOpenLocationConsentEmployerDialog = (doc: SignableDocument) => {
     setLocationConsentEmployerDialog(doc);
     setLocationConsentEmployerError(null);
-    locationConsentEmployerHasDrawnRef.current = false;
-  };
-
-  const locationConsentEmployerPos = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    const c = locationConsentEmployerSigCanvasRef.current!;
-    const r = c.getBoundingClientRect();
-    return { x: ((e.clientX - r.left) / r.width) * c.width, y: ((e.clientY - r.top) / r.height) * c.height };
-  };
-  const locationConsentEmployerStartDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    locationConsentEmployerDrawingRef.current = true;
-    const ctx = locationConsentEmployerSigCanvasRef.current!.getContext("2d")!;
-    const { x, y } = locationConsentEmployerPos(e);
-    ctx.beginPath();
-    ctx.moveTo(x, y);
-    e.currentTarget.setPointerCapture(e.pointerId);
-  };
-  const locationConsentEmployerMoveDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!locationConsentEmployerDrawingRef.current) return;
-    const ctx = locationConsentEmployerSigCanvasRef.current!.getContext("2d")!;
-    const { x, y } = locationConsentEmployerPos(e);
-    ctx.lineTo(x, y);
-    ctx.strokeStyle = "#0f172a";
-    ctx.lineWidth = 2;
-    ctx.lineCap = "round";
-    ctx.stroke();
-    locationConsentEmployerHasDrawnRef.current = true;
-  };
-  const locationConsentEmployerEndDraw = () => { locationConsentEmployerDrawingRef.current = false; };
-  const locationConsentEmployerClearSignature = () => {
-    const c = locationConsentEmployerSigCanvasRef.current;
-    if (!c) return;
-    c.getContext("2d")!.clearRect(0, 0, c.width, c.height);
-    locationConsentEmployerHasDrawnRef.current = false;
   };
 
   const handleSaveLocationConsentEmployerSignature = async () => {
     if (!locationConsentEmployerDialog || !uid) return;
-    if (!locationConsentEmployerHasDrawnRef.current) {
-      setLocationConsentEmployerError("Please draw your signature.");
+    if (!locationConsentEmployerSigPad.hasContent()) {
+      setLocationConsentEmployerError("Please add your signature.");
       return;
     }
     setLocationConsentEmployerSaving(true);
@@ -5676,7 +5520,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         ? new Uint8Array(await (await fetch(existing.employeeSignatureDataUrl)).arrayBuffer())
         : undefined;
 
-      const dataUrl = locationConsentEmployerSigCanvasRef.current!.toDataURL("image/png");
+      const dataUrl = locationConsentEmployerSigPad.toDataURL();
+      if (!dataUrl) {
+        setLocationConsentEmployerError("Please add your signature.");
+        return;
+      }
       const employerSigBytes = new Uint8Array(await (await fetch(dataUrl)).arrayBuffer());
       const signatureUrl = await uploadSignableDocumentSignature(locationConsentEmployerDialog.companyId, locationConsentEmployerDialog.id, "hr_staff", dataUrl);
       const signedAt = new Date().toISOString();
@@ -5719,7 +5567,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
   useEffect(() => {
-    if (activeTab === "damage" || activeTab === "jotformDocuments") void loadSentDamageForms();
+    if (activeTab === "damage" || activeTab === "jotformDocuments" || activeTab === "combineForms") void loadSentDamageForms();
   }, [activeTab]);
   // Employee done, nobody has claimed the employer signature yet — feeds the sidebar tab's count badge.
   const sentDamageAwaitingEmployerCount = useMemo(
@@ -5904,52 +5752,17 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [damageEmployerDialog, setDamageEmployerDialog] = useState<SignableDocument | null>(null);
   const [damageEmployerSaving, setDamageEmployerSaving] = useState(false);
   const [damageEmployerError, setDamageEmployerError] = useState<string | null>(null);
-  const damageEmployerSigCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const damageEmployerDrawingRef = useRef(false);
-  const damageEmployerHasDrawnRef = useRef(false);
+  const damageEmployerSigPad = useSignaturePad({ width: 400, height: 120 });
 
   const handleOpenDamageEmployerDialog = (doc: SignableDocument) => {
     setDamageEmployerDialog(doc);
     setDamageEmployerError(null);
-    damageEmployerHasDrawnRef.current = false;
-  };
-
-  const damageEmployerPos = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    const c = damageEmployerSigCanvasRef.current!;
-    const r = c.getBoundingClientRect();
-    return { x: ((e.clientX - r.left) / r.width) * c.width, y: ((e.clientY - r.top) / r.height) * c.height };
-  };
-  const damageEmployerStartDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    damageEmployerDrawingRef.current = true;
-    const ctx = damageEmployerSigCanvasRef.current!.getContext("2d")!;
-    const { x, y } = damageEmployerPos(e);
-    ctx.beginPath();
-    ctx.moveTo(x, y);
-    e.currentTarget.setPointerCapture(e.pointerId);
-  };
-  const damageEmployerMoveDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!damageEmployerDrawingRef.current) return;
-    const ctx = damageEmployerSigCanvasRef.current!.getContext("2d")!;
-    const { x, y } = damageEmployerPos(e);
-    ctx.lineTo(x, y);
-    ctx.strokeStyle = "#0f172a";
-    ctx.lineWidth = 2;
-    ctx.lineCap = "round";
-    ctx.stroke();
-    damageEmployerHasDrawnRef.current = true;
-  };
-  const damageEmployerEndDraw = () => { damageEmployerDrawingRef.current = false; };
-  const damageEmployerClearSignature = () => {
-    const c = damageEmployerSigCanvasRef.current;
-    if (!c) return;
-    c.getContext("2d")!.clearRect(0, 0, c.width, c.height);
-    damageEmployerHasDrawnRef.current = false;
   };
 
   const handleSaveDamageEmployerSignature = async () => {
     if (!damageEmployerDialog || !uid) return;
-    if (!damageEmployerHasDrawnRef.current) {
-      setDamageEmployerError("Please draw your signature.");
+    if (!damageEmployerSigPad.hasContent()) {
+      setDamageEmployerError("Please add your signature.");
       return;
     }
     setDamageEmployerSaving(true);
@@ -5965,7 +5778,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         ? new Uint8Array(await (await fetch(existing.employeeSignatureDataUrl)).arrayBuffer())
         : undefined;
 
-      const dataUrl = damageEmployerSigCanvasRef.current!.toDataURL("image/png");
+      const dataUrl = damageEmployerSigPad.toDataURL();
+      if (!dataUrl) {
+        setDamageEmployerError("Please add your signature.");
+        return;
+      }
       const employerSigBytes = new Uint8Array(await (await fetch(dataUrl)).arrayBuffer());
       const signatureUrl = await uploadSignableDocumentSignature(damageEmployerDialog.companyId, damageEmployerDialog.id, "hr_staff", dataUrl);
       const signedAt = new Date().toISOString();
@@ -6006,7 +5823,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
   useEffect(() => {
-    if (activeTab === "contractorData" || activeTab === "jotformDocuments") void loadSentContractorDataForms();
+    if (activeTab === "contractorData" || activeTab === "jotformDocuments" || activeTab === "combineForms") void loadSentContractorDataForms();
   }, [activeTab]);
 
   const [contractorDataRecipientId, setContractorDataRecipientId] = useState("");
@@ -6215,7 +6032,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
   useEffect(() => {
-    if (activeTab === "directDeposit" || activeTab === "jotformDocuments") void loadSentDirectDepositForms();
+    if (activeTab === "directDeposit" || activeTab === "jotformDocuments" || activeTab === "combineForms") void loadSentDirectDepositForms();
   }, [activeTab]);
 
   const [directDepositRecipientId, setDirectDepositRecipientId] = useState("");
@@ -6580,6 +6397,145 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
 
+  // ── Combine Forms — pick a technician, check off which of the acknowledgment/
+  // agreement forms they need, and generate all of them at once as brand-new
+  // documents bundled behind one link (instead of visiting each form's own
+  // tab and sending it separately). Every one of these types is created the
+  // exact same way (see e.g. handleSendWageAck above): formData is just
+  // { employeeId, employeeName }, recipientSlot is always "employee", and
+  // pdfUrl starts empty — the recipient fills the form themselves when they
+  // open their link, nothing needs pre-filling here. Grouped the same way
+  // the sidebar groups them ("General" vs "Technician Forms"). Warning/
+  // Promotion/Action Plan/Termination are deliberately left out — those need
+  // HR to author real content (a warning reason, promotion details, etc.)
+  // and a pre-rendered PDF before they can be created, so they can't be
+  // blank-generated from a checkbox the way these can.
+  const GENERAL_FORM_TYPES: { type: SignableDocumentType; label: string }[] = [
+    { type: "w8ben", label: "Form W-8BEN" },
+    { type: "w4", label: "Form W-4" },
+    { type: "w9", label: "Form W-9" },
+    { type: "w4r", label: "Form W-4R" },
+    { type: "i9", label: "Form I-9 (Employment Eligibility)" },
+  ];
+  const TECHNICIAN_FORM_TYPES: { type: SignableDocumentType; label: string }[] = [
+    { type: "wage_ack", label: "Acknowledgment of Wage" },
+    { type: "car_iq_agreement", label: "Car IQ Technician Agreement" },
+    { type: "vehicle_agreement", label: "Company Vehicle Use Agreement" },
+    { type: "contractor_data", label: "Contractor Data" },
+    { type: "damage", label: "Damage Agreement" },
+    { type: "direct_deposit", label: "Direct Deposit Authorization" },
+    { type: "employee_confidentiality", label: "Employee Confidentiality Agreement" },
+    { type: "location_consent", label: "Location Sharing Consent" },
+    { type: "meal_rest_break", label: "Meal & Rest Break Policy" },
+    { type: "mileage_fuel", label: "Mileage & Fuel Policy" },
+    { type: "parts_responsibility", label: "Parts Responsibility Form" },
+    { type: "pto_ack", label: "PTO & Sick Leave Policy" },
+  ];
+
+  const [combineFormsRecipientId, setCombineFormsRecipientId] = useState("");
+  const [combineFormsRecipientSearch, setCombineFormsRecipientSearch] = useState("");
+  const [combineFormsRecipientDropdownOpen, setCombineFormsRecipientDropdownOpen] = useState(false);
+  const filteredCombineFormsRecipients = useMemo(
+    () => employees.filter((e) => e.status === "active" && e.name.toLowerCase().includes(combineFormsRecipientSearch.toLowerCase())),
+    [employees, combineFormsRecipientSearch]
+  );
+  // No AHS account needed for "Copy Link Instead" — same "type a name" fallback every other form's own External Link mode already uses (e.g. handleGenerateExternalWageAck).
+  const [combineFormsExternalName, setCombineFormsExternalName] = useState("");
+  const [selectedFormTypes, setSelectedFormTypes] = useState<Set<SignableDocumentType>>(new Set());
+  const toggleFormTypeSelected = (type: SignableDocumentType) => {
+    setSelectedFormTypes((prev) => {
+      const next = new Set(prev);
+      if (next.has(type)) next.delete(type); else next.add(type);
+      return next;
+    });
+  };
+  const [combineFormsBusy, setCombineFormsBusy] = useState(false);
+  const [combineFormsError, setCombineFormsError] = useState<string | null>(null);
+  const [combineFormsSentNotice, setCombineFormsSentNotice] = useState<string | null>(null);
+  const [combineFormsCopyLink, setCombineFormsCopyLink] = useState<string | null>(null);
+
+  const handleGenerateCombinedForms = async (deliver: "message" | "copyLink") => {
+    // "message" always needs a real AHS teammate (there's no one to DM otherwise).
+    // "copyLink" also accepts a typed name, or no name at all — same "name isn't
+    // required upfront" fallback every other form's External Link mode already uses.
+    const recipient = employees.find((e) => e.id === combineFormsRecipientId);
+    const externalName = combineFormsExternalName.trim() || "External Recipient";
+    if (selectedFormTypes.size === 0 || !uid) return;
+    if (deliver === "message" && !recipient) return;
+    setCombineFormsBusy(true);
+    setCombineFormsError(null);
+    setCombineFormsSentNotice(null);
+    setCombineFormsCopyLink(null);
+    try {
+      const docs = await Promise.all(
+        Array.from(selectedFormTypes).map((type) =>
+          createSignableDocument(
+            recipient
+              ? {
+                  documentType: type,
+                  formData: { employeeId: recipient.id, employeeName: recipient.name } as unknown as Record<string, any>,
+                  recipientId: recipient.id,
+                  recipientSlot: "employee",
+                  pdfUrl: "",
+                }
+              : {
+                  documentType: type,
+                  formData: { employeeId: "", employeeName: externalName } as unknown as Record<string, any>,
+                  recipientName: externalName,
+                  recipientSlot: "employee",
+                  pdfUrl: "",
+                }
+          )
+        )
+      );
+
+      // Local dev only: point the bundle link at this dev server instead of
+      // the deployed production URL so it's immediately clickable while
+      // testing — import.meta.env.DEV is false in a real `npm run deploy`
+      // build, so a deployed generate falls back to getAppUrl() as normal.
+      const bundleOrigin = import.meta.env.DEV ? window.location.origin : getAppUrl();
+      // External (no-account) recipients go through the public /sign-bundle-external bridge — /sign-bundle requires an authenticated session tied to the actual recipient.
+      const bundlePath = recipient ? "/sign-bundle" : "/sign-bundle-external";
+      const bundleLink = `${bundleOrigin}${bundlePath}?ids=${docs.map((d) => d.id).join(",")}`;
+
+      if (deliver === "message" && recipient) {
+        const senderProfileId = myProfileId ?? (await getMyProfileId(uid));
+        if (!senderProfileId) throw new Error("Could not resolve your profile.");
+        const thread = await getOrCreateDmThread(senderProfileId, recipient.id);
+        await sendMessage({
+          dmThreadId: thread.id,
+          senderId: senderProfileId,
+          senderName: displayName || "HR",
+          body: `📋 Please complete these ${docs.length} forms: ${bundleLink}`,
+        });
+        setCombineFormsSentNotice(`Link sent to ${recipient.name} for ${docs.length} form${docs.length === 1 ? "" : "s"}.`);
+      } else {
+        // Skip the in-app message — HR shares this link themselves (text, email, etc.) instead.
+        try { await navigator.clipboard.writeText(bundleLink); } catch { /* clipboard permission denied — link is still shown below to copy manually */ }
+        setCombineFormsCopyLink(bundleLink);
+      }
+
+      void logActivity({ action: "combined_forms_sent", targetType: "employee", targetId: recipient?.id, targetLabel: recipient?.name ?? externalName, details: { types: Array.from(selectedFormTypes), deliver } });
+
+      setSelectedFormTypes(new Set());
+      setCombineFormsRecipientId("");
+      setCombineFormsRecipientSearch("");
+      setCombineFormsExternalName("");
+      // Refresh each type's own "Sent X Forms" tracking table too, so these newly-generated documents show up there right away.
+      await Promise.all([
+        loadSentW8benForms(), loadSentW4Forms(), loadSentW9Forms(), loadSentW4RForms(), loadSentI9Forms(),
+        loadSentWageAckForms(), loadSentCarIqAgreementForms(), loadSentVehicleAgreementForms(), loadSentDamageForms(),
+        loadSentDirectDepositForms(), loadSentEmployeeConfidentialityForms(), loadSentContractorDataForms(),
+        loadSentLocationConsentForms(), loadSentMealRestBreakForms(), loadSentMileageFuelForms(),
+        loadSentPartsResponsibilityForms(), loadSentPtoAckForms(),
+      ]);
+    } catch (err) {
+      setCombineFormsError(err instanceof Error ? err.message : "Failed to generate these forms.");
+    } finally {
+      setCombineFormsBusy(false);
+    }
+  };
+
   const handleCopyI9Link = async (doc: SignableDocument) => {
     try {
       const path = doc.recipientId ? "fill-i9" : "fill-i9-external";
@@ -6639,47 +6595,13 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [i9Section2Form, setI9Section2Form] = useState(I9_SECTION2_BLANK);
   const [i9Section2Saving, setI9Section2Saving] = useState(false);
   const [i9Section2Error, setI9Section2Error] = useState<string | null>(null);
-  const i9Section2SigCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const i9Section2DrawingRef = useRef(false);
-  const i9Section2HasDrawnRef = useRef(false);
+  const i9Section2SigPad = useSignaturePad({ width: 440, height: 100 });
 
   const handleOpenI9Section2 = (doc: SignableDocument) => {
     setI9Section2Dialog(doc);
     setI9Section2Form(I9_SECTION2_BLANK);
     setI9Section2Error(null);
-    i9Section2HasDrawnRef.current = false;
-  };
-
-  const i9Section2Pos = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    const c = i9Section2SigCanvasRef.current!;
-    const r = c.getBoundingClientRect();
-    return { x: ((e.clientX - r.left) / r.width) * c.width, y: ((e.clientY - r.top) / r.height) * c.height };
-  };
-  const i9Section2StartDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    i9Section2DrawingRef.current = true;
-    const ctx = i9Section2SigCanvasRef.current!.getContext("2d")!;
-    const { x, y } = i9Section2Pos(e);
-    ctx.beginPath();
-    ctx.moveTo(x, y);
-    e.currentTarget.setPointerCapture(e.pointerId);
-  };
-  const i9Section2MoveDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!i9Section2DrawingRef.current) return;
-    const ctx = i9Section2SigCanvasRef.current!.getContext("2d")!;
-    const { x, y } = i9Section2Pos(e);
-    ctx.lineTo(x, y);
-    ctx.strokeStyle = "#0f172a";
-    ctx.lineWidth = 2;
-    ctx.lineCap = "round";
-    ctx.stroke();
-    i9Section2HasDrawnRef.current = true;
-  };
-  const i9Section2EndDraw = () => { i9Section2DrawingRef.current = false; };
-  const i9Section2ClearSignature = () => {
-    const c = i9Section2SigCanvasRef.current;
-    if (!c) return;
-    c.getContext("2d")!.clearRect(0, 0, c.width, c.height);
-    i9Section2HasDrawnRef.current = false;
+    i9Section2SigPad.clear();
   };
 
   const handleSaveI9Section2 = async () => {
@@ -6704,8 +6626,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       setI9Section2Error("Fill in the employer/authorized representative and business info.");
       return;
     }
-    if (!i9Section2HasDrawnRef.current) {
-      setI9Section2Error("Please draw your signature.");
+    if (!i9Section2SigPad.hasContent()) {
+      setI9Section2Error("Please add your signature.");
       return;
     }
     setI9Section2Saving(true);
@@ -6721,7 +6643,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         ? new Uint8Array(await (await fetch(existing.employeeSignatureDataUrl)).arrayBuffer())
         : undefined;
 
-      const dataUrl = i9Section2SigCanvasRef.current!.toDataURL("image/png");
+      const dataUrl = i9Section2SigPad.toDataURL();
+      if (!dataUrl) {
+        setI9Section2Error("Please add your signature.");
+        return;
+      }
       const employerSigBytes = new Uint8Array(await (await fetch(dataUrl)).arrayBuffer());
       const signatureUrl = await uploadSignableDocumentSignature(i9Section2Dialog.companyId, i9Section2Dialog.id, "hr_staff", dataUrl);
       const signedAt = new Date().toISOString();
@@ -9893,6 +9819,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // unscannable as a plain accordion).
   const automatedFormsGeneralTabs = [
     ...(canViewJotformTab ? [{ key: "jotformDocuments", label: "Applicant Documents", count: newJotformSubmissionsCount, icon: Forward }] as const : []),
+    { key: "combineForms", label: "Combine Forms", count: 0, icon: Link2 },
     { key: "coe", label: "Certificate of Employment", count: 0, icon: CheckCircle },
     { key: "customForms", label: "Custom Forms", count: newCustomFormSubmissionsCount, icon: FileText },
     { key: "promotionForm", label: "Employee Promotion / Role Change", count: 0, icon: FileText },
@@ -11464,6 +11391,152 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             </tbody>
           </table>
         </div>
+      </div>
+      )}
+
+      {/* ── Combine Forms — pick a technician, check off which forms they need, and generate all of them at once behind one link that opens as a Next-through wizard with a completion timeline (SignBundlePage.tsx) ── */}
+      {activeTab === "combineForms" && (
+      <div className="panel p-0 overflow-hidden">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm flex items-center gap-1.5"><Link2 className="h-4 w-4 text-blue-300" /> Combine Forms</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Pick a technician, check off the forms they need, then generate one link that walks them through all of it — instead of sending each form separately.</p>
+        </div>
+
+        <div className="p-4 border-b border-white/10 flex flex-col gap-1 relative max-w-md">
+          <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Technician</label>
+          <input
+            type="text"
+            value={combineFormsRecipientSearch}
+            onChange={(e) => { setCombineFormsRecipientSearch(e.target.value); setCombineFormsRecipientId(""); setCombineFormsRecipientDropdownOpen(true); setCombineFormsExternalName(""); }}
+            onFocus={() => setCombineFormsRecipientDropdownOpen(true)}
+            onBlur={() => setTimeout(() => setCombineFormsRecipientDropdownOpen(false), 150)}
+            placeholder="Search a teammate…"
+            className="glass-input text-sm py-1.5 px-3 rounded-md"
+          />
+          {combineFormsRecipientDropdownOpen && (
+            <div className="absolute z-50 top-full mt-1 w-full max-h-96 overflow-y-auto rounded-md border border-white/15 bg-slate-900 shadow-2xl">
+              {filteredCombineFormsRecipients.length === 0 ? (
+                <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+              ) : (
+                filteredCombineFormsRecipients.map((e) => (
+                  <button
+                    key={e.id}
+                    type="button"
+                    onMouseDown={(ev) => ev.preventDefault()}
+                    onClick={() => {
+                      setCombineFormsRecipientId(e.id);
+                      setCombineFormsRecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`);
+                      setCombineFormsRecipientDropdownOpen(false);
+                    }}
+                    className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${combineFormsRecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                  >
+                    {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
+                  </button>
+                ))
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="px-4 pb-4 border-b border-white/10 flex flex-col gap-1 max-w-md">
+          <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">— or, no AHS account —</label>
+          <input
+            type="text"
+            value={combineFormsExternalName}
+            onChange={(e) => { setCombineFormsExternalName(e.target.value); setCombineFormsRecipientId(""); setCombineFormsRecipientSearch(""); }}
+            placeholder="Type their name…"
+            className="glass-input text-sm py-1.5 px-3 rounded-md"
+          />
+          <p className="text-[10px] text-muted-foreground">Optional — only used by "Copy Link Instead" below, which works even with no name at all.</p>
+        </div>
+
+        <div className="px-4 pt-4">
+          <h3 className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">General</h3>
+        </div>
+        <div className="p-4 pt-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 border-b border-white/10">
+          {GENERAL_FORM_TYPES.map(({ type, label }) => {
+            const checked = selectedFormTypes.has(type);
+            return (
+              <label
+                key={type}
+                className={`flex items-start gap-2.5 rounded-lg border p-3 cursor-pointer transition-colors ${
+                  checked ? "border-primary/50 bg-primary/10" : "border-white/10 bg-white/5 hover:bg-white/10"
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={() => toggleFormTypeSelected(type)}
+                  className="mt-0.5 h-3.5 w-3.5 shrink-0"
+                />
+                <span className="text-sm font-medium">{label}</span>
+              </label>
+            );
+          })}
+        </div>
+
+        <div className="px-4 pt-4">
+          <h3 className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Technician</h3>
+        </div>
+        <div className="p-4 pt-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          {TECHNICIAN_FORM_TYPES.map(({ type, label }) => {
+            const checked = selectedFormTypes.has(type);
+            return (
+              <label
+                key={type}
+                className={`flex items-start gap-2.5 rounded-lg border p-3 cursor-pointer transition-colors ${
+                  checked ? "border-primary/50 bg-primary/10" : "border-white/10 bg-white/5 hover:bg-white/10"
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={() => toggleFormTypeSelected(type)}
+                  className="mt-0.5 h-3.5 w-3.5 shrink-0"
+                />
+                <span className="text-sm font-medium">{label}</span>
+              </label>
+            );
+          })}
+        </div>
+
+        <div className="px-4 py-4 border-t border-white/10 flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            disabled={!combineFormsRecipientId || selectedFormTypes.size === 0 || combineFormsBusy}
+            onClick={() => handleGenerateCombinedForms("message")}
+            className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-40 flex items-center gap-1.5"
+          >
+            <Link2 className="h-3.5 w-3.5" /> {combineFormsBusy ? "Generating…" : "Generate Link for Selected Forms"}
+          </button>
+          <button
+            type="button"
+            disabled={selectedFormTypes.size === 0 || combineFormsBusy}
+            onClick={() => handleGenerateCombinedForms("copyLink")}
+            title="Generate the same forms but just copy the link — nothing gets sent as a message"
+            className="btn text-sm px-4 py-2 disabled:opacity-40 flex items-center gap-1.5"
+          >
+            <Copy className="h-3.5 w-3.5" /> Copy Link Instead
+          </button>
+          {selectedFormTypes.size > 0 && (
+            <span className="text-xs text-muted-foreground">{selectedFormTypes.size} form{selectedFormTypes.size === 1 ? "" : "s"} selected</span>
+          )}
+        </div>
+
+        {combineFormsError && (
+          <p className="mx-4 mb-4 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{combineFormsError}</p>
+        )}
+        {combineFormsSentNotice && (
+          <p className="mx-4 mb-4 text-xs text-green-300 bg-green-500/10 border border-green-500/30 rounded-md px-2.5 py-2">{combineFormsSentNotice}</p>
+        )}
+        {combineFormsCopyLink && (
+          <div className="mx-4 mb-4 text-xs bg-blue-500/10 border border-blue-500/30 rounded-md px-2.5 py-2 flex flex-wrap items-center gap-2">
+            <span>Copied to clipboard — share it however you'd like:</span>
+            <code className="px-1.5 py-0.5 bg-black/30 rounded break-all">{combineFormsCopyLink}</code>
+            <button type="button" onClick={() => navigator.clipboard.writeText(combineFormsCopyLink)} className="btn text-xs px-2 py-1">Copy Again</button>
+            <button type="button" onClick={() => setCombineFormsCopyLink(null)} className="btn text-xs px-2 py-1">Dismiss</button>
+          </div>
+        )}
       </div>
       )}
 
@@ -17649,19 +17722,13 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               Employee Meal and Rest Break Policy Acknowledgment.
             </p>
 
-            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2 block">Draw your signature</label>
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2 block">Add your signature</label>
             <canvas
-              ref={mealRestBreakEmployerSigCanvasRef}
-              width={400}
-              height={120}
-              onPointerDown={mealRestBreakEmployerStartDraw}
-              onPointerMove={mealRestBreakEmployerMoveDraw}
-              onPointerUp={mealRestBreakEmployerEndDraw}
-              onPointerLeave={mealRestBreakEmployerEndDraw}
-              className="bg-white rounded-md border border-white/15 w-full touch-none cursor-crosshair"
+              {...mealRestBreakEmployerSigPad.canvasProps}
+              className={`bg-white rounded-md border border-white/15 w-full ${mealRestBreakEmployerSigPad.canvasProps.className}`}
             />
-            <div className="flex gap-2 mt-2">
-              <button onClick={mealRestBreakEmployerClearSignature} className="btn text-xs px-3 py-1.5">Clear</button>
+            <div className="flex justify-center mt-2">
+              <SignaturePadControls pad={mealRestBreakEmployerSigPad} />
             </div>
 
             {mealRestBreakEmployerError && (
@@ -17740,19 +17807,13 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               Parts Responsibility and Technician Floor Protection Acknowledgment Form.
             </p>
 
-            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2 block">Draw your signature</label>
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2 block">Add your signature</label>
             <canvas
-              ref={partsResponsibilityManagerSigCanvasRef}
-              width={400}
-              height={120}
-              onPointerDown={partsResponsibilityManagerStartDraw}
-              onPointerMove={partsResponsibilityManagerMoveDraw}
-              onPointerUp={partsResponsibilityManagerEndDraw}
-              onPointerLeave={partsResponsibilityManagerEndDraw}
-              className="bg-white rounded-md border border-white/15 w-full touch-none cursor-crosshair"
+              {...partsResponsibilityManagerSigPad.canvasProps}
+              className={`bg-white rounded-md border border-white/15 w-full ${partsResponsibilityManagerSigPad.canvasProps.className}`}
             />
-            <div className="flex gap-2 mt-2">
-              <button onClick={partsResponsibilityManagerClearSignature} className="btn text-xs px-3 py-1.5">Clear</button>
+            <div className="flex justify-center mt-2">
+              <SignaturePadControls pad={partsResponsibilityManagerSigPad} />
             </div>
 
             {partsResponsibilityManagerError && (
@@ -17808,19 +17869,13 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               Personal Vehicle Mileage and Fuel Policy Agreement.
             </p>
 
-            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2 block">Draw your signature</label>
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2 block">Add your signature</label>
             <canvas
-              ref={mileageFuelEmployerSigCanvasRef}
-              width={400}
-              height={120}
-              onPointerDown={mileageFuelEmployerStartDraw}
-              onPointerMove={mileageFuelEmployerMoveDraw}
-              onPointerUp={mileageFuelEmployerEndDraw}
-              onPointerLeave={mileageFuelEmployerEndDraw}
-              className="bg-white rounded-md border border-white/15 w-full touch-none cursor-crosshair"
+              {...mileageFuelEmployerSigPad.canvasProps}
+              className={`bg-white rounded-md border border-white/15 w-full ${mileageFuelEmployerSigPad.canvasProps.className}`}
             />
-            <div className="flex gap-2 mt-2">
-              <button onClick={mileageFuelEmployerClearSignature} className="btn text-xs px-3 py-1.5">Clear</button>
+            <div className="flex justify-center mt-2">
+              <SignaturePadControls pad={mileageFuelEmployerSigPad} />
             </div>
 
             {mileageFuelEmployerError && (
@@ -17876,19 +17931,13 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               Employee Mobile App Location Sharing Consent Agreement.
             </p>
 
-            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2 block">Draw your signature</label>
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2 block">Add your signature</label>
             <canvas
-              ref={locationConsentEmployerSigCanvasRef}
-              width={400}
-              height={120}
-              onPointerDown={locationConsentEmployerStartDraw}
-              onPointerMove={locationConsentEmployerMoveDraw}
-              onPointerUp={locationConsentEmployerEndDraw}
-              onPointerLeave={locationConsentEmployerEndDraw}
-              className="bg-white rounded-md border border-white/15 w-full touch-none cursor-crosshair"
+              {...locationConsentEmployerSigPad.canvasProps}
+              className={`bg-white rounded-md border border-white/15 w-full ${locationConsentEmployerSigPad.canvasProps.className}`}
             />
-            <div className="flex gap-2 mt-2">
-              <button onClick={locationConsentEmployerClearSignature} className="btn text-xs px-3 py-1.5">Clear</button>
+            <div className="flex justify-center mt-2">
+              <SignaturePadControls pad={locationConsentEmployerSigPad} />
             </div>
 
             {locationConsentEmployerError && (
@@ -17944,19 +17993,13 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               Damage, Part Loss, and Tool Penalty Commission Deduction Agreement.
             </p>
 
-            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2 block">Draw your signature</label>
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2 block">Add your signature</label>
             <canvas
-              ref={damageEmployerSigCanvasRef}
-              width={400}
-              height={120}
-              onPointerDown={damageEmployerStartDraw}
-              onPointerMove={damageEmployerMoveDraw}
-              onPointerUp={damageEmployerEndDraw}
-              onPointerLeave={damageEmployerEndDraw}
-              className="bg-white rounded-md border border-white/15 w-full touch-none cursor-crosshair"
+              {...damageEmployerSigPad.canvasProps}
+              className={`bg-white rounded-md border border-white/15 w-full ${damageEmployerSigPad.canvasProps.className}`}
             />
-            <div className="flex gap-2 mt-2">
-              <button onClick={damageEmployerClearSignature} className="btn text-xs px-3 py-1.5">Clear</button>
+            <div className="flex justify-center mt-2">
+              <SignaturePadControls pad={damageEmployerSigPad} />
             </div>
 
             {damageEmployerError && (
@@ -18193,16 +18236,12 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               <div className="flex flex-col gap-1">
                 <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Employer/AR signature</label>
                 <canvas
-                  ref={i9Section2SigCanvasRef}
-                  width={440}
-                  height={100}
-                  onPointerDown={i9Section2StartDraw}
-                  onPointerMove={i9Section2MoveDraw}
-                  onPointerUp={i9Section2EndDraw}
-                  onPointerLeave={i9Section2EndDraw}
-                  className="touch-none cursor-crosshair bg-white rounded-md border border-white/20 w-full max-w-[440px] h-[100px]"
+                  {...i9Section2SigPad.canvasProps}
+                  className={`bg-white rounded-md border border-white/20 w-full max-w-[440px] h-[100px] ${i9Section2SigPad.canvasProps.className}`}
                 />
-                <button type="button" onClick={i9Section2ClearSignature} className="btn text-xs px-3 py-1.5 w-fit mt-1">Clear signature</button>
+                <div className="flex justify-center mt-1">
+                  <SignaturePadControls pad={i9Section2SigPad} />
+                </div>
               </div>
             </div>
 
@@ -18259,19 +18298,13 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               Acknowledgment of Wage & Compensation Structure.
             </p>
 
-            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2 block">Draw your signature</label>
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2 block">Add your signature</label>
             <canvas
-              ref={wageAckEmployerSigCanvasRef}
-              width={400}
-              height={120}
-              onPointerDown={wageAckEmployerStartDraw}
-              onPointerMove={wageAckEmployerMoveDraw}
-              onPointerUp={wageAckEmployerEndDraw}
-              onPointerLeave={wageAckEmployerEndDraw}
-              className="bg-white rounded-md border border-white/15 w-full touch-none cursor-crosshair"
+              {...wageAckEmployerSigPad.canvasProps}
+              className={`bg-white rounded-md border border-white/15 w-full ${wageAckEmployerSigPad.canvasProps.className}`}
             />
-            <div className="flex gap-2 mt-2">
-              <button onClick={wageAckEmployerClearSignature} className="btn text-xs px-3 py-1.5">Clear</button>
+            <div className="flex justify-center mt-2">
+              <SignaturePadControls pad={wageAckEmployerSigPad} />
             </div>
 
             {wageAckEmployerError && (
