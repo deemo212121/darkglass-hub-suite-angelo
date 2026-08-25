@@ -7,7 +7,7 @@
  * pages already use — no server changes needed.
  */
 import { Suspense, useEffect, useMemo, useState } from "react";
-import { CheckCircle2, ChevronLeft, ChevronRight, Circle, Loader2 } from "lucide-react";
+import { CheckCircle2, ChevronLeft, ChevronRight, Circle, Loader2, Menu, X } from "lucide-react";
 import type { SignableDocumentType } from "@/lib/supabase/signableDocuments";
 import { signableDocumentLabel } from "@/lib/signableDocumentRegistry";
 import { EXTERNAL_SIGNABLE_DOCUMENT_COMPONENTS } from "@/lib/signableDocumentComponents";
@@ -41,6 +41,10 @@ export function ExternalSignBundlePage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [index, setIndex] = useState(0);
+  // Collapsed by default — on mobile the timeline would otherwise permanently
+  // eat into the width available for the actual form. md:block below always
+  // shows it on wider screens regardless of this state.
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   useEffect(() => {
     if (ids.length === 0) {
@@ -108,9 +112,19 @@ export function ExternalSignBundlePage() {
   return (
     <div className="min-h-screen flex flex-col bg-slate-950">
       <div className="px-4 py-2.5 border-b border-white/10 flex items-center justify-between gap-3 bg-slate-900">
-        <p className="text-sm font-semibold">
-          Document {index + 1} of {ids.length}
-        </p>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setSidebarOpen((v) => !v)}
+            className="md:hidden btn text-xs px-2 py-1.5"
+            title="Show all documents in this bundle"
+          >
+            {sidebarOpen ? <X className="h-3.5 w-3.5" /> : <Menu className="h-3.5 w-3.5" />}
+          </button>
+          <p className="text-sm font-semibold">
+            Document {index + 1} of {ids.length}
+          </p>
+        </div>
         <div className="flex items-center gap-2">
           <button
             type="button"
@@ -131,8 +145,8 @@ export function ExternalSignBundlePage() {
         </div>
       </div>
 
-      <div className="flex flex-1 min-h-0">
-        <aside className="w-64 shrink-0 border-r border-white/10 bg-slate-900/60 overflow-y-auto py-3">
+      <div className="flex flex-1 min-h-0 relative">
+        <aside className={`${sidebarOpen ? "flex" : "hidden"} md:flex flex-col absolute md:static inset-y-0 left-0 z-20 w-64 shrink-0 border-r border-white/10 bg-slate-900 md:bg-slate-900/60 overflow-y-auto py-3`}>
           {ids.map((id, i) => {
             const doc = docs[id];
             const finished = doc ? isFinished(doc) : false;
@@ -140,7 +154,7 @@ export function ExternalSignBundlePage() {
               <button
                 key={id}
                 type="button"
-                onClick={async () => { await refreshCurrent(); setIndex(i); }}
+                onClick={async () => { await refreshCurrent(); setIndex(i); setSidebarOpen(false); }}
                 className={`w-full text-left px-4 py-2.5 flex items-center gap-2 text-sm transition-colors ${
                   i === index ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground hover:bg-white/5"
                 }`}
@@ -155,6 +169,9 @@ export function ExternalSignBundlePage() {
             );
           })}
         </aside>
+        {sidebarOpen && (
+          <div className="md:hidden fixed inset-0 z-10 bg-black/50" onClick={() => setSidebarOpen(false)} />
+        )}
 
         <main className="flex-1 min-w-0 overflow-y-auto">
           {!currentDoc || !CurrentComponent ? (
@@ -164,6 +181,28 @@ export function ExternalSignBundlePage() {
               <CurrentComponent docId={currentDoc.id} />
             </Suspense>
           )}
+          {/* Right where the recipient's eyes already are after a form's own "Submitted" confirmation — the top bar's Back/Next is easy to miss up there.
+              Sits flush under that confirmation panel (matching its max-w-4xl column + panel styling, pulled up to close the panel's own bottom margin) so it reads as one connected card instead of a separate control bar. */}
+          <div className="max-w-4xl mx-auto px-4">
+            <div className="panel !mt-[-1.5rem] !rounded-t-none !border-t-0 flex items-center justify-center gap-2">
+              <button
+                type="button"
+                onClick={goBack}
+                disabled={index === 0}
+                className="btn text-sm px-4 py-2 flex items-center gap-1.5 disabled:opacity-40"
+              >
+                <ChevronLeft className="h-4 w-4" /> Back
+              </button>
+              <button
+                type="button"
+                onClick={goNext}
+                disabled={index >= ids.length - 1}
+                className="btn text-sm px-4 py-2 flex items-center gap-1.5 disabled:opacity-40"
+              >
+                Next <ChevronRight className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
         </main>
       </div>
     </div>
