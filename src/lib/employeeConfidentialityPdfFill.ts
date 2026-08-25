@@ -73,8 +73,7 @@ export async function fillEmployeeConfidentialityPdf(
   if (signatureBytes) {
     const png = await pdfDoc.embedPng(signatureBytes);
     const maxW = 270, maxH = 20;
-    const scale = Math.min(maxW / png.width, maxH / png.height, 1);
-    page2.drawImage(png, { x: 180, y: 323, width: png.width * scale, height: png.height * scale });
+    page2.drawImage(png, { x: 180, y: 323, width: maxW, height: maxH });
   }
 
   return pdfDoc.save();

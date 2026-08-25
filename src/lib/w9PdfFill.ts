@@ -125,8 +125,7 @@ export async function fillW9Pdf(data: W9FormData, signaturePngBytes?: Uint8Array
     const png = await pdfDoc.embedPng(signaturePngBytes);
     const maxW = 210;
     const maxH = 16;
-    const scale = Math.min(maxW / png.width, maxH / png.height, 1);
-    page1.drawImage(png, { x: 160, y: 198, width: png.width * scale, height: png.height * scale });
+    page1.drawImage(png, { x: 160, y: 198, width: maxW, height: maxH });
   }
 
   for (const field of form.getFields()) {

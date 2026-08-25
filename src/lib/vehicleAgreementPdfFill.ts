@@ -76,8 +76,7 @@ export async function fillVehicleAgreementPdf(data: VehicleAgreementFormData, si
   if (signatureBytes) {
     const png = await pdfDoc.embedPng(signatureBytes);
     const { x, y, maxW, maxH } = VEHICLE_AGREEMENT_SIGNATURE_DRAW;
-    const scale = Math.min(maxW / png.width, maxH / png.height, 1);
-    page2.drawImage(png, { x, y, width: png.width * scale, height: png.height * scale });
+    page2.drawImage(png, { x, y, width: maxW, height: maxH });
   }
 
   return pdfDoc.save();

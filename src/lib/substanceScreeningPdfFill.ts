@@ -82,8 +82,7 @@ export async function fillSubstanceScreeningPdf(
   if (signatureBytes) {
     const png = await pdfDoc.embedPng(signatureBytes);
     const maxW = 210, maxH = 20;
-    const scale = Math.min(maxW / png.width, maxH / png.height, 1);
-    page2.drawImage(png, { x: 80, y: 490, width: png.width * scale, height: png.height * scale });
+    page2.drawImage(png, { x: 80, y: 490, width: maxW, height: maxH });
   }
 
   return pdfDoc.save();

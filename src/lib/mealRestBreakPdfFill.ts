@@ -48,8 +48,7 @@ export async function fillMealRestBreakPdf(
   if (employeeSigBytes) {
     const png = await pdfDoc.embedPng(employeeSigBytes);
     const maxW = 255, maxH = 20;
-    const scale = Math.min(maxW / png.width, maxH / png.height, 1);
-    page.drawImage(png, { x: 177, y: 267, width: png.width * scale, height: png.height * scale });
+    page.drawImage(png, { x: 177, y: 267, width: maxW, height: maxH });
   }
   const employeeDateParts = fmtDateParts(data.employeeDateSigned);
   draw(employeeDateParts.mm, MEAL_REST_BREAK_DATE_X.mm, 246, 9);
@@ -59,8 +58,7 @@ export async function fillMealRestBreakPdf(
   if (employerSigBytes) {
     const png = await pdfDoc.embedPng(employerSigBytes);
     const maxW = 195, maxH = 20;
-    const scale = Math.min(maxW / png.width, maxH / png.height, 1);
-    page.drawImage(png, { x: 253, y: 217, width: png.width * scale, height: png.height * scale });
+    page.drawImage(png, { x: 253, y: 217, width: maxW, height: maxH });
   }
   const employerDateParts = fmtDateParts(data.employerDateSigned);
   draw(employerDateParts.mm, MEAL_REST_BREAK_DATE_X.mm, 196, 9);

@@ -65,15 +65,13 @@ export async function fillPartsResponsibilityPdf(
   if (technicianSigBytes) {
     const png = await pdfDoc.embedPng(technicianSigBytes);
     const maxW = 280, maxH = 20;
-    const scale = Math.min(maxW / png.width, maxH / png.height, 1);
-    page2.drawImage(png, { x: 191, y: 603.7, width: png.width * scale, height: png.height * scale });
+    page2.drawImage(png, { x: 191, y: 603.7, width: maxW, height: maxH });
   }
 
   if (managerSigBytes) {
     const png = await pdfDoc.embedPng(managerSigBytes);
     const maxW = 260, maxH = 20;
-    const scale = Math.min(maxW / png.width, maxH / png.height, 1);
-    page2.drawImage(png, { x: 234, y: 561.7, width: png.width * scale, height: png.height * scale });
+    page2.drawImage(png, { x: 234, y: 561.7, width: maxW, height: maxH });
   }
   const managerDateParts = fmtDateParts(data.managerDateSigned);
   draw2(managerDateParts.mm, PARTS_RESP_DATE_X.mm, 519.8, 9);
