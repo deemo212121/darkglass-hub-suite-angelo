@@ -40,6 +40,14 @@ export async function loadBlankSubstanceScreeningBytes(): Promise<Uint8Array> {
   const pdfDoc = await PDFDocument.load(bytes);
   const boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
   const page1 = pdfDoc.getPage(0);
+  // The source PDF's own underscore blank for the date (x=72.02 y=626.86
+  // w=138.50) sits on its own orphaned row between "Employee Name:" and
+  // "Company Name:" — now that the date itself is drawn next to the
+  // "Date:" label instead (see fillSubstanceScreeningPdf below), this line
+  // has nothing pointing to it and just reads as a stray blank. Whited out
+  // here so it never renders, same technique as
+  // employeeConfidentialityPdfFill.ts's BRANCH_PLACEHOLDER_COVER.
+  page1.drawRectangle({ x: 70, y: 623, width: 150, height: 10, color: rgb(1, 1, 1) });
   page1.drawText("US IN HOME SERVICES", { x: 168, y: 617, size: 10, font: boldFont, color: rgb(0, 0, 0) });
   await addLogoHeader(pdfDoc);
   return pdfDoc.save();
