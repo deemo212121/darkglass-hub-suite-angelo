@@ -11,6 +11,8 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as TimecardRouteImport } from './routes/timecard'
 import { Route as SuperadminRouteImport } from './routes/superadmin'
+import { Route as SignBundleExternalRouteImport } from './routes/sign-bundle-external'
+import { Route as SignBundleRouteImport } from './routes/sign-bundle'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as ServicepowerTestRouteImport } from './routes/servicepower-test'
 import { Route as ProfileRouteImport } from './routes/profile'
@@ -47,6 +49,8 @@ import { Route as FillW4DocIdRouteImport } from './routes/fill-w4.$docId'
 import { Route as FillW4ExternalDocIdRouteImport } from './routes/fill-w4-external.$docId'
 import { Route as FillVehicleAgreementDocIdRouteImport } from './routes/fill-vehicle-agreement.$docId'
 import { Route as FillVehicleAgreementExternalDocIdRouteImport } from './routes/fill-vehicle-agreement-external.$docId'
+import { Route as FillSubstanceScreeningDocIdRouteImport } from './routes/fill-substance-screening.$docId'
+import { Route as FillSubstanceScreeningExternalDocIdRouteImport } from './routes/fill-substance-screening-external.$docId'
 import { Route as FillPtoAckDocIdRouteImport } from './routes/fill-pto-ack.$docId'
 import { Route as FillPtoAckExternalDocIdRouteImport } from './routes/fill-pto-ack-external.$docId'
 import { Route as FillPartsResponsibilityDocIdRouteImport } from './routes/fill-parts-responsibility.$docId'
@@ -86,6 +90,16 @@ const TimecardRoute = TimecardRouteImport.update({
 const SuperadminRoute = SuperadminRouteImport.update({
   id: '/superadmin',
   path: '/superadmin',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SignBundleExternalRoute = SignBundleExternalRouteImport.update({
+  id: '/sign-bundle-external',
+  path: '/sign-bundle-external',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SignBundleRoute = SignBundleRouteImport.update({
+  id: '/sign-bundle',
+  path: '/sign-bundle',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SettingsRoute = SettingsRouteImport.update({
@@ -275,6 +289,18 @@ const FillVehicleAgreementExternalDocIdRoute =
     path: '/fill-vehicle-agreement-external/$docId',
     getParentRoute: () => rootRouteImport,
   } as any)
+const FillSubstanceScreeningDocIdRoute =
+  FillSubstanceScreeningDocIdRouteImport.update({
+    id: '/fill-substance-screening/$docId',
+    path: '/fill-substance-screening/$docId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const FillSubstanceScreeningExternalDocIdRoute =
+  FillSubstanceScreeningExternalDocIdRouteImport.update({
+    id: '/fill-substance-screening-external/$docId',
+    path: '/fill-substance-screening-external/$docId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const FillPtoAckDocIdRoute = FillPtoAckDocIdRouteImport.update({
   id: '/fill-pto-ack/$docId',
   path: '/fill-pto-ack/$docId',
@@ -452,6 +478,8 @@ export interface FileRoutesByFullPath {
   '/profile': typeof ProfileRoute
   '/servicepower-test': typeof ServicepowerTestRoute
   '/settings': typeof SettingsRoute
+  '/sign-bundle': typeof SignBundleRoute
+  '/sign-bundle-external': typeof SignBundleExternalRoute
   '/superadmin': typeof SuperadminRouteWithChildren
   '/timecard': typeof TimecardRoute
   '/admin/users': typeof AdminUsersRoute
@@ -481,6 +509,8 @@ export interface FileRoutesByFullPath {
   '/fill-parts-responsibility/$docId': typeof FillPartsResponsibilityDocIdRoute
   '/fill-pto-ack-external/$docId': typeof FillPtoAckExternalDocIdRoute
   '/fill-pto-ack/$docId': typeof FillPtoAckDocIdRoute
+  '/fill-substance-screening-external/$docId': typeof FillSubstanceScreeningExternalDocIdRoute
+  '/fill-substance-screening/$docId': typeof FillSubstanceScreeningDocIdRoute
   '/fill-vehicle-agreement-external/$docId': typeof FillVehicleAgreementExternalDocIdRoute
   '/fill-vehicle-agreement/$docId': typeof FillVehicleAgreementDocIdRoute
   '/fill-w4-external/$docId': typeof FillW4ExternalDocIdRoute
@@ -522,6 +552,8 @@ export interface FileRoutesByTo {
   '/profile': typeof ProfileRoute
   '/servicepower-test': typeof ServicepowerTestRoute
   '/settings': typeof SettingsRoute
+  '/sign-bundle': typeof SignBundleRoute
+  '/sign-bundle-external': typeof SignBundleExternalRoute
   '/superadmin': typeof SuperadminRouteWithChildren
   '/timecard': typeof TimecardRoute
   '/admin/users': typeof AdminUsersRoute
@@ -551,6 +583,8 @@ export interface FileRoutesByTo {
   '/fill-parts-responsibility/$docId': typeof FillPartsResponsibilityDocIdRoute
   '/fill-pto-ack-external/$docId': typeof FillPtoAckExternalDocIdRoute
   '/fill-pto-ack/$docId': typeof FillPtoAckDocIdRoute
+  '/fill-substance-screening-external/$docId': typeof FillSubstanceScreeningExternalDocIdRoute
+  '/fill-substance-screening/$docId': typeof FillSubstanceScreeningDocIdRoute
   '/fill-vehicle-agreement-external/$docId': typeof FillVehicleAgreementExternalDocIdRoute
   '/fill-vehicle-agreement/$docId': typeof FillVehicleAgreementDocIdRoute
   '/fill-w4-external/$docId': typeof FillW4ExternalDocIdRoute
@@ -593,6 +627,8 @@ export interface FileRoutesById {
   '/profile': typeof ProfileRoute
   '/servicepower-test': typeof ServicepowerTestRoute
   '/settings': typeof SettingsRoute
+  '/sign-bundle': typeof SignBundleRoute
+  '/sign-bundle-external': typeof SignBundleExternalRoute
   '/superadmin': typeof SuperadminRouteWithChildren
   '/timecard': typeof TimecardRoute
   '/admin/users': typeof AdminUsersRoute
@@ -622,6 +658,8 @@ export interface FileRoutesById {
   '/fill-parts-responsibility/$docId': typeof FillPartsResponsibilityDocIdRoute
   '/fill-pto-ack-external/$docId': typeof FillPtoAckExternalDocIdRoute
   '/fill-pto-ack/$docId': typeof FillPtoAckDocIdRoute
+  '/fill-substance-screening-external/$docId': typeof FillSubstanceScreeningExternalDocIdRoute
+  '/fill-substance-screening/$docId': typeof FillSubstanceScreeningDocIdRoute
   '/fill-vehicle-agreement-external/$docId': typeof FillVehicleAgreementExternalDocIdRoute
   '/fill-vehicle-agreement/$docId': typeof FillVehicleAgreementDocIdRoute
   '/fill-w4-external/$docId': typeof FillW4ExternalDocIdRoute
@@ -665,6 +703,8 @@ export interface FileRouteTypes {
     | '/profile'
     | '/servicepower-test'
     | '/settings'
+    | '/sign-bundle'
+    | '/sign-bundle-external'
     | '/superadmin'
     | '/timecard'
     | '/admin/users'
@@ -694,6 +734,8 @@ export interface FileRouteTypes {
     | '/fill-parts-responsibility/$docId'
     | '/fill-pto-ack-external/$docId'
     | '/fill-pto-ack/$docId'
+    | '/fill-substance-screening-external/$docId'
+    | '/fill-substance-screening/$docId'
     | '/fill-vehicle-agreement-external/$docId'
     | '/fill-vehicle-agreement/$docId'
     | '/fill-w4-external/$docId'
@@ -735,6 +777,8 @@ export interface FileRouteTypes {
     | '/profile'
     | '/servicepower-test'
     | '/settings'
+    | '/sign-bundle'
+    | '/sign-bundle-external'
     | '/superadmin'
     | '/timecard'
     | '/admin/users'
@@ -764,6 +808,8 @@ export interface FileRouteTypes {
     | '/fill-parts-responsibility/$docId'
     | '/fill-pto-ack-external/$docId'
     | '/fill-pto-ack/$docId'
+    | '/fill-substance-screening-external/$docId'
+    | '/fill-substance-screening/$docId'
     | '/fill-vehicle-agreement-external/$docId'
     | '/fill-vehicle-agreement/$docId'
     | '/fill-w4-external/$docId'
@@ -805,6 +851,8 @@ export interface FileRouteTypes {
     | '/profile'
     | '/servicepower-test'
     | '/settings'
+    | '/sign-bundle'
+    | '/sign-bundle-external'
     | '/superadmin'
     | '/timecard'
     | '/admin/users'
@@ -834,6 +882,8 @@ export interface FileRouteTypes {
     | '/fill-parts-responsibility/$docId'
     | '/fill-pto-ack-external/$docId'
     | '/fill-pto-ack/$docId'
+    | '/fill-substance-screening-external/$docId'
+    | '/fill-substance-screening/$docId'
     | '/fill-vehicle-agreement-external/$docId'
     | '/fill-vehicle-agreement/$docId'
     | '/fill-w4-external/$docId'
@@ -876,6 +926,8 @@ export interface RootRouteChildren {
   ProfileRoute: typeof ProfileRoute
   ServicepowerTestRoute: typeof ServicepowerTestRoute
   SettingsRoute: typeof SettingsRoute
+  SignBundleRoute: typeof SignBundleRoute
+  SignBundleExternalRoute: typeof SignBundleExternalRoute
   SuperadminRoute: typeof SuperadminRouteWithChildren
   TimecardRoute: typeof TimecardRoute
   AdminUsersRoute: typeof AdminUsersRoute
@@ -905,6 +957,8 @@ export interface RootRouteChildren {
   FillPartsResponsibilityDocIdRoute: typeof FillPartsResponsibilityDocIdRoute
   FillPtoAckExternalDocIdRoute: typeof FillPtoAckExternalDocIdRoute
   FillPtoAckDocIdRoute: typeof FillPtoAckDocIdRoute
+  FillSubstanceScreeningExternalDocIdRoute: typeof FillSubstanceScreeningExternalDocIdRoute
+  FillSubstanceScreeningDocIdRoute: typeof FillSubstanceScreeningDocIdRoute
   FillVehicleAgreementExternalDocIdRoute: typeof FillVehicleAgreementExternalDocIdRoute
   FillVehicleAgreementDocIdRoute: typeof FillVehicleAgreementDocIdRoute
   FillW4ExternalDocIdRoute: typeof FillW4ExternalDocIdRoute
@@ -944,6 +998,20 @@ declare module '@tanstack/react-router' {
       path: '/superadmin'
       fullPath: '/superadmin'
       preLoaderRoute: typeof SuperadminRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/sign-bundle-external': {
+      id: '/sign-bundle-external'
+      path: '/sign-bundle-external'
+      fullPath: '/sign-bundle-external'
+      preLoaderRoute: typeof SignBundleExternalRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/sign-bundle': {
+      id: '/sign-bundle'
+      path: '/sign-bundle'
+      fullPath: '/sign-bundle'
+      preLoaderRoute: typeof SignBundleRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/settings': {
@@ -1196,6 +1264,20 @@ declare module '@tanstack/react-router' {
       path: '/fill-vehicle-agreement-external/$docId'
       fullPath: '/fill-vehicle-agreement-external/$docId'
       preLoaderRoute: typeof FillVehicleAgreementExternalDocIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/fill-substance-screening/$docId': {
+      id: '/fill-substance-screening/$docId'
+      path: '/fill-substance-screening/$docId'
+      fullPath: '/fill-substance-screening/$docId'
+      preLoaderRoute: typeof FillSubstanceScreeningDocIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/fill-substance-screening-external/$docId': {
+      id: '/fill-substance-screening-external/$docId'
+      path: '/fill-substance-screening-external/$docId'
+      fullPath: '/fill-substance-screening-external/$docId'
+      preLoaderRoute: typeof FillSubstanceScreeningExternalDocIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/fill-pto-ack/$docId': {
@@ -1459,6 +1541,8 @@ const rootRouteChildren: RootRouteChildren = {
   ProfileRoute: ProfileRoute,
   ServicepowerTestRoute: ServicepowerTestRoute,
   SettingsRoute: SettingsRoute,
+  SignBundleRoute: SignBundleRoute,
+  SignBundleExternalRoute: SignBundleExternalRoute,
   SuperadminRoute: SuperadminRouteWithChildren,
   TimecardRoute: TimecardRoute,
   AdminUsersRoute: AdminUsersRoute,
@@ -1490,6 +1574,9 @@ const rootRouteChildren: RootRouteChildren = {
   FillPartsResponsibilityDocIdRoute: FillPartsResponsibilityDocIdRoute,
   FillPtoAckExternalDocIdRoute: FillPtoAckExternalDocIdRoute,
   FillPtoAckDocIdRoute: FillPtoAckDocIdRoute,
+  FillSubstanceScreeningExternalDocIdRoute:
+    FillSubstanceScreeningExternalDocIdRoute,
+  FillSubstanceScreeningDocIdRoute: FillSubstanceScreeningDocIdRoute,
   FillVehicleAgreementExternalDocIdRoute:
     FillVehicleAgreementExternalDocIdRoute,
   FillVehicleAgreementDocIdRoute: FillVehicleAgreementDocIdRoute,
