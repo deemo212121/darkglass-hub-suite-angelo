@@ -34,6 +34,7 @@ import type * as Leaflet from "leaflet";
 import {
   getDmMessages,
   getOrCreateDmThread,
+  peekLatestThreadMessage,
   sendMessage,
   subscribeToMessages,
   listMyDmInbox,
@@ -2869,8 +2870,15 @@ function ChatView({ firebaseUid, authorName }: { firebaseUid: string; authorName
       dmThreadId: thread.id,
       onMessage: (m) => setMessages((prev) => mergeById(prev, [m])),
     });
+    // Cheap peek every tick (latest message id for this thread); only pay
+    // for the full getDmMessages when something actually moved — realtime
+    // is the fast path, this is just the fallback.
+    let lastPeekedId: string | null = null;
     const poll = async () => {
       try {
+        const top = await peekLatestThreadMessage({ dmThreadId: thread.id });
+        if (top?.id === lastPeekedId) return;
+        lastPeekedId = top?.id ?? null;
         const rows = await getDmMessages(thread.id);
         if (!cancelled) setMessages((prev) => mergeById(prev, rows));
       } catch (err) {

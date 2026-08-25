@@ -7,7 +7,7 @@
  * refreshes the unread counts so the badge stays live without polling.
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { Hash, MessageCircle, MessageSquare } from "lucide-react";
 import {
@@ -68,6 +68,11 @@ export function MessagesMenu() {
   const [profileId, setProfileId] = useState<string | null>(null);
   const [previews, setPreviews] = useState<ThreadPreview[]>([]);
   const [unreadTotal, setUnreadTotal] = useState(0);
+  // Which DM threads are actually mine — kept current by refresh() below, and
+  // checked by the realtime/poll handlers so a DM between two OTHER
+  // coworkers doesn't ding everyone else in the company who happens to have
+  // this menu mounted. Channels don't need this check: they're company-wide.
+  const myDmThreadIdsRef = useRef<Set<string>>(new Set());
 
   const refresh = async (pid: string) => {
     try {
@@ -85,67 +90,64 @@ export function MessagesMenu() {
       const byProfile = new Map<string, ProfileRow>();
       for (const u of users) byProfile.set(u.id, u);
 
-      // 2. Issue the "latest message per thread" queries all in parallel
-      // (was previously sequential — that's where the multi-second delay was
-      // coming from).
+      // 2. "Latest message per thread" — one query instead of one per
+      // channel/DM (was N+1: a user with 10 channels + 20 DMs fired 30
+      // queries here on every refresh). Pull back the most recent
+      // MAX_THREADS_FOR_PREVIEW messages across every relevant thread in one
+      // shot, ordered newest-first, then take the first occurrence per
+      // thread — since only the newest matters, that first occurrence IS
+      // that thread's latest message, same result as the old per-thread
+      // `.limit(1)` queries.
       const targetChannels = channels.filter((c) => !c.is_announcement);
-      const channelLatestPromises = targetChannels.map((ch) =>
-        supabase
-          .from("messages")
-          .select(
-            "id, channel_id, dm_thread_id, sender_id, sender_name, body, kind, is_announcement, created_at, edited_at, deleted_at"
-          )
-          .eq("channel_id", ch.id)
-          .is("deleted_at", null)
-          .order("created_at", { ascending: false })
-          .limit(1)
-      );
-
       const dmRows = (dmRowsRes.data || []) as Array<{
         id: string;
         participant_a: string;
         participant_b: string;
       }>;
-      const dmLatestPromises = dmRows.map((row) =>
-        supabase
+      const targetChannelIds = targetChannels.map((c) => c.id);
+      const dmIds = dmRows.map((r) => r.id);
+      myDmThreadIdsRef.current = new Set(dmIds);
+      const latestByThread = new Map<string, MessageRow>();
+      if (targetChannelIds.length > 0 || dmIds.length > 0) {
+        const orParts = [
+          targetChannelIds.length > 0 ? `channel_id.in.(${targetChannelIds.join(",")})` : null,
+          dmIds.length > 0 ? `dm_thread_id.in.(${dmIds.join(",")})` : null,
+        ].filter(Boolean) as string[];
+        // Generous cap — comfortably covers "most recent message per thread"
+        // for any realistic number of channels/DMs without being unbounded.
+        const MAX_RECENT_ROWS = Math.max(200, (targetChannelIds.length + dmIds.length) * 5);
+        const { data: recent } = await supabase
           .from("messages")
-          .select(
-            "id, channel_id, dm_thread_id, sender_id, sender_name, body, kind, is_announcement, created_at, edited_at, deleted_at"
-          )
-          .eq("dm_thread_id", row.id)
+          .select("id, channel_id, dm_thread_id, sender_id, sender_name, body, kind, is_announcement, created_at, edited_at, deleted_at")
           .is("deleted_at", null)
+          .or(orParts.join(","))
           .order("created_at", { ascending: false })
-          .limit(1)
-      );
+          .limit(MAX_RECENT_ROWS);
+        for (const row of (recent || []) as MessageRow[]) {
+          const key = row.channel_id ? `c:${row.channel_id}` : `d:${row.dm_thread_id}`;
+          if (!latestByThread.has(key)) latestByThread.set(key, row);
+        }
+      }
 
-      const [channelLatest, dmLatest] = await Promise.all([
-        Promise.all(channelLatestPromises),
-        Promise.all(dmLatestPromises),
-      ]);
+      const channelPreviews: ThreadPreview[] = targetChannels.map((ch) => ({
+        id: ch.id,
+        kind: "channel" as const,
+        title: ch.title,
+        subtitle: ch.subtitle || "",
+        unread: counts.perChannel[ch.id] ?? 0,
+        lastMessage: latestByThread.get(`c:${ch.id}`),
+      }));
 
-      const channelPreviews: ThreadPreview[] = targetChannels.map((ch, i) => {
-        const last = (channelLatest[i].data || [])[0] as MessageRow | undefined;
-        return {
-          id: ch.id,
-          kind: "channel" as const,
-          title: ch.title,
-          subtitle: ch.subtitle || "",
-          unread: counts.perChannel[ch.id] ?? 0,
-          lastMessage: last,
-        };
-      });
-
-      const dmPreviews: ThreadPreview[] = dmRows.map((row, i) => {
+      const dmPreviews: ThreadPreview[] = dmRows.map((row) => {
         const otherId = row.participant_a === pid ? row.participant_b : row.participant_a;
         const other = byProfile.get(otherId);
-        const last = (dmLatest[i].data || [])[0] as MessageRow | undefined;
         return {
           id: row.id,
           kind: "dm" as const,
           title: other?.display_name || other?.email || "Direct message",
           subtitle: other ? `${other.role}${other.assigned_branch ? ` · ${other.assigned_branch}` : ""}` : "",
           unread: counts.perDm[row.id] ?? 0,
-          lastMessage: last,
+          lastMessage: latestByThread.get(`d:${row.id}`),
           otherProfileId: otherId,
         };
       });
@@ -198,8 +200,24 @@ export function MessagesMenu() {
   useEffect(() => {
     if (!profileId) return;
     let lastSeenAt = "";
+    // Realtime fires refresh() (a ~dozen-query fan-out) on EVERY message in
+    // the company, and a busy company/channel can fire several inserts back
+    // to back — debouncing coalesces a burst into one refresh instead of one
+    // per message. The poll and the custom event below funnel through the
+    // same debounce so all three triggers can never stack into overlapping
+    // refreshes either.
+    let debounceTimer: number | undefined;
+    const debouncedRefresh = () => {
+      if (debounceTimer) window.clearTimeout(debounceTimer);
+      debounceTimer = window.setTimeout(() => { void refresh(profileId); }, 800);
+    };
+    // A DM row is only relevant if I'm actually a participant — channels
+    // don't need this check since every channel is company-wide.
+    const isRelevant = (row: { channel_id?: string | null; dm_thread_id?: string | null }) =>
+      !row.dm_thread_id || myDmThreadIdsRef.current.has(row.dm_thread_id);
     const unsub = subscribeToAllNewMessages((row) => {
-      refresh(profileId);
+      if (!isRelevant(row)) return;
+      debouncedRefresh();
       if (row?.sender_id && row.sender_id !== profileId) {
         playNotifySound();
       }
@@ -211,28 +229,26 @@ export function MessagesMenu() {
       try {
         const { data } = await supabase
           .from("messages")
-          .select("id, sender_id, created_at")
+          .select("id, sender_id, created_at, channel_id, dm_thread_id")
           .order("created_at", { ascending: false })
           .limit(1);
         const top = (data || [])[0] as any;
         if (top?.created_at && top.created_at !== lastSeenAt) {
           const isFirstScan = lastSeenAt === "";
           lastSeenAt = top.created_at;
+          if (!isRelevant(top)) return;
           // Don't beep on the very first scan after mount — that's the seed.
-          if (!isFirstScan) {
-            await refresh(profileId);
-            if (top.sender_id !== profileId) playNotifySound();
-          } else {
-            await refresh(profileId);
-          }
+          debouncedRefresh();
+          if (!isFirstScan && top.sender_id !== profileId) playNotifySound();
         }
       } catch { /* ignore */ }
     }, 4000);
-    const onChanged = () => { refresh(profileId); };
+    const onChanged = () => { debouncedRefresh(); };
     window.addEventListener("ahs:unread-changed", onChanged);
     return () => {
       unsub();
       window.clearInterval(poll);
+      if (debounceTimer) window.clearTimeout(debounceTimer);
       window.removeEventListener("ahs:unread-changed", onChanged);
     };
   }, [profileId]);
