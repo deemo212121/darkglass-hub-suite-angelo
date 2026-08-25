@@ -14,7 +14,7 @@
  * flow, then POSTed already-finished to the server bridge, which uploads
  * it and notifies HR — no DM step here since there's no sender profile.
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Loader2 } from "lucide-react";
 import logo from "@/assets/Admin Hub Solutions Logo no Text.png";
 import { getExternalSignableDocument, submitExternalSignature, type ExternalSignableDocument } from "@/lib/supabase/externalSignableDocuments";
@@ -27,6 +27,8 @@ import {
   DIRECT_DEPOSIT_ACCOUNT_TYPES,
   type DirectDepositFormData,
 } from "@/lib/directDepositFormTemplate";
+import { useSignaturePad } from "@/hooks/useSignaturePad";
+import { SignaturePadControls } from "@/components/SignaturePad";
 
 interface Props {
   docId: string;
@@ -65,9 +67,8 @@ export function ExternalFillDirectDepositPage({ docId }: Props) {
 
   const [form, setForm] = useState<DirectDepositFormData>({ ...BLANK_FORM });
 
-  const sigCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const drawingRef = useRef(false);
-  const hasDrawnRef = useRef(false);
+  const employeeName = [form.firstName, form.middleName, form.lastName].filter(Boolean).join(" ");
+  const sigPad = useSignaturePad({ defaultName: employeeName, width: 500, height: 130 });
 
   useEffect(() => {
     loadAssetDataUrl(() => import("@/assets/us-in-home-services-logo.png")).then(setLogoDataUrl);
@@ -99,38 +100,6 @@ export function ExternalFillDirectDepositPage({ docId }: Props) {
 
   const updateField = <K extends keyof DirectDepositFormData>(key: K, value: DirectDepositFormData[K]) => setForm((f) => ({ ...f, [key]: value }));
 
-  const pos = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    const c = sigCanvasRef.current!;
-    const r = c.getBoundingClientRect();
-    return { x: ((e.clientX - r.left) / r.width) * c.width, y: ((e.clientY - r.top) / r.height) * c.height };
-  };
-  const startDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    drawingRef.current = true;
-    const ctx = sigCanvasRef.current!.getContext("2d")!;
-    const { x, y } = pos(e);
-    ctx.beginPath();
-    ctx.moveTo(x, y);
-    e.currentTarget.setPointerCapture(e.pointerId);
-  };
-  const moveDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!drawingRef.current) return;
-    const ctx = sigCanvasRef.current!.getContext("2d")!;
-    const { x, y } = pos(e);
-    ctx.lineTo(x, y);
-    ctx.strokeStyle = "#0f172a";
-    ctx.lineWidth = 2;
-    ctx.lineCap = "round";
-    ctx.stroke();
-    hasDrawnRef.current = true;
-  };
-  const endDraw = () => { drawingRef.current = false; };
-  const clearSignature = () => {
-    const c = sigCanvasRef.current;
-    if (!c) return;
-    c.getContext("2d")!.clearRect(0, 0, c.width, c.height);
-    hasDrawnRef.current = false;
-  };
-
   const validate = (): string | null => {
     if (!form.firstName.trim()) return "Enter your first name.";
     if (!form.middleName.trim()) return "Enter your middle name (or N/A).";
@@ -140,22 +109,25 @@ export function ExternalFillDirectDepositPage({ docId }: Props) {
     if (!form.accountNumber.trim()) return "Enter your account number.";
     if (!/^\d{9}$/.test(form.routingNumber.trim())) return "Enter your 9-digit routing number.";
     if (!form.accountType) return "Select the type of account.";
-    if (!hasDrawnRef.current) return "Please draw your signature.";
+    if (!sigPad.hasContent()) return "Please add your signature.";
     return null;
   };
 
   const handleSubmit = async () => {
-    if (!doc || !sigCanvasRef.current) return;
+    if (!doc) return;
     const validationError = validate();
     if (validationError) {
       setError(validationError);
       return;
     }
+    const dataUrl = sigPad.toDataURL();
+    if (!dataUrl) {
+      setError("Please add your signature.");
+      return;
+    }
     setSubmitting(true);
     setError(null);
     try {
-      const employeeName = [form.firstName, form.middleName, form.lastName].filter(Boolean).join(" ");
-      const dataUrl = sigCanvasRef.current.toDataURL("image/png");
       const signatureBlob = await (await fetch(dataUrl)).blob();
       const signedAt = new Date().toISOString();
       const finalData: DirectDepositFormData = { ...form, employeeName, dateSigned: signedAt, signatureDataUrl: dataUrl };
@@ -263,16 +235,12 @@ export function ExternalFillDirectDepositPage({ docId }: Props) {
                 <div>
                   <label className={labelCls}>Contractor's Signature</label>
                   <canvas
-                    ref={sigCanvasRef}
-                    width={500}
-                    height={130}
-                    onPointerDown={startDraw}
-                    onPointerMove={moveDraw}
-                    onPointerUp={endDraw}
-                    onPointerLeave={endDraw}
-                    className="bg-white rounded-md border border-white/15 w-full max-w-md touch-none cursor-crosshair mt-1"
+                    {...sigPad.canvasProps}
+                    className={`bg-white rounded-md border border-white/15 w-full max-w-md mt-1 ${sigPad.canvasProps.className}`}
                   />
-                  <button onClick={clearSignature} className="btn text-xs px-3 py-1.5 mt-2">Clear signature</button>
+                  <div className="mt-2">
+                    <SignaturePadControls pad={sigPad} />
+                  </div>
                 </div>
 
                 {error && (

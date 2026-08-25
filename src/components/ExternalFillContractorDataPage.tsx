@@ -16,7 +16,7 @@
  * submitExternalSignature's header comment) — the bridge uploads them and
  * notifies HR, no DM step here since there's no sender profile.
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Loader2 } from "lucide-react";
 import logo from "@/assets/Admin Hub Solutions Logo no Text.png";
 import { getExternalSignableDocument, submitExternalSignature, type ExternalSignableDocument } from "@/lib/supabase/externalSignableDocuments";
@@ -32,6 +32,8 @@ import {
   type ContractorDataFormData,
   type ContractorDataEmergencyContact,
 } from "@/lib/contractorDataFormTemplate";
+import { useSignaturePad } from "@/hooks/useSignaturePad";
+import { SignaturePadControls } from "@/components/SignaturePad";
 
 interface Props {
   docId: string;
@@ -99,9 +101,8 @@ export function ExternalFillContractorDataPage({ docId }: Props) {
   const [ssnCardFiles, setSsnCardFiles] = useState<File[]>([]);
   const [driversLicenseFiles, setDriversLicenseFiles] = useState<File[]>([]);
 
-  const sigCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const drawingRef = useRef(false);
-  const hasDrawnRef = useRef(false);
+  const employeeName = [form.firstName, form.middleName, form.lastName].filter(Boolean).join(" ");
+  const sigPad = useSignaturePad({ defaultName: employeeName, width: 500, height: 130 });
 
   useEffect(() => {
     loadAssetDataUrl(() => import("@/assets/us-in-home-services-logo.png")).then(setLogoDataUrl);
@@ -149,38 +150,6 @@ export function ExternalFillContractorDataPage({ docId }: Props) {
   const updateEmergencyContact = <K extends keyof ContractorDataEmergencyContact>(index: number, key: K, value: ContractorDataEmergencyContact[K]) =>
     setForm((f) => ({ ...f, emergencyContacts: f.emergencyContacts.map((c, i) => (i === index ? { ...c, [key]: value } : c)) }));
 
-  const pos = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    const c = sigCanvasRef.current!;
-    const r = c.getBoundingClientRect();
-    return { x: ((e.clientX - r.left) / r.width) * c.width, y: ((e.clientY - r.top) / r.height) * c.height };
-  };
-  const startDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    drawingRef.current = true;
-    const ctx = sigCanvasRef.current!.getContext("2d")!;
-    const { x, y } = pos(e);
-    ctx.beginPath();
-    ctx.moveTo(x, y);
-    e.currentTarget.setPointerCapture(e.pointerId);
-  };
-  const moveDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!drawingRef.current) return;
-    const ctx = sigCanvasRef.current!.getContext("2d")!;
-    const { x, y } = pos(e);
-    ctx.lineTo(x, y);
-    ctx.strokeStyle = "#0f172a";
-    ctx.lineWidth = 2;
-    ctx.lineCap = "round";
-    ctx.stroke();
-    hasDrawnRef.current = true;
-  };
-  const endDraw = () => { drawingRef.current = false; };
-  const clearSignature = () => {
-    const c = sigCanvasRef.current;
-    if (!c) return;
-    c.getContext("2d")!.clearRect(0, 0, c.width, c.height);
-    hasDrawnRef.current = false;
-  };
-
   const validate = (): string | null => {
     if (!form.firstName.trim()) return "Enter your first name.";
     if (!form.middleName.trim()) return "Enter your middle name (or N/A).";
@@ -207,22 +176,25 @@ export function ExternalFillContractorDataPage({ docId }: Props) {
     if (!contact1.lastName.trim()) return "Enter Emergency Contact 1's last name.";
     if (!contact1.relationship.trim()) return "Enter Emergency Contact 1's relationship.";
     if (!contact1.contactNumber.trim()) return "Enter Emergency Contact 1's phone number.";
-    if (!hasDrawnRef.current) return "Please draw your signature.";
+    if (!sigPad.hasContent()) return "Please add your signature.";
     return null;
   };
 
   const handleSubmit = async () => {
-    if (!doc || !sigCanvasRef.current) return;
+    if (!doc) return;
     const validationError = validate();
     if (validationError) {
       setError(validationError);
       return;
     }
+    const dataUrl = sigPad.toDataURL();
+    if (!dataUrl) {
+      setError("Please add your signature.");
+      return;
+    }
     setSubmitting(true);
     setError(null);
     try {
-      const employeeName = [form.firstName, form.middleName, form.lastName].filter(Boolean).join(" ");
-      const dataUrl = sigCanvasRef.current.toDataURL("image/png");
       const signatureBlob = await (await fetch(dataUrl)).blob();
       const signedAt = new Date().toISOString();
       // Placeholder URLs — the server bridge fills these in for real once it
@@ -428,18 +400,14 @@ export function ExternalFillContractorDataPage({ docId }: Props) {
                 </div>
 
                 <div>
-                  <label className={labelCls}>Draw your signature</label>
+                  <label className={labelCls}>Signature</label>
                   <canvas
-                    ref={sigCanvasRef}
-                    width={500}
-                    height={130}
-                    onPointerDown={startDraw}
-                    onPointerMove={moveDraw}
-                    onPointerUp={endDraw}
-                    onPointerLeave={endDraw}
-                    className="bg-white rounded-md border border-white/15 w-full max-w-md touch-none cursor-crosshair mt-1"
+                    {...sigPad.canvasProps}
+                    className={`bg-white rounded-md border border-white/15 w-full max-w-md mt-1 ${sigPad.canvasProps.className}`}
                   />
-                  <button onClick={clearSignature} className="btn text-xs px-3 py-1.5 mt-2">Clear signature</button>
+                  <div className="mt-2">
+                    <SignaturePadControls pad={sigPad} />
+                  </div>
                 </div>
 
                 {error && (
