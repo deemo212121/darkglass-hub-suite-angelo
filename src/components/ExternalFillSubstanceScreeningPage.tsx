@@ -50,6 +50,8 @@ const BLANK_FORM: SubstanceScreeningFormData = {
   employeeName: "",
   dateSigned: "",
   signatureDataUrl: "",
+  employerDateSigned: "",
+  employerSignatureDataUrl: "",
 };
 
 export function ExternalFillSubstanceScreeningPage({ docId }: Props) {

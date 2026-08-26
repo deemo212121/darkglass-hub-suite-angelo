@@ -4370,12 +4370,13 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
 
-  // ── Substance Screening & Conduct Agreement — same pattern as Employee
-  // Confidentiality above: single recipient, the recipient fills in
-  // everything themselves on FillSubstanceScreeningPage.tsx. No employer/HR
-  // co-signature step. The source PDF has no AcroForm fields at all (see
-  // substanceScreeningFormTemplate.ts's header comment) — every value is
-  // drawn directly onto the page. No branch field on this one. ──
+  // ── Substance Screening & Conduct Agreement — genuine two-party flow,
+  // same shape as Location Sharing Consent: the recipient fills in and
+  // signs first on FillSubstanceScreeningPage.tsx, then HR adds the
+  // "Company Representative Signature" via the "Complete Employer
+  // Signature" dialog below. The source PDF has no AcroForm fields at all
+  // (see substanceScreeningFormTemplate.ts's header comment) — every value
+  // is drawn directly onto the page. No branch field on this one. ──
   const [sentSubstanceScreeningForms, setSentSubstanceScreeningForms] = useState<SignableDocument[]>([]);
   const loadSentSubstanceScreeningForms = async () => {
     try {
@@ -4412,6 +4413,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     employeeName,
     dateSigned: "",
     signatureDataUrl: "",
+    employerDateSigned: "",
+    employerSignatureDataUrl: "",
   });
 
   /** Toggles the inline collapsible preview panel — collapsing just hides it (and revokes the blob URL); expanding (re)builds a fresh blank-filled sample from the currently-selected recipient's name. */
@@ -4550,6 +4553,67 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       setSubstanceScreeningActionError(err instanceof Error ? err.message : "Failed to delete.");
     } finally {
       setSubstanceScreeningActionBusyId(null);
+    }
+  };
+
+  // ── Complete Employer Signature — same shape as Location Consent's own
+  // dialog above: a plain signature pad (no fields to review), reassigns
+  // the document to the current HR user first so the RLS update policy
+  // allows it, then regenerates the whole PDF fresh with both signatures. ──
+  const [substanceScreeningEmployerDialog, setSubstanceScreeningEmployerDialog] = useState<SignableDocument | null>(null);
+  const [substanceScreeningEmployerSaving, setSubstanceScreeningEmployerSaving] = useState(false);
+  const [substanceScreeningEmployerError, setSubstanceScreeningEmployerError] = useState<string | null>(null);
+  const substanceScreeningEmployerSigPad = useSignaturePad({ width: 400, height: 120 });
+
+  const handleOpenSubstanceScreeningEmployerDialog = (doc: SignableDocument) => {
+    setSubstanceScreeningEmployerDialog(doc);
+    setSubstanceScreeningEmployerError(null);
+  };
+
+  const handleSaveSubstanceScreeningEmployerSignature = async () => {
+    if (!substanceScreeningEmployerDialog || !uid) return;
+    if (!substanceScreeningEmployerSigPad.hasContent()) {
+      setSubstanceScreeningEmployerError("Please add your signature.");
+      return;
+    }
+    setSubstanceScreeningEmployerSaving(true);
+    setSubstanceScreeningEmployerError(null);
+    try {
+      const myProfileId = await getMyProfileId(uid);
+      if (!myProfileId) throw new Error("Could not resolve your profile.");
+
+      await reassignSignableDocument(substanceScreeningEmployerDialog.id, { recipientId: myProfileId, recipientName: displayName || "HR" }, "hr_staff");
+
+      const existing = substanceScreeningEmployerDialog.formData as SubstanceScreeningFormData;
+      const employeeSigBytes = existing.signatureDataUrl
+        ? new Uint8Array(await (await fetch(existing.signatureDataUrl)).arrayBuffer())
+        : undefined;
+
+      const dataUrl = substanceScreeningEmployerSigPad.toDataURL();
+      if (!dataUrl) {
+        setSubstanceScreeningEmployerError("Please add your signature.");
+        return;
+      }
+      const employerSigBytes = new Uint8Array(await (await fetch(dataUrl)).arrayBuffer());
+      const signatureUrl = await uploadSignableDocumentSignature(substanceScreeningEmployerDialog.companyId, substanceScreeningEmployerDialog.id, "hr_staff", dataUrl);
+      const signedAt = new Date().toISOString();
+
+      const merged: SubstanceScreeningFormData = { ...existing, employerSignatureDataUrl: dataUrl, employerDateSigned: signedAt };
+
+      const pdfBytes = await fillSubstanceScreeningPdf(merged, employeeSigBytes, employerSigBytes);
+      const pdfUrl = await uploadSubstanceScreeningForm(substanceScreeningEmployerDialog.companyId, existing.employeeName || "substance-screening", new Blob([pdfBytes as unknown as BlobPart], { type: "application/pdf" }));
+
+      const entry = { name: displayName || "HR", url: signatureUrl, signedAt };
+      await signDocument(substanceScreeningEmployerDialog.id, "hr_staff", entry, pdfUrl, merged as unknown as Record<string, any>);
+      await confirmSignableDocument(substanceScreeningEmployerDialog.id, null);
+
+      void logActivity({ action: "substance_screening_employer_signed", targetType: "employee", targetLabel: existing.employeeName || "" });
+      setSubstanceScreeningEmployerDialog(null);
+      await loadSentSubstanceScreeningForms();
+    } catch (err) {
+      setSubstanceScreeningEmployerError(err instanceof Error ? err.message : "Failed to save signature.");
+    } finally {
+      setSubstanceScreeningEmployerSaving(false);
     }
   };
 
@@ -6252,6 +6316,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           : doc.documentType === "mileage_fuel" ? "mileageFuel"
           : doc.documentType === "location_consent" ? "locationConsent"
           : doc.documentType === "damage" ? "damage"
+          : doc.documentType === "substance_screening" ? "substanceScreening"
           : "wageAck";
         const tabLink = `${getAppUrl()}/m/dashboard/hr-dashboard?tab=${tabKey}`;
         const body =
@@ -6267,6 +6332,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             ? `📋 Please add the employer/representative signature to the Employee Mobile App Location Sharing Consent Agreement for ${employeeName} — [open the Location Sharing Consent tab](${tabLink}) in the HR Dashboard.`
             : doc.documentType === "damage"
             ? `📋 Please add the employer/representative signature to the Damage, Part Loss, and Tool Penalty Commission Deduction Agreement for ${employeeName} — [open the Damage Agreement tab](${tabLink}) in the HR Dashboard.`
+            : doc.documentType === "substance_screening"
+            ? `📋 Please add the company representative signature to the Substance Screening & Conduct Agreement for ${employeeName} — [open the Substance Screening & Conduct Agreement tab](${tabLink}) in the HR Dashboard.`
             : `📋 Please add the employer/representative signature to the Acknowledgment of Wage & Compensation Structure for ${employeeName} — [open the Acknowledgment of Wage tab](${tabLink}) in the HR Dashboard.`;
         await sendMessage({
           dmThreadId: thread.id,
@@ -6283,6 +6350,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       else if (doc.documentType === "mileage_fuel") await loadSentMileageFuelForms();
       else if (doc.documentType === "location_consent") await loadSentLocationConsentForms();
       else if (doc.documentType === "damage") await loadSentDamageForms();
+      else if (doc.documentType === "substance_screening") await loadSentSubstanceScreeningForms();
       else await loadSentWageAckForms();
     } catch (err) {
       setEmployerReassignError(err instanceof Error ? err.message : "Failed to send.");
@@ -16075,7 +16143,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       <div className="panel p-0 overflow-hidden mt-4">
         <div className="px-4 py-4 border-b border-white/10">
           <h2 className="font-semibold text-sm">Sent Substance Screening & Conduct Agreement Forms</h2>
-          <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status.</p>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status. "Awaiting Employer Signature" means the employee finished — add your signature to finalize.</p>
         </div>
         {substanceScreeningActionError && (
           <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{substanceScreeningActionError}</p>
@@ -16099,6 +16167,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                   const data = doc.formData as Partial<SubstanceScreeningFormData>;
                   const recipient = employees.find((e) => e.id === doc.recipientId);
                   const busy = substanceScreeningActionBusyId === doc.id;
+                  const awaitingEmployer = isAwaitingEmployerStep(doc);
                   return (
                     <tr key={doc.id} className="border-b border-white/5 hover:bg-white/5">
                       <td className="px-4 py-3 font-medium">
@@ -16113,20 +16182,31 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                       <td className="px-4 py-3 text-muted-foreground">{doc.createdByName ?? "—"}</td>
                       <td className="px-4 py-3">
                         <span className={`px-2 py-1 rounded text-xs font-semibold ${
-                          doc.status === "signed" ? "bg-green-500/20 text-green-300"
+                          doc.status === "confirmed" ? "bg-green-500/20 text-green-300"
+                          : awaitingEmployer ? "bg-orange-500/20 text-orange-300"
                           : doc.status === "cancelled" ? "bg-slate-500/20 text-slate-400"
                           : "bg-yellow-500/20 text-yellow-300"
                         }`}>
-                          {doc.status === "signed" ? "Submitted" : doc.status === "cancelled" ? "Cancelled" : "Awaiting Completion"}
+                          {doc.status === "confirmed" ? "Completed" : awaitingEmployer ? "Awaiting Employer Signature" : doc.status === "cancelled" ? "Cancelled" : "Awaiting Employee"}
                         </span>
                       </td>
                       <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{new Date(doc.createdAt).toLocaleDateString()}</td>
                       <td className="px-4 py-3">
                         <div className="flex flex-wrap items-center gap-1.5">
-                          {doc.status === "pending_signature" && (
+                          {doc.status === "pending_signature" && doc.recipientSlot === "employee" && (
                             <button type="button" onClick={() => handleCopySubstanceScreeningLink(doc)} className="btn text-[10px] px-2 py-1">
                               Copy Link
                             </button>
+                          )}
+                          {awaitingEmployer && (
+                            <>
+                              <button type="button" onClick={() => handleOpenSubstanceScreeningEmployerDialog(doc)} className="btn text-[10px] px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white">
+                                Add Employer Signature →
+                              </button>
+                              <button type="button" onClick={() => handleOpenEmployerReassign(doc)} className="btn text-[10px] px-2 py-1">
+                                Send to Employer
+                              </button>
+                            </>
                           )}
                           {doc.pdfUrl && (
                             <button type="button" onClick={() => handleDownloadSubstanceScreeningPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
@@ -18309,6 +18389,42 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                 className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
               >
                 {locationConsentEmployerSaving ? "Saving…" : "Complete & Sign"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {substanceScreeningEmployerDialog && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-800 border border-white/10 rounded-lg p-6 max-w-sm w-full">
+            <h3 className="text-lg font-bold mb-2">Add Employer Signature</h3>
+            <p className="text-sm text-muted-foreground mb-4">
+              Company representative signature for{" "}
+              <span className="font-semibold text-white">{(substanceScreeningEmployerDialog.formData as Partial<SubstanceScreeningFormData>).employeeName || "—"}</span>'s
+              Substance Screening & Conduct Agreement.
+            </p>
+
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2 block">Add your signature</label>
+            <canvas
+              {...substanceScreeningEmployerSigPad.canvasProps}
+              className={`bg-white rounded-md border border-white/15 w-full ${substanceScreeningEmployerSigPad.canvasProps.className}`}
+            />
+            <div className="flex justify-center mt-2">
+              <SignaturePadControls pad={substanceScreeningEmployerSigPad} />
+            </div>
+
+            {substanceScreeningEmployerError && (
+              <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2 mt-3">{substanceScreeningEmployerError}</p>
+            )}
+            <div className="flex gap-2 justify-end mt-4">
+              <button onClick={() => setSubstanceScreeningEmployerDialog(null)} className="btn text-sm px-4 py-2">Cancel</button>
+              <button
+                onClick={handleSaveSubstanceScreeningEmployerSignature}
+                disabled={substanceScreeningEmployerSaving}
+                className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+              >
+                {substanceScreeningEmployerSaving ? "Saving…" : "Complete & Sign"}
               </button>
             </div>
           </div>

@@ -16,8 +16,9 @@
  * Agreement/Employee Confidentiality — only the signature image is drawn
  * onto the bottom "Employee Printed Name & Signature" blank, not a second
  * copy of the typed name. The "Company Representative Signature" line
- * right below it is intentionally left untouched; it's filled by hand
- * later, outside this app.
+ * right below it (measured the same way, via pdf.js's text-position API:
+ * underscore blank at x=72 y=439.3, "Date" blank at x=354.7 y=439.3, same
+ * row) is filled in by HR's own "Complete Employer Signature" step.
  */
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import type { SubstanceScreeningFormData } from "./substanceScreeningFormTemplate";
@@ -55,7 +56,8 @@ export async function loadBlankSubstanceScreeningBytes(): Promise<Uint8Array> {
 
 export async function fillSubstanceScreeningPdf(
   data: SubstanceScreeningFormData,
-  signatureBytes?: Uint8Array
+  employeeSigBytes?: Uint8Array,
+  employerSigBytes?: Uint8Array
 ): Promise<Uint8Array> {
   const blankBytes = await loadBlankSubstanceScreeningBytes();
   const pdfDoc = await PDFDocument.load(blankBytes);
@@ -79,10 +81,22 @@ export async function fillSubstanceScreeningPdf(
 
   const page2 = pdfDoc.getPage(1);
   draw(page2, dateText, 360, 491, 9);
-  if (signatureBytes) {
-    const png = await pdfDoc.embedPng(signatureBytes);
+  if (employeeSigBytes) {
+    const png = await pdfDoc.embedPng(employeeSigBytes);
     const maxW = 210, maxH = 20;
     page2.drawImage(png, { x: 80, y: 490, width: maxW, height: maxH });
+  }
+
+  // "Company Representative Signature" line — same x/width as the
+  // employee's own line above, shifted down to its row (underscore blank
+  // at y=439.3 vs the employee line's y=488.4, a 49.1pt offset applied to
+  // both the signature and date draw positions).
+  const employerDateText = fmtDate(data.employerDateSigned);
+  draw(page2, employerDateText, 360, 442, 9);
+  if (employerSigBytes) {
+    const png = await pdfDoc.embedPng(employerSigBytes);
+    const maxW = 210, maxH = 20;
+    page2.drawImage(png, { x: 80, y: 441, width: maxW, height: maxH });
   }
 
   return pdfDoc.save();
