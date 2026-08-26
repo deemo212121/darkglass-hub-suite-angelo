@@ -13,6 +13,7 @@ import {
   resolveScheduledShiftHours,
 } from "@/lib/supabase/timecards";
 import { getMyProfileId } from "@/lib/supabase/users";
+import { getServerNow, zonedDateKey, zonedTimeString, type ScheduleTimezone } from "@/lib/serverTime";
 import { getMyPayslips, payslipStatusLabel, type MyPayslipRow } from "@/lib/supabase/payslips";
 import { getCompanyPtoRequests, type PtoRequestRow } from "@/lib/supabase/pto";
 
@@ -75,6 +76,7 @@ function FullTimecardPage({ uid, ready }: { uid: string | null; ready: boolean }
   const [requiredCheckOut, setRequiredCheckOut] = useState("");
   const [workingHours, setWorkingHours] = useState<number | null>(null);
   const [mealMinutes, setMealMinutes] = useState<number | null>(null);
+  const [scheduleTimezone, setScheduleTimezone] = useState<ScheduleTimezone>("CST");
   const [editingDate, setEditingDate] = useState<string | null>(null);
   const [modalEntry, setModalEntry] = useState<TimeEntry | null>(null);
   // True once ANY punch action (Time In/Out or Meal In/Out) has fired during
@@ -82,6 +84,17 @@ function FullTimecardPage({ uid, ready }: { uid: string | null; ready: boolean }
   // modal is closed and reopened. See openEntryModal/closeEntryModal.
   const [modalActionTaken, setModalActionTaken] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
+  // Server-verified "today" (see src/lib/serverTime.ts) for the currently
+  // open modal, fetched once when it opens — the Time In/Out and Meal
+  // In/Out buttons below gate on THIS, not the browser's own clock, so
+  // setting your computer's date back a day can't unlock editing a past
+  // day's punches. null while the fetch is in flight or if it failed.
+  const [modalServerToday, setModalServerToday] = useState<string | null>(null);
+  const [modalTimeError, setModalTimeError] = useState<string | null>(null);
+  // Guards the brief async window between clicking a punch button and its
+  // server-time fetch resolving, distinct from modalActionTaken (which
+  // stays true for the rest of the modal session once a punch lands).
+  const [modalPunching, setModalPunching] = useState(false);
   const navigate = useNavigate();
 
   // Resolve the caller's profile id + scheduled shift once auth is ready.
@@ -96,6 +109,7 @@ function FullTimecardPage({ uid, ready }: { uid: string | null; ready: boolean }
         setRequiredCheckOut(s.requiredCheckOut);
         setWorkingHours(s.workingHours);
         setMealMinutes(s.mealMinutes);
+        setScheduleTimezone(s.scheduleTimezone);
       })
       .catch((err) => console.error("Failed to resolve profile:", err));
     return () => { cancelled = true; };
@@ -168,19 +182,6 @@ function FullTimecardPage({ uid, ready }: { uid: string | null; ready: boolean }
   const ptoForDate = (dateKey: string): PtoRequestRow | undefined =>
     myApprovedPto.find((r) => dateKey >= r.startDate && dateKey <= r.endDate);
 
-  // Includes seconds so payroll can compute hours (and therefore pay) to
-  // sub-minute precision instead of rounding every punch to the minute.
-  const getNowTime = (): string => {
-    const now = new Date();
-    return (
-      String(now.getHours()).padStart(2, "0") +
-      ":" +
-      String(now.getMinutes()).padStart(2, "0") +
-      ":" +
-      String(now.getSeconds()).padStart(2, "0")
-    );
-  };
-
   const timeDiff = (t1: string, t2: string): number => {
     if (!t1 || !t2) return 0;
     const [h1, m1, s1 = 0] = t1.split(":").map(Number);
@@ -241,6 +242,11 @@ function FullTimecardPage({ uid, ready }: { uid: string | null; ready: boolean }
     setModalEntry(entry);
     setModalOpen(true);
     setModalActionTaken(false);
+    setModalServerToday(null);
+    setModalTimeError(null);
+    getServerNow()
+      .then((d) => setModalServerToday(zonedDateKey(d, scheduleTimezone)))
+      .catch(() => setModalTimeError("Couldn't verify the current time with the server. Close and reopen this day to try again."));
   };
 
   const closeEntryModal = () => {
@@ -248,6 +254,8 @@ function FullTimecardPage({ uid, ready }: { uid: string | null; ready: boolean }
     setEditingDate(null);
     setModalEntry(null);
     setModalActionTaken(false);
+    setModalServerToday(null);
+    setModalTimeError(null);
   };
 
   const saveEntry = async () => {
@@ -274,24 +282,44 @@ function FullTimecardPage({ uid, ready }: { uid: string | null; ready: boolean }
   // (openEntryModal) resets this, so the next action needs a fresh open.
   // Functional setState avoids a stale-closure write even on the one action
   // that IS allowed to fire.
-  const handleTimeToggle = () => {
-    if (!modalEntry || modalActionTaken) return;
-    if (editingDate && ptoForDate(editingDate)) {
+  // Stamps with the server's own current instant (never the browser's
+  // clock — see src/lib/serverTime.ts), fetched fresh at click time and
+  // converted into this employee's own scheduled timezone. Also
+  // re-verifies the server-side date still matches editingDate — closes
+  // the same window a manipulated computer clock could otherwise use to
+  // get the "isToday" gate below to unlock a different day.
+  const handleTimeToggle = async () => {
+    if (!modalEntry || modalActionTaken || modalPunching || !editingDate) return;
+    if (ptoForDate(editingDate)) {
       alert("You have an approved PTO for this day, so time punches are disabled.");
       return;
     }
-    setModalEntry((prev) => {
-      if (!prev) return prev;
-      if (!prev.checkIn) return { ...prev, checkIn: getNowTime() };
-      if (!prev.checkOut) return { ...prev, checkOut: getNowTime() };
-      return prev;
-    });
-    setModalActionTaken(true);
+    setModalPunching(true);
+    try {
+      const serverNow = await getServerNow();
+      if (zonedDateKey(serverNow, scheduleTimezone) !== editingDate) {
+        alert("It's now a different day server-side — please close and reopen today's entry.");
+        return;
+      }
+      const time = zonedTimeString(serverNow, scheduleTimezone);
+      setModalEntry((prev) => {
+        if (!prev) return prev;
+        if (!prev.checkIn) return { ...prev, checkIn: time };
+        if (!prev.checkOut) return { ...prev, checkOut: time };
+        return prev;
+      });
+      setModalActionTaken(true);
+    } catch (err) {
+      console.error("Failed to read server time:", err);
+      alert(`Couldn't verify the current time: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setModalPunching(false);
+    }
   };
 
-  const handleMealToggle = () => {
-    if (!modalEntry || modalActionTaken) return;
-    if (editingDate && ptoForDate(editingDate)) {
+  const handleMealToggle = async () => {
+    if (!modalEntry || modalActionTaken || modalPunching || !editingDate) return;
+    if (ptoForDate(editingDate)) {
       alert("You have an approved PTO for this day, so time punches are disabled.");
       return;
     }
@@ -318,13 +346,27 @@ function FullTimecardPage({ uid, ready }: { uid: string | null; ready: boolean }
       return;
     }
 
-    setModalEntry((prev) => {
-      if (!prev) return prev;
-      if (!prev.mealStart) return { ...prev, mealStart: getNowTime() };
-      if (!prev.mealEnd) return { ...prev, mealEnd: getNowTime() };
-      return prev;
-    });
-    setModalActionTaken(true);
+    setModalPunching(true);
+    try {
+      const serverNow = await getServerNow();
+      if (zonedDateKey(serverNow, scheduleTimezone) !== editingDate) {
+        alert("It's now a different day server-side — please close and reopen today's entry.");
+        return;
+      }
+      const time = zonedTimeString(serverNow, scheduleTimezone);
+      setModalEntry((prev) => {
+        if (!prev) return prev;
+        if (!prev.mealStart) return { ...prev, mealStart: time };
+        if (!prev.mealEnd) return { ...prev, mealEnd: time };
+        return prev;
+      });
+      setModalActionTaken(true);
+    } catch (err) {
+      console.error("Failed to read server time:", err);
+      alert(`Couldn't verify the current time: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setModalPunching(false);
+    }
   };
 
   const deleteEntry = async () => {
@@ -615,12 +657,26 @@ function FullTimecardPage({ uid, ready }: { uid: string | null; ready: boolean }
 
                   {/* Actions */}
                   {(() => {
-                    const todayKey = (() => {
-                      const t = new Date();
-                      return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}-${String(t.getDate()).padStart(2, "0")}`;
-                    })();
-                    const isToday = editingDate === todayKey;
-                    const isPast = editingDate < todayKey;
+                    // Gates on the server-verified date (fetched when this
+                    // modal opened — see openEntryModal), not the browser's
+                    // own clock, so setting your computer's date back a day
+                    // can't unlock editing a past day's punches.
+                    if (modalTimeError) {
+                      return (
+                        <div className="rounded-lg border border-red-400/30 bg-red-500/10 px-3 py-3 text-xs text-red-200">
+                          {modalTimeError}
+                        </div>
+                      );
+                    }
+                    if (!modalServerToday) {
+                      return (
+                        <div className="rounded-lg border border-[var(--color-panel-border)] bg-[var(--color-panel)] px-3 py-3 text-xs text-muted-foreground">
+                          Checking the current time…
+                        </div>
+                      );
+                    }
+                    const isToday = editingDate === modalServerToday;
+                    const isPast = !!editingDate && editingDate < modalServerToday;
                     if (!isToday) {
                       return (
                         <div className="rounded-lg border border-amber-400/30 bg-amber-500/10 px-3 py-3 text-xs text-amber-200">
@@ -648,7 +704,7 @@ function FullTimecardPage({ uid, ready }: { uid: string | null; ready: boolean }
                             }
                           }}
                           className="flex-1 px-4 py-3 bg-green-600 hover:bg-green-700 disabled:bg-slate-600 disabled:opacity-50 text-white rounded-lg font-semibold transition"
-                          disabled={modalActionTaken || !!modalEntry.checkOut}
+                          disabled={modalActionTaken || modalPunching || !!modalEntry.checkOut}
                         >
                           {!modalEntry.checkIn
                             ? "🕐 Time In"
@@ -665,7 +721,7 @@ function FullTimecardPage({ uid, ready }: { uid: string | null; ready: boolean }
                             }
                           }}
                           className="flex-1 px-4 py-3 bg-orange-600 hover:bg-orange-700 disabled:bg-slate-600 disabled:opacity-50 text-white rounded-lg font-semibold transition"
-                          disabled={modalActionTaken || !!modalEntry.mealEnd || !!modalEntry.checkOut}
+                          disabled={modalActionTaken || modalPunching || !!modalEntry.mealEnd || !!modalEntry.checkOut}
                         >
                           {!modalEntry.mealStart
                             ? "🍽 Meal In"

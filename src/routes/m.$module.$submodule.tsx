@@ -81,14 +81,13 @@ import { isSubmoduleAllowed, isCompanySuperAdminRole, isCsrRestrictedRole } from
 import { CompanySettingsPage } from "@/components/CompanySettingsPage";
 import { getDashboardRoleGate, hasDashboardAccess } from "@/lib/dashboardAccess";
 import { getModuleRoleGate } from "@/lib/moduleAccess";
-
 // Roles allowed into the admin module overall, and into User Management /
 // Activity Logs specifically. Checked via hasDashboardAccess so a secondary
 // role (profiles.extra_roles) grants access too, not just the primary role —
 // e.g. a Parts Manager who's also been given Admin as a secondary role.
-const ADMIN_MODULE_ROLES = ["ADMIN", "SUPERADMIN"];
-const USER_MANAGEMENT_ROLES = ["HR", "MANAGER", "SENIOR_BRANCH_MANAGER", "ADMIN", "SUPERADMIN"];
-const ACTIVITY_LOG_ROLES = ["SENIOR_BRANCH_MANAGER", "ADMIN", "SUPERADMIN"];
+// Shared with submoduleAccess.ts (used by home.tsx/ModuleNavigator.tsx to
+// decide what to even list) so both surfaces can never drift apart.
+import { ADMIN_MODULE_ROLES, USER_MANAGEMENT_ROLES, ACTIVITY_LOG_ROLES } from "@/lib/submoduleAccess";
 import { getMyRoles } from "@/lib/supabase/users";
 import { ROLE_LABELS } from "@/lib/roleLabels";
 import { useEffect, useState } from "react";

@@ -89,15 +89,17 @@ export async function getMyProfileSchedule(firebaseUid: string): Promise<{
   mealMinutes: number | null;
   /** Day-off indices (0=Sunday..6=Saturday, same convention as getAttendanceForRange's daysOff) — without this, every day (including real days off) gets treated as a scheduled work day. */
   offDays: number[];
+  /** profiles.schedule_timezone — which real-world clock this employee's punches should be stamped in (see src/lib/serverTime.ts). Defaults to "CST", same convention as AppHeader's clock and getMyFullProfile. */
+  scheduleTimezone: "CST" | "EST";
 }> {
   const { data, error } = await supabase
     .from("profiles")
-    .select("id, required_check_in, required_check_out, off_days")
+    .select("id, required_check_in, required_check_out, off_days, schedule_timezone")
     .eq("firebase_uid", firebaseUid)
     .maybeSingle();
   if (error) {
     console.error("getMyProfileSchedule error:", error.message);
-    return { profileId: null, requiredCheckIn: "", requiredCheckOut: "", workingHours: null, mealMinutes: null, offDays: [] };
+    return { profileId: null, requiredCheckIn: "", requiredCheckOut: "", workingHours: null, mealMinutes: null, offDays: [], scheduleTimezone: "CST" };
   }
 
   let workingHours: number | null = null;
@@ -123,6 +125,7 @@ export async function getMyProfileSchedule(firebaseUid: string): Promise<{
     workingHours,
     mealMinutes,
     offDays: ((data as any)?.off_days as number[] | null) ?? [],
+    scheduleTimezone: ((data as any)?.schedule_timezone as "CST" | "EST" | null) ?? "CST",
   };
 }
 

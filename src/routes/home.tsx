@@ -6,7 +6,8 @@ import { MODULES } from "@/lib/modules";
 import { ArrowRight } from "lucide-react";
 import { useEffect } from "react";
 import { shouldUseMobile } from "@/lib/device";
-import { isModuleAllowed, isSubmoduleAllowed } from "@/lib/roleLabels";
+import { isModuleAllowed } from "@/lib/roleLabels";
+import { canAccessSubmodule } from "@/lib/submoduleAccess";
 
 export const Route = createFileRoute("/home")({
   ssr: false,
@@ -55,7 +56,7 @@ function Home() {
         </div>
         <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-3">
           {MODULES.filter((m) => isModuleAllowed(role, m.slug, extraRoles)).map((m) => {
-            const visibleSubmodules = m.submodules.filter((s) => isSubmoduleAllowed(role, m.slug, s.slug, extraRoles));
+            const visibleSubmodules = m.submodules.filter((s) => canAccessSubmodule(role, extraRoles, m.slug, s));
             return (
             <Link key={m.slug} to="/m/$module" params={{ module: m.slug }} className="module-card group">
               <div className="flex items-center gap-3 mb-3">
