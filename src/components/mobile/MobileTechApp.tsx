@@ -52,6 +52,7 @@ import { isAttendanceManagerTierRole, normalizeRole } from "@/lib/roleLabels";
 import { timezoneForBranch, nowInTimezone } from "@/lib/attendanceGrace";
 import { getTicketComments, addTicketComment, type TicketComment } from "@/lib/supabase/comments";
 import { TicketPhotos } from "@/components/TicketPhotos";
+import { MessageBody } from "@/components/MessageBody";
 import { uploadTicketSignature, uploadPayrollDisputeAttachment } from "@/lib/firebase/storage";
 import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
 import { lookupZip } from "@/lib/zipCoverage";
@@ -2474,7 +2475,7 @@ function CommentThread({
               </span>
               <span className="mtech-comment-time">{fmt(c.createdAt)}</span>
             </div>
-            <div className="mtech-comment-body">{c.body}</div>
+            <div className="mtech-comment-body"><MessageBody text={c.body} className="m-0" /></div>
           </div>
         ))}
       </div>
@@ -3025,7 +3026,7 @@ function ChatView({ firebaseUid, authorName }: { firebaseUid: string; authorName
                 )}
                 <div className="mtech-msg-bubble-wrap">
                   <div className={`mtech-msg-bubble ${mine ? "mine" : "theirs"}`}>
-                    {m.body}
+                    <MessageBody text={m.body} className="m-0" />
                   </div>
                   <div className={`mtech-msg-time ${mine ? "mine" : ""}`}>
                     {fmtTime((m as any).created_at)}
