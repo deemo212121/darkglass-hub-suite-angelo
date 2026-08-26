@@ -6405,7 +6405,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     { type: "wage_ack", label: "Acknowledgment of Wage" },
     { type: "car_iq_agreement", label: "Car IQ Technician Agreement" },
     { type: "vehicle_agreement", label: "Company Vehicle Use Agreement" },
-    { type: "contractor_data", label: "Contractor Data" },
+    { type: "contractor_data", label: "Employee Data" },
     { type: "damage", label: "Damage Agreement" },
     { type: "direct_deposit", label: "Direct Deposit Authorization" },
     { type: "employee_confidentiality", label: "Employee Confidentiality Agreement" },
