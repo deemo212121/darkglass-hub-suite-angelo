@@ -53,6 +53,7 @@ import { timezoneForBranch, nowInTimezone } from "@/lib/attendanceGrace";
 import { getTicketComments, addTicketComment, type TicketComment } from "@/lib/supabase/comments";
 import { TicketPhotos } from "@/components/TicketPhotos";
 import { MessageBody } from "@/components/MessageBody";
+import { LocationSharingBadge } from "@/components/LocationSharingBadge";
 import { uploadTicketSignature, uploadPayrollDisputeAttachment } from "@/lib/firebase/storage";
 import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
 import { lookupZip } from "@/lib/zipCoverage";
@@ -898,11 +899,12 @@ function AppHeaderMobile({
         <NotificationsMenu onLinkClick={onNotificationLink} onViewAll={onOpenNotifications} />
         <button
           type="button"
-          className="mtech-app-profile-btn"
+          className="mtech-app-profile-btn relative"
           onClick={() => setMenu((m) => !m)}
           aria-label="Account menu"
         >
           {initials}
+          <LocationSharingBadge />
         </button>
         {menu && (
           <>

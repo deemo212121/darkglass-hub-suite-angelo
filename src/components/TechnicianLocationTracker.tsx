@@ -27,6 +27,7 @@ import { useAuth } from "@/lib/auth";
 import { getMyProfileId } from "@/lib/supabase/users";
 import { getEntryForDate } from "@/lib/supabase/timecards";
 import { hasConfirmedLocationConsent, upsertMyLocationPing, clearMyLocationPing } from "@/lib/supabase/technicianLocationPings";
+import { setLocationSharingStatus } from "@/lib/locationSharingStatus";
 
 const POLL_MS = 60_000;
 const UPLOAD_THROTTLE_MS = 60_000;
@@ -178,6 +179,14 @@ export function TechnicianLocationTracker() {
 
   useEffect(() => () => releaseWakeLock(), []);
 
+  // Broadcast to anything else that wants to show a "live" indicator (e.g.
+  // MobileTechApp.tsx's own header badge) without duplicating the actual
+  // tracking logic — see locationSharingStatus.ts.
+  useEffect(() => {
+    setLocationSharingStatus(watching);
+    return () => setLocationSharingStatus(false);
+  }, [watching]);
+
   // Start/stop tracking as the clocked-in state itself flips.
   useEffect(() => {
     if (!armed) return;
@@ -229,13 +238,9 @@ export function TechnicianLocationTracker() {
     );
   }
 
-  if (watching) {
-    return (
-      <div className="fixed bottom-3 left-3 z-50 flex items-center gap-1.5 rounded-full border border-blue-400/30 bg-blue-500/15 px-2.5 py-1 text-[11px] font-medium text-blue-300 shadow-lg">
-        📍 Sharing location
-      </div>
-    );
-  }
-
+  // No more floating pill here — the "sharing" state now shows as a small
+  // badge on the user's own avatar (Header.tsx / MobileTechApp.tsx), via
+  // locationSharingStatus.ts, instead of a fixed-position element that
+  // used to sit right on top of the mobile bottom tab bar.
   return null;
 }
