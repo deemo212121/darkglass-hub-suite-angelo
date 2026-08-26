@@ -183,8 +183,12 @@ export async function signDocument(id: string, slot: SignatureSlot, entry: Signa
   const signatures = { ...doc.signatures, [slot]: entry };
   const update: Record<string, any> = { signatures, status: "signed", pdf_url: pdfUrl, signed_at: new Date().toISOString() };
   if (formData) update.form_data = formData;
-  const { error } = await supabase.from("hr_signable_documents").update(update).eq("id", id);
+  // .select("id") so a zero-row result (RLS silently filtered the row out
+  // rather than raising an error) is actually detectable — without it, a
+  // blocked write looks identical to a successful one to the caller.
+  const { data, error } = await supabase.from("hr_signable_documents").update(update).eq("id", id).select("id");
   if (error) throw new Error(error.message);
+  if (!data || data.length === 0) throw new Error("Couldn't save the signature — you may not have permission to update this document.");
 }
 
 /**
@@ -222,7 +226,7 @@ export async function reassignSignableDocument(id: string, target: { recipientId
   // the document even though it's no longer the active recipientSlot.
   const recipientNames = { ...(doc.formData as { recipientNames?: Record<string, string> }).recipientNames, [recipientSlot]: target.recipientName };
   const formData = { ...doc.formData, recipientSlot, recipientName: target.recipientName, recipientNames };
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("hr_signable_documents")
     .update({
       recipient_id: target.recipientId ?? null,
@@ -231,8 +235,10 @@ export async function reassignSignableDocument(id: string, target: { recipientId
       form_data: formData,
       status: "pending_signature",
     })
-    .eq("id", id);
+    .eq("id", id)
+    .select("id");
   if (error) throw new Error(error.message);
+  if (!data || data.length === 0) throw new Error("Couldn't reassign this document — you may not have permission to update it.");
 }
 
 /**
@@ -244,11 +250,13 @@ export async function reassignSignableDocument(id: string, target: { recipientId
  * just doesn't count toward any employee's official warning history.
  */
 export async function confirmSignableDocument(id: string, agentNoteId: string | null): Promise<void> {
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("hr_signable_documents")
     .update({ status: "confirmed", agent_note_id: agentNoteId, confirmed_at: new Date().toISOString() })
-    .eq("id", id);
+    .eq("id", id)
+    .select("id");
   if (error) throw new Error(error.message);
+  if (!data || data.length === 0) throw new Error("Couldn't confirm this document — you may not have permission to update it.");
 }
 
 /**
