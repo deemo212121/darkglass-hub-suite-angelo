@@ -22,6 +22,7 @@ import { getExternalSignableDocument, submitExternalSignature, type ExternalSign
 import { fillW4Pdf, loadBlankW4Bytes } from "@/lib/w4PdfFill";
 import type { W4FilingStatus, W4FormData } from "@/lib/w4FormTemplate";
 import { useSignaturePad } from "@/hooks/useSignaturePad";
+import { useResponsivePdfScale } from "@/hooks/useResponsivePdfScale";
 import { SignaturePadControls } from "@/components/SignaturePad";
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 
@@ -155,7 +156,7 @@ export function ExternalFillW4Page({ docId }: Props) {
   const [submittedPdfUrl, setSubmittedPdfUrl] = useState<string | null>(null);
 
   const [pageLoading, setPageLoading] = useState(true);
-  const [scale, setScale] = useState(1.3);
+  const { scale, containerRef } = useResponsivePdfScale(PAGE_WIDTH);
   const [numPages, setNumPages] = useState(0);
   const pdfDocRef = useRef<any>(null);
   const pageCanvasRefs = useRef<(HTMLCanvasElement | null)[]>([]);
@@ -333,7 +334,7 @@ export function ExternalFillW4Page({ docId }: Props) {
               Fill in your information directly on the form below, add your signature, then submit. Steps 2-4 only apply if relevant to you — the Multiple Jobs Worksheet (page 3) and Deductions Worksheet (page 4) are shown for reference and are only fillable if you're using them.
             </p>
 
-            <div className="overflow-x-auto flex flex-col items-center bg-white/5 rounded-md p-4 gap-4">
+            <div ref={containerRef} className="overflow-x-auto flex flex-col items-center bg-white/5 rounded-md p-4 gap-4">
               {Array.from({ length: numPages || 1 }, (_, i) => i + 1).map((pageNum) => (
                 <div key={pageNum} className="relative bg-white shadow-lg" style={{ width: PAGE_WIDTH * scale, height: PAGE_HEIGHT * scale }}>
                   <canvas ref={(el) => { pageCanvasRefs.current[pageNum - 1] = el; }} className="absolute inset-0" />

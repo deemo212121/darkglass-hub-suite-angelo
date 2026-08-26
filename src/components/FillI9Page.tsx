@@ -30,6 +30,7 @@ import { logActivity } from "@/lib/supabase/hrActivityLog";
 import { getHrNotificationSettings } from "@/lib/supabase/companySettings";
 import { notifyHrRoleUsers } from "@/lib/supabase/hrRoleNotify";
 import { useSignaturePad } from "@/hooks/useSignaturePad";
+import { useResponsivePdfScale } from "@/hooks/useResponsivePdfScale";
 import { SignaturePadControls } from "@/components/SignaturePad";
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 
@@ -149,7 +150,7 @@ export function FillI9Page({ docId }: Props) {
   const [submitted, setSubmitted] = useState(false);
 
   const [pageLoading, setPageLoading] = useState(true);
-  const [scale, setScale] = useState(1.3);
+  const { scale, containerRef } = useResponsivePdfScale(PAGE_WIDTH);
   const [numPages, setNumPages] = useState(0);
   const pdfDocRef = useRef<any>(null);
   const pageCanvasRefs = useRef<(HTMLCanvasElement | null)[]>([]);
@@ -368,7 +369,7 @@ export function FillI9Page({ docId }: Props) {
               Fill in Section 1 (your own information) directly on the form below, add your signature, then submit. Section 2, further down the same page, is completed separately by HR after you submit. Page 2 (Lists of Acceptable Documents) is shown for reference.
             </p>
 
-            <div className="overflow-x-auto flex flex-col items-center bg-white/5 rounded-md p-4 gap-4">
+            <div ref={containerRef} className="overflow-x-auto flex flex-col items-center bg-white/5 rounded-md p-4 gap-4">
               {Array.from({ length: numPages || 1 }, (_, i) => i + 1).map((pageNum) => (
                 <div key={pageNum} className="relative bg-white shadow-lg" style={{ width: PAGE_WIDTH * scale, height: PAGE_HEIGHT * scale }}>
                   <canvas ref={(el) => { pageCanvasRefs.current[pageNum - 1] = el; }} className="absolute inset-0" />

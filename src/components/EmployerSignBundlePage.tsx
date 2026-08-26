@@ -87,11 +87,36 @@ function LiveDocumentPreview({
   sigPad: SignaturePadHandle;
 }) {
   const canvasRefs = useRef<(HTMLCanvasElement | null)[]>([]);
+  const previewContainerRef = useRef<HTMLDivElement | null>(null);
   const [scale, setScale] = useState(1);
   const [numPages, setNumPages] = useState(0);
   const [pageLoading, setPageLoading] = useState(true);
   const [pageError, setPageError] = useState<string | null>(null);
   const [liveSigUrl, setLiveSigUrl] = useState<string | null>(null);
+  // Actual available width for the preview, measured from the container —
+  // replaces the old hardcoded LIVE_PREVIEW_WIDTH constant, which rendered
+  // every page at a fixed 620px wide regardless of screen size, clipping
+  // the document (and the exact spot you're meant to sign) off any screen
+  // narrower than that. Starts at LIVE_PREVIEW_WIDTH so desktop looks
+  // exactly as before until the real measurement comes in.
+  const [previewWidth, setPreviewWidth] = useState(LIVE_PREVIEW_WIDTH);
+
+  useEffect(() => {
+    const el = previewContainerRef.current;
+    if (!el) return;
+    const compute = () => {
+      const available = el.clientWidth;
+      if (available) setPreviewWidth(Math.min(LIVE_PREVIEW_WIDTH, available - 8));
+    };
+    compute();
+    const observer = new ResizeObserver(compute);
+    observer.observe(el);
+    window.addEventListener("resize", compute);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", compute);
+    };
+  }, []);
 
   // Renders every page (not just the one with the signature line) so this
   // still reads as the whole document, same as the plain iframe preview
@@ -126,7 +151,7 @@ function LiveDocumentPreview({
         if (cancelled) return;
         setNumPages(pdf.numPages);
         const firstPage = await pdf.getPage(1);
-        const fitScale = LIVE_PREVIEW_WIDTH / firstPage.getViewport({ scale: 1 }).width;
+        const fitScale = previewWidth / firstPage.getViewport({ scale: 1 }).width;
         const dpr = window.devicePixelRatio || 1;
         for (let i = 1; i <= pdf.numPages; i++) {
           const page = await pdf.getPage(i);
@@ -150,7 +175,7 @@ function LiveDocumentPreview({
       }
     })();
     return () => { cancelled = true; };
-  }, [pdfUrl, loadBlankBytes]);
+  }, [pdfUrl, loadBlankBytes, previewWidth]);
 
   useEffect(() => {
     const tick = () => setLiveSigUrl(sigPad.toDataURL());
@@ -168,7 +193,7 @@ function LiveDocumentPreview({
   };
 
   return (
-    <div className="rounded-lg overflow-hidden border border-white/10 bg-slate-900" style={{ maxHeight: "75vh", overflowY: "auto" }}>
+    <div ref={previewContainerRef} className="rounded-lg overflow-x-auto border border-white/10 bg-slate-900" style={{ maxHeight: "75vh", overflowY: "auto" }}>
       {pageError ? (
         <div className="bg-white text-red-600 text-xs p-4 text-center">{pageError}</div>
       ) : (
