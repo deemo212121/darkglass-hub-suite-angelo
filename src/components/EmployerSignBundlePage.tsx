@@ -123,6 +123,17 @@ function LiveDocumentPreview({
   // used to — only the live overlay img below is limited to one page.
   useEffect(() => {
     let cancelled = false;
+    // previewWidth (below) can update more than once in quick succession —
+    // ResizeObserver commonly fires an initial callback plus follow-ups as
+    // the surrounding layout keeps settling — which re-runs this whole
+    // effect before a previous run's pdf.js render() call has necessarily
+    // finished. The `cancelled` flag alone only stops OUR code from
+    // starting further work; it doesn't reach into pdf.js and cancel an
+    // already-in-flight render, so two runs could both call render() on
+    // the same <canvas> and pdf.js throws "Cannot use the same canvas
+    // during multiple render() operations." Tracking and cancelling the
+    // actual RenderTask in cleanup closes that race.
+    const renderTasks: { cancel: () => void }[] = [];
     (async () => {
       setPageLoading(true);
       setPageError(null);
@@ -164,17 +175,24 @@ function LiveDocumentPreview({
           canvas.style.height = `${viewport.height}px`;
           const ctx = canvas.getContext("2d")!;
           ctx.scale(dpr, dpr);
-          await page.render({ canvas, canvasContext: ctx, viewport }).promise;
+          const task = page.render({ canvas, canvasContext: ctx, viewport });
+          renderTasks.push(task);
+          await task.promise;
         }
         if (cancelled) return;
         setScale(fitScale);
       } catch (err) {
+        // A cancelled RenderTask rejects its own promise — expected, not a
+        // real failure, so only surface an error for a genuine one.
         if (!cancelled) setPageError(err instanceof Error ? err.message : "Failed to render preview.");
       } finally {
         if (!cancelled) setPageLoading(false);
       }
     })();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      renderTasks.forEach((t) => t.cancel());
+    };
   }, [pdfUrl, loadBlankBytes, previewWidth]);
 
   useEffect(() => {
@@ -232,7 +250,6 @@ interface SignableConfig {
   label: string;
   fillPdf: (formData: any, employeeSigBytes: Uint8Array | undefined, employerSigBytes: Uint8Array) => Promise<Uint8Array>;
   uploadPdf: (companyId: string, name: string, blob: Blob) => Promise<string>;
-  employeeSigField: string;
   employerSigField: string;
   employerDateField: string;
   filenamePrefix: string;
@@ -254,43 +271,43 @@ const SIGNABLE_CONFIG: Partial<Record<SignableDocumentType, SignableConfig>> = {
   wage_ack: {
     label: "Acknowledgment of Wage",
     fillPdf: fillWageAckPdf, uploadPdf: uploadWageAckForm,
-    employeeSigField: "employeeSignatureDataUrl", employerSigField: "employerSignatureDataUrl", employerDateField: "employerDateSigned",
+    employerSigField: "employerSignatureDataUrl", employerDateField: "employerDateSigned",
     filenamePrefix: "acknowledgment-of-wage", activityAction: "wage_ack_employer_signed",
     sigPageIndex: 1, sigRect: { x: 258, y: 488, w: 125, h: 13 }, loadBlankBytes: loadBlankWageAckBytes,
   },
   meal_rest_break: {
     label: "Meal & Rest Break Policy",
     fillPdf: fillMealRestBreakPdf, uploadPdf: uploadMealRestBreakForm,
-    employeeSigField: "employeeSignatureDataUrl", employerSigField: "employerSignatureDataUrl", employerDateField: "employerDateSigned",
+    employerSigField: "employerSignatureDataUrl", employerDateField: "employerDateSigned",
     filenamePrefix: "meal-rest-break", activityAction: "meal_rest_break_employer_signed",
     sigPageIndex: 0, sigRect: { x: 253, y: 217, w: 195, h: 20 }, loadBlankBytes: loadBlankMealRestBreakBytes,
   },
   parts_responsibility: {
     label: "Parts Responsibility Form",
     fillPdf: fillPartsResponsibilityPdf, uploadPdf: uploadPartsResponsibilityForm,
-    // Named "technician"/"manager" instead of "employee"/"employer" on this one type — same shape otherwise.
-    employeeSigField: "technicianSignatureDataUrl", employerSigField: "managerSignatureDataUrl", employerDateField: "managerDateSigned",
+    // Named "manager" instead of "employer" on this one type — same shape otherwise.
+    employerSigField: "managerSignatureDataUrl", employerDateField: "managerDateSigned",
     filenamePrefix: "parts-responsibility", activityAction: "parts_responsibility_manager_signed",
     sigPageIndex: 1, sigRect: { x: 234, y: 561.7, w: 260, h: 20 }, loadBlankBytes: loadBlankPartsResponsibilityBytes,
   },
   location_consent: {
     label: "Location Sharing Consent",
     fillPdf: fillLocationConsentPdf, uploadPdf: uploadLocationConsentForm,
-    employeeSigField: "employeeSignatureDataUrl", employerSigField: "employerSignatureDataUrl", employerDateField: "employerDateSigned",
+    employerSigField: "employerSignatureDataUrl", employerDateField: "employerDateSigned",
     filenamePrefix: "location-consent", activityAction: "location_consent_employer_signed",
     sigPageIndex: 1, sigRect: { x: 256, y: 673, w: 125, h: 20 }, loadBlankBytes: loadBlankLocationConsentBytes,
   },
   damage: {
     label: "Damage Agreement",
     fillPdf: fillDamagePdf, uploadPdf: uploadDamageForm,
-    employeeSigField: "employeeSignatureDataUrl", employerSigField: "employerSignatureDataUrl", employerDateField: "employerDateSigned",
+    employerSigField: "employerSignatureDataUrl", employerDateField: "employerDateSigned",
     filenamePrefix: "damage", activityAction: "damage_employer_signed",
     sigPageIndex: 1, sigRect: { x: 256, y: 631, w: 125, h: 20 }, loadBlankBytes: loadBlankDamageBytes,
   },
   mileage_fuel: {
     label: "Mileage & Fuel Policy",
     fillPdf: fillMileageFuelPdf, uploadPdf: uploadMileageFuelForm,
-    employeeSigField: "employeeSignatureDataUrl", employerSigField: "employerSignatureDataUrl", employerDateField: "employerDateSigned",
+    employerSigField: "employerSignatureDataUrl", employerDateField: "employerDateSigned",
     filenamePrefix: "mileage-fuel", activityAction: "mileage_fuel_employer_signed", loadBlankBytes: loadBlankMileageFuelBytes,
     sigPageIndex: 1, sigRect: { x: 256, y: 695.5, w: 215, h: 20 },
   },
@@ -409,7 +426,14 @@ export function EmployerSignBundlePage() {
     setStepError(null);
     try {
       const existing = doc.formData as any;
-      const employeeSigUrl = existing[config.employeeSigField] as string | undefined;
+      // The durable, fetchable signature lives in doc.signatures.employee.url
+      // (a real Firebase Storage URL, set by signDocument() when the
+      // employee/technician originally signed) — NOT
+      // formData[config.employeeSigField], which is only the raw canvas
+      // `data:` URI kept around for the instant on-screen preview. Proxying
+      // a data: URI 403s (no hostname to allowlist), which is exactly what
+      // was happening here.
+      const employeeSigUrl = doc.signatures?.employee?.url;
       const employeeSigBytes = employeeSigUrl ? await fetchBytesViaProxy(employeeSigUrl) : undefined;
 
       const dataUrl = sigPad.toDataURL();
