@@ -3,6 +3,7 @@ import "./lib/error-capture";
 import { consumeLastCapturedError } from "./lib/error-capture";
 import { renderErrorPage } from "./lib/error-page";
 import { handleSupabaseTokenRequest } from "./lib/server/supabaseTokenBridge";
+import { handleServerTimeRequest } from "./lib/server/serverTime";
 import { handleServicePowerRequest } from "./lib/server/servicePowerBridge";
 import { handleMarconeRequest } from "./lib/server/marconeBridge";
 import { handleEncompassRequest } from "./lib/server/encompassBridge";
@@ -122,6 +123,9 @@ export default {
     if (url.pathname === "/api/supabase-token") {
       const merged = await resolveServerEnv(env);
       return await handleSupabaseTokenRequest(request, merged);
+    }
+    if (url.pathname === "/api/server-time") {
+      return await handleServerTimeRequest();
     }
     if (url.pathname === "/api/login-lockout") {
       const merged = await resolveServerEnv(env);

@@ -25,9 +25,7 @@ import { createPortal } from "react-dom";
 import { LayoutGrid } from "lucide-react";
 import { MODULES, DASHBOARD_GRID_EXCLUDED_SLUGS, type ModuleDef, type SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
-import { isSubmoduleAllowed } from "@/lib/roleLabels";
-import { getDashboardRoleGate, hasDashboardAccess } from "@/lib/dashboardAccess";
-import { getModuleRoleGate } from "@/lib/moduleAccess";
+import { canAccessSubmodule } from "@/lib/submoduleAccess";
 
 // Header's inner container in AppHeader: `max-w-[1400px] mx-auto px-6`.
 // We mirror those constants here so the floating navigator's right edge
@@ -106,25 +104,19 @@ export function ModuleNavigator() {
 
   if (!ready || !email || !mounted) return null;
 
-  // Same filtering the module's own tile grid uses (m.$module.tsx): the CSR
-  // department allow-list (isSubmoduleAllowed, which folds in the module-
-  // level CSR check too) PLUS the per-submodule role gate (Dashboard's
-  // hardcoded defaults / any company override from Accessibility
-  // Management's Module Access by Role grid). Previously this only checked
-  // the CSR allow-list, so e.g. a plain Technician would see HR Dashboard,
-  // Staff List, Payroll Calculation, etc. in the quick-nav even though
-  // opening any of them lands on "Access restricted." Filtering the strip
-  // itself, not just the destination page, keeps what's hoverable in sync
-  // with what's actually reachable.
+  // Same full gate m.$module.$submodule.tsx itself enforces (CSR
+  // allow-list, admin-module gate + its it-tickets/user-management/
+  // activity-log/internal-message-support carve-outs, company-settings,
+  // and the generic Dashboard-hardcoded-or-DB-override gate) — see
+  // submoduleAccess.ts. Filtering the strip itself, not just the
+  // destination page, keeps what's hoverable in sync with what's actually
+  // reachable, so e.g. a plain Technician never sees HR Dashboard, Staff
+  // List, or Payroll Calculation here only to land on "Access restricted."
   const visibleSubmodulesFor = (m: ModuleDef): SubModuleDef[] =>
     m.submodules.filter((s) => {
       if (s.hiddenFromGrid) return false;
       if (m.slug === "dashboard" && DASHBOARD_GRID_EXCLUDED_SLUGS.has(s.slug)) return false;
-      const explicitOverride = getModuleRoleGate(m.slug, s.slug);
-      const roleGate = m.slug === "dashboard" ? getDashboardRoleGate(s.slug) : explicitOverride;
-      if (roleGate && !hasDashboardAccess(roleGate, role, extraRoles)) return false;
-      if (!explicitOverride && !isSubmoduleAllowed(role, m.slug, s.slug, extraRoles)) return false;
-      return true;
+      return canAccessSubmodule(role, extraRoles, m.slug, s);
     });
 
   // A module only gets a pill if it has at least one submodule this viewer

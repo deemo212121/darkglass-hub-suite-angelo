@@ -156,6 +156,25 @@ function supabaseTokenDevPlugin() {
   };
 }
 
+// Dev-only middleware: serve /api/server-time locally (vite dev does not run
+// the serverless api/ folder). Same handler as the production Worker — see
+// src/lib/server/serverTime.ts's header comment for why this endpoint
+// exists (an untamperable clock for self-service time punches).
+function serverTimeDevPlugin() {
+  return {
+    name: "server-time-dev",
+    configureServer(server: any) {
+      server.middlewares.use("/api/server-time", async (_req: any, res: any) => {
+        const { handleServerTimeRequest } = await server.ssrLoadModule("/src/lib/server/serverTime.ts");
+        const webRes: Response = await handleServerTimeRequest();
+        res.statusCode = webRes.status;
+        webRes.headers.forEach((v: string, k: string) => res.setHeader(k, v));
+        res.end(await webRes.text());
+      });
+    },
+  };
+}
+
 // Dev-only middleware: serve /api/servicepower locally (vite dev does not run
 // the serverless api/ folder). Uses the SAME runtime-agnostic bridge as the
 // production Worker so dev and prod behave identically.
@@ -734,7 +753,7 @@ export default defineConfig({
     // server for testing webhooks (e.g. Jotform) that need a public URL.
     server: { allowedHosts: [".trycloudflare.com"] },
     test: { globals: true, environment: "node" },
-    plugins: [supabaseTokenDevPlugin(), servicePowerDevPlugin(), marconeDevPlugin(), encompassDevPlugin(), nsaDevPlugin(), jotformDevPlugin(), customFormsDevPlugin(), imageProxyDevPlugin(), googleDriveDevPlugin(), gmailDevPlugin(), signableDocumentsDevPlugin(), liveChatDevPlugin(), liveChatStaffDevPlugin(), adminUpdateEmailDevPlugin(), adminResetPasswordDevPlugin(), loginLockoutDevPlugin()],
+    plugins: [supabaseTokenDevPlugin(), serverTimeDevPlugin(), servicePowerDevPlugin(), marconeDevPlugin(), encompassDevPlugin(), nsaDevPlugin(), jotformDevPlugin(), customFormsDevPlugin(), imageProxyDevPlugin(), googleDriveDevPlugin(), gmailDevPlugin(), signableDocumentsDevPlugin(), liveChatDevPlugin(), liveChatStaffDevPlugin(), adminUpdateEmailDevPlugin(), adminResetPasswordDevPlugin(), loginLockoutDevPlugin()],
     build: {
       chunkSizeWarningLimit: 800,
       // See the rmSync call above — we clean dist/ ourselves once, up
