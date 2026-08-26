@@ -301,6 +301,18 @@ export function MessagesMenu() {
           </div>
         </DropdownMenuLabel>
         <DropdownMenuSeparator className="bg-[var(--color-panel-border)]" />
+        <DropdownMenuItem
+          onSelect={() =>
+            navigate({
+              to: "/m/$module/$submodule",
+              params: { module: "admin", submodule: "internal-message-support" },
+            })
+          }
+          className="gap-2 rounded-lg px-3 py-2 cursor-pointer text-foreground"
+        >
+          <MessageCircle className="h-4 w-4 text-blue-200" /> Open Team Messenger
+        </DropdownMenuItem>
+        <DropdownMenuSeparator className="bg-[var(--color-panel-border)]" />
         {recent.length === 0 ? (
           <div className="px-3 py-4 text-sm text-slate-400">No conversations yet.</div>
         ) : (
@@ -334,18 +346,6 @@ export function MessagesMenu() {
             </DropdownMenuItem>
           ))
         )}
-        <DropdownMenuSeparator className="bg-[var(--color-panel-border)]" />
-        <DropdownMenuItem
-          onSelect={() =>
-            navigate({
-              to: "/m/$module/$submodule",
-              params: { module: "admin", submodule: "internal-message-support" },
-            })
-          }
-          className="gap-2 rounded-lg px-3 py-2 cursor-pointer text-foreground"
-        >
-          <MessageCircle className="h-4 w-4 text-blue-200" /> Open Team Messenger
-        </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   );

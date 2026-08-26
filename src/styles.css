@@ -1808,12 +1808,29 @@ input::-ms-clear {
   align-items: center;
   justify-content: center;
   height: 18px;
+  position: relative;
 }
 .mtech-bottom-tab-label {
   font-size: 0.58rem;
   font-weight: 600;
   letter-spacing: 0.01em;
   line-height: 1;
+}
+.mtech-bottom-tab-badge {
+  position: absolute;
+  top: -4px;
+  right: -9px;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 3px;
+  border-radius: 999px;
+  background: #ef4444;
+  color: #fff;
+  font-size: 0.6rem;
+  font-weight: 800;
+  line-height: 15px;
+  text-align: center;
+  box-shadow: 0 0 0 2px #fff;
 }
 
 /* ── Legacy topbar styles kept for any remaining references ──────────── */
@@ -4951,13 +4968,35 @@ a.mtech-phone-link:active { opacity: 0.7; }
   color: var(--mt-blue-dark);
   line-height: 1;
 }
-.mtech-home-stat-label {
+.mtech-home-stat-btn {
+  appearance: none;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+.mtech-home-stat-btn:not(:disabled):active {
+  transform: scale(0.98);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+}
+.mtech-home-stat-btn:disabled {
+  cursor: default;
+}
+.mtech-home-stat-title {
   font-size: 0.78rem;
   font-weight: 700;
   color: #64748b;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  text-align: right;
+}
+.mtech-home-stat-sub {
+  margin-top: 0.15rem;
+  font-size: 0.72rem;
+  color: #94a3b8;
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: normal;
 }
 
 /* 2×2 shortcut tile grid — white cards */
@@ -4994,7 +5033,11 @@ a.mtech-phone-link:active { opacity: 0.7; }
   font-size: 0.88rem;
   color: var(--mt-blue-dark);
 }
-
+.mtech-home-divider {
+  height: 1px;
+  background: #e2e8f0;
+  margin: 0.15rem 0;
+}
 /* ── Payroll view ──────────────────────────────────────────────────────── */
 .mtech-payroll {
   padding: 1rem;
@@ -5238,6 +5281,49 @@ a.mtech-phone-link:active { opacity: 0.7; }
 .mtech-timecard-card-value.in { color: #16a34a; }
 .mtech-timecard-card-value.out { color: #dc2626; }
 .mtech-timecard-card-value.meal { color: #d97706; }
+.mtech-timecard-card-btn {
+  appearance: none;
+  width: 100%;
+  text-align: left;
+  font-family: inherit;
+  cursor: pointer;
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+.mtech-timecard-card-btn:not(:disabled):active {
+  transform: scale(0.97);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+}
+.mtech-timecard-card-btn:disabled {
+  cursor: default;
+}
+.mtech-timecard-card-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+.mtech-timecard-card-confirm-label {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: #1f2937;
+}
+.mtech-timecard-card-confirm-actions {
+  display: flex;
+  gap: 0.4rem;
+}
+.mtech-timecard-confirm-btn {
+  flex: 1;
+  appearance: none;
+  border: none;
+  border-radius: 8px;
+  padding: 0.4rem 0;
+  font-weight: 700;
+  font-size: 0.78rem;
+  font-family: inherit;
+  cursor: pointer;
+  color: #fff;
+}
+.mtech-timecard-confirm-yes { background: #16a34a; }
+.mtech-timecard-confirm-no { background: #94a3b8; }
 .mtech-timecard-hours {
   text-align: center;
   padding: 0.6rem;
@@ -5395,6 +5481,7 @@ a.mtech-phone-link:active { opacity: 0.7; }
   align-items: center;
   justify-content: center;
   height: 18px;
+  position: relative;
 }
 
 /* ── Home tile SVG icons ─────────────────────────────────────────────── */
@@ -7500,12 +7587,29 @@ a.mtech-phone-link:active { opacity: 0.7; }
   align-items: center;
   justify-content: center;
   height: 18px;
+  position: relative;
 }
 .mtech-bottom-tab-label {
   font-size: 0.58rem;
   font-weight: 600;
   letter-spacing: 0.01em;
   line-height: 1;
+}
+.mtech-bottom-tab-badge {
+  position: absolute;
+  top: -4px;
+  right: -9px;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 3px;
+  border-radius: 999px;
+  background: #ef4444;
+  color: #fff;
+  font-size: 0.6rem;
+  font-weight: 800;
+  line-height: 15px;
+  text-align: center;
+  box-shadow: 0 0 0 2px #fff;
 }
 
 /* ── Legacy topbar styles kept for any remaining references ──────────── */
@@ -10641,13 +10745,35 @@ a.mtech-phone-link:active { opacity: 0.7; }
   color: var(--mt-blue-dark);
   line-height: 1;
 }
-.mtech-home-stat-label {
+.mtech-home-stat-btn {
+  appearance: none;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+.mtech-home-stat-btn:not(:disabled):active {
+  transform: scale(0.98);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+}
+.mtech-home-stat-btn:disabled {
+  cursor: default;
+}
+.mtech-home-stat-title {
   font-size: 0.78rem;
   font-weight: 700;
   color: #64748b;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  text-align: right;
+}
+.mtech-home-stat-sub {
+  margin-top: 0.15rem;
+  font-size: 0.72rem;
+  color: #94a3b8;
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: normal;
 }
 
 /* 2×2 shortcut tile grid — white cards */
@@ -10684,7 +10810,11 @@ a.mtech-phone-link:active { opacity: 0.7; }
   font-size: 0.88rem;
   color: var(--mt-blue-dark);
 }
-
+.mtech-home-divider {
+  height: 1px;
+  background: #e2e8f0;
+  margin: 0.15rem 0;
+}
 /* ── Payroll view ──────────────────────────────────────────────────────── */
 .mtech-payroll {
   padding: 1rem;
@@ -10928,6 +11058,49 @@ a.mtech-phone-link:active { opacity: 0.7; }
 .mtech-timecard-card-value.in { color: #16a34a; }
 .mtech-timecard-card-value.out { color: #dc2626; }
 .mtech-timecard-card-value.meal { color: #d97706; }
+.mtech-timecard-card-btn {
+  appearance: none;
+  width: 100%;
+  text-align: left;
+  font-family: inherit;
+  cursor: pointer;
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+.mtech-timecard-card-btn:not(:disabled):active {
+  transform: scale(0.97);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+}
+.mtech-timecard-card-btn:disabled {
+  cursor: default;
+}
+.mtech-timecard-card-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+.mtech-timecard-card-confirm-label {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: #1f2937;
+}
+.mtech-timecard-card-confirm-actions {
+  display: flex;
+  gap: 0.4rem;
+}
+.mtech-timecard-confirm-btn {
+  flex: 1;
+  appearance: none;
+  border: none;
+  border-radius: 8px;
+  padding: 0.4rem 0;
+  font-weight: 700;
+  font-size: 0.78rem;
+  font-family: inherit;
+  cursor: pointer;
+  color: #fff;
+}
+.mtech-timecard-confirm-yes { background: #16a34a; }
+.mtech-timecard-confirm-no { background: #94a3b8; }
 .mtech-timecard-hours {
   text-align: center;
   padding: 0.6rem;
@@ -11085,6 +11258,7 @@ a.mtech-phone-link:active { opacity: 0.7; }
   align-items: center;
   justify-content: center;
   height: 18px;
+  position: relative;
 }
 
 /* ── Home tile SVG icons ─────────────────────────────────────────────── */
