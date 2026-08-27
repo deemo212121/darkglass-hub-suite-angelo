@@ -30,6 +30,14 @@ export interface TechnicianWhereabouts {
   address: string | null;
   /** Real GPS, when a fresh one exists — see LIVE_STALE_MS. Additive: `status` above still reflects today's job-schedule state regardless of whether this is set. */
   liveLocation: { lat: number; lng: number; updatedAt: string } | null;
+  /**
+   * When this technician's most recent ping (if any) actually landed —
+   * set even once it's gone stale (unlike liveLocation, which clears at
+   * LIVE_STALE_MS), so the page can show "Last seen 12 min ago" instead of
+   * someone just silently disappearing from "Live" with no explanation.
+   * null if they've never sent a ping at all.
+   */
+  lastSeenAt: string | null;
 }
 
 function formatAddress(row: any): string {
@@ -89,10 +97,18 @@ export async function getTechnicianWhereabouts(): Promise<TechnicianWhereabouts[
       .filter((p) => now - new Date(p.updatedAt).getTime() < LIVE_STALE_MS)
       .map((p) => [p.profileId, { lat: p.lat, lng: p.lng, updatedAt: p.updatedAt }])
   );
+  // Unfiltered by staleness — every technician who has EVER sent a ping
+  // gets a lastSeenAt, even long after it stops counting as "live".
+  const lastSeenByProfileId = new Map(pings.map((p) => [p.profileId, p.updatedAt]));
 
   return technicians.map((tech): TechnicianWhereabouts => {
     const rows = byTech.get(tech.name.trim().toLowerCase()) ?? [];
-    const base = { name: tech.name, branch: tech.branch, liveLocation: liveByProfileId.get(tech.id) ?? null };
+    const base = {
+      name: tech.name,
+      branch: tech.branch,
+      liveLocation: liveByProfileId.get(tech.id) ?? null,
+      lastSeenAt: lastSeenByProfileId.get(tech.id) ?? null,
+    };
     if (rows.length === 0) {
       return { ...base, status: "none", ticketNo: null, repairStatus: null, timeSlot: null, address: null };
     }

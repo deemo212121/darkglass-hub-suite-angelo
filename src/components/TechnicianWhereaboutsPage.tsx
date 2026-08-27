@@ -234,6 +234,8 @@ export function TechnicianWhereaboutsPage({ mod, sub }: { mod: ModuleDef; sub: S
         spread.forEach(({ pt, tech }) => {
           const tooltipText = tech.liveLocation
             ? `${tech.name} — 📍 Live · updated ${timeAgo(tech.liveLocation.updatedAt)}`
+            : tech.lastSeenAt
+            ? `${tech.name} — ${STATUS_STYLE[tech.status].label} · last seen ${timeAgo(tech.lastSeenAt)}`
             : `${tech.name} — ${STATUS_STYLE[tech.status].label}`;
           if (tech.liveLocation) {
             const halo = L.circleMarker([pt.lat, pt.lng], {
@@ -265,6 +267,8 @@ export function TechnicianWhereaboutsPage({ mod, sub }: { mod: ModuleDef; sub: S
         spread.forEach(({ pt, tech }) => {
           const title = tech.liveLocation
             ? `${tech.name} — 📍 Live · updated ${timeAgo(tech.liveLocation.updatedAt)}`
+            : tech.lastSeenAt
+            ? `${tech.name} — ${STATUS_STYLE[tech.status].label} · last seen ${timeAgo(tech.lastSeenAt)}`
             : `${tech.name} — ${STATUS_STYLE[tech.status].label}`;
           if (tech.liveLocation) {
             const halo = new g.maps.Marker({
@@ -459,7 +463,14 @@ export function TechnicianWhereaboutsPage({ mod, sub }: { mod: ModuleDef; sub: S
                         <MapPin className="h-3 w-3 shrink-0" />📍 Live · updated {timeAgo(tech.liveLocation.updatedAt)}
                       </p>
                     ) : (
-                      tech.address && <p className="text-slate-500 mt-0.5 truncate flex items-center gap-1"><MapPin className="h-3 w-3 shrink-0" />{tech.address}</p>
+                      <>
+                        {tech.address && <p className="text-slate-500 mt-0.5 truncate flex items-center gap-1"><MapPin className="h-3 w-3 shrink-0" />{tech.address}</p>}
+                        {tech.lastSeenAt && (
+                          <p className="text-slate-500 mt-0.5 truncate" title="Their location sharing stopped — phone likely locked or the app was backgrounded">
+                            Last seen {timeAgo(tech.lastSeenAt)}
+                          </p>
+                        )}
+                      </>
                     )}
                   </div>
                 </div>
@@ -485,8 +496,17 @@ export function TechnicianWhereaboutsPage({ mod, sub }: { mod: ModuleDef; sub: S
                       />
                       <span className="text-slate-300">{tech.name}</span>
                       <span className="text-slate-500">· {tech.branch || "No branch"}</span>
-                      {tech.liveLocation && (
+                      {tech.liveLocation ? (
                         <span className="ml-auto shrink-0" style={{ color: LIVE_COLOR }}>📍 Live</span>
+                      ) : (
+                        tech.lastSeenAt && (
+                          <span
+                            className="ml-auto shrink-0 text-slate-500"
+                            title="Their location sharing stopped — phone likely locked or the app was backgrounded"
+                          >
+                            Last seen {timeAgo(tech.lastSeenAt)}
+                          </span>
+                        )
                       )}
                     </div>
                   ))}
