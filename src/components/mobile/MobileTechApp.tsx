@@ -3753,6 +3753,31 @@ function HomeOnSiteCard({
   // geofence.
   const [devSimulate, setDevSimulate] = useState(false);
 
+  // Snap to a single ticket instead of listing the whole active queue at
+  // once. Priority: (1) a ticket already checked in ("I'm Here" tapped) but
+  // not yet marked done stays pinned regardless of distance — stepping away
+  // mid-visit (a supply run, a distraction) shouldn't lose an unfinished
+  // check-in; (2) otherwise the nearest ticket currently inside the
+  // geofence; (3) otherwise the nearest ticket overall, shown dimmed with
+  // its distance so there's still context on where they're headed. null
+  // only while every ticket's distance is still unresolved (map provider or
+  // geocoding not ready yet) or there's nothing active to check into.
+  const focusTicket = useMemo(() => {
+    const inProgress = visibleTickets.filter((t) => arrivedAt[t.ticketNo] && !doneAt[t.ticketNo]);
+    const pool = inProgress.length > 0 ? inProgress : visibleTickets;
+    const withDist = pool
+      .map((t) => ({ t, d: distanceFor(t) }))
+      .filter((x): x is { t: Ticket; d: number } => x.d !== null);
+    if (withDist.length === 0) return null;
+    if (inProgress.length > 0) {
+      return withDist.reduce((a, b) => (b.d < a.d ? b : a)).t;
+    }
+    const inRadius = withDist.filter((x) => devSimulate || x.d <= ON_SITE_CHECKIN_RADIUS_MILES);
+    const candidates = inRadius.length > 0 ? inRadius : withDist;
+    return candidates.reduce((a, b) => (b.d < a.d ? b : a)).t;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visibleTickets, ticketPos, myPos, arrivedAt, doneAt, devSimulate]);
+
   const formatNow = () => new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
   const logCheckIn = async (t: Ticket, label: string, time: string) => {
@@ -3800,27 +3825,38 @@ function HomeOnSiteCard({
           {devSimulate ? "✓ " : ""}Dev: simulate in-radius (local only)
         </button>
       )}
-      {visibleTickets.length === 0 ? (
-        <div className="mtech-home-onsite-empty">No active tickets to check into right now.</div>
+      {!focusTicket ? (
+        <div className="mtech-home-onsite-empty">
+          {visibleTickets.length === 0 ? "No active tickets to check into right now." : "Locating nearby tickets…"}
+        </div>
       ) : (
       <div className="mtech-home-onsite-list">
-        {visibleTickets.map((t) => {
+        {(() => {
+          const t = focusTicket;
           const dist = distanceFor(t);
           const inRadius = devSimulate || (dist !== null && dist <= ON_SITE_CHECKIN_RADIUS_MILES);
           const hereAt = arrivedAt[t.ticketNo];
           const finishedAt = doneAt[t.ticketNo];
           const isBusy = busy === t.ticketNo;
+          const pending = !inRadius && !hereAt && !finishedAt;
           return (
-            <div key={t.ticketNo} className="mtech-home-onsite-row">
+            <div className={`mtech-home-onsite-row${pending ? " mtech-home-onsite-row--pending" : ""}`}>
               <div className="mtech-home-onsite-info">
                 <span className="mtech-home-onsite-location">{resolveLocation(t)}</span>
                 <span className="mtech-home-onsite-ticket">{t.ticketNo}</span>
-                {(hereAt || finishedAt) && (
+                {hereAt || finishedAt ? (
                   <span className="mtech-home-onsite-times">
                     {hereAt && `Here ${hereAt}`}
                     {hereAt && finishedAt && "  ·  "}
                     {finishedAt && `Done ${finishedAt}`}
                   </span>
+                ) : (
+                  pending &&
+                  dist !== null && (
+                    <span className="mtech-home-onsite-distance">
+                      {dist < 0.1 ? "Almost there…" : `${dist.toFixed(1)} mi away`}
+                    </span>
+                  )
                 )}
               </div>
               {!finishedAt && (
@@ -3846,7 +3882,7 @@ function HomeOnSiteCard({
               )}
             </div>
           );
-        })}
+        })()}
       </div>
       )}
     </div>

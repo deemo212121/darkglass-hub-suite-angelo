@@ -5102,6 +5102,15 @@ a.mtech-phone-link:active { opacity: 0.7; }
 .mtech-home-onsite-row:last-child {
   border-bottom: none;
 }
+.mtech-home-onsite-row--pending {
+  opacity: 0.6;
+}
+.mtech-home-onsite-distance {
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: #94a3b8;
+  margin-top: 0.2rem;
+}
 .mtech-home-onsite-info {
   display: flex;
   flex-direction: column;
@@ -11007,6 +11016,15 @@ a.mtech-phone-link:active { opacity: 0.7; }
 }
 .mtech-home-onsite-row:last-child {
   border-bottom: none;
+}
+.mtech-home-onsite-row--pending {
+  opacity: 0.6;
+}
+.mtech-home-onsite-distance {
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: #94a3b8;
+  margin-top: 0.2rem;
 }
 .mtech-home-onsite-info {
   display: flex;
