@@ -22,7 +22,7 @@ import { AppHeader } from "@/components/Header";
 import { useAuth } from "@/lib/auth";
 import { getMyProfileId } from "@/lib/supabase/users";
 import { getSignableDocument, signDocument, type SignableDocument } from "@/lib/supabase/signableDocuments";
-import { uploadSignableDocumentSignature, uploadEmployeeConfidentialityForm } from "@/lib/firebase/storage";
+import { uploadSignableDocumentSignature, uploadEmployeeConfidentialityForm, refreshStorageAuthToken } from "@/lib/firebase/storage";
 import { fillEmployeeConfidentialityPdf, loadBlankEmployeeConfidentialityBytes } from "@/lib/employeeConfidentialityPdfFill";
 import { EMPLOYEE_CONFIDENTIALITY_BRANCHES, type EmployeeConfidentialityFormData } from "@/lib/employeeConfidentialityFormTemplate";
 import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
@@ -219,6 +219,10 @@ export function FillEmployeeConfidentialityPage({ docId }: Props) {
     setError(null);
     try {
       const companyId = doc.companyId;
+      // Force a fresh ID token before this upload sequence — see
+      // refreshStorageAuthToken's doc comment (a slow connection can let
+      // it go stale between signing in and finally submitting).
+      await refreshStorageAuthToken();
       const sigBytes = new Uint8Array(await (await fetch(dataUrl)).arrayBuffer());
       const signatureUrl = await uploadSignableDocumentSignature(companyId, doc.id, "employee", dataUrl);
       const signedAt = new Date().toISOString();

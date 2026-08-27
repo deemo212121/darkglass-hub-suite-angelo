@@ -1,20 +1,20 @@
 /**
- * Fill Employee Mobile App Location Sharing Consent Agreement — opened
+ * Fill Employee Mobile App Location Sharing Consent Agreement â opened
  * from the deep link a Team Messenger message sends (see
  * ReportHRDaily.tsx's "Location Sharing Consent" tab "Send Request"
  * flow). Same architecture as FillWageAckPage.tsx: renders the REAL
  * official PDF's pages to canvases via pdf.js, with input overlays at
- * each blank's own coordinates — no redrawn lookalike. Submitting draws
+ * each blank's own coordinates â no redrawn lookalike. Submitting draws
  * the collected values directly onto that same real PDF via
  * fillLocationConsentPdf (there are no AcroForm fields on this PDF at all
- * — see locationConsentFormTemplate.ts's header comment) and sends the
+ * â see locationConsentFormTemplate.ts's header comment) and sends the
  * result back to HR.
  *
  * Genuine two-party document, same shape as Acknowledgment of Wage: only
  * the employee half (name, position/title, effective date, signature) is
  * fillable here. The "Employer Representative Signature" line is
  * completed separately afterward by HR inside ReportHRDaily.tsx's
- * "Complete Employer Signature" dialog — shown here read-only (the blank
+ * "Complete Employer Signature" dialog â shown here read-only (the blank
  * PDF page underneath, no overlay).
  */
 import { useEffect, useRef, useState } from "react";
@@ -24,7 +24,7 @@ import { AppHeader } from "@/components/Header";
 import { useAuth } from "@/lib/auth";
 import { getMyProfileId } from "@/lib/supabase/users";
 import { getSignableDocument, signDocument, type SignableDocument } from "@/lib/supabase/signableDocuments";
-import { uploadSignableDocumentSignature, uploadLocationConsentForm } from "@/lib/firebase/storage";
+import { uploadSignableDocumentSignature, uploadLocationConsentForm, refreshStorageAuthToken } from "@/lib/firebase/storage";
 import { fillLocationConsentPdf, loadBlankLocationConsentBytes } from "@/lib/locationConsentPdfFill";
 import type { LocationConsentFormData } from "@/lib/locationConsentFormTemplate";
 import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
@@ -45,7 +45,7 @@ const PAGE_HEIGHT = 792;
 // Field rectangles (PDF user-space units, origin bottom-left), extracted
 // via pdf.js's text-position API against the actual underscore-blank
 // lines/labels on
-// src/assets/EMPLOYEE MOBILE APP LOCATION SHARING CONSENT AGREEMENT.pdf —
+// src/assets/EMPLOYEE MOBILE APP LOCATION SHARING CONSENT AGREEMENT.pdf â
 // the exact numbers locationConsentPdfFill.ts's draw coordinates were
 // derived from. This PDF has no real AcroForm fields at all.
 const PAGE1_RECT = {
@@ -190,6 +190,10 @@ export function FillLocationConsentPage({ docId }: Props) {
     setError(null);
     try {
       const companyId = doc.companyId;
+      // Force a fresh ID token before this upload sequence — see
+      // refreshStorageAuthToken's doc comment (a slow connection can let
+      // it go stale between signing in and finally submitting).
+      await refreshStorageAuthToken();
       const sigBytes = new Uint8Array(await (await fetch(dataUrl)).arrayBuffer());
       const signatureUrl = await uploadSignableDocumentSignature(companyId, doc.id, "employee", dataUrl);
       const signedAt = new Date().toISOString();
@@ -208,7 +212,7 @@ export function FillLocationConsentPage({ docId }: Props) {
           dmThreadId: thread.id,
           senderId: myProfileId,
           senderName: displayName || "Employee",
-          body: `📄 Employee Mobile App Location Sharing Consent Agreement for ${form.employeeName} has been signed, and is ready for the employer/representative signature: [${filename}](${pdfUrl})`,
+          body: `ð Employee Mobile App Location Sharing Consent Agreement for ${form.employeeName} has been signed, and is ready for the employer/representative signature: [${filename}](${pdfUrl})`,
         });
       }
 
@@ -216,7 +220,7 @@ export function FillLocationConsentPage({ docId }: Props) {
         .then(({ taxForms }) => {
           if (!taxForms) return;
           const excludeIds = doc.createdBy ? [doc.createdBy] : [];
-          void notifyHrRoleUsers(myProfileId, displayName || "Employee", excludeIds, `📄 Employee Mobile App Location Sharing Consent Agreement for ${form.employeeName} has been signed — the employer/representative signature is ready to be added.`);
+          void notifyHrRoleUsers(myProfileId, displayName || "Employee", excludeIds, `ð Employee Mobile App Location Sharing Consent Agreement for ${form.employeeName} has been signed â the employer/representative signature is ready to be added.`);
         })
         .catch((err) => console.error("[location-consent] hr notify check failed:", err));
 
@@ -264,7 +268,7 @@ export function FillLocationConsentPage({ docId }: Props) {
 
         {loading ? (
           <div className="panel p-8 text-center text-sm text-muted-foreground flex items-center justify-center gap-2">
-            <Loader2 className="h-4 w-4 animate-spin" /> Loading document…
+            <Loader2 className="h-4 w-4 animate-spin" /> Loading documentâ¦
           </div>
         ) : error && !doc ? (
           <div className="panel p-6 text-sm text-red-300">{error}</div>
@@ -272,7 +276,7 @@ export function FillLocationConsentPage({ docId }: Props) {
           <div className="panel p-6 text-sm text-muted-foreground">This document isn't addressed to your account.</div>
         ) : submitted || doc.status === "signed" || doc.status === "confirmed" ? (
           <div className="panel p-6 text-center">
-            <p className="text-sm font-semibold mb-2">✅ Submitted{submitted ? " and sent back to HR" : ""}.</p>
+            <p className="text-sm font-semibold mb-2">â Submitted{submitted ? " and sent back to HR" : ""}.</p>
             <p className="text-xs text-muted-foreground mb-2">HR will add the employer/representative signature separately.</p>
             {doc.pdfUrl && (
               <a href={doc.pdfUrl} target="_blank" rel="noreferrer noopener" className="text-blue-300 hover:text-blue-200 underline text-sm">
@@ -292,7 +296,7 @@ export function FillLocationConsentPage({ docId }: Props) {
                   <canvas ref={(el) => { pageCanvasRefs.current[pageNum - 1] = el; }} className="absolute inset-0" />
                   {pageLoading && (
                     <div className="absolute inset-0 flex items-center justify-center bg-white/70 text-sm text-muted-foreground gap-2">
-                      <Loader2 className="h-4 w-4 animate-spin" /> Loading form…
+                      <Loader2 className="h-4 w-4 animate-spin" /> Loading formâ¦
                     </div>
                   )}
 
@@ -344,7 +348,7 @@ export function FillLocationConsentPage({ docId }: Props) {
               disabled={submitting}
               className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white mt-3 disabled:opacity-50"
             >
-              {submitting ? "Submitting…" : "Submit to HR"}
+              {submitting ? "Submittingâ¦" : "Submit to HR"}
             </button>
           </div>
         )}

@@ -50,7 +50,7 @@ import {
   type OnboardingDocumentColumn,
   type OnboardingGroupKey,
 } from "@/lib/supabase/onboardingDocumentColumns";
-import { uploadCoeCertificate, uploadWarningForm, uploadPromotionForm, uploadActionPlanForm, uploadTerminationForm, uploadW8benForm, uploadW4Form, uploadW4RForm, uploadI9Form, uploadWageAckForm, uploadCarIqAgreementForm, uploadVehicleAgreementForm, uploadEmployeeConfidentialityForm, uploadMealRestBreakForm, uploadPtoAckForm, uploadPartsResponsibilityForm, uploadMileageFuelForm, uploadLocationConsentForm, uploadDamageForm, uploadContractorDataForm, uploadDirectDepositForm, uploadSubstanceScreeningForm, uploadSignableDocumentSignature } from "@/lib/firebase/storage";
+import { uploadCoeCertificate, uploadWarningForm, uploadPromotionForm, uploadActionPlanForm, uploadTerminationForm, uploadW8benForm, uploadW4Form, uploadW4RForm, uploadI9Form, uploadWageAckForm, uploadCarIqAgreementForm, uploadVehicleAgreementForm, uploadEmployeeConfidentialityForm, uploadMealRestBreakForm, uploadPtoAckForm, uploadPartsResponsibilityForm, uploadMileageFuelForm, uploadLocationConsentForm, uploadDamageForm, uploadContractorDataForm, uploadDirectDepositForm, uploadSubstanceScreeningForm, uploadSignableDocumentSignature, refreshStorageAuthToken } from "@/lib/firebase/storage";
 import { captureHtmlToPdfBlob, loadAssetDataUrl as loadImageDataUrl } from "@/lib/pdfCapture";
 import {
   createSignableDocument,
@@ -3531,6 +3531,9 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         setWageAckEmployerError("Please add your signature.");
         return;
       }
+      // Force a fresh ID token before uploading — see refreshStorageAuthToken's
+      // doc comment (HR may have had this dashboard open a while).
+      await refreshStorageAuthToken();
       const employerSigBytes = new Uint8Array(await (await fetch(dataUrl)).arrayBuffer());
       const signatureUrl = await uploadSignableDocumentSignature(wageAckEmployerDialog.companyId, wageAckEmployerDialog.id, "hr_staff", dataUrl);
       const signedAt = new Date().toISOString();
@@ -3793,6 +3796,9 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         setMealRestBreakEmployerError("Please add your signature.");
         return;
       }
+      // Force a fresh ID token before uploading — see refreshStorageAuthToken's
+      // doc comment (HR may have had this dashboard open a while).
+      await refreshStorageAuthToken();
       const employerSigBytes = new Uint8Array(await (await fetch(dataUrl)).arrayBuffer());
       const signatureUrl = await uploadSignableDocumentSignature(mealRestBreakEmployerDialog.companyId, mealRestBreakEmployerDialog.id, "hr_staff", dataUrl);
       const signedAt = new Date().toISOString();
@@ -5004,6 +5010,9 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         setPartsResponsibilityManagerError("Please add your signature.");
         return;
       }
+      // Force a fresh ID token before uploading — see refreshStorageAuthToken's
+      // doc comment (HR may have had this dashboard open a while).
+      await refreshStorageAuthToken();
       const managerSigBytes = new Uint8Array(await (await fetch(dataUrl)).arrayBuffer());
       const signatureUrl = await uploadSignableDocumentSignature(partsResponsibilityManagerDialog.companyId, partsResponsibilityManagerDialog.id, "hr_staff", dataUrl);
       const signedAt = new Date().toISOString();
@@ -5267,6 +5276,9 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         setMileageFuelEmployerError("Please add your signature.");
         return;
       }
+      // Force a fresh ID token before uploading — see refreshStorageAuthToken's
+      // doc comment (HR may have had this dashboard open a while).
+      await refreshStorageAuthToken();
       const employerSigBytes = new Uint8Array(await (await fetch(dataUrl)).arrayBuffer());
       const signatureUrl = await uploadSignableDocumentSignature(mileageFuelEmployerDialog.companyId, mileageFuelEmployerDialog.id, "hr_staff", dataUrl);
       const signedAt = new Date().toISOString();
@@ -5525,6 +5537,9 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         setLocationConsentEmployerError("Please add your signature.");
         return;
       }
+      // Force a fresh ID token before uploading — see refreshStorageAuthToken's
+      // doc comment (HR may have had this dashboard open a while).
+      await refreshStorageAuthToken();
       const employerSigBytes = new Uint8Array(await (await fetch(dataUrl)).arrayBuffer());
       const signatureUrl = await uploadSignableDocumentSignature(locationConsentEmployerDialog.companyId, locationConsentEmployerDialog.id, "hr_staff", dataUrl);
       const signedAt = new Date().toISOString();
@@ -5783,6 +5798,9 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         setDamageEmployerError("Please add your signature.");
         return;
       }
+      // Force a fresh ID token before uploading — see refreshStorageAuthToken's
+      // doc comment (HR may have had this dashboard open a while).
+      await refreshStorageAuthToken();
       const employerSigBytes = new Uint8Array(await (await fetch(dataUrl)).arrayBuffer());
       const signatureUrl = await uploadSignableDocumentSignature(damageEmployerDialog.companyId, damageEmployerDialog.id, "hr_staff", dataUrl);
       const signedAt = new Date().toISOString();
@@ -6648,6 +6666,9 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         setI9Section2Error("Please add your signature.");
         return;
       }
+      // Force a fresh ID token before uploading — see refreshStorageAuthToken's
+      // doc comment (HR may have had this dashboard open a while).
+      await refreshStorageAuthToken();
       const employerSigBytes = new Uint8Array(await (await fetch(dataUrl)).arrayBuffer());
       const signatureUrl = await uploadSignableDocumentSignature(i9Section2Dialog.companyId, i9Section2Dialog.id, "hr_staff", dataUrl);
       const signedAt = new Date().toISOString();

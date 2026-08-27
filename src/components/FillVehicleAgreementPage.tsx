@@ -25,7 +25,7 @@ import { AppHeader } from "@/components/Header";
 import { useAuth } from "@/lib/auth";
 import { getMyProfileId } from "@/lib/supabase/users";
 import { getSignableDocument, signDocument, type SignableDocument } from "@/lib/supabase/signableDocuments";
-import { uploadSignableDocumentSignature, uploadVehicleAgreementForm } from "@/lib/firebase/storage";
+import { uploadSignableDocumentSignature, uploadVehicleAgreementForm, refreshStorageAuthToken } from "@/lib/firebase/storage";
 import { fillVehicleAgreementPdf, loadBlankVehicleAgreementBytes } from "@/lib/vehicleAgreementPdfFill";
 import { VEHICLE_AGREEMENT_BRANCHES, type VehicleAgreementFormData } from "@/lib/vehicleAgreementFormTemplate";
 import { dateBlankPositions } from "@/lib/pdfDateBlankSplit";
@@ -196,6 +196,10 @@ export function FillVehicleAgreementPage({ docId }: Props) {
     setError(null);
     try {
       const companyId = doc.companyId;
+      // Force a fresh ID token before this upload sequence — see
+      // refreshStorageAuthToken's doc comment (a slow connection can let
+      // it go stale between signing in and finally submitting).
+      await refreshStorageAuthToken();
       const employeeName = [form.firstName, form.lastName].filter(Boolean).join(" ");
       const sigBytes = new Uint8Array(await (await fetch(dataUrl)).arrayBuffer());
       const signatureUrl = await uploadSignableDocumentSignature(companyId, doc.id, "employee", dataUrl);

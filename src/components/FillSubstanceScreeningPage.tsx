@@ -1,20 +1,20 @@
 /**
- * Fill Substance Screening & Conduct Agreement — opened from the deep link
+ * Fill Substance Screening & Conduct Agreement â opened from the deep link
  * a Team Messenger message sends (see ReportHRDaily.tsx's "Substance
  * Screening & Conduct Agreement" tab "Send Request" flow). Same
  * architecture as FillEmployeeConfidentialityPage.tsx: renders the REAL
  * official PDF's pages to canvases via pdf.js, with input overlays at each
- * blank's own coordinates — no redrawn lookalike. Submitting draws the
+ * blank's own coordinates â no redrawn lookalike. Submitting draws the
  * collected values directly onto that same real PDF via
  * fillSubstanceScreeningPdf (there are no AcroForm fields on this PDF at
- * all — see substanceScreeningFormTemplate.ts's header comment) and sends
+ * all â see substanceScreeningFormTemplate.ts's header comment) and sends
  * the result back to HR.
  *
  * Single-party, same shape as Car IQ/Vehicle Agreement/Employee
- * Confidentiality — no employer/HR co-signature step, and no separate "I
+ * Confidentiality â no employer/HR co-signature step, and no separate "I
  * AGREE" checkbox (signing itself is the agreement here). Fields sit on
  * page 1, signature sits on page 2. The "Company Representative Signature"
- * line on page 2 is intentionally left blank — filled by hand later,
+ * line on page 2 is intentionally left blank â filled by hand later,
  * outside this app.
  */
 import { useEffect, useRef, useState } from "react";
@@ -24,7 +24,7 @@ import { AppHeader } from "@/components/Header";
 import { useAuth } from "@/lib/auth";
 import { getMyProfileId } from "@/lib/supabase/users";
 import { getSignableDocument, signDocument, type SignableDocument } from "@/lib/supabase/signableDocuments";
-import { uploadSignableDocumentSignature, uploadSubstanceScreeningForm } from "@/lib/firebase/storage";
+import { uploadSignableDocumentSignature, uploadSubstanceScreeningForm, refreshStorageAuthToken } from "@/lib/firebase/storage";
 import { fillSubstanceScreeningPdf, loadBlankSubstanceScreeningBytes } from "@/lib/substanceScreeningPdfFill";
 import type { SubstanceScreeningFormData } from "@/lib/substanceScreeningFormTemplate";
 import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
@@ -44,10 +44,10 @@ const PAGE_HEIGHT = 792;
 
 // Field rectangles (PDF user-space units, origin bottom-left), extracted
 // via pdf.js's text-position API against the actual label/blank positions
-// on src/assets/SUBSTANCE SCREENING & CONDUCT AGREEMENT.pdf — the exact
+// on src/assets/SUBSTANCE SCREENING & CONDUCT AGREEMENT.pdf â the exact
 // numbers substanceScreeningPdfFill.ts's draw coordinates were derived
 // from. This PDF has no real AcroForm fields at all. dateSigned sits
-// directly after the "Date:" label on the same row as Employee Name —
+// directly after the "Date:" label on the same row as Employee Name â
 // see substanceScreeningPdfFill.ts's header comment for why that's NOT
 // where the source PDF's own underscore blank for it actually is.
 const PAGE1_RECT = {
@@ -185,6 +185,10 @@ export function FillSubstanceScreeningPage({ docId }: Props) {
     setError(null);
     try {
       const companyId = doc.companyId;
+      // Force a fresh ID token before this upload sequence — see
+      // refreshStorageAuthToken's doc comment (a slow connection can let
+      // it go stale between signing in and finally submitting).
+      await refreshStorageAuthToken();
       const sigBytes = new Uint8Array(await (await fetch(dataUrl)).arrayBuffer());
       const signatureUrl = await uploadSignableDocumentSignature(companyId, doc.id, "employee", dataUrl);
       const signedAt = new Date().toISOString();
@@ -203,7 +207,7 @@ export function FillSubstanceScreeningPage({ docId }: Props) {
           dmThreadId: thread.id,
           senderId: myProfileId,
           senderName: displayName || "Employee",
-          body: `📄 Substance Screening & Conduct Agreement for ${form.employeeName} has been signed: [${filename}](${pdfUrl})`,
+          body: `ð Substance Screening & Conduct Agreement for ${form.employeeName} has been signed: [${filename}](${pdfUrl})`,
         });
       }
 
@@ -211,7 +215,7 @@ export function FillSubstanceScreeningPage({ docId }: Props) {
         .then(({ taxForms }) => {
           if (!taxForms) return;
           const excludeIds = doc.createdBy ? [doc.createdBy] : [];
-          void notifyHrRoleUsers(myProfileId, displayName || "Employee", excludeIds, `📄 Substance Screening & Conduct Agreement for ${form.employeeName} has been signed.`);
+          void notifyHrRoleUsers(myProfileId, displayName || "Employee", excludeIds, `ð Substance Screening & Conduct Agreement for ${form.employeeName} has been signed.`);
         })
         .catch((err) => console.error("[substance-screening] hr notify check failed:", err));
 
@@ -249,7 +253,7 @@ export function FillSubstanceScreeningPage({ docId }: Props) {
 
         {loading ? (
           <div className="panel p-8 text-center text-sm text-muted-foreground flex items-center justify-center gap-2">
-            <Loader2 className="h-4 w-4 animate-spin" /> Loading document…
+            <Loader2 className="h-4 w-4 animate-spin" /> Loading documentâ¦
           </div>
         ) : error && !doc ? (
           <div className="panel p-6 text-sm text-red-300">{error}</div>
@@ -257,7 +261,7 @@ export function FillSubstanceScreeningPage({ docId }: Props) {
           <div className="panel p-6 text-sm text-muted-foreground">This document isn't addressed to your account.</div>
         ) : submitted || doc.status === "signed" ? (
           <div className="panel p-6 text-center">
-            <p className="text-sm font-semibold mb-2">✅ Submitted{submitted ? " and sent back to HR" : ""}.</p>
+            <p className="text-sm font-semibold mb-2">â Submitted{submitted ? " and sent back to HR" : ""}.</p>
             {doc.pdfUrl && (
               <a href={doc.pdfUrl} target="_blank" rel="noreferrer noopener" className="text-blue-300 hover:text-blue-200 underline text-sm">
                 View the completed PDF
@@ -276,7 +280,7 @@ export function FillSubstanceScreeningPage({ docId }: Props) {
                   <canvas ref={(el) => { pageCanvasRefs.current[pageNum - 1] = el; }} className="absolute inset-0" />
                   {pageLoading && (
                     <div className="absolute inset-0 flex items-center justify-center bg-white/70 text-sm text-muted-foreground gap-2">
-                      <Loader2 className="h-4 w-4 animate-spin" /> Loading form…
+                      <Loader2 className="h-4 w-4 animate-spin" /> Loading formâ¦
                     </div>
                   )}
 
@@ -330,7 +334,7 @@ export function FillSubstanceScreeningPage({ docId }: Props) {
               disabled={submitting}
               className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white mt-3 disabled:opacity-50"
             >
-              {submitting ? "Submitting…" : "Submit to HR"}
+              {submitting ? "Submittingâ¦" : "Submit to HR"}
             </button>
           </div>
         )}

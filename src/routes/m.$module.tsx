@@ -340,12 +340,23 @@ function ModuleIndex() {
     }
   };
 
+  // Previously only fetched for the Dashboard module, on the assumption
+  // that only Dashboard's own submodule gate (getDashboardRoleGate) needed
+  // a secondary role. That stopped being true once canAccessSubmodule's
+  // fuller gate (admin-module/user-management/activity-log/company-
+  // settings, used by the tile-grid filters below) started checking
+  // extraRoles too: on every OTHER module this stayed the initial `[]`
+  // forever, so a user whose ADMIN access came only from a secondary role
+  // (extra_roles) would see the Admin module's own tiles disappear even
+  // though they could still open it directly via URL. isAdmin above (used
+  // elsewhere in this file, e.g. Parts' admin-only controls) had the same
+  // gap for the same reason.
   useEffect(() => {
-    if (!ready || !uid || m.slug !== "dashboard") return;
+    if (!ready || !uid) return;
     let cancelled = false;
     getMyRoles(uid).then(({ extraRoles }) => { if (!cancelled) setExtraRoles(extraRoles); });
     return () => { cancelled = true; };
-  }, [ready, uid, m.slug]);
+  }, [ready, uid]);
 
   if (!ready) return null;
   if (!email) return <Navigate to="/landing" replace />;
