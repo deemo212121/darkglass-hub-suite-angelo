@@ -22,7 +22,7 @@ import { AppHeader } from "@/components/Header";
 import { useAuth } from "@/lib/auth";
 import { getMyProfileId } from "@/lib/supabase/users";
 import { getSignableDocument, signDocument, type SignableDocument } from "@/lib/supabase/signableDocuments";
-import { uploadSignableDocumentSignature, uploadSignableDocumentAttachment, uploadContractorDataForm } from "@/lib/firebase/storage";
+import { uploadSignableDocumentSignature, uploadSignableDocumentAttachment, uploadContractorDataForm, refreshStorageAuthToken } from "@/lib/firebase/storage";
 import { captureHtmlToPdfBlob, loadAssetDataUrl } from "@/lib/pdfCapture";
 import {
   buildContractorDataBodyMarkup,
@@ -206,6 +206,13 @@ export function FillContractorDataPage({ docId }: Props) {
     setError(null);
     try {
       const companyId = doc.companyId;
+
+      // This form does several uploads in a row (SSN card, driver's
+      // license front+back, signature, then the final PDF) — force a
+      // fresh ID token first so a slow mobile connection can't let it go
+      // stale partway through and fail the LAST upload with a confusing
+      // "storage/unauthorized" (see refreshStorageAuthToken's doc comment).
+      await refreshStorageAuthToken();
 
       const ssnCardUrls = await Promise.all(ssnCardFiles.map((file, i) => uploadSignableDocumentAttachment(companyId, doc.id, "ssnCardUrls", i, file)));
       const driversLicenseUrls = await Promise.all(driversLicenseFiles.map((file, i) => uploadSignableDocumentAttachment(companyId, doc.id, "driversLicenseUrls", i, file)));

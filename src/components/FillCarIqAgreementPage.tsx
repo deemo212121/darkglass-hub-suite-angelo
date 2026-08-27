@@ -18,7 +18,7 @@ import { AppHeader } from "@/components/Header";
 import { useAuth } from "@/lib/auth";
 import { getMyProfileId } from "@/lib/supabase/users";
 import { getSignableDocument, signDocument, type SignableDocument } from "@/lib/supabase/signableDocuments";
-import { uploadSignableDocumentSignature, uploadCarIqAgreementForm } from "@/lib/firebase/storage";
+import { uploadSignableDocumentSignature, uploadCarIqAgreementForm, refreshStorageAuthToken } from "@/lib/firebase/storage";
 import { fillCarIqAgreementPdf, loadBlankCarIqAgreementBytes } from "@/lib/carIqAgreementPdfFill";
 import { CAR_IQ_BRANCHES, type CarIqAgreementFormData } from "@/lib/carIqAgreementFormTemplate";
 import { dateBlankPositions } from "@/lib/pdfDateBlankSplit";
@@ -199,6 +199,10 @@ export function FillCarIqAgreementPage({ docId }: Props) {
     setError(null);
     try {
       const companyId = doc.companyId;
+      // Force a fresh ID token before this upload sequence — see
+      // refreshStorageAuthToken's doc comment (a slow connection can let
+      // it go stale between signing in and finally submitting).
+      await refreshStorageAuthToken();
       const employeeName = [form.firstName, form.lastName].filter(Boolean).join(" ");
       const sigBytes = new Uint8Array(await (await fetch(dataUrl)).arrayBuffer());
       const signatureUrl = await uploadSignableDocumentSignature(companyId, doc.id, "employee", dataUrl);

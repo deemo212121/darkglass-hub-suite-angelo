@@ -1,18 +1,18 @@
 /**
- * Fill Employee Paid Time Off (PTO) and Sick Leave Policy Acknowledgment —
+ * Fill Employee Paid Time Off (PTO) and Sick Leave Policy Acknowledgment â
  * opened from the deep link a Team Messenger message sends (see
  * ReportHRDaily.tsx's "PTO & Sick Leave Policy" tab "Send Request" flow).
  * Same architecture as FillMealRestBreakPage.tsx: renders the REAL
  * official PDF's pages to canvases via pdf.js, with input overlays at each
- * blank's own coordinates — no redrawn lookalike. Submitting draws the
+ * blank's own coordinates â no redrawn lookalike. Submitting draws the
  * collected values directly onto that same real PDF via fillPtoAckPdf
- * (there are no AcroForm fields on this PDF at all — see
+ * (there are no AcroForm fields on this PDF at all â see
  * ptoAckFormTemplate.ts's header comment) and sends the result back to HR.
  *
- * Single-party, same shape as Vehicle Agreement/Car IQ/Confidentiality —
+ * Single-party, same shape as Vehicle Agreement/Car IQ/Confidentiality â
  * no employer co-signature step, and no separate "I AGREE" checkbox
- * (signing itself is the agreement here). Everything — name/branch fields
- * and the signature — sits on page 1; the source PDF's second page only
+ * (signing itself is the agreement here). Everything â name/branch fields
+ * and the signature â sits on page 1; the source PDF's second page only
  * ever held the unused branch checklist plus the signature block, so
  * loadBlankPtoAckBytes drops it entirely (see that function's comment).
  */
@@ -23,7 +23,7 @@ import { AppHeader } from "@/components/Header";
 import { useAuth } from "@/lib/auth";
 import { getMyProfileId } from "@/lib/supabase/users";
 import { getSignableDocument, signDocument, type SignableDocument } from "@/lib/supabase/signableDocuments";
-import { uploadSignableDocumentSignature, uploadPtoAckForm } from "@/lib/firebase/storage";
+import { uploadSignableDocumentSignature, uploadPtoAckForm, refreshStorageAuthToken } from "@/lib/firebase/storage";
 import { fillPtoAckPdf, loadBlankPtoAckBytes } from "@/lib/ptoAckPdfFill";
 import { PTO_ACK_BRANCHES, type PtoAckFormData } from "@/lib/ptoAckFormTemplate";
 import { dateBlankPositions } from "@/lib/pdfDateBlankSplit";
@@ -45,7 +45,7 @@ const PAGE_HEIGHT = 792;
 
 // Field rectangles (PDF user-space units, origin bottom-left), extracted
 // via pdf.js's text-position API against the actual label/blank positions
-// on src/assets/EMPLOYEE PAID TIME OFF.pdf — the exact numbers
+// on src/assets/EMPLOYEE PAID TIME OFF.pdf â the exact numbers
 // ptoAckPdfFill.ts's draw coordinates were derived from. This PDF has no
 // real AcroForm fields at all.
 const DATE_X = dateBlankPositions(101.57);
@@ -55,7 +55,7 @@ const PAGE1_RECT = {
   middleName: { x: 390, y: 325, w: 99, h: 14 },
   lastName: { x: 100, y: 308, w: 99, h: 14 },
   branch: { x: 190, y: 283, w: 240, h: 14 },
-  // Signature/date were moved up onto this page — see ptoAckPdfFill.ts's loadBlankPtoAckBytes.
+  // Signature/date were moved up onto this page â see ptoAckPdfFill.ts's loadBlankPtoAckBytes.
   signature: { x: 174, y: 242, w: 290, h: 20 },
   dateSignedMM: { x: DATE_X.mm, y: 217, w: 30, h: 13 },
   dateSignedDD: { x: DATE_X.dd, y: 217, w: 30, h: 13 },
@@ -197,6 +197,10 @@ export function FillPtoAckPage({ docId }: Props) {
     setError(null);
     try {
       const companyId = doc.companyId;
+      // Force a fresh ID token before this upload sequence — see
+      // refreshStorageAuthToken's doc comment (a slow connection can let
+      // it go stale between signing in and finally submitting).
+      await refreshStorageAuthToken();
       const employeeName = [form.firstName, form.middleName, form.lastName].filter(Boolean).join(" ");
       const sigBytes = new Uint8Array(await (await fetch(dataUrl)).arrayBuffer());
       const signatureUrl = await uploadSignableDocumentSignature(companyId, doc.id, "employee", dataUrl);
@@ -216,7 +220,7 @@ export function FillPtoAckPage({ docId }: Props) {
           dmThreadId: thread.id,
           senderId: myProfileId,
           senderName: displayName || "Employee",
-          body: `📄 Employee Paid Time Off (PTO) and Sick Leave Policy Acknowledgment for ${employeeName} has been signed: [${filename}](${pdfUrl})`,
+          body: `ð Employee Paid Time Off (PTO) and Sick Leave Policy Acknowledgment for ${employeeName} has been signed: [${filename}](${pdfUrl})`,
         });
       }
 
@@ -224,7 +228,7 @@ export function FillPtoAckPage({ docId }: Props) {
         .then(({ taxForms }) => {
           if (!taxForms) return;
           const excludeIds = doc.createdBy ? [doc.createdBy] : [];
-          void notifyHrRoleUsers(myProfileId, displayName || "Employee", excludeIds, `📄 Employee Paid Time Off (PTO) and Sick Leave Policy Acknowledgment for ${employeeName} has been signed.`);
+          void notifyHrRoleUsers(myProfileId, displayName || "Employee", excludeIds, `ð Employee Paid Time Off (PTO) and Sick Leave Policy Acknowledgment for ${employeeName} has been signed.`);
         })
         .catch((err) => console.error("[pto-ack] hr notify check failed:", err));
 
@@ -263,7 +267,7 @@ export function FillPtoAckPage({ docId }: Props) {
 
         {loading ? (
           <div className="panel p-8 text-center text-sm text-muted-foreground flex items-center justify-center gap-2">
-            <Loader2 className="h-4 w-4 animate-spin" /> Loading document…
+            <Loader2 className="h-4 w-4 animate-spin" /> Loading documentâ¦
           </div>
         ) : error && !doc ? (
           <div className="panel p-6 text-sm text-red-300">{error}</div>
@@ -271,7 +275,7 @@ export function FillPtoAckPage({ docId }: Props) {
           <div className="panel p-6 text-sm text-muted-foreground">This document isn't addressed to your account.</div>
         ) : submitted || doc.status === "signed" ? (
           <div className="panel p-6 text-center">
-            <p className="text-sm font-semibold mb-2">✅ Submitted{submitted ? " and sent back to HR" : ""}.</p>
+            <p className="text-sm font-semibold mb-2">â Submitted{submitted ? " and sent back to HR" : ""}.</p>
             {doc.pdfUrl && (
               <a href={doc.pdfUrl} target="_blank" rel="noreferrer noopener" className="text-blue-300 hover:text-blue-200 underline text-sm">
                 View the completed PDF
@@ -290,7 +294,7 @@ export function FillPtoAckPage({ docId }: Props) {
                   <canvas ref={(el) => { pageCanvasRefs.current[pageNum - 1] = el; }} className="absolute inset-0" />
                   {pageLoading && (
                     <div className="absolute inset-0 flex items-center justify-center bg-white/70 text-sm text-muted-foreground gap-2">
-                      <Loader2 className="h-4 w-4 animate-spin" /> Loading form…
+                      <Loader2 className="h-4 w-4 animate-spin" /> Loading formâ¦
                     </div>
                   )}
 
@@ -321,7 +325,7 @@ export function FillPtoAckPage({ docId }: Props) {
                         value={form.branch}
                         onChange={(e) => updateField("branch", e.target.value)}
                       >
-                        <option value="">Select…</option>
+                        <option value="">Selectâ¦</option>
                         {PTO_ACK_BRANCHES.map((b) => <option key={b} value={b}>{b}</option>)}
                       </select>
 
@@ -357,7 +361,7 @@ export function FillPtoAckPage({ docId }: Props) {
               disabled={submitting}
               className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white mt-3 disabled:opacity-50"
             >
-              {submitting ? "Submitting…" : "Submit to HR"}
+              {submitting ? "Submittingâ¦" : "Submit to HR"}
             </button>
           </div>
         )}

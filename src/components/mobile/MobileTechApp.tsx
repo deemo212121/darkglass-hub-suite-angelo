@@ -59,6 +59,7 @@ import { visibleAttendanceProfileIds } from "@/lib/notifyRouting";
 import { getCsrTeamComposition } from "@/lib/supabase/csrTeams";
 import { isAttendanceManagerTierRole, normalizeRole } from "@/lib/roleLabels";
 import { timezoneForBranch, nowInTimezone } from "@/lib/attendanceGrace";
+import { getServerNow, zonedDateKey, zonedTimeString, type ScheduleTimezone } from "@/lib/serverTime";
 import { getTicketComments, addTicketComment, type TicketComment } from "@/lib/supabase/comments";
 import { TicketPhotos } from "@/components/TicketPhotos";
 import { MessageBody } from "@/components/MessageBody";
@@ -4160,6 +4161,7 @@ function MobileTimecardView({
   const [requiredCheckOut, setRequiredCheckOut] = useState("");
   const [workingHours, setWorkingHours] = useState<number | null>(null);
   const [mealMinutes, setMealMinutes] = useState<number | null>(null);
+  const [scheduleTimezone, setScheduleTimezone] = useState<ScheduleTimezone>("CST");
   const [entry, setEntry] = useState<UITimeEntry>({ checkIn: "", checkOut: "", mealStart: "", mealEnd: "", notes: "" });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -4183,6 +4185,7 @@ function MobileTimecardView({
         setRequiredCheckOut(schedule.requiredCheckOut);
         setWorkingHours(schedule.workingHours);
         setMealMinutes(schedule.mealMinutes);
+        setScheduleTimezone(schedule.scheduleTimezone);
         if (!schedule.profileId) {
           setEntry({ checkIn: "", checkOut: "", mealStart: "", mealEnd: "", notes: "" });
           return;
@@ -4200,11 +4203,6 @@ function MobileTimecardView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [uid]);
 
-  const getNowTime = (): string => {
-    const t = new Date();
-    return `${String(t.getHours()).padStart(2, "0")}:${String(t.getMinutes()).padStart(2, "0")}:${String(t.getSeconds()).padStart(2, "0")}`;
-  };
-
   const timeDiff = (t1: string, t2: string): number => {
     if (!t1 || !t2) return 0;
     const [h1, m1, s1 = 0] = t1.split(":").map(Number);
@@ -4212,15 +4210,29 @@ function MobileTimecardView({
     return (h2 * 3600 + m2 * 60 + s2 - (h1 * 3600 + m1 * 60 + s1)) / 3600;
   };
 
-  const persist = async (next: UITimeEntry) => {
-    setEntry(next);
+  // Stamps `field` with the server's own current instant (never the
+  // phone's own clock — see src/lib/serverTime.ts), converted into this
+  // technician's own scheduled timezone, so setting your phone's date/time
+  // can't fake a punch. If getServerNow() fails, the punch is NOT saved
+  // with a fallback local time — that would just reopen the hole this
+  // exists to close.
+  const persistPunch = async (field: keyof Pick<UITimeEntry, "checkIn" | "checkOut" | "mealStart" | "mealEnd">) => {
     if (!profileId) {
       alert("Could not resolve your profile. Please re-login.");
       return;
     }
     setSaving(true);
     try {
-      await saveTimecardEntry(profileId, todayKey, next);
+      const serverNow = await getServerNow();
+      const workDate = zonedDateKey(serverNow, scheduleTimezone);
+      const time = zonedTimeString(serverNow, scheduleTimezone);
+      if (workDate !== todayKey) {
+        alert("It's now a new day — please reopen your timecard and try again.");
+        return;
+      }
+      const next = { ...entry, [field]: time };
+      setEntry(next);
+      await saveTimecardEntry(profileId, workDate, next);
     } catch (e) {
       console.error("MobileTimecardView: save failed", e);
       alert(`Failed to save: ${e instanceof Error ? e.message : "Unknown error"}`);
@@ -4230,8 +4242,8 @@ function MobileTimecardView({
   };
 
   const handleTimeToggle = () => {
-    if (!entry.checkIn) persist({ ...entry, checkIn: getNowTime() });
-    else if (!entry.checkOut) persist({ ...entry, checkOut: getNowTime() });
+    if (!entry.checkIn) void persistPunch("checkIn");
+    else if (!entry.checkOut) void persistPunch("checkOut");
   };
 
   const handleMealToggle = () => {
@@ -4255,8 +4267,8 @@ function MobileTimecardView({
       alert(`Meal break is only available for scheduled shifts of more than 6 hours. Your scheduled shift is ${scheduledShift.toFixed(1)} hours.`);
       return;
     }
-    if (!entry.mealStart) persist({ ...entry, mealStart: getNowTime() });
-    else if (!entry.mealEnd) persist({ ...entry, mealEnd: getNowTime() });
+    if (!entry.mealStart) void persistPunch("mealStart");
+    else if (!entry.mealEnd) void persistPunch("mealEnd");
   };
 
   const hoursToday = entry.checkIn && entry.checkOut
@@ -4401,8 +4413,11 @@ function MobileClockInTeamView({ profileId }: { profileId: string | null }) {
     setClockingIn((prev) => new Set(prev).add(tech.id));
     try {
       const branchTz = timezoneForBranch(tech.branch);
-      const hhmm = nowInTimezone(branchTz).hhmm;
-      const seconds = String(new Date().getSeconds()).padStart(2, "0");
+      // Server-verified instant (see src/lib/serverTime.ts), not this
+      // manager's own phone clock — same reason self-punches use it.
+      const serverNow = await getServerNow();
+      const { hhmm } = nowInTimezone(branchTz, serverNow);
+      const seconds = String(serverNow.getSeconds()).padStart(2, "0");
       await saveTimecardEntry(
         tech.id,
         todayKey,

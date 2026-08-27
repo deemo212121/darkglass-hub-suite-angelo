@@ -1,14 +1,14 @@
 /**
- * Fill W-8BEN — opened from the deep link a Team Messenger message sends
+ * Fill W-8BEN â opened from the deep link a Team Messenger message sends
  * (see ReportHRDaily.tsx's "W-8/W-9/W-4 Forms" tab "Send W-8BEN Request"
- * flow). HR doesn't pre-fill this document — the recipient fills in their
+ * flow). HR doesn't pre-fill this document â the recipient fills in their
  * own Part I identification fields, certifies, and signs. Part II (Claim of
  * Tax Treaty Benefits) is left entirely blank, same as the rest of the
  * unfilled form.
  *
  * This renders the REAL official PDF's own page 1 to a <canvas> via pdf.js
  * (not a redrawn approximation), then overlays real <input> elements at
- * each field's own coordinates — extracted directly from the PDF's own
+ * each field's own coordinates â extracted directly from the PDF's own
  * AcroForm widget rectangles (see w8benPdfFill.ts's field mapping, derived
  * the same way). Typing there looks like typing directly into the actual
  * form because the background IS the actual form. Submitting flattens the
@@ -22,7 +22,7 @@ import { AppHeader } from "@/components/Header";
 import { useAuth } from "@/lib/auth";
 import { getMyProfileId } from "@/lib/supabase/users";
 import { getSignableDocument, signDocument, type SignableDocument } from "@/lib/supabase/signableDocuments";
-import { uploadSignableDocumentSignature, uploadW8benForm } from "@/lib/firebase/storage";
+import { uploadSignableDocumentSignature, uploadW8benForm, refreshStorageAuthToken } from "@/lib/firebase/storage";
 import { fillW8benPdf, loadBlankW8benBytes } from "@/lib/w8benPdfFill";
 import type { W8benAddress, W8benFormData } from "@/lib/w8benFormTemplate";
 import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
@@ -42,7 +42,7 @@ const BLANK_ADDRESS: W8benAddress = { street: "", cityStateZip: "", country: "" 
 
 // PDF page size + every field's own rectangle (PDF user-space units, origin
 // bottom-left), extracted via pdf-lib's acroField.getWidgets()[0]
-// .getRectangle() on src/assets/w8ben-blank.pdf — the exact same numbers
+// .getRectangle() on src/assets/w8ben-blank.pdf â the exact same numbers
 // w8benPdfFill.ts's field mapping was derived from.
 const PAGE_WIDTH = 612;
 const PAGE_HEIGHT = 792.008;
@@ -75,7 +75,7 @@ const RECT = {
 /** Extra room (PDF units) the signature drawing canvas extends upward beyond its nominal field box, so a real hand signature has space while still sitting on the real line. */
 const SIG_EXTRA_HEIGHT = 16;
 
-/** MM-DD-YYYY — matches both the field's own label and fillW8benPdf's fmtDate, unlike toLocaleDateString's MM/DD/YYYY slashes. */
+/** MM-DD-YYYY â matches both the field's own label and fillW8benPdf's fmtDate, unlike toLocaleDateString's MM/DD/YYYY slashes. */
 const fmtDateSigned = (d: Date) => `${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}-${d.getFullYear()}`;
 
 export function FillW8benPage({ docId }: Props) {
@@ -144,7 +144,7 @@ export function FillW8benPage({ docId }: Props) {
     return () => { cancelled = true; };
   }, [ready, uid, docId]);
 
-  // Render the real PDF's page 1 onto a <canvas> — this is the visual
+  // Render the real PDF's page 1 onto a <canvas> â this is the visual
   // background the input overlays sit on top of, not a redrawn lookalike.
   useEffect(() => {
     if (loading || error || submitted) return;
@@ -206,6 +206,10 @@ export function FillW8benPage({ docId }: Props) {
     setError(null);
     try {
       const companyId = doc.companyId;
+      // Force a fresh ID token before this upload sequence — see
+      // refreshStorageAuthToken's doc comment (a slow connection can let
+      // it go stale between signing in and finally submitting).
+      await refreshStorageAuthToken();
       const sigBytes = new Uint8Array(await (await fetch(dataUrl)).arrayBuffer());
       const signatureUrl = await uploadSignableDocumentSignature(companyId, doc.id, "employee", dataUrl);
       const signedAt = new Date().toISOString();
@@ -213,12 +217,12 @@ export function FillW8benPage({ docId }: Props) {
       const entry = { name: displayName || form.employeeName || "Signed", url: signatureUrl, signedAt };
 
       // The stored document is the real official PDF's own fields, filled
-      // in via pdf-lib (see w8benPdfFill.ts) — never a redrawn lookalike.
+      // in via pdf-lib (see w8benPdfFill.ts) â never a redrawn lookalike.
       const pdfBytes = await fillW8benPdf(finalData, sigBytes);
       const pdfUrl = await uploadW8benForm(companyId, finalData.employeeName, new Blob([pdfBytes as unknown as BlobPart], { type: "application/pdf" }));
 
       // form_data on the doc was just the near-empty shell HR created when
-      // sending the request — persist what the recipient actually filled in.
+      // sending the request â persist what the recipient actually filled in.
       await signDocument(doc.id, "employee", entry, pdfUrl, finalData as unknown as Record<string, any>);
 
       if (doc.createdBy) {
@@ -228,16 +232,16 @@ export function FillW8benPage({ docId }: Props) {
           dmThreadId: thread.id,
           senderId: myProfileId,
           senderName: displayName || "Employee",
-          body: `📄 W-8BEN form for ${finalData.employeeName} has been completed and submitted: [${filename}](${pdfUrl})`,
+          body: `ð W-8BEN form for ${finalData.employeeName} has been completed and submitted: [${filename}](${pdfUrl})`,
         });
       }
 
-      // Opt-in broadcast — see Notifications Settings (migration 0090).
+      // Opt-in broadcast â see Notifications Settings (migration 0090).
       getHrNotificationSettings()
         .then(({ taxForms }) => {
           if (!taxForms) return;
           const excludeIds = doc.createdBy ? [doc.createdBy] : [];
-          void notifyHrRoleUsers(myProfileId, displayName || "Employee", excludeIds, `📄 W-8BEN form for ${finalData.employeeName} has been completed and submitted.`);
+          void notifyHrRoleUsers(myProfileId, displayName || "Employee", excludeIds, `ð W-8BEN form for ${finalData.employeeName} has been completed and submitted.`);
         })
         .catch((err) => console.error("[w8ben] hr notify check failed:", err));
 
@@ -252,11 +256,11 @@ export function FillW8benPage({ docId }: Props) {
   };
 
   const isRecipient = !!doc && !!myProfileId && doc.recipientId === myProfileId;
-  // Platform-level SUPERSUPERADMIN only — the per-company SUPERADMIN role
+  // Platform-level SUPERSUPERADMIN only â the per-company SUPERADMIN role
   // should NOT see every employee's private documents, just its own like ADMIN.
   const isSuperadmin = role === "SUPERSUPERADMIN";
 
-  /** PDF bottom-left-origin rect → CSS top-left-origin absolute position, at the current display scale. */
+  /** PDF bottom-left-origin rect â CSS top-left-origin absolute position, at the current display scale. */
   const overlayStyle = (r: { x: number; y: number; w: number; h: number }): React.CSSProperties => ({
     position: "absolute",
     left: r.x * scale,
@@ -279,7 +283,7 @@ export function FillW8benPage({ docId }: Props) {
 
         {loading ? (
           <div className="panel p-8 text-center text-sm text-muted-foreground flex items-center justify-center gap-2">
-            <Loader2 className="h-4 w-4 animate-spin" /> Loading document…
+            <Loader2 className="h-4 w-4 animate-spin" /> Loading documentâ¦
           </div>
         ) : error && !doc ? (
           <div className="panel p-6 text-sm text-red-300">{error}</div>
@@ -287,7 +291,7 @@ export function FillW8benPage({ docId }: Props) {
           <div className="panel p-6 text-sm text-muted-foreground">This document isn't addressed to your account.</div>
         ) : submitted || doc.status === "signed" ? (
           <div className="panel p-6 text-center">
-            <p className="text-sm font-semibold mb-2">✅ Submitted{submitted ? " and sent back to HR" : ""}.</p>
+            <p className="text-sm font-semibold mb-2">â Submitted{submitted ? " and sent back to HR" : ""}.</p>
             {doc.pdfUrl && (
               <a href={doc.pdfUrl} target="_blank" rel="noreferrer noopener" className="text-blue-300 hover:text-blue-200 underline text-sm">
                 View the completed PDF
@@ -303,7 +307,7 @@ export function FillW8benPage({ docId }: Props) {
                 <canvas ref={bgCanvasRef} className="absolute inset-0" />
                 {pageLoading && (
                   <div className="absolute inset-0 flex items-center justify-center bg-white/70 text-sm text-muted-foreground gap-2">
-                    <Loader2 className="h-4 w-4 animate-spin" /> Loading form…
+                    <Loader2 className="h-4 w-4 animate-spin" /> Loading formâ¦
                   </div>
                 )}
 
@@ -328,12 +332,12 @@ export function FillW8benPage({ docId }: Props) {
                       onClick={() => updateField("ftinNotRequired", !form.ftinNotRequired)}
                       className="border border-black/60 bg-transparent flex items-center justify-center leading-none text-[#00008B] font-bold"
                     >
-                      {form.ftinNotRequired ? "✔" : ""}
+                      {form.ftinNotRequired ? "â" : ""}
                     </button>
                     <input style={overlayStyle(RECT.referenceNumbers)} className={overlayInputCls} value={form.referenceNumbers} onChange={(e) => updateField("referenceNumbers", e.target.value)} />
                     <input type="date" style={overlayStyle(RECT.dateOfBirth)} className={overlayInputCls} value={form.dateOfBirth} onChange={(e) => updateField("dateOfBirth", e.target.value)} />
 
-                    {/* Part II — Claim of Tax Treaty Benefits, optional, filled in by the recipient like everything else */}
+                    {/* Part II â Claim of Tax Treaty Benefits, optional, filled in by the recipient like everything else */}
                     <input style={overlayStyle(RECT.treatyResidentCountry)} className={overlayInputCls} value={form.treatyResidentCountry} onChange={(e) => updateField("treatyResidentCountry", e.target.value)} />
                     <input style={overlayStyle(RECT.treatyArticleParagraph)} className={overlayInputCls} value={form.treatyArticleParagraph} onChange={(e) => updateField("treatyArticleParagraph", e.target.value)} />
                     <input style={overlayStyle(RECT.treatyRate)} className={overlayInputCls} value={form.treatyRate} onChange={(e) => updateField("treatyRate", e.target.value)} />
@@ -351,14 +355,14 @@ export function FillW8benPage({ docId }: Props) {
                       }}
                     />
 
-                    {/* Rendered AFTER (so it stacks on top of) the signature canvas — otherwise the enlarged drawing area, which extends upward toward this line, intercepts clicks meant for the checkbox. */}
+                    {/* Rendered AFTER (so it stacks on top of) the signature canvas â otherwise the enlarged drawing area, which extends upward toward this line, intercepts clicks meant for the checkbox. */}
                     <button
                       type="button"
                       style={overlayStyle(RECT.certifiedTrue)}
                       onClick={() => updateField("certifiedTrue", !form.certifiedTrue)}
                       className="border border-black/60 bg-transparent flex items-center justify-center leading-none text-[#00008B] font-bold"
                     >
-                      {form.certifiedTrue ? "✔" : ""}
+                      {form.certifiedTrue ? "â" : ""}
                     </button>
                     <div style={overlayStyle(RECT.dateSigned)} className="flex items-end justify-center font-bold text-[#00008B]">
                       {fmtDateSigned(new Date())}
@@ -384,7 +388,7 @@ export function FillW8benPage({ docId }: Props) {
               disabled={submitting}
               className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white mt-3 disabled:opacity-50"
             >
-              {submitting ? "Submitting…" : "Submit to HR"}
+              {submitting ? "Submittingâ¦" : "Submit to HR"}
             </button>
           </div>
         )}

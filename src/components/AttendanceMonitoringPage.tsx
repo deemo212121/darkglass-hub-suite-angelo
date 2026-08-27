@@ -23,6 +23,7 @@ import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
 import { resolveTeamLeadOrManager, visibleAttendanceProfileIds } from "@/lib/notifyRouting";
 import { getCsrTeamComposition, type CsrTeamComposition } from "@/lib/supabase/csrTeams";
 import { ATTENDANCE_GRACE_MINUTES, addMinutesToHHMM, nowInTimezone, timezoneForBranch, DEFAULT_ATTENDANCE_TIMEZONE, payGraceMinutesFor, applyGraceToCheckIn, roundCheckOutToSchedule, toSeconds, ON_TIME_BUFFER_SECONDS } from "@/lib/attendanceGrace";
+import { getServerNow } from "@/lib/serverTime";
 import { formatClockTime } from "@/lib/payslipTemplate";
 import {
   getCompanyPtoRequests,
@@ -925,7 +926,9 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   // Manager proxy clock-in — only ever clocks IN a direct-report technician
   // (never out; that stays the technician's own action). Stamps the
   // technician's own branch-local time, not the manager's, and records
-  // clocked_in_by so the row visibly shows it wasn't a self-punch.
+  // clocked_in_by so the row visibly shows it wasn't a self-punch. Uses the
+  // server-verified instant (see src/lib/serverTime.ts), not the manager's
+  // own browser clock, for the same reason self-punches do (TimeClockMenu.tsx).
   const [clockingInIds, setClockingInIds] = useState<Set<string>>(new Set());
   const handleProxyClockIn = async (record: DailyRecord) => {
     if (!myProfileId) return;
@@ -933,9 +936,9 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     setClockingInIds((prev) => new Set(prev).add(record.profileId));
     try {
       const branchTz = timezoneForBranch(record.location);
-      const now = new Date();
-      const hhmm = nowInTimezone(branchTz).hhmm;
-      const seconds = String(now.getSeconds()).padStart(2, "0");
+      const serverNow = await getServerNow();
+      const { hhmm } = nowInTimezone(branchTz, serverNow);
+      const seconds = String(serverNow.getSeconds()).padStart(2, "0");
       await saveTimecardEntry(
         record.profileId,
         todayISO,

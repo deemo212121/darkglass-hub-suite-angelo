@@ -1,9 +1,9 @@
 /**
- * Fill W-4 — opened from the deep link a Team Messenger message sends (see
+ * Fill W-4 â opened from the deep link a Team Messenger message sends (see
  * ReportHRDaily.tsx's "W-8/W-9/W-4 Forms" tab "Send W-4 Request" flow).
  * Same architecture as FillW8benPage.tsx: renders the REAL official PDF's
  * pages to canvases via pdf.js, with input overlays at each field's own
- * coordinates — no redrawn lookalike. Submitting fills that same real PDF's
+ * coordinates â no redrawn lookalike. Submitting fills that same real PDF's
  * own fields via fillW4Pdf and sends the result back to HR.
  *
  * All 5 pages are shown (the recipient may want to check the worksheets
@@ -20,7 +20,7 @@ import { AppHeader } from "@/components/Header";
 import { useAuth } from "@/lib/auth";
 import { getMyProfileId } from "@/lib/supabase/users";
 import { getSignableDocument, signDocument, type SignableDocument } from "@/lib/supabase/signableDocuments";
-import { uploadSignableDocumentSignature, uploadW4Form } from "@/lib/firebase/storage";
+import { uploadSignableDocumentSignature, uploadW4Form, refreshStorageAuthToken } from "@/lib/firebase/storage";
 import { fillW4Pdf, loadBlankW4Bytes } from "@/lib/w4PdfFill";
 import type { W4FilingStatus, W4FormData } from "@/lib/w4FormTemplate";
 import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
@@ -41,10 +41,10 @@ const PAGE_HEIGHT = 792;
 
 // Field rectangles (PDF user-space units, origin bottom-left), extracted
 // via pdf-lib's acroField.getWidgets()[0].getRectangle() on
-// src/assets/w4-blank.pdf — the exact numbers w4PdfFill.ts's field mapping
+// src/assets/w4-blank.pdf â the exact numbers w4PdfFill.ts's field mapping
 // was derived from, cross-checked against the user's own field-by-page
 // breakdown. The signature/date row has no real field (see w4PdfFill.ts's
-// header comment) — those coordinates are estimated from the actual
+// header comment) â those coordinates are estimated from the actual
 // "Employee's signature"/"Date" caption text positions instead.
 const PAGE1_RECT = {
   firstNameMiddleInitial: { x: 95, y: 684, w: 178, h: 14 },
@@ -67,7 +67,7 @@ const PAGE1_RECT = {
   dateSigned: { x: 465, y: 93, w: 110, h: 14 },
 } as const;
 
-/** Page 3 — Multiple Jobs Worksheet. */
+/** Page 3 â Multiple Jobs Worksheet. */
 const MJW_RECT = {
   mjwLine1: { x: 511, y: 588, w: 65, h: 12 },
   mjwLine2a: { x: 511, y: 498, w: 65, h: 12 },
@@ -77,7 +77,7 @@ const MJW_RECT = {
   mjwLine4: { x: 511, y: 330, w: 65, h: 12 },
 } as const;
 
-/** Page 4 — Deductions Worksheet. */
+/** Page 4 â Deductions Worksheet. */
 const DW_RECT = {
   dwLine1a: { x: 511, y: 660, w: 65, h: 12 },
   dwLine1b: { x: 511, y: 624, w: 65, h: 12 },
@@ -106,7 +106,7 @@ const DW_RECT = {
 
 // Kept tight: "Under penalties of perjury..." sits right above this row at
 // y=116.3 (text baseline), and the "Employee's signature" caption is at
-// y=81.7 — a real signature stroke can reach the top of a taller box and
+// y=81.7 â a real signature stroke can reach the top of a taller box and
 // visually collide with that perjury text, so this stays modest.
 const SIG_EXTRA_HEIGHT = 0;
 
@@ -286,13 +286,17 @@ export function FillW4Page({ docId }: Props) {
     setError(null);
     try {
       const companyId = doc.companyId;
+      // Force a fresh ID token before this upload sequence — see
+      // refreshStorageAuthToken's doc comment (a slow connection can let
+      // it go stale between signing in and finally submitting).
+      await refreshStorageAuthToken();
       const sigBytes = new Uint8Array(await (await fetch(dataUrl)).arrayBuffer());
       const signatureUrl = await uploadSignableDocumentSignature(companyId, doc.id, "employee", dataUrl);
       const signedAt = new Date().toISOString();
       // signatureDataUrl (the raw canvas PNG) is stored alongside the
       // durable Firebase Storage URL so HR's later "Fill Employer Info"
       // regeneration can redraw the signature without a cross-origin fetch
-      // — see w4FormTemplate.ts's header comment.
+      // â see w4FormTemplate.ts's header comment.
       const finalData: W4FormData = { ...form, dateSigned: signedAt, signatureDataUrl: dataUrl };
       const entry = { name: displayName || `${form.firstNameMiddleInitial} ${form.lastName}`.trim() || "Signed", url: signatureUrl, signedAt };
 
@@ -309,17 +313,17 @@ export function FillW4Page({ docId }: Props) {
           dmThreadId: thread.id,
           senderId: myProfileId,
           senderName: displayName || "Employee",
-          body: `📄 W-4 form for ${employeeName} has been completed and submitted: [${filename}](${pdfUrl})`,
+          body: `ð W-4 form for ${employeeName} has been completed and submitted: [${filename}](${pdfUrl})`,
         });
       }
 
-      // Opt-in broadcast — see Notifications Settings (migration 0090).
+      // Opt-in broadcast â see Notifications Settings (migration 0090).
       getHrNotificationSettings()
         .then(({ taxForms }) => {
           if (!taxForms) return;
           const excludeIds = doc.createdBy ? [doc.createdBy] : [];
           const employeeName = `${finalData.firstNameMiddleInitial} ${finalData.lastName}`.trim();
-          void notifyHrRoleUsers(myProfileId, displayName || "Employee", excludeIds, `📄 W-4 form for ${employeeName} has been completed and submitted.`);
+          void notifyHrRoleUsers(myProfileId, displayName || "Employee", excludeIds, `ð W-4 form for ${employeeName} has been completed and submitted.`);
         })
         .catch((err) => console.error("[w4] hr notify check failed:", err));
 
@@ -334,7 +338,7 @@ export function FillW4Page({ docId }: Props) {
   };
 
   const isRecipient = !!doc && !!myProfileId && doc.recipientId === myProfileId;
-  // Platform-level SUPERSUPERADMIN only — the per-company SUPERADMIN role
+  // Platform-level SUPERSUPERADMIN only â the per-company SUPERADMIN role
   // should NOT see every employee's private documents, just its own like ADMIN.
   const isSuperadmin = role === "SUPERSUPERADMIN";
 
@@ -372,7 +376,7 @@ export function FillW4Page({ docId }: Props) {
 
         {loading ? (
           <div className="panel p-8 text-center text-sm text-muted-foreground flex items-center justify-center gap-2">
-            <Loader2 className="h-4 w-4 animate-spin" /> Loading document…
+            <Loader2 className="h-4 w-4 animate-spin" /> Loading documentâ¦
           </div>
         ) : error && !doc ? (
           <div className="panel p-6 text-sm text-red-300">{error}</div>
@@ -380,7 +384,7 @@ export function FillW4Page({ docId }: Props) {
           <div className="panel p-6 text-sm text-muted-foreground">This document isn't addressed to your account.</div>
         ) : submitted || doc.status === "signed" ? (
           <div className="panel p-6 text-center">
-            <p className="text-sm font-semibold mb-2">✅ Submitted{submitted ? " and sent back to HR" : ""}.</p>
+            <p className="text-sm font-semibold mb-2">â Submitted{submitted ? " and sent back to HR" : ""}.</p>
             {doc.pdfUrl && (
               <a href={doc.pdfUrl} target="_blank" rel="noreferrer noopener" className="text-blue-300 hover:text-blue-200 underline text-sm">
                 View the completed PDF
@@ -390,7 +394,7 @@ export function FillW4Page({ docId }: Props) {
         ) : (
           <div className="panel p-4">
             <p className="text-xs text-muted-foreground mb-3">
-              Fill in your information directly on the form below, add your signature, then submit. Steps 2-4 only apply if relevant to you — the Multiple Jobs Worksheet (page 3) and Deductions Worksheet (page 4) are shown for reference and are only fillable if you're using them.
+              Fill in your information directly on the form below, add your signature, then submit. Steps 2-4 only apply if relevant to you â the Multiple Jobs Worksheet (page 3) and Deductions Worksheet (page 4) are shown for reference and are only fillable if you're using them.
             </p>
 
             <div ref={containerRef} className="overflow-x-auto flex flex-col items-center bg-white/5 rounded-md p-4 gap-4">
@@ -399,7 +403,7 @@ export function FillW4Page({ docId }: Props) {
                   <canvas ref={(el) => { pageCanvasRefs.current[pageNum - 1] = el; }} className="absolute inset-0" />
                   {pageLoading && (
                     <div className="absolute inset-0 flex items-center justify-center bg-white/70 text-sm text-muted-foreground gap-2">
-                      <Loader2 className="h-4 w-4 animate-spin" /> Loading form…
+                      <Loader2 className="h-4 w-4 animate-spin" /> Loading formâ¦
                     </div>
                   )}
 
@@ -411,11 +415,11 @@ export function FillW4Page({ docId }: Props) {
                       {singleLineInput("address", PAGE1_RECT.address)}
                       {singleLineInput("cityStateZip", PAGE1_RECT.cityStateZip)}
 
-                      <button type="button" style={overlayStyle(PAGE1_RECT.filingSingle)} onClick={() => setFilingStatus("single_or_mfs")} className={checkboxCls}>{form.filingStatus === "single_or_mfs" ? "✔" : ""}</button>
-                      <button type="button" style={overlayStyle(PAGE1_RECT.filingMarried)} onClick={() => setFilingStatus("married_filing_jointly")} className={checkboxCls}>{form.filingStatus === "married_filing_jointly" ? "✔" : ""}</button>
-                      <button type="button" style={overlayStyle(PAGE1_RECT.filingHoh)} onClick={() => setFilingStatus("head_of_household")} className={checkboxCls}>{form.filingStatus === "head_of_household" ? "✔" : ""}</button>
+                      <button type="button" style={overlayStyle(PAGE1_RECT.filingSingle)} onClick={() => setFilingStatus("single_or_mfs")} className={checkboxCls}>{form.filingStatus === "single_or_mfs" ? "â" : ""}</button>
+                      <button type="button" style={overlayStyle(PAGE1_RECT.filingMarried)} onClick={() => setFilingStatus("married_filing_jointly")} className={checkboxCls}>{form.filingStatus === "married_filing_jointly" ? "â" : ""}</button>
+                      <button type="button" style={overlayStyle(PAGE1_RECT.filingHoh)} onClick={() => setFilingStatus("head_of_household")} className={checkboxCls}>{form.filingStatus === "head_of_household" ? "â" : ""}</button>
 
-                      <button type="button" style={overlayStyle(PAGE1_RECT.multipleJobs)} onClick={() => updateField("multipleJobsCheckbox", !form.multipleJobsCheckbox)} className={checkboxCls}>{form.multipleJobsCheckbox ? "✔" : ""}</button>
+                      <button type="button" style={overlayStyle(PAGE1_RECT.multipleJobs)} onClick={() => updateField("multipleJobsCheckbox", !form.multipleJobsCheckbox)} className={checkboxCls}>{form.multipleJobsCheckbox ? "â" : ""}</button>
 
                       {singleLineInput("step3ChildrenAmount", PAGE1_RECT.step3Children)}
                       {singleLineInput("step3OtherDependentsAmount", PAGE1_RECT.step3OtherDependents)}
@@ -425,7 +429,7 @@ export function FillW4Page({ docId }: Props) {
                       {singleLineInput("step4bDeductions", PAGE1_RECT.step4b)}
                       {singleLineInput("step4cExtraWithholding", PAGE1_RECT.step4c)}
 
-                      <button type="button" style={overlayStyle(PAGE1_RECT.exempt)} onClick={() => updateField("exemptCheckbox", !form.exemptCheckbox)} className={checkboxCls}>{form.exemptCheckbox ? "✔" : ""}</button>
+                      <button type="button" style={overlayStyle(PAGE1_RECT.exempt)} onClick={() => updateField("exemptCheckbox", !form.exemptCheckbox)} className={checkboxCls}>{form.exemptCheckbox ? "â" : ""}</button>
 
                       <canvas
                         {...sigPad.canvasProps}
@@ -498,7 +502,7 @@ export function FillW4Page({ docId }: Props) {
               disabled={submitting}
               className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white mt-3 disabled:opacity-50"
             >
-              {submitting ? "Submitting…" : "Submit to HR"}
+              {submitting ? "Submittingâ¦" : "Submit to HR"}
             </button>
           </div>
         )}
