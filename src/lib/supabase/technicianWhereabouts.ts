@@ -5,8 +5,18 @@
  * (see technicianLocationPings.ts / TechnicianLocationTracker.tsx) — a
  * technician only ever shows a live point while they're actually clocked in
  * AND have a confirmed Location Consent document on file; everyone else
- * (or anyone whose last ping has gone stale) falls back to the schedule
- * proxy exactly as before this existed.
+ * falls back to the schedule proxy exactly as before this existed.
+ *
+ * A ping is kept and preferred over the schedule proxy for as long as its
+ * row exists, however old — a technician who loses signal or closes the tab
+ * mid-shift should still show at their last real position, not silently
+ * snap back to their branch/ticket address just because a few minutes
+ * passed. The row only goes away (via clearMyLocationPing) the moment they
+ * actually clock out, which is the real "reset" boundary here: on clock-out
+ * TechnicianLocationTracker.tsx deletes it, and everyone naturally falls
+ * back to the schedule proxy for the next day. LIVE_FRESH_MS below is
+ * cosmetic only now — "Live" vs. "last known" wording, never a cutoff that
+ * drops the position.
  */
 
 import { supabase } from "./client";
@@ -17,8 +27,8 @@ import { normalizeTimePeriod, FRAME_START_TIME } from "@/lib/timeframes";
 
 export type WhereaboutsStatus = "current" | "last" | "none";
 
-/** A live ping is only trusted for this long before falling back to the schedule proxy — covers a technician who closed the tab/lost signal without formally clocking out. */
-const LIVE_STALE_MS = 15 * 60 * 1000;
+/** Below this age a ping reads as "Live"; older is still shown (and still preferred over the schedule proxy) but labeled "Active" instead — see the header comment above for why nothing gets dropped anymore. Exported so the map legend (TechnicianWhereaboutsPage.tsx) can state the real cutoff instead of a hardcoded number that could drift out of sync. */
+export const LIVE_FRESH_MS = 15 * 60 * 1000;
 
 export interface TechnicianWhereabouts {
   name: string;
@@ -28,8 +38,12 @@ export interface TechnicianWhereabouts {
   repairStatus: string | null;
   timeSlot: string | null;
   address: string | null;
-  /** Real GPS, when a fresh one exists — see LIVE_STALE_MS. Additive: `status` above still reflects today's job-schedule state regardless of whether this is set. */
-  liveLocation: { lat: number; lng: number; updatedAt: string } | null;
+  /**
+   * Real GPS, whenever a ping row exists for this technician — kept
+   * regardless of age (see the file header comment). Additive: `status`
+   * above still reflects today's job-schedule state independent of this.
+   */
+  liveLocation: { lat: number; lng: number; updatedAt: string; isLive: boolean } | null;
 }
 
 function formatAddress(row: any): string {
@@ -86,8 +100,9 @@ export async function getTechnicianWhereabouts(): Promise<TechnicianWhereabouts[
   const now = Date.now();
   const liveByProfileId = new Map(
     pings
-      .filter((p) => now - new Date(p.updatedAt).getTime() < LIVE_STALE_MS)
-      .map((p) => [p.profileId, { lat: p.lat, lng: p.lng, updatedAt: p.updatedAt }])
+      // Every ping row is kept, however old — see the file header comment.
+      // isLive is cosmetic labeling only, never a reason to drop a position.
+      .map((p) => [p.profileId, { lat: p.lat, lng: p.lng, updatedAt: p.updatedAt, isLive: now - new Date(p.updatedAt).getTime() < LIVE_FRESH_MS }])
   );
 
   return technicians.map((tech): TechnicianWhereabouts => {
