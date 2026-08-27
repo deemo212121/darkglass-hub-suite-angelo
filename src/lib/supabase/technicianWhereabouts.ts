@@ -25,7 +25,7 @@ import { getCompanyLocationPings } from "./technicianLocationPings";
 import { statusGroupOf } from "@/lib/ticketData";
 import { normalizeTimePeriod, FRAME_START_TIME } from "@/lib/timeframes";
 
-export type WhereaboutsStatus = "current" | "last" | "none";
+export type WhereaboutsStatus = "current" | "scheduled" | "last" | "none";
 
 /** Below this age a ping reads as "Live"; older is still shown (and still preferred over the schedule proxy) but labeled "Active" instead — see the header comment above for why nothing gets dropped anymore. Exported so the map legend (TechnicianWhereaboutsPage.tsx) can state the real cutoff instead of a hardcoded number that could drift out of sync. */
 export const LIVE_FRESH_MS = 15 * 60 * 1000;
@@ -64,13 +64,17 @@ function slotSortKey(timeSlot: string | null | undefined): string {
  *    not yet) — being scheduled for today alone no longer counts; see
  *    migration 0202. If more than one somehow qualifies, the most
  *    recently arrived wins.
- *  - "last": no on-site check-in in progress, but at least one ticket was
- *    completed today — their last completed stop (by time slot).
- *    Cancelled-only days don't count here since a cancelled call is no
- *    real signal the tech ever went there.
- *  - "none": nothing checked into or completed today (or only cancelled
- *    calls) — including a technician with an open ticket on today's
- *    schedule who simply hasn't tapped "I'm Here" yet.
+ *  - "scheduled": no on-site check-in in progress, but at least one open
+ *    ticket is on today's schedule — their earliest one, by time slot.
+ *    Distinct from "none" so "hasn't started yet" doesn't read as "nothing
+ *    to do today" (a real distinction technicians and dispatchers both
+ *    care about — see the wording issue this fixed).
+ *  - "last": no on-site check-in and nothing left open today, but at least
+ *    one ticket was completed today — their last completed stop (by time
+ *    slot). Cancelled-only days don't count here since a cancelled call is
+ *    no real signal the tech ever went there.
+ *  - "none": nothing scheduled, checked into, or completed today (or only
+ *    cancelled calls).
  */
 export async function getTechnicianWhereabouts(): Promise<TechnicianWhereabouts[]> {
   const technicians = await getCompanyTechnicians();
@@ -128,6 +132,12 @@ export async function getTechnicianWhereabouts(): Promise<TechnicianWhereabouts[
     if (checkedIn.length > 0) {
       const stop = checkedIn[0];
       return { ...base, status: "current", ticketNo: stop.ticket_no, repairStatus: stop.status, timeSlot: stop.time_slot, address: formatAddress(stop.customer ?? {}) };
+    }
+
+    const open = rows.filter((r) => statusGroupOf(r.status) === "open").sort((a, b) => slotSortKey(a.time_slot).localeCompare(slotSortKey(b.time_slot)));
+    if (open.length > 0) {
+      const stop = open[0];
+      return { ...base, status: "scheduled", ticketNo: stop.ticket_no, repairStatus: stop.status, timeSlot: stop.time_slot, address: formatAddress(stop.customer ?? {}) };
     }
 
     const completed = rows.filter((r) => statusGroupOf(r.status) === "completed").sort((a, b) => slotSortKey(b.time_slot).localeCompare(slotSortKey(a.time_slot)));
