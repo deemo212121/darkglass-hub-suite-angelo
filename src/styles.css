@@ -4948,40 +4948,44 @@ a.mtech-phone-link:active { opacity: 0.7; }
 }
 
 /* Stat card — white, same as roster/ticket cards */
-.mtech-home-stats {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 0.6rem;
-}
-.mtech-home-stat {
-  padding: 1rem 1.1rem;
-  border-radius: 14px;
-  background: #fff;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14);
+.mtech-home-stat-card {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  align-items: stretch;
+  background: #fff;
+  border-radius: 14px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14);
+  overflow: hidden;
 }
-.mtech-home-stat-value {
-  font-size: 2.2rem;
-  font-weight: 800;
-  color: var(--mt-blue-dark);
-  line-height: 1;
-}
-.mtech-home-stat-btn {
+.mtech-home-stat-col {
+  flex: 1;
+  min-width: 0;
   appearance: none;
-  width: 100%;
+  border: none;
+  background: transparent;
+  padding: 0.85rem 0.9rem;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.2rem;
   text-align: left;
   cursor: pointer;
   font-family: inherit;
-  transition: transform 0.12s ease, box-shadow 0.12s ease;
+  transition: background-color 0.12s ease;
 }
-.mtech-home-stat-btn:not(:disabled):active {
-  transform: scale(0.98);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+.mtech-home-stat-col:active {
+  background: rgba(76, 90, 192, 0.08);
 }
-.mtech-home-stat-btn:disabled {
-  cursor: default;
+.mtech-home-stat-divider {
+  width: 1px;
+  flex-shrink: 0;
+  background: #e2e8f0;
+  margin: 0.6rem 0;
+}
+.mtech-home-stat-value {
+  font-size: 1.75rem;
+  font-weight: 800;
+  color: var(--mt-blue-dark);
+  line-height: 1;
 }
 .mtech-home-stat-title {
   font-size: 0.78rem;
@@ -5032,6 +5036,116 @@ a.mtech-phone-link:active { opacity: 0.7; }
   font-weight: 700;
   font-size: 0.88rem;
   color: var(--mt-blue-dark);
+}
+.mtech-home-tile-desc {
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: #64748b;
+  text-align: center;
+  line-height: 1.25;
+}
+.mtech-home-onsite {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.mtech-home-onsite-title {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.85);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0 0.15rem;
+}
+.mtech-home-onsite-hint {
+  font-size: 0.72rem;
+  color: rgba(255, 255, 255, 0.6);
+  padding: 0 0.15rem;
+}
+.mtech-home-onsite-devbtn {
+  appearance: none;
+  align-self: flex-start;
+  border: 1px dashed rgba(251, 191, 36, 0.6);
+  border-radius: 8px;
+  background: rgba(251, 191, 36, 0.12);
+  color: #fbbf24;
+  font-size: 0.68rem;
+  font-weight: 700;
+  padding: 0.3rem 0.6rem;
+  font-family: inherit;
+  cursor: pointer;
+}
+.mtech-home-onsite-list {
+  background: #fff;
+  border-radius: 14px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14);
+  overflow: hidden;
+}
+.mtech-home-onsite-empty {
+  padding: 0.9rem 1rem;
+  background: #fff;
+  border-radius: 14px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14);
+  color: #64748b;
+  font-weight: 600;
+  font-size: 0.82rem;
+  text-align: center;
+}
+.mtech-home-onsite-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  padding: 0.75rem 0.9rem;
+  border-bottom: 1px solid #f1f5f9;
+}
+.mtech-home-onsite-row:last-child {
+  border-bottom: none;
+}
+.mtech-home-onsite-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.mtech-home-onsite-location {
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.mtech-home-onsite-ticket {
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: #1f2937;
+  margin-top: 0.1rem;
+}
+.mtech-home-onsite-times {
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: #16a34a;
+  margin-top: 0.2rem;
+}
+.mtech-home-onsite-btn {
+  appearance: none;
+  border: none;
+  border-radius: 10px;
+  padding: 0.45rem 0.9rem;
+  font-weight: 700;
+  font-size: 0.78rem;
+  font-family: inherit;
+  color: #fff;
+  background: #16a34a;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.mtech-home-onsite-btn-done {
+  background: var(--mt-blue-dark);
+}
+.mtech-home-onsite-btn:disabled {
+  background: #cbd5e1;
+  cursor: not-allowed;
 }
 .mtech-home-divider {
   height: 1px;
@@ -5281,6 +5395,29 @@ a.mtech-phone-link:active { opacity: 0.7; }
 .mtech-timecard-card-value.in { color: #16a34a; }
 .mtech-timecard-card-value.out { color: #dc2626; }
 .mtech-timecard-card-value.meal { color: #d97706; }
+/* Home's clock-status row — 4 cards on one line instead of 2x2, scoped so
+   the standalone Timecard page's own 2x2 layout is untouched. */
+.mtech-home-clockrow {
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.4rem;
+}
+.mtech-home-clockrow .mtech-timecard-card {
+  padding: 0.6rem 0.4rem;
+}
+.mtech-home-clockrow .mtech-timecard-card-label {
+  font-size: 0.56rem;
+}
+.mtech-home-clockrow .mtech-timecard-card-value {
+  font-size: 0.98rem;
+  margin-top: 0.15rem;
+}
+.mtech-home-clockrow .mtech-timecard-card-confirm-label {
+  font-size: 0.6rem;
+}
+.mtech-home-clockrow .mtech-timecard-confirm-btn {
+  font-size: 0.62rem;
+  padding: 0.3rem 0;
+}
 .mtech-timecard-card-btn {
   appearance: none;
   width: 100%;
@@ -5484,14 +5621,6 @@ a.mtech-phone-link:active { opacity: 0.7; }
   position: relative;
 }
 
-/* ── Home tile SVG icons ─────────────────────────────────────────────── */
-.mtech-home-tile-svg {
-  width: 28px;
-  height: 28px;
-  stroke-width: 1.5;
-  color: var(--mt-blue-dark);
-  display: block;
-}
 
 /* ════════════════════════════════════════════════════════════════════════
    Messenger-style Chat UI
@@ -10725,40 +10854,44 @@ a.mtech-phone-link:active { opacity: 0.7; }
 }
 
 /* Stat card — white, same as roster/ticket cards */
-.mtech-home-stats {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 0.6rem;
-}
-.mtech-home-stat {
-  padding: 1rem 1.1rem;
-  border-radius: 14px;
-  background: #fff;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14);
+.mtech-home-stat-card {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  align-items: stretch;
+  background: #fff;
+  border-radius: 14px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14);
+  overflow: hidden;
 }
-.mtech-home-stat-value {
-  font-size: 2.2rem;
-  font-weight: 800;
-  color: var(--mt-blue-dark);
-  line-height: 1;
-}
-.mtech-home-stat-btn {
+.mtech-home-stat-col {
+  flex: 1;
+  min-width: 0;
   appearance: none;
-  width: 100%;
+  border: none;
+  background: transparent;
+  padding: 0.85rem 0.9rem;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.2rem;
   text-align: left;
   cursor: pointer;
   font-family: inherit;
-  transition: transform 0.12s ease, box-shadow 0.12s ease;
+  transition: background-color 0.12s ease;
 }
-.mtech-home-stat-btn:not(:disabled):active {
-  transform: scale(0.98);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+.mtech-home-stat-col:active {
+  background: rgba(76, 90, 192, 0.08);
 }
-.mtech-home-stat-btn:disabled {
-  cursor: default;
+.mtech-home-stat-divider {
+  width: 1px;
+  flex-shrink: 0;
+  background: #e2e8f0;
+  margin: 0.6rem 0;
+}
+.mtech-home-stat-value {
+  font-size: 1.75rem;
+  font-weight: 800;
+  color: var(--mt-blue-dark);
+  line-height: 1;
 }
 .mtech-home-stat-title {
   font-size: 0.78rem;
@@ -10809,6 +10942,116 @@ a.mtech-phone-link:active { opacity: 0.7; }
   font-weight: 700;
   font-size: 0.88rem;
   color: var(--mt-blue-dark);
+}
+.mtech-home-tile-desc {
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: #64748b;
+  text-align: center;
+  line-height: 1.25;
+}
+.mtech-home-onsite {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.mtech-home-onsite-title {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.85);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0 0.15rem;
+}
+.mtech-home-onsite-hint {
+  font-size: 0.72rem;
+  color: rgba(255, 255, 255, 0.6);
+  padding: 0 0.15rem;
+}
+.mtech-home-onsite-devbtn {
+  appearance: none;
+  align-self: flex-start;
+  border: 1px dashed rgba(251, 191, 36, 0.6);
+  border-radius: 8px;
+  background: rgba(251, 191, 36, 0.12);
+  color: #fbbf24;
+  font-size: 0.68rem;
+  font-weight: 700;
+  padding: 0.3rem 0.6rem;
+  font-family: inherit;
+  cursor: pointer;
+}
+.mtech-home-onsite-list {
+  background: #fff;
+  border-radius: 14px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14);
+  overflow: hidden;
+}
+.mtech-home-onsite-empty {
+  padding: 0.9rem 1rem;
+  background: #fff;
+  border-radius: 14px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14);
+  color: #64748b;
+  font-weight: 600;
+  font-size: 0.82rem;
+  text-align: center;
+}
+.mtech-home-onsite-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  padding: 0.75rem 0.9rem;
+  border-bottom: 1px solid #f1f5f9;
+}
+.mtech-home-onsite-row:last-child {
+  border-bottom: none;
+}
+.mtech-home-onsite-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.mtech-home-onsite-location {
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.mtech-home-onsite-ticket {
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: #1f2937;
+  margin-top: 0.1rem;
+}
+.mtech-home-onsite-times {
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: #16a34a;
+  margin-top: 0.2rem;
+}
+.mtech-home-onsite-btn {
+  appearance: none;
+  border: none;
+  border-radius: 10px;
+  padding: 0.45rem 0.9rem;
+  font-weight: 700;
+  font-size: 0.78rem;
+  font-family: inherit;
+  color: #fff;
+  background: #16a34a;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.mtech-home-onsite-btn-done {
+  background: var(--mt-blue-dark);
+}
+.mtech-home-onsite-btn:disabled {
+  background: #cbd5e1;
+  cursor: not-allowed;
 }
 .mtech-home-divider {
   height: 1px;
@@ -11058,6 +11301,29 @@ a.mtech-phone-link:active { opacity: 0.7; }
 .mtech-timecard-card-value.in { color: #16a34a; }
 .mtech-timecard-card-value.out { color: #dc2626; }
 .mtech-timecard-card-value.meal { color: #d97706; }
+/* Home's clock-status row — 4 cards on one line instead of 2x2, scoped so
+   the standalone Timecard page's own 2x2 layout is untouched. */
+.mtech-home-clockrow {
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.4rem;
+}
+.mtech-home-clockrow .mtech-timecard-card {
+  padding: 0.6rem 0.4rem;
+}
+.mtech-home-clockrow .mtech-timecard-card-label {
+  font-size: 0.56rem;
+}
+.mtech-home-clockrow .mtech-timecard-card-value {
+  font-size: 0.98rem;
+  margin-top: 0.15rem;
+}
+.mtech-home-clockrow .mtech-timecard-card-confirm-label {
+  font-size: 0.6rem;
+}
+.mtech-home-clockrow .mtech-timecard-confirm-btn {
+  font-size: 0.62rem;
+  padding: 0.3rem 0;
+}
 .mtech-timecard-card-btn {
   appearance: none;
   width: 100%;
@@ -11261,14 +11527,6 @@ a.mtech-phone-link:active { opacity: 0.7; }
   position: relative;
 }
 
-/* ── Home tile SVG icons ─────────────────────────────────────────────── */
-.mtech-home-tile-svg {
-  width: 28px;
-  height: 28px;
-  stroke-width: 1.5;
-  color: var(--mt-blue-dark);
-  display: block;
-}
 
 /* ════════════════════════════════════════════════════════════════════════
    Messenger-style Chat UI

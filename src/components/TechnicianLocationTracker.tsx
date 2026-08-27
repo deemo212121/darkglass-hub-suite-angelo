@@ -28,6 +28,7 @@ import { getMyProfileId } from "@/lib/supabase/users";
 import { getEntryForDate } from "@/lib/supabase/timecards";
 import { hasConfirmedLocationConsent, upsertMyLocationPing, clearMyLocationPing } from "@/lib/supabase/technicianLocationPings";
 import { setLocationSharingStatus } from "@/lib/locationSharingStatus";
+import { useLiveLocation } from "@/lib/liveLocationContext";
 
 const POLL_MS = 60_000;
 const UPLOAD_THROTTLE_MS = 60_000;
@@ -44,6 +45,7 @@ function isTechnicianRole(role: string | null, extraRoles: string[]): boolean {
 
 export function TechnicianLocationTracker() {
   const { ready, uid, role, extraRoles } = useAuth();
+  const { setLiveLocation } = useLiveLocation();
   const [profileId, setProfileId] = useState<string | null>(null);
   const [consentConfirmed, setConsentConfirmed] = useState(false);
   const [clockedIn, setClockedIn] = useState(false);
@@ -74,6 +76,14 @@ export function TechnicianLocationTracker() {
   }, [eligible, uid]);
 
   const armed = eligible && !!profileId && consentConfirmed;
+
+  // Publish the same gating state other components (e.g. MobileTechApp.tsx's
+  // On-Site Check-In card) need to explain *why* there's no live position
+  // yet, rather than just guessing from a bare null.
+  useEffect(() => {
+    setLiveLocation({ consentConfirmed, clockedIn });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [consentConfirmed, clockedIn]);
 
   // Poll "am I clocked in today" independently of either clock-in UI —
   // same cadence TimeClockButtons.tsx already uses for its own resync.
@@ -110,6 +120,7 @@ export function TechnicianLocationTracker() {
       watchIdRef.current = null;
     }
     setWatching(false);
+    setLiveLocation({ watching: false, position: null });
   };
 
   const startWatch = () => {
@@ -118,6 +129,10 @@ export function TechnicianLocationTracker() {
     watchIdRef.current = navigator.geolocation.watchPosition(
       (pos) => {
         setWatching(true);
+        // Local consumers (the shared context) get every reading — cheap,
+        // no network cost. The upload to technician_location_pings below
+        // stays throttled since that one's a real network write.
+        setLiveLocation({ watching: true, position: { lat: pos.coords.latitude, lng: pos.coords.longitude } });
         const now = Date.now();
         if (now - lastUploadRef.current < UPLOAD_THROTTLE_MS) return;
         lastUploadRef.current = now;

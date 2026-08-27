@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth";
 import { setDesktopOverride } from "@/lib/device";
+import { useLiveLocation } from "@/lib/liveLocationContext";
 import {
   ArrowLeft,
   ChevronRight,
@@ -13,13 +14,6 @@ import {
   DollarSign,
   ExternalLink,
   Home,
-  Clock,
-  Users,
-  LifeBuoy,
-  Receipt,
-  Palmtree,
-  AlertTriangle,
-  PenLine,
 } from "lucide-react";
 // Mobile shell is an isolated surface — no navigation to desktop routes,
 // no device-override toggle. The desktop UI is available only from an
@@ -37,7 +31,7 @@ import {
 import { getMyProfileId, getMyFullProfile } from "@/lib/supabase/users";
 import { getTechPayrollBreakdown, type TechPayrollBreakdown } from "@/lib/supabase/techPayroll";
 import { getCompanyMapProvider, type MapProvider } from "@/lib/supabase/companySettings";
-import { loadGoogleMapsScript, getLeaflet, makeGeocoder, haversineMiles, routeGeoapify, metersToMiles, formatDuration, attachLeafletResizeFix, createBadgeDivIcon, OSM_TILE_URL, OSM_ATTRIBUTION } from "@/lib/mapEngine";
+import { loadGoogleMapsScript, getLeaflet, makeGeocoder, haversineMiles, routeGeoapify, metersToMiles, formatDuration, attachLeafletResizeFix, createBadgeDivIcon, OSM_TILE_URL, OSM_ATTRIBUTION, ON_SITE_CHECKIN_RADIUS_MILES } from "@/lib/mapEngine";
 import type * as Leaflet from "leaflet";
 import {
   getDmMessages,
@@ -529,6 +523,13 @@ export function MobileTechApp() {
     [myTickets]
   );
 
+  // On-Site Check-In's ticket list — the technician's whole active queue
+  // (same set the To Do tab shows), not narrowed to today's schedule date
+  // like todaysTickets above. Many real tickets don't have a schedule date
+  // that matches today exactly, which would otherwise leave this feature
+  // with nothing to show even when there's real work to check into.
+  const activeTickets = useMemo(() => myTickets.filter((t) => !isDone(t.status)), [myTickets]);
+
   // Technician roster for managers — real TECHNICIAN-role users from Supabase,
   // scoped to the manager's allowed locations (assigned_branch / branch_access).
   const roster = useMemo(() => {
@@ -887,14 +888,15 @@ export function MobileTechApp() {
         {view === "home" && (
           <MobileHomeView
             userName={headerName}
+            role={role}
             uid={uid}
             profileId={profileId}
             todaysTickets={todaysTickets}
+            activeTickets={activeTickets}
             onHoldTickets={onHoldTickets}
             onOpenTicketsTab={() => setView("tickets")}
             onOpenOnHoldTab={() => setView("onhold")}
             showClockInTeam={isAttendanceManagerTierRole(role, extraRoles)}
-            onOpenTimecard={() => setView("timecard")}
             onOpenClockInTeam={() => setView("clockinteam")}
             onOpenItSupport={() => setView("itsupport")}
             onOpenPayrollDispute={() => { setPayrollDisputePrefill(null); setView("payrolldispute"); }}
@@ -3600,28 +3602,33 @@ function BillingTab({ ticket, companyId }: { ticket: Ticket; companyId: string |
 // Sidebar-launched views — stay inside the mobile shell
 // ══════════════════════════════════════════════════════════════════════
 
-// A total-only stat card on the Home landing page ("Assigned Today" /
-// "Pending On Hold") — just the count, tap to jump to the full tab for the
-// actual ticket details instead of repeating full ticket cards here too.
-function HomeTicketSummary({
-  title,
-  count,
-  onViewAll,
-  emptyText,
+// "Assigned Today" and "On Hold" totals side by side in one card, not two
+// separate cards — just the counts, tap either half to jump to that tab for
+// the actual ticket details instead of repeating full ticket cards here too.
+function HomeTicketStatsCard({
+  todaysCount,
+  onHoldCount,
+  onOpenTicketsTab,
+  onOpenOnHoldTab,
 }: {
-  title: string;
-  count: number;
-  onViewAll: () => void;
-  emptyText: string;
+  todaysCount: number;
+  onHoldCount: number;
+  onOpenTicketsTab: () => void;
+  onOpenOnHoldTab: () => void;
 }) {
   return (
-    <button type="button" className="mtech-home-stat mtech-home-stat-btn" disabled={count === 0} onClick={onViewAll}>
-      <div>
-        <div className="mtech-home-stat-title">{title}</div>
-        {count === 0 && <div className="mtech-home-stat-sub">{emptyText}</div>}
-      </div>
-      <div className="mtech-home-stat-value">{count}</div>
-    </button>
+    <div className="mtech-home-stat-card">
+      <button type="button" className="mtech-home-stat-col" onClick={onOpenTicketsTab}>
+        <span className="mtech-home-stat-title">Assigned Today</span>
+        <span className="mtech-home-stat-value">{todaysCount}</span>
+      </button>
+      <div className="mtech-home-stat-divider" />
+      <button type="button" className="mtech-home-stat-col" onClick={onOpenOnHoldTab}>
+        <span className="mtech-home-stat-title">On Hold</span>
+        <span className="mtech-home-stat-value">{onHoldCount}</span>
+        <span className="mtech-home-stat-sub">Tickets needed updates.</span>
+      </button>
+    </div>
   );
 }
 
@@ -3667,18 +3674,198 @@ function ClockCard({
   );
 }
 
+// "Location / Ticket#" list of today's assigned tickets with a geofenced
+// I'm Here / I'm Done action per ticket. Both buttons only log a timestamped
+// ticket comment (no status change) — this is a lightweight arrival/
+// completion record for monitoring, not a replacement for the real
+// completion flow (photos/parts/signature) technicians still do from the
+// ticket's own detail screen. A ticket stays in the list after being marked
+// done — both timestamps just show underneath it instead of the buttons —
+// so the record stays visible for the rest of the shift rather than
+// disappearing the moment it's logged.
+function HomeOnSiteCard({
+  tickets,
+  userName,
+  role,
+}: {
+  tickets: Ticket[];
+  userName: string;
+  role: string | null;
+}) {
+  const [mapProvider, setMapProvider] = useState<MapProvider | null>(null);
+  const [ticketPos, setTicketPos] = useState<Record<string, { lat: number; lng: number } | null>>({});
+  const [arrivedAt, setArrivedAt] = useState<Record<string, string>>({});
+  const [doneAt, setDoneAt] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    getCompanyMapProvider().then((p) => { if (!cancelled) setMapProvider(p); });
+    return () => { cancelled = true; };
+  }, []);
+
+  // Same live position TechnicianLocationTracker.tsx already watches (and
+  // uploads to technician_location_pings) — no second navigator.geolocation
+  // watch here. That component only turns tracking on when the technician
+  // has confirmed Location Consent AND is clocked in; consentConfirmed/
+  // clockedIn are exposed here so this card can explain which of those is
+  // missing instead of a generic error.
+  const { position: myPos, consentConfirmed, clockedIn } = useLiveLocation();
+  const geoError = !consentConfirmed
+    ? "Confirm the Location Sharing Consent agreement to use on-site check-in."
+    : !clockedIn
+    ? "Clock in to use on-site check-in."
+    : !myPos
+    ? "Waiting for a location fix…"
+    : null;
+
+  const visibleTickets = tickets;
+
+  // Geocode each visible ticket's address once we know the map provider —
+  // same geocode() helper (with its own DB-backed cache) RouteMapView uses.
+  useEffect(() => {
+    if (!mapProvider) return;
+    let cancelled = false;
+    const geocode = makeGeocoder(mapProvider);
+    (async () => {
+      for (const t of visibleTickets) {
+        if (ticketPos[t.ticketNo] !== undefined) continue;
+        const addr = fmtAddress(t) || t.city || t.location;
+        const pos = addr ? await geocode(addr) : null;
+        if (cancelled) return;
+        setTicketPos((prev) => ({ ...prev, [t.ticketNo]: pos }));
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mapProvider, visibleTickets]);
+
+  const distanceFor = (t: Ticket): number | null => {
+    const pos = ticketPos[t.ticketNo];
+    if (!pos || !myPos) return null;
+    return haversineMiles(myPos, pos);
+  };
+
+  // Dev-only escape hatch for testing the in-radius UI without real GPS
+  // (e.g. location permission unavailable in this environment). Gated on
+  // import.meta.env.DEV so this never exists in a production build — a
+  // simulate-location bypass in prod would defeat the whole point of the
+  // geofence.
+  const [devSimulate, setDevSimulate] = useState(false);
+
+  const formatNow = () => new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+  const logCheckIn = async (t: Ticket, label: string, time: string) => {
+    await addTicketComment(t.ticketNo, `On-site check-in: ${label} at ${time}`, userName, role || "");
+  };
+
+  const handleImHere = async (t: Ticket) => {
+    const time = formatNow();
+    setBusy(t.ticketNo);
+    try {
+      await logCheckIn(t, "arrived", time);
+      setArrivedAt((prev) => ({ ...prev, [t.ticketNo]: time }));
+    } catch (e) {
+      console.error("on-site check-in: arrival log failed", e);
+      alert("Couldn't check in — please try again.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const handleImDone = async (t: Ticket) => {
+    const time = formatNow();
+    setBusy(t.ticketNo);
+    try {
+      await logCheckIn(t, "marked done", time);
+      setDoneAt((prev) => ({ ...prev, [t.ticketNo]: time }));
+    } catch (e) {
+      console.error("on-site check-in: done log failed", e);
+      alert("Couldn't mark this done — please try again.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <div className="mtech-home-onsite">
+      <div className="mtech-home-onsite-title">On-Site Check-In</div>
+      {geoError && <div className="mtech-home-onsite-hint">{geoError}</div>}
+      {import.meta.env.DEV && (
+        <button
+          type="button"
+          className="mtech-home-onsite-devbtn"
+          onClick={() => setDevSimulate((v) => !v)}
+        >
+          {devSimulate ? "✓ " : ""}Dev: simulate in-radius (local only)
+        </button>
+      )}
+      {visibleTickets.length === 0 ? (
+        <div className="mtech-home-onsite-empty">No active tickets to check into right now.</div>
+      ) : (
+      <div className="mtech-home-onsite-list">
+        {visibleTickets.map((t) => {
+          const dist = distanceFor(t);
+          const inRadius = devSimulate || (dist !== null && dist <= ON_SITE_CHECKIN_RADIUS_MILES);
+          const hereAt = arrivedAt[t.ticketNo];
+          const finishedAt = doneAt[t.ticketNo];
+          const isBusy = busy === t.ticketNo;
+          return (
+            <div key={t.ticketNo} className="mtech-home-onsite-row">
+              <div className="mtech-home-onsite-info">
+                <span className="mtech-home-onsite-location">{resolveLocation(t)}</span>
+                <span className="mtech-home-onsite-ticket">{t.ticketNo}</span>
+                {(hereAt || finishedAt) && (
+                  <span className="mtech-home-onsite-times">
+                    {hereAt && `Here ${hereAt}`}
+                    {hereAt && finishedAt && "  ·  "}
+                    {finishedAt && `Done ${finishedAt}`}
+                  </span>
+                )}
+              </div>
+              {!finishedAt && (
+                !hereAt ? (
+                  <button
+                    type="button"
+                    className="mtech-home-onsite-btn"
+                    disabled={!inRadius || isBusy}
+                    onClick={() => handleImHere(t)}
+                  >
+                    {isBusy ? "…" : "I'm Here"}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="mtech-home-onsite-btn mtech-home-onsite-btn-done"
+                    disabled={!inRadius || isBusy}
+                    onClick={() => handleImDone(t)}
+                  >
+                    {isBusy ? "…" : "I'm Done"}
+                  </button>
+                )
+              )}
+            </div>
+          );
+        })}
+      </div>
+      )}
+    </div>
+  );
+}
+
 // Home tab: high-level greeting + quick jumps to the same sidebar
 // destinations so users can navigate without opening the drawer.
 function MobileHomeView({
   userName,
+  role,
   uid,
   profileId,
   todaysTickets,
+  activeTickets,
   onHoldTickets,
   onOpenTicketsTab,
   onOpenOnHoldTab,
   showClockInTeam,
-  onOpenTimecard,
   onOpenClockInTeam,
   onOpenItSupport,
   onOpenPayrollDispute,
@@ -3687,14 +3874,15 @@ function MobileHomeView({
   onOpenCorrection,
 }: {
   userName: string;
+  role: string | null;
   uid: string | null;
   profileId: string | null;
   todaysTickets: Ticket[];
+  activeTickets: Ticket[];
   onHoldTickets: Ticket[];
   onOpenTicketsTab: () => void;
   onOpenOnHoldTab: () => void;
   showClockInTeam: boolean;
-  onOpenTimecard: () => void;
   onOpenClockInTeam: () => void;
   onOpenItSupport: () => void;
   onOpenPayrollDispute: () => void;
@@ -3831,13 +4019,36 @@ function MobileHomeView({
   };
 
   const menuTiles = [
-    { key: "timecard", label: "Timecard", icon: <Clock className="mtech-home-tile-svg" />, onClick: onOpenTimecard, show: true },
-    { key: "clockinteam", label: "Clock In Team", icon: <Users className="mtech-home-tile-svg" />, onClick: onOpenClockInTeam, show: showClockInTeam },
-    { key: "itsupport", label: "IT Support", icon: <LifeBuoy className="mtech-home-tile-svg" />, onClick: onOpenItSupport, show: true },
-    { key: "payrolldispute", label: "Payroll Dispute", icon: <Receipt className="mtech-home-tile-svg" />, onClick: onOpenPayrollDispute, show: true },
-    { key: "timeoff", label: "Time Off Request", icon: <Palmtree className="mtech-home-tile-svg" />, onClick: onOpenTimeOff, show: true },
-    { key: "attendancedispute", label: "Attendance Dispute", icon: <AlertTriangle className="mtech-home-tile-svg" />, onClick: onOpenAttendanceDispute, show: true },
-    { key: "correction", label: "Time Correction", icon: <PenLine className="mtech-home-tile-svg" />, onClick: onOpenCorrection, show: true },
+    {
+      key: "correction", label: "Time Correction",
+      description: "Request a fix to a check-in, check-out, or meal punch",
+      onClick: onOpenCorrection, show: true,
+    },
+    {
+      key: "timeoff", label: "Time Off Request",
+      description: "Request PTO, sick leave, or unpaid time off",
+      onClick: onOpenTimeOff, show: true,
+    },
+    {
+      key: "attendancedispute", label: "Attendance Dispute",
+      description: "Flag an issue with your attendance record",
+      onClick: onOpenAttendanceDispute, show: true,
+    },
+    {
+      key: "payrolldispute", label: "Payroll Dispute",
+      description: "Dispute a pay period and track your own requests",
+      onClick: onOpenPayrollDispute, show: true,
+    },
+    {
+      key: "itsupport", label: "IT Support",
+      description: "Submit a ticket and track your own requests",
+      onClick: onOpenItSupport, show: true,
+    },
+    {
+      key: "clockinteam", label: "Clock In Team",
+      description: "Your direct-report technicians, today",
+      onClick: onOpenClockInTeam, show: showClockInTeam,
+    },
   ].filter((t) => t.show);
 
   return (
@@ -3847,31 +4058,18 @@ function MobileHomeView({
         <div className="mtech-home-name">{userName}</div>
       </div>
 
-      <div className="mtech-home-stats">
-        <HomeTicketSummary
-          title="Assigned Today"
-          count={todaysTickets.length}
-          onViewAll={onOpenTicketsTab}
-          emptyText="No tickets scheduled for today."
-        />
-        <HomeTicketSummary
-          title="On Hold"
-          count={onHoldTickets.length}
-          onViewAll={onOpenOnHoldTab}
-          emptyText="No tickets on hold right now."
-        />
-      </div>
+      <HomeTicketStatsCard
+        todaysCount={todaysTickets.length}
+        onHoldCount={onHoldTickets.length}
+        onOpenTicketsTab={onOpenTicketsTab}
+        onOpenOnHoldTab={onOpenOnHoldTab}
+      />
 
-      <div className="mtech-timecard-summary">
+      <div className="mtech-timecard-summary mtech-home-clockrow">
         <ClockCard
           label="Time In" value={entry.checkIn ? entry.checkIn.slice(0, 5) : ""} valueClass="in"
           armed={armedCard === "checkIn"} canAct={canTimeIn} confirmLabel="Time In now?"
           onTap={handleTimeIn} onCancel={disarm}
-        />
-        <ClockCard
-          label="Time Out" value={entry.checkOut ? entry.checkOut.slice(0, 5) : ""} valueClass="out"
-          armed={armedCard === "checkOut"} canAct={canTimeOut} confirmLabel="Time Out now?"
-          onTap={handleTimeOut} onCancel={disarm}
         />
         <ClockCard
           label="Meal In" value={entry.mealStart ? entry.mealStart.slice(0, 5) : ""} valueClass="meal"
@@ -3883,15 +4081,22 @@ function MobileHomeView({
           armed={armedCard === "mealEnd"} canAct={canMealOut} confirmLabel="Meal Out now?"
           onTap={handleMealOut} onCancel={disarm}
         />
+        <ClockCard
+          label="Time Out" value={entry.checkOut ? entry.checkOut.slice(0, 5) : ""} valueClass="out"
+          armed={armedCard === "checkOut"} canAct={canTimeOut} confirmLabel="Time Out now?"
+          onTap={handleTimeOut} onCancel={disarm}
+        />
       </div>
+
+      <HomeOnSiteCard tickets={activeTickets} userName={userName} role={role} />
 
       <div className="mtech-home-divider" />
 
       <div className="mtech-home-grid">
         {menuTiles.map((t) => (
           <button key={t.key} className="mtech-home-tile" type="button" onClick={t.onClick}>
-            {t.icon}
             <span className="mtech-home-tile-label">{t.label}</span>
+            <span className="mtech-home-tile-desc">{t.description}</span>
           </button>
         ))}
       </div>
