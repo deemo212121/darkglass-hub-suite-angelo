@@ -121,12 +121,19 @@ export function TechnicianLocationTracker() {
         const now = Date.now();
         if (now - lastUploadRef.current < UPLOAD_THROTTLE_MS) return;
         lastUploadRef.current = now;
+        // Deliberately NOT pos.timestamp — Safari/WebKit doesn't reliably
+        // report it in epoch milliseconds the way Chrome does, and a
+        // misinterpreted unit there produces a garbage date far enough out
+        // of range that Postgres rejects the write outright (confirmed via
+        // a real WebKit reproduction: "time zone displacement out of
+        // range"). The device's own current time is what "now" means for
+        // a live ping anyway.
         upsertMyLocationPing(
           profileId,
           pos.coords.latitude,
           pos.coords.longitude,
           pos.coords.accuracy ?? null,
-          new Date(pos.timestamp).toISOString()
+          new Date(now).toISOString()
         ).catch((err) => console.error("[TechnicianLocationTracker] upsertMyLocationPing failed:", err));
       },
       (err) => {
