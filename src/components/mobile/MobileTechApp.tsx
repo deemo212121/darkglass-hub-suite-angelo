@@ -3712,11 +3712,21 @@ function HomeOnSiteCard({
   // clockedIn are exposed here so this card can explain which of those is
   // missing instead of a generic error.
   const { position: myPos, consentConfirmed, clockedIn } = useLiveLocation();
+
+  // Dev-only escape hatch for testing the in-radius UI without real GPS
+  // (e.g. location permission unavailable in this environment). Gated on
+  // import.meta.env.DEV so this never exists in a production build — a
+  // simulate-location bypass in prod would defeat the whole point of the
+  // geofence. Bypasses both the radius check below AND the "waiting for a
+  // fix" gate here — a missing myPos shouldn't block testing when distance
+  // itself is about to be ignored anyway.
+  const [devSimulate, setDevSimulate] = useState(false);
+
   const geoError = !consentConfirmed
     ? "Confirm the Location Sharing Consent agreement to use on-site check-in."
     : !clockedIn
     ? "Clock in to use on-site check-in."
-    : !myPos
+    : !myPos && !devSimulate
     ? "Waiting for a location fix…"
     : null;
 
@@ -3747,13 +3757,6 @@ function HomeOnSiteCard({
     return haversineMiles(myPos, pos);
   };
 
-  // Dev-only escape hatch for testing the in-radius UI without real GPS
-  // (e.g. location permission unavailable in this environment). Gated on
-  // import.meta.env.DEV so this never exists in a production build — a
-  // simulate-location bypass in prod would defeat the whole point of the
-  // geofence.
-  const [devSimulate, setDevSimulate] = useState(false);
-
   // Snap to a single ticket instead of listing the whole active queue at
   // once. Priority: (1) a ticket already checked in ("I'm Here" tapped) but
   // not yet marked done stays pinned regardless of distance — stepping away
@@ -3762,14 +3765,18 @@ function HomeOnSiteCard({
   // geofence; (3) otherwise the nearest ticket overall, shown dimmed with
   // its distance so there's still context on where they're headed. null
   // only while every ticket's distance is still unresolved (map provider or
-  // geocoding not ready yet) or there's nothing active to check into.
+  // geocoding not ready yet) or there's nothing active to check into. In
+  // devSimulate mode with no real fix at all (myPos never resolved — e.g. no
+  // GPS available in this test environment), distance is meaningless anyway,
+  // so just pick the first candidate rather than staying stuck on null.
   const focusTicket = useMemo(() => {
     const inProgress = visibleTickets.filter((t) => arrivedAt[t.ticketNo] && !doneAt[t.ticketNo]);
     const pool = inProgress.length > 0 ? inProgress : visibleTickets;
+    if (pool.length === 0) return null;
     const withDist = pool
       .map((t) => ({ t, d: distanceFor(t) }))
       .filter((x): x is { t: Ticket; d: number } => x.d !== null);
-    if (withDist.length === 0) return null;
+    if (withDist.length === 0) return devSimulate ? pool[0] : null;
     if (inProgress.length > 0) {
       return withDist.reduce((a, b) => (b.d < a.d ? b : a)).t;
     }
