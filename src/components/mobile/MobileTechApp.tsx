@@ -12,6 +12,14 @@ import {
   PauseCircle,
   DollarSign,
   ExternalLink,
+  Home,
+  Clock,
+  Users,
+  LifeBuoy,
+  Receipt,
+  Palmtree,
+  AlertTriangle,
+  PenLine,
 } from "lucide-react";
 // Mobile shell is an isolated surface — no navigation to desktop routes,
 // no device-override toggle. The desktop UI is available only from an
@@ -39,6 +47,7 @@ import {
   subscribeToMessages,
   listMyDmInbox,
   markThreadRead,
+  getUnreadCounts,
   type MessageRow,
   type DmThreadRow,
   type DmInboxEntry,
@@ -153,6 +162,27 @@ function isDone(status: string): boolean {
   return s.includes("complete") || s.includes("closed") || s.includes("cl-") || s.includes("claim");
 }
 
+// Same "is this ticket's schedule today" match RouteMapView's ticket
+// filter uses (ISO or US-format schedule string) — pulled out so Home's
+// "Assigned Today" list uses the identical definition of "today".
+function isScheduledToday(t: Ticket): boolean {
+  const rawDate = String(t.schedule || (t as any).schedule_date || "").trim();
+  if (!rawDate) return false;
+  const today = new Date();
+  const yyyy = today.getFullYear();
+  const mm = String(today.getMonth() + 1).padStart(2, "0");
+  const dd = String(today.getDate()).padStart(2, "0");
+  const todayIso = `${yyyy}-${mm}-${dd}`;
+  if (rawDate.startsWith(todayIso)) return true;
+  const usMatch = rawDate.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
+  if (usMatch) {
+    const yy = usMatch[3].length === 2 ? `20${usMatch[3]}` : usMatch[3];
+    const iso = `${yy}-${usMatch[1].padStart(2, "0")}-${usMatch[2].padStart(2, "0")}`;
+    return iso === todayIso;
+  }
+  return false;
+}
+
 function statusTone(status: string): string {
   const s = (status || "").toLowerCase();
   if (s.includes("complete") || s.includes("ready to complete")) return "tone-green";
@@ -222,6 +252,27 @@ export function MobileTechApp() {
     return () => { cancelled = true; };
   }, [uid]);
 
+  // Red badge on the Chat bottom-nav tab — total unread DMs across every
+  // thread, kept live independent of whether ChatView is even mounted.
+  // getUnreadCounts is the same batched query MessagesMenu.tsx (desktop)
+  // already uses instead of one count-query per thread; only perDm matters
+  // here since this mobile shell has no channel chat UI.
+  const [unreadDmCount, setUnreadDmCount] = useState(0);
+  useEffect(() => {
+    if (!profileId) return;
+    let cancelled = false;
+    const refresh = () => {
+      getUnreadCounts(profileId)
+        .then((counts) => {
+          if (!cancelled) setUnreadDmCount(Object.values(counts.perDm).reduce((a, b) => a + b, 0));
+        })
+        .catch((e) => console.error("mtech: unread DM count poll failed", e));
+    };
+    refresh();
+    const intervalId = window.setInterval(refresh, 30000);
+    return () => { cancelled = true; window.clearInterval(intervalId); };
+  }, [profileId]);
+
   // Persist the mobile tech-app navigation state across page reloads.
   // The tech expects a refresh to keep them on the same view instead of
   // bouncing back to the technician roster or the ticket list.
@@ -270,8 +321,23 @@ export function MobileTechApp() {
     if (stored && (known as string[]).includes(stored)) {
       return stored as View;
     }
-    return isSelfRole ? "tickets" : "roster";
+    return isSelfRole ? "home" : "roster";
   });
+
+  // ChatView clears unread server-side the moment a thread is opened, but
+  // the 30s poll above wouldn't reflect that right away — re-poll as soon
+  // as the user leaves Chat so the nav badge drops immediately instead of
+  // lagging behind what they just read.
+  const prevViewRef = useRef<View>(view);
+  useEffect(() => {
+    if (prevViewRef.current === "chat" && view !== "chat" && profileId) {
+      getUnreadCounts(profileId)
+        .then((counts) => setUnreadDmCount(Object.values(counts.perDm).reduce((a, b) => a + b, 0)))
+        .catch((e) => console.error("mtech: unread DM count re-poll failed", e));
+    }
+    prevViewRef.current = view;
+  }, [view, profileId]);
+
   const [tab, setTab] = useState<"todo" | "done" | "search">(
     _persisted.tab ?? "todo",
   );
@@ -455,6 +521,13 @@ export function MobileTechApp() {
     });
   }, [locScoped, scopeTech]);
 
+  // Home landing page's "Assigned Today" list — same tickets To Do would
+  // show, further narrowed to today's schedule date.
+  const todaysTickets = useMemo(
+    () => myTickets.filter((t) => !isDone(t.status) && isScheduledToday(t)),
+    [myTickets]
+  );
+
   // Technician roster for managers — real TECHNICIAN-role users from Supabase,
   // scoped to the manager's allowed locations (assigned_branch / branch_access).
   const roster = useMemo(() => {
@@ -610,7 +683,17 @@ export function MobileTechApp() {
       ? "payroll"
       : view === "map"
       ? "route"
-      : "tickets"; // tickets, roster, detail, home, parts all highlight Tickets
+      : view === "home" ||
+        view === "timecard" ||
+        view === "clockinteam" ||
+        view === "itsupport" ||
+        view === "payrolldispute" ||
+        view === "timeoff" ||
+        view === "attendancedispute" ||
+        view === "correction" ||
+        view === "notifications"
+      ? "home" // Home's own quick-action tiles reach all of these sub-pages
+      : "tickets"; // tickets, roster, detail, parts all highlight Tickets
 
   // Every notification's linkTo is a DESKTOP path (e.g.
   // "/m/dashboard/attendance-monitoring?tab=disputes-inquiries") — the
@@ -799,15 +882,24 @@ export function MobileTechApp() {
           </div>
         )}
 
-        {/* home / parts sub-views still reachable but not in bottom nav — redirect to tickets */}
+        {/* parts sub-view still reachable but not in bottom nav — redirect to tickets */}
         {view === "home" && (
           <MobileHomeView
             userName={headerName}
-            openTickets={myTickets.filter((t) => !isDone(t.status)).length}
-            onOpenTickets={() => setView("tickets")}
-            onOpenPayroll={() => setView("payroll")}
-            onOpenOnHold={() => setView("onhold")}
-            onOpenRoute={() => setView("map")}
+            uid={uid}
+            profileId={profileId}
+            todaysTickets={todaysTickets}
+            onHoldTickets={onHoldTickets}
+            onOpenTicketsTab={() => setView("tickets")}
+            onOpenOnHoldTab={() => setView("onhold")}
+            showClockInTeam={isAttendanceManagerTierRole(role, extraRoles)}
+            onOpenTimecard={() => setView("timecard")}
+            onOpenClockInTeam={() => setView("clockinteam")}
+            onOpenItSupport={() => setView("itsupport")}
+            onOpenPayrollDispute={() => { setPayrollDisputePrefill(null); setView("payrolldispute"); }}
+            onOpenTimeOff={() => setView("timeoff")}
+            onOpenAttendanceDispute={() => setView("attendancedispute")}
+            onOpenCorrection={() => setView("correction")}
           />
         )}
 
@@ -822,6 +914,7 @@ export function MobileTechApp() {
       {/* ── Persistent bottom navigation bar ──────────────────────── */}
       <BottomNav
         active={activeBottomTab}
+        unreadDmCount={unreadDmCount}
         onSelect={(tab) => {
           if (tab === "tickets") setView(isSelfRole ? "tickets" : "roster");
           else if (tab === "route") setView("map");
@@ -986,8 +1079,9 @@ function AppHeaderMobile({
 }
 
 // ── Persistent bottom navigation bar ────────────────────────────────────
-type BottomTab = "tickets" | "route" | "chat" | "onhold" | "payroll";
+type BottomTab = "home" | "tickets" | "route" | "chat" | "onhold" | "payroll";
 const BOTTOM_TABS: Array<{ id: BottomTab; label: string; icon: React.ReactNode }> = [
+  { id: "home",    label: "Home",      icon: <Home        className="mtech-bottom-tab-svg" /> },
   { id: "tickets", label: "Tickets",   icon: <TicketIcon  className="mtech-bottom-tab-svg" /> },
   { id: "route",   label: "Route",     icon: <MapPin      className="mtech-bottom-tab-svg" /> },
   { id: "chat",    label: "Chat",      icon: <MessageCircle className="mtech-bottom-tab-svg" /> },
@@ -997,9 +1091,11 @@ const BOTTOM_TABS: Array<{ id: BottomTab; label: string; icon: React.ReactNode }
 
 function BottomNav({
   active,
+  unreadDmCount,
   onSelect,
 }: {
   active: BottomTab;
+  unreadDmCount: number;
   onSelect: (tab: BottomTab) => void;
 }) {
   return (
@@ -1010,10 +1106,15 @@ function BottomNav({
           type="button"
           className={`mtech-bottom-tab${active === tab.id ? " mtech-bottom-tab-active" : ""}`}
           onClick={() => onSelect(tab.id)}
-          aria-label={tab.label}
+          aria-label={tab.id === "chat" && unreadDmCount > 0 ? `${tab.label}, ${unreadDmCount} unread` : tab.label}
           aria-current={active === tab.id ? "page" : undefined}
         >
-          <span className="mtech-bottom-tab-icon">{tab.icon}</span>
+          <span className="mtech-bottom-tab-icon">
+            {tab.icon}
+            {tab.id === "chat" && unreadDmCount > 0 && (
+              <span className="mtech-bottom-tab-badge">{unreadDmCount > 9 ? "9+" : unreadDmCount}</span>
+            )}
+          </span>
           <span className="mtech-bottom-tab-label">{tab.label}</span>
         </button>
       ))}
@@ -3498,26 +3599,246 @@ function BillingTab({ ticket, companyId }: { ticket: Ticket; companyId: string |
 // Sidebar-launched views — stay inside the mobile shell
 // ══════════════════════════════════════════════════════════════════════
 
+// A total-only stat card on the Home landing page ("Assigned Today" /
+// "Pending On Hold") — just the count, tap to jump to the full tab for the
+// actual ticket details instead of repeating full ticket cards here too.
+function HomeTicketSummary({
+  title,
+  count,
+  onViewAll,
+  emptyText,
+}: {
+  title: string;
+  count: number;
+  onViewAll: () => void;
+  emptyText: string;
+}) {
+  return (
+    <button type="button" className="mtech-home-stat mtech-home-stat-btn" disabled={count === 0} onClick={onViewAll}>
+      <div>
+        <div className="mtech-home-stat-title">{title}</div>
+        {count === 0 && <div className="mtech-home-stat-sub">{emptyText}</div>}
+      </div>
+      <div className="mtech-home-stat-value">{count}</div>
+    </button>
+  );
+}
+
+// One Time In/Out/Meal In/Out card on the Home landing page. Two states:
+// a plain tappable card showing the recorded value (or "—"), or — once
+// armed by a first tap — an inline "Yes / No" confirm in the same slot,
+// so committing a clock event never needs a native browser popup.
+function ClockCard({
+  label,
+  value,
+  valueClass,
+  armed,
+  canAct,
+  confirmLabel,
+  onTap,
+  onCancel,
+}: {
+  label: string;
+  value: string;
+  valueClass: "in" | "out" | "meal";
+  armed: boolean;
+  canAct: boolean;
+  confirmLabel: string;
+  onTap: () => void;
+  onCancel: () => void;
+}) {
+  if (armed) {
+    return (
+      <div className="mtech-timecard-card mtech-timecard-card-confirm">
+        <div className="mtech-timecard-card-confirm-label">{confirmLabel}</div>
+        <div className="mtech-timecard-card-confirm-actions">
+          <button type="button" className="mtech-timecard-confirm-btn mtech-timecard-confirm-yes" onClick={onTap}>Yes</button>
+          <button type="button" className="mtech-timecard-confirm-btn mtech-timecard-confirm-no" onClick={onCancel}>No</button>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <button type="button" className="mtech-timecard-card mtech-timecard-card-btn" disabled={!canAct} onClick={onTap}>
+      <div className="mtech-timecard-card-label">{label}</div>
+      <div className={`mtech-timecard-card-value ${valueClass}`}>{value || "—"}</div>
+    </button>
+  );
+}
+
 // Home tab: high-level greeting + quick jumps to the same sidebar
 // destinations so users can navigate without opening the drawer.
 function MobileHomeView({
   userName,
-  openTickets,
-  onOpenTickets,
-  onOpenPayroll,
-  onOpenOnHold,
-  onOpenRoute,
+  uid,
+  profileId,
+  todaysTickets,
+  onHoldTickets,
+  onOpenTicketsTab,
+  onOpenOnHoldTab,
+  showClockInTeam,
+  onOpenTimecard,
+  onOpenClockInTeam,
+  onOpenItSupport,
+  onOpenPayrollDispute,
+  onOpenTimeOff,
+  onOpenAttendanceDispute,
+  onOpenCorrection,
 }: {
   userName: string;
-  openTickets: number;
-  onOpenTickets: () => void;
-  onOpenPayroll: () => void;
-  onOpenOnHold: () => void;
-  onOpenRoute: () => void;
+  uid: string | null;
+  profileId: string | null;
+  todaysTickets: Ticket[];
+  onHoldTickets: Ticket[];
+  onOpenTicketsTab: () => void;
+  onOpenOnHoldTab: () => void;
+  showClockInTeam: boolean;
+  onOpenTimecard: () => void;
+  onOpenClockInTeam: () => void;
+  onOpenItSupport: () => void;
+  onOpenPayrollDispute: () => void;
+  onOpenTimeOff: () => void;
+  onOpenAttendanceDispute: () => void;
+  onOpenCorrection: () => void;
 }) {
   const hourNow = new Date().getHours();
   const greeting =
     hourNow < 12 ? "Good morning" : hourNow < 18 ? "Good afternoon" : "Good evening";
+
+  // Same clock-in/meal data + rules as MobileTimecardView, so tapping a
+  // card here is a real Time In/Out or Meal In/Out, not just a shortcut to
+  // the Timecard tab. Confirmation is inline (tap to arm, tap Yes to
+  // confirm) rather than a native window.confirm() popup, to match the
+  // rest of this card-based UI instead of a plain OS dialog.
+  const [requiredCheckIn, setRequiredCheckIn] = useState("");
+  const [requiredCheckOut, setRequiredCheckOut] = useState("");
+  const [workingHours, setWorkingHours] = useState<number | null>(null);
+  const [mealMinutes, setMealMinutes] = useState<number | null>(null);
+  const [scheduleProfileId, setScheduleProfileId] = useState<string | null>(null);
+  const [entry, setEntry] = useState<UITimeEntry>({ checkIn: "", checkOut: "", mealStart: "", mealEnd: "", notes: "" });
+  const [saving, setSaving] = useState(false);
+
+  const now = new Date();
+  const todayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+
+  useEffect(() => {
+    if (!uid) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const schedule = await getMyProfileSchedule(uid);
+        if (cancelled) return;
+        setRequiredCheckIn(schedule.requiredCheckIn);
+        setRequiredCheckOut(schedule.requiredCheckOut);
+        setWorkingHours(schedule.workingHours);
+        setMealMinutes(schedule.mealMinutes);
+        setScheduleProfileId(schedule.profileId || null);
+        if (!schedule.profileId) return;
+        const monthEntries = await getMonthEntries(schedule.profileId, now.getFullYear(), now.getMonth());
+        if (!cancelled) setEntry(monthEntries[todayKey] || { checkIn: "", checkOut: "", mealStart: "", mealEnd: "", notes: "" });
+      } catch (e) {
+        console.error("MobileHomeView: load today's entry failed", e);
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [uid]);
+
+  const getNowTime = (): string => {
+    const t = new Date();
+    return `${String(t.getHours()).padStart(2, "0")}:${String(t.getMinutes()).padStart(2, "0")}:${String(t.getSeconds()).padStart(2, "0")}`;
+  };
+
+  const persist = async (next: UITimeEntry) => {
+    if (!scheduleProfileId) {
+      alert("Could not resolve your profile. Please re-login.");
+      return;
+    }
+    setEntry(next);
+    setSaving(true);
+    try {
+      await saveTimecardEntry(scheduleProfileId, todayKey, next);
+    } catch (e) {
+      console.error("MobileHomeView: save failed", e);
+      alert(`Failed to save: ${e instanceof Error ? e.message : "Unknown error"}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const canTimeIn = !entry.checkIn && !saving;
+  const canTimeOut = !!entry.checkIn && !entry.checkOut && !saving;
+  const canMealIn = !!entry.checkIn && !entry.checkOut && !entry.mealStart && !saving;
+  const canMealOut = !!entry.mealStart && !entry.mealEnd && !saving;
+
+  // Which card is currently showing its inline "Yes / No" confirm —
+  // at most one at a time. Auto-disarms after a few seconds so an armed
+  // card doesn't sit there indefinitely if the user taps away.
+  type ArmedCard = "checkIn" | "checkOut" | "mealStart" | "mealEnd" | null;
+  const [armedCard, setArmedCard] = useState<ArmedCard>(null);
+  const armTimerRef = useRef<number | null>(null);
+
+  const arm = (card: ArmedCard) => {
+    if (armTimerRef.current) window.clearTimeout(armTimerRef.current);
+    setArmedCard(card);
+    armTimerRef.current = window.setTimeout(() => setArmedCard(null), 4000);
+  };
+  const disarm = () => {
+    if (armTimerRef.current) window.clearTimeout(armTimerRef.current);
+    setArmedCard(null);
+  };
+  useEffect(() => () => { if (armTimerRef.current) window.clearTimeout(armTimerRef.current); }, []);
+
+  const handleTimeIn = () => {
+    if (!canTimeIn) return;
+    if (armedCard !== "checkIn") { arm("checkIn"); return; }
+    disarm();
+    persist({ ...entry, checkIn: getNowTime() });
+  };
+
+  const handleTimeOut = () => {
+    if (!canTimeOut) return;
+    if (armedCard !== "checkOut") { arm("checkOut"); return; }
+    disarm();
+    persist({ ...entry, checkOut: getNowTime() });
+  };
+
+  const handleMealIn = () => {
+    if (!canMealIn) return;
+    if (armedCard !== "mealStart") {
+      if ((!requiredCheckIn || !requiredCheckOut) && !workingHours) {
+        alert("No scheduled shift is set for your account. Contact your admin to set your required schedule.");
+        return;
+      }
+      const scheduledShift = resolveScheduledShiftHours(requiredCheckIn, requiredCheckOut, workingHours, mealMinutes);
+      if (scheduledShift <= 6) {
+        alert(`Meal break is only available for scheduled shifts of more than 6 hours. Your scheduled shift is ${scheduledShift.toFixed(1)} hours.`);
+        return;
+      }
+      arm("mealStart");
+      return;
+    }
+    disarm();
+    persist({ ...entry, mealStart: getNowTime() });
+  };
+
+  const handleMealOut = () => {
+    if (!canMealOut) return;
+    if (armedCard !== "mealEnd") { arm("mealEnd"); return; }
+    disarm();
+    persist({ ...entry, mealEnd: getNowTime() });
+  };
+
+  const menuTiles = [
+    { key: "timecard", label: "Timecard", icon: <Clock className="mtech-home-tile-svg" />, onClick: onOpenTimecard, show: true },
+    { key: "clockinteam", label: "Clock In Team", icon: <Users className="mtech-home-tile-svg" />, onClick: onOpenClockInTeam, show: showClockInTeam },
+    { key: "itsupport", label: "IT Support", icon: <LifeBuoy className="mtech-home-tile-svg" />, onClick: onOpenItSupport, show: true },
+    { key: "payrolldispute", label: "Payroll Dispute", icon: <Receipt className="mtech-home-tile-svg" />, onClick: onOpenPayrollDispute, show: true },
+    { key: "timeoff", label: "Time Off Request", icon: <Palmtree className="mtech-home-tile-svg" />, onClick: onOpenTimeOff, show: true },
+    { key: "attendancedispute", label: "Attendance Dispute", icon: <AlertTriangle className="mtech-home-tile-svg" />, onClick: onOpenAttendanceDispute, show: true },
+    { key: "correction", label: "Time Correction", icon: <PenLine className="mtech-home-tile-svg" />, onClick: onOpenCorrection, show: true },
+  ].filter((t) => t.show);
+
   return (
     <div className="mtech-scroll mtech-home">
       <div className="mtech-home-greeting">
@@ -3526,29 +3847,52 @@ function MobileHomeView({
       </div>
 
       <div className="mtech-home-stats">
-        <div className="mtech-home-stat">
-          <div className="mtech-home-stat-value">{openTickets}</div>
-          <div className="mtech-home-stat-label">Open Tickets</div>
-        </div>
+        <HomeTicketSummary
+          title="Assigned Today"
+          count={todaysTickets.length}
+          onViewAll={onOpenTicketsTab}
+          emptyText="No tickets scheduled for today."
+        />
+        <HomeTicketSummary
+          title="On Hold"
+          count={onHoldTickets.length}
+          onViewAll={onOpenOnHoldTab}
+          emptyText="No tickets on hold right now."
+        />
       </div>
 
+      <div className="mtech-timecard-summary">
+        <ClockCard
+          label="Time In" value={entry.checkIn ? entry.checkIn.slice(0, 5) : ""} valueClass="in"
+          armed={armedCard === "checkIn"} canAct={canTimeIn} confirmLabel="Time In now?"
+          onTap={handleTimeIn} onCancel={disarm}
+        />
+        <ClockCard
+          label="Time Out" value={entry.checkOut ? entry.checkOut.slice(0, 5) : ""} valueClass="out"
+          armed={armedCard === "checkOut"} canAct={canTimeOut} confirmLabel="Time Out now?"
+          onTap={handleTimeOut} onCancel={disarm}
+        />
+        <ClockCard
+          label="Meal In" value={entry.mealStart ? entry.mealStart.slice(0, 5) : ""} valueClass="meal"
+          armed={armedCard === "mealStart"} canAct={canMealIn} confirmLabel="Meal In now?"
+          onTap={handleMealIn} onCancel={disarm}
+        />
+        <ClockCard
+          label="Meal Out" value={entry.mealEnd ? entry.mealEnd.slice(0, 5) : ""} valueClass="meal"
+          armed={armedCard === "mealEnd"} canAct={canMealOut} confirmLabel="Meal Out now?"
+          onTap={handleMealOut} onCancel={disarm}
+        />
+      </div>
+
+      <div className="mtech-home-divider" />
+
       <div className="mtech-home-grid">
-        <button className="mtech-home-tile" type="button" onClick={onOpenTickets}>
-          <TicketIcon className="mtech-home-tile-svg" />
-          <span className="mtech-home-tile-label">Tickets</span>
-        </button>
-        <button className="mtech-home-tile" type="button" onClick={onOpenOnHold}>
-          <PauseCircle className="mtech-home-tile-svg" />
-          <span className="mtech-home-tile-label">On Hold</span>
-        </button>
-        <button className="mtech-home-tile" type="button" onClick={onOpenRoute}>
-          <MapPin className="mtech-home-tile-svg" />
-          <span className="mtech-home-tile-label">Route</span>
-        </button>
-        <button className="mtech-home-tile" type="button" onClick={onOpenPayroll}>
-          <DollarSign className="mtech-home-tile-svg" />
-          <span className="mtech-home-tile-label">Payroll</span>
-        </button>
+        {menuTiles.map((t) => (
+          <button key={t.key} className="mtech-home-tile" type="button" onClick={t.onClick}>
+            {t.icon}
+            <span className="mtech-home-tile-label">{t.label}</span>
+          </button>
+        ))}
       </div>
     </div>
   );
