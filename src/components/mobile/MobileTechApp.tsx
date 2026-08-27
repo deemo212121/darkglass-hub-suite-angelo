@@ -26,6 +26,7 @@ import {
   getLatestVisitTechnicianByTicketIds,
   getTicketParts,
   updateTicketPart,
+  setTicketOnsiteCheckIn,
   type UIPartRow,
 } from "@/lib/supabase/tickets";
 import { getMyProfileId, getMyFullProfile } from "@/lib/supabase/users";
@@ -3788,7 +3789,10 @@ function HomeOnSiteCard({
     const time = formatNow();
     setBusy(t.ticketNo);
     try {
-      await logCheckIn(t, "arrived", time);
+      await Promise.all([
+        logCheckIn(t, "arrived", time),
+        setTicketOnsiteCheckIn(t.ticketNo, "arrived", new Date().toISOString()),
+      ]);
       setArrivedAt((prev) => ({ ...prev, [t.ticketNo]: time }));
     } catch (e) {
       console.error("on-site check-in: arrival log failed", e);
@@ -3802,7 +3806,10 @@ function HomeOnSiteCard({
     const time = formatNow();
     setBusy(t.ticketNo);
     try {
-      await logCheckIn(t, "marked done", time);
+      await Promise.all([
+        logCheckIn(t, "marked done", time),
+        setTicketOnsiteCheckIn(t.ticketNo, "done", new Date().toISOString()),
+      ]);
       setDoneAt((prev) => ({ ...prev, [t.ticketNo]: time }));
     } catch (e) {
       console.error("on-site check-in: done log failed", e);

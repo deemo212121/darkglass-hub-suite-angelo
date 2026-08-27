@@ -59,12 +59,18 @@ function slotSortKey(timeSlot: string | null | undefined): string {
 /**
  * One row per active technician (from getCompanyTechnicians — already
  * excludes deactivated accounts), each resolved to today's schedule:
- *  - "current": earliest still-open ticket scheduled today, by time slot.
- *  - "last": no open ticket left today, but at least one was completed —
- *    their last completed stop (by time slot). Cancelled-only days don't
- *    count here since a cancelled call is no real signal the tech ever
- *    went there.
- *  - "none": nothing scheduled today (or only cancelled calls).
+ *  - "current": a ticket the technician has actually checked into via the
+ *    mobile On-Site Check-In card (onsite_arrived_at set, onsite_done_at
+ *    not yet) — being scheduled for today alone no longer counts; see
+ *    migration 0202. If more than one somehow qualifies, the most
+ *    recently arrived wins.
+ *  - "last": no on-site check-in in progress, but at least one ticket was
+ *    completed today — their last completed stop (by time slot).
+ *    Cancelled-only days don't count here since a cancelled call is no
+ *    real signal the tech ever went there.
+ *  - "none": nothing checked into or completed today (or only cancelled
+ *    calls) — including a technician with an open ticket on today's
+ *    schedule who simply hasn't tapped "I'm Here" yet.
  */
 export async function getTechnicianWhereabouts(): Promise<TechnicianWhereabouts[]> {
   const technicians = await getCompanyTechnicians();
@@ -74,7 +80,7 @@ export async function getTechnicianWhereabouts(): Promise<TechnicianWhereabouts[
   const [{ data, error }, pings] = await Promise.all([
     supabase
       .from("tickets")
-      .select("ticket_no, technician, status, time_slot, customer:customers ( address, address2, city, state, zip )")
+      .select("ticket_no, technician, status, time_slot, onsite_arrived_at, onsite_done_at, customer:customers ( address, address2, city, state, zip )")
       .eq("schedule_date", today),
     // Best-effort: a non-Admin/SuperAdmin caller would get an RLS-empty
     // result here, not an error, but this function itself is only ever
@@ -116,9 +122,11 @@ export async function getTechnicianWhereabouts(): Promise<TechnicianWhereabouts[
       return { ...base, status: "none", ticketNo: null, repairStatus: null, timeSlot: null, address: null };
     }
 
-    const open = rows.filter((r) => statusGroupOf(r.status) === "open").sort((a, b) => slotSortKey(a.time_slot).localeCompare(slotSortKey(b.time_slot)));
-    if (open.length > 0) {
-      const stop = open[0];
+    const checkedIn = rows
+      .filter((r) => r.onsite_arrived_at && !r.onsite_done_at)
+      .sort((a, b) => new Date(b.onsite_arrived_at).getTime() - new Date(a.onsite_arrived_at).getTime());
+    if (checkedIn.length > 0) {
+      const stop = checkedIn[0];
       return { ...base, status: "current", ticketNo: stop.ticket_no, repairStatus: stop.status, timeSlot: stop.time_slot, address: formatAddress(stop.customer ?? {}) };
     }
 
@@ -143,6 +151,9 @@ export interface TechnicianRouteStop {
   statusGroup: ReturnType<typeof statusGroupOf>;
   timeSlot: string | null;
   address: string;
+  /** Real On-Site Check-In timestamps (migration 0202) — when the technician tapped "I'm Here"/"I'm Done" on this stop today, for the Today's Route popup's "Timestamp (Start - End)" row. Either can be null: not yet arrived, or arrived but not yet marked done. */
+  arrivedAt: string | null;
+  doneAt: string | null;
 }
 
 /** Every ticket scheduled today for one technician, in time-slot order — feeds the "today's route" map view opened by clicking their dot. */
@@ -150,7 +161,7 @@ export async function getTechnicianTodayRoute(technicianName: string): Promise<T
   const today = new Date().toISOString().slice(0, 10);
   const { data, error } = await supabase
     .from("tickets")
-    .select("ticket_no, technician, status, time_slot, customer:customers ( address, address2, city, state, zip )")
+    .select("ticket_no, technician, status, time_slot, onsite_arrived_at, onsite_done_at, customer:customers ( address, address2, city, state, zip )")
     .eq("schedule_date", today);
   if (error) {
     console.error("getTechnicianTodayRoute error:", error.message);
@@ -165,6 +176,8 @@ export async function getTechnicianTodayRoute(technicianName: string): Promise<T
       statusGroup: statusGroupOf(row.status),
       timeSlot: row.time_slot as string | null,
       address: formatAddress(row.customer ?? {}),
+      arrivedAt: row.onsite_arrived_at as string | null,
+      doneAt: row.onsite_done_at as string | null,
     }))
     .sort((a, b) => slotSortKey(a.timeSlot).localeCompare(slotSortKey(b.timeSlot)));
 }

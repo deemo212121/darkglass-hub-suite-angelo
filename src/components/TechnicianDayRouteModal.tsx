@@ -29,6 +29,10 @@ import {
   type LatLng,
 } from "@/lib/mapEngine";
 
+function formatStopTime(iso: string): string {
+  return new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+
 const STOP_STATUS_COLOR: Record<TechnicianRouteStop["statusGroup"], string> = {
   open: "#5b7eff",
   completed: "#22c55e",
@@ -403,6 +407,11 @@ export function TechnicianDayRouteModal({ technicianName, branch, liveLocation, 
                             {stop.timeSlot && <span className="text-slate-500"> · {stop.timeSlot}</span>}
                             <span className="text-slate-500"> · {stop.status}</span>
                             <p className="text-slate-400 truncate">{stop.address || "No address on file"}</p>
+                            {stop.arrivedAt && (
+                              <p className="text-slate-500 mt-0.5">
+                                Timestamp (Start - End): {formatStopTime(stop.arrivedAt)} - {stop.doneAt ? formatStopTime(stop.doneAt) : "in progress"}
+                              </p>
+                            )}
                           </div>
                         </div>
                       ))
