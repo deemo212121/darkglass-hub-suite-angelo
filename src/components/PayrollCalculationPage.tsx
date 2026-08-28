@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useCallback, Fragment } from "react";
-import { Link } from "@tanstack/react-router";
+import { useNavigate } from "@tanstack/react-router";
+import { useSmartBack } from "@/hooks/useSmartBack";
 import { ChevronLeft, Download } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
@@ -47,6 +48,8 @@ function rateLabel(row: PayrollRow): string {
 }
 
 export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
+  const navigate = useNavigate();
+  const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
   const { displayName, email } = useAuth();
   const [loading, setLoading] = useState(true);
   const [profiles, setProfiles] = useState<ProfileRow[]>([]);
@@ -218,9 +221,9 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
       <main className="flex-1 max-w-[1400px] mx-auto w-full px-6 py-8">
         <div className="mb-8">
           <div className="flex items-center gap-3 mb-6">
-            <Link to="/m/$module" params={{ module: mod.slug }} className="btn hover:bg-white/15">
+            <button type="button" onClick={goBack} className="btn hover:bg-white/15">
               <ChevronLeft className="h-4 w-4" /> {mod.label}
-            </Link>
+            </button>
           </div>
           <div>
             <h1 className="text-2xl font-semibold tracking-tight flex items-center gap-2">

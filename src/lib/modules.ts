@@ -140,6 +140,7 @@ const dashboardMod: ModuleDef = {
       title: "Payroll Calculation Dashboard",
       description: "Calculate and manage employee payroll with deductions.",
       custom: "payroll-calculation" as any,
+      hiddenFromGrid: true,
       fields: [
         { key: "employeeName", label: "Employee", filterable: true },
         { key: "period", label: "Period", filterable: true },
@@ -293,6 +294,7 @@ const dashboardMod: ModuleDef = {
       title: "Staff List",
       description: "Per-branch technician roster, branch-manager summary, and tier pay rates.",
       custom: "staff-list",
+      hiddenFromGrid: true,
       fields: [],
       count: 0,
       seed: () => ({}),

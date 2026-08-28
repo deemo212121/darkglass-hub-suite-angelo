@@ -1,6 +1,7 @@
 import { useState, useMemo, useRef, useEffect } from "react";
 import { ChevronLeft, RefreshCw, ChevronDown } from "lucide-react";
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
+import { useSmartBack } from "@/hooks/useSmartBack";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { LOCATIONS, pick, pad, offsetStr, todayStr } from "@/components/shared";
 
@@ -55,6 +56,8 @@ function LocationDropdown({ value, onChange }: { value: string; onChange: (v: st
 }
 
 export function PartTransactionReport({ mod, sub }: Props) {
+  const navigate = useNavigate();
+  const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
   const [location, setLocation] = useState("");
   const [dateType, setDateType] = useState("P/O Date");
   const [startDate, setStartDate] = useState(todayStr());
@@ -76,7 +79,7 @@ export function PartTransactionReport({ mod, sub }: Props) {
         <span className="text-foreground font-medium">Part Transaction Report</span>
       </div>
       <div className="flex items-center gap-3 mb-5">
-        <Link to="/m/$module" params={{ module: mod.slug }} className="btn"><ChevronLeft className="h-4 w-4"/></Link>
+        <button type="button" onClick={goBack} className="btn"><ChevronLeft className="h-4 w-4"/></button>
         <h1 className="text-xl font-bold">Part Transaction Report</h1>
       </div>
       <div className="panel panel-filter mb-5">

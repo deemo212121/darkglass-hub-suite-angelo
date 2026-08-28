@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
+import { useSmartBack } from "@/hooks/useSmartBack";
 import { ChevronLeft } from "lucide-react";
 import { LOCATIONS } from "@/lib/locations";
 import { getPartFootprint, type PartFootprintRow } from "@/lib/supabase/partFootprint";
@@ -15,6 +16,8 @@ function formatUsd(value: number | undefined): string {
 }
 
 export function PartFootprintPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
+  const navigate = useNavigate();
+  const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
   const [rows, setRows] = useState<PartFootprintRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -166,9 +169,9 @@ export function PartFootprintPage({ mod, sub }: { mod: ModuleDef; sub: SubModule
 
         <div className="mb-8">
           <div className="flex items-center gap-3 mb-6">
-            <Link to="/m/$module" params={{ module: mod.slug }} className="btn hover:bg-white/15">
+            <button type="button" onClick={goBack} className="btn hover:bg-white/15">
               <ChevronLeft className="h-4 w-4" /> {mod.label}
-            </Link>
+            </button>
           </div>
           <h1 className="text-4xl font-display font-bold tracking-tight mb-2">{sub.title}</h1>
           <p className="text-lg text-muted-foreground">{sub.description}</p>

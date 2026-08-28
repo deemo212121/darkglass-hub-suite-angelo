@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
+import { useSmartBack } from "@/hooks/useSmartBack";
 import { ChevronLeft } from "lucide-react";
 import { LOCATIONS } from "@/lib/locations";
 import {
@@ -15,6 +16,8 @@ function formatUsd(value: number | undefined): string {
 }
 
 export function ReturnPickupPage() {
+  const navigate = useNavigate();
+  const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: "parts" } }));
   const [allRows, setAllRows] = useState<ReturnPickupRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -274,9 +277,9 @@ export function ReturnPickupPage() {
 
         <div className="mb-4">
           <div className="flex items-center gap-3 mb-4">
-            <Link to="/m/$module" params={{ module: "parts" }} className="back-btn">
+            <button type="button" onClick={goBack} className="back-btn">
               <ChevronLeft className="h-4 w-4" /> Parts
-            </Link>
+            </button>
           </div>
           <h1 className="text-2xl font-semibold leading-tight text-white">Return &amp; Pickup</h1>
         </div>

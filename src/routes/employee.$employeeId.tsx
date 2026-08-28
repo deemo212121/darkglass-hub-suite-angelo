@@ -12,6 +12,7 @@
  * numbers here always agree with the company-wide report.
  */
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { useSmartBack } from "@/hooks/useSmartBack";
 import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, Clock, Loader2, CalendarOff } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { AppHeader } from "@/components/Header";
@@ -82,6 +83,7 @@ function dayCellClass(status: "present" | "late" | "absent" | "day-off" | "futur
 function EmployeeDetailsPage() {
   const { employeeId } = Route.useParams();
   const navigate = useNavigate();
+  const goBackToDashboard = useSmartBack(() => navigate({ to: "/m/$module", params: { module: "dashboard" } }));
   const { ready } = useAuth();
 
   const [loading, setLoading] = useState(true);
@@ -186,9 +188,9 @@ function EmployeeDetailsPage() {
 
       <header className="border-b border-white/10 bg-slate-900/50 backdrop-blur">
         <div className="max-w-350 mx-auto px-6 py-6 flex items-center gap-4">
-          <Link to="/m/$module" params={{ module: "dashboard" }} className="btn hover:bg-white/15 p-2 rounded-md">
+          <button type="button" onClick={goBackToDashboard} className="btn hover:bg-white/15 p-2 rounded-md">
             <ChevronLeft className="h-5 w-5" />
-          </Link>
+          </button>
           <div>
             <h1 className="text-2xl font-bold text-white">{loading ? "Loading…" : employee?.display_name || employee?.username || employee?.email || "—"}</h1>
             <p className="text-sm text-slate-400">

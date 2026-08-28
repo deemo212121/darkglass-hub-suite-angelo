@@ -5,6 +5,7 @@ import { setDesktopOverride } from "@/lib/device";
 import { useLiveLocation } from "@/lib/liveLocationContext";
 import {
   ArrowLeft,
+  Check,
   ChevronRight,
   Send,
   Ticket as TicketIcon,
@@ -14,6 +15,7 @@ import {
   DollarSign,
   ExternalLink,
   Home,
+  X,
 } from "lucide-react";
 // Mobile shell is an isolated surface — no navigation to desktop routes,
 // no device-override toggle. The desktop UI is available only from an
@@ -2006,12 +2008,6 @@ function DetailsTab({
 
   return (
     <div className="mtech-panel">
-      <div className="mtech-actions">
-        <button type="button" disabled title="Coming soon">On my way</button>
-        <button type="button" disabled title="Coming soon">Check In</button>
-        <button type="button" disabled title="Coming soon">Check Out</button>
-      </div>
-
       <div className="mtech-section-title">Customer</div>
       <InfoRow label="Name" value={ticket.customer || [ticket.firstName, ticket.lastName].filter(Boolean).join(" ")} />
       <InfoRow label="Phone" value={ticket.phone || ticket.secondPhone} type="phone" />
@@ -3674,7 +3670,7 @@ function HomeOnSiteCard({
   // has confirmed Location Consent AND is clocked in; consentConfirmed/
   // clockedIn are exposed here so this card can explain which of those is
   // missing instead of a generic error.
-  const { position: myPos, consentConfirmed, clockedIn } = useLiveLocation();
+  const { position: myPos, watching, consentConfirmed, clockedIn, permissionDenied } = useLiveLocation();
 
   // Dev-only escape hatch for testing the in-radius UI without real GPS
   // (e.g. location permission unavailable in this environment). Gated on
@@ -3685,11 +3681,19 @@ function HomeOnSiteCard({
   // itself is about to be ignored anyway.
   const [devSimulate, setDevSimulate] = useState(false);
 
-  const geoError = !consentConfirmed
-    ? "Confirm the Location Sharing Consent agreement to use on-site check-in."
+  // Sharing is only actually "on" once TechnicianLocationTracker.tsx has a
+  // live reading flowing (watching) — separate from consentConfirmed, which
+  // just means the agreement is on file. Two independent status rows below
+  // instead of one message, so a technician can see at a glance which of
+  // the two prerequisites is actually missing.
+  const sharingActive = watching || devSimulate;
+  const sharingReason = !consentConfirmed
+    ? null // already explained by the Consent row above — no need to repeat it
     : !clockedIn
-    ? "Clock in to use on-site check-in."
-    : !myPos && !devSimulate
+    ? "Clock in to start sharing your location."
+    : permissionDenied
+    ? "Location access is blocked — enable it in your phone's Settings."
+    : !sharingActive
     ? "Waiting for a location fix…"
     : null;
 
@@ -3792,16 +3796,6 @@ function HomeOnSiteCard({
   return (
     <div className="mtech-home-onsite">
       <div className="mtech-home-onsite-title">On-Site Check-In</div>
-      {geoError && <div className="mtech-home-onsite-hint">{geoError}</div>}
-      {import.meta.env.DEV && (
-        <button
-          type="button"
-          className="mtech-home-onsite-devbtn"
-          onClick={() => setDevSimulate((v) => !v)}
-        >
-          {devSimulate ? "✓ " : ""}Dev: simulate in-radius (local only)
-        </button>
-      )}
       {!focusTicket ? (
         <div className="mtech-home-onsite-empty">
           {visibleTickets.length === 0 ? "No active tickets to check into right now." : "Locating nearby tickets…"}
@@ -3861,6 +3855,25 @@ function HomeOnSiteCard({
           );
         })()}
       </div>
+      )}
+      <div className="mtech-home-onsite-hint">This feature appears once you're within about 200 meters of the customer's address.</div>
+      <div className="mtech-home-onsite-status-row">
+        <span className={`mtech-home-onsite-status ${consentConfirmed ? "is-ok" : "is-bad"}`}>
+          {consentConfirmed ? <Check className="h-3 w-3" /> : <X className="h-3 w-3" />} Consent
+        </span>
+        <span className={`mtech-home-onsite-status ${sharingActive ? "is-ok" : "is-bad"}`}>
+          {sharingActive ? <Check className="h-3 w-3" /> : <X className="h-3 w-3" />} Sharing Location
+        </span>
+      </div>
+      {sharingReason && <div className="mtech-home-onsite-hint">{sharingReason}</div>}
+      {import.meta.env.DEV && (
+        <button
+          type="button"
+          className="mtech-home-onsite-devbtn"
+          onClick={() => setDevSimulate((v) => !v)}
+        >
+          {devSimulate ? "✓ " : ""}Dev: simulate in-radius (local only)
+        </button>
       )}
     </div>
   );
@@ -4069,14 +4082,13 @@ function MobileHomeView({
       <div className="mtech-home-greeting">
         <div className="mtech-home-hi">{greeting},</div>
         <div className="mtech-home-name">{userName}</div>
+        <HomeTicketStatsCard
+          todaysCount={todaysTickets.length}
+          onHoldCount={onHoldTickets.length}
+          onOpenTicketsTab={onOpenTicketsTab}
+          onOpenOnHoldTab={onOpenOnHoldTab}
+        />
       </div>
-
-      <HomeTicketStatsCard
-        todaysCount={todaysTickets.length}
-        onHoldCount={onHoldTickets.length}
-        onOpenTicketsTab={onOpenTicketsTab}
-        onOpenOnHoldTab={onOpenOnHoldTab}
-      />
 
       <div className="mtech-timecard-summary mtech-home-clockrow">
         <ClockCard

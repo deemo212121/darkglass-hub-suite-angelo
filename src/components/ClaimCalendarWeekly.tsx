@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect, useCallback, useLayoutEffect } from "react";
 import { createPortal } from "react-dom";
 import { ChevronLeft, ChevronRight } from "lucide-react";
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
+import { useSmartBack } from "@/hooks/useSmartBack";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { LOCATIONS, CSR_NAMES, pick } from "@/components/shared";
 
@@ -44,6 +45,8 @@ function generateTechWeekData(techs: string[], dates: Date[]) {
 }
 
 export function ClaimCalendarWeekly({ mod, sub }: Props) {
+  const navigate = useNavigate();
+  const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
   const today = new Date();
   const [weekStart, setWeekStart] = useState(getMondayOfWeek(today));
   const [location, setLocation] = useState("");
@@ -103,7 +106,7 @@ export function ClaimCalendarWeekly({ mod, sub }: Props) {
         <span className="text-foreground font-medium">Claim Calendar (Weekly)</span>
       </div>
       <div className="flex items-center gap-3 mb-5">
-        <Link to="/m/$module" params={{ module: mod.slug }} className="btn"><ChevronLeft className="h-4 w-4"/></Link>
+        <button type="button" onClick={goBack} className="btn"><ChevronLeft className="h-4 w-4"/></button>
         <h1 className="text-xl font-bold">Claim Calendar (Weekly)</h1>
       </div>
 

@@ -1,6 +1,7 @@
 import { AlertCircle, AlertTriangle, Clock, Users, UserCheck, UserX, Bell, MessageSquare, ChevronLeft, Download, Calendar, FileText, CheckCircle, XCircle, Loader2 } from "lucide-react";
 import { useState, useEffect, useMemo, useCallback, Fragment } from "react";
-import { Link, useSearch } from "@tanstack/react-router";
+import { useSearch, useNavigate } from "@tanstack/react-router";
+import { useSmartBack } from "@/hooks/useSmartBack";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { usePersistedTab } from "@/lib/usePersistedTab";
@@ -194,6 +195,8 @@ function isPenalizedLateAlert(alert: string): boolean {
 }
 
 export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
+  const navigate = useNavigate();
+  const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
   const { uid, ready, allowedLocations, displayName, role, extraRoles } = useAuth();
   // Attendance notes (the quick "Add Note" / Notify Individual / Notify Team
   // Lead flow) are open to HR/Finance/Admin for the whole roster, and to
@@ -1153,9 +1156,9 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
       <main className="flex-1 max-w-[1400px] mx-auto w-full px-6 py-8">
         <div className="mb-8">
           <div className="flex items-center gap-3 mb-6">
-            <Link to="/m/$module" params={{ module: mod.slug }} className="btn hover:bg-white/15">
+            <button type="button" onClick={goBack} className="btn hover:bg-white/15">
               <ChevronLeft className="h-4 w-4" /> {mod.label}
-            </Link>
+            </button>
           </div>
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>

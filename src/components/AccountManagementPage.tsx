@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "@tanstack/react-router";
+import { useNavigate } from "@tanstack/react-router";
+import { useSmartBack } from "@/hooks/useSmartBack";
 import { ChevronLeft, Loader2, CheckCircle2, CircleDashed } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import {
@@ -82,6 +83,8 @@ const blankRow = (): AccountRow => ({
 });
 
 export function AccountManagementPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
+  const navigate = useNavigate();
+  const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
   const [rows, setRows] = useState<AccountRow[]>([]);
   const [savedRows, setSavedRows] = useState<AccountRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -185,10 +188,10 @@ export function AccountManagementPage({ mod, sub }: { mod: ModuleDef; sub: SubMo
     <main className="flex-1 bg-slate-950 py-6">
       <div className="max-w-[1500px] mx-auto px-6">
         <div className="flex items-center gap-3 text-white">
-          <Link to="/m/$module" params={{ module: mod.slug }} className="btn">
+          <button type="button" onClick={goBack} className="btn">
             <ChevronLeft className="h-4 w-4" />
             {mod.label}
-          </Link>
+          </button>
           <div>
             <h1 className="text-3xl font-bold tracking-tight">{sub.title}</h1>
             <p className="mt-1 text-sm text-slate-300">{sub.description}</p>

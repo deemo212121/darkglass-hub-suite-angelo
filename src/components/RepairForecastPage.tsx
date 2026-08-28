@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "@tanstack/react-router";
+import { useNavigate } from "@tanstack/react-router";
+import { useSmartBack } from "@/hooks/useSmartBack";
 import { ChevronLeft } from "lucide-react";
 import { getLocationRanking, getOverallStatus, getTechRanking, getTickets } from "@/lib/db-api";
 import type { DashboardOverallStatus, LocationRankingRecord, ModuleDef, SubModuleDef, TechRankingRecord, Ticket } from "@/lib/db";
@@ -26,6 +27,8 @@ function nextDates(days: number) {
 }
 
 export function RepairForecastPage({ mod, sub, companyId }: { mod: ModuleDef; sub: SubModuleDef; companyId: string | null; }) {
+  const navigate = useNavigate();
+  const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
   // Prefer the company's short login alias (e.g. "USIHS") over the raw
   // legacy_code (e.g. "COMP001") for display — same convention Header.tsx
   // uses. companyId itself is left untouched everywhere else (RLS, storage
@@ -106,9 +109,9 @@ export function RepairForecastPage({ mod, sub, companyId }: { mod: ModuleDef; su
       <main className="flex-1 max-w-[1400px] mx-auto w-full px-6 py-8">
         <div className="mb-8">
           <div className="flex items-center gap-3 mb-6">
-            <Link to="/m/$module" params={{ module: mod.slug }} className="btn hover:bg-white/15">
+            <button type="button" onClick={goBack} className="btn hover:bg-white/15">
               <ChevronLeft className="h-4 w-4" /> {mod.label}
-            </Link>
+            </button>
           </div>
           <div>
             <h1 className="text-4xl font-display font-bold tracking-tight mb-2">CSR Repair Forecast</h1>

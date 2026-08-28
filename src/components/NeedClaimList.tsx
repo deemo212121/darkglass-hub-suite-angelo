@@ -7,7 +7,8 @@ import {
   useState,
 } from "react";
 import { ChevronLeft, RefreshCw } from "lucide-react";
-import { Link } from "@tanstack/react-router";
+import { useNavigate } from "@tanstack/react-router";
+import { useSmartBack } from "@/hooks/useSmartBack";
 import { createPortal } from "react-dom";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { LOCATIONS } from "@/lib/locations";
@@ -179,6 +180,8 @@ interface ClaimRow {
 }
 
 export function NeedClaimList({ mod, sub }: Props) {
+  const navigate = useNavigate();
+  const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
   const auth = useAuth();
 
   // ── Server state ──
@@ -671,9 +674,9 @@ export function NeedClaimList({ mod, sub }: Props) {
     <div className="min-h-screen flex flex-col">
     <main className="flex-1 max-w-[1800px] mx-auto w-full px-4 py-6">
       <div className="flex items-center gap-3 mb-5">
-        <Link to="/m/$module" params={{ module: mod.slug }} className="btn">
+        <button type="button" onClick={goBack} className="btn">
           <ChevronLeft className="h-4 w-4" />
-        </Link>
+        </button>
         <h1 className="text-xl font-bold flex items-center gap-2">
           Need Claim List
           <span

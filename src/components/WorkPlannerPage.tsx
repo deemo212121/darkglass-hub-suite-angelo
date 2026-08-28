@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { CalendarDays, ChevronLeft, ChevronRight, ChevronDown, MapPin, X } from "lucide-react";
-import { Link } from "@tanstack/react-router";
+import { useNavigate } from "@tanstack/react-router";
 import type * as Leaflet from "leaflet";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { LOCATIONS, normalizeLocationName } from "@/lib/locations";
@@ -17,6 +17,7 @@ import { getCompanyTechnicians, type TechnicianOption, type TechnicianHome } fro
 import { lookupZip } from "@/lib/zipCoverage";
 import { useAuth } from "@/lib/auth";
 import { getCompanyMapProvider, type MapProvider } from "@/lib/supabase/companySettings";
+import { useSmartBack } from "@/hooks/useSmartBack";
 import { loadGoogleMapsScript, getLeaflet, makeGeocoder, addRouteDirectionArrow, attachLeafletResizeFix, createBadgeDivIcon, OSM_TILE_URL, OSM_ATTRIBUTION } from "@/lib/mapEngine";
 
 type TicketRecord = Record<string, any> & {
@@ -223,6 +224,8 @@ function getSelectedTechRoster(location: string, liveTechnicians: TechnicianOpti
 }
 
 export function WorkPlannerPage({ mod, sub }: Props) {
+  const navigate = useNavigate();
+  const goBackToTickets = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
   const { email, ready, allowedLocations } = useAuth();
   const locationChoices = allowedLocations === null
     ? (LOCATION_OPTIONS as unknown as string[])
@@ -993,9 +996,9 @@ export function WorkPlannerPage({ mod, sub }: Props) {
   return (
     <main className="w-full px-6 py-6 flex-none">
       <div className="flex items-center gap-3 mb-4">
-        <Link to="/m/$module" params={{ module: mod.slug }} className="btn">
+        <button type="button" onClick={goBackToTickets} className="btn">
           <ChevronLeft className="h-4 w-4" /> Back to Tickets
-        </Link>
+        </button>
         <div>
           <h1 className="text-2xl font-semibold leading-tight">{sub.title}</h1>
           <p className="text-sm text-muted-foreground">{sub.description}</p>

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { Link } from "@tanstack/react-router";
+import { useNavigate } from "@tanstack/react-router";
+import { useSmartBack } from "@/hooks/useSmartBack";
 import { ChevronLeft } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
@@ -15,6 +16,8 @@ const SUBSCRIPTION_PLANS = ["basic", "professional", "enterprise"] as const;
  * form.
  */
 export function CompanySettingsPage({ sub }: { mod: ModuleDef; sub: SubModuleDef }) {
+  const navigate = useNavigate();
+  const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: "admin" } }));
   const { companyId } = useAuth(); // this is the company's legacy_code
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -81,10 +84,10 @@ export function CompanySettingsPage({ sub }: { mod: ModuleDef; sub: SubModuleDef
     <main className="flex-1 bg-slate-950 py-6">
       <div className="max-w-3xl mx-auto px-6">
         <div className="flex items-center gap-3 text-white mb-6">
-          <Link to="/m/$module" params={{ module: "admin" }} className="btn">
+          <button type="button" onClick={goBack} className="btn">
             <ChevronLeft className="h-4 w-4" />
             Admin
-          </Link>
+          </button>
           <div>
             <h1 className="text-3xl font-bold tracking-tight">{sub.title}</h1>
             <p className="mt-1 text-sm text-slate-300">{sub.description}</p>

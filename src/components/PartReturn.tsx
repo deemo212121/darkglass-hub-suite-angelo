@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
+import { useSmartBack } from "@/hooks/useSmartBack";
 import { ChevronLeft, Printer } from "lucide-react";
 import { LOCATIONS } from "@/lib/locations";
 import { getPartReturns, updatePartReturnEntryRow, submitPartReturnBatch, type PartReturnRow } from "@/lib/supabase/partReturn";
@@ -96,6 +97,8 @@ function marconeAccountNumber(): string {
 }
 
 export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
+  const navigate = useNavigate();
+  const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
   const [tab, setTab] = usePersistedTab<"return" | "core">(
     "ahs:part-return-active-tab",
     ["return", "core"],
@@ -459,7 +462,7 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
         `}</style>
 
         <div className="flex items-center gap-3 mb-6 no-print">
-          <Link to="/m/$module" params={{ module: mod.slug }} className="btn hover:bg-white/15"><ChevronLeft className="h-4 w-4" /></Link>
+          <button type="button" onClick={goBack} className="btn hover:bg-white/15"><ChevronLeft className="h-4 w-4" /></button>
           <h1 className="text-2xl font-bold">{sub.title}</h1>
         </div>
         {saveError && <p className="text-sm text-red-400 mb-3 no-print">{saveError}</p>}

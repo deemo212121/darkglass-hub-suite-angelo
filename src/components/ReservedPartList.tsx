@@ -1,6 +1,7 @@
 import { useState, useMemo, useRef, useEffect, useLayoutEffect, useCallback } from "react";
 import { createPortal } from "react-dom";
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
+import { useSmartBack } from "@/hooks/useSmartBack";
 import { ChevronLeft } from "lucide-react";
 import { LOCATIONS } from "@/lib/locations";
 import { getCompanyUsers } from "@/lib/supabase/users";
@@ -24,6 +25,8 @@ function useP(open: boolean) {
 }
 
 export function ReservedPartList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
+  const navigate = useNavigate();
+  const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
   const [allRows, setAllRows] = useState<ReservedPartRow[]>([]);
   const [technicianRoster, setTechnicianRoster] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
@@ -106,7 +109,7 @@ export function ReservedPartList({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
     <div className="min-h-screen flex flex-col">
       <main className="flex-1 max-w-[1400px] mx-auto w-full px-6 py-8">
         <div className="flex items-center gap-3 mb-6">
-          <Link to="/m/$module" params={{ module: mod.slug }} className="btn hover:bg-white/15"><ChevronLeft className="h-4 w-4" /></Link>
+          <button type="button" onClick={goBack} className="btn hover:bg-white/15"><ChevronLeft className="h-4 w-4" /></button>
           <h1 className="text-2xl font-bold">{sub.title}</h1>
         </div>
         <div className="panel mb-4">

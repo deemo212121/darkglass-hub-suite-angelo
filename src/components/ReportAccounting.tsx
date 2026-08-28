@@ -8,7 +8,8 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "@tanstack/react-router";
+import { useNavigate } from "@tanstack/react-router";
+import { useSmartBack } from "@/hooks/useSmartBack";
 import { ChevronLeft, DollarSign, Users, TrendingUp, Loader2, Download } from "lucide-react";
 import { Bar, BarChart, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import * as XLSX from "xlsx";
@@ -89,6 +90,8 @@ function toUSD(li: PayrollLineItem): number {
 }
 
 export function ReportAccounting({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
+  const navigate = useNavigate();
+  const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -284,7 +287,7 @@ export function ReportAccounting({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
     <div className="min-h-screen flex flex-col">
       <main className="flex-1 max-w-[1600px] mx-auto w-full px-6 py-8">
         <div className="flex items-center gap-3 mb-2">
-          <Link to="/m/$module" params={{ module: mod.slug }} className="btn hover:bg-white/15"><ChevronLeft className="h-4 w-4" /></Link>
+          <button type="button" onClick={goBack} className="btn hover:bg-white/15"><ChevronLeft className="h-4 w-4" /></button>
           <div>
             <h1 className="text-2xl font-bold">{sub.title}</h1>
             <p className="text-xs text-muted-foreground mt-0.5">Read-only payroll summary — live from Accounting. Generate/approve payroll runs from the Accounting Dashboard.</p>

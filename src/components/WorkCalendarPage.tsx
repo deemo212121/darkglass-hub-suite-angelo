@@ -1,12 +1,13 @@
 import { useMemo, useState, useEffect } from "react";
 import { CalendarDays, ChevronLeft, ChevronRight, Home, ListFilter, Search } from "lucide-react";
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { getCompanyTickets } from "@/lib/supabase/tickets";
 import type { Ticket } from "@/lib/ticketData";
 import { normalizeTimePeriod, FRAME_START_TIME } from "@/lib/timeframes";
 import { getCompanyTechnicians } from "@/lib/supabase/users";
 import { usePersistedTab } from "@/lib/usePersistedTab";
+import { useSmartBack } from "@/hooks/useSmartBack";
 
 interface Props { mod: ModuleDef; sub: SubModuleDef; }
 
@@ -126,6 +127,8 @@ function buildRowsFromTickets(tickets: Ticket[]): CalendarRow[] {
 }
 
 export function WorkCalendarPage({ mod, sub }: Props) {
+  const navigate = useNavigate();
+  const goBackToTickets = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
   const now = new Date();
   const [technician, setTechnician] = useState("");
   const [monthValue, setMonthValue] = useState(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`);
@@ -252,10 +255,10 @@ export function WorkCalendarPage({ mod, sub }: Props) {
       </div>
 
       <div className="flex items-center gap-3 mb-5">
-        <Link to="/m/$module" params={{ module: mod.slug }} className="btn">
+        <button type="button" onClick={goBackToTickets} className="btn">
           <ChevronLeft className="h-4 w-4" />
           Back to Tickets
-        </Link>
+        </button>
         <div>
           <h1 className="text-2xl font-semibold leading-tight">Work Calendar (Monthly)</h1>
           <p className="text-sm text-muted-foreground">Scheduled jobs by date.</p>

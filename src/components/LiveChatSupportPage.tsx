@@ -11,7 +11,8 @@
  * these tables yet.
  */
 import { useEffect, useRef, useState } from "react";
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
+import { useSmartBack } from "@/hooks/useSmartBack";
 import {
   AlertTriangle,
   ArrowDown,
@@ -172,6 +173,8 @@ function formatTimestamp(value: string) {
 }
 
 export function LiveChatSupportPage({ mod, sub }: Props) {
+  const navigate = useNavigate();
+  const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
   const { uid, role, displayName, email } = useAuth();
   const [myProfileId, setMyProfileId] = useState<string | null>(null);
   const [extraRoles, setExtraRoles] = useState<string[]>([]);
@@ -785,9 +788,9 @@ export function LiveChatSupportPage({ mod, sub }: Props) {
       </div>
 
       <div className="flex items-center gap-3 mb-5">
-        <Link to="/m/$module" params={{ module: mod.slug }} className="btn">
+        <button type="button" onClick={goBack} className="btn">
           <ChevronLeft className="h-4 w-4" />
-        </Link>
+        </button>
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Live Chat</h1>
           <p className="text-sm text-muted-foreground">Reply to live chat messages from the public website.</p>

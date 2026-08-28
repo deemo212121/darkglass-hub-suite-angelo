@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useLayoutEffect, useCallback } from "react";
 import { createPortal } from "react-dom";
-import { Link } from "@tanstack/react-router";
+import { useNavigate } from "@tanstack/react-router";
+import { useSmartBack } from "@/hooks/useSmartBack";
 import { ChevronLeft, Printer, Save, Check, History } from "lucide-react";
 import { LOCATIONS } from "@/lib/locations";
 import { useAuth } from "@/lib/auth";
@@ -47,6 +48,8 @@ export const EXAMPLE_PICKUP_ROWS: PartPickupRow[] = [
 ];
 
 export function PartDailyPickup({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
+  const navigate = useNavigate();
+  const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: "parts" } }));
   // Notes is Parts Order's own working column — everyone else with access
   // to this page sees the rest of the table, just not this. Held roles
   // pile up (secondary PARTS_ORDER counts the same as primary); SUPERADMIN
@@ -178,7 +181,7 @@ export function PartDailyPickup({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
   return(<div className="min-h-screen flex flex-col"><main className="flex-1 max-w-[1600px] mx-auto w-full px-4 py-8">
     <div className="flex items-center justify-between gap-3 mb-6">
       <div className="flex items-center gap-3">
-        <Link to="/m/$module" params={{module:"parts"}} className="btn hover:bg-white/15"><ChevronLeft className="h-4 w-4"/></Link>
+        <button type="button" onClick={goBack} className="btn hover:bg-white/15"><ChevronLeft className="h-4 w-4"/></button>
         <h1 className="text-2xl font-bold">{sub.title}</h1>
       </div>
       <button type="button" onClick={openActivityLog} className="btn hover:bg-white/15 inline-flex items-center gap-2 text-xs">

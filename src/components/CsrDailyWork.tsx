@@ -1,6 +1,7 @@
 import { useState, useMemo, useRef, useEffect } from "react";
 import { ChevronLeft, RefreshCw, ChevronDown } from "lucide-react";
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
+import { useSmartBack } from "@/hooks/useSmartBack";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { CSR_NAMES, pick, pad, todayStr, offsetStr } from "@/components/shared";
 
@@ -62,6 +63,8 @@ function Dropdown({ options, value, onChange, placeholder }: {
 }
 
 export function CsrDailyWork({ mod, sub }: Props) {
+  const navigate = useNavigate();
+  const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
   const [csr, setCsr] = useState("");
   const [startDate, setStartDate] = useState(todayStr());
   const [endDate, setEndDate] = useState(todayStr());
@@ -87,7 +90,7 @@ export function CsrDailyWork({ mod, sub }: Props) {
         <span className="text-foreground font-medium">CSR Daily Work</span>
       </div>
       <div className="flex items-center gap-3 mb-5">
-        <Link to="/m/$module" params={{ module: mod.slug }} className="btn"><ChevronLeft className="h-4 w-4" /></Link>
+        <button type="button" onClick={goBack} className="btn"><ChevronLeft className="h-4 w-4" /></button>
         <h1 className="text-xl font-bold">CSR Daily Work</h1>
       </div>
 

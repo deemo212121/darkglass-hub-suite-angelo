@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "@tanstack/react-router";
+import { useNavigate } from "@tanstack/react-router";
+import { useSmartBack } from "@/hooks/useSmartBack";
 import { ChevronLeft } from "lucide-react";
 import type * as Leaflet from "leaflet";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
@@ -125,6 +126,8 @@ interface AddBranchPageProps {
 }
 
 export function AddBranchPage({ mod, sub }: AddBranchPageProps) {
+  const navigate = useNavigate();
+  const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
   // Company-wide map provider (see migration 0050) — set from /m/admin.
   const [mapProvider, setMapProvider] = useState<MapProvider | null>(null);
   useEffect(() => {
@@ -500,10 +503,10 @@ export function AddBranchPage({ mod, sub }: AddBranchPageProps) {
     <main className="flex-1 bg-slate-950">
       <div className="mx-auto max-w-[1600px] px-4 py-4">
         <div className="mb-3 flex flex-wrap items-center gap-3 text-white">
-          <Link to="/m/$module" params={{ module: mod.slug }} className="btn">
+          <button type="button" onClick={goBack} className="btn">
             <ChevronLeft className="h-4 w-4" />
             {mod.label}
-          </Link>
+          </button>
           <h1 className="text-xl font-semibold">{sub.title}</h1>
           <p className="text-sm text-slate-400">{sub.description}</p>
         </div>

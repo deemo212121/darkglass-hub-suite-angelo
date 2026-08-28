@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "@tanstack/react-router";
+import { useNavigate } from "@tanstack/react-router";
+import { useSmartBack } from "@/hooks/useSmartBack";
 import { ChevronLeft, RefreshCw, ArrowUp, ArrowDown, ArrowUpDown, Lock, Send, ShieldCheck, ShieldAlert, History } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { getCompanyUsers, updateCompanyUser, type ProfileRow } from "@/lib/supabase/users";
@@ -101,6 +102,8 @@ function computeUserStats(profile: ProfileRow, events: LoginEvent[]): UserLoginS
 const TAB_VALUES = ["security", "lockouts", "lockoutHistory"] as const;
 
 export function LoginSecurityPage({ mod, sub }: Props) {
+  const navigate = useNavigate();
+  const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
   const [activeTab, setActiveTab] = usePersistedTab<(typeof TAB_VALUES)[number]>("loginSecurityPage:tab", TAB_VALUES, "security");
   const { displayName, email: myEmail } = useAuth();
   const [profiles, setProfiles] = useState<ProfileRow[]>([]);
@@ -295,10 +298,10 @@ export function LoginSecurityPage({ mod, sub }: Props) {
   return (
     <main className="w-full px-6 py-6 flex-none">
       <div className="flex items-center gap-3 mb-4">
-        <Link to="/m/$module" params={{ module: mod.slug }} className="btn">
+        <button type="button" onClick={goBack} className="btn">
           <ChevronLeft className="h-4 w-4" />
           {mod.label}
-        </Link>
+        </button>
         <div>
           <h1 className="text-2xl font-semibold leading-tight">{sub.title}</h1>
           <p className="text-sm text-muted-foreground">{sub.description}</p>

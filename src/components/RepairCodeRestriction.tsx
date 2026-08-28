@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { ChevronLeft, Search } from "lucide-react";
-import { Link } from "@tanstack/react-router";
+import { useNavigate } from "@tanstack/react-router";
+import { useSmartBack } from "@/hooks/useSmartBack";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 
 interface Props { mod: ModuleDef; sub: SubModuleDef; }
@@ -29,6 +30,8 @@ const BASE_ROWS = [
 ];
 
 export function RepairCodeRestriction({ mod, sub }: Props) {
+  const navigate = useNavigate();
+  const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
   const [rows, setRows] = useState(BASE_ROWS);
   const [search, setSearch] = useState("");
   const filtered = rows.filter(r=>
@@ -41,7 +44,7 @@ export function RepairCodeRestriction({ mod, sub }: Props) {
     <div className="min-h-screen flex flex-col">
     <main className="flex-1 max-w-[1900px] mx-auto w-full px-4 py-6">
       <div className="flex items-center gap-3 mb-5">
-        <Link to="/m/$module" params={{module:mod.slug}} className="btn"><ChevronLeft className="h-4 w-4"/></Link>
+        <button type="button" onClick={goBack} className="btn"><ChevronLeft className="h-4 w-4"/></button>
         <h1 className="text-xl font-bold">Repair Code Restriction</h1>
       </div>
       <div className="panel p-0 overflow-hidden">

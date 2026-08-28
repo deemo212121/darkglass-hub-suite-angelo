@@ -1,6 +1,7 @@
 import { useMemo, useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
+import { useSmartBack } from "@/hooks/useSmartBack";
 import { ChevronDown, ChevronLeft, Check, Filter, Search, Loader2, KeyRound, RotateCcw, Ban, CheckCircle2 } from "lucide-react";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
@@ -726,6 +727,8 @@ function ColumnFilter({
 }
 
 export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
+  const navigate = useNavigate();
+  const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
   const auth = useAuth();
   const [viewMode, setViewMode] = usePersistedTab<ViewMode>("ahs:admin-user-management-view-mode", ["list", "hierarchy"], "list");
   const [search, setSearch] = useState("");
@@ -1251,10 +1254,10 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
         <div className="rounded-xl border border-white/15 bg-white/8 p-5 text-white backdrop-blur-md">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div className="flex min-w-0 flex-1 items-center gap-3">
-              <Link to="/m/$module" params={{ module: mod.slug }} className="btn">
+              <button type="button" onClick={goBack} className="btn">
                 <ChevronLeft className="h-4 w-4" />
                 {mod.label}
-              </Link>
+              </button>
               <div className="min-w-0">
                 <h1 className="text-3xl font-bold tracking-tight">{sub.title}</h1>
                 <p className="mt-1 text-sm text-slate-300">{sub.description}</p>

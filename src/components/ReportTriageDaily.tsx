@@ -31,7 +31,8 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "@tanstack/react-router";
+import { useNavigate } from "@tanstack/react-router";
+import { useSmartBack } from "@/hooks/useSmartBack";
 import * as XLSX from "xlsx";
 import { ChevronLeft, Loader2, Users, CheckCircle2, Clock, Timer, Download, Activity, UserCheck, UserX } from "lucide-react";
 import { Bar, BarChart, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
@@ -118,6 +119,8 @@ function computeTriageExits(auditRows: { ticketId: string; field: string; before
 }
 
 export function ReportTriageDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
+  const navigate = useNavigate();
+  const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [tickets, setTickets] = useState<Ticket[]>([]);
@@ -374,7 +377,7 @@ export function ReportTriageDaily({ mod, sub }: { mod: ModuleDef; sub: SubModule
     <div className="min-h-screen flex flex-col">
       <main className="flex-1 max-w-[1600px] mx-auto w-full px-6 py-8">
         <div className="flex items-center gap-3 mb-6">
-          <Link to="/m/$module" params={{ module: mod.slug }} className="btn hover:bg-white/15"><ChevronLeft className="h-4 w-4" /></Link>
+          <button type="button" onClick={goBack} className="btn hover:bg-white/15"><ChevronLeft className="h-4 w-4" /></button>
           <h1 className="text-2xl font-bold">{sub.title}</h1>
         </div>
 

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
+import { useSmartBack } from "@/hooks/useSmartBack";
 import { ChevronLeft } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { LOCATIONS, normalizeLocationName } from "@/lib/locations";
@@ -102,6 +103,8 @@ const COLUMN_FILTER_KEYS = ["ticketNo", "warranty", "customer", "model", "custom
 type ColumnFilterKey = (typeof COLUMN_FILTER_KEYS)[number];
 
 export function TodoListPage({ mod, sub }: Props) {
+  const navigate = useNavigate();
+  const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
   const { ready: authReady } = useAuth();
   const [rows, setRows] = useState<TodoRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -277,9 +280,9 @@ export function TodoListPage({ mod, sub }: Props) {
       <main className="flex-1 max-w-[1900px] mx-auto w-full px-6 py-8">
         <div className="mb-8">
           <div className="flex items-center gap-3 mb-6">
-            <Link to="/m/$module" params={{ module: mod.slug }} className="btn hover:bg-white/15">
+            <button type="button" onClick={goBack} className="btn hover:bg-white/15">
               <ChevronLeft className="h-4 w-4" /> {mod.label}
-            </Link>
+            </button>
           </div>
           <h1 className="text-4xl font-display font-bold tracking-tight mb-2">{sub.title}</h1>
           <p className="text-lg text-muted-foreground">{sub.description}</p>

@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useLayoutEffect, useCallback } from "react";
 import { createPortal } from "react-dom";
-import { Link } from "@tanstack/react-router";
+import { useNavigate } from "@tanstack/react-router";
+import { useSmartBack } from "@/hooks/useSmartBack";
 import { ChevronLeft, Printer, Save, CheckCircle, Loader2, Undo2, ScanLine, History } from "lucide-react";
 import { LOCATIONS } from "@/lib/locations";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
@@ -35,6 +36,8 @@ function getDefaultCollectionDate() {
 const COLS=["Technician","Picked Up","Collected","Part No","Description","Unique ID","Core Value","Ticket #","Repair Status","Qty","Used Qty","Restock Qty","Collect Type","Lot #","Comment","Part Status","Action"];
 
 export function PartDailyCollection({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
+  const navigate = useNavigate();
+  const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: "parts" } }));
   const { companyId } = useAuth();
   const [location,setLocation]=useState("");const [locOpen,setLocOpen]=useState(false);
   const [tech,setTech]=useState("");const [techOpen,setTechOpen]=useState(false);
@@ -210,7 +213,7 @@ export function PartDailyCollection({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
 
   return(<div className="min-h-screen flex flex-col"><main className="flex-1 max-w-[1600px] mx-auto w-full px-6 py-8">
     <div className="flex items-center justify-between gap-3 mb-6">
-      <div className="flex items-center gap-3"><Link to="/m/$module" params={{ module: "parts" }} className="btn hover:bg-white/15"><ChevronLeft className="h-4 w-4"/></Link><h1 className="text-2xl font-bold">{sub.title}</h1></div>
+      <div className="flex items-center gap-3"><button type="button" onClick={goBack} className="btn hover:bg-white/15"><ChevronLeft className="h-4 w-4"/></button><h1 className="text-2xl font-bold">{sub.title}</h1></div>
       <button type="button" onClick={openActivityLog} className="btn hover:bg-white/15 inline-flex items-center gap-2 text-xs">
         <History className="h-3.5 w-3.5" /> View Activity
       </button>

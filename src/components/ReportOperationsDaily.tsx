@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect } from "react";
-import { Link } from "@tanstack/react-router";
+import { useNavigate } from "@tanstack/react-router";
+import { useSmartBack } from "@/hooks/useSmartBack";
 import * as XLSX from "xlsx";
 import { ChevronLeft, Loader2, Users, AlertTriangle, Download } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
@@ -46,6 +47,8 @@ function exportStaffToXlsx(rows: { name: string; role: string; branch: string; w
 }
 
 export function ReportOperationsDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
+  const navigate = useNavigate();
+  const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
   const [activeTab, setActiveTab] = usePersistedTab<TabKey>(
     "ahs:operations-daily-active-tab",
     ["overview", "east", "west", "central", "cancellations"],
@@ -132,9 +135,9 @@ export function ReportOperationsDaily({ mod, sub }: { mod: ModuleDef; sub: SubMo
     <div className="min-h-screen flex flex-col">
       <main className="flex-1 max-w-[1600px] mx-auto w-full px-6 py-8">
         <div className="flex items-center gap-3 mb-6">
-          <Link to="/m/$module" params={{ module: mod.slug }} className="btn hover:bg-white/15">
+          <button type="button" onClick={goBack} className="btn hover:bg-white/15">
             <ChevronLeft className="h-4 w-4" />
-          </Link>
+          </button>
           <h1 className="text-2xl font-bold">{sub.title}</h1>
         </div>
 

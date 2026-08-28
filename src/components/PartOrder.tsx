@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect, useRef } from "react";
-import { Link } from "@tanstack/react-router";
+import { useNavigate } from "@tanstack/react-router";
+import { useSmartBack } from "@/hooks/useSmartBack";
 import { ChevronLeft, Download, ChevronDown, Filter } from "lucide-react";
 import {
   getPartOrderRows,
@@ -105,6 +106,8 @@ const columnValueGetters: Record<ColumnFilterKey, (o: PartOrderRow) => string> =
 };
 
 export function PartOrder({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
+  const navigate = useNavigate();
+  const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
   const { ready: authReady } = useAuth();
   // "all" (default) applies no date filtering at all — same behavior the
   // old plain date input had when left blank. "specific" filters to
@@ -252,9 +255,9 @@ export function PartOrder({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
       <main className="flex-1 max-w-[1400px] mx-auto w-full px-6 py-8">
         <div className="mb-8">
           <div className="flex items-center gap-3 mb-6">
-            <Link to="/m/$module" params={{ module: mod.slug }} className="btn hover:bg-white/15">
+            <button type="button" onClick={goBack} className="btn hover:bg-white/15">
               <ChevronLeft className="h-4 w-4" /> {mod.label}
-            </Link>
+            </button>
           </div>
           <h1 className="text-4xl font-display font-bold tracking-tight mb-2">{sub.title}</h1>
           <p className="text-lg text-muted-foreground">{sub.description}</p>

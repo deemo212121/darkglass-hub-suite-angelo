@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "@tanstack/react-router";
+import { useNavigate } from "@tanstack/react-router";
+import { useSmartBack } from "@/hooks/useSmartBack";
 import { ChevronLeft, ChevronDown, RefreshCw, Loader2 } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { MODULES } from "@/lib/modules";
@@ -96,6 +97,8 @@ interface GateRow {
  * an additional permission. This page only ever touches extra_roles.
  */
 export function AccessibilityManagementPage({ mod, sub }: Props) {
+  const navigate = useNavigate();
+  const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
   const [users, setUsers] = useState<ProfileRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -443,10 +446,10 @@ export function AccessibilityManagementPage({ mod, sub }: Props) {
     <main className="flex-1 bg-slate-950 py-6">
       <div className="max-w-[1600px] mx-auto px-6">
         <div className="mb-4 flex flex-wrap items-center gap-3 text-white">
-          <Link to="/m/$module" params={{ module: mod.slug }} className="btn">
+          <button type="button" onClick={goBack} className="btn">
             <ChevronLeft className="h-4 w-4" />
             {mod.label}
-          </Link>
+          </button>
           <div>
             <h1 className="text-2xl font-semibold leading-tight">{sub.title}</h1>
             <p className="text-sm text-muted-foreground">{sub.description}</p>

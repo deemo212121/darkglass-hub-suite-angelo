@@ -1,6 +1,7 @@
 import { useState, useMemo, useRef, useEffect, useLayoutEffect, useCallback } from "react";
 import { ChevronLeft, Save, Check } from "lucide-react";
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
+import { useSmartBack } from "@/hooks/useSmartBack";
 import { createPortal } from "react-dom";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { LOCATIONS } from "@/lib/locations";
@@ -93,6 +94,8 @@ function PortalDropdown({label,options,value,onChange}:{label:string;options:str
 }
 
 export function ClaimList({ mod, sub }: Props) {
+  const navigate = useNavigate();
+  const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
   const tableScrollRef = useRef<HTMLDivElement>(null);
   const [location, setLocation] = useState(""); const [locOpen, setLocOpen] = useState(false);
   const [account, setAccount] = useState("");
@@ -180,7 +183,7 @@ export function ClaimList({ mod, sub }: Props) {
     <div className="min-h-screen flex flex-col">
     <main className="flex-1 max-w-[1900px] mx-auto w-full px-4 py-6">
       <div className="flex items-center gap-3 mb-5">
-        <Link to="/m/$module" params={{module:mod.slug}} className="btn"><ChevronLeft className="h-4 w-4"/></Link>
+        <button type="button" onClick={goBack} className="btn"><ChevronLeft className="h-4 w-4"/></button>
         <h1 className="text-xl font-bold">Claim List</h1>
       </div>
 

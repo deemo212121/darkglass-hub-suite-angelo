@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
+import { useSmartBack } from "@/hooks/useSmartBack";
 import { ChevronLeft, Download, Loader2, Search, SlidersHorizontal, X } from "lucide-react";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
 import * as XLSX from "xlsx";
@@ -155,6 +156,8 @@ export function DailyActivityPage({
   /** Skips this page's own outer shell (back-link, title, description, min-h-screen wrapper) — set when a parent page (e.g. TriageDashboardPage's Activity tab) already provides that chrome. */
   embedded?: boolean;
 }) {
+  const navigate = useNavigate();
+  const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
   const { ready, uid, companyLoginAlias } = useAuth();
   // Prefer the company's short login alias (e.g. "USIHS") over the raw
   // legacy_code (e.g. "COMP001") for display — same convention Header.tsx
@@ -396,9 +399,9 @@ export function DailyActivityPage({
       {!embedded && (
         <div className="mb-3">
           <div className="flex items-center gap-3 mb-2">
-            <Link to="/m/$module" params={{ module: mod.slug }} className="btn hover:bg-white/15">
+            <button type="button" onClick={goBack} className="btn hover:bg-white/15">
               <ChevronLeft className="h-4 w-4" /> {mod.label}
-            </Link>
+            </button>
           </div>
           <div>
             <h1 className="text-2xl font-display font-bold tracking-tight mb-1">{sub.title}</h1>
