@@ -1,5 +1,5 @@
 -- =====================================================================
--- 0203 — Let the company-scoped Super Admin role read/clear technician
+-- 0204 — Let the company-scoped Super Admin role read/clear technician
 -- location pings, same as Admin already can.
 --
 -- 0191's SELECT policy (and 0189's original DELETE policy) checked
