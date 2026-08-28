@@ -2,10 +2,10 @@
  * "Connect Gmail" — one connection PER SLOT: "US"/"PH" Payroll (each gets
  * its own connected Gmail account, matching AccountingDashboard.tsx's
  * US/PH Payroll toggle), "PARTS" (the ticket page's Part Transaction
- * "Send" drop-ship request — see migration 0171, added later than the
+ * "Send" drop-ship request — see migration 0168, added later than the
  * original two so it's independently connectable rather than forced to
  * reuse whichever Payroll mailbox happens to be connected), and
- * "IT_1"/"IT_2"/"IT_3" (IT Tickets' "Send" — see migration 0177; unlike
+ * "IT_1"/"IT_2"/"IT_3" (IT Tickets' "Send" — see migration 0173; unlike
  * every other slot, IT Tickets lets the caller pick WHICH of up to 3
  * connected accounts to send from per email, rather than always
  * resolving to one fixed slot). Status/disconnect go through Supabase

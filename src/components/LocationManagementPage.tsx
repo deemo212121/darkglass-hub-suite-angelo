@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "@tanstack/react-router";
+import { useNavigate } from "@tanstack/react-router";
+import { useSmartBack } from "@/hooks/useSmartBack";
 import { ChevronLeft } from "lucide-react";
 import type * as Leaflet from "leaflet";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
@@ -854,6 +855,8 @@ function resolveCoverageLocation(query: string, locationRows: LocationRow[], cov
 }
 
 export function LocationManagementPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
+  const navigate = useNavigate();
+  const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
   const [activeTab, setActiveTab] = usePersistedTab<"locations" | "parts" | "coverage">(
     "ahs:location-management-active-tab",
     ["locations", "parts", "coverage"],
@@ -1760,10 +1763,10 @@ export function LocationManagementPage({ mod, sub }: { mod: ModuleDef; sub: SubM
         <div className="rounded-xl border border-white/15 bg-white/8 p-5 backdrop-blur-md">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div className="flex items-center gap-3">
-              <Link to="/m/$module" params={{ module: mod.slug }} className="btn">
+              <button type="button" onClick={goBack} className="btn">
                 <ChevronLeft className="h-4 w-4" />
                 {mod.label}
-              </Link>
+              </button>
               <div>
                 <h1 className="text-3xl font-bold tracking-tight">{sub.title}</h1>
                 <p className="mt-1 text-sm text-slate-300">{sub.description}</p>

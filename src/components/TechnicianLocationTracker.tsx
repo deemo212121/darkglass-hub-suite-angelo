@@ -62,12 +62,23 @@ export function TechnicianLocationTracker() {
 
   // Resolve profile id + consent status once, when eligible.
   useEffect(() => {
-    if (!eligible || !uid) return;
+    if (!eligible || !uid) {
+      console.warn("[TechnicianLocationTracker] consent check skipped — not eligible", { eligible, uid, role, extraRoles });
+      return;
+    }
     let cancelled = false;
     getMyProfileId(uid).then(async (pid) => {
-      if (cancelled || !pid) return;
+      if (cancelled) return;
+      if (!pid) {
+        console.warn("[TechnicianLocationTracker] getMyProfileId returned no profile for this uid:", uid);
+        return;
+      }
       setProfileId(pid);
-      const confirmed = await hasConfirmedLocationConsent(pid).catch(() => false);
+      const confirmed = await hasConfirmedLocationConsent(pid).catch((err) => {
+        console.error("[TechnicianLocationTracker] hasConfirmedLocationConsent failed:", err);
+        return false;
+      });
+      console.log("[TechnicianLocationTracker] consent check:", { profileId: pid, confirmed });
       if (!cancelled) setConsentConfirmed(confirmed);
     });
     return () => {
@@ -126,13 +137,16 @@ export function TechnicianLocationTracker() {
   const startWatch = () => {
     if (!navigator.geolocation || watchIdRef.current !== null || !profileId) return;
     setShowPrompt(false);
+    // A fresh attempt — clear any earlier denial so a consumer's "location
+    // access is blocked" message doesn't linger once permission is granted.
+    setLiveLocation({ permissionDenied: false });
     watchIdRef.current = navigator.geolocation.watchPosition(
       (pos) => {
         setWatching(true);
         // Local consumers (the shared context) get every reading — cheap,
         // no network cost. The upload to technician_location_pings below
         // stays throttled since that one's a real network write.
-        setLiveLocation({ watching: true, position: { lat: pos.coords.latitude, lng: pos.coords.longitude } });
+        setLiveLocation({ watching: true, position: { lat: pos.coords.latitude, lng: pos.coords.longitude }, permissionDenied: false });
         const now = Date.now();
         if (now - lastUploadRef.current < UPLOAD_THROTTLE_MS) return;
         lastUploadRef.current = now;
@@ -155,7 +169,10 @@ export function TechnicianLocationTracker() {
         // Permission denied or unavailable — best-effort feature, never
         // blocks clocking in/out either way.
         console.warn("[TechnicianLocationTracker] geolocation error:", err.message);
-        if (err.code === err.PERMISSION_DENIED) stopWatch();
+        if (err.code === err.PERMISSION_DENIED) {
+          setLiveLocation({ permissionDenied: true });
+          stopWatch();
+        }
       },
       { enableHighAccuracy: false, maximumAge: 30_000, timeout: 20_000 }
     );
@@ -229,7 +246,11 @@ export function TechnicianLocationTracker() {
         .then((status: PermissionStatus) => {
           if (status.state === "granted") startWatch();
           else if (status.state === "prompt") setShowPrompt(true);
-          // "denied" — skip silently, don't nag.
+          // Already denied at the OS/browser level — don't nag with a
+          // native prompt that won't appear anyway, but do let consumers
+          // (e.g. On-Site Check-In's hint) explain the real blocker instead
+          // of showing "waiting for a location fix" forever.
+          else if (status.state === "denied") setLiveLocation({ permissionDenied: true });
         })
         .catch(() => setShowPrompt(true));
     } else {

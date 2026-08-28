@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "@tanstack/react-router";
+import { useNavigate } from "@tanstack/react-router";
+import { useSmartBack } from "@/hooks/useSmartBack";
 import type { SubModuleDef, ModuleDef } from "@/lib/modules";
 import { ChevronLeft, Plus, RefreshCw, Save, Trash2 } from "lucide-react";
 
@@ -13,6 +14,8 @@ function filterKey(mod: string, sub: string) {
 }
 
 export function GenericModulePage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
+  const navigate = useNavigate();
+  const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
   const count = sub.count ?? 20;
   const [rows, setRows] = useState<Row[]>([]);
   const [filters, setFilters] = useState<Record<string, string>>({});
@@ -79,9 +82,9 @@ export function GenericModulePage({ mod, sub }: { mod: ModuleDef; sub: SubModule
   return (
     <div className="max-w-[1400px] mx-auto px-6 py-6">
       <div className="flex items-center gap-3 mb-4">
-        <Link to="/m/$module" params={{ module: mod.slug }} className="btn">
+        <button type="button" onClick={goBack} className="btn">
           <ChevronLeft className="h-4 w-4" /> {mod.label}
-        </Link>
+        </button>
         <div>
           <h1 className="text-2xl font-semibold leading-tight">{sub.title}</h1>
           <p className="text-sm text-muted-foreground">{sub.description}</p>

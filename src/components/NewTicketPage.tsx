@@ -1,6 +1,7 @@
 import { useMemo, useState, useEffect } from "react";
-import { Link, useSearch, useNavigate } from "@tanstack/react-router";
+import { useSearch, useNavigate } from "@tanstack/react-router";
 import { ChevronLeft, Loader2 } from "lucide-react";
+import { useSmartBack } from "@/hooks/useSmartBack";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { type Ticket } from "@/lib/ticketData";
 import { createTicket as createSupabaseTicket } from "@/lib/supabase/tickets";
@@ -123,6 +124,7 @@ export function NewTicketPage({ mod, sub }: Props) {
   const [zipLookupPending, setZipLookupPending] = useState(false);
   const [zipLookupError, setZipLookupError] = useState<string | null>(null);
   const navigate = useNavigate();
+  const goBackToTickets = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
   const createdTicketStatus = "Acknowledged";
   // Company-wide default technician (see migration 0067) — new tickets are
   // created with this technician instead of starting unassigned. Empty
@@ -365,9 +367,9 @@ export function NewTicketPage({ mod, sub }: Props) {
   return (
     <main className="max-w-[1400px] mx-auto px-6 py-6">
       <div className="flex items-center gap-3 mb-4">
-        <Link to="/m/$module" params={{ module: mod.slug }} className="btn">
+        <button type="button" onClick={goBackToTickets} className="btn">
           <ChevronLeft className="h-4 w-4" /> Back to Tickets
-        </Link>
+        </button>
         <div>
           <h1 className="text-2xl font-semibold leading-tight">{sub.title}</h1>
           <p className="text-sm text-muted-foreground">{sub.description}</p>

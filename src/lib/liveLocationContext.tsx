@@ -19,6 +19,8 @@ export interface LiveLocationState {
   watching: boolean;
   consentConfirmed: boolean;
   clockedIn: boolean;
+  /** True once the browser/OS has actually denied location permission (not just "no fix yet") — lets a consumer tell those two apart instead of showing a "waiting…" message that will never resolve. */
+  permissionDenied: boolean;
 }
 
 interface LiveLocationContextValue extends LiveLocationState {
@@ -30,6 +32,7 @@ const DEFAULT_STATE: LiveLocationState = {
   watching: false,
   consentConfirmed: false,
   clockedIn: false,
+  permissionDenied: false,
 };
 
 const LiveLocationContext = createContext<LiveLocationContextValue>({

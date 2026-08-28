@@ -1,10 +1,13 @@
 import { useEffect, useRef, useState } from "react";
-import { Link } from "@tanstack/react-router";
+import { useNavigate } from "@tanstack/react-router";
+import { useSmartBack } from "@/hooks/useSmartBack";
 import { ChevronLeft } from "lucide-react";
 import { getFilteredPartOrders } from "@/lib/supabase/partOrders";
 import type { StoredPartOrder } from "@/lib/supabase/partOrders";
 
 export function PoStatusPage() {
+  const navigate = useNavigate();
+  const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: "parts" } }));
   const tableWrapRef = useRef<HTMLDivElement | null>(null);
   const floatingBarRef = useRef<HTMLDivElement | null>(null);
   const floatingInnerRef = useRef<HTMLDivElement | null>(null);
@@ -222,9 +225,9 @@ export function PoStatusPage() {
 
         <div className="mb-4">
           <div className="flex items-center gap-3 mb-4">
-            <Link to="/m/$module" params={{ module: "parts" }} className="back-btn">
+            <button type="button" onClick={goBack} className="back-btn">
               <ChevronLeft className="h-4 w-4" /> Parts
-            </Link>
+            </button>
           </div>
           <h1 className="text-2xl font-semibold leading-tight text-white">P/O Status</h1>
         </div>

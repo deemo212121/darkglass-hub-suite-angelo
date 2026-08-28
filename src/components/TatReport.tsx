@@ -1,6 +1,7 @@
 import { useState, useMemo } from "react";
 import { ChevronLeft } from "lucide-react";
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
+import { useSmartBack } from "@/hooks/useSmartBack";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 
 interface Props { mod: ModuleDef; sub: SubModuleDef; }
@@ -242,6 +243,8 @@ function DateRangeRow({
 
 // ── Main component ────────────────────────────────────────────────────────────
 export function TatReport({ mod, sub }: Props) {
+  const navigate = useNavigate();
+  const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
   const [byLocation, setByLocation] = useState(false);
   const [byTechnician, setByTechnician] = useState(false);
   const [byBranch, setByBranch] = useState(false);
@@ -292,9 +295,9 @@ export function TatReport({ mod, sub }: Props) {
 
       {/* Title */}
       <div className="flex items-center gap-3 mb-5">
-        <Link to="/m/$module" params={{ module: mod.slug }} className="btn">
+        <button type="button" onClick={goBack} className="btn">
           <ChevronLeft className="h-4 w-4" />
-        </Link>
+        </button>
         <h1 className="text-xl font-bold tracking-tight">Turn Around Time (TAT) Report</h1>
       </div>
 

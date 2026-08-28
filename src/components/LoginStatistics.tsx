@@ -1,6 +1,7 @@
 import { useState, useMemo } from "react";
 import { ChevronLeft, RefreshCw } from "lucide-react";
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
+import { useSmartBack } from "@/hooks/useSmartBack";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { USER_TYPES, todayStr } from "@/components/shared";
 
@@ -33,6 +34,8 @@ function generateRows(count = 178) {
 const ALL_ROWS = generateRows(178);
 
 export function LoginStatistics({ mod, sub }: Props) {
+  const navigate = useNavigate();
+  const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
   const [reportDate] = useState(todayStr());
   const [search, setSearch] = useState("");
   const [visibleCols, setVisibleCols] = useState<string[]>([...COLS]);
@@ -53,7 +56,7 @@ export function LoginStatistics({ mod, sub }: Props) {
         <span className="text-foreground font-medium">Login Statistics</span>
       </div>
       <div className="flex items-center gap-3 mb-5">
-        <Link to="/m/$module" params={{ module: mod.slug }} className="btn"><ChevronLeft className="h-4 w-4" /></Link>
+        <button type="button" onClick={goBack} className="btn"><ChevronLeft className="h-4 w-4" /></button>
         <h1 className="text-xl font-bold">Login Statistics</h1>
       </div>
 

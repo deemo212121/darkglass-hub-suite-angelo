@@ -1,7 +1,8 @@
 import { useState, useMemo, useRef, useEffect, useCallback, useLayoutEffect } from "react";
 import { createPortal } from "react-dom";
 import { ChevronLeft } from "lucide-react";
-import { Link } from "@tanstack/react-router";
+import { useNavigate } from "@tanstack/react-router";
+import { useSmartBack } from "@/hooks/useSmartBack";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { LOCATIONS, TECHS_FULL, pick, pad, offsetStr, todayStr } from "@/components/shared";
 import { FloatingHorizontalScrollbar } from "@/components/FloatingHorizontalScrollbar";
@@ -11,6 +12,8 @@ const STATUSES=["TR-Need Triage","TR-Need PO","OP-Waiting for Part","OP-Ready fo
 const ALL_ROWS=Array.from({length:60},(_,i)=>{const d=new Date();d.setDate(d.getDate()-(i%30));return{id:i+1,ticketNo:"TK-2026-"+pad(1000+i),location:pick(LOCATIONS.slice(1),i),tech:pick(TECHS_FULL,i),repairStatus:pick(STATUSES,i),date:d.toISOString().slice(0,10),count:1+(i%5)};});
 
 export function RepairStatusReport({ mod, sub }: Props) {
+  const navigate = useNavigate();
+  const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
   const [dataLevel, setDataLevel] = useState<"location"|"tech">("tech");
   const [location, setLocation] = useState("");
   const [locOpen, setLocOpen] = useState(false);
@@ -56,7 +59,7 @@ export function RepairStatusReport({ mod, sub }: Props) {
     <div className="min-h-screen flex flex-col">
     <main className="flex-1 max-w-[1900px] mx-auto w-full px-4 py-6">
       <div className="flex items-center gap-3 mb-5">
-        <Link to="/m/$module" params={{module:mod.slug}} className="btn"><ChevronLeft className="h-4 w-4"/></Link>
+        <button type="button" onClick={goBack} className="btn"><ChevronLeft className="h-4 w-4"/></button>
         <h1 className="text-xl font-bold">Repair Status Report</h1>
       </div>
       <div className="panel panel-filter mb-5">

@@ -67,7 +67,7 @@ function readEnv(env?: Record<string, string | undefined>): EnvBag | { error: st
 
 // "PARTS" isn't a real geographic region — it's the ticket page's Part
 // Transaction "Send" (drop-ship request) connection slot, added later
-// (migration 0171) so it's independently connectable instead of forced to
+// (migration 0168) so it's independently connectable instead of forced to
 // reuse whichever Payroll US/PH mailbox happens to be connected. Same
 // table/RPCs/connect-flow, just a third allowed value.
 type Region = "US" | "PH" | "PARTS" | "IT_1" | "IT_2" | "IT_3";
@@ -486,7 +486,7 @@ export async function handleGmailRequest(request: Request, env?: Record<string, 
     try {
       const payload = (await request.json().catch(() => ({}))) as Record<string, unknown>;
       const idToken = typeof payload.idToken === "string" ? payload.idToken : "";
-      // Its own independent connection slot (see migration 0171) — not
+      // Its own independent connection slot (see migration 0168) — not
       // resolved from the ticket's US/PH branch like Payroll is, so this
       // never actually varies per-request, but stays parseRegion-checked
       // for consistency with the other actions in this file.

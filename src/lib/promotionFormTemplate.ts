@@ -8,7 +8,7 @@
  * src/assets/Employee Promotion or Role Change.pdf exactly.
  *
  * One more signature slot than the Warning Form (5, not 4) — Employee,
- * Direct Manager, Senior Manager, HR, and Executive — see migration 0166
+ * Direct Manager, Senior Manager, HR, and Executive — see migration 0165
  * for the matching hr_signable_documents.recipient_slot widening.
  */
 

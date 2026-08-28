@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
+import { useSmartBack } from "@/hooks/useSmartBack";
 import { ChevronLeft, Printer, Download, Search, X } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
@@ -371,6 +372,8 @@ function exportCsv(title: string, rows: RankingRow[], label: string) {
 }
 
 export function OverallStatusPage({ mod, companyId }: { mod: ModuleDef; sub: SubModuleDef; companyId: string | null; }) {
+  const navigate = useNavigate();
+  const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
   // Prefer the company's short login alias (e.g. "USIHS") over the raw
   // legacy_code (e.g. "COMP001") for display — same convention Header.tsx
   // uses. companyId itself is left untouched (still the real functional
@@ -434,9 +437,9 @@ export function OverallStatusPage({ mod, companyId }: { mod: ModuleDef; sub: Sub
     <div className="min-h-screen flex flex-col bg-slate-950 text-white">
       <main className="flex-1 max-w-[1400px] mx-auto w-full px-4 py-3">
         <div className="flex items-center gap-3 mb-2">
-          <Link to="/m/$module" params={{ module: mod.slug }} className="inline-flex items-center gap-1.5 rounded-md border border-white/15 bg-slate-800/70 px-2.5 py-1 text-xs text-slate-200 hover:bg-slate-700">
+          <button type="button" onClick={goBack} className="inline-flex items-center gap-1.5 rounded-md border border-white/15 bg-slate-800/70 px-2.5 py-1 text-xs text-slate-200 hover:bg-slate-700">
             <ChevronLeft className="h-3.5 w-3.5" /> {mod.label}
-          </Link>
+          </button>
         </div>
 
         <div className="mb-2 text-center">

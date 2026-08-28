@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect, useCallback, useLayoutEffect } from "react";
 import { createPortal } from "react-dom";
 import { ChevronLeft, Save } from "lucide-react";
-import { Link } from "@tanstack/react-router";
+import { useNavigate } from "@tanstack/react-router";
+import { useSmartBack } from "@/hooks/useSmartBack";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { LOCATIONS, TECHS_FULL, pick, offsetStr, todayStr } from "@/components/shared";
 import { usePersistedTab } from "@/lib/usePersistedTab";
@@ -27,6 +28,8 @@ const CPA_ROWS = Array.from({length:20},(_,i)=>({
 }));
 
 export function PayrollReport({ mod, sub }: Props) {
+  const navigate = useNavigate();
+  const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
   const [tab, setTab] = usePersistedTab<"tech" | "cpa">("ahs:payroll-report-active-tab", ["tech", "cpa"], "tech");
   const [location, setLocation] = useState("");
   const [locOpen, setLocOpen] = useState(false);
@@ -73,7 +76,7 @@ export function PayrollReport({ mod, sub }: Props) {
     <div className="min-h-screen flex flex-col">
     <main className="flex-1 max-w-[1900px] mx-auto w-full px-4 py-6">
       <div className="flex items-center gap-3 mb-5">
-        <Link to="/m/$module" params={{module:mod.slug}} className="btn"><ChevronLeft className="h-4 w-4"/></Link>
+        <button type="button" onClick={goBack} className="btn"><ChevronLeft className="h-4 w-4"/></button>
         <h1 className="text-xl font-bold">Payroll Report</h1>
       </div>
       <div className="panel panel-filter mb-5">

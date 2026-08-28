@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
+import { useSmartBack } from "@/hooks/useSmartBack";
 import { ChevronLeft, Check, Columns3, History } from "lucide-react";
 import { LOCATIONS } from "@/lib/locations";
 import {
@@ -242,6 +243,8 @@ function branchChipColor(location: string) {
 }
 
 export function PartReceive({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
+  const navigate = useNavigate();
+  const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
   const [location, setLocation] = useState("");
   const [partFrom, setPartFrom] = useState("");
   const [dateFrom, setDateFrom] = useState("");
@@ -553,9 +556,9 @@ export function PartReceive({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef })
       <main className="flex-1 min-w-0 w-full px-3 py-8">
         <div className="mb-8">
           <div className="flex items-center gap-3 mb-6">
-            <Link to="/m/$module" params={{ module: mod.slug }} className="btn hover:bg-white/15">
+            <button type="button" onClick={goBack} className="btn hover:bg-white/15">
               <ChevronLeft className="h-4 w-4" /> {mod.label}
-            </Link>
+            </button>
           </div>
           <h1 className="text-4xl font-display font-bold tracking-tight mb-2">{sub.title}</h1>
           <p className="text-lg text-muted-foreground">{sub.description}</p>

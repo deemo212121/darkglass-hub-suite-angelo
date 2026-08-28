@@ -8,7 +8,8 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
+import { useSmartBack } from "@/hooks/useSmartBack";
 import type * as Leaflet from "leaflet";
 import { ChevronLeft, Loader2, MapPin, RefreshCw, Search, X } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
@@ -95,6 +96,8 @@ function spreadOverlappingPoints(points: Array<{ pt: LatLng; tech: TechnicianWhe
 const AUTO_REFRESH_MS = 60_000;
 
 export function TechnicianWhereaboutsPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
+  const navigate = useNavigate();
+  const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
   const [rows, setRows] = useState<TechnicianWhereabouts[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
@@ -316,10 +319,10 @@ export function TechnicianWhereaboutsPage({ mod, sub }: { mod: ModuleDef; sub: S
     <main className="flex-1 bg-slate-950 py-6">
       <div className="max-w-[1500px] mx-auto px-6">
         <div className="flex items-center gap-3 text-white">
-          <Link to="/m/$module" params={{ module: mod.slug }} className="btn">
+          <button type="button" onClick={goBack} className="btn">
             <ChevronLeft className="h-4 w-4" />
             {mod.label}
-          </Link>
+          </button>
           <div>
             <h1 className="text-3xl font-bold tracking-tight">{sub.title}</h1>
             <p className="mt-1 text-sm text-slate-300">

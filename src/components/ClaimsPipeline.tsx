@@ -1,5 +1,6 @@
 import { useMemo, useState, useEffect } from "react";
-import { Link } from "@tanstack/react-router";
+import { useNavigate } from "@tanstack/react-router";
+import { useSmartBack } from "@/hooks/useSmartBack";
 import { Card } from "./ui/card";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
@@ -15,6 +16,8 @@ interface PipelineStage {
 }
 
 export function ClaimsPipeline({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
+  const navigate = useNavigate();
+  const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
   const [filter, setFilter] = useState<string>("all");
   const [isReady, setIsReady] = useState(false);
 
@@ -89,9 +92,9 @@ export function ClaimsPipeline({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
         {/* Header */}
         <div className="mb-8">
           <div className="flex items-center gap-3 mb-6">
-            <Link to="/m/$module" params={{ module: mod.slug }} className="btn hover:bg-white/15">
+            <button type="button" onClick={goBack} className="btn hover:bg-white/15">
               <ChevronLeft className="h-4 w-4" /> {mod.label}
-            </Link>
+            </button>
           </div>
           <div>
             <h1 className="text-4xl font-display font-bold tracking-tight mb-2">{sub.title}</h1>

@@ -14,6 +14,8 @@ export interface PartCollectionRow {
   techName: string;
   ticketNo: string;
   repairStatus: string;
+  /** The ticket's branch/location — drives the Parts hub's per-branch "Done" digest routing. */
+  location: string;
   partNo: string;
   description: string;
   uniqueId: string;
@@ -30,8 +32,6 @@ export interface PartCollectionRow {
   collected: boolean;
   collectedDate: string;
   scheduleDate: string;
-  /** The ticket's branch/location — drives the Parts hub's per-branch "Done" digest routing. */
-  location: string;
 }
 
 // Suggests a Collect Type from the part's own status, per the rules the

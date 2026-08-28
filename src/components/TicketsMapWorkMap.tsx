@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Link } from "@tanstack/react-router";
+import { useNavigate } from "@tanstack/react-router";
+import { useSmartBack } from "@/hooks/useSmartBack";
 import type * as Leaflet from "leaflet";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { CalendarDays, ChevronLeft, ChevronDown, MapPin, X } from "lucide-react";
@@ -105,6 +106,8 @@ function getStatusDotClass(status: "ready" | "op" | "clNeed" | "comp") {
 }
 
 export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
+  const navigate = useNavigate();
+  const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
   const [selectedLocation, setSelectedLocation] = useState("");
   // Real, active technicians (role=TECHNICIAN, primary or secondary) —
   // replaces the old static TECHNICIANS_BY_LOCATION seed list.
@@ -887,9 +890,9 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
     <div className="min-h-screen flex flex-col">
       <main className="flex-1 max-w-[1400px] mx-auto w-full px-6 py-8">
         <div className="flex items-center gap-3 mb-8">
-          <Link to="/m/$module" params={{ module: mod.slug }} className="btn hover:bg-white/15">
+          <button type="button" onClick={goBack} className="btn hover:bg-white/15">
             <ChevronLeft className="h-4 w-4" /> {mod.label}
-          </Link>
+          </button>
           <div>
             <h1 className="text-4xl font-display font-bold tracking-tight">{sub.title}</h1>
             <p className="text-lg text-muted-foreground">{sub.description}</p>

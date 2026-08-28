@@ -9,7 +9,8 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "@tanstack/react-router";
+import { useNavigate } from "@tanstack/react-router";
+import { useSmartBack } from "@/hooks/useSmartBack";
 import { ChevronLeft, Users, UserCheck, UserX, Clock, Briefcase, Loader2, Download } from "lucide-react";
 import { Bar, BarChart, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import * as XLSX from "xlsx";
@@ -38,6 +39,8 @@ const daysAgoIso = (n: number) => { const d = new Date(); d.setDate(d.getDate() 
 function dateOnly(v: string | undefined | null): string { return (v || "").slice(0, 10); }
 
 export function ReportHR({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
+  const navigate = useNavigate();
+  const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -168,7 +171,7 @@ export function ReportHR({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
     <div className="min-h-screen flex flex-col">
       <main className="flex-1 max-w-[1600px] mx-auto w-full px-6 py-8">
         <div className="flex items-center gap-3 mb-6">
-          <Link to="/m/$module" params={{ module: mod.slug }} className="btn hover:bg-white/15"><ChevronLeft className="h-4 w-4" /></Link>
+          <button type="button" onClick={goBack} className="btn hover:bg-white/15"><ChevronLeft className="h-4 w-4" /></button>
           <div>
             <h1 className="text-2xl font-bold">{sub.title}</h1>
             <p className="text-xs text-muted-foreground mt-0.5">Read-only hiring &amp; headcount summary — manage candidates, onboarding, and Jotform submissions from the HR &amp; Recruitment Dashboard.</p>

@@ -725,7 +725,7 @@ async function findHrFirebaseUids(
 
 /**
  * Per-person opt-outs (Accessibility Management's opt-out grid, migration
- * 0176) layered on top of the role-based routing above — a person whose
+ * 0172) layered on top of the role-based routing above — a person whose
  * role qualifies can still have personally opted out of this trigger.
  * Fails open (returns the input unfiltered) on any error rather than
  * silently notifying nobody.

@@ -1,6 +1,6 @@
 /**
  * Per-company overrides for which role(s) get notified by each of the
- * app's role-configurable notification triggers — see migration 0175
+ * app's role-configurable notification triggers — see migration 0171
  * (notification_role_gates), same shape/semantics as
  * module_role_gate_overrides (moduleRoleGates.ts): a trigger with no
  * override rows falls back to its own hardcoded defaultRoles below, and

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { ChevronLeft, Trash2, Loader2, Plus } from "lucide-react";
-import { Link } from "@tanstack/react-router";
+import { useNavigate } from "@tanstack/react-router";
+import { useSmartBack } from "@/hooks/useSmartBack";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { usePersistedTab } from "@/lib/usePersistedTab";
@@ -121,6 +122,8 @@ const EMPTY_NEW_BRANCH_FORM = {
 };
 
 export function GeneralInfoPage({ mod, sub }: Props) {
+  const navigate = useNavigate();
+  const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
   const { role } = useAuth();
   const canEdit = ["ADMIN", "HR", "SUPERADMIN"].includes(String(role || "").toUpperCase());
 
@@ -427,7 +430,7 @@ export function GeneralInfoPage({ mod, sub }: Props) {
     <main className="max-w-[1600px] mx-auto px-6 py-8">
       <div className="sticky top-[64px] z-10 -mx-6 px-6 pb-2 backdrop-blur-md bg-[var(--color-background)]/95">
         <div className="flex items-center gap-3 mb-6 pt-2">
-          <Link to="/m/$module" params={{ module: mod.slug }} className="btn"><ChevronLeft className="h-4 w-4" /></Link>
+          <button type="button" onClick={goBack} className="btn"><ChevronLeft className="h-4 w-4" /></button>
           <div>
             <h1 className="text-xl font-bold text-white">General Information</h1>
             <p className="text-sm text-slate-400">Branch management directory — roles, regions, leadership, and abbreviations.</p>

@@ -1,15 +1,16 @@
 import { useState, useRef, useEffect, useLayoutEffect, useCallback } from "react";
 import { createPortal } from "react-dom";
-import { Link } from "@tanstack/react-router";
+import { useNavigate } from "@tanstack/react-router";
+import { useSmartBack } from "@/hooks/useSmartBack";
 import { ChevronLeft, Printer, Save, CheckCircle, Loader2, Undo2, ScanLine, History } from "lucide-react";
 import { LOCATIONS } from "@/lib/locations";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { getCompanyTechnicians } from "@/lib/supabase/users";
-import { getPartsForDailyCollection, updatePartCollectionRow, suggestCollectType, type PartCollectionRow } from "@/lib/supabase/partDailyCollection";
 import { addPendingDoneItem, removePendingDoneItem } from "@/lib/partsDoneQueue";
 import { getEffectiveNotificationRoles } from "@/lib/supabase/notificationRoleGates";
 import { notifyPartsManagers } from "@/lib/partsNotify";
+import { getPartsForDailyCollection, updatePartCollectionRow, suggestCollectType, type PartCollectionRow } from "@/lib/supabase/partDailyCollection";
 import { logActivity, getActivityLog, activityActionLabel, type HrActivityLogEntry } from "@/lib/supabase/hrActivityLog";
 
 const PARTS_DONE_QUEUE_SOURCE = "Part Daily Collection";
@@ -32,7 +33,11 @@ function getDefaultCollectionDate() {
   else d.setDate(d.getDate() - 1);
   return d.toISOString().slice(0, 10);
 }
+const COLS=["Technician","Picked Up","Collected","Part No","Description","Unique ID","Core Value","Ticket #","Repair Status","Qty","Used Qty","Restock Qty","Collect Type","Lot #","Comment","Part Status","Action"];
+
 export function PartDailyCollection({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
+  const navigate = useNavigate();
+  const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: "parts" } }));
   const { companyId } = useAuth();
   const [location,setLocation]=useState("");const [locOpen,setLocOpen]=useState(false);
   const [tech,setTech]=useState("");const [techOpen,setTechOpen]=useState(false);
@@ -109,13 +114,14 @@ export function PartDailyCollection({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
         removePendingDoneItem(PARTS_DONE_QUEUE_SOURCE, id);
         return { ...r, collected: false, collectedDate: "" };
       }
-      addPendingDoneItem(PARTS_DONE_QUEUE_SOURCE, id, `${r.partNo || id} (Ticket ${r.ticketNo || "—"})`, r.location);
-      return {
+      const next = {
         ...r,
         collected: true,
         collectedDate: TODAY,
         collectType: r.collectType || suggestCollectType(r.partStatus),
       };
+      addPendingDoneItem(PARTS_DONE_QUEUE_SOURCE, id, `${next.partNo || next.id} (Ticket ${next.ticketNo || "—"})`, next.location);
+      return next;
     }));
   };
 
@@ -137,9 +143,10 @@ export function PartDailyCollection({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
   };
 
   // When collect type is set to "Restock" and saved, fire a notification
-  // to whichever role(s) Accessibility Management > Notification Access by
-  // Role configures for trigger "parts_restock" (defaults to Parts
-  // Manager) — per-user opt-outs on that same page apply too.
+  // to the Parts Manager role that this part is back in stock. Configurable
+  // via Accessibility Management > Notification Access by Role (trigger
+  // "parts_restock") — defaults to Parts Manager. Per-user opt-outs (same
+  // page's opt-out grid) apply too.
   const notifyRestock = useCallback(async (row: PartCollectionRow) => {
     try {
       const roles = await getEffectiveNotificationRoles("parts_restock");
@@ -204,11 +211,9 @@ export function PartDailyCollection({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
     if(ctOpen&&!ctD.ref.current?.contains(t)&&!ctL.current?.contains(t))setCtOpen(false);
   };document.addEventListener("mousedown",fn);return()=>document.removeEventListener("mousedown",fn);},[locOpen,techOpen,dtOpen,ctOpen]);
 
-  const COLS=["Technician","Picked Up","Collected","Part No","Description","Unique ID","Core Value","Ticket #","Repair Status","Qty","Used Qty","Restock Qty","Collect Type","Lot #","Comment","Part Status","Action"];
-
   return(<div className="min-h-screen flex flex-col"><main className="flex-1 max-w-[1600px] mx-auto w-full px-6 py-8">
     <div className="flex items-center justify-between gap-3 mb-6">
-      <div className="flex items-center gap-3"><Link to="/m/$module" params={{ module: "parts" }} className="btn hover:bg-white/15"><ChevronLeft className="h-4 w-4"/></Link><h1 className="text-2xl font-bold">{sub.title}</h1></div>
+      <div className="flex items-center gap-3"><button type="button" onClick={goBack} className="btn hover:bg-white/15"><ChevronLeft className="h-4 w-4"/></button><h1 className="text-2xl font-bold">{sub.title}</h1></div>
       <button type="button" onClick={openActivityLog} className="btn hover:bg-white/15 inline-flex items-center gap-2 text-xs">
         <History className="h-3.5 w-3.5" /> View Activity
       </button>

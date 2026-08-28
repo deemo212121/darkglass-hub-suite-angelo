@@ -30,7 +30,7 @@ export async function getBranchProgress(branches: string[]): Promise<BranchProgr
   const [allReceive, allCollection, ...pickupResults] = await Promise.all([
     getPartsToReceive().catch(() => []),
     getPartsForDailyCollection({
-      dateType: "Pickup Date",
+      dateType: "Collect Date",
       startDate: "",
       endDate: "",
       notCollected: true,

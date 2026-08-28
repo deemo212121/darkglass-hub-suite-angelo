@@ -1,6 +1,7 @@
 import { useState, useMemo, useRef, useEffect } from "react";
 import { ChevronLeft, ChevronDown } from "lucide-react";
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
+import { useSmartBack } from "@/hooks/useSmartBack";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 
 interface Props { mod: ModuleDef; sub: SubModuleDef; }
@@ -181,6 +182,8 @@ const STATUS_CHIP: Record<string,string> = {
 };
 
 export function LtpReport({ mod, sub }: Props) {
+  const navigate = useNavigate();
+  const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
   const [accounts, setAccounts] = useState<string[]>([...ACCOUNTS]);
   const [serviceTypes, setServiceTypes] = useState<string[]>([...SERVICE_TYPES]);
   const [warrantyTypes, setWarrantyTypes] = useState<string[]>([...WARRANTY_TYPES]);
@@ -214,9 +217,9 @@ export function LtpReport({ mod, sub }: Props) {
 
       {/* Title */}
       <div className="flex items-center gap-3 mb-5">
-        <Link to="/m/$module" params={{ module: mod.slug }} className="btn">
+        <button type="button" onClick={goBack} className="btn">
           <ChevronLeft className="h-4 w-4" />
-        </Link>
+        </button>
         <h1 className="text-xl font-bold tracking-tight">Long Term Pending (LTP) Report</h1>
       </div>
 

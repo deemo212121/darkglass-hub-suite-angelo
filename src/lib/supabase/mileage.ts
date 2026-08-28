@@ -49,7 +49,7 @@ export interface MileageEntry {
   /** "manual" (Mileage tab's On Hold button) or "no_photos" (automatic — see
    *  reconcileMileageNoPhotoHolds). Null when not excluded. Lets the
    *  automatic rule know never to touch a human's manual hold, and lets a
-   *  human's "take it off hold" always win even with no photo. Migration 0181. */
+   *  human's "take it off hold" always win even with no photo. Migration 0177. */
   payrollHoldReason: "manual" | "no_photos" | null;
   /** This day's manually-set stop sequence (0-based, shared meaning across
    *  every entry in the same technician+work_date group) — see

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "@tanstack/react-router";
+import { useNavigate } from "@tanstack/react-router";
+import { useSmartBack } from "@/hooks/useSmartBack";
 import { ChevronLeft, Save, Download, Printer, Loader2, X } from "lucide-react";
 import type { ModuleDef } from "@/lib/modules";
 import { ROLE_OPTIONS } from "@/lib/roleLabels";
@@ -71,6 +72,8 @@ function RoleMultiSelectCell({ values, onChange }: { values: string[]; onChange:
 }
 
 export function RepairStatusesPage({ mod }: { mod: ModuleDef }) {
+  const navigate = useNavigate();
+  const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
   const [rows, setRows] = useState<RepairStatus[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -236,9 +239,9 @@ export function RepairStatusesPage({ mod }: { mod: ModuleDef }) {
 
         <div className="repair-toolbar">
           <div className="repair-title-wrap">
-            <Link to="/m/$module" params={{ module: mod.slug }} className="btn">
+            <button type="button" onClick={goBack} className="btn">
               <ChevronLeft className="h-4 w-4" /> {mod.label}
-            </Link>
+            </button>
             <div>
               <div className="repair-title">Repair Statuses</div>
               <div className="repair-subtitle">{filteredRows.length} records found</div>

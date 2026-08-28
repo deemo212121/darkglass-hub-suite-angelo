@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { ChevronLeft, ChevronRight, Trash2, Loader2 } from "lucide-react";
-import { Link } from "@tanstack/react-router";
+import { useNavigate } from "@tanstack/react-router";
+import { useSmartBack } from "@/hooks/useSmartBack";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { usePersistedTab } from "@/lib/usePersistedTab";
 import { LOCATIONS } from "@/lib/locations";
@@ -22,6 +23,8 @@ interface Props { mod: ModuleDef; sub: SubModuleDef; }
 const ALL_BRANCHES = "__ALL__";
 
 export function TechPayrollSetup({ mod, sub }: Props) {
+  const navigate = useNavigate();
+  const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
   const [tab, setTab] = usePersistedTab<"amount" | "date" | "tier">(
     "ahs:tech-payroll-setup-active-tab",
     ["amount", "date", "tier"],
@@ -105,7 +108,7 @@ export function TechPayrollSetup({ mod, sub }: Props) {
     <main className="flex-1 max-w-[1900px] mx-auto w-full px-4 py-6">
       <div className="flex items-center justify-between mb-5">
         <div className="flex items-center gap-3">
-          <Link to="/m/$module" params={{module:mod.slug}} className="btn"><ChevronLeft className="h-4 w-4"/></Link>
+          <button type="button" onClick={goBack} className="btn"><ChevronLeft className="h-4 w-4"/></button>
           <h1 className="text-xl font-bold">Tech Payroll Setup</h1>
         </div>
       </div>

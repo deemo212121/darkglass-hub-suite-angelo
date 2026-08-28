@@ -1233,7 +1233,7 @@ function TicketDetailsPage() {
   // for a PO rather than a separate email per part).
   const [dropshipRows, setDropshipRows] = useState<PartTransactionRow[]>([]);
   const [dropshipSelectedIds, setDropshipSelectedIds] = useState<Set<string>>(new Set());
-  // Recent recipients (company-wide, see migration 0172) — lets HR pick a
+  // Recent recipients (company-wide, see migration 0169) — lets HR pick a
   // distributor they've sent to before instead of retyping it every time.
   const [dropshipRecent, setDropshipRecent] = useState<DropshipRecipient[]>([]);
   const [dropshipRecentError, setDropshipRecentError] = useState<string | null>(null);
@@ -5034,7 +5034,7 @@ function TicketDetailsPage() {
     clearPartForm();
   };
 
-  // Its own independent connection slot (see migration 0171) — deliberately
+  // Its own independent connection slot (see migration 0168) — deliberately
   // NOT resolved from the ticket's US/PH branch like Payroll payslips are,
   // so a drop-ship request never goes out from whichever Payroll mailbox
   // happens to be connected. An Admin can still connect the same account

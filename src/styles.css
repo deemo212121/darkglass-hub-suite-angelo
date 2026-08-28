@@ -401,15 +401,15 @@ input::-ms-clear {
   table.work-table {
     width: 100%;
     border-collapse: collapse;
-    background: #fff;
-    color: #1f2937;
+    background: #111827;
+    color: #e5e7eb;
     border-radius: 8px;
     overflow: hidden;
   }
 
   .work-table th,
   .work-table td {
-    border: 1px solid #d1d5db;
+    border: 1px solid rgba(255, 255, 255, 0.12);
     padding: 0.6rem 0.7rem;
     font-size: 0.79rem;
     white-space: nowrap;
@@ -417,7 +417,7 @@ input::-ms-clear {
   }
 
   .work-table th {
-    background: #f3f4f6;
+    background: #1f2937;
     font-weight: 700;
   }
 
@@ -443,9 +443,9 @@ input::-ms-clear {
   .work-calendar-grid {
     display: grid;
     gap: 0;
-    color: #1f2937;
-    background: #fff;
-    border: 1px solid #1f2937;
+    color: #e5e7eb;
+    background: #111827;
+    border: 1px solid rgba(255, 255, 255, 0.12);
     overflow: hidden;
   }
 
@@ -465,13 +465,13 @@ input::-ms-clear {
 
   .work-calendar-period-head,
   .work-calendar-period-cell {
-    background: #edf0f5;
+    background: rgba(255, 255, 255, 0.05);
     display: flex;
     align-items: center;
     justify-content: center;
     font-size: 0.72rem;
     font-weight: 700;
-    color: #374151;
+    color: #9ca3af;
     letter-spacing: 0.08em;
     text-transform: uppercase;
   }
@@ -492,7 +492,7 @@ input::-ms-clear {
 
   .work-calendar-cell {
     min-height: 120px;
-    background: #fff;
+    background: #111827;
     padding: 0.35rem 0.45rem 0.4rem;
     display: flex;
     flex-direction: column;
@@ -500,12 +500,12 @@ input::-ms-clear {
   }
 
   .work-calendar-cell.is-outside {
-    background: #f3f4f6;
-    color: #9ca3af;
+    background: rgba(255, 255, 255, 0.03);
+    color: #6b7280;
   }
 
   .work-calendar-cell.is-weekend {
-    background: #f2f2f2;
+    background: rgba(96, 165, 250, 0.06);
   }
 
   .work-calendar-cell-top {
@@ -517,7 +517,7 @@ input::-ms-clear {
   .work-calendar-day-number {
     font-size: 0.72rem;
     font-weight: 700;
-    color: #111827;
+    color: #e5e7eb;
   }
 
   .work-calendar-day-number.is-muted {
@@ -543,13 +543,13 @@ input::-ms-clear {
     padding: 2rem 1rem;
     text-align: center;
     color: #6b7280;
-    background: #fff;
+    background: #111827;
   }
 
   .work-calendar-empty-state-title {
     font-size: 1rem;
     font-weight: 700;
-    color: #111827;
+    color: #e5e7eb;
   }
 
   .work-calendar-empty-state-copy {
@@ -1626,6 +1626,13 @@ input::-ms-clear {
 .mtech {
   --mt-blue: #5b7eff;
   --mt-blue-dark: #4c5ac0;
+  --mt-ease: cubic-bezier(0.4, 0, 0.2, 1);
+  /* Same hue family as the page's own navy gradient below (oklch hue ~260-265)
+     but lighter — an "elevated surface" tint that reads as a card without the
+     stark contrast a plain white box makes against this dark background. */
+  --mt-surface: oklch(0.26 0.045 262);
+  --mt-surface-inset: oklch(0.2 0.04 262);
+  --mt-surface-border: rgba(255, 255, 255, 0.08);
   --mt-header-h: 52px;
   --mt-bottom-h: 52px;
   min-height: 100vh;
@@ -1720,22 +1727,24 @@ input::-ms-clear {
   top: calc(100% + 0.5rem);
   right: 0;
   z-index: 50;
-  background: #fff;
+  background: var(--mt-surface);
+  border: 1px solid var(--mt-surface-border);
   border-radius: 12px;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.22);
   min-width: 180px;
   overflow: hidden;
   animation: mtechSideFade 0.12s ease-out;
+  color: rgba(255, 255, 255, 0.92);
 }
 .mtech-app-profile-name {
   padding: 0.75rem 1rem 0.5rem;
   font-weight: 700;
   font-size: 0.9rem;
-  color: #1f2937;
+  color: rgba(255, 255, 255, 0.92);
 }
 .mtech-app-profile-divider {
   height: 1px;
-  background: #f1f5f9;
+  background: rgba(255, 255, 255, 0.08);
   margin: 0 0.75rem;
 }
 .mtech-app-profile-timecard {
@@ -1744,7 +1753,7 @@ input::-ms-clear {
   padding: 0.7rem 1rem;
   border: none;
   background: none;
-  color: var(--mt-blue-dark);
+  color: var(--mt-blue);
   font-size: 0.9rem;
   font-weight: 600;
   text-align: left;
@@ -1752,7 +1761,7 @@ input::-ms-clear {
   font-family: inherit;
 }
 .mtech-app-profile-timecard:hover {
-  background: #eef2ff;
+  background: rgba(255, 255, 255, 0.1);
 }
 .mtech-app-profile-logout {
   display: block;
@@ -1760,7 +1769,7 @@ input::-ms-clear {
   padding: 0.7rem 1rem;
   border: none;
   background: none;
-  color: #dc2626;
+  color: #f87171;
   font-size: 0.9rem;
   font-weight: 600;
   text-align: left;
@@ -1768,7 +1777,7 @@ input::-ms-clear {
   font-family: inherit;
 }
 .mtech-app-profile-logout:hover {
-  background: #fef2f2;
+  background: rgba(248, 113, 113, 0.15);
 }
 
 /* ── Scrollable content area (between header and bottom nav) ─────────── */
@@ -1794,8 +1803,8 @@ input::-ms-clear {
   height: var(--mt-bottom-h);
   display: flex;
   align-items: stretch;
-  background: #fff;
-  border-top: 1px solid #e2e8f0;
+  background: var(--mt-surface);
+  border-top: 1px solid var(--mt-surface-border);
   box-shadow: 0 -1px 8px rgba(0, 0, 0, 0.07);
   padding-bottom: env(safe-area-inset-bottom, 0);
 }
@@ -1803,7 +1812,7 @@ input::-ms-clear {
   flex: 1;
   border: none;
   background: transparent;
-  color: #94a3b8;
+  color: rgba(255, 255, 255, 0.85);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1816,7 +1825,7 @@ input::-ms-clear {
   position: relative;
 }
 .mtech-bottom-tab-active {
-  color: var(--mt-blue-dark);
+  color: var(--mt-blue);
 }
 .mtech-bottom-tab-active::before {
   content: "";
@@ -1827,6 +1836,11 @@ input::-ms-clear {
   height: 2px;
   border-radius: 0 0 3px 3px;
   background: linear-gradient(90deg, var(--mt-blue), var(--mt-blue-dark));
+}
+@media (prefers-reduced-motion: no-preference) {
+  .mtech-bottom-tab-active::before {
+    animation: mtech-fade-up 0.15s var(--mt-ease) both;
+  }
 }
 .mtech-bottom-tab-icon {
   font-size: 1.1rem;
@@ -1857,7 +1871,7 @@ input::-ms-clear {
   font-weight: 800;
   line-height: 15px;
   text-align: center;
-  box-shadow: 0 0 0 2px #fff;
+  box-shadow: 0 0 0 2px var(--mt-surface);
 }
 
 /* ── Legacy topbar styles kept for any remaining references ──────────── */
@@ -1906,9 +1920,9 @@ input::-ms-clear {
   object-fit: contain;
 }
 .mtech-user {
-  background: #fff;
-  color: var(--mt-blue-dark);
-  border: none;
+  background: var(--mt-surface);
+  color: var(--mt-blue);
+  border: 1px solid var(--mt-surface-border);
   border-radius: 999px;
   padding: 0.35rem 0.9rem;
   font-weight: 700;
@@ -1930,22 +1944,23 @@ input::-ms-clear {
 .mtech-alert-popup-card {
   width: 100%;
   max-width: 22rem;
-  background: #fff;
+  background: var(--mt-surface);
   border-radius: 14px;
   border: 2px solid #f59e0b;
   box-shadow: 0 20px 50px rgba(0, 0, 0, 0.35);
   padding: 1.2rem;
+  color: rgba(255, 255, 255, 0.92);
 }
 .mtech-alert-popup-title {
   font-size: 1.05rem;
   font-weight: 800;
-  color: #92400e;
+  color: #fbbf24;
   margin-bottom: 0.7rem;
 }
 .mtech-alert-popup-body { max-height: 40vh; overflow-y: auto; margin-bottom: 1rem; }
 .mtech-alert-popup-text {
   font-size: 0.92rem;
-  color: #1f2937;
+  color: rgba(255, 255, 255, 0.92);
   line-height: 1.4;
   margin: 0 0 0.6rem;
 }
@@ -1955,7 +1970,8 @@ input::-ms-clear {
   right: 0.8rem;
   top: 3.1rem;
   z-index: 40;
-  background: #fff;
+  background: var(--mt-surface);
+  border: 1px solid var(--mt-surface-border);
   border-radius: 8px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
   overflow: hidden;
@@ -1965,8 +1981,8 @@ input::-ms-clear {
   width: 100%;
   padding: 0.7rem 1.4rem;
   border: none;
-  background: #fff;
-  color: #b91c1c;
+  background: transparent;
+  color: #f87171;
   font-weight: 600;
   cursor: pointer;
 }
@@ -1979,9 +1995,9 @@ input::-ms-clear {
   background: rgba(255, 255, 255, 0.08);
 }
 .mtech-back, .mtech-detail-back {
-  background: #fff;
-  color: var(--mt-blue-dark);
-  border: none;
+  background: var(--mt-surface);
+  color: var(--mt-blue);
+  border: 1px solid var(--mt-surface-border);
   border-radius: 999px;
   width: 30px;
   height: 30px;
@@ -1993,17 +2009,18 @@ input::-ms-clear {
 .mtech-date {
   flex: 1;
   text-align: center;
-  background: #fff;
-  color: var(--mt-blue-dark);
+  background: var(--mt-surface);
+  color: var(--mt-blue);
+  border: 1px solid var(--mt-surface-border);
   border-radius: 999px;
   padding: 0.4rem 0.8rem;
   font-weight: 700;
   font-size: 0.9rem;
 }
 .mtech-route-btn {
-  background: #fff;
-  color: var(--mt-blue-dark);
-  border: none;
+  background: var(--mt-surface);
+  color: var(--mt-blue);
+  border: 1px solid var(--mt-surface-border);
   border-radius: 999px;
   padding: 0.4rem 1.1rem;
   font-weight: 700;
@@ -2057,6 +2074,18 @@ input::-ms-clear {
   gap: 0.6rem;
   padding: 0.75rem 0.85rem 1.25rem;
 }
+@keyframes mtech-fade-up {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@media (prefers-reduced-motion: no-preference) {
+  /* Every tab is a fresh mount (view === "x" swaps the whole subtree), so
+     this replays on every switch — one animation covers every screen
+     without touching the switching logic itself. */
+  .mtech-scroll {
+    animation: mtech-fade-up 0.25s var(--mt-ease) both;
+  }
+}
 .mtech-empty {
   text-align: center;
   color: rgba(255, 255, 255, 0.85);
@@ -2069,17 +2098,17 @@ input::-ms-clear {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background: #fff;
-  border: none;
+  background: var(--mt-surface);
+  border: 1px solid var(--mt-surface-border);
   border-radius: 14px;
   padding: 1rem 1.2rem;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14);
   cursor: pointer;
   text-align: left;
+  color: rgba(255, 255, 255, 0.92);
 }
 .mtech-roster-info { display: flex; flex-direction: column; }
-.mtech-roster-role { font-size: 0.72rem; color: #64748b; font-weight: 600; }
-.mtech-roster-name { font-size: 1.15rem; font-weight: 700; color: var(--mt-blue-dark); }
+.mtech-roster-role { font-size: 0.72rem; color: rgba(255, 255, 255, 0.85); font-weight: 600; }
+.mtech-roster-name { font-size: 1.15rem; font-weight: 700; color: var(--mt-blue); }
 .mtech-roster-chev {
   font-size: 1.8rem;
   color: #fff;
@@ -2095,21 +2124,20 @@ input::-ms-clear {
 .mtech-ticket-card {
   display: flex;
   align-items: stretch;
-  background: #fff;
-  border: none;
+  background: var(--mt-surface);
+  border: 1px solid var(--mt-surface-border);
   border-radius: 14px;
   overflow: hidden;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.09);
   cursor: pointer;
   text-align: left;
   width: 100%;
   min-height: 80px;          /* prevent collapse to zero height */
   font-family: inherit;
+  color: rgba(255, 255, 255, 0.92);
   transition: box-shadow 0.15s ease, transform 0.1s ease;
 }
 .mtech-ticket-card:active {
   transform: scale(0.985);
-  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.12);
 }
 
 /* 4px colored left accent strip */
@@ -2144,7 +2172,7 @@ input::-ms-clear {
 .mtech-ticket-no {
   font-weight: 800;
   font-size: 0.95rem;
-  color: var(--mt-blue-dark);
+  color: var(--mt-blue);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 .mtech-ticket-tone-badge {
@@ -2162,7 +2190,7 @@ input::-ms-clear {
 .mtech-ticket-customer {
   font-weight: 700;
   font-size: 0.92rem;
-  color: #1f2937;
+  color: rgba(255, 255, 255, 0.92);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2180,15 +2208,15 @@ input::-ms-clear {
   font-weight: 600;
   padding: 0.15rem 0.5rem;
   border-radius: 999px;
-  background: #f1f5f9;
-  color: #64748b;
+  background: var(--mt-surface-inset);
+  color: rgba(255, 255, 255, 0.85);
 }
 
 /* Status line */
 .mtech-ticket-status-line {
   font-size: 0.75rem;
   font-weight: 600;
-  color: #64748b;
+  color: rgba(255, 255, 255, 0.85);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2197,7 +2225,7 @@ input::-ms-clear {
 /* Schedule + model */
 .mtech-ticket-sched {
   font-size: 0.72rem;
-  color: #94a3b8;
+  color: rgba(255, 255, 255, 0.85);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2208,7 +2236,7 @@ input::-ms-clear {
   display: flex;
   align-items: center;
   padding: 0 0.75rem;
-  color: #cbd5e1;
+  color: rgba(255, 255, 255, 0.4);
   flex-shrink: 0;
 }
 
@@ -2305,13 +2333,12 @@ input::-ms-clear {
   display: flex;
   align-items: center;
   gap: 0.7rem;
-  background: #fff;
-  border: none;
+  background: var(--mt-surface);
+  border: 1px solid var(--mt-surface-border);
   border-radius: 10px;
   padding: 0.7rem 0.8rem;
   text-align: left;
   cursor: pointer;
-  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.12);
 }
 .mtech-direction-num {
   flex-shrink: 0;
@@ -2326,10 +2353,10 @@ input::-ms-clear {
   font-size: 0.85rem;
 }
 .mtech-direction-info { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-.mtech-direction-cust { font-weight: 700; color: #0f172a; font-size: 0.9rem; }
+.mtech-direction-cust { font-weight: 700; color: rgba(255, 255, 255, 0.92); font-size: 0.9rem; }
 .mtech-direction-addr {
   font-size: 0.78rem;
-  color: #64748b;
+  color: rgba(255, 255, 255, 0.85);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2341,23 +2368,24 @@ input::-ms-clear {
   align-items: flex-end;
   font-size: 0.78rem;
   font-weight: 700;
-  color: #2563eb;
+  color: var(--mt-blue);
 }
-.mtech-direction-dist { color: #94a3b8; font-weight: 600; }
+.mtech-direction-dist { color: rgba(255, 255, 255, 0.85); font-weight: 600; }
 
 /* Detail */
 .mtech-detail-head {
   display: flex;
   gap: 0.6rem;
-  background: #fff;
+  background: var(--mt-surface);
+  border: 1px solid var(--mt-surface-border);
   border-radius: 12px;
   padding: 0.8rem;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14);
+  color: rgba(255, 255, 255, 0.92);
 }
 .mtech-detail-headinfo { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.15rem; }
-.mtech-detail-no { font-weight: 800; color: #b91c1c; font-size: 1.1rem; }
-.mtech-detail-status { font-weight: 700; color: #b45309; font-size: 0.85rem; }
-.mtech-detail-line { font-size: 0.82rem; color: #1f2937; }
+.mtech-detail-no { font-weight: 800; color: #f87171; font-size: 1.1rem; }
+.mtech-detail-status { font-weight: 700; color: #fbbf24; font-size: 0.85rem; }
+.mtech-detail-line { font-size: 0.82rem; color: rgba(255, 255, 255, 0.92); }
 .mtech-detail-railbadge {
   flex-shrink: 0;
   width: 70px;
@@ -2396,18 +2424,19 @@ input::-ms-clear {
 .mtech-detail-tabs button.active { background: #fff; color: var(--mt-blue-dark); }
 
 .mtech-panel {
-  background: #fff;
+  background: var(--mt-surface);
+  border: 1px solid var(--mt-surface-border);
   border-radius: 12px;
   padding: 0.9rem;
   margin-top: 0.7rem;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14);
+  color: rgba(255, 255, 255, 0.92);
 }
 .mtech-section-title {
   font-weight: 800;
-  color: var(--mt-blue-dark);
+  color: var(--mt-blue);
   font-size: 0.95rem;
   margin: 0.8rem 0 0.5rem;
-  border-bottom: 2px solid #e5e7eb;
+  border-bottom: 2px solid rgba(255, 255, 255, 0.08);
   padding-bottom: 0.3rem;
 }
 .mtech-inforow {
@@ -2415,32 +2444,32 @@ input::-ms-clear {
   justify-content: space-between;
   gap: 0.8rem;
   padding: 0.4rem 0;
-  border-bottom: 1px solid #f1f5f9;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   font-size: 0.85rem;
 }
-.mtech-info-label { color: #64748b; font-weight: 600; flex-shrink: 0; }
-.mtech-info-value { color: #0f172a; text-align: right; word-break: break-word; }
-.mtech-service-section { padding: 0.4rem 0; border-bottom: 1px solid #f1f5f9; }
+.mtech-info-label { color: rgba(255, 255, 255, 0.85); font-weight: 600; flex-shrink: 0; }
+.mtech-info-value { color: rgba(255, 255, 255, 0.92); text-align: right; word-break: break-word; }
+.mtech-service-section { padding: 0.4rem 0; border-bottom: 1px solid rgba(255, 255, 255, 0.08); }
 .mtech-service-section .mtech-info-label { margin-bottom: 0.2rem; }
 .mtech-service-section-value {
-  color: #0f172a;
+  color: rgba(255, 255, 255, 0.92);
   font-size: 0.85rem;
   white-space: pre-wrap;
   word-break: break-word;
 }
-a.mtech-phone-link { color: #4f46e5; font-weight: 700; text-decoration: none; }
+a.mtech-phone-link { color: var(--mt-blue); font-weight: 700; text-decoration: none; }
 a.mtech-phone-link:active { opacity: 0.7; }
-.mtech-problem { font-size: 0.85rem; color: #1f2937; line-height: 1.5; }
-.mtech-muted { color: #64748b; font-size: 0.8rem; padding: 0.5rem 0; }
+.mtech-problem { font-size: 0.85rem; color: rgba(255, 255, 255, 0.92); line-height: 1.5; }
+.mtech-muted { color: rgba(255, 255, 255, 0.85); font-size: 0.8rem; padding: 0.5rem 0; }
 
 .mtech-bill { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
 .mtech-bill th, .mtech-bill td {
-  border: 1px solid #e5e7eb;
+  border: 1px solid rgba(255, 255, 255, 0.08);
   padding: 0.5rem;
   text-align: left;
 }
-.mtech-bill th { background: #f3f4f6; font-weight: 700; }
-.mtech-bill-total td { font-weight: 800; background: #f8fafc; }
+.mtech-bill th { background: var(--mt-surface-inset); font-weight: 700; }
+.mtech-bill-total td { font-weight: 800; background: var(--mt-surface-inset); }
 
 .mtech-desktop-link {
   position: sticky;
@@ -2479,7 +2508,7 @@ a.mtech-phone-link:active { opacity: 0.7; }
   margin-top: 0.6rem;
   font-size: 0.82rem;
   font-weight: 600;
-  color: #16a34a;
+  color: #4ade80;
   text-align: center;
 }
 
@@ -2507,7 +2536,7 @@ a.mtech-phone-link:active { opacity: 0.7; }
 .mtech-sig-clear {
   background: none;
   border: none;
-  color: #2563eb;
+  color: var(--mt-blue);
   font-weight: 700;
   text-decoration: underline;
   cursor: pointer;
@@ -2545,8 +2574,8 @@ a.mtech-phone-link:active { opacity: 0.7; }
   margin: 0.5rem 0 0.8rem;
 }
 .mtech-comment {
-  background: #f1f5f9;
-  border: 1px solid #e2e8f0;
+  background: var(--mt-surface-inset);
+  border: 1px solid var(--mt-surface-border);
   border-radius: 8px;
   padding: 0.55rem 0.7rem;
 }
@@ -2556,9 +2585,9 @@ a.mtech-phone-link:active { opacity: 0.7; }
   gap: 0.5rem;
   margin-bottom: 0.25rem;
 }
-.mtech-comment-author { font-size: 0.75rem; font-weight: 700; color: #2563eb; }
-.mtech-comment-time { font-size: 0.72rem; color: #94a3b8; }
-.mtech-comment-body { font-size: 0.85rem; color: #0f172a; white-space: pre-wrap; }
+.mtech-comment-author { font-size: 0.75rem; font-weight: 700; color: var(--mt-blue); }
+.mtech-comment-time { font-size: 0.72rem; color: rgba(255, 255, 255, 0.85); }
+.mtech-comment-body { font-size: 0.85rem; color: rgba(255, 255, 255, 0.92); white-space: pre-wrap; }
 .mtech-comment-compose {
   display: flex;
   flex-direction: column;
@@ -2591,14 +2620,14 @@ a.mtech-phone-link:active { opacity: 0.7; }
 .mtech-comment-section {
   margin-top: 1rem;
   padding-top: 0.6rem;
-  border-top: 2px solid #e2e8f0;
+  border-top: 2px solid rgba(255, 255, 255, 0.08);
 }
 
 /* Mobile — service tracking visit cards */
 .mtech-visit-list { display: flex; flex-direction: column; gap: 0.6rem; margin-bottom: 0.8rem; }
 .mtech-visit {
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
+  background: var(--mt-surface-inset);
+  border: 1px solid var(--mt-surface-border);
   border-radius: 8px;
   padding: 0.6rem 0.7rem;
 }
@@ -2608,7 +2637,7 @@ a.mtech-phone-link:active { opacity: 0.7; }
   align-items: center;
   margin-bottom: 0.3rem;
 }
-.mtech-visit-no { font-weight: 800; color: #4c5ac0; font-size: 0.9rem; }
+.mtech-visit-no { font-weight: 800; color: var(--mt-blue); font-size: 0.9rem; }
 .mtech-visit-status {
   font-size: 0.72rem;
   font-weight: 700;
@@ -2622,7 +2651,7 @@ a.mtech-phone-link:active { opacity: 0.7; }
   flex-direction: column;
   gap: 0.1rem;
   font-size: 0.8rem;
-  color: #475569;
+  color: rgba(255, 255, 255, 0.85);
   margin-bottom: 0.3rem;
 }
 
@@ -2633,14 +2662,14 @@ a.mtech-phone-link:active { opacity: 0.7; }
   gap: 0.35rem;
   margin-top: 0.55rem;
   padding-top: 0.55rem;
-  border-top: 1px dashed rgba(99, 102, 241, 0.25);
+  border-top: 1px dashed var(--mt-surface-border);
 }
 .mtech-visit-edit-label {
   font-size: 0.72rem;
   font-weight: 700;
   letter-spacing: 0.05em;
   text-transform: uppercase;
-  color: #4c5ac0;
+  color: var(--mt-blue);
   margin-top: 0.25rem;
 }
 .mtech-visit-edit-label.field-invalid {
@@ -2676,9 +2705,9 @@ a.mtech-phone-link:active { opacity: 0.7; }
 }
 .mtech-btn {
   appearance: none;
-  border: 1px solid rgba(99, 102, 241, 0.3);
-  background: #ffffff;
-  color: #4c5ac0;
+  border: 1px solid var(--mt-surface-border);
+  background: var(--mt-surface-inset);
+  color: var(--mt-blue);
   padding: 0.45rem 0.85rem;
   border-radius: 0.45rem;
   font-size: 0.82rem;
@@ -2699,18 +2728,18 @@ a.mtech-phone-link:active { opacity: 0.7; }
   background: #4338ca;
 }
 .mtech-btn:not(.mtech-btn-primary):hover:not(:disabled) {
-  background: #eef2ff;
+  background: rgba(255, 255, 255, 0.1);
 }
 
 /* Mobile-tech parts panel. Read-only rows with a single editable
    status dropdown. */
 .mtech-part-list { display: flex; flex-direction: column; gap: 0.6rem; margin-top: 0.4rem; }
 .mtech-part {
-  border: 1px solid rgba(99, 102, 241, 0.18);
+  border: 1px solid var(--mt-surface-border);
   border-radius: 0.5rem;
   padding: 0.6rem 0.7rem;
-  background: #ffffff;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
+  background: var(--mt-surface);
+  color: rgba(255, 255, 255, 0.92);
 }
 .mtech-part-head {
   display: flex;
@@ -2720,20 +2749,20 @@ a.mtech-phone-link:active { opacity: 0.7; }
 }
 .mtech-part-no {
   font-weight: 800;
-  color: #1e293b;
+  color: rgba(255, 255, 255, 0.92);
   font-size: 0.95rem;
   letter-spacing: 0.01em;
 }
 .mtech-part-dist {
   font-size: 0.72rem;
   font-weight: 700;
-  color: #4c5ac0;
+  color: var(--mt-blue);
   letter-spacing: 0.03em;
   text-transform: uppercase;
 }
 .mtech-part-desc {
   font-size: 0.82rem;
-  color: #475569;
+  color: rgba(255, 255, 255, 0.85);
   margin-bottom: 0.4rem;
 }
 .mtech-part-status-row {
@@ -2743,14 +2772,14 @@ a.mtech-phone-link:active { opacity: 0.7; }
   margin: 0.35rem 0 0.55rem;
   padding: 0.4rem 0.5rem;
   border-radius: 0.4rem;
-  background: rgba(79, 70, 229, 0.06);
+  background: var(--mt-surface-inset);
 }
 .mtech-part-status-label {
   font-size: 0.72rem;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: #4c5ac0;
+  color: var(--mt-blue);
 }
 .mtech-part-status-input {
   flex: 1;
@@ -2769,7 +2798,7 @@ a.mtech-phone-link:active { opacity: 0.7; }
 }
 .mtech-part-saving {
   font-size: 0.7rem;
-  color: #64748b;
+  color: rgba(255, 255, 255, 0.85);
 }
 .mtech-part-details {
   display: flex;
@@ -2809,18 +2838,19 @@ a.mtech-phone-link:active { opacity: 0.7; }
   align-items: center;
   justify-content: space-between;
   padding: 0.65rem 0.75rem;
-  border: 1px solid rgba(99, 102, 241, 0.18);
+  border: 1px solid var(--mt-surface-border);
   border-radius: 0.5rem;
-  background: #ffffff;
+  background: var(--mt-surface);
   cursor: pointer;
   transition: background 0.15s ease, border-color 0.15s ease;
+  color: rgba(255, 255, 255, 0.92);
 }
-.mtech-chat-contact:hover { background: #eef2ff; border-color: rgba(99, 102, 241, 0.4); }
-.mtech-chat-contact-name { font-weight: 700; color: #1e293b; }
+.mtech-chat-contact:hover { background: var(--mt-surface-inset); border-color: var(--mt-blue); }
+.mtech-chat-contact-name { font-weight: 700; color: rgba(255, 255, 255, 0.92); }
 .mtech-chat-contact-role {
   font-size: 0.72rem;
   font-weight: 700;
-  color: #4c5ac0;
+  color: var(--mt-blue);
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
@@ -2871,7 +2901,7 @@ a.mtech-phone-link:active { opacity: 0.7; }
   display: flex;
   gap: 0.5rem;
   padding-top: 0.4rem;
-  border-top: 1px solid rgba(99, 102, 241, 0.18);
+  border-top: 1px solid var(--mt-surface-border);
 }
 .mtech-chat-composer-input {
   flex: 1;
@@ -4914,7 +4944,7 @@ a.mtech-phone-link:active { opacity: 0.7; }
   border-radius: 0.4rem;
   background: rgba(251, 146, 60, 0.14);
   border: 1px solid rgba(251, 146, 60, 0.35);
-  color: #9a3412;
+  color: #fbbf24;
   font-size: 0.78rem;
   line-height: 1.35;
 }
@@ -4969,14 +4999,14 @@ a.mtech-phone-link:active { opacity: 0.7; }
   margin-top: 0.12rem;
 }
 
-/* Stat card — white, same as roster/ticket cards */
+/* Stat row — folded into mtech-home-greeting's own card (see below), so it's
+   a plain divided row on the same blue gradient, not its own white card. */
 .mtech-home-stat-card {
   display: flex;
   align-items: stretch;
-  background: #fff;
-  border-radius: 14px;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14);
-  overflow: hidden;
+  margin-top: 0.9rem;
+  padding-top: 0.8rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.2);
 }
 .mtech-home-stat-col {
   flex: 1;
@@ -4984,7 +5014,8 @@ a.mtech-phone-link:active { opacity: 0.7; }
   appearance: none;
   border: none;
   background: transparent;
-  padding: 0.85rem 0.9rem;
+  border-radius: 8px;
+  padding: 0.2rem 0.4rem;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -4995,37 +5026,37 @@ a.mtech-phone-link:active { opacity: 0.7; }
   transition: background-color 0.12s ease;
 }
 .mtech-home-stat-col:active {
-  background: rgba(76, 90, 192, 0.08);
+  background: rgba(255, 255, 255, 0.1);
 }
 .mtech-home-stat-divider {
   width: 1px;
   flex-shrink: 0;
-  background: #e2e8f0;
-  margin: 0.6rem 0;
+  background: rgba(255, 255, 255, 0.25);
+  margin: 0.1rem 0;
 }
 .mtech-home-stat-value {
-  font-size: 1.75rem;
+  font-size: 1.6rem;
   font-weight: 800;
-  color: var(--mt-blue-dark);
+  color: #fff;
   line-height: 1;
 }
 .mtech-home-stat-title {
-  font-size: 0.78rem;
+  font-size: 0.75rem;
   font-weight: 700;
-  color: #64748b;
+  color: rgba(255, 255, 255, 0.85);
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
 .mtech-home-stat-sub {
   margin-top: 0.15rem;
-  font-size: 0.72rem;
-  color: #94a3b8;
+  font-size: 0.7rem;
+  color: rgba(255, 255, 255, 0.7);
   font-weight: 500;
   text-transform: none;
   letter-spacing: normal;
 }
 
-/* 2×2 shortcut tile grid — white cards */
+/* 2×2 shortcut tile grid */
 .mtech-home-grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
@@ -5033,9 +5064,9 @@ a.mtech-phone-link:active { opacity: 0.7; }
 }
 .mtech-home-tile {
   appearance: none;
-  border: none;
-  background: #fff;
-  color: #1f2937;
+  border: 1px solid var(--mt-surface-border);
+  background: var(--mt-surface);
+  color: rgba(255, 255, 255, 0.92);
   padding: 1.1rem 0.75rem 1rem;
   border-radius: 14px;
   display: flex;
@@ -5043,13 +5074,12 @@ a.mtech-phone-link:active { opacity: 0.7; }
   align-items: center;
   gap: 0.45rem;
   cursor: pointer;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14);
-  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  transition: transform 0.15s ease, background-color 0.15s ease;
   font-family: inherit;
 }
 .mtech-home-tile:active {
   transform: scale(0.97);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+  background: var(--mt-surface-inset);
 }
 .mtech-home-tile-icon {
   font-size: 1.85rem;
@@ -5057,12 +5087,12 @@ a.mtech-phone-link:active { opacity: 0.7; }
 .mtech-home-tile-label {
   font-weight: 700;
   font-size: 0.88rem;
-  color: var(--mt-blue-dark);
+  color: var(--mt-blue);
 }
 .mtech-home-tile-desc {
   font-size: 0.72rem;
   font-weight: 500;
-  color: #64748b;
+  color: rgba(255, 255, 255, 0.85);
   text-align: center;
   line-height: 1.25;
 }
@@ -5070,19 +5100,39 @@ a.mtech-phone-link:active { opacity: 0.7; }
   display: flex;
   flex-direction: column;
   gap: 0.4rem;
+  background: var(--mt-surface);
+  border: 1px solid var(--mt-surface-border);
+  border-radius: 14px;
+  padding: 0.9rem 1rem;
 }
 .mtech-home-onsite-title {
   font-size: 0.78rem;
   font-weight: 700;
-  color: rgba(255, 255, 255, 0.85);
+  color: rgba(255, 255, 255, 0.9);
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  padding: 0 0.15rem;
 }
 .mtech-home-onsite-hint {
   font-size: 0.72rem;
-  color: rgba(255, 255, 255, 0.6);
-  padding: 0 0.15rem;
+  color: rgba(255, 255, 255, 0.85);
+}
+.mtech-home-onsite-status-row {
+  display: flex;
+  gap: 0.75rem;
+}
+.mtech-home-onsite-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  transition: color 0.2s var(--mt-ease);
+}
+.mtech-home-onsite-status.is-ok {
+  color: #4ade80;
+}
+.mtech-home-onsite-status.is-bad {
+  color: #fbbf24;
 }
 .mtech-home-onsite-devbtn {
   appearance: none;
@@ -5098,20 +5148,24 @@ a.mtech-phone-link:active { opacity: 0.7; }
   cursor: pointer;
 }
 .mtech-home-onsite-list {
-  background: #fff;
-  border-radius: 14px;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14);
+  background: var(--mt-surface-inset);
+  border-radius: 10px;
   overflow: hidden;
 }
 .mtech-home-onsite-empty {
   padding: 0.9rem 1rem;
-  background: #fff;
-  border-radius: 14px;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14);
-  color: #64748b;
+  background: var(--mt-surface-inset);
+  border-radius: 10px;
+  color: rgba(255, 255, 255, 0.85);
   font-weight: 600;
   font-size: 0.82rem;
   text-align: center;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .mtech-home-onsite-list,
+  .mtech-home-onsite-empty {
+    animation: mtech-fade-up 0.2s var(--mt-ease) both;
+  }
 }
 .mtech-home-onsite-row {
   display: flex;
@@ -5119,7 +5173,7 @@ a.mtech-phone-link:active { opacity: 0.7; }
   justify-content: space-between;
   gap: 0.6rem;
   padding: 0.75rem 0.9rem;
-  border-bottom: 1px solid #f1f5f9;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 .mtech-home-onsite-row:last-child {
   border-bottom: none;
@@ -5130,7 +5184,7 @@ a.mtech-phone-link:active { opacity: 0.7; }
 .mtech-home-onsite-distance {
   font-size: 0.68rem;
   font-weight: 600;
-  color: #94a3b8;
+  color: rgba(255, 255, 255, 0.85);
   margin-top: 0.2rem;
 }
 .mtech-home-onsite-info {
@@ -5141,20 +5195,20 @@ a.mtech-phone-link:active { opacity: 0.7; }
 .mtech-home-onsite-location {
   font-size: 0.68rem;
   font-weight: 700;
-  color: #64748b;
+  color: rgba(255, 255, 255, 0.85);
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
 .mtech-home-onsite-ticket {
   font-size: 0.88rem;
   font-weight: 700;
-  color: #1f2937;
+  color: rgba(255, 255, 255, 0.92);
   margin-top: 0.1rem;
 }
 .mtech-home-onsite-times {
   font-size: 0.68rem;
   font-weight: 600;
-  color: #16a34a;
+  color: #4ade80;
   margin-top: 0.2rem;
 }
 .mtech-home-onsite-btn {
@@ -5170,6 +5224,10 @@ a.mtech-phone-link:active { opacity: 0.7; }
   cursor: pointer;
   white-space: nowrap;
   flex-shrink: 0;
+  transition: transform 0.12s var(--mt-ease), box-shadow 0.12s var(--mt-ease), background-color 0.15s var(--mt-ease);
+}
+.mtech-home-onsite-btn:not(:disabled):active {
+  transform: scale(0.95);
 }
 .mtech-home-onsite-btn-done {
   background: var(--mt-blue-dark);
@@ -5191,25 +5249,26 @@ a.mtech-phone-link:active { opacity: 0.7; }
   gap: 0.85rem;
 }
 
-/* Heading (white card) */
+/* Heading (elevated dark surface card) */
 .mtech-payroll-heading {
   padding: 0.85rem 1.05rem;
-  background: #fff;
+  background: var(--mt-surface);
+  border: 1px solid var(--mt-surface-border);
   border-radius: 14px;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14);
+  color: rgba(255, 255, 255, 0.92);
 }
 .mtech-payroll-name {
   font-size: 1.1rem;
   font-weight: 800;
-  color: var(--mt-blue-dark);
+  color: var(--mt-blue);
 }
 .mtech-payroll-sub {
   margin-top: 0.1rem;
   font-size: 0.78rem;
-  color: #64748b;
+  color: rgba(255, 255, 255, 0.85);
 }
 
-/* Summary cards — two side by side, white */
+/* Summary cards — two side by side */
 .mtech-payroll-summary {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -5218,36 +5277,38 @@ a.mtech-phone-link:active { opacity: 0.7; }
 .mtech-payroll-card {
   padding: 0.85rem 0.95rem;
   border-radius: 14px;
-  background: #fff;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14);
+  background: var(--mt-surface);
+  border: 1px solid var(--mt-surface-border);
+  color: rgba(255, 255, 255, 0.92);
 }
 .mtech-payroll-card-label {
   font-size: 0.68rem;
   text-transform: uppercase;
   letter-spacing: 0.05em;
   font-weight: 700;
-  color: #64748b;
+  color: rgba(255, 255, 255, 0.85);
 }
 .mtech-payroll-card-value {
   margin-top: 0.25rem;
   font-size: 1.3rem;
   font-weight: 800;
-  color: #1f2937;
+  color: rgba(255, 255, 255, 0.92);
 }
-.mtech-payroll-card-value.paid { color: #16a34a; }
-.mtech-payroll-card-value.pending { color: #d97706; }
+.mtech-payroll-card-value.paid { color: #4ade80; }
+.mtech-payroll-card-value.pending { color: #fbbf24; }
 
-/* Per-period row cards — white */
+/* Per-period row cards */
 .mtech-payroll-list {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
 }
 .mtech-payroll-row {
-  background: #fff;
+  background: var(--mt-surface);
+  border: 1px solid var(--mt-surface-border);
   border-radius: 12px;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12);
   overflow: hidden;
+  color: rgba(255, 255, 255, 0.92);
 }
 .mtech-payroll-row-head {
   display: flex;
@@ -5259,7 +5320,7 @@ a.mtech-phone-link:active { opacity: 0.7; }
 .mtech-payroll-row-date {
   font-weight: 700;
   font-size: 0.85rem;
-  color: #1f2937;
+  color: rgba(255, 255, 255, 0.92);
 }
 
 /* Status pills (on white card — use saturated solid colours) */
@@ -5298,13 +5359,13 @@ a.mtech-phone-link:active { opacity: 0.7; }
   justify-content: space-between;
   padding: 0.4rem 0.85rem 0.7rem;
   gap: 0.6rem;
-  border-top: 1px solid #f1f5f9;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
 }
 .mtech-payroll-row-amount {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 1.05rem;
   font-weight: 800;
-  color: var(--mt-blue-dark);
+  color: var(--mt-blue);
 }
 .mtech-payroll-row-actions {
   display: flex;
@@ -5317,8 +5378,8 @@ a.mtech-phone-link:active { opacity: 0.7; }
   padding: 0.35rem 0.7rem;
   border-radius: 6px;
   border: 1.5px solid var(--mt-blue);
-  background: #fff;
-  color: var(--mt-blue-dark);
+  background: var(--mt-surface-inset);
+  color: var(--mt-blue);
   font-size: 0.75rem;
   font-weight: 700;
   cursor: pointer;
@@ -5326,14 +5387,14 @@ a.mtech-phone-link:active { opacity: 0.7; }
   transition: background 0.12s ease;
 }
 .mtech-payroll-action:hover:not(:disabled) {
-  background: #eef2ff;
+  background: rgba(255, 255, 255, 0.1);
 }
 .mtech-payroll-action-secondary {
-  border-color: #16a34a;
-  color: #16a34a;
+  border-color: #4ade80;
+  color: #4ade80;
 }
 .mtech-payroll-action-secondary:hover:not(:disabled) {
-  background: #f0fdf4;
+  background: rgba(74, 222, 128, 0.15);
 }
 .mtech-payroll-action:disabled {
   opacity: 0.4;
@@ -5344,7 +5405,7 @@ a.mtech-phone-link:active { opacity: 0.7; }
 .mtech-payroll-note {
   margin-top: 0.35rem;
   font-size: 0.72rem;
-  color: rgba(255, 255, 255, 0.65);
+  color: rgba(255, 255, 255, 0.85);
   text-align: center;
   padding: 0 0.5rem;
 }
@@ -5352,8 +5413,8 @@ a.mtech-phone-link:active { opacity: 0.7; }
 /* Technician Tech Payroll breakdown — inline expand under a pay period row */
 .mtech-payroll-breakdown {
   padding: 0.6rem 0.85rem 0.75rem;
-  border-top: 1px solid #f1f5f9;
-  background: #f8fafc;
+  border-top: 1px solid var(--mt-surface-border);
+  background: var(--mt-surface-inset);
 }
 .mtech-payroll-breakdown-row {
   display: flex;
@@ -5362,16 +5423,16 @@ a.mtech-phone-link:active { opacity: 0.7; }
   padding: 0.22rem 0;
   font-size: 0.8rem;
 }
-.mtech-payroll-breakdown-label { color: #64748b; font-weight: 600; }
-.mtech-payroll-breakdown-value { color: #1f2937; font-weight: 700; text-align: right; }
+.mtech-payroll-breakdown-label { color: rgba(255, 255, 255, 0.85); font-weight: 600; }
+.mtech-payroll-breakdown-value { color: rgba(255, 255, 255, 0.92); font-weight: 700; text-align: right; }
 .mtech-payroll-breakdown-total {
   margin-top: 0.3rem;
   padding-top: 0.4rem;
-  border-top: 1px solid #e2e8f0;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
 }
 .mtech-payroll-breakdown-total .mtech-payroll-breakdown-label,
 .mtech-payroll-breakdown-total .mtech-payroll-breakdown-value {
-  color: var(--mt-blue-dark);
+  color: var(--mt-blue);
   font-size: 0.9rem;
   font-weight: 800;
 }
@@ -5385,19 +5446,20 @@ a.mtech-phone-link:active { opacity: 0.7; }
 }
 .mtech-timecard-heading {
   padding: 0.85rem 1.05rem;
-  background: #fff;
+  background: var(--mt-surface);
+  border: 1px solid var(--mt-surface-border);
   border-radius: 14px;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14);
+  color: rgba(255, 255, 255, 0.92);
 }
 .mtech-timecard-name {
   font-size: 1.1rem;
   font-weight: 800;
-  color: var(--mt-blue-dark);
+  color: var(--mt-blue);
 }
 .mtech-timecard-sub {
   margin-top: 0.1rem;
   font-size: 0.78rem;
-  color: #64748b;
+  color: rgba(255, 255, 255, 0.85);
 }
 .mtech-timecard-summary {
   display: grid;
@@ -5407,43 +5469,66 @@ a.mtech-phone-link:active { opacity: 0.7; }
 .mtech-timecard-card {
   padding: 0.85rem 0.95rem;
   border-radius: 14px;
-  background: #fff;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14);
+  background: var(--mt-surface);
+  border: 1px solid var(--mt-surface-border);
+  color: rgba(255, 255, 255, 0.92);
 }
 .mtech-timecard-card-label {
   font-size: 0.68rem;
   text-transform: uppercase;
   letter-spacing: 0.05em;
   font-weight: 700;
-  color: #64748b;
+  color: rgba(255, 255, 255, 0.85);
 }
 .mtech-timecard-card-value {
   margin-top: 0.25rem;
   font-size: 1.3rem;
   font-weight: 800;
-  color: #1f2937;
+  color: rgba(255, 255, 255, 0.92);
 }
-.mtech-timecard-card-value.in { color: #16a34a; }
-.mtech-timecard-card-value.out { color: #dc2626; }
-.mtech-timecard-card-value.meal { color: #d97706; }
-/* Home's clock-status row — 4 cards on one line instead of 2x2, scoped so
-   the standalone Timecard page's own 2x2 layout is untouched. */
+.mtech-timecard-card-value.in { color: #4ade80; }
+.mtech-timecard-card-value.out { color: #f87171; }
+.mtech-timecard-card-value.meal { color: #fbbf24; }
+/* Home's clock-status row — one shared card holding all 4 slots instead of
+   2x2, scoped so the standalone Timecard page's own 2x2 layout is untouched. */
 .mtech-home-clockrow {
   grid-template-columns: repeat(4, 1fr);
-  gap: 0.4rem;
+  gap: 0;
+  background: var(--mt-surface);
+  border: 1px solid var(--mt-surface-border);
+  border-radius: 14px;
+  overflow: hidden;
 }
 .mtech-home-clockrow .mtech-timecard-card {
   padding: 0.6rem 0.4rem;
+  background: transparent;
+  border-radius: 0;
+  box-shadow: none;
+  /* Base .mtech-timecard-card now carries its own 1px border on all sides
+     for the standalone Timecard page — reset it here so only the intended
+     right-edge divider between slots shows in this flush 4-up row. */
+  border: none;
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+}
+.mtech-home-clockrow .mtech-timecard-card:last-child {
+  border-right: none;
 }
 .mtech-home-clockrow .mtech-timecard-card-label {
   font-size: 0.56rem;
+  color: rgba(255, 255, 255, 0.85);
 }
 .mtech-home-clockrow .mtech-timecard-card-value {
   font-size: 0.98rem;
   margin-top: 0.15rem;
 }
+/* Base .in/.out/.meal colors are tuned for the white Timecard page — this
+   card's own dark surface needs brighter equivalents for the same legibility. */
+.mtech-home-clockrow .mtech-timecard-card-value.in { color: #4ade80; }
+.mtech-home-clockrow .mtech-timecard-card-value.out { color: #f87171; }
+.mtech-home-clockrow .mtech-timecard-card-value.meal { color: #fbbf24; }
 .mtech-home-clockrow .mtech-timecard-card-confirm-label {
   font-size: 0.6rem;
+  color: rgba(255, 255, 255, 0.9);
 }
 .mtech-home-clockrow .mtech-timecard-confirm-btn {
   font-size: 0.62rem;
@@ -5469,10 +5554,15 @@ a.mtech-phone-link:active { opacity: 0.7; }
   flex-direction: column;
   gap: 0.45rem;
 }
+@media (prefers-reduced-motion: no-preference) {
+  .mtech-timecard-card-confirm {
+    animation: mtech-fade-up 0.18s var(--mt-ease) both;
+  }
+}
 .mtech-timecard-card-confirm-label {
   font-size: 0.8rem;
   font-weight: 700;
-  color: #1f2937;
+  color: rgba(255, 255, 255, 0.92);
 }
 .mtech-timecard-card-confirm-actions {
   display: flex;
@@ -5495,12 +5585,12 @@ a.mtech-phone-link:active { opacity: 0.7; }
 .mtech-timecard-hours {
   text-align: center;
   padding: 0.6rem;
-  background: #fff;
+  background: var(--mt-surface);
+  border: 1px solid var(--mt-surface-border);
   border-radius: 12px;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12);
   font-weight: 800;
   font-size: 1.05rem;
-  color: var(--mt-blue-dark);
+  color: var(--mt-blue);
 }
 .mtech-timecard-btn {
   appearance: none;
@@ -5528,7 +5618,7 @@ a.mtech-phone-link:active { opacity: 0.7; }
 .mtech-timecard-note {
   margin-top: 0.1rem;
   font-size: 0.72rem;
-  color: rgba(255, 255, 255, 0.65);
+  color: rgba(255, 255, 255, 0.85);
   text-align: center;
   padding: 0 0.5rem;
 }
@@ -5542,19 +5632,20 @@ a.mtech-phone-link:active { opacity: 0.7; }
 }
 .mtech-clockin-heading {
   padding: 0.85rem 1.05rem;
-  background: #fff;
+  background: var(--mt-surface);
+  border: 1px solid var(--mt-surface-border);
   border-radius: 14px;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14);
+  color: rgba(255, 255, 255, 0.92);
 }
 .mtech-clockin-title {
   font-size: 1.1rem;
   font-weight: 800;
-  color: var(--mt-blue-dark);
+  color: var(--mt-blue);
 }
 .mtech-clockin-sub {
   margin-top: 0.1rem;
   font-size: 0.78rem;
-  color: #64748b;
+  color: rgba(255, 255, 255, 0.85);
 }
 .mtech-clockin-list {
   display: flex;
@@ -5567,19 +5658,20 @@ a.mtech-phone-link:active { opacity: 0.7; }
   justify-content: space-between;
   gap: 0.6rem;
   padding: 0.75rem 0.9rem;
-  background: #fff;
+  background: var(--mt-surface);
+  border: 1px solid var(--mt-surface-border);
   border-radius: 12px;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12);
+  color: rgba(255, 255, 255, 0.92);
 }
 .mtech-clockin-row-name {
   font-weight: 700;
   font-size: 0.9rem;
-  color: #1f2937;
+  color: rgba(255, 255, 255, 0.92);
 }
 .mtech-clockin-row-status {
   margin-top: 0.15rem;
   font-size: 0.75rem;
-  color: #64748b;
+  color: rgba(255, 255, 255, 0.85);
 }
 .mtech-clockin-btn {
   appearance: none;
@@ -5663,7 +5755,11 @@ a.mtech-phone-link:active { opacity: 0.7; }
   flex-direction: column;
   height: 100%;
   min-height: 0;
-  background: #f8fafc;
+  /* Was a light-gray #f8fafc page fill tuned for white messenger surfaces —
+     with the inbox/thread surfaces below now dark, keep this transparent so
+     the shared .mtech dark gradient shows through instead of a mismatched
+     light strip. */
+  background: transparent;
 }
 
 /* ── Inbox (contact list) ─────────────────────────────────────────────── */
@@ -5680,8 +5776,8 @@ a.mtech-phone-link:active { opacity: 0.7; }
   position: sticky;
   top: 0;
   z-index: 5;
-  background: #fff;
-  border-bottom: 1px solid #e2e8f0;
+  background: var(--mt-surface);
+  border-bottom: 1px solid var(--mt-surface-border);
   padding: 0.85rem 1rem 0.75rem;
   display: flex;
   flex-direction: column;
@@ -5691,7 +5787,7 @@ a.mtech-phone-link:active { opacity: 0.7; }
 .mtech-chat-inbox-title {
   font-size: 1.15rem;
   font-weight: 800;
-  color: #1f2937;
+  color: rgba(255, 255, 255, 0.92);
 }
 
 /* Full-width search bar */
@@ -5758,9 +5854,9 @@ a.mtech-phone-link:active { opacity: 0.7; }
 .mtech-chat-role-pills::-webkit-scrollbar { display: none; }
 .mtech-chat-role-pill {
   appearance: none;
-  border: 1.5px solid #e2e8f0;
-  background: #fff;
-  color: #64748b;
+  border: 1.5px solid var(--mt-surface-border);
+  background: var(--mt-surface);
+  color: rgba(255, 255, 255, 0.85);
   border-radius: 999px;
   padding: 0.28rem 0.75rem;
   font-size: 0.72rem;
@@ -5780,17 +5876,17 @@ a.mtech-phone-link:active { opacity: 0.7; }
 /* Status / empty text */
 .mtech-chat-status {
   text-align: center;
-  color: #64748b;
+  color: rgba(255, 255, 255, 0.85);
   font-size: 0.85rem;
   padding: 1.5rem 1rem;
 }
-.mtech-chat-status-err { color: #dc2626; }
+.mtech-chat-status-err { color: #f87171; }
 
 /* Contact rows — WhatsApp/Messenger-style */
 .mtech-chat-contact-list {
   display: flex;
   flex-direction: column;
-  background: #fff;
+  background: var(--mt-surface);
 }
 
 .mtech-chat-contact-row {
@@ -5803,7 +5899,7 @@ a.mtech-phone-link:active { opacity: 0.7; }
   text-align: left;
   cursor: pointer;
   transition: background 0.1s ease;
-  border-bottom: 1px solid #f1f5f9;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   font-family: inherit;
 }
 .mtech-chat-contact-row:last-child {
@@ -5811,7 +5907,7 @@ a.mtech-phone-link:active { opacity: 0.7; }
 }
 .mtech-chat-contact-row:active,
 .mtech-chat-contact-row:hover {
-  background: #f8fafc;
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .mtech-chat-contact-avatar {
@@ -5837,23 +5933,23 @@ a.mtech-phone-link:active { opacity: 0.7; }
 .mtech-chat-contact-name {
   font-weight: 700;
   font-size: 0.95rem;
-  color: #1f2937;
+  color: rgba(255, 255, 255, 0.92);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.mtech-chat-contact-name.unread { color: #0f172a; font-weight: 800; }
+.mtech-chat-contact-name.unread { color: #fff; font-weight: 800; }
 /* Last-message preview (falls back to the role label when no
    conversation exists yet) - single-line truncated like a real chat
    list, not the plain role subtitle it replaced. */
 .mtech-chat-contact-preview {
   font-size: 0.8rem;
-  color: #64748b;
+  color: rgba(255, 255, 255, 0.85);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.mtech-chat-contact-preview.unread { color: #1e293b; font-weight: 600; }
+.mtech-chat-contact-preview.unread { color: rgba(255, 255, 255, 0.85); font-weight: 600; }
 
 .mtech-chat-contact-meta {
   display: flex;
@@ -5864,7 +5960,7 @@ a.mtech-phone-link:active { opacity: 0.7; }
 }
 .mtech-chat-contact-time {
   font-size: 0.7rem;
-  color: #94a3b8;
+  color: rgba(255, 255, 255, 0.85);
   white-space: nowrap;
 }
 .mtech-chat-contact-unread-badge {
@@ -5882,7 +5978,7 @@ a.mtech-phone-link:active { opacity: 0.7; }
 }
 
 .mtech-chat-contact-chev {
-  color: #cbd5e1;
+  color: rgba(255, 255, 255, 0.4);
   flex-shrink: 0;
 }
 
@@ -5896,8 +5992,8 @@ a.mtech-phone-link:active { opacity: 0.7; }
   align-items: center;
   gap: 0.75rem;
   padding: 0.7rem 0.85rem;
-  background: #fff;
-  border-bottom: 1px solid #e2e8f0;
+  background: var(--mt-surface);
+  border-bottom: 1px solid var(--mt-surface-border);
   position: sticky;
   top: 0;
   z-index: 5;
@@ -5908,14 +6004,14 @@ a.mtech-phone-link:active { opacity: 0.7; }
   border: none;
   padding: 0.3rem;
   cursor: pointer;
-  color: var(--mt-blue-dark);
+  color: var(--mt-blue);
   display: grid;
   place-items: center;
   border-radius: 50%;
   transition: background 0.12s ease;
 }
 .mtech-chat-back-btn:hover {
-  background: #f1f5f9;
+  background: rgba(255, 255, 255, 0.1);
 }
 
 .mtech-chat-thread-avatar {
@@ -5938,11 +6034,11 @@ a.mtech-phone-link:active { opacity: 0.7; }
 .mtech-chat-thread-name {
   font-weight: 700;
   font-size: 0.95rem;
-  color: #1f2937;
+  color: rgba(255, 255, 255, 0.92);
 }
 .mtech-chat-thread-role {
   font-size: 0.72rem;
-  color: #64748b;
+  color: rgba(255, 255, 255, 0.85);
 }
 
 /* Message bubbles area */
@@ -5953,7 +6049,9 @@ a.mtech-phone-link:active { opacity: 0.7; }
   display: flex;
   flex-direction: column;
   gap: 0.45rem;
-  background: #f8fafc;
+  /* Was a light-gray #f8fafc fill behind the bubbles — transparent lets the
+     shared .mtech dark gradient show through, matching .mtech-chat above. */
+  background: transparent;
 }
 
 /* Each row (avatar + bubble) */
@@ -5997,10 +6095,10 @@ a.mtech-phone-link:active { opacity: 0.7; }
   word-break: break-word;
 }
 .mtech-msg-bubble.theirs {
-  background: #fff;
-  color: #1f2937;
+  background: var(--mt-surface);
+  color: rgba(255, 255, 255, 0.92);
   border-bottom-left-radius: 4px;
-  box-shadow: 0 1px 2px rgba(0,0,0,0.07);
+  border: 1px solid var(--mt-surface-border);
 }
 .mtech-msg-bubble.mine {
   background: linear-gradient(135deg, var(--mt-blue), var(--mt-blue-dark));
@@ -6010,7 +6108,7 @@ a.mtech-phone-link:active { opacity: 0.7; }
 
 .mtech-msg-time {
   font-size: 0.65rem;
-  color: #94a3b8;
+  color: rgba(255, 255, 255, 0.85);
   padding: 0 0.25rem;
 }
 .mtech-msg-time.mine {
@@ -6023,8 +6121,8 @@ a.mtech-phone-link:active { opacity: 0.7; }
   align-items: center;
   gap: 0.5rem;
   padding: 0.55rem 0.75rem;
-  background: #fff;
-  border-top: 1px solid #e2e8f0;
+  background: var(--mt-surface);
+  border-top: 1px solid var(--mt-surface-border);
   /* Give it a bit of space from the bottom nav */
   padding-bottom: calc(0.55rem + env(safe-area-inset-bottom, 0));
 }
@@ -6342,15 +6440,15 @@ a.mtech-phone-link:active { opacity: 0.7; }
   table.work-table {
     width: 100%;
     border-collapse: collapse;
-    background: #fff;
-    color: #1f2937;
+    background: #111827;
+    color: #e5e7eb;
     border-radius: 8px;
     overflow: hidden;
   }
 
   .work-table th,
   .work-table td {
-    border: 1px solid #d1d5db;
+    border: 1px solid rgba(255, 255, 255, 0.12);
     padding: 0.6rem 0.7rem;
     font-size: 0.79rem;
     white-space: nowrap;
@@ -6358,7 +6456,7 @@ a.mtech-phone-link:active { opacity: 0.7; }
   }
 
   .work-table th {
-    background: #f3f4f6;
+    background: #1f2937;
     font-weight: 700;
   }
 
@@ -6384,9 +6482,9 @@ a.mtech-phone-link:active { opacity: 0.7; }
   .work-calendar-grid {
     display: grid;
     gap: 0;
-    color: #1f2937;
-    background: #fff;
-    border: 1px solid #1f2937;
+    color: #e5e7eb;
+    background: #111827;
+    border: 1px solid rgba(255, 255, 255, 0.12);
     overflow: hidden;
   }
 
@@ -6406,13 +6504,13 @@ a.mtech-phone-link:active { opacity: 0.7; }
 
   .work-calendar-period-head,
   .work-calendar-period-cell {
-    background: #edf0f5;
+    background: rgba(255, 255, 255, 0.05);
     display: flex;
     align-items: center;
     justify-content: center;
     font-size: 0.72rem;
     font-weight: 700;
-    color: #374151;
+    color: #9ca3af;
     letter-spacing: 0.08em;
     text-transform: uppercase;
   }
@@ -6433,7 +6531,7 @@ a.mtech-phone-link:active { opacity: 0.7; }
 
   .work-calendar-cell {
     min-height: 120px;
-    background: #fff;
+    background: #111827;
     padding: 0.35rem 0.45rem 0.4rem;
     display: flex;
     flex-direction: column;
@@ -6441,12 +6539,12 @@ a.mtech-phone-link:active { opacity: 0.7; }
   }
 
   .work-calendar-cell.is-outside {
-    background: #f3f4f6;
-    color: #9ca3af;
+    background: rgba(255, 255, 255, 0.03);
+    color: #6b7280;
   }
 
   .work-calendar-cell.is-weekend {
-    background: #f2f2f2;
+    background: rgba(96, 165, 250, 0.06);
   }
 
   .work-calendar-cell-top {
@@ -6458,7 +6556,7 @@ a.mtech-phone-link:active { opacity: 0.7; }
   .work-calendar-day-number {
     font-size: 0.72rem;
     font-weight: 700;
-    color: #111827;
+    color: #e5e7eb;
   }
 
   .work-calendar-day-number.is-muted {
@@ -6484,13 +6582,13 @@ a.mtech-phone-link:active { opacity: 0.7; }
     padding: 2rem 1rem;
     text-align: center;
     color: #6b7280;
-    background: #fff;
+    background: #111827;
   }
 
   .work-calendar-empty-state-title {
     font-size: 1rem;
     font-weight: 700;
-    color: #111827;
+    color: #e5e7eb;
   }
 
   .work-calendar-empty-state-copy {
@@ -7565,6 +7663,13 @@ a.mtech-phone-link:active { opacity: 0.7; }
 .mtech {
   --mt-blue: #5b7eff;
   --mt-blue-dark: #4c5ac0;
+  --mt-ease: cubic-bezier(0.4, 0, 0.2, 1);
+  /* Same hue family as the page's own navy gradient below (oklch hue ~260-265)
+     but lighter — an "elevated surface" tint that reads as a card without the
+     stark contrast a plain white box makes against this dark background. */
+  --mt-surface: oklch(0.26 0.045 262);
+  --mt-surface-inset: oklch(0.2 0.04 262);
+  --mt-surface-border: rgba(255, 255, 255, 0.08);
   --mt-header-h: 52px;
   --mt-bottom-h: 52px;
   min-height: 100vh;
@@ -7659,22 +7764,24 @@ a.mtech-phone-link:active { opacity: 0.7; }
   top: calc(100% + 0.5rem);
   right: 0;
   z-index: 50;
-  background: #fff;
+  background: var(--mt-surface);
+  border: 1px solid var(--mt-surface-border);
   border-radius: 12px;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.22);
   min-width: 180px;
   overflow: hidden;
   animation: mtechSideFade 0.12s ease-out;
+  color: rgba(255, 255, 255, 0.92);
 }
 .mtech-app-profile-name {
   padding: 0.75rem 1rem 0.5rem;
   font-weight: 700;
   font-size: 0.9rem;
-  color: #1f2937;
+  color: rgba(255, 255, 255, 0.92);
 }
 .mtech-app-profile-divider {
   height: 1px;
-  background: #f1f5f9;
+  background: rgba(255, 255, 255, 0.08);
   margin: 0 0.75rem;
 }
 .mtech-app-profile-timecard {
@@ -7683,7 +7790,7 @@ a.mtech-phone-link:active { opacity: 0.7; }
   padding: 0.7rem 1rem;
   border: none;
   background: none;
-  color: var(--mt-blue-dark);
+  color: var(--mt-blue);
   font-size: 0.9rem;
   font-weight: 600;
   text-align: left;
@@ -7691,7 +7798,7 @@ a.mtech-phone-link:active { opacity: 0.7; }
   font-family: inherit;
 }
 .mtech-app-profile-timecard:hover {
-  background: #eef2ff;
+  background: rgba(255, 255, 255, 0.1);
 }
 .mtech-app-profile-logout {
   display: block;
@@ -7699,7 +7806,7 @@ a.mtech-phone-link:active { opacity: 0.7; }
   padding: 0.7rem 1rem;
   border: none;
   background: none;
-  color: #dc2626;
+  color: #f87171;
   font-size: 0.9rem;
   font-weight: 600;
   text-align: left;
@@ -7707,7 +7814,7 @@ a.mtech-phone-link:active { opacity: 0.7; }
   font-family: inherit;
 }
 .mtech-app-profile-logout:hover {
-  background: #fef2f2;
+  background: rgba(248, 113, 113, 0.15);
 }
 
 /* ── Scrollable content area (between header and bottom nav) ─────────── */
@@ -7733,8 +7840,8 @@ a.mtech-phone-link:active { opacity: 0.7; }
   height: var(--mt-bottom-h);
   display: flex;
   align-items: stretch;
-  background: #fff;
-  border-top: 1px solid #e2e8f0;
+  background: var(--mt-surface);
+  border-top: 1px solid var(--mt-surface-border);
   box-shadow: 0 -1px 8px rgba(0, 0, 0, 0.07);
   padding-bottom: env(safe-area-inset-bottom, 0);
 }
@@ -7742,7 +7849,7 @@ a.mtech-phone-link:active { opacity: 0.7; }
   flex: 1;
   border: none;
   background: transparent;
-  color: #94a3b8;
+  color: rgba(255, 255, 255, 0.85);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -7755,7 +7862,7 @@ a.mtech-phone-link:active { opacity: 0.7; }
   position: relative;
 }
 .mtech-bottom-tab-active {
-  color: var(--mt-blue-dark);
+  color: var(--mt-blue);
 }
 .mtech-bottom-tab-active::before {
   content: "";
@@ -7766,6 +7873,11 @@ a.mtech-phone-link:active { opacity: 0.7; }
   height: 2px;
   border-radius: 0 0 3px 3px;
   background: linear-gradient(90deg, var(--mt-blue), var(--mt-blue-dark));
+}
+@media (prefers-reduced-motion: no-preference) {
+  .mtech-bottom-tab-active::before {
+    animation: mtech-fade-up 0.15s var(--mt-ease) both;
+  }
 }
 .mtech-bottom-tab-icon {
   font-size: 1.1rem;
@@ -7796,7 +7908,7 @@ a.mtech-phone-link:active { opacity: 0.7; }
   font-weight: 800;
   line-height: 15px;
   text-align: center;
-  box-shadow: 0 0 0 2px #fff;
+  box-shadow: 0 0 0 2px var(--mt-surface);
 }
 
 /* ── Legacy topbar styles kept for any remaining references ──────────── */
@@ -7845,9 +7957,9 @@ a.mtech-phone-link:active { opacity: 0.7; }
   object-fit: contain;
 }
 .mtech-user {
-  background: #fff;
-  color: var(--mt-blue-dark);
-  border: none;
+  background: var(--mt-surface);
+  color: var(--mt-blue);
+  border: 1px solid var(--mt-surface-border);
   border-radius: 999px;
   padding: 0.35rem 0.9rem;
   font-weight: 700;
@@ -7869,22 +7981,23 @@ a.mtech-phone-link:active { opacity: 0.7; }
 .mtech-alert-popup-card {
   width: 100%;
   max-width: 22rem;
-  background: #fff;
+  background: var(--mt-surface);
   border-radius: 14px;
   border: 2px solid #f59e0b;
   box-shadow: 0 20px 50px rgba(0, 0, 0, 0.35);
   padding: 1.2rem;
+  color: rgba(255, 255, 255, 0.92);
 }
 .mtech-alert-popup-title {
   font-size: 1.05rem;
   font-weight: 800;
-  color: #92400e;
+  color: #fbbf24;
   margin-bottom: 0.7rem;
 }
 .mtech-alert-popup-body { max-height: 40vh; overflow-y: auto; margin-bottom: 1rem; }
 .mtech-alert-popup-text {
   font-size: 0.92rem;
-  color: #1f2937;
+  color: rgba(255, 255, 255, 0.92);
   line-height: 1.4;
   margin: 0 0 0.6rem;
 }
@@ -7894,7 +8007,8 @@ a.mtech-phone-link:active { opacity: 0.7; }
   right: 0.8rem;
   top: 3.1rem;
   z-index: 40;
-  background: #fff;
+  background: var(--mt-surface);
+  border: 1px solid var(--mt-surface-border);
   border-radius: 8px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
   overflow: hidden;
@@ -7904,8 +8018,8 @@ a.mtech-phone-link:active { opacity: 0.7; }
   width: 100%;
   padding: 0.7rem 1.4rem;
   border: none;
-  background: #fff;
-  color: #b91c1c;
+  background: transparent;
+  color: #f87171;
   font-weight: 600;
   cursor: pointer;
 }
@@ -7918,9 +8032,9 @@ a.mtech-phone-link:active { opacity: 0.7; }
   background: rgba(255, 255, 255, 0.08);
 }
 .mtech-back, .mtech-detail-back {
-  background: #fff;
-  color: var(--mt-blue-dark);
-  border: none;
+  background: var(--mt-surface);
+  color: var(--mt-blue);
+  border: 1px solid var(--mt-surface-border);
   border-radius: 999px;
   width: 30px;
   height: 30px;
@@ -7932,17 +8046,18 @@ a.mtech-phone-link:active { opacity: 0.7; }
 .mtech-date {
   flex: 1;
   text-align: center;
-  background: #fff;
-  color: var(--mt-blue-dark);
+  background: var(--mt-surface);
+  color: var(--mt-blue);
+  border: 1px solid var(--mt-surface-border);
   border-radius: 999px;
   padding: 0.4rem 0.8rem;
   font-weight: 700;
   font-size: 0.9rem;
 }
 .mtech-route-btn {
-  background: #fff;
-  color: var(--mt-blue-dark);
-  border: none;
+  background: var(--mt-surface);
+  color: var(--mt-blue);
+  border: 1px solid var(--mt-surface-border);
   border-radius: 999px;
   padding: 0.4rem 1.1rem;
   font-weight: 700;
@@ -7996,6 +8111,18 @@ a.mtech-phone-link:active { opacity: 0.7; }
   gap: 0.6rem;
   padding: 0.75rem 0.85rem 1.25rem;
 }
+@keyframes mtech-fade-up {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@media (prefers-reduced-motion: no-preference) {
+  /* Every tab is a fresh mount (view === "x" swaps the whole subtree), so
+     this replays on every switch — one animation covers every screen
+     without touching the switching logic itself. */
+  .mtech-scroll {
+    animation: mtech-fade-up 0.25s var(--mt-ease) both;
+  }
+}
 .mtech-empty {
   text-align: center;
   color: rgba(255, 255, 255, 0.85);
@@ -8008,17 +8135,17 @@ a.mtech-phone-link:active { opacity: 0.7; }
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background: #fff;
-  border: none;
+  background: var(--mt-surface);
+  border: 1px solid var(--mt-surface-border);
   border-radius: 14px;
   padding: 1rem 1.2rem;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14);
   cursor: pointer;
   text-align: left;
+  color: rgba(255, 255, 255, 0.92);
 }
 .mtech-roster-info { display: flex; flex-direction: column; }
-.mtech-roster-role { font-size: 0.72rem; color: #64748b; font-weight: 600; }
-.mtech-roster-name { font-size: 1.15rem; font-weight: 700; color: var(--mt-blue-dark); }
+.mtech-roster-role { font-size: 0.72rem; color: rgba(255, 255, 255, 0.85); font-weight: 600; }
+.mtech-roster-name { font-size: 1.15rem; font-weight: 700; color: var(--mt-blue); }
 .mtech-roster-chev {
   font-size: 1.8rem;
   color: #fff;
@@ -8034,21 +8161,20 @@ a.mtech-phone-link:active { opacity: 0.7; }
 .mtech-ticket-card {
   display: flex;
   align-items: stretch;
-  background: #fff;
-  border: none;
+  background: var(--mt-surface);
+  border: 1px solid var(--mt-surface-border);
   border-radius: 14px;
   overflow: hidden;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.09);
   cursor: pointer;
   text-align: left;
   width: 100%;
   min-height: 80px;          /* prevent collapse to zero height */
   font-family: inherit;
+  color: rgba(255, 255, 255, 0.92);
   transition: box-shadow 0.15s ease, transform 0.1s ease;
 }
 .mtech-ticket-card:active {
   transform: scale(0.985);
-  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.12);
 }
 
 /* 4px colored left accent strip */
@@ -8083,7 +8209,7 @@ a.mtech-phone-link:active { opacity: 0.7; }
 .mtech-ticket-no {
   font-weight: 800;
   font-size: 0.95rem;
-  color: var(--mt-blue-dark);
+  color: var(--mt-blue);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 .mtech-ticket-tone-badge {
@@ -8101,7 +8227,7 @@ a.mtech-phone-link:active { opacity: 0.7; }
 .mtech-ticket-customer {
   font-weight: 700;
   font-size: 0.92rem;
-  color: #1f2937;
+  color: rgba(255, 255, 255, 0.92);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -8119,15 +8245,15 @@ a.mtech-phone-link:active { opacity: 0.7; }
   font-weight: 600;
   padding: 0.15rem 0.5rem;
   border-radius: 999px;
-  background: #f1f5f9;
-  color: #64748b;
+  background: var(--mt-surface-inset);
+  color: rgba(255, 255, 255, 0.85);
 }
 
 /* Status line */
 .mtech-ticket-status-line {
   font-size: 0.75rem;
   font-weight: 600;
-  color: #64748b;
+  color: rgba(255, 255, 255, 0.85);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -8136,7 +8262,7 @@ a.mtech-phone-link:active { opacity: 0.7; }
 /* Schedule + model */
 .mtech-ticket-sched {
   font-size: 0.72rem;
-  color: #94a3b8;
+  color: rgba(255, 255, 255, 0.85);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -8147,7 +8273,7 @@ a.mtech-phone-link:active { opacity: 0.7; }
   display: flex;
   align-items: center;
   padding: 0 0.75rem;
-  color: #cbd5e1;
+  color: rgba(255, 255, 255, 0.4);
   flex-shrink: 0;
 }
 
@@ -8244,13 +8370,12 @@ a.mtech-phone-link:active { opacity: 0.7; }
   display: flex;
   align-items: center;
   gap: 0.7rem;
-  background: #fff;
-  border: none;
+  background: var(--mt-surface);
+  border: 1px solid var(--mt-surface-border);
   border-radius: 10px;
   padding: 0.7rem 0.8rem;
   text-align: left;
   cursor: pointer;
-  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.12);
 }
 .mtech-direction-num {
   flex-shrink: 0;
@@ -8265,10 +8390,10 @@ a.mtech-phone-link:active { opacity: 0.7; }
   font-size: 0.85rem;
 }
 .mtech-direction-info { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-.mtech-direction-cust { font-weight: 700; color: #0f172a; font-size: 0.9rem; }
+.mtech-direction-cust { font-weight: 700; color: rgba(255, 255, 255, 0.92); font-size: 0.9rem; }
 .mtech-direction-addr {
   font-size: 0.78rem;
-  color: #64748b;
+  color: rgba(255, 255, 255, 0.85);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -8280,23 +8405,24 @@ a.mtech-phone-link:active { opacity: 0.7; }
   align-items: flex-end;
   font-size: 0.78rem;
   font-weight: 700;
-  color: #2563eb;
+  color: var(--mt-blue);
 }
-.mtech-direction-dist { color: #94a3b8; font-weight: 600; }
+.mtech-direction-dist { color: rgba(255, 255, 255, 0.85); font-weight: 600; }
 
 /* Detail */
 .mtech-detail-head {
   display: flex;
   gap: 0.6rem;
-  background: #fff;
+  background: var(--mt-surface);
+  border: 1px solid var(--mt-surface-border);
   border-radius: 12px;
   padding: 0.8rem;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14);
+  color: rgba(255, 255, 255, 0.92);
 }
 .mtech-detail-headinfo { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.15rem; }
-.mtech-detail-no { font-weight: 800; color: #b91c1c; font-size: 1.1rem; }
-.mtech-detail-status { font-weight: 700; color: #b45309; font-size: 0.85rem; }
-.mtech-detail-line { font-size: 0.82rem; color: #1f2937; }
+.mtech-detail-no { font-weight: 800; color: #f87171; font-size: 1.1rem; }
+.mtech-detail-status { font-weight: 700; color: #fbbf24; font-size: 0.85rem; }
+.mtech-detail-line { font-size: 0.82rem; color: rgba(255, 255, 255, 0.92); }
 .mtech-detail-railbadge {
   flex-shrink: 0;
   width: 70px;
@@ -8335,18 +8461,19 @@ a.mtech-phone-link:active { opacity: 0.7; }
 .mtech-detail-tabs button.active { background: #fff; color: var(--mt-blue-dark); }
 
 .mtech-panel {
-  background: #fff;
+  background: var(--mt-surface);
+  border: 1px solid var(--mt-surface-border);
   border-radius: 12px;
   padding: 0.9rem;
   margin-top: 0.7rem;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14);
+  color: rgba(255, 255, 255, 0.92);
 }
 .mtech-section-title {
   font-weight: 800;
-  color: var(--mt-blue-dark);
+  color: var(--mt-blue);
   font-size: 0.95rem;
   margin: 0.8rem 0 0.5rem;
-  border-bottom: 2px solid #e5e7eb;
+  border-bottom: 2px solid rgba(255, 255, 255, 0.08);
   padding-bottom: 0.3rem;
 }
 .mtech-inforow {
@@ -8354,32 +8481,32 @@ a.mtech-phone-link:active { opacity: 0.7; }
   justify-content: space-between;
   gap: 0.8rem;
   padding: 0.4rem 0;
-  border-bottom: 1px solid #f1f5f9;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   font-size: 0.85rem;
 }
-.mtech-info-label { color: #64748b; font-weight: 600; flex-shrink: 0; }
-.mtech-info-value { color: #0f172a; text-align: right; word-break: break-word; }
-.mtech-service-section { padding: 0.4rem 0; border-bottom: 1px solid #f1f5f9; }
+.mtech-info-label { color: rgba(255, 255, 255, 0.85); font-weight: 600; flex-shrink: 0; }
+.mtech-info-value { color: rgba(255, 255, 255, 0.92); text-align: right; word-break: break-word; }
+.mtech-service-section { padding: 0.4rem 0; border-bottom: 1px solid rgba(255, 255, 255, 0.08); }
 .mtech-service-section .mtech-info-label { margin-bottom: 0.2rem; }
 .mtech-service-section-value {
-  color: #0f172a;
+  color: rgba(255, 255, 255, 0.92);
   font-size: 0.85rem;
   white-space: pre-wrap;
   word-break: break-word;
 }
-a.mtech-phone-link { color: #4f46e5; font-weight: 700; text-decoration: none; }
+a.mtech-phone-link { color: var(--mt-blue); font-weight: 700; text-decoration: none; }
 a.mtech-phone-link:active { opacity: 0.7; }
-.mtech-problem { font-size: 0.85rem; color: #1f2937; line-height: 1.5; }
-.mtech-muted { color: #64748b; font-size: 0.8rem; padding: 0.5rem 0; }
+.mtech-problem { font-size: 0.85rem; color: rgba(255, 255, 255, 0.92); line-height: 1.5; }
+.mtech-muted { color: rgba(255, 255, 255, 0.85); font-size: 0.8rem; padding: 0.5rem 0; }
 
 .mtech-bill { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
 .mtech-bill th, .mtech-bill td {
-  border: 1px solid #e5e7eb;
+  border: 1px solid rgba(255, 255, 255, 0.08);
   padding: 0.5rem;
   text-align: left;
 }
-.mtech-bill th { background: #f3f4f6; font-weight: 700; }
-.mtech-bill-total td { font-weight: 800; background: #f8fafc; }
+.mtech-bill th { background: var(--mt-surface-inset); font-weight: 700; }
+.mtech-bill-total td { font-weight: 800; background: var(--mt-surface-inset); }
 
 .mtech-desktop-link {
   position: sticky;
@@ -8418,7 +8545,7 @@ a.mtech-phone-link:active { opacity: 0.7; }
   margin-top: 0.6rem;
   font-size: 0.82rem;
   font-weight: 600;
-  color: #16a34a;
+  color: #4ade80;
   text-align: center;
 }
 
@@ -8446,7 +8573,7 @@ a.mtech-phone-link:active { opacity: 0.7; }
 .mtech-sig-clear {
   background: none;
   border: none;
-  color: #2563eb;
+  color: var(--mt-blue);
   font-weight: 700;
   text-decoration: underline;
   cursor: pointer;
@@ -8484,8 +8611,8 @@ a.mtech-phone-link:active { opacity: 0.7; }
   margin: 0.5rem 0 0.8rem;
 }
 .mtech-comment {
-  background: #f1f5f9;
-  border: 1px solid #e2e8f0;
+  background: var(--mt-surface-inset);
+  border: 1px solid var(--mt-surface-border);
   border-radius: 8px;
   padding: 0.55rem 0.7rem;
 }
@@ -8495,9 +8622,9 @@ a.mtech-phone-link:active { opacity: 0.7; }
   gap: 0.5rem;
   margin-bottom: 0.25rem;
 }
-.mtech-comment-author { font-size: 0.75rem; font-weight: 700; color: #2563eb; }
-.mtech-comment-time { font-size: 0.72rem; color: #94a3b8; }
-.mtech-comment-body { font-size: 0.85rem; color: #0f172a; white-space: pre-wrap; }
+.mtech-comment-author { font-size: 0.75rem; font-weight: 700; color: var(--mt-blue); }
+.mtech-comment-time { font-size: 0.72rem; color: rgba(255, 255, 255, 0.85); }
+.mtech-comment-body { font-size: 0.85rem; color: rgba(255, 255, 255, 0.92); white-space: pre-wrap; }
 .mtech-comment-compose {
   display: flex;
   flex-direction: column;
@@ -8530,14 +8657,14 @@ a.mtech-phone-link:active { opacity: 0.7; }
 .mtech-comment-section {
   margin-top: 1rem;
   padding-top: 0.6rem;
-  border-top: 2px solid #e2e8f0;
+  border-top: 2px solid rgba(255, 255, 255, 0.08);
 }
 
 /* Mobile — service tracking visit cards */
 .mtech-visit-list { display: flex; flex-direction: column; gap: 0.6rem; margin-bottom: 0.8rem; }
 .mtech-visit {
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
+  background: var(--mt-surface-inset);
+  border: 1px solid var(--mt-surface-border);
   border-radius: 8px;
   padding: 0.6rem 0.7rem;
 }
@@ -8547,7 +8674,7 @@ a.mtech-phone-link:active { opacity: 0.7; }
   align-items: center;
   margin-bottom: 0.3rem;
 }
-.mtech-visit-no { font-weight: 800; color: #4c5ac0; font-size: 0.9rem; }
+.mtech-visit-no { font-weight: 800; color: var(--mt-blue); font-size: 0.9rem; }
 .mtech-visit-status {
   font-size: 0.72rem;
   font-weight: 700;
@@ -8561,7 +8688,7 @@ a.mtech-phone-link:active { opacity: 0.7; }
   flex-direction: column;
   gap: 0.1rem;
   font-size: 0.8rem;
-  color: #475569;
+  color: rgba(255, 255, 255, 0.85);
   margin-bottom: 0.3rem;
 }
 
@@ -8572,14 +8699,14 @@ a.mtech-phone-link:active { opacity: 0.7; }
   gap: 0.35rem;
   margin-top: 0.55rem;
   padding-top: 0.55rem;
-  border-top: 1px dashed rgba(99, 102, 241, 0.25);
+  border-top: 1px dashed var(--mt-surface-border);
 }
 .mtech-visit-edit-label {
   font-size: 0.72rem;
   font-weight: 700;
   letter-spacing: 0.05em;
   text-transform: uppercase;
-  color: #4c5ac0;
+  color: var(--mt-blue);
   margin-top: 0.25rem;
 }
 .mtech-visit-edit-label.field-invalid {
@@ -8615,9 +8742,9 @@ a.mtech-phone-link:active { opacity: 0.7; }
 }
 .mtech-btn {
   appearance: none;
-  border: 1px solid rgba(99, 102, 241, 0.3);
-  background: #ffffff;
-  color: #4c5ac0;
+  border: 1px solid var(--mt-surface-border);
+  background: var(--mt-surface-inset);
+  color: var(--mt-blue);
   padding: 0.45rem 0.85rem;
   border-radius: 0.45rem;
   font-size: 0.82rem;
@@ -8638,18 +8765,18 @@ a.mtech-phone-link:active { opacity: 0.7; }
   background: #4338ca;
 }
 .mtech-btn:not(.mtech-btn-primary):hover:not(:disabled) {
-  background: #eef2ff;
+  background: rgba(255, 255, 255, 0.1);
 }
 
 /* Mobile-tech parts panel. Read-only rows with a single editable
    status dropdown. */
 .mtech-part-list { display: flex; flex-direction: column; gap: 0.6rem; margin-top: 0.4rem; }
 .mtech-part {
-  border: 1px solid rgba(99, 102, 241, 0.18);
+  border: 1px solid var(--mt-surface-border);
   border-radius: 0.5rem;
   padding: 0.6rem 0.7rem;
-  background: #ffffff;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
+  background: var(--mt-surface);
+  color: rgba(255, 255, 255, 0.92);
 }
 .mtech-part-head {
   display: flex;
@@ -8659,20 +8786,20 @@ a.mtech-phone-link:active { opacity: 0.7; }
 }
 .mtech-part-no {
   font-weight: 800;
-  color: #1e293b;
+  color: rgba(255, 255, 255, 0.92);
   font-size: 0.95rem;
   letter-spacing: 0.01em;
 }
 .mtech-part-dist {
   font-size: 0.72rem;
   font-weight: 700;
-  color: #4c5ac0;
+  color: var(--mt-blue);
   letter-spacing: 0.03em;
   text-transform: uppercase;
 }
 .mtech-part-desc {
   font-size: 0.82rem;
-  color: #475569;
+  color: rgba(255, 255, 255, 0.85);
   margin-bottom: 0.4rem;
 }
 .mtech-part-status-row {
@@ -8682,14 +8809,14 @@ a.mtech-phone-link:active { opacity: 0.7; }
   margin: 0.35rem 0 0.55rem;
   padding: 0.4rem 0.5rem;
   border-radius: 0.4rem;
-  background: rgba(79, 70, 229, 0.06);
+  background: var(--mt-surface-inset);
 }
 .mtech-part-status-label {
   font-size: 0.72rem;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: #4c5ac0;
+  color: var(--mt-blue);
 }
 .mtech-part-status-input {
   flex: 1;
@@ -8708,7 +8835,7 @@ a.mtech-phone-link:active { opacity: 0.7; }
 }
 .mtech-part-saving {
   font-size: 0.7rem;
-  color: #64748b;
+  color: rgba(255, 255, 255, 0.85);
 }
 .mtech-part-details {
   display: flex;
@@ -8748,18 +8875,19 @@ a.mtech-phone-link:active { opacity: 0.7; }
   align-items: center;
   justify-content: space-between;
   padding: 0.65rem 0.75rem;
-  border: 1px solid rgba(99, 102, 241, 0.18);
+  border: 1px solid var(--mt-surface-border);
   border-radius: 0.5rem;
-  background: #ffffff;
+  background: var(--mt-surface);
   cursor: pointer;
   transition: background 0.15s ease, border-color 0.15s ease;
+  color: rgba(255, 255, 255, 0.92);
 }
-.mtech-chat-contact:hover { background: #eef2ff; border-color: rgba(99, 102, 241, 0.4); }
-.mtech-chat-contact-name { font-weight: 700; color: #1e293b; }
+.mtech-chat-contact:hover { background: var(--mt-surface-inset); border-color: var(--mt-blue); }
+.mtech-chat-contact-name { font-weight: 700; color: rgba(255, 255, 255, 0.92); }
 .mtech-chat-contact-role {
   font-size: 0.72rem;
   font-weight: 700;
-  color: #4c5ac0;
+  color: var(--mt-blue);
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
@@ -8810,7 +8938,7 @@ a.mtech-phone-link:active { opacity: 0.7; }
   display: flex;
   gap: 0.5rem;
   padding-top: 0.4rem;
-  border-top: 1px solid rgba(99, 102, 241, 0.18);
+  border-top: 1px solid var(--mt-surface-border);
 }
 .mtech-chat-composer-input {
   flex: 1;
@@ -10851,7 +10979,7 @@ a.mtech-phone-link:active { opacity: 0.7; }
   border-radius: 0.4rem;
   background: rgba(251, 146, 60, 0.14);
   border: 1px solid rgba(251, 146, 60, 0.35);
-  color: #9a3412;
+  color: #fbbf24;
   font-size: 0.78rem;
   line-height: 1.35;
 }
@@ -10906,14 +11034,14 @@ a.mtech-phone-link:active { opacity: 0.7; }
   margin-top: 0.12rem;
 }
 
-/* Stat card — white, same as roster/ticket cards */
+/* Stat row — folded into mtech-home-greeting's own card (see below), so it's
+   a plain divided row on the same blue gradient, not its own white card. */
 .mtech-home-stat-card {
   display: flex;
   align-items: stretch;
-  background: #fff;
-  border-radius: 14px;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14);
-  overflow: hidden;
+  margin-top: 0.9rem;
+  padding-top: 0.8rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.2);
 }
 .mtech-home-stat-col {
   flex: 1;
@@ -10921,7 +11049,8 @@ a.mtech-phone-link:active { opacity: 0.7; }
   appearance: none;
   border: none;
   background: transparent;
-  padding: 0.85rem 0.9rem;
+  border-radius: 8px;
+  padding: 0.2rem 0.4rem;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -10932,37 +11061,37 @@ a.mtech-phone-link:active { opacity: 0.7; }
   transition: background-color 0.12s ease;
 }
 .mtech-home-stat-col:active {
-  background: rgba(76, 90, 192, 0.08);
+  background: rgba(255, 255, 255, 0.1);
 }
 .mtech-home-stat-divider {
   width: 1px;
   flex-shrink: 0;
-  background: #e2e8f0;
-  margin: 0.6rem 0;
+  background: rgba(255, 255, 255, 0.25);
+  margin: 0.1rem 0;
 }
 .mtech-home-stat-value {
-  font-size: 1.75rem;
+  font-size: 1.6rem;
   font-weight: 800;
-  color: var(--mt-blue-dark);
+  color: #fff;
   line-height: 1;
 }
 .mtech-home-stat-title {
-  font-size: 0.78rem;
+  font-size: 0.75rem;
   font-weight: 700;
-  color: #64748b;
+  color: rgba(255, 255, 255, 0.85);
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
 .mtech-home-stat-sub {
   margin-top: 0.15rem;
-  font-size: 0.72rem;
-  color: #94a3b8;
+  font-size: 0.7rem;
+  color: rgba(255, 255, 255, 0.7);
   font-weight: 500;
   text-transform: none;
   letter-spacing: normal;
 }
 
-/* 2×2 shortcut tile grid — white cards */
+/* 2×2 shortcut tile grid */
 .mtech-home-grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
@@ -10970,9 +11099,9 @@ a.mtech-phone-link:active { opacity: 0.7; }
 }
 .mtech-home-tile {
   appearance: none;
-  border: none;
-  background: #fff;
-  color: #1f2937;
+  border: 1px solid var(--mt-surface-border);
+  background: var(--mt-surface);
+  color: rgba(255, 255, 255, 0.92);
   padding: 1.1rem 0.75rem 1rem;
   border-radius: 14px;
   display: flex;
@@ -10980,13 +11109,12 @@ a.mtech-phone-link:active { opacity: 0.7; }
   align-items: center;
   gap: 0.45rem;
   cursor: pointer;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14);
-  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  transition: transform 0.15s ease, background-color 0.15s ease;
   font-family: inherit;
 }
 .mtech-home-tile:active {
   transform: scale(0.97);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+  background: var(--mt-surface-inset);
 }
 .mtech-home-tile-icon {
   font-size: 1.85rem;
@@ -10994,12 +11122,12 @@ a.mtech-phone-link:active { opacity: 0.7; }
 .mtech-home-tile-label {
   font-weight: 700;
   font-size: 0.88rem;
-  color: var(--mt-blue-dark);
+  color: var(--mt-blue);
 }
 .mtech-home-tile-desc {
   font-size: 0.72rem;
   font-weight: 500;
-  color: #64748b;
+  color: rgba(255, 255, 255, 0.85);
   text-align: center;
   line-height: 1.25;
 }
@@ -11007,19 +11135,39 @@ a.mtech-phone-link:active { opacity: 0.7; }
   display: flex;
   flex-direction: column;
   gap: 0.4rem;
+  background: var(--mt-surface);
+  border: 1px solid var(--mt-surface-border);
+  border-radius: 14px;
+  padding: 0.9rem 1rem;
 }
 .mtech-home-onsite-title {
   font-size: 0.78rem;
   font-weight: 700;
-  color: rgba(255, 255, 255, 0.85);
+  color: rgba(255, 255, 255, 0.9);
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  padding: 0 0.15rem;
 }
 .mtech-home-onsite-hint {
   font-size: 0.72rem;
-  color: rgba(255, 255, 255, 0.6);
-  padding: 0 0.15rem;
+  color: rgba(255, 255, 255, 0.85);
+}
+.mtech-home-onsite-status-row {
+  display: flex;
+  gap: 0.75rem;
+}
+.mtech-home-onsite-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  transition: color 0.2s var(--mt-ease);
+}
+.mtech-home-onsite-status.is-ok {
+  color: #4ade80;
+}
+.mtech-home-onsite-status.is-bad {
+  color: #fbbf24;
 }
 .mtech-home-onsite-devbtn {
   appearance: none;
@@ -11035,20 +11183,24 @@ a.mtech-phone-link:active { opacity: 0.7; }
   cursor: pointer;
 }
 .mtech-home-onsite-list {
-  background: #fff;
-  border-radius: 14px;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14);
+  background: var(--mt-surface-inset);
+  border-radius: 10px;
   overflow: hidden;
 }
 .mtech-home-onsite-empty {
   padding: 0.9rem 1rem;
-  background: #fff;
-  border-radius: 14px;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14);
-  color: #64748b;
+  background: var(--mt-surface-inset);
+  border-radius: 10px;
+  color: rgba(255, 255, 255, 0.85);
   font-weight: 600;
   font-size: 0.82rem;
   text-align: center;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .mtech-home-onsite-list,
+  .mtech-home-onsite-empty {
+    animation: mtech-fade-up 0.2s var(--mt-ease) both;
+  }
 }
 .mtech-home-onsite-row {
   display: flex;
@@ -11056,7 +11208,7 @@ a.mtech-phone-link:active { opacity: 0.7; }
   justify-content: space-between;
   gap: 0.6rem;
   padding: 0.75rem 0.9rem;
-  border-bottom: 1px solid #f1f5f9;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 .mtech-home-onsite-row:last-child {
   border-bottom: none;
@@ -11067,7 +11219,7 @@ a.mtech-phone-link:active { opacity: 0.7; }
 .mtech-home-onsite-distance {
   font-size: 0.68rem;
   font-weight: 600;
-  color: #94a3b8;
+  color: rgba(255, 255, 255, 0.85);
   margin-top: 0.2rem;
 }
 .mtech-home-onsite-info {
@@ -11078,20 +11230,20 @@ a.mtech-phone-link:active { opacity: 0.7; }
 .mtech-home-onsite-location {
   font-size: 0.68rem;
   font-weight: 700;
-  color: #64748b;
+  color: rgba(255, 255, 255, 0.85);
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
 .mtech-home-onsite-ticket {
   font-size: 0.88rem;
   font-weight: 700;
-  color: #1f2937;
+  color: rgba(255, 255, 255, 0.92);
   margin-top: 0.1rem;
 }
 .mtech-home-onsite-times {
   font-size: 0.68rem;
   font-weight: 600;
-  color: #16a34a;
+  color: #4ade80;
   margin-top: 0.2rem;
 }
 .mtech-home-onsite-btn {
@@ -11107,6 +11259,10 @@ a.mtech-phone-link:active { opacity: 0.7; }
   cursor: pointer;
   white-space: nowrap;
   flex-shrink: 0;
+  transition: transform 0.12s var(--mt-ease), box-shadow 0.12s var(--mt-ease), background-color 0.15s var(--mt-ease);
+}
+.mtech-home-onsite-btn:not(:disabled):active {
+  transform: scale(0.95);
 }
 .mtech-home-onsite-btn-done {
   background: var(--mt-blue-dark);
@@ -11128,25 +11284,26 @@ a.mtech-phone-link:active { opacity: 0.7; }
   gap: 0.85rem;
 }
 
-/* Heading (white card) */
+/* Heading (elevated dark surface card) */
 .mtech-payroll-heading {
   padding: 0.85rem 1.05rem;
-  background: #fff;
+  background: var(--mt-surface);
+  border: 1px solid var(--mt-surface-border);
   border-radius: 14px;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14);
+  color: rgba(255, 255, 255, 0.92);
 }
 .mtech-payroll-name {
   font-size: 1.1rem;
   font-weight: 800;
-  color: var(--mt-blue-dark);
+  color: var(--mt-blue);
 }
 .mtech-payroll-sub {
   margin-top: 0.1rem;
   font-size: 0.78rem;
-  color: #64748b;
+  color: rgba(255, 255, 255, 0.85);
 }
 
-/* Summary cards — two side by side, white */
+/* Summary cards — two side by side */
 .mtech-payroll-summary {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -11155,36 +11312,38 @@ a.mtech-phone-link:active { opacity: 0.7; }
 .mtech-payroll-card {
   padding: 0.85rem 0.95rem;
   border-radius: 14px;
-  background: #fff;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14);
+  background: var(--mt-surface);
+  border: 1px solid var(--mt-surface-border);
+  color: rgba(255, 255, 255, 0.92);
 }
 .mtech-payroll-card-label {
   font-size: 0.68rem;
   text-transform: uppercase;
   letter-spacing: 0.05em;
   font-weight: 700;
-  color: #64748b;
+  color: rgba(255, 255, 255, 0.85);
 }
 .mtech-payroll-card-value {
   margin-top: 0.25rem;
   font-size: 1.3rem;
   font-weight: 800;
-  color: #1f2937;
+  color: rgba(255, 255, 255, 0.92);
 }
-.mtech-payroll-card-value.paid { color: #16a34a; }
-.mtech-payroll-card-value.pending { color: #d97706; }
+.mtech-payroll-card-value.paid { color: #4ade80; }
+.mtech-payroll-card-value.pending { color: #fbbf24; }
 
-/* Per-period row cards — white */
+/* Per-period row cards */
 .mtech-payroll-list {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
 }
 .mtech-payroll-row {
-  background: #fff;
+  background: var(--mt-surface);
+  border: 1px solid var(--mt-surface-border);
   border-radius: 12px;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12);
   overflow: hidden;
+  color: rgba(255, 255, 255, 0.92);
 }
 .mtech-payroll-row-head {
   display: flex;
@@ -11196,7 +11355,7 @@ a.mtech-phone-link:active { opacity: 0.7; }
 .mtech-payroll-row-date {
   font-weight: 700;
   font-size: 0.85rem;
-  color: #1f2937;
+  color: rgba(255, 255, 255, 0.92);
 }
 
 /* Status pills (on white card — use saturated solid colours) */
@@ -11235,13 +11394,13 @@ a.mtech-phone-link:active { opacity: 0.7; }
   justify-content: space-between;
   padding: 0.4rem 0.85rem 0.7rem;
   gap: 0.6rem;
-  border-top: 1px solid #f1f5f9;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
 }
 .mtech-payroll-row-amount {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 1.05rem;
   font-weight: 800;
-  color: var(--mt-blue-dark);
+  color: var(--mt-blue);
 }
 .mtech-payroll-row-actions {
   display: flex;
@@ -11254,8 +11413,8 @@ a.mtech-phone-link:active { opacity: 0.7; }
   padding: 0.35rem 0.7rem;
   border-radius: 6px;
   border: 1.5px solid var(--mt-blue);
-  background: #fff;
-  color: var(--mt-blue-dark);
+  background: var(--mt-surface-inset);
+  color: var(--mt-blue);
   font-size: 0.75rem;
   font-weight: 700;
   cursor: pointer;
@@ -11263,14 +11422,14 @@ a.mtech-phone-link:active { opacity: 0.7; }
   transition: background 0.12s ease;
 }
 .mtech-payroll-action:hover:not(:disabled) {
-  background: #eef2ff;
+  background: rgba(255, 255, 255, 0.1);
 }
 .mtech-payroll-action-secondary {
-  border-color: #16a34a;
-  color: #16a34a;
+  border-color: #4ade80;
+  color: #4ade80;
 }
 .mtech-payroll-action-secondary:hover:not(:disabled) {
-  background: #f0fdf4;
+  background: rgba(74, 222, 128, 0.15);
 }
 .mtech-payroll-action:disabled {
   opacity: 0.4;
@@ -11281,7 +11440,7 @@ a.mtech-phone-link:active { opacity: 0.7; }
 .mtech-payroll-note {
   margin-top: 0.35rem;
   font-size: 0.72rem;
-  color: rgba(255, 255, 255, 0.65);
+  color: rgba(255, 255, 255, 0.85);
   text-align: center;
   padding: 0 0.5rem;
 }
@@ -11289,8 +11448,8 @@ a.mtech-phone-link:active { opacity: 0.7; }
 /* Technician Tech Payroll breakdown — inline expand under a pay period row */
 .mtech-payroll-breakdown {
   padding: 0.6rem 0.85rem 0.75rem;
-  border-top: 1px solid #f1f5f9;
-  background: #f8fafc;
+  border-top: 1px solid var(--mt-surface-border);
+  background: var(--mt-surface-inset);
 }
 .mtech-payroll-breakdown-row {
   display: flex;
@@ -11299,16 +11458,16 @@ a.mtech-phone-link:active { opacity: 0.7; }
   padding: 0.22rem 0;
   font-size: 0.8rem;
 }
-.mtech-payroll-breakdown-label { color: #64748b; font-weight: 600; }
-.mtech-payroll-breakdown-value { color: #1f2937; font-weight: 700; text-align: right; }
+.mtech-payroll-breakdown-label { color: rgba(255, 255, 255, 0.85); font-weight: 600; }
+.mtech-payroll-breakdown-value { color: rgba(255, 255, 255, 0.92); font-weight: 700; text-align: right; }
 .mtech-payroll-breakdown-total {
   margin-top: 0.3rem;
   padding-top: 0.4rem;
-  border-top: 1px solid #e2e8f0;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
 }
 .mtech-payroll-breakdown-total .mtech-payroll-breakdown-label,
 .mtech-payroll-breakdown-total .mtech-payroll-breakdown-value {
-  color: var(--mt-blue-dark);
+  color: var(--mt-blue);
   font-size: 0.9rem;
   font-weight: 800;
 }
@@ -11322,19 +11481,20 @@ a.mtech-phone-link:active { opacity: 0.7; }
 }
 .mtech-timecard-heading {
   padding: 0.85rem 1.05rem;
-  background: #fff;
+  background: var(--mt-surface);
+  border: 1px solid var(--mt-surface-border);
   border-radius: 14px;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14);
+  color: rgba(255, 255, 255, 0.92);
 }
 .mtech-timecard-name {
   font-size: 1.1rem;
   font-weight: 800;
-  color: var(--mt-blue-dark);
+  color: var(--mt-blue);
 }
 .mtech-timecard-sub {
   margin-top: 0.1rem;
   font-size: 0.78rem;
-  color: #64748b;
+  color: rgba(255, 255, 255, 0.85);
 }
 .mtech-timecard-summary {
   display: grid;
@@ -11344,43 +11504,66 @@ a.mtech-phone-link:active { opacity: 0.7; }
 .mtech-timecard-card {
   padding: 0.85rem 0.95rem;
   border-radius: 14px;
-  background: #fff;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14);
+  background: var(--mt-surface);
+  border: 1px solid var(--mt-surface-border);
+  color: rgba(255, 255, 255, 0.92);
 }
 .mtech-timecard-card-label {
   font-size: 0.68rem;
   text-transform: uppercase;
   letter-spacing: 0.05em;
   font-weight: 700;
-  color: #64748b;
+  color: rgba(255, 255, 255, 0.85);
 }
 .mtech-timecard-card-value {
   margin-top: 0.25rem;
   font-size: 1.3rem;
   font-weight: 800;
-  color: #1f2937;
+  color: rgba(255, 255, 255, 0.92);
 }
-.mtech-timecard-card-value.in { color: #16a34a; }
-.mtech-timecard-card-value.out { color: #dc2626; }
-.mtech-timecard-card-value.meal { color: #d97706; }
-/* Home's clock-status row — 4 cards on one line instead of 2x2, scoped so
-   the standalone Timecard page's own 2x2 layout is untouched. */
+.mtech-timecard-card-value.in { color: #4ade80; }
+.mtech-timecard-card-value.out { color: #f87171; }
+.mtech-timecard-card-value.meal { color: #fbbf24; }
+/* Home's clock-status row — one shared card holding all 4 slots instead of
+   2x2, scoped so the standalone Timecard page's own 2x2 layout is untouched. */
 .mtech-home-clockrow {
   grid-template-columns: repeat(4, 1fr);
-  gap: 0.4rem;
+  gap: 0;
+  background: var(--mt-surface);
+  border: 1px solid var(--mt-surface-border);
+  border-radius: 14px;
+  overflow: hidden;
 }
 .mtech-home-clockrow .mtech-timecard-card {
   padding: 0.6rem 0.4rem;
+  background: transparent;
+  border-radius: 0;
+  box-shadow: none;
+  /* Base .mtech-timecard-card now carries its own 1px border on all sides
+     for the standalone Timecard page — reset it here so only the intended
+     right-edge divider between slots shows in this flush 4-up row. */
+  border: none;
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+}
+.mtech-home-clockrow .mtech-timecard-card:last-child {
+  border-right: none;
 }
 .mtech-home-clockrow .mtech-timecard-card-label {
   font-size: 0.56rem;
+  color: rgba(255, 255, 255, 0.85);
 }
 .mtech-home-clockrow .mtech-timecard-card-value {
   font-size: 0.98rem;
   margin-top: 0.15rem;
 }
+/* Base .in/.out/.meal colors are tuned for the white Timecard page — this
+   card's own dark surface needs brighter equivalents for the same legibility. */
+.mtech-home-clockrow .mtech-timecard-card-value.in { color: #4ade80; }
+.mtech-home-clockrow .mtech-timecard-card-value.out { color: #f87171; }
+.mtech-home-clockrow .mtech-timecard-card-value.meal { color: #fbbf24; }
 .mtech-home-clockrow .mtech-timecard-card-confirm-label {
   font-size: 0.6rem;
+  color: rgba(255, 255, 255, 0.9);
 }
 .mtech-home-clockrow .mtech-timecard-confirm-btn {
   font-size: 0.62rem;
@@ -11406,10 +11589,15 @@ a.mtech-phone-link:active { opacity: 0.7; }
   flex-direction: column;
   gap: 0.45rem;
 }
+@media (prefers-reduced-motion: no-preference) {
+  .mtech-timecard-card-confirm {
+    animation: mtech-fade-up 0.18s var(--mt-ease) both;
+  }
+}
 .mtech-timecard-card-confirm-label {
   font-size: 0.8rem;
   font-weight: 700;
-  color: #1f2937;
+  color: rgba(255, 255, 255, 0.92);
 }
 .mtech-timecard-card-confirm-actions {
   display: flex;
@@ -11432,12 +11620,12 @@ a.mtech-phone-link:active { opacity: 0.7; }
 .mtech-timecard-hours {
   text-align: center;
   padding: 0.6rem;
-  background: #fff;
+  background: var(--mt-surface);
+  border: 1px solid var(--mt-surface-border);
   border-radius: 12px;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12);
   font-weight: 800;
   font-size: 1.05rem;
-  color: var(--mt-blue-dark);
+  color: var(--mt-blue);
 }
 .mtech-timecard-btn {
   appearance: none;
@@ -11465,7 +11653,7 @@ a.mtech-phone-link:active { opacity: 0.7; }
 .mtech-timecard-note {
   margin-top: 0.1rem;
   font-size: 0.72rem;
-  color: rgba(255, 255, 255, 0.65);
+  color: rgba(255, 255, 255, 0.85);
   text-align: center;
   padding: 0 0.5rem;
 }
@@ -11479,19 +11667,20 @@ a.mtech-phone-link:active { opacity: 0.7; }
 }
 .mtech-clockin-heading {
   padding: 0.85rem 1.05rem;
-  background: #fff;
+  background: var(--mt-surface);
+  border: 1px solid var(--mt-surface-border);
   border-radius: 14px;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14);
+  color: rgba(255, 255, 255, 0.92);
 }
 .mtech-clockin-title {
   font-size: 1.1rem;
   font-weight: 800;
-  color: var(--mt-blue-dark);
+  color: var(--mt-blue);
 }
 .mtech-clockin-sub {
   margin-top: 0.1rem;
   font-size: 0.78rem;
-  color: #64748b;
+  color: rgba(255, 255, 255, 0.85);
 }
 .mtech-clockin-list {
   display: flex;
@@ -11504,19 +11693,20 @@ a.mtech-phone-link:active { opacity: 0.7; }
   justify-content: space-between;
   gap: 0.6rem;
   padding: 0.75rem 0.9rem;
-  background: #fff;
+  background: var(--mt-surface);
+  border: 1px solid var(--mt-surface-border);
   border-radius: 12px;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12);
+  color: rgba(255, 255, 255, 0.92);
 }
 .mtech-clockin-row-name {
   font-weight: 700;
   font-size: 0.9rem;
-  color: #1f2937;
+  color: rgba(255, 255, 255, 0.92);
 }
 .mtech-clockin-row-status {
   margin-top: 0.15rem;
   font-size: 0.75rem;
-  color: #64748b;
+  color: rgba(255, 255, 255, 0.85);
 }
 .mtech-clockin-btn {
   appearance: none;
@@ -11600,7 +11790,11 @@ a.mtech-phone-link:active { opacity: 0.7; }
   flex-direction: column;
   height: 100%;
   min-height: 0;
-  background: #f8fafc;
+  /* Was a light-gray #f8fafc page fill tuned for white messenger surfaces —
+     with the inbox/thread surfaces below now dark, keep this transparent so
+     the shared .mtech dark gradient shows through instead of a mismatched
+     light strip. */
+  background: transparent;
 }
 
 /* ── Inbox (contact list) ─────────────────────────────────────────────── */
@@ -11617,8 +11811,8 @@ a.mtech-phone-link:active { opacity: 0.7; }
   position: sticky;
   top: 0;
   z-index: 5;
-  background: #fff;
-  border-bottom: 1px solid #e2e8f0;
+  background: var(--mt-surface);
+  border-bottom: 1px solid var(--mt-surface-border);
   padding: 0.85rem 1rem 0.75rem;
   display: flex;
   flex-direction: column;
@@ -11628,7 +11822,7 @@ a.mtech-phone-link:active { opacity: 0.7; }
 .mtech-chat-inbox-title {
   font-size: 1.15rem;
   font-weight: 800;
-  color: #1f2937;
+  color: rgba(255, 255, 255, 0.92);
 }
 
 /* Full-width search bar */
@@ -11695,9 +11889,9 @@ a.mtech-phone-link:active { opacity: 0.7; }
 .mtech-chat-role-pills::-webkit-scrollbar { display: none; }
 .mtech-chat-role-pill {
   appearance: none;
-  border: 1.5px solid #e2e8f0;
-  background: #fff;
-  color: #64748b;
+  border: 1.5px solid var(--mt-surface-border);
+  background: var(--mt-surface);
+  color: rgba(255, 255, 255, 0.85);
   border-radius: 999px;
   padding: 0.28rem 0.75rem;
   font-size: 0.72rem;
@@ -11717,17 +11911,17 @@ a.mtech-phone-link:active { opacity: 0.7; }
 /* Status / empty text */
 .mtech-chat-status {
   text-align: center;
-  color: #64748b;
+  color: rgba(255, 255, 255, 0.85);
   font-size: 0.85rem;
   padding: 1.5rem 1rem;
 }
-.mtech-chat-status-err { color: #dc2626; }
+.mtech-chat-status-err { color: #f87171; }
 
 /* Contact rows — WhatsApp/Messenger-style */
 .mtech-chat-contact-list {
   display: flex;
   flex-direction: column;
-  background: #fff;
+  background: var(--mt-surface);
 }
 
 .mtech-chat-contact-row {
@@ -11740,7 +11934,7 @@ a.mtech-phone-link:active { opacity: 0.7; }
   text-align: left;
   cursor: pointer;
   transition: background 0.1s ease;
-  border-bottom: 1px solid #f1f5f9;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   font-family: inherit;
 }
 .mtech-chat-contact-row:last-child {
@@ -11748,7 +11942,7 @@ a.mtech-phone-link:active { opacity: 0.7; }
 }
 .mtech-chat-contact-row:active,
 .mtech-chat-contact-row:hover {
-  background: #f8fafc;
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .mtech-chat-contact-avatar {
@@ -11774,23 +11968,23 @@ a.mtech-phone-link:active { opacity: 0.7; }
 .mtech-chat-contact-name {
   font-weight: 700;
   font-size: 0.95rem;
-  color: #1f2937;
+  color: rgba(255, 255, 255, 0.92);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.mtech-chat-contact-name.unread { color: #0f172a; font-weight: 800; }
+.mtech-chat-contact-name.unread { color: #fff; font-weight: 800; }
 /* Last-message preview (falls back to the role label when no
    conversation exists yet) - single-line truncated like a real chat
    list, not the plain role subtitle it replaced. */
 .mtech-chat-contact-preview {
   font-size: 0.8rem;
-  color: #64748b;
+  color: rgba(255, 255, 255, 0.85);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.mtech-chat-contact-preview.unread { color: #1e293b; font-weight: 600; }
+.mtech-chat-contact-preview.unread { color: rgba(255, 255, 255, 0.85); font-weight: 600; }
 
 .mtech-chat-contact-meta {
   display: flex;
@@ -11801,7 +11995,7 @@ a.mtech-phone-link:active { opacity: 0.7; }
 }
 .mtech-chat-contact-time {
   font-size: 0.7rem;
-  color: #94a3b8;
+  color: rgba(255, 255, 255, 0.85);
   white-space: nowrap;
 }
 .mtech-chat-contact-unread-badge {
@@ -11819,7 +12013,7 @@ a.mtech-phone-link:active { opacity: 0.7; }
 }
 
 .mtech-chat-contact-chev {
-  color: #cbd5e1;
+  color: rgba(255, 255, 255, 0.4);
   flex-shrink: 0;
 }
 
@@ -11833,8 +12027,8 @@ a.mtech-phone-link:active { opacity: 0.7; }
   align-items: center;
   gap: 0.75rem;
   padding: 0.7rem 0.85rem;
-  background: #fff;
-  border-bottom: 1px solid #e2e8f0;
+  background: var(--mt-surface);
+  border-bottom: 1px solid var(--mt-surface-border);
   position: sticky;
   top: 0;
   z-index: 5;
@@ -11845,14 +12039,14 @@ a.mtech-phone-link:active { opacity: 0.7; }
   border: none;
   padding: 0.3rem;
   cursor: pointer;
-  color: var(--mt-blue-dark);
+  color: var(--mt-blue);
   display: grid;
   place-items: center;
   border-radius: 50%;
   transition: background 0.12s ease;
 }
 .mtech-chat-back-btn:hover {
-  background: #f1f5f9;
+  background: rgba(255, 255, 255, 0.1);
 }
 
 .mtech-chat-thread-avatar {
@@ -11875,11 +12069,11 @@ a.mtech-phone-link:active { opacity: 0.7; }
 .mtech-chat-thread-name {
   font-weight: 700;
   font-size: 0.95rem;
-  color: #1f2937;
+  color: rgba(255, 255, 255, 0.92);
 }
 .mtech-chat-thread-role {
   font-size: 0.72rem;
-  color: #64748b;
+  color: rgba(255, 255, 255, 0.85);
 }
 
 /* Message bubbles area */
@@ -11890,7 +12084,9 @@ a.mtech-phone-link:active { opacity: 0.7; }
   display: flex;
   flex-direction: column;
   gap: 0.45rem;
-  background: #f8fafc;
+  /* Was a light-gray #f8fafc fill behind the bubbles — transparent lets the
+     shared .mtech dark gradient show through, matching .mtech-chat above. */
+  background: transparent;
 }
 
 /* Each row (avatar + bubble) */
@@ -11934,10 +12130,10 @@ a.mtech-phone-link:active { opacity: 0.7; }
   word-break: break-word;
 }
 .mtech-msg-bubble.theirs {
-  background: #fff;
-  color: #1f2937;
+  background: var(--mt-surface);
+  color: rgba(255, 255, 255, 0.92);
   border-bottom-left-radius: 4px;
-  box-shadow: 0 1px 2px rgba(0,0,0,0.07);
+  border: 1px solid var(--mt-surface-border);
 }
 .mtech-msg-bubble.mine {
   background: linear-gradient(135deg, var(--mt-blue), var(--mt-blue-dark));
@@ -11947,7 +12143,7 @@ a.mtech-phone-link:active { opacity: 0.7; }
 
 .mtech-msg-time {
   font-size: 0.65rem;
-  color: #94a3b8;
+  color: rgba(255, 255, 255, 0.85);
   padding: 0 0.25rem;
 }
 .mtech-msg-time.mine {
@@ -11960,8 +12156,8 @@ a.mtech-phone-link:active { opacity: 0.7; }
   align-items: center;
   gap: 0.5rem;
   padding: 0.55rem 0.75rem;
-  background: #fff;
-  border-top: 1px solid #e2e8f0;
+  background: var(--mt-surface);
+  border-top: 1px solid var(--mt-surface-border);
   /* Give it a bit of space from the bottom nav */
   padding-bottom: calc(0.55rem + env(safe-area-inset-bottom, 0));
 }

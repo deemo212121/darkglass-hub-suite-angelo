@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { ChevronLeft, Save, FileText, ExternalLink } from "lucide-react";
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
+import { useSmartBack } from "@/hooks/useSmartBack";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 
 interface Props { mod: ModuleDef; sub: SubModuleDef; }
@@ -14,6 +15,8 @@ const SAMPLE_DOCS = [
 ];
 
 export function ModelDocuments({ mod, sub }: Props) {
+  const navigate = useNavigate();
+  const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
   const [modelCode, setModelCode] = useState("");
   const [results, setResults] = useState<typeof SAMPLE_DOCS>([]);
   const [searched, setSearched] = useState(false);
@@ -34,7 +37,7 @@ export function ModelDocuments({ mod, sub }: Props) {
         <span className="text-foreground font-medium">Model Documents</span>
       </div>
       <div className="flex items-center gap-3 mb-5">
-        <Link to="/m/$module" params={{ module: mod.slug }} className="btn"><ChevronLeft className="h-4 w-4" /></Link>
+        <button type="button" onClick={goBack} className="btn"><ChevronLeft className="h-4 w-4" /></button>
         <h1 className="text-xl font-bold">Model Documents</h1>
       </div>
 

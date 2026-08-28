@@ -18,7 +18,8 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Link, useSearch } from "@tanstack/react-router";
+import { useSearch, useNavigate } from "@tanstack/react-router";
+import { useSmartBack } from "@/hooks/useSmartBack";
 import { ChevronLeft, Loader2, LayoutDashboard, CheckCheck, Building2, ClipboardList, RotateCcw, Download } from "lucide-react";
 import { Bar, BarChart, ResponsiveContainer, Tooltip, XAxis, YAxis, Legend } from "recharts";
 import * as XLSX from "xlsx";
@@ -147,7 +148,7 @@ function doneMetricColor(done: number, total: number): string {
   return done >= total ? "text-emerald-400" : "text-amber-400";
 }
 
-// Rows without structured metrics (migration 0179) — either logged before
+// Rows without structured metrics (migration 0175) — either logged before
 // that migration, or a branch-progress lookup miss at log time — still
 // carry the numbers inside the flat `summary` sentence
 // (formatBranchProgressLine's own fixed wording), so parse them back out
@@ -184,6 +185,8 @@ const addDaysToIso = (iso: string, n: number) => { const d = new Date(iso); d.se
 const fmtShort = (iso: string) => { const [, m, d] = iso.split("-"); return `${Number(m)}/${Number(d)}`; };
 
 export function ReportPartsDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
+  const navigate = useNavigate();
+  const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [rows, setRows] = useState<PartInventoryRow[]>([]);
@@ -248,7 +251,7 @@ export function ReportPartsDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
 
   // Done Activity tab — a log of every "Done" button click on the Parts
   // hub (m.$module.tsx), synced with the same "Parts done" notification
-  // that goes out to each branch's Parts Manager (see migration 0178 /
+  // that goes out to each branch's Parts Manager (see migration 0174 /
   // partsDoneActivityLog.ts). Loaded lazily, only once this tab is opened.
   const [doneActivity, setDoneActivity] = useState<PartsDoneActivityRow[]>([]);
   const [doneActivityLoading, setDoneActivityLoading] = useState(false);
@@ -420,7 +423,7 @@ export function ReportPartsDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
     <div className="min-h-screen flex flex-col">
       <main className="flex-1 max-w-[1600px] mx-auto w-full px-6 py-8">
         <div className="flex items-center gap-3 mb-6">
-          <Link to="/m/$module" params={{ module: mod.slug }} className="btn hover:bg-white/15"><ChevronLeft className="h-4 w-4" /></Link>
+          <button type="button" onClick={goBack} className="btn hover:bg-white/15"><ChevronLeft className="h-4 w-4" /></button>
           <h1 className="text-2xl font-bold">{sub.title}</h1>
         </div>
 

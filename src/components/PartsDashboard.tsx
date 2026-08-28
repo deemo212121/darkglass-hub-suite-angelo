@@ -15,7 +15,8 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "@tanstack/react-router";
+import { useNavigate } from "@tanstack/react-router";
+import { useSmartBack } from "@/hooks/useSmartBack";
 import { ChevronLeft, LayoutDashboard, Package, AlertTriangle, CheckCircle, Truck, ClipboardList, Loader2, Users, Download } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 import * as XLSX from "xlsx";
@@ -70,6 +71,8 @@ const TABS = [
 type PartsDashboardTab = (typeof TABS)[number]["id"];
 
 export function PartsDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
+  const navigate = useNavigate();
+  const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -360,9 +363,9 @@ export function PartsDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
 
         {/* Header */}
         <div className="flex items-center gap-3 mb-2">
-          <Link to="/m/$module" params={{ module: mod.slug }} className="btn hover:bg-white/15">
+          <button type="button" onClick={goBack} className="btn hover:bg-white/15">
             <ChevronLeft className="h-4 w-4" />
-          </Link>
+          </button>
           <div>
             <h1 className="text-2xl font-bold">{sub.title}</h1>
             <p className="text-xs text-muted-foreground mt-0.5">Live from Part Inventory &amp; Truck Stock · {kpi.staffCount} Parts staff</p>

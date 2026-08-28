@@ -1,14 +1,14 @@
 /**
  * Recently-used Drop-Ship Request recipients (ticket.$ticketNo.tsx's Part
  * Transaction "Send"/"Send Selected") — one row per distinct recipient
- * email, company-wide (see migration 0172), so whoever sends to that
+ * email, company-wide (see migration 0169), so whoever sends to that
  * distributor next gets the Recipient/CC fields pre-filled instead of
  * retyping them.
  *
  * No company_id param here on purpose — useAuth()'s companyId is the
  * legacy Firebase-era company CODE (e.g. "COMP001"), not the Postgres
  * companies.id UUID this table's company_id column actually references
- * (see migration 0173). Scoping is entirely server-side instead: RLS
+ * (see migration 0170). Scoping is entirely server-side instead: RLS
  * filters SELECT to the caller's own company, and a BEFORE INSERT
  * trigger stamps company_id from the authenticated session — same
  * idiom hr_activity_log already uses.

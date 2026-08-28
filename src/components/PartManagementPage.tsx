@@ -7,7 +7,8 @@ import {
   useState,
 } from "react";
 import { createPortal } from "react-dom";
-import { Link } from "@tanstack/react-router";
+import { useNavigate } from "@tanstack/react-router";
+import { useSmartBack } from "@/hooks/useSmartBack";
 import { AlertTriangle, ChevronLeft, Download, Send, Trash2, Loader2 } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { LOCATIONS } from "@/lib/locations";
@@ -94,6 +95,8 @@ const ChevronIcon = ({ open }: { open: boolean }) => (
 );
 
 export function PartManagementPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
+  const navigate = useNavigate();
+  const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
   const [rows, setRows] = useState<PartManagementRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -298,13 +301,13 @@ export function PartManagementPage({ mod, sub }: { mod: ModuleDef; sub: SubModul
       <main className="flex-1 max-w-7xl mx-auto w-full px-6 py-8">
         <div className="mb-8">
           <div className="flex items-center gap-3 mb-6">
-            <Link
-              to="/m/$module"
-              params={{ module: mod.slug }}
+            <button
+              type="button"
+              onClick={goBack}
               className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-white text-sm font-semibold transition"
             >
               <ChevronLeft className="h-4 w-4" /> Parts
-            </Link>
+            </button>
           </div>
           <h1 className="text-4xl font-bold text-white mb-2">{sub.title}</h1>
           <p className="text-lg text-slate-400">{sub.description}</p>

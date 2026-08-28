@@ -1,6 +1,7 @@
 import { useState, useMemo, useRef, useEffect } from "react";
 import { ChevronLeft, RefreshCw, ChevronDown } from "lucide-react";
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
+import { useSmartBack } from "@/hooks/useSmartBack";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { PART_DISTRIBUTORS, pick, pad, offsetStr } from "@/components/shared";
 
@@ -53,6 +54,8 @@ function DistributorDropdown({ value, onChange }: { value: string; onChange: (v:
 }
 
 export function PartPurchaseReport({ mod, sub }: Props) {
+  const navigate = useNavigate();
+  const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
   const [distributor, setDistributor] = useState("");
   const [startMonth, setStartMonth] = useState(offsetStr(-365));
   const [endMonth, setEndMonth] = useState(offsetStr(0));
@@ -75,7 +78,7 @@ export function PartPurchaseReport({ mod, sub }: Props) {
         <span className="text-foreground font-medium">Part Purchase Report</span>
       </div>
       <div className="flex items-center gap-3 mb-5">
-        <Link to="/m/$module" params={{ module: mod.slug }} className="btn"><ChevronLeft className="h-4 w-4" /></Link>
+        <button type="button" onClick={goBack} className="btn"><ChevronLeft className="h-4 w-4" /></button>
         <h1 className="text-xl font-bold">Part Purchase Report</h1>
       </div>
 

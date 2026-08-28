@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { Link } from "@tanstack/react-router";
+import { useNavigate } from "@tanstack/react-router";
+import { useSmartBack } from "@/hooks/useSmartBack";
 import { ChevronLeft, Activity, Clock, CalendarClock } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { DailyActivityPage } from "@/components/DailyActivityPage";
@@ -30,6 +31,8 @@ const isNeedTriageStatus = (status: string) => String(status || "").trim().toLow
  * page shell) — this page provides that chrome once, for all three tabs.
  */
 export function TriageDashboardPage({ mod, sub, companyId }: { mod: ModuleDef; sub: SubModuleDef; companyId: string | null }) {
+  const navigate = useNavigate();
+  const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
   const [tab, setTab] = useState<"activity" | "attendance" | "workHours">("activity");
 
   return (
@@ -37,9 +40,9 @@ export function TriageDashboardPage({ mod, sub, companyId }: { mod: ModuleDef; s
       <main className="flex-1 max-w-[1600px] mx-auto w-full px-4 py-4">
         <div className="mb-3">
           <div className="flex items-center gap-3 mb-2">
-            <Link to="/m/$module" params={{ module: mod.slug }} className="btn hover:bg-white/15">
+            <button type="button" onClick={goBack} className="btn hover:bg-white/15">
               <ChevronLeft className="h-4 w-4" /> {mod.label}
-            </Link>
+            </button>
           </div>
           <div>
             <h1 className="text-2xl font-display font-bold tracking-tight">{sub.title}</h1>

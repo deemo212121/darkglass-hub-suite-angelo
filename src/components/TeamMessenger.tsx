@@ -13,7 +13,8 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronLeft, Hash, Home, Lock, MessageCircle, Plus, Search, Send, UserPlus, Users2, X } from "lucide-react";
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
+import { useSmartBack } from "@/hooks/useSmartBack";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { hasDashboardAccess } from "@/lib/dashboardAccess";
@@ -90,6 +91,8 @@ function initials(name: string) {
 }
 
 export function TeamMessenger({ mod, sub }: Props) {
+  const navigate = useNavigate();
+  const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
   const { email, ready, uid, displayName, role, extraRoles } = useAuth();
   const [profileId, setProfileId] = useState<string | null>(null);
   const [channels, setChannels] = useState<ChannelRow[]>([]);
@@ -505,10 +508,10 @@ export function TeamMessenger({ mod, sub }: Props) {
       </div>
 
       <div className="flex items-center gap-3 mb-5">
-        <Link to="/m/$module" params={{ module: mod.slug }} className="btn">
+        <button type="button" onClick={goBack} className="btn">
           <ChevronLeft className="h-4 w-4" />
           {mod.label}
-        </Link>
+        </button>
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Team Messenger</h1>
           <p className="text-sm text-muted-foreground">Chat with employees, teams, and broadcast channels.</p>

@@ -7,7 +7,8 @@
  * data-shaping of its own.
  */
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "@tanstack/react-router";
+import { useNavigate } from "@tanstack/react-router";
+import { useSmartBack } from "@/hooks/useSmartBack";
 import * as XLSX from "xlsx";
 import { ChevronLeft, Loader2, Download, Search } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
@@ -41,6 +42,8 @@ function downloadXlsx(rows: UniversalActivityEntry[], dateFrom: string, dateTo: 
 }
 
 export function UniversalActivityLogPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
+  const navigate = useNavigate();
+  const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
   const [activeTab, setActiveTab] = usePersistedTab<TabKey>("ahs:universal-activity-log-tab", TABS, "all");
 
   const [loading, setLoading] = useState(true);
@@ -94,7 +97,7 @@ export function UniversalActivityLogPage({ mod, sub }: { mod: ModuleDef; sub: Su
     <div className="min-h-screen flex flex-col">
       <main className="flex-1 max-w-[1600px] mx-auto w-full px-6 py-8">
         <div className="flex items-center gap-3 mb-2">
-          <Link to="/m/$module" params={{ module: mod.slug }} className="btn hover:bg-white/15"><ChevronLeft className="h-4 w-4" /></Link>
+          <button type="button" onClick={goBack} className="btn hover:bg-white/15"><ChevronLeft className="h-4 w-4" /></button>
           <div>
             <h1 className="text-2xl font-bold">{sub.title}</h1>
             <p className="text-xs text-muted-foreground mt-0.5">Every department's recent activity in one feed — pick a department or view ALL.</p>

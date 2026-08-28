@@ -2,7 +2,7 @@
  * Per-user opt-outs layered on top of Notification Access by Role
  * (notificationRoleGates.ts) — a user's role makes them a CANDIDATE for
  * a notification trigger, but this table lets an admin exclude a
- * specific person from it anyway. See migration 0176.
+ * specific person from it anyway. See migration 0172.
  */
 import { supabase } from "./client";
 

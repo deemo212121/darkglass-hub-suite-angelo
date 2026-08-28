@@ -2,14 +2,14 @@
  * Write-through log of the Parts hub's "Done" button — backs the Parts
  * Order Dashboard's "Done Activity" tab. m.$module.tsx's confirmImDone
  * inserts one row here per branch, right alongside the real "Parts done"
- * notification send (see migration 0178's header comment for why this
+ * notification send (see migration 0174's header comment for why this
  * doesn't just re-derive the log from the notification backends).
  *
- * Collections/Pickup/Received done-vs-total (migration 0179) are stored
+ * Collections/Pickup/Received done-vs-total (migration 0175) are stored
  * as their own columns, not parsed back out of `summary`, so the Done
  * Activity tab can render them as real bullet points. `metrics` is
  * optional on logPartsDoneActivity/nullable on the row — rows logged
- * before 0179 only have `summary`, so the tab falls back to that.
+ * before 0175 only have `summary`, so the tab falls back to that.
  */
 import { supabase } from "./client";
 
