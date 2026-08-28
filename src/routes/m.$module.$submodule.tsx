@@ -87,7 +87,7 @@ import { getModuleRoleGate } from "@/lib/moduleAccess";
 // e.g. a Parts Manager who's also been given Admin as a secondary role.
 // Shared with submoduleAccess.ts (used by home.tsx/ModuleNavigator.tsx to
 // decide what to even list) so both surfaces can never drift apart.
-import { ADMIN_MODULE_ROLES, USER_MANAGEMENT_ROLES, ACTIVITY_LOG_ROLES } from "@/lib/submoduleAccess";
+import { ADMIN_MODULE_ROLES, USER_MANAGEMENT_ROLES, ACTIVITY_LOG_ROLES, WHEREABOUTS_ROLES } from "@/lib/submoduleAccess";
 import { getMyRoles } from "@/lib/supabase/users";
 import { ROLE_LABELS } from "@/lib/roleLabels";
 import { useEffect, useState } from "react";
@@ -271,6 +271,10 @@ function SubModule() {
   // reaching their dedicated check.
   const isUserManagementSubmodule = sub.custom === "user-management";
   const isActivityLogSubmodule = (sub as any).custom === "universal-activity-log";
+  // Technician Whereabouts: Technical Director also needs this for
+  // dispatch/route visibility, same carve-out reasoning as Activity Logs
+  // already gets for Senior Branch Manager just above.
+  const isWhereaboutsSubmodule = (sub as any).custom === "technician-whereabouts";
 
   if (
     mod.slug === "admin" &&
@@ -278,7 +282,8 @@ function SubModule() {
     !hasItTicketsAccess &&
     !ALL_ROLES_ADMIN_SUBMODULES.has(sub.slug) &&
     !isUserManagementSubmodule &&
-    !isActivityLogSubmodule
+    !isActivityLogSubmodule &&
+    !isWhereaboutsSubmodule
   ) {
     return (
       <>
@@ -346,6 +351,35 @@ function SubModule() {
               <h1 className="text-2xl font-bold">Access restricted</h1>
               <p className="mt-2 text-sm text-slate-300">
                 Activity Logs is only available to Senior Branch Manager, Admin, and SuperAdmin users.
+              </p>
+              <p className="mt-2 text-sm text-slate-400">
+                Current sign-in: {email}
+              </p>
+              <p className="mt-1 text-sm text-slate-400">
+                Your role: {role || "No role assigned"}
+              </p>
+            </div>
+          </div>
+        </main>
+        <Footer />
+      </>
+    );
+  }
+
+  // Technician Whereabouts — same carve-out pattern as User Management/
+  // Activity Logs above.
+  const hasWhereaboutsAccess = hasDashboardAccess(WHEREABOUTS_ROLES, role, extraRoles);
+
+  if (isWhereaboutsSubmodule && !hasWhereaboutsAccess) {
+    return (
+      <>
+        <AppHeader />
+        <main className="flex-1 bg-slate-950 py-6">
+          <div className="max-w-4xl mx-auto px-6">
+            <div className="rounded-xl border border-white/15 bg-white/8 p-6 text-white backdrop-blur-md">
+              <h1 className="text-2xl font-bold">Access restricted</h1>
+              <p className="mt-2 text-sm text-slate-300">
+                Technician Whereabouts is only available to Technical Director, Admin, and SuperAdmin users.
               </p>
               <p className="mt-2 text-sm text-slate-400">
                 Current sign-in: {email}

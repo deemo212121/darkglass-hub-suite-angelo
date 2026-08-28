@@ -18,6 +18,11 @@ import { getModuleRoleGate } from "./moduleAccess";
 export const ADMIN_MODULE_ROLES = ["ADMIN", "SUPERADMIN"];
 export const USER_MANAGEMENT_ROLES = ["HR", "MANAGER", "SENIOR_BRANCH_MANAGER", "ADMIN", "SUPERADMIN"];
 export const ACTIVITY_LOG_ROLES = ["SENIOR_BRANCH_MANAGER", "ADMIN", "SUPERADMIN"];
+// Technical Director oversees dispatch/route visibility company-wide, same
+// operational reason Senior Branch Manager already gets a broader carve-out
+// above for Activity Logs — full Admin access isn't needed just to see
+// where technicians are.
+export const WHEREABOUTS_ROLES = ["TECHNICAL_DIRECTOR", "ADMIN", "SUPERADMIN"];
 // Admin-module submodules open to everyone regardless of the admin gate —
 // company-wide utilities, same carve-out as m.$module.$submodule.tsx's own.
 const ALL_ROLES_ADMIN_SUBMODULES = new Set(["internal-message-support"]);
@@ -35,6 +40,7 @@ export function canAccessSubmodule(
 
   const isUserManagementSubmodule = sub.custom === "user-management";
   const isActivityLogSubmodule = sub.custom === "universal-activity-log";
+  const isWhereaboutsSubmodule = sub.custom === "technician-whereabouts";
   const hasAdminAccess = hasDashboardAccess(ADMIN_MODULE_ROLES, role, extraRoles);
   const hasItTicketsAccess = sub.custom === "it-tickets" && hasDashboardAccess(getDashboardRoleGate("it-tickets") || [], role, extraRoles);
 
@@ -44,13 +50,15 @@ export function canAccessSubmodule(
     !hasItTicketsAccess &&
     !ALL_ROLES_ADMIN_SUBMODULES.has(sub.slug) &&
     !isUserManagementSubmodule &&
-    !isActivityLogSubmodule
+    !isActivityLogSubmodule &&
+    !isWhereaboutsSubmodule
   ) {
     return false;
   }
 
   if (isUserManagementSubmodule && !hasDashboardAccess(USER_MANAGEMENT_ROLES, role, extraRoles)) return false;
   if (isActivityLogSubmodule && !hasDashboardAccess(ACTIVITY_LOG_ROLES, role, extraRoles)) return false;
+  if (isWhereaboutsSubmodule && !hasDashboardAccess(WHEREABOUTS_ROLES, role, extraRoles)) return false;
   if (sub.custom === "company-settings" && !isCompanySuperAdminRole(role, extraRoles)) return false;
 
   if (moduleAllowedRoles && !hasDashboardAccess(moduleAllowedRoles, role, extraRoles)) return false;
