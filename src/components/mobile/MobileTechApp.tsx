@@ -2337,10 +2337,16 @@ function RepairTab({ ticket, authorName }: { ticket: Ticket; authorName: string 
         {visits.map((v, idx) => {
           const isEditing = editVisitId === v.id;
           const isLatestVisit = idx === 0;
+          // Recompute the label from position rather than trusting the
+          // stored visit_no — visits arrives newest-first (oldest = V1), so
+          // this stays correct even when visit_no is missing or duplicated
+          // in the database. Mirrors the same guard on desktop's Visit
+          // History (ticket.$ticketNo.tsx's getNextVisitNumber/visitLabelById).
+          const visitLabel = `V${visits.length - idx}`;
           return (
             <div key={v.id} className="mtech-visit">
               <div className="mtech-visit-head">
-                <span className="mtech-visit-no">{v.visitNo || "Visit"}</span>
+                <span className="mtech-visit-no">{visitLabel}</span>
                 <span className="mtech-visit-status">{v.repairStatus || v.status || "—"}</span>
               </div>
               <div className="mtech-visit-meta">
@@ -2481,7 +2487,7 @@ function RepairTab({ ticket, authorName }: { ticket: Ticket; authorName: string 
         category="service"
         title=""
         uploadedBy={authorName}
-        visitOptions={visits.map((v) => String(v.visitNo || "")).filter(Boolean)}
+        visitOptions={Array.from(new Set(visits.map((v) => String(v.visitNo || "")).filter(Boolean)))}
       />
     </div>
   );
