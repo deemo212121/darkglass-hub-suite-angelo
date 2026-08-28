@@ -249,6 +249,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   const [searchEmployee, setSearchEmployee] = useState<string>("");
   const [filterDepartment, setFilterDepartment] = useState<string>("all");
   const [summaryDepartmentFilter, setSummaryDepartmentFilter] = useState<string>("all");
+  const [summaryLocationFilter, setSummaryLocationFilter] = useState<string>("all");
   // Weekly Attendance Summary: narrow the roster to who checked in (or was
   // absent) on one specific day of the current week, instead of always
   // showing everyone's full Mon-Fri row.
@@ -646,13 +647,14 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   ) as string[];
   const locations = Array.from(new Set(visibleProfiles.map((p) => p.assigned_branch).filter(Boolean))) as string[];
 
-  // Weekly/Monthly summary tables get their own department filter since
-  // they're a separate section below the Daily Attendance table/filters.
+  // Weekly/Monthly summary tables get their own department + branch filters
+  // since they're a separate section below the Daily Attendance table/filters.
   const summaryProfiles = useMemo(
-    () => summaryDepartmentFilter === "all"
-      ? visibleProfiles
-      : visibleProfiles.filter((p) => profileDepartment(p) === summaryDepartmentFilter),
-    [visibleProfiles, summaryDepartmentFilter]
+    () =>
+      visibleProfiles
+        .filter((p) => summaryDepartmentFilter === "all" || profileDepartment(p) === summaryDepartmentFilter)
+        .filter((p) => summaryLocationFilter === "all" || p.assigned_branch === summaryLocationFilter),
+    [visibleProfiles, summaryDepartmentFilter, summaryLocationFilter]
   );
 
   // ---- Weekly summary (Mon–Fri of the current week) ----
@@ -1611,6 +1613,19 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                         <option value="all">All Departments</option>
                         {departments.map((dept) => (
                           <option key={dept} value={dept}>{dept}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-slate-400 uppercase">Branch</span>
+                      <select
+                        value={summaryLocationFilter}
+                        onChange={(e) => setSummaryLocationFilter(e.target.value)}
+                        className="bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none"
+                      >
+                        <option value="all">All Branches</option>
+                        {locations.map((loc) => (
+                          <option key={loc} value={loc}>{loc}</option>
                         ))}
                       </select>
                     </div>
