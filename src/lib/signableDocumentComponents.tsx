@@ -34,6 +34,7 @@ export const INTERNAL_SIGNABLE_DOCUMENT_COMPONENTS: Record<SignableDocumentType,
   contractor_data: lazy(() => import("@/components/FillContractorDataPage").then((m) => ({ default: m.FillContractorDataPage }))),
   direct_deposit: lazy(() => import("@/components/FillDirectDepositPage").then((m) => ({ default: m.FillDirectDepositPage }))),
   substance_screening: lazy(() => import("@/components/FillSubstanceScreeningPage").then((m) => ({ default: m.FillSubstanceScreeningPage }))),
+  flash_technician_travel: lazy(() => import("@/components/FillFlashTechnicianTravelPage").then((m) => ({ default: m.FillFlashTechnicianTravelPage }))),
 };
 
 export const EXTERNAL_SIGNABLE_DOCUMENT_COMPONENTS: Record<SignableDocumentType, ReturnType<typeof lazy>> = {
@@ -59,4 +60,5 @@ export const EXTERNAL_SIGNABLE_DOCUMENT_COMPONENTS: Record<SignableDocumentType,
   contractor_data: lazy(() => import("@/components/ExternalFillContractorDataPage").then((m) => ({ default: m.ExternalFillContractorDataPage }))),
   direct_deposit: lazy(() => import("@/components/ExternalFillDirectDepositPage").then((m) => ({ default: m.ExternalFillDirectDepositPage }))),
   substance_screening: lazy(() => import("@/components/ExternalFillSubstanceScreeningPage").then((m) => ({ default: m.ExternalFillSubstanceScreeningPage }))),
+  flash_technician_travel: lazy(() => import("@/components/ExternalFillFlashTechnicianTravelPage").then((m) => ({ default: m.ExternalFillFlashTechnicianTravelPage }))),
 };

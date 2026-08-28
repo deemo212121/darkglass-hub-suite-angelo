@@ -462,15 +462,15 @@ export function PartPickupPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
           .meta-right select { padding: 0.42rem 0.55rem; border-radius: 6px; border: 1px solid rgba(255, 255, 255, 0.2); background: rgba(17, 24, 39, 0.95); color: #fff; }
           .search-row { justify-content: flex-start; }
           .search-input { min-width: 260px; }
-          .table-wrap { overflow-x: auto; border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 8px; background: #fff; max-width: 100%; min-width: 0; }
-          table.pickup-table { width: 100%; min-width: 2200px; border-collapse: collapse; font-size: 0.75rem; color: #111827; }
-          .pickup-table th, .pickup-table td { border: 1px solid #d1d5db; padding: 0.42rem; vertical-align: top; white-space: nowrap; }
+          .table-wrap { overflow-x: auto; border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 8px; background: #111827; max-width: 100%; min-width: 0; }
+          table.pickup-table { width: 100%; min-width: 2200px; border-collapse: collapse; font-size: 0.75rem; color: #e5e7eb; }
+          .pickup-table th, .pickup-table td { border: 1px solid rgba(255, 255, 255, 0.12); padding: 0.42rem; vertical-align: top; white-space: nowrap; }
           .pickup-table th { background: #1f2937; color: #f9fafb; text-align: left; position: sticky; top: 0; z-index: 1; }
-          .pickup-table tbody tr:nth-child(even) { background: #f9fafb; }
+          .pickup-table tbody tr:nth-child(even) { background: rgba(255, 255, 255, 0.03); }
           .qty, .money { text-align: right; }
-          .ticket-link { color: #111827; font-weight: 700; text-decoration: none; }
-          .ticket-link:hover { text-decoration: underline; }
-          .part-link-btn { border: 0; background: transparent; padding: 0; margin: 0; font: inherit; color: #111827; font-weight: 700; text-decoration: none; cursor: pointer; }
+          .ticket-link { color: #60a5fa; font-weight: 700; text-decoration: none; }
+          .ticket-link:hover { text-decoration: underline; color: #93c5fd; }
+          .part-link-btn { border: 0; background: transparent; padding: 0; margin: 0; font: inherit; color: #60a5fa; font-weight: 700; text-decoration: none; cursor: pointer; }
           .part-link-btn:hover { text-decoration: underline; }
           .part-info-modal-overlay { position: fixed; inset: 0; background: rgba(15, 23, 42, 0.45); display: none; align-items: center; justify-content: center; z-index: 2200; padding: 1rem; }
           .part-info-modal-overlay.is-open { display: flex; }

@@ -33,13 +33,14 @@ import {
 import { addAgentNote } from "@/lib/supabase/csrAgentNotes";
 import { buildWarnNoteText } from "@/lib/warningFormTemplate";
 import { logActivity } from "@/lib/supabase/hrActivityLog";
-import { uploadSignableDocumentSignature, uploadWageAckForm, uploadMealRestBreakForm, uploadPartsResponsibilityForm, uploadLocationConsentForm, uploadDamageForm, uploadMileageFuelForm } from "@/lib/firebase/storage";
+import { uploadSignableDocumentSignature, uploadWageAckForm, uploadMealRestBreakForm, uploadPartsResponsibilityForm, uploadLocationConsentForm, uploadDamageForm, uploadMileageFuelForm, uploadFlashTechnicianTravelForm } from "@/lib/firebase/storage";
 import { fillWageAckPdf, loadBlankWageAckBytes } from "@/lib/wageAckPdfFill";
 import { fillMealRestBreakPdf, loadBlankMealRestBreakBytes } from "@/lib/mealRestBreakPdfFill";
 import { fillPartsResponsibilityPdf, loadBlankPartsResponsibilityBytes } from "@/lib/partsResponsibilityPdfFill";
 import { fillLocationConsentPdf, loadBlankLocationConsentBytes } from "@/lib/locationConsentPdfFill";
 import { fillDamagePdf, loadBlankDamageBytes } from "@/lib/damagePdfFill";
 import { fillMileageFuelPdf, loadBlankMileageFuelBytes } from "@/lib/mileageFuelPdfFill";
+import { fillFlashTechnicianTravelPdf, loadBlankFlashTechnicianTravelBytes } from "@/lib/flashTechnicianTravelPdfFill";
 import { useSignaturePad, type SignaturePadHandle } from "@/hooks/useSignaturePad";
 import { SignaturePadControls } from "@/components/SignaturePad";
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
@@ -79,12 +80,18 @@ function LiveDocumentPreview({
   pageIndex,
   sigRect,
   sigPad,
+  pageHeight = PDF_PAGE_HEIGHT,
 }: {
   pdfUrl: string | null | undefined;
   loadBlankBytes: () => Promise<Uint8Array>;
   pageIndex: number;
   sigRect: { x: number; y: number; w: number; h: number };
   sigPad: SignaturePadHandle;
+  // Most of these PDFs are US Letter (792pt), the module-level default —
+  // only pass this when a type's source PDF uses a different page size
+  // (e.g. Flash Technician Travel's A4 template), so the overlay's flipped
+  // y coordinate lines up with the real page instead of assuming Letter.
+  pageHeight?: number;
 }) {
   const canvasRefs = useRef<(HTMLCanvasElement | null)[]>([]);
   const previewContainerRef = useRef<HTMLDivElement | null>(null);
@@ -205,7 +212,7 @@ function LiveDocumentPreview({
   const overlayStyle: CSSProperties = {
     position: "absolute",
     left: sigRect.x * scale,
-    top: (PDF_PAGE_HEIGHT - sigRect.y - sigRect.h) * scale,
+    top: (pageHeight - sigRect.y - sigRect.h) * scale,
     width: sigRect.w * scale,
     height: sigRect.h * scale,
   };
@@ -266,6 +273,9 @@ interface SignableConfig {
   // document's actual current pdfUrl fails (e.g. a storage CORS hiccup);
   // see LiveDocumentPreview.
   loadBlankBytes: () => Promise<Uint8Array>;
+  // Only needed for a type whose source PDF isn't US Letter (792pt) — see
+  // LiveDocumentPreview's pageHeight prop.
+  pageHeight?: number;
 }
 const SIGNABLE_CONFIG: Partial<Record<SignableDocumentType, SignableConfig>> = {
   wage_ack: {
@@ -310,6 +320,17 @@ const SIGNABLE_CONFIG: Partial<Record<SignableDocumentType, SignableConfig>> = {
     employerSigField: "employerSignatureDataUrl", employerDateField: "employerDateSigned",
     filenamePrefix: "mileage-fuel", activityAction: "mileage_fuel_employer_signed", loadBlankBytes: loadBlankMileageFuelBytes,
     sigPageIndex: 1, sigRect: { x: 256, y: 695.5, w: 215, h: 20 },
+  },
+  flash_technician_travel: {
+    label: "Flash Technician Travel & Out-of-State Policy",
+    fillPdf: fillFlashTechnicianTravelPdf, uploadPdf: uploadFlashTechnicianTravelForm,
+    employerSigField: "employerSignatureDataUrl", employerDateField: "employerDateSigned",
+    filenamePrefix: "flash-technician-travel", activityAction: "flash_technician_travel_employer_signed", loadBlankBytes: loadBlankFlashTechnicianTravelBytes,
+    // Both signatures live on the last page (index 2) — this PDF is A4
+    // (842.04pt tall), not the US Letter every other type here uses, so
+    // pageHeight must be set explicitly or the live overlay would be
+    // vertically misplaced.
+    sigPageIndex: 2, sigRect: { x: 257, y: 705, w: 130, h: 11 }, pageHeight: 842.04,
   },
 };
 
@@ -639,6 +660,7 @@ export function EmployerSignBundlePage() {
                         pageIndex={signableConfig!.sigPageIndex}
                         sigRect={signableConfig!.sigRect}
                         sigPad={sigPad}
+                        pageHeight={signableConfig!.pageHeight}
                       />
                     </div>
                   ) : currentDoc.pdfUrl && (

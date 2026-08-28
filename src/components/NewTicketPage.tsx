@@ -53,6 +53,28 @@ const WARRANTY_TYPES = [
   "In warranty", "Labor only Wty", "Out-of-warranty", "Part only Wty", "Special Part 5 year", "Unknown",
 ];
 
+// Every required field, in the same order the form presents them — walked
+// as a group at submit time so ALL missing fields are flagged at once
+// (both here and as red-outlined inputs below), instead of the old
+// behavior of stopping at the first one and telling the user about it one
+// field at a time.
+const REQUIRED_FIELDS: { key: keyof typeof DEFAULT_FORM; label: string }[] = [
+  { key: "ticketNo", label: "Ticket No" },
+  { key: "source", label: "Source" },
+  { key: "customerName", label: "Name" },
+  { key: "primaryPhone", label: "Primary Phone" },
+  { key: "address", label: "Address" },
+  { key: "city", label: "City" },
+  { key: "zipCode", label: "Zip Code" },
+  { key: "state", label: "State" },
+  { key: "model", label: "Model" },
+  { key: "serialNo", label: "Serial" },
+  { key: "brand", label: "Brand" },
+  { key: "productCategory", label: "Product Category" },
+  { key: "warrantyType", label: "Warranty Type" },
+  { key: "problemDescription", label: "Problem Description" },
+];
+
 const DEFAULT_FORM = {
   ticketNo: "",
   originalTicketNo: "",
@@ -85,6 +107,11 @@ const DEFAULT_FORM = {
 export function NewTicketPage({ mod, sub }: Props) {
   const [form, setForm] = useState(DEFAULT_FORM);
   const [status, setStatus] = useState("");
+  const [statusIsError, setStatusIsError] = useState(false);
+  // Which required fields are currently flagged red — populated all at
+  // once on a failed submit attempt (see handleCreateTicket), cleared
+  // per-field the moment the user edits it (see update()).
+  const [invalidFields, setInvalidFields] = useState<Set<string>>(new Set());
   const [submittingTicket, setSubmittingTicket] = useState(false);
   const [location, setLocation] = useState("");
   // Live USPS-equivalent zip lookup state.
@@ -199,42 +226,36 @@ export function NewTicketPage({ mod, sub }: Props) {
 
   const update = <K extends keyof typeof DEFAULT_FORM>(key: K, value: (typeof DEFAULT_FORM)[K]) => {
     setForm((current) => ({ ...current, [key]: value }));
+    // Clear that field's red outline the moment they start fixing it —
+    // don't make them re-submit just to see the flag go away.
+    setInvalidFields((prev) => {
+      if (!prev.has(key as string)) return prev;
+      const next = new Set(prev);
+      next.delete(key as string);
+      return next;
+    });
   };
 
+  const fieldClass = (base: string, key: string) => (invalidFields.has(key) ? `${base} field-invalid` : base);
+  const labelClass = (key: string) => (invalidFields.has(key) ? "form-label required field-invalid" : "form-label required");
+
   const handleCreateTicket = async () => {
-    // Validate required fields
-    if (!form.ticketNo.trim()) {
-      setStatus("Error: Ticket number is required");
+    // Validate every required field at once — not one at a time — so every
+    // missing box gets red-outlined together and the summary above the
+    // form lists all of them in a single pass.
+    const missing = REQUIRED_FIELDS.filter(({ key }) => {
+      const value = form[key];
+      return typeof value === "string" ? !value.trim() : !value;
+    });
+    if (missing.length > 0) {
+      setInvalidFields(new Set(missing.map((f) => f.key as string)));
+      setStatusIsError(true);
+      setStatus(`Please fill in: ${missing.map((f) => f.label).join(", ")}`);
+      document.getElementById(missing[0].key)?.scrollIntoView({ behavior: "smooth", block: "center" });
       return;
     }
-    if (!form.source) {
-      setStatus("Error: Source is required");
-      return;
-    }
-    if (!form.customerName.trim()) {
-      setStatus("Error: Customer name is required");
-      return;
-    }
-    if (!form.primaryPhone.trim()) {
-      setStatus("Error: Primary phone is required");
-      return;
-    }
-    if (!form.address.trim()) {
-      setStatus("Error: Address is required");
-      return;
-    }
-    if (!form.city.trim()) {
-      setStatus("Error: City is required");
-      return;
-    }
-    if (!form.zipCode.trim()) {
-      setStatus("Error: Zip code is required");
-      return;
-    }
-    if (!form.state) {
-      setStatus("Error: State is required");
-      return;
-    }
+    setInvalidFields(new Set());
+
     // Final zip ↔ city/state guard. We re-run the lookup at submit time
     // so we still block when the user typed everything fast and the
     // banner hadn't refreshed yet. If the live lookup is unreachable
@@ -243,38 +264,18 @@ export function NewTicketPage({ mod, sub }: Props) {
     try {
       const verify = await lookupZipCityState(form.zipCode);
       if (verify && !cityStateMatchesZip(verify, form.city, form.state)) {
+        setInvalidFields(new Set(["city", "state"]));
+        setStatusIsError(true);
         setStatus(
           `Error: ZIP ${verify.zip} is ${verify.primary.city}, ${verify.primary.state} — not ${form.city || "—"}, ${form.state || "—"}. Fix the city / state (or the ZIP) before saving.`,
         );
+        document.getElementById("city")?.scrollIntoView({ behavior: "smooth", block: "center" });
         return;
       }
     } catch {
       // ignore — network blip shouldn't block the save
     }
-    if (!form.model.trim()) {
-      setStatus("Error: Model is required");
-      return;
-    }
-    if (!form.serialNo.trim()) {
-      setStatus("Error: Serial number is required");
-      return;
-    }
-    if (!form.brand.trim()) {
-      setStatus("Error: Brand is required");
-      return;
-    }
-    if (!form.productCategory) {
-      setStatus("Error: Product category is required");
-      return;
-    }
-    if (!form.warrantyType) {
-      setStatus("Error: Warranty type is required");
-      return;
-    }
-    if (!form.problemDescription.trim()) {
-      setStatus("Error: Problem description is required");
-      return;
-    }
+    setStatusIsError(false);
 
     // Create ticket object matching Ticket interface
     const newTicket: Ticket = {
@@ -348,8 +349,10 @@ export function NewTicketPage({ mod, sub }: Props) {
       } catch (err: any) {
         console.error("Create ticket failed:", err);
         const msg = String(err?.message || "");
+        setStatusIsError(true);
         if (msg.includes("duplicate") || msg.includes("unique")) {
           setStatus(`Error: Ticket number ${newTicket.ticketNo} already exists`);
+          setInvalidFields(new Set(["ticketNo"]));
         } else {
           setStatus(`Error creating ticket: ${msg || "Unknown error"}`);
         }
@@ -380,13 +383,20 @@ export function NewTicketPage({ mod, sub }: Props) {
           <div className="ticket-form-badge">{ticketNoPreview}</div>
         </div>
 
+        {invalidFields.size > 0 && (
+          <div className="ticket-form-alert" role="alert">
+            ⚠ {invalidFields.size} field{invalidFields.size === 1 ? "" : "s"} need{invalidFields.size === 1 ? "s" : ""} your attention:{" "}
+            {REQUIRED_FIELDS.filter((f) => invalidFields.has(f.key as string)).map((f) => f.label).join(", ")}
+          </div>
+        )}
+
         <form className="ticket-form">
           <section className="ticket-form-section">
             <h3 className="ticket-form-section-title">Customer Information</h3>
             <div className="ticket-form-grid">
               <div className="form-group">
-                <label className="form-label required" htmlFor="ticketNo">Ticket No</label>
-                <input id="ticketNo" className="form-input" value={form.ticketNo} onChange={(event) => update("ticketNo", event.target.value)} required />
+                <label className={labelClass("ticketNo")} htmlFor="ticketNo">Ticket No</label>
+                <input id="ticketNo" className={fieldClass("form-input", "ticketNo")} value={form.ticketNo} onChange={(event) => update("ticketNo", event.target.value)} required />
               </div>
               <div className="form-group form-group-inline">
                 <div className="form-checkbox-group">
@@ -398,15 +408,15 @@ export function NewTicketPage({ mod, sub }: Props) {
 
             <div className="ticket-form-grid ticket-form-grid-3">
               <div className="form-group">
-                <label className="form-label required" htmlFor="source">Source</label>
-                <select id="source" className="form-select" value={form.source} onChange={(event) => update("source", event.target.value)} required>
+                <label className={labelClass("source")} htmlFor="source">Source</label>
+                <select id="source" className={fieldClass("form-select", "source")} value={form.source} onChange={(event) => update("source", event.target.value)} required>
                   <option value="">Select Source</option>
                   {SOURCES.map((option) => <option key={option} value={option}>{option}</option>)}
                 </select>
               </div>
               <div className="form-group">
-                <label className="form-label required" htmlFor="customerName">Name</label>
-                <input id="customerName" className="form-input" value={form.customerName} onChange={(event) => update("customerName", event.target.value)} required />
+                <label className={labelClass("customerName")} htmlFor="customerName">Name</label>
+                <input id="customerName" className={fieldClass("form-input", "customerName")} value={form.customerName} onChange={(event) => update("customerName", event.target.value)} required />
               </div>
               <div className="form-group">
                 <label className="form-label" htmlFor="caseNumber">Case Number <span className="text-muted-foreground font-normal">(Optional)</span></label>
@@ -416,8 +426,8 @@ export function NewTicketPage({ mod, sub }: Props) {
 
             <div className="ticket-form-grid ticket-form-grid-3">
               <div className="form-group">
-                <label className="form-label required" htmlFor="primaryPhone">Primary Phone</label>
-                <input id="primaryPhone" className="form-input" type="tel" value={form.primaryPhone} onChange={(event) => update("primaryPhone", event.target.value)} required />
+                <label className={labelClass("primaryPhone")} htmlFor="primaryPhone">Primary Phone</label>
+                <input id="primaryPhone" className={fieldClass("form-input", "primaryPhone")} type="tel" value={form.primaryPhone} onChange={(event) => update("primaryPhone", event.target.value)} required />
               </div>
               <div className="form-group">
                 <label className="form-label" htmlFor="secondaryPhone">Secondary Phone</label>
@@ -431,8 +441,8 @@ export function NewTicketPage({ mod, sub }: Props) {
 
             <div className="ticket-form-grid">
               <div className="form-group">
-                <label className="form-label required" htmlFor="address">Address</label>
-                <input id="address" className="form-input" value={form.address} onChange={(event) => update("address", event.target.value)} required />
+                <label className={labelClass("address")} htmlFor="address">Address</label>
+                <input id="address" className={fieldClass("form-input", "address")} value={form.address} onChange={(event) => update("address", event.target.value)} required />
               </div>
               <div className="form-group">
                 <label className="form-label" htmlFor="address2">Address 2</label>
@@ -442,14 +452,14 @@ export function NewTicketPage({ mod, sub }: Props) {
 
             <div className="ticket-form-grid">
               <div className="form-group">
-                <label className="form-label required" htmlFor="city">City</label>
-                <input id="city" className="form-input" value={form.city} onChange={(event) => update("city", event.target.value)} required />
+                <label className={labelClass("city")} htmlFor="city">City</label>
+                <input id="city" className={fieldClass("form-input", "city")} value={form.city} onChange={(event) => update("city", event.target.value)} required />
               </div>
               <div className="form-group">
-                <label className="form-label required" htmlFor="zipCode">Zip Code</label>
+                <label className={labelClass("zipCode")} htmlFor="zipCode">Zip Code</label>
                 <input
                   id="zipCode"
-                  className="form-input"
+                  className={fieldClass("form-input", "zipCode")}
                   value={form.zipCode}
                   onChange={(event) => {
                     const val = event.target.value.replace(/\D/g, "").slice(0, 5);
@@ -546,8 +556,8 @@ export function NewTicketPage({ mod, sub }: Props) {
                 )}
               </div>
               <div className="form-group">
-                <label className="form-label required" htmlFor="state">State</label>
-                <select id="state" className="form-select" value={form.state} onChange={(event) => update("state", event.target.value)} required>
+                <label className={labelClass("state")} htmlFor="state">State</label>
+                <select id="state" className={fieldClass("form-select", "state")} value={form.state} onChange={(event) => update("state", event.target.value)} required>
                   <option value="">Select State</option>
                   {STATES.map((option) => <option key={option} value={option}>{option}</option>)}
                 </select>
@@ -566,12 +576,12 @@ export function NewTicketPage({ mod, sub }: Props) {
             <h3 className="ticket-form-section-title">Product Information</h3>
             <div className="ticket-form-grid">
               <div className="form-group">
-                <label className="form-label required" htmlFor="model">Model</label>
-                <input id="model" className="form-input" value={form.model} onChange={(event) => update("model", event.target.value)} required />
+                <label className={labelClass("model")} htmlFor="model">Model</label>
+                <input id="model" className={fieldClass("form-input", "model")} value={form.model} onChange={(event) => update("model", event.target.value)} required />
               </div>
               <div className="form-group">
-                <label className="form-label required" htmlFor="serialNo">Serial</label>
-                <input id="serialNo" className="form-input" value={form.serialNo} onChange={(event) => update("serialNo", event.target.value)} required />
+                <label className={labelClass("serialNo")} htmlFor="serialNo">Serial</label>
+                <input id="serialNo" className={fieldClass("form-input", "serialNo")} value={form.serialNo} onChange={(event) => update("serialNo", event.target.value)} required />
               </div>
               <div className="form-group">
                 <label className="form-label" htmlFor="modelVersion">Model Version</label>
@@ -581,12 +591,12 @@ export function NewTicketPage({ mod, sub }: Props) {
 
             <div className="ticket-form-grid">
               <div className="form-group">
-                <label className="form-label required" htmlFor="brand">Brand</label>
-                <input id="brand" className="form-input" value={form.brand} onChange={(event) => update("brand", event.target.value)} required />
+                <label className={labelClass("brand")} htmlFor="brand">Brand</label>
+                <input id="brand" className={fieldClass("form-input", "brand")} value={form.brand} onChange={(event) => update("brand", event.target.value)} required />
               </div>
               <div className="form-group">
-                <label className="form-label required" htmlFor="productCategory">Product Category</label>
-                <select id="productCategory" className="form-select" value={form.productCategory} onChange={(event) => update("productCategory", event.target.value)} required>
+                <label className={labelClass("productCategory")} htmlFor="productCategory">Product Category</label>
+                <select id="productCategory" className={fieldClass("form-select", "productCategory")} value={form.productCategory} onChange={(event) => update("productCategory", event.target.value)} required>
                   <option value="">Select Category</option>
                   {PRODUCT_CATEGORIES.map((option) => <option key={option} value={option}>{option}</option>)}
                 </select>
@@ -599,8 +609,8 @@ export function NewTicketPage({ mod, sub }: Props) {
                 <input id="purchaseDate" className="form-input" type="date" value={form.purchaseDate} onChange={(event) => update("purchaseDate", event.target.value)} />
               </div>
               <div className="form-group">
-                <label className="form-label required" htmlFor="warrantyType">Warranty Type</label>
-                <select id="warrantyType" className="form-select" value={form.warrantyType} onChange={(event) => update("warrantyType", event.target.value)} required>
+                <label className={labelClass("warrantyType")} htmlFor="warrantyType">Warranty Type</label>
+                <select id="warrantyType" className={fieldClass("form-select", "warrantyType")} value={form.warrantyType} onChange={(event) => update("warrantyType", event.target.value)} required>
                   <option value="">Select Warranty Type</option>
                   {WARRANTY_TYPES.map((option) => <option key={option} value={option}>{option}</option>)}
                 </select>
@@ -625,17 +635,19 @@ export function NewTicketPage({ mod, sub }: Props) {
             </div>
             <div className="ticket-form-grid">
               <div className="form-group full-width">
-                <label className="form-label required" htmlFor="problemDescription">Problem Description</label>
-                <textarea id="problemDescription" className="form-textarea" rows={5} value={form.problemDescription} onChange={(event) => update("problemDescription", event.target.value)} required />
+                <label className={labelClass("problemDescription")} htmlFor="problemDescription">Problem Description</label>
+                <textarea id="problemDescription" className={fieldClass("form-textarea", "problemDescription")} rows={5} value={form.problemDescription} onChange={(event) => update("problemDescription", event.target.value)} required />
               </div>
             </div>
           </section>
 
           <div className="ticket-form-actions">
-            <p className="ticket-form-status">{status}</p>
+            <p className={statusIsError ? "ticket-form-status is-error" : "ticket-form-status"}>{status}</p>
             <button type="button" className="btn btn-secondary" onClick={() => {
               setForm(DEFAULT_FORM);
               setStatus("");
+              setStatusIsError(false);
+              setInvalidFields(new Set());
               setLocation("");
             }}>
               Cancel

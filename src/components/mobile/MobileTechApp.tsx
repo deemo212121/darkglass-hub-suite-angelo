@@ -52,7 +52,8 @@ import { getMyPayslips, payslipStatusLabel, type MyPayslipRow } from "@/lib/supa
 import { getMyProfileSchedule, getMonthEntries, getCompanyTimecardEntries, saveEntry as saveTimecardEntry, resolveScheduledShiftHours, type UITimeEntry, type CompanyTimecardEntry } from "@/lib/supabase/timecards";
 import { visibleAttendanceProfileIds } from "@/lib/notifyRouting";
 import { getCsrTeamComposition } from "@/lib/supabase/csrTeams";
-import { isAttendanceManagerTierRole, normalizeRole } from "@/lib/roleLabels";
+import { isAttendanceManagerTierRole, normalizeRole, ROLE_LABELS } from "@/lib/roleLabels";
+import { LOCATIONS } from "@/lib/locations";
 import { timezoneForBranch, nowInTimezone } from "@/lib/attendanceGrace";
 import { getServerNow, zonedDateKey, zonedTimeString, type ScheduleTimezone } from "@/lib/serverTime";
 import { getTicketComments, addTicketComment, type TicketComment } from "@/lib/supabase/comments";
@@ -732,11 +733,6 @@ export function MobileTechApp() {
         onOpenTimecard={() => setView("timecard")}
         showClockInTeam={isAttendanceManagerTierRole(role, extraRoles)}
         onOpenClockInTeam={() => setView("clockinteam")}
-        onOpenItSupport={() => setView("itsupport")}
-        onOpenPayrollDispute={() => { setPayrollDisputePrefill(null); setView("payrolldispute"); }}
-        onOpenTimeOff={() => setView("timeoff")}
-        onOpenAttendanceDispute={() => setView("attendancedispute")}
-        onOpenCorrection={() => setView("correction")}
         onNotificationLink={handleNotificationLink}
         onOpenNotifications={() => setView("notifications")}
         onSwitchToDesktop={() => {
@@ -938,11 +934,6 @@ function AppHeaderMobile({
   onOpenTimecard,
   showClockInTeam,
   onOpenClockInTeam,
-  onOpenItSupport,
-  onOpenPayrollDispute,
-  onOpenTimeOff,
-  onOpenAttendanceDispute,
-  onOpenCorrection,
   onNotificationLink,
   onOpenNotifications,
   onSwitchToDesktop,
@@ -955,11 +946,6 @@ function AppHeaderMobile({
   onOpenTimecard: () => void;
   showClockInTeam: boolean;
   onOpenClockInTeam: () => void;
-  onOpenItSupport: () => void;
-  onOpenPayrollDispute: () => void;
-  onOpenTimeOff: () => void;
-  onOpenAttendanceDispute: () => void;
-  onOpenCorrection: () => void;
   onNotificationLink: (linkTo: string) => void;
   onOpenNotifications: () => void;
   onSwitchToDesktop: () => void;
@@ -1025,41 +1011,6 @@ function AppHeaderMobile({
                   👥 Clock In Team
                 </button>
               )}
-              <button
-                type="button"
-                className="mtech-app-profile-timecard"
-                onClick={() => { setMenu(false); onOpenItSupport(); }}
-              >
-                🎫 IT Support
-              </button>
-              <button
-                type="button"
-                className="mtech-app-profile-timecard"
-                onClick={() => { setMenu(false); onOpenPayrollDispute(); }}
-              >
-                💰 Payroll Dispute
-              </button>
-              <button
-                type="button"
-                className="mtech-app-profile-timecard"
-                onClick={() => { setMenu(false); onOpenTimeOff(); }}
-              >
-                🌴 Time Off Request
-              </button>
-              <button
-                type="button"
-                className="mtech-app-profile-timecard"
-                onClick={() => { setMenu(false); onOpenAttendanceDispute(); }}
-              >
-                ⚠️ Attendance Dispute
-              </button>
-              <button
-                type="button"
-                className="mtech-app-profile-timecard"
-                onClick={() => { setMenu(false); onOpenCorrection(); }}
-              >
-                ✏️ Time Correction
-              </button>
               <button
                 type="button"
                 className="mtech-app-profile-timecard"
@@ -2183,6 +2134,12 @@ function RepairTab({ ticket, authorName }: { ticket: Ticket; authorName: string 
     nonCompletionReason: string;
   }>({ repairStatus: "", diagnosis: "", service: composeServicePerformed(emptyServicePerformed()), nonCompletionReason: "" });
   const [savingVisit, setSavingVisit] = useState(false);
+  // Red-outlines the Repair Status dropdown after a blocked save attempt —
+  // cleared the moment they pick a value. Desktop's own Add Visit modal
+  // already blocks an empty Repair Status the same way (see
+  // ticket.$ticketNo.tsx's addVisitLogEntry); this closes the same gap on
+  // mobile's Save-visit-edit path, which had no validation at all.
+  const [repairStatusInvalid, setRepairStatusInvalid] = useState(false);
 
   // Parts Used isn't part of the free-text notes anymore - it's a live,
   // read-only readout of whichever parts the Parts tab currently has
@@ -2240,9 +2197,15 @@ function RepairTab({ ticket, authorName }: { ticket: Ticket; authorName: string 
   const cancelEdit = () => {
     setEditVisitId(null);
     setEditDraft({ repairStatus: "", diagnosis: "", service: composeServicePerformed(emptyServicePerformed()), nonCompletionReason: "" });
+    setRepairStatusInvalid(false);
   };
 
   const saveEdit = async (visitId: string) => {
+    if (!editDraft.repairStatus.trim()) {
+      setRepairStatusInvalid(true);
+      alert("Repair Status is required before saving this visit.");
+      return;
+    }
     setSavingVisit(true);
     try {
       const original = visits.find((row) => row.id === visitId);
@@ -2414,11 +2377,11 @@ function RepairTab({ ticket, authorName }: { ticket: Ticket; authorName: string 
                     }
                     rows={10}
                   />
-                  <label className="mtech-visit-edit-label">Repair Status</label>
+                  <label className={repairStatusInvalid ? "mtech-visit-edit-label field-invalid" : "mtech-visit-edit-label"}>Repair Status {repairStatusInvalid && <span className="text-rose-400">*required</span>}</label>
                   <select
-                    className="mtech-visit-edit-input"
+                    className={repairStatusInvalid ? "mtech-visit-edit-input field-invalid" : "mtech-visit-edit-input"}
                     value={editDraft.repairStatus}
-                    onChange={(e) => setEditDraft((d) => ({ ...d, repairStatus: e.target.value }))}
+                    onChange={(e) => { setEditDraft((d) => ({ ...d, repairStatus: e.target.value })); if (e.target.value.trim()) setRepairStatusInvalid(false); }}
                   >
                     <option value="">— select —</option>
                     {MOBILE_REPAIR_STATUSES.map((s) => (
@@ -5193,12 +5156,24 @@ function MobileTimeOffView({ userName, profileId }: { userName: string; profileI
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [details, setDetails] = useState("");
+  const [position, setPosition] = useState("");
+  const [branch, setBranch] = useState<string>(LOCATIONS[0] || "");
   const [submitting, setSubmitting] = useState(false);
   const [msg, setMsg] = useState("");
 
   useEffect(() => {
     getCompanyUsers().then(setCompanyProfiles).catch((e) => console.error("time off: load users failed", e));
   }, []);
+
+  // Auto-fill from the technician's own profile, same as the desktop
+  // Employee Self-Service PTO/Sick modal — they can still change either.
+  useEffect(() => {
+    if (!profileId) return;
+    const myProfile = companyProfiles.find((p) => p.id === profileId);
+    if (!myProfile) return;
+    if (myProfile.role) setPosition(myProfile.role);
+    if (myProfile.assigned_branch) setBranch(myProfile.assigned_branch);
+  }, [profileId, companyProfiles]);
 
   const load = async () => {
     setLoading(true);
@@ -5240,7 +5215,7 @@ function MobileTimeOffView({ userName, profileId }: { userName: string; profileI
         ptoType,
         startDate,
         endDate,
-        reason: details.trim(),
+        reason: `Branch: ${branch} | Position: ${ROLE_LABELS[position] || position || "N/A"} - ${details.trim()}`,
         requestedBy: profileId,
         managerId: managerProfile?.id ?? null,
       });
@@ -5293,6 +5268,20 @@ function MobileTimeOffView({ userName, profileId }: { userName: string; profileI
         <select className="mtech-bill-input full" value={leaveType} onChange={(e) => setLeaveType(e.target.value)}>
           {LEAVE_TYPES.map((t) => (
             <option key={t} value={t}>{t}</option>
+          ))}
+        </select>
+
+        <div className="mtech-section-title">Position</div>
+        <select className="mtech-bill-input full" value={position} onChange={(e) => setPosition(e.target.value)}>
+          {Object.entries(ROLE_LABELS).map(([code, label]) => (
+            <option key={code} value={code}>{label}</option>
+          ))}
+        </select>
+
+        <div className="mtech-section-title">Branch</div>
+        <select className="mtech-bill-input full" value={branch} onChange={(e) => setBranch(e.target.value)}>
+          {LOCATIONS.map((location) => (
+            <option key={location} value={location}>{location}</option>
           ))}
         </select>
 

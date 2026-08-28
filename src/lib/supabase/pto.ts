@@ -315,7 +315,15 @@ export function canReviewPtoStage(
   /** The requester's CURRENT manager_name (profiles.manager_name), looked
    *  up fresh by the caller — NOT request.managerId, which is a one-time
    *  snapshot resolved at submission. See the fallback note below. */
-  requesterCurrentManagerName?: string | null
+  requesterCurrentManagerName?: string | null,
+  /** The requester's manager's OWN manager_name — i.e. one level further up
+   *  the chain, looked up fresh by the caller the same way as
+   *  requesterCurrentManagerName. Lets that person (a senior manager, in
+   *  practice) also act on the manager stage when the direct manager is
+   *  unavailable, without granting approval rights to senior managers in
+   *  general — only to whoever is specifically this requester's manager's
+   *  own manager. */
+  requesterManagersManagerName?: string | null
 ): boolean {
   // Held roles pile up: a secondary HR/FINANCE/MANAGER role grants that
   // stage's authority just as well as holding it as the primary role.
@@ -333,8 +341,14 @@ export function canReviewPtoStage(
     // requester's manager RIGHT NOW" keeps a reassignment from silently
     // orphaning any request that was already pending when it happened.
     const currentManagerName = (requesterCurrentManagerName || "").trim().toLowerCase();
+    const managersManagerName = (requesterManagersManagerName || "").trim().toLowerCase();
     const viewerName = (viewerDisplayName || "").trim().toLowerCase();
     if (currentManagerName && viewerName && currentManagerName === viewerName) return true;
+    // The requester's manager's own manager (e.g. a senior manager one
+    // level up) can also act — covers the direct manager being absent —
+    // scoped to specifically THIS requester's chain, not senior managers
+    // in general.
+    if (managersManagerName && viewerName && managersManagerName === viewerName) return true;
     if (request.managerId) return false;
     return has("MANAGER");
   }

@@ -1140,9 +1140,15 @@ function TicketDetailsPage() {
   // visit. On desktop / web for other roles these stay optional.
   const isPhone = useIsPhone();
   const isTechRole = useMemo(() => {
-    const r = String(currentUserRole || "").toUpperCase();
-    return r === "TECHNICIAN";
-  }, [currentUserRole]);
+    // Primary role AND extraRoles — a secondary TECHNICIAN role must gate
+    // this the same as a primary one, matching every other role check in
+    // this file (canManageMisdiagnosed, PART_LOCK_BYPASS_ROLES, etc.).
+    // Checking only currentUserRole let anyone with TECHNICIAN as a
+    // secondary role submit a visit on desktop with Cause of Failure /
+    // Service Performed left blank.
+    const roles = [currentUserRole, ...(currentUserExtraRoles ?? [])].map((r) => String(r || "").toUpperCase());
+    return roles.includes("TECHNICIAN");
+  }, [currentUserRole, currentUserExtraRoles]);
   const requireTechVisitFields = isPhone || isTechRole;
   // Remembered per-ticket so a full page reload lands back on whichever
   // tab (e.g. Service Tracking) the user had open, instead of resetting to
