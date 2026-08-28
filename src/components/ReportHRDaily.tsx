@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useRef, Fragment } from "react";
 import { Link, useSearch, useNavigate } from "@tanstack/react-router";
-import { ChevronLeft, ChevronDown, ChevronRight, Plus, Trash2, AlertTriangle, CheckCircle, XCircle, Paperclip, Users, Clock, UserCheck, UserX, UserMinus, Search, Bell, Download, Forward, History, FileText, ClipboardList, Landmark, GripVertical, FileCheck, Link2, Copy } from "lucide-react";
+import { ChevronLeft, ChevronDown, ChevronUp, ChevronRight, Plus, Trash2, AlertTriangle, CheckCircle, XCircle, Paperclip, Users, Clock, UserCheck, UserX, UserMinus, Search, Bell, Download, Forward, History, FileText, ClipboardList, Landmark, GripVertical, FileCheck, Link2, Copy } from "lucide-react";
 import { useSignaturePad } from "@/hooks/useSignaturePad";
 import { SignaturePadControls } from "@/components/SignaturePad";
 
@@ -5709,6 +5709,44 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     () => sentLocationConsentForms.filter(isAwaitingEmployerStep).length,
     [sentLocationConsentForms]
   );
+
+  // Filters + sort for the "Sent Location Sharing Consent Forms" table below
+  // — a view-only derived list, never fed back into sentLocationConsentForms
+  // itself (that state also feeds the employer queue and the all-docs
+  // combined list elsewhere, which must stay unfiltered).
+  const [locationConsentPositionFilter, setLocationConsentPositionFilter] = useState("all");
+  const [locationConsentSentByFilter, setLocationConsentSentByFilter] = useState("all");
+  const [locationConsentStatusFilter, setLocationConsentStatusFilter] = useState("all");
+  const [locationConsentSentSortDir, setLocationConsentSentSortDir] = useState<"asc" | "desc">("desc");
+
+  const locationConsentStatusLabel = (doc: SignableDocument): string =>
+    doc.status === "confirmed" ? "Completed"
+    : isAwaitingEmployerStep(doc) ? "Awaiting Employer Signature"
+    : doc.status === "cancelled" ? "Cancelled"
+    : "Awaiting Employee";
+
+  const locationConsentPositionOptions = useMemo(
+    () => Array.from(new Set(
+      sentLocationConsentForms.map((doc) => (doc.formData as Partial<LocationConsentFormData>).positionTitle).filter((v): v is string => !!v)
+    )).sort((a, b) => a.localeCompare(b)),
+    [sentLocationConsentForms]
+  );
+  const locationConsentSentByOptions = useMemo(
+    () => Array.from(new Set(sentLocationConsentForms.map((doc) => doc.createdByName).filter((v): v is string => !!v))).sort((a, b) => a.localeCompare(b)),
+    [sentLocationConsentForms]
+  );
+  const locationConsentStatusOptions = ["Awaiting Employee", "Awaiting Employer Signature", "Completed", "Cancelled"];
+
+  const filteredSentLocationConsentForms = useMemo(() => {
+    return sentLocationConsentForms
+      .filter((doc) => locationConsentPositionFilter === "all" || (doc.formData as Partial<LocationConsentFormData>).positionTitle === locationConsentPositionFilter)
+      .filter((doc) => locationConsentSentByFilter === "all" || doc.createdByName === locationConsentSentByFilter)
+      .filter((doc) => locationConsentStatusFilter === "all" || locationConsentStatusLabel(doc) === locationConsentStatusFilter)
+      .sort((a, b) => {
+        const diff = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+        return locationConsentSentSortDir === "asc" ? diff : -diff;
+      });
+  }, [sentLocationConsentForms, locationConsentPositionFilter, locationConsentSentByFilter, locationConsentStatusFilter, locationConsentSentSortDir]);
 
   const [locationConsentRecipientId, setLocationConsentRecipientId] = useState("");
   const [locationConsentRecipientSearch, setLocationConsentRecipientSearch] = useState("");
@@ -17841,6 +17879,38 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <h2 className="font-semibold text-sm">Sent Location Sharing Consent Forms</h2>
           <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status. "Awaiting Employer Signature" means the employee finished — add your signature to finalize.</p>
         </div>
+        <div className="px-4 py-3 border-b border-white/10 flex flex-wrap items-center gap-2">
+          <select
+            value={locationConsentPositionFilter}
+            onChange={(e) => setLocationConsentPositionFilter(e.target.value)}
+            className="glass-input text-xs py-1.5 px-2.5 rounded-md"
+          >
+            <option value="all">All Positions / Titles</option>
+            {locationConsentPositionOptions.map((p) => (
+              <option key={p} value={p}>{p}</option>
+            ))}
+          </select>
+          <select
+            value={locationConsentSentByFilter}
+            onChange={(e) => setLocationConsentSentByFilter(e.target.value)}
+            className="glass-input text-xs py-1.5 px-2.5 rounded-md"
+          >
+            <option value="all">All Senders</option>
+            {locationConsentSentByOptions.map((s) => (
+              <option key={s} value={s}>{s}</option>
+            ))}
+          </select>
+          <select
+            value={locationConsentStatusFilter}
+            onChange={(e) => setLocationConsentStatusFilter(e.target.value)}
+            className="glass-input text-xs py-1.5 px-2.5 rounded-md"
+          >
+            <option value="all">All Statuses</option>
+            {locationConsentStatusOptions.map((s) => (
+              <option key={s} value={s}>{s}</option>
+            ))}
+          </select>
+        </div>
         {locationConsentActionError && (
           <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{locationConsentActionError}</p>
         )}
@@ -17852,15 +17922,25 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                 <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Position / Title</th>
                 <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent By</th>
                 <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Status</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">
+                  <button
+                    type="button"
+                    onClick={() => setLocationConsentSentSortDir((d) => (d === "asc" ? "desc" : "asc"))}
+                    className="flex items-center gap-1 uppercase hover:text-white transition-colors"
+                    title={`Sort ${locationConsentSentSortDir === "asc" ? "oldest first (click for newest first)" : "newest first (click for oldest first)"}`}
+                  >
+                    Sent
+                    {locationConsentSentSortDir === "asc" ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                  </button>
+                </th>
                 <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {sentLocationConsentForms.length === 0 ? (
-                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">No requests sent yet.</td></tr>
+              {filteredSentLocationConsentForms.length === 0 ? (
+                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">{sentLocationConsentForms.length === 0 ? "No requests sent yet." : "No requests match these filters."}</td></tr>
               ) : (
-                sentLocationConsentForms.map((doc) => {
+                filteredSentLocationConsentForms.map((doc) => {
                   const data = doc.formData as Partial<LocationConsentFormData>;
                   const recipient = employees.find((e) => e.id === doc.recipientId);
                   const busy = locationConsentActionBusyId === doc.id;
