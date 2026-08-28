@@ -4209,14 +4209,6 @@ function TicketDetailsPage() {
   // TECHNICIAN-role user, so an existing assignment never silently
   // disappears from its own dropdown.
   const [liveTechnicians, setLiveTechnicians] = useState<TechnicianOption[]>([]);
-  // Profile ids missing at least one of the 9 documents required before a
-  // technician can be put on a route (substance screening, I-9, Car IQ
-  // agreement, etc. — see ROUTE_REQUIRED_DOCUMENT_TYPES). Excluded from
-  // technicianOptions below so they can't be newly assigned; an existing
-  // assignment is still preserved, matching the "never silently disappears
-  // from its own dropdown" behavior liveTechnicians already had for
-  // inactive users.
-  const [technicianIdsMissingDocs, setTechnicianIdsMissingDocs] = useState<Set<string>>(new Set());
   useEffect(() => {
     if (!authReady) return;
     let cancelled = false;
@@ -4224,28 +4216,19 @@ function TicketDetailsPage() {
       try {
         const { getCompanyTechnicians } = await import("@/lib/supabase/users");
         const rows = await getCompanyTechnicians();
-        if (cancelled) return;
-        setLiveTechnicians(rows);
-        const { getTechnicianIdsMissingRouteDocuments } = await import("@/lib/supabase/signableDocuments");
-        const missing = await getTechnicianIdsMissingRouteDocuments(rows.map((t) => t.id));
-        if (!cancelled) setTechnicianIdsMissingDocs(missing);
+        if (!cancelled) setLiveTechnicians(rows);
       } catch (err) {
         console.warn("technician roster load failed:", err);
-        if (!cancelled) {
-          setLiveTechnicians([]);
-          setTechnicianIdsMissingDocs(new Set());
-        }
+        if (!cancelled) setLiveTechnicians([]);
       }
     })();
     return () => { cancelled = true; };
   }, [authReady]);
   const technicianOptions = useMemo(() => {
-    const names = new Set<string>(
-      liveTechnicians.filter((t) => !technicianIdsMissingDocs.has(t.id)).map((t) => t.name)
-    );
+    const names = new Set<string>(liveTechnicians.map((t) => t.name));
     if (ticket?.technician) names.add(ticket.technician);
     return Array.from(names).sort((a, b) => a.localeCompare(b));
-  }, [liveTechnicians, technicianIdsMissingDocs, ticket?.technician]);
+  }, [liveTechnicians, ticket?.technician]);
 
   const isClaimsRole = useMemo(() => {
     const primary = String(currentUserRole || "").toUpperCase();
