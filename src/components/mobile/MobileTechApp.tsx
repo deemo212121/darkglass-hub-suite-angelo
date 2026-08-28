@@ -27,6 +27,7 @@ import {
   getTicketParts,
   updateTicketPart,
   setTicketOnsiteCheckIn,
+  getOnsiteCheckins,
   type UIPartRow,
 } from "@/lib/supabase/tickets";
 import { getMyProfileId, getMyFullProfile } from "@/lib/supabase/users";
@@ -2137,6 +2138,8 @@ function RepairTab({ ticket, authorName }: { ticket: Ticket; authorName: string 
   // ticket.$ticketNo.tsx's addVisitLogEntry); this closes the same gap on
   // mobile's Save-visit-edit path, which had no validation at all.
   const [repairStatusInvalid, setRepairStatusInvalid] = useState(false);
+  const [diagnosisInvalid, setDiagnosisInvalid] = useState(false);
+  const [serviceInvalid, setServiceInvalid] = useState(false);
 
   // Parts Used isn't part of the free-text notes anymore - it's a live,
   // read-only readout of whichever parts the Parts tab currently has
@@ -2195,12 +2198,24 @@ function RepairTab({ ticket, authorName }: { ticket: Ticket; authorName: string 
     setEditVisitId(null);
     setEditDraft({ repairStatus: "", diagnosis: "", service: composeServicePerformed(emptyServicePerformed()), nonCompletionReason: "" });
     setRepairStatusInvalid(false);
+    setDiagnosisInvalid(false);
+    setServiceInvalid(false);
   };
 
   const saveEdit = async (visitId: string) => {
-    if (!editDraft.repairStatus.trim()) {
-      setRepairStatusInvalid(true);
-      alert("Repair Status is required before saving this visit.");
+    const repairStatusMissing = !editDraft.repairStatus.trim();
+    const diagnosisMissing = !editDraft.diagnosis.trim();
+    const serviceMissing = !parseServicePerformed(editDraft.service).notes.trim();
+    if (repairStatusMissing || diagnosisMissing || serviceMissing) {
+      setRepairStatusInvalid(repairStatusMissing);
+      setDiagnosisInvalid(diagnosisMissing);
+      setServiceInvalid(serviceMissing);
+      const missing = [
+        diagnosisMissing && "Cause of Failure",
+        serviceMissing && "Service Performed",
+        repairStatusMissing && "Repair Status",
+      ].filter(Boolean);
+      alert(`Missing required field${missing.length > 1 ? "s" : ""} before saving this visit: ${missing.join(", ")}.`);
       return;
     }
     setSavingVisit(true);
@@ -2359,19 +2374,19 @@ function RepairTab({ ticket, authorName }: { ticket: Ticket; authorName: string 
 
               {isEditing ? (
                 <div className="mtech-visit-edit">
-                  <label className="mtech-visit-edit-label">Cause of Failure (Tech)</label>
+                  <label className={diagnosisInvalid ? "mtech-visit-edit-label field-invalid" : "mtech-visit-edit-label"}>Cause of Failure (Tech) {diagnosisInvalid && <span className="text-rose-400">*required</span>}</label>
                   <textarea
-                    className="mtech-visit-edit-input"
+                    className={diagnosisInvalid ? "mtech-visit-edit-input field-invalid" : "mtech-visit-edit-input"}
                     value={editDraft.diagnosis}
-                    onChange={(e) => setEditDraft((d) => ({ ...d, diagnosis: e.target.value }))}
+                    onChange={(e) => { setEditDraft((d) => ({ ...d, diagnosis: e.target.value })); if (e.target.value.trim()) setDiagnosisInvalid(false); }}
                     placeholder="What failed and why"
                     rows={2}
                   />
-                  <label className="mtech-visit-edit-label">Service Performed (Tech)</label>
+                  <label className={serviceInvalid ? "mtech-visit-edit-label field-invalid" : "mtech-visit-edit-label"}>Service Performed (Tech) {serviceInvalid && <span className="text-rose-400">*required</span>}</label>
                   <textarea
-                    className="mtech-visit-edit-input"
+                    className={serviceInvalid ? "mtech-visit-edit-input field-invalid" : "mtech-visit-edit-input"}
                     value={editDraft.service}
-                    onChange={(e) => setEditDraft((d) => ({ ...d, service: e.target.value }))}
+                    onChange={(e) => { setEditDraft((d) => ({ ...d, service: e.target.value })); if (parseServicePerformed(e.target.value).notes.trim()) setServiceInvalid(false); }}
                     onBlur={() =>
                       setEditDraft((d) => ({
                         ...d,
@@ -3671,6 +3686,33 @@ function HomeOnSiteCard({
     return () => { cancelled = true; };
   }, []);
 
+  // arrivedAt/doneAt above are local-only and start blank on every mount —
+  // without this, a tech who checks in, then navigates away (e.g. to the
+  // ticket's Visit Log to fill in Cause of Failure/Service Performed) and
+  // back to Home, would see this card forget the check-in (back to "I'm
+  // Here") even though onsite_arrived_at was already written. Seed from
+  // what's actually persisted; `prev` wins over the fetch on merge so an
+  // optimistic tap made while this was still in flight isn't clobbered.
+  const ticketNoKey = tickets.map((t) => t.ticketNo).join(",");
+  useEffect(() => {
+    if (!ticketNoKey) return;
+    let cancelled = false;
+    getOnsiteCheckins(ticketNoKey.split(","))
+      .then((checkins) => {
+        if (cancelled) return;
+        const arrived: Record<string, string> = {};
+        const done: Record<string, string> = {};
+        for (const [ticketNo, v] of Object.entries(checkins)) {
+          if (v.arrivedAt) arrived[ticketNo] = formatTimeAt(v.arrivedAt);
+          if (v.doneAt) done[ticketNo] = formatTimeAt(v.doneAt);
+        }
+        setArrivedAt((prev) => ({ ...arrived, ...prev }));
+        setDoneAt((prev) => ({ ...done, ...prev }));
+      })
+      .catch((e) => console.warn("Failed to load on-site check-in status", e));
+    return () => { cancelled = true; };
+  }, [ticketNoKey]);
+
   // Same live position TechnicianLocationTracker.tsx already watches (and
   // uploads to technician_location_pings) — no second navigator.geolocation
   // watch here. That component only turns tracking on when the technician
@@ -3753,6 +3795,7 @@ function HomeOnSiteCard({
   }, [visibleTickets, ticketPos, myPos, arrivedAt, doneAt, devSimulate]);
 
   const formatNow = () => new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const formatTimeAt = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
   const checkInCommentBody = (label: string, time: string) => `On-site check-in: ${label} at ${time}`;
 
@@ -3877,7 +3920,7 @@ function HomeOnSiteCard({
                     disabled={!inRadius || isBusy}
                     onClick={() => handleImHere(t)}
                   >
-                    {isBusy ? "…" : "I'm Here"}
+                    {isBusy ? "…" : "Work Start"}
                   </button>
                 ) : (
                   // No radius gate here, unlike "I'm Here" — the meaningful
@@ -3891,7 +3934,7 @@ function HomeOnSiteCard({
                     disabled={isBusy}
                     onClick={() => handleImDone(t)}
                   >
-                    {isBusy ? "…" : "I'm Done"}
+                    {isBusy ? "…" : "Work Done"}
                   </button>
                 )
               )}

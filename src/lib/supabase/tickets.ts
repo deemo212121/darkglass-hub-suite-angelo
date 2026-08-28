@@ -512,6 +512,33 @@ export async function setTicketOnsiteCheckIn(
 }
 
 /**
+ * Real onsite_arrived_at/onsite_done_at for a set of tickets, keyed by
+ * ticket_no. Lets the On-Site Check-In card (MobileTechApp.tsx) seed its
+ * local arrived/done state from what's actually persisted, instead of
+ * starting blank on every mount — without this, a tech who checks in, then
+ * navigates away (e.g. to log the visit) and back, would see the card
+ * forget the check-in and revert to showing "I'm Here" again.
+ */
+export async function getOnsiteCheckins(
+  ticketNos: string[]
+): Promise<Record<string, { arrivedAt: string | null; doneAt: string | null }>> {
+  if (ticketNos.length === 0) return {};
+  const { data, error } = await supabase
+    .from("tickets")
+    .select("ticket_no, onsite_arrived_at, onsite_done_at")
+    .in("ticket_no", ticketNos);
+  if (error) {
+    console.error("getOnsiteCheckins error:", error.message);
+    throw new Error(error.message);
+  }
+  const result: Record<string, { arrivedAt: string | null; doneAt: string | null }> = {};
+  for (const row of data ?? []) {
+    result[row.ticket_no] = { arrivedAt: row.onsite_arrived_at, doneAt: row.onsite_done_at };
+  }
+  return result;
+}
+
+/**
  * Delete a ticket by ticket number (company-scoped).
  */
 export async function deleteTicket(ticketNo: string): Promise<void> {
