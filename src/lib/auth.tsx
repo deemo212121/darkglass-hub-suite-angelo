@@ -13,6 +13,14 @@ import { subscribeTableChanges } from "./supabase/realtime";
 // One active session per account (migration 0124) — see checkAndHandleSession below.
 const CLAIMED_SESSION_KEY = "ahs:deviceSessionId";
 
+// Startup/auth-flow tracing — genuinely useful when debugging a real login
+// issue locally (see the token-bridge hang fix, root-caused this way), but
+// pure noise for an end user's production console. Silent in production,
+// same messages as before in dev.
+const devLog = (...args: unknown[]) => {
+  if (import.meta.env.DEV) console.log(...args);
+};
+
 /**
  * Refreshes the Supabase session as normal, then compares the server's
  * current_session_id (see supabaseTokenBridge.ts's mintOrReadSessionId)
@@ -124,7 +132,7 @@ function loadCompanyZipCoverage() {
             tierCode: r.tierCode,
           }))
         );
-        console.log(`📍 Registered ${rows.length} coverage zips from Supabase.`);
+        devLog(`📍 Registered ${rows.length} coverage zips from Supabase.`);
       }
     } catch (error) {
       console.warn("Loading company zip coverage skipped:", error);
@@ -209,7 +217,7 @@ function maybeAutoMigrateLegacyUsers(role: string, companyId: string) {
       const { migrateFirestoreUsersToSupabase } = await import("./supabase/users");
       const result = await migrateFirestoreUsersToSupabase(companyId);
       if (result.migrated > 0) {
-        console.log(
+        devLog(
           `🔄 Auto-migrated ${result.migrated} legacy user(s) to Supabase ` +
             `(skipped ${result.skipped}, failed ${result.failed}).`
         );
@@ -262,7 +270,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
 
         // Set up Firebase Auth listener
-        console.log("🔐 Setting up Firebase Auth listener...");
+        devLog("🔐 Setting up Firebase Auth listener...");
         // Guards against out-of-order onAuthStateChanged firings — e.g. a
         // kickout's firebaseSignOut() is async, so its delayed "signed out"
         // notification can arrive AFTER a fresh login's "signed in" one if
@@ -347,7 +355,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           const isStale = () => myGeneration !== authGeneration;
 
           if (firebaseUser) {
-            console.log("✅ Firebase user authenticated:", firebaseUser.email);
+            devLog("✅ Firebase user authenticated:", firebaseUser.email);
 
             // Establish Supabase session (exchange Firebase token -> Supabase JWT)
             // so all Supabase queries are scoped to this user's company via RLS.
@@ -401,7 +409,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               if (isStale()) return;
 
               if (sbProfile) {
-                console.log("✅ User profile loaded (Supabase):", {
+                devLog("✅ User profile loaded (Supabase):", {
                   email: sbProfile.email,
                   role: sbProfile.role,
                   companyId: sbProfile.companyId,
@@ -472,7 +480,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                 // Legacy fallback: Firestore profile
                 const userProfile = await getUserAccount(firebaseUser.uid);
                 if (userProfile) {
-                  console.log("✅ User profile loaded (Firestore fallback):", {
+                  devLog("✅ User profile loaded (Firestore fallback):", {
                     email: userProfile.email,
                     role: userProfile.role,
                     companyId: userProfile.companyId,
@@ -518,9 +526,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             // Firebase's own current user is the ground truth here: if it's
             // already someone again, this notification is stale — skip it
             // instead of wiping out the fresh login it raced.
-            console.log("🔓 Ignoring stale sign-out notification — already signed in again");
+            devLog("🔓 Ignoring stale sign-out notification — already signed in again");
           } else {
-            console.log("🔓 No Firebase user authenticated");
+            devLog("🔓 No Firebase user authenticated");
             stopTokenRefresh();
             stopSessionWatchIfAny();
             // Clear Supabase session
@@ -544,7 +552,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         // Cleanup listener on unmount
         return () => {
-          console.log("🔒 Cleaning up Firebase Auth listener");
+          devLog("🔒 Cleaning up Firebase Auth listener");
           stopTokenRefresh();
           stopSessionWatchIfAny();
           document.removeEventListener("visibilitychange", onVisible);
@@ -576,7 +584,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         throw lockedError;
       }
 
-      console.log("🔐 Attempting Firebase login for:", email);
+      devLog("🔐 Attempting Firebase login for:", email);
       let authUser: Awaited<ReturnType<typeof firebaseSignIn>>;
       try {
         authUser = await firebaseSignIn(email, password);
@@ -594,7 +602,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
       void recordLoginLockoutOutcome(email, "recordSuccess");
 
-      console.log("✅ Login successful:", {
+      devLog("✅ Login successful:", {
         email: authUser.email,
         role: authUser.role,
         companyId: authUser.companyId
@@ -681,9 +689,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     try {
-      console.log("🔓 Logging out...");
+      devLog("🔓 Logging out...");
       await firebaseSignOut();
-      console.log("✅ Logout successful");
+      devLog("✅ Logout successful");
 
       // State will be cleared by onAuthStateChanged listener
     } catch (error) {

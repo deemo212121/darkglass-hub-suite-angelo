@@ -96,7 +96,7 @@ export async function refreshSupabaseSession(
     supabaseAccessToken = token;
     tokenExpiresAt = expiresAt;
     if (sessionId) currentSessionId = sessionId;
-    console.log("✅ Supabase session established (expires", new Date(expiresAt * 1000).toLocaleTimeString(), ")");
+    if (import.meta.env.DEV) console.log("✅ Supabase session established (expires", new Date(expiresAt * 1000).toLocaleTimeString(), ")");
     return true;
   } catch (error) {
     console.error("❌ Error exchanging Firebase token for Supabase token:", error);
