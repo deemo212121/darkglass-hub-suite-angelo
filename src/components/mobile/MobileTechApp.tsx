@@ -2009,12 +2009,6 @@ function DetailsTab({
 
   return (
     <div className="mtech-panel">
-      <div className="mtech-actions">
-        <button type="button" disabled title="Coming soon">On my way</button>
-        <button type="button" disabled title="Coming soon">Check In</button>
-        <button type="button" disabled title="Coming soon">Check Out</button>
-      </div>
-
       <div className="mtech-section-title">Customer</div>
       <InfoRow label="Name" value={ticket.customer || [ticket.firstName, ticket.lastName].filter(Boolean).join(" ")} />
       <InfoRow label="Phone" value={ticket.phone || ticket.secondPhone} type="phone" />

@@ -2402,19 +2402,6 @@ input::-ms-clear {
   margin-top: 0.7rem;
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14);
 }
-.mtech-actions { display: flex; gap: 0.5rem; margin-bottom: 0.9rem; }
-.mtech-actions button {
-  flex: 1;
-  padding: 0.55rem 0.3rem;
-  border: none;
-  border-radius: 8px;
-  background: linear-gradient(135deg, #5b7eff, #4c5ac0);
-  color: #fff;
-  font-weight: 700;
-  font-size: 0.82rem;
-  cursor: pointer;
-}
-.mtech-actions button:disabled { opacity: 0.5; cursor: not-allowed; }
 .mtech-section-title {
   font-weight: 800;
   color: var(--mt-blue-dark);
@@ -8354,19 +8341,6 @@ a.mtech-phone-link:active { opacity: 0.7; }
   margin-top: 0.7rem;
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14);
 }
-.mtech-actions { display: flex; gap: 0.5rem; margin-bottom: 0.9rem; }
-.mtech-actions button {
-  flex: 1;
-  padding: 0.55rem 0.3rem;
-  border: none;
-  border-radius: 8px;
-  background: linear-gradient(135deg, #5b7eff, #4c5ac0);
-  color: #fff;
-  font-weight: 700;
-  font-size: 0.82rem;
-  cursor: pointer;
-}
-.mtech-actions button:disabled { opacity: 0.5; cursor: not-allowed; }
 .mtech-section-title {
   font-weight: 800;
   color: var(--mt-blue-dark);
