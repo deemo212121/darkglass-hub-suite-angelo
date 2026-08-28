@@ -85,8 +85,7 @@ export async function fillCarIqAgreementPdf(data: CarIqAgreementFormData, signat
   if (signatureBytes) {
     const png = await pdfDoc.embedPng(signatureBytes);
     const { x, y, maxW, maxH } = CAR_IQ_SIGNATURE_DRAW;
-    const scale = Math.min(maxW / png.width, maxH / png.height, 1);
-    page1.drawImage(png, { x, y, width: png.width * scale, height: png.height * scale });
+    page1.drawImage(png, { x, y, width: maxW, height: maxH });
   }
 
   return pdfDoc.save();

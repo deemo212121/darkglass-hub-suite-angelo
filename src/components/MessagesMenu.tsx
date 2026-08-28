@@ -242,7 +242,7 @@ export function MessagesMenu() {
           if (!isFirstScan && top.sender_id !== profileId) playNotifySound();
         }
       } catch { /* ignore */ }
-    }, 4000);
+    }, 8000);
     const onChanged = () => { debouncedRefresh(); };
     window.addEventListener("ahs:unread-changed", onChanged);
     return () => {

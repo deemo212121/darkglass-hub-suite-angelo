@@ -23,7 +23,7 @@ import { AppHeader } from "@/components/Header";
 import { useAuth } from "@/lib/auth";
 import { getMyProfileId } from "@/lib/supabase/users";
 import { getSignableDocument, signDocument, type SignableDocument } from "@/lib/supabase/signableDocuments";
-import { uploadSignableDocumentSignature, uploadDamageForm } from "@/lib/firebase/storage";
+import { uploadSignableDocumentSignature, uploadDamageForm, refreshStorageAuthToken } from "@/lib/firebase/storage";
 import { fillDamagePdf, loadBlankDamageBytes } from "@/lib/damagePdfFill";
 import type { DamageFormData } from "@/lib/damageFormTemplate";
 import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
@@ -31,6 +31,7 @@ import { logActivity } from "@/lib/supabase/hrActivityLog";
 import { getHrNotificationSettings } from "@/lib/supabase/companySettings";
 import { notifyHrRoleUsers } from "@/lib/supabase/hrRoleNotify";
 import { useSignaturePad } from "@/hooks/useSignaturePad";
+import { useResponsivePdfScale } from "@/hooks/useResponsivePdfScale";
 import { SignaturePadControls } from "@/components/SignaturePad";
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 
@@ -80,7 +81,7 @@ export function FillDamagePage({ docId }: Props) {
   const [submitted, setSubmitted] = useState(false);
 
   const [pageLoading, setPageLoading] = useState(true);
-  const [scale, setScale] = useState(1.3);
+  const { scale, containerRef } = useResponsivePdfScale(PAGE_WIDTH);
   const [numPages, setNumPages] = useState(0);
   const pdfDocRef = useRef<any>(null);
   const pageCanvasRefs = useRef<(HTMLCanvasElement | null)[]>([]);
@@ -188,6 +189,10 @@ export function FillDamagePage({ docId }: Props) {
     setError(null);
     try {
       const companyId = doc.companyId;
+      // Force a fresh ID token before this upload sequence — see
+      // refreshStorageAuthToken's doc comment (a slow connection can let
+      // it go stale between signing in and finally submitting).
+      await refreshStorageAuthToken();
       const sigBytes = new Uint8Array(await (await fetch(dataUrl)).arrayBuffer());
       const signatureUrl = await uploadSignableDocumentSignature(companyId, doc.id, "employee", dataUrl);
       const signedAt = new Date().toISOString();
@@ -284,7 +289,7 @@ export function FillDamagePage({ docId }: Props) {
               Fill in your name, position/title, and the effective date, review the terms, add your signature, then submit.
             </p>
 
-            <div className="overflow-x-auto flex flex-col items-center bg-white/5 rounded-md p-4 gap-4">
+            <div ref={containerRef} className="overflow-x-auto flex flex-col items-center bg-white/5 rounded-md p-4 gap-4">
               {Array.from({ length: numPages || 1 }, (_, i) => i + 1).map((pageNum) => (
                 <div key={pageNum} className="relative bg-white shadow-lg" style={{ width: PAGE_WIDTH * scale, height: PAGE_HEIGHT * scale }}>
                   <canvas ref={(el) => { pageCanvasRefs.current[pageNum - 1] = el; }} className="absolute inset-0" />

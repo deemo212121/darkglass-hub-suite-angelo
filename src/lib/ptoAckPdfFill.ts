@@ -71,8 +71,7 @@ export async function fillPtoAckPdf(data: PtoAckFormData, signatureBytes?: Uint8
   if (signatureBytes) {
     const png = await pdfDoc.embedPng(signatureBytes);
     const { x, y, maxW, maxH } = PTO_ACK_SIGNATURE_DRAW;
-    const scale = Math.min(maxW / png.width, maxH / png.height, 1);
-    page1.drawImage(png, { x, y, width: png.width * scale, height: png.height * scale });
+    page1.drawImage(png, { x, y, width: maxW, height: maxH });
   }
   const dateParts = fmtDateParts(data.dateSigned);
   draw1(dateParts.mm, PTO_ACK_DATE_X.mm, PTO_ACK_DATE_SIGNED_DRAW.y, 9);

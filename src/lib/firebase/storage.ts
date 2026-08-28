@@ -15,7 +15,29 @@ import {
   deleteObject,
   getMetadata,
 } from "firebase/storage";
-import { storage, isFirebaseReady } from "./config";
+import { storage, auth, isFirebaseReady } from "./config";
+
+/**
+ * Force-refreshes the signed-in user's Firebase ID token before a batch of
+ * Storage uploads. Some of the HR "Fill*Page" forms (Employee Data,
+ * Employee Confidentiality, etc.) do several uploads in a row — SSN card,
+ * driver's license front+back, a signature, then the final generated PDF —
+ * and on a slow mobile connection that whole sequence can take long enough
+ * for the token backing the LAST upload to have gone stale, even though
+ * the user is still genuinely signed in. storage.rules requires
+ * request.auth != null for every write, so a stale token surfaces as
+ * "storage/unauthorized" on whichever upload happens to run last, not as
+ * an auth error the user would recognize. Best-effort: swallow failures
+ * (offline, etc.) rather than blocking the upload that follows — a failed
+ * refresh just leaves whatever token was already there.
+ */
+export async function refreshStorageAuthToken(): Promise<void> {
+  try {
+    await auth?.currentUser?.getIdToken(true);
+  } catch {
+    // best-effort — see doc comment above
+  }
+}
 
 export interface TicketPhoto {
   name: string;       // storage object name (unique)

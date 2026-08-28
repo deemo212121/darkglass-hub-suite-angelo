@@ -25,17 +25,16 @@ import { useEffect, useRef, useState } from "react";
 import { useAuth } from "@/lib/auth";
 import { getMyProfileSchedule, getEntryForDate, saveEntry, resolveScheduledShiftHours, type UITimeEntry } from "@/lib/supabase/timecards";
 import { getCompanyPtoRequests } from "@/lib/supabase/pto";
+import { getServerNow, zonedDateKey, zonedTimeString, type ScheduleTimezone } from "@/lib/serverTime";
 
 const EMPTY_ENTRY: UITimeEntry = { checkIn: "", checkOut: "", mealStart: "", mealEnd: "", notes: "" };
 
+// Local-clock approximation — fine for non-punch bookkeeping (which day's
+// entry to load, whether to re-poll after a tab regains focus), but never
+// used to stamp an actual punch. See handlePunch() below for that.
 function todayKey(): string {
   const t = new Date();
   return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}-${String(t.getDate()).padStart(2, "0")}`;
-}
-
-function nowTime(): string {
-  const t = new Date();
-  return `${String(t.getHours()).padStart(2, "0")}:${String(t.getMinutes()).padStart(2, "0")}:${String(t.getSeconds()).padStart(2, "0")}`;
 }
 
 function fmtTime(t: string): string {
@@ -53,6 +52,7 @@ export function TimeClockButtons() {
   const [requiredCheckOut, setRequiredCheckOut] = useState("");
   const [workingHours, setWorkingHours] = useState<number | null>(null);
   const [mealMinutes, setMealMinutes] = useState<number | null>(null);
+  const [scheduleTimezone, setScheduleTimezone] = useState<ScheduleTimezone>("CST");
   const [entry, setEntry] = useState<UITimeEntry>(EMPTY_ENTRY);
   const [saving, setSaving] = useState(false);
   // Time In/Meal In/Meal Out/Time Out sit right next to each other — `saving`
@@ -87,6 +87,7 @@ export function TimeClockButtons() {
       setRequiredCheckOut(s.requiredCheckOut);
       setWorkingHours(s.workingHours);
       setMealMinutes(s.mealMinutes);
+      setScheduleTimezone(s.scheduleTimezone);
     });
     return () => { cancelled = true; };
   }, [ready, uid]);
@@ -156,20 +157,30 @@ export function TimeClockButtons() {
   const scheduledShift = resolveScheduledShiftHours(requiredCheckIn, requiredCheckOut, workingHours, mealMinutes);
   const mealEligible = scheduledShift > 6;
 
-  const persist = async (next: UITimeEntry) => {
+  // Stamps `field` with the server's own current instant (never the
+  // browser's clock — see src/lib/serverTime.ts) converted into this
+  // employee's own scheduled timezone, then saves it under the matching
+  // server-verified calendar date. If getServerNow() fails, the punch is
+  // NOT saved with a fallback local time — that would just re-open the
+  // hole this exists to close — the employee sees an error and can retry.
+  const persistPunch = async (field: keyof Pick<UITimeEntry, "checkIn" | "checkOut" | "mealStart" | "mealEnd">) => {
     if (!profileId) return;
-    // Belt-and-suspenders against the visibilitychange/focus/interval resync
-    // above missing a same-second day rollover: refuse to write a punch
-    // computed from a stale day's entry under the new day's work_date.
-    if (todayKey() !== loadedDateKeyRef.current) {
-      loadToday(profileId);
-      alert("It's now a new day — your punch state was refreshed. Please try again.");
-      return;
-    }
     setSaving(true);
-    setEntry(next);
     try {
-      await saveEntry(profileId, todayKey(), next);
+      const serverNow = await getServerNow();
+      const workDate = zonedDateKey(serverNow, scheduleTimezone);
+      const time = zonedTimeString(serverNow, scheduleTimezone);
+      // Belt-and-suspenders against the visibilitychange/focus/interval resync
+      // above missing a same-second day rollover: refuse to write a punch
+      // computed from a stale day's entry under the new day's work_date.
+      if (workDate !== loadedDateKeyRef.current) {
+        loadToday(profileId);
+        alert("It's now a new day — your punch state was refreshed. Please try again.");
+        return;
+      }
+      const next = { ...entry, [field]: time };
+      setEntry(next);
+      await saveEntry(profileId, workDate, next);
     } catch (err) {
       console.error("Failed to save time punch:", err);
       alert(`Failed to save: ${err instanceof Error ? err.message : "Unknown error"}`);
@@ -190,7 +201,7 @@ export function TimeClockButtons() {
       alert(ptoBlockMessage);
       return;
     }
-    withLock(() => void persist({ ...entry, checkIn: nowTime() }));
+    withLock(() => void persistPunch("checkIn"));
   };
 
   const handleTimeOut = () => {
@@ -199,7 +210,7 @@ export function TimeClockButtons() {
       alert(ptoBlockMessage);
       return;
     }
-    withLock(() => void persist({ ...entry, checkOut: nowTime() }));
+    withLock(() => void persistPunch("checkOut"));
   };
 
   const handleMealIn = () => {
@@ -224,7 +235,7 @@ export function TimeClockButtons() {
       );
       return;
     }
-    withLock(() => void persist({ ...entry, mealStart: nowTime() }));
+    withLock(() => void persistPunch("mealStart"));
   };
 
   const handleMealOut = () => {
@@ -237,7 +248,7 @@ export function TimeClockButtons() {
       alert(ptoBlockMessage);
       return;
     }
-    withLock(() => void persist({ ...entry, mealEnd: nowTime() }));
+    withLock(() => void persistPunch("mealEnd"));
   };
 
   const btnClass =

@@ -26,6 +26,7 @@ import {
   getLatestVisitTechnicianByTicketIds,
   getTicketParts,
   updateTicketPart,
+  setTicketOnsiteCheckIn,
   type UIPartRow,
 } from "@/lib/supabase/tickets";
 import { getMyProfileId, getMyFullProfile } from "@/lib/supabase/users";
@@ -54,8 +55,11 @@ import { getCsrTeamComposition } from "@/lib/supabase/csrTeams";
 import { isAttendanceManagerTierRole, normalizeRole, ROLE_LABELS } from "@/lib/roleLabels";
 import { LOCATIONS } from "@/lib/locations";
 import { timezoneForBranch, nowInTimezone } from "@/lib/attendanceGrace";
+import { getServerNow, zonedDateKey, zonedTimeString, type ScheduleTimezone } from "@/lib/serverTime";
 import { getTicketComments, addTicketComment, type TicketComment } from "@/lib/supabase/comments";
 import { TicketPhotos } from "@/components/TicketPhotos";
+import { MessageBody } from "@/components/MessageBody";
+import { LocationSharingBadge } from "@/components/LocationSharingBadge";
 import { uploadTicketSignature, uploadPayrollDisputeAttachment } from "@/lib/firebase/storage";
 import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
 import { lookupZip } from "@/lib/zipCoverage";
@@ -978,11 +982,12 @@ function AppHeaderMobile({
         <NotificationsMenu onLinkClick={onNotificationLink} onViewAll={onOpenNotifications} />
         <button
           type="button"
-          className="mtech-app-profile-btn"
+          className="mtech-app-profile-btn relative"
           onClick={() => setMenu((m) => !m)}
           aria-label="Account menu"
         >
           {initials}
+          <LocationSharingBadge />
         </button>
         {menu && (
           <>
@@ -2540,7 +2545,7 @@ function CommentThread({
               </span>
               <span className="mtech-comment-time">{fmt(c.createdAt)}</span>
             </div>
-            <div className="mtech-comment-body">{c.body}</div>
+            <div className="mtech-comment-body"><MessageBody text={c.body} className="m-0" /></div>
           </div>
         ))}
       </div>
@@ -3091,7 +3096,7 @@ function ChatView({ firebaseUid, authorName }: { firebaseUid: string; authorName
                 )}
                 <div className="mtech-msg-bubble-wrap">
                   <div className={`mtech-msg-bubble ${mine ? "mine" : "theirs"}`}>
-                    {m.body}
+                    <MessageBody text={m.body} className="m-0" />
                   </div>
                   <div className={`mtech-msg-time ${mine ? "mine" : ""}`}>
                     {fmtTime((m as any).created_at)}
@@ -3670,11 +3675,21 @@ function HomeOnSiteCard({
   // clockedIn are exposed here so this card can explain which of those is
   // missing instead of a generic error.
   const { position: myPos, consentConfirmed, clockedIn } = useLiveLocation();
+
+  // Dev-only escape hatch for testing the in-radius UI without real GPS
+  // (e.g. location permission unavailable in this environment). Gated on
+  // import.meta.env.DEV so this never exists in a production build — a
+  // simulate-location bypass in prod would defeat the whole point of the
+  // geofence. Bypasses both the radius check below AND the "waiting for a
+  // fix" gate here — a missing myPos shouldn't block testing when distance
+  // itself is about to be ignored anyway.
+  const [devSimulate, setDevSimulate] = useState(false);
+
   const geoError = !consentConfirmed
     ? "Confirm the Location Sharing Consent agreement to use on-site check-in."
     : !clockedIn
     ? "Clock in to use on-site check-in."
-    : !myPos
+    : !myPos && !devSimulate
     ? "Waiting for a location fix…"
     : null;
 
@@ -3705,12 +3720,34 @@ function HomeOnSiteCard({
     return haversineMiles(myPos, pos);
   };
 
-  // Dev-only escape hatch for testing the in-radius UI without real GPS
-  // (e.g. location permission unavailable in this environment). Gated on
-  // import.meta.env.DEV so this never exists in a production build — a
-  // simulate-location bypass in prod would defeat the whole point of the
-  // geofence.
-  const [devSimulate, setDevSimulate] = useState(false);
+  // Snap to a single ticket instead of listing the whole active queue at
+  // once. Priority: (1) a ticket already checked in ("I'm Here" tapped) but
+  // not yet marked done stays pinned regardless of distance — stepping away
+  // mid-visit (a supply run, a distraction) shouldn't lose an unfinished
+  // check-in; (2) otherwise the nearest ticket currently inside the
+  // geofence; (3) otherwise the nearest ticket overall, shown dimmed with
+  // its distance so there's still context on where they're headed. null
+  // only while every ticket's distance is still unresolved (map provider or
+  // geocoding not ready yet) or there's nothing active to check into. In
+  // devSimulate mode with no real fix at all (myPos never resolved — e.g. no
+  // GPS available in this test environment), distance is meaningless anyway,
+  // so just pick the first candidate rather than staying stuck on null.
+  const focusTicket = useMemo(() => {
+    const inProgress = visibleTickets.filter((t) => arrivedAt[t.ticketNo] && !doneAt[t.ticketNo]);
+    const pool = inProgress.length > 0 ? inProgress : visibleTickets;
+    if (pool.length === 0) return null;
+    const withDist = pool
+      .map((t) => ({ t, d: distanceFor(t) }))
+      .filter((x): x is { t: Ticket; d: number } => x.d !== null);
+    if (withDist.length === 0) return devSimulate ? pool[0] : null;
+    if (inProgress.length > 0) {
+      return withDist.reduce((a, b) => (b.d < a.d ? b : a)).t;
+    }
+    const inRadius = withDist.filter((x) => devSimulate || x.d <= ON_SITE_CHECKIN_RADIUS_MILES);
+    const candidates = inRadius.length > 0 ? inRadius : withDist;
+    return candidates.reduce((a, b) => (b.d < a.d ? b : a)).t;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visibleTickets, ticketPos, myPos, arrivedAt, doneAt, devSimulate]);
 
   const formatNow = () => new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
@@ -3722,7 +3759,10 @@ function HomeOnSiteCard({
     const time = formatNow();
     setBusy(t.ticketNo);
     try {
-      await logCheckIn(t, "arrived", time);
+      await Promise.all([
+        logCheckIn(t, "arrived", time),
+        setTicketOnsiteCheckIn(t.ticketNo, "arrived", new Date().toISOString()),
+      ]);
       setArrivedAt((prev) => ({ ...prev, [t.ticketNo]: time }));
     } catch (e) {
       console.error("on-site check-in: arrival log failed", e);
@@ -3736,7 +3776,10 @@ function HomeOnSiteCard({
     const time = formatNow();
     setBusy(t.ticketNo);
     try {
-      await logCheckIn(t, "marked done", time);
+      await Promise.all([
+        logCheckIn(t, "marked done", time),
+        setTicketOnsiteCheckIn(t.ticketNo, "done", new Date().toISOString()),
+      ]);
       setDoneAt((prev) => ({ ...prev, [t.ticketNo]: time }));
     } catch (e) {
       console.error("on-site check-in: done log failed", e);
@@ -3759,27 +3802,38 @@ function HomeOnSiteCard({
           {devSimulate ? "✓ " : ""}Dev: simulate in-radius (local only)
         </button>
       )}
-      {visibleTickets.length === 0 ? (
-        <div className="mtech-home-onsite-empty">No active tickets to check into right now.</div>
+      {!focusTicket ? (
+        <div className="mtech-home-onsite-empty">
+          {visibleTickets.length === 0 ? "No active tickets to check into right now." : "Locating nearby tickets…"}
+        </div>
       ) : (
       <div className="mtech-home-onsite-list">
-        {visibleTickets.map((t) => {
+        {(() => {
+          const t = focusTicket;
           const dist = distanceFor(t);
           const inRadius = devSimulate || (dist !== null && dist <= ON_SITE_CHECKIN_RADIUS_MILES);
           const hereAt = arrivedAt[t.ticketNo];
           const finishedAt = doneAt[t.ticketNo];
           const isBusy = busy === t.ticketNo;
+          const pending = !inRadius && !hereAt && !finishedAt;
           return (
-            <div key={t.ticketNo} className="mtech-home-onsite-row">
+            <div className={`mtech-home-onsite-row${pending ? " mtech-home-onsite-row--pending" : ""}`}>
               <div className="mtech-home-onsite-info">
                 <span className="mtech-home-onsite-location">{resolveLocation(t)}</span>
                 <span className="mtech-home-onsite-ticket">{t.ticketNo}</span>
-                {(hereAt || finishedAt) && (
+                {hereAt || finishedAt ? (
                   <span className="mtech-home-onsite-times">
                     {hereAt && `Here ${hereAt}`}
                     {hereAt && finishedAt && "  ·  "}
                     {finishedAt && `Done ${finishedAt}`}
                   </span>
+                ) : (
+                  pending &&
+                  dist !== null && (
+                    <span className="mtech-home-onsite-distance">
+                      {dist < 0.1 ? "Almost there…" : `${dist.toFixed(1)} mi away`}
+                    </span>
+                  )
                 )}
               </div>
               {!finishedAt && (
@@ -3805,7 +3859,7 @@ function HomeOnSiteCard({
               )}
             </div>
           );
-        })}
+        })()}
       </div>
       )}
     </div>
@@ -4325,6 +4379,7 @@ function MobileTimecardView({
   const [requiredCheckOut, setRequiredCheckOut] = useState("");
   const [workingHours, setWorkingHours] = useState<number | null>(null);
   const [mealMinutes, setMealMinutes] = useState<number | null>(null);
+  const [scheduleTimezone, setScheduleTimezone] = useState<ScheduleTimezone>("CST");
   const [entry, setEntry] = useState<UITimeEntry>({ checkIn: "", checkOut: "", mealStart: "", mealEnd: "", notes: "" });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -4348,6 +4403,7 @@ function MobileTimecardView({
         setRequiredCheckOut(schedule.requiredCheckOut);
         setWorkingHours(schedule.workingHours);
         setMealMinutes(schedule.mealMinutes);
+        setScheduleTimezone(schedule.scheduleTimezone);
         if (!schedule.profileId) {
           setEntry({ checkIn: "", checkOut: "", mealStart: "", mealEnd: "", notes: "" });
           return;
@@ -4365,11 +4421,6 @@ function MobileTimecardView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [uid]);
 
-  const getNowTime = (): string => {
-    const t = new Date();
-    return `${String(t.getHours()).padStart(2, "0")}:${String(t.getMinutes()).padStart(2, "0")}:${String(t.getSeconds()).padStart(2, "0")}`;
-  };
-
   const timeDiff = (t1: string, t2: string): number => {
     if (!t1 || !t2) return 0;
     const [h1, m1, s1 = 0] = t1.split(":").map(Number);
@@ -4377,15 +4428,29 @@ function MobileTimecardView({
     return (h2 * 3600 + m2 * 60 + s2 - (h1 * 3600 + m1 * 60 + s1)) / 3600;
   };
 
-  const persist = async (next: UITimeEntry) => {
-    setEntry(next);
+  // Stamps `field` with the server's own current instant (never the
+  // phone's own clock — see src/lib/serverTime.ts), converted into this
+  // technician's own scheduled timezone, so setting your phone's date/time
+  // can't fake a punch. If getServerNow() fails, the punch is NOT saved
+  // with a fallback local time — that would just reopen the hole this
+  // exists to close.
+  const persistPunch = async (field: keyof Pick<UITimeEntry, "checkIn" | "checkOut" | "mealStart" | "mealEnd">) => {
     if (!profileId) {
       alert("Could not resolve your profile. Please re-login.");
       return;
     }
     setSaving(true);
     try {
-      await saveTimecardEntry(profileId, todayKey, next);
+      const serverNow = await getServerNow();
+      const workDate = zonedDateKey(serverNow, scheduleTimezone);
+      const time = zonedTimeString(serverNow, scheduleTimezone);
+      if (workDate !== todayKey) {
+        alert("It's now a new day — please reopen your timecard and try again.");
+        return;
+      }
+      const next = { ...entry, [field]: time };
+      setEntry(next);
+      await saveTimecardEntry(profileId, workDate, next);
     } catch (e) {
       console.error("MobileTimecardView: save failed", e);
       alert(`Failed to save: ${e instanceof Error ? e.message : "Unknown error"}`);
@@ -4395,8 +4460,8 @@ function MobileTimecardView({
   };
 
   const handleTimeToggle = () => {
-    if (!entry.checkIn) persist({ ...entry, checkIn: getNowTime() });
-    else if (!entry.checkOut) persist({ ...entry, checkOut: getNowTime() });
+    if (!entry.checkIn) void persistPunch("checkIn");
+    else if (!entry.checkOut) void persistPunch("checkOut");
   };
 
   const handleMealToggle = () => {
@@ -4420,8 +4485,8 @@ function MobileTimecardView({
       alert(`Meal break is only available for scheduled shifts of more than 6 hours. Your scheduled shift is ${scheduledShift.toFixed(1)} hours.`);
       return;
     }
-    if (!entry.mealStart) persist({ ...entry, mealStart: getNowTime() });
-    else if (!entry.mealEnd) persist({ ...entry, mealEnd: getNowTime() });
+    if (!entry.mealStart) void persistPunch("mealStart");
+    else if (!entry.mealEnd) void persistPunch("mealEnd");
   };
 
   const hoursToday = entry.checkIn && entry.checkOut
@@ -4566,8 +4631,11 @@ function MobileClockInTeamView({ profileId }: { profileId: string | null }) {
     setClockingIn((prev) => new Set(prev).add(tech.id));
     try {
       const branchTz = timezoneForBranch(tech.branch);
-      const hhmm = nowInTimezone(branchTz).hhmm;
-      const seconds = String(new Date().getSeconds()).padStart(2, "0");
+      // Server-verified instant (see src/lib/serverTime.ts), not this
+      // manager's own phone clock — same reason self-punches use it.
+      const serverNow = await getServerNow();
+      const { hhmm } = nowInTimezone(branchTz, serverNow);
+      const seconds = String(serverNow.getSeconds()).padStart(2, "0");
       await saveTimecardEntry(
         tech.id,
         todayKey,

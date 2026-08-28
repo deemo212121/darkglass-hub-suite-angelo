@@ -365,7 +365,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             if (justClaimedUidRef.current === firebaseUser.uid) {
               justClaimedUidRef.current = null;
             } else {
-              wasKickedOut = await runSessionCheck(firebaseUser, false, () => setKickedOut(true));
+              // Unlike the other 3 call sites of runSessionCheck (periodic
+              // refresh, tab-focus, visibilitychange), this one used to be
+              // awaited with no .catch() — a transient failure here (e.g. a
+              // slow/flaky connection during the Firebase->Supabase token
+              // exchange) threw out of the whole onAuthStateChanged callback
+              // uncaught, so setReady/setLoading below never ran and sign-in
+              // spun forever with no error shown. Matches the other 3 sites'
+              // fail-open behavior now: log it, proceed as not-kicked-out.
+              wasKickedOut = await runSessionCheck(firebaseUser, false, () => setKickedOut(true)).catch((e) => {
+                console.warn("Session check failed during sign-in — proceeding anyway:", e);
+                return false;
+              });
             }
             // A newer auth event already landed while we were awaiting (e.g.
             // this was a stale duplicate firing) — let that one own the

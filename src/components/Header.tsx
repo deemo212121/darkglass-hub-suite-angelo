@@ -18,6 +18,7 @@ import { TimeClockButtons } from "@/components/TimeClockMenu";
 import { useTheme } from "@/lib/theme";
 import { setDesktopOverride, setMobileMode } from "@/lib/device";
 import { getMyFullProfile } from "@/lib/supabase/users";
+import { LocationSharingBadge } from "@/components/LocationSharingBadge";
 
 /**
  * Live reference clock in the header — this app's operations run across
@@ -177,12 +178,13 @@ export function AppHeader() {
                   className="group flex items-center gap-2.5 rounded-full pl-1 pr-3 py-1 border border-[var(--color-panel-border)] bg-[var(--color-panel)] hover:bg-[var(--color-secondary)] transition-colors cursor-pointer"
                   aria-label="Account menu"
                 >
-                  <span className="grid place-items-center h-8 w-8 rounded-full bg-[var(--color-primary)] overflow-hidden text-xs font-semibold text-[var(--color-primary-foreground)]">
+                  <span className="relative grid h-8 w-8 place-items-center rounded-full bg-[var(--color-primary)] overflow-hidden text-xs font-semibold text-[var(--color-primary-foreground)]">
                     {photoDataUrl ? (
                       <img src={photoDataUrl} alt="Uploaded profile photo" className="h-full w-full object-cover" />
                     ) : (
                       getInitials(nameDisplay)
                     )}
+                    <LocationSharingBadge />
                   </span>
                   <span className="hidden sm:flex flex-col items-start leading-tight">
                     <span className="text-foreground text-sm truncate max-w-[180px]">{nameDisplay}</span>

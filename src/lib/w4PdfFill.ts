@@ -164,8 +164,7 @@ export async function fillW4Pdf(data: W4FormData, signaturePngBytes?: Uint8Array
     const png = await pdfDoc.embedPng(signaturePngBytes);
     const maxW = 340;
     const maxH = 20;
-    const scale = Math.min(maxW / png.width, maxH / png.height, 1);
-    page1.drawImage(png, { x: 100, y: 93, width: png.width * scale, height: png.height * scale });
+    page1.drawImage(png, { x: 100, y: 93, width: maxW, height: maxH });
   }
 
   // Locking every field is safe now regardless of whether the employer box

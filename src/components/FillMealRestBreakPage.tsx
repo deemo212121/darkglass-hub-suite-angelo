@@ -1,19 +1,19 @@
 /**
- * Fill Employee Meal and Rest Break Policy Acknowledgment — opened from the
+ * Fill Employee Meal and Rest Break Policy Acknowledgment â opened from the
  * deep link a Team Messenger message sends (see ReportHRDaily.tsx's "Meal
  * & Rest Break Policy" tab "Send Request" flow). Same architecture as
  * FillWageAckPage.tsx: renders the REAL official PDF's page to a canvas via
- * pdf.js, with input overlays at each blank's own coordinates — no
+ * pdf.js, with input overlays at each blank's own coordinates â no
  * redrawn lookalike. Submitting draws the collected values directly onto
  * that same real PDF via fillMealRestBreakPdf (there are no AcroForm
- * fields on this PDF at all — see mealRestBreakFormTemplate.ts's header
+ * fields on this PDF at all â see mealRestBreakFormTemplate.ts's header
  * comment) and sends the result back to HR.
  *
  * Genuine two-party document, same shape as Acknowledgment of Wage: only
  * the employee half (name, branch, employee signature) is fillable here.
  * The "Employer Representative Signature" line is completed separately
  * afterward by HR inside ReportHRDaily.tsx's "Complete Employer Signature"
- * dialog — shown here read-only (the blank PDF page underneath, no
+ * dialog â shown here read-only (the blank PDF page underneath, no
  * overlay). Unlike Wage Ack, everything (both signature lines included)
  * fits on the one page this PDF has.
  */
@@ -24,7 +24,7 @@ import { AppHeader } from "@/components/Header";
 import { useAuth } from "@/lib/auth";
 import { getMyProfileId } from "@/lib/supabase/users";
 import { getSignableDocument, signDocument, type SignableDocument } from "@/lib/supabase/signableDocuments";
-import { uploadSignableDocumentSignature, uploadMealRestBreakForm } from "@/lib/firebase/storage";
+import { uploadSignableDocumentSignature, uploadMealRestBreakForm, refreshStorageAuthToken } from "@/lib/firebase/storage";
 import { fillMealRestBreakPdf, loadBlankMealRestBreakBytes } from "@/lib/mealRestBreakPdfFill";
 import { MEAL_REST_BREAK_BRANCHES, type MealRestBreakFormData } from "@/lib/mealRestBreakFormTemplate";
 import { dateBlankPositions } from "@/lib/pdfDateBlankSplit";
@@ -33,6 +33,7 @@ import { logActivity } from "@/lib/supabase/hrActivityLog";
 import { getHrNotificationSettings } from "@/lib/supabase/companySettings";
 import { notifyHrRoleUsers } from "@/lib/supabase/hrRoleNotify";
 import { useSignaturePad } from "@/hooks/useSignaturePad";
+import { useResponsivePdfScale } from "@/hooks/useResponsivePdfScale";
 import { SignaturePadControls } from "@/components/SignaturePad";
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 
@@ -45,7 +46,7 @@ const PAGE_HEIGHT = 792;
 
 // Field rectangles (PDF user-space units, origin bottom-left), extracted
 // via pdf.js's text-position API against the actual label/blank positions
-// on src/assets/EMPLOYEE MEAL AND REST BREAK POLICY ACKNOWLEDGMENT.pdf —
+// on src/assets/EMPLOYEE MEAL AND REST BREAK POLICY ACKNOWLEDGMENT.pdf â
 // the exact numbers mealRestBreakPdfFill.ts's draw coordinates were derived
 // from. This PDF has no real AcroForm fields at all.
 const EMPLOYEE_DATE_X = dateBlankPositions(101.57);
@@ -90,7 +91,7 @@ export function FillMealRestBreakPage({ docId }: Props) {
   const [submitted, setSubmitted] = useState(false);
 
   const [pageLoading, setPageLoading] = useState(true);
-  const [scale, setScale] = useState(1.3);
+  const { scale, containerRef } = useResponsivePdfScale(PAGE_WIDTH);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   const [form, setForm] = useState<MealRestBreakFormData>({ ...BLANK_FORM });
@@ -180,6 +181,10 @@ export function FillMealRestBreakPage({ docId }: Props) {
     setError(null);
     try {
       const companyId = doc.companyId;
+      // Force a fresh ID token before this upload sequence — see
+      // refreshStorageAuthToken's doc comment (a slow connection can let
+      // it go stale between signing in and finally submitting).
+      await refreshStorageAuthToken();
       const employeeName = [form.firstName, form.middleName, form.lastName].filter(Boolean).join(" ");
       const sigBytes = new Uint8Array(await (await fetch(dataUrl)).arrayBuffer());
       const signatureUrl = await uploadSignableDocumentSignature(companyId, doc.id, "employee", dataUrl);
@@ -199,7 +204,7 @@ export function FillMealRestBreakPage({ docId }: Props) {
           dmThreadId: thread.id,
           senderId: myProfileId,
           senderName: displayName || "Employee",
-          body: `📄 Employee Meal and Rest Break Policy Acknowledgment for ${employeeName} has been signed, and is ready for the employer signature: [${filename}](${pdfUrl})`,
+          body: `ð Employee Meal and Rest Break Policy Acknowledgment for ${employeeName} has been signed, and is ready for the employer signature: [${filename}](${pdfUrl})`,
         });
       }
 
@@ -207,7 +212,7 @@ export function FillMealRestBreakPage({ docId }: Props) {
         .then(({ taxForms }) => {
           if (!taxForms) return;
           const excludeIds = doc.createdBy ? [doc.createdBy] : [];
-          void notifyHrRoleUsers(myProfileId, displayName || "Employee", excludeIds, `📄 Employee Meal and Rest Break Policy Acknowledgment for ${employeeName} has been signed — the employer signature is ready to be added.`);
+          void notifyHrRoleUsers(myProfileId, displayName || "Employee", excludeIds, `ð Employee Meal and Rest Break Policy Acknowledgment for ${employeeName} has been signed â the employer signature is ready to be added.`);
         })
         .catch((err) => console.error("[meal-rest-break] hr notify check failed:", err));
 
@@ -246,7 +251,7 @@ export function FillMealRestBreakPage({ docId }: Props) {
 
         {loading ? (
           <div className="panel p-8 text-center text-sm text-muted-foreground flex items-center justify-center gap-2">
-            <Loader2 className="h-4 w-4 animate-spin" /> Loading document…
+            <Loader2 className="h-4 w-4 animate-spin" /> Loading documentâ¦
           </div>
         ) : error && !doc ? (
           <div className="panel p-6 text-sm text-red-300">{error}</div>
@@ -254,7 +259,7 @@ export function FillMealRestBreakPage({ docId }: Props) {
           <div className="panel p-6 text-sm text-muted-foreground">This document isn't addressed to your account.</div>
         ) : submitted || doc.status === "signed" || doc.status === "confirmed" ? (
           <div className="panel p-6 text-center">
-            <p className="text-sm font-semibold mb-2">✅ Submitted{submitted ? " and sent back to HR" : ""}.</p>
+            <p className="text-sm font-semibold mb-2">â Submitted{submitted ? " and sent back to HR" : ""}.</p>
             <p className="text-xs text-muted-foreground mb-2">HR will add the employer signature separately.</p>
             {doc.pdfUrl && (
               <a href={doc.pdfUrl} target="_blank" rel="noreferrer noopener" className="text-blue-300 hover:text-blue-200 underline text-sm">
@@ -268,12 +273,12 @@ export function FillMealRestBreakPage({ docId }: Props) {
               Read the break policy below, fill in your name and branch, add your signature, then submit.
             </p>
 
-            <div className="overflow-x-auto flex flex-col items-center bg-white/5 rounded-md p-4 gap-4">
+            <div ref={containerRef} className="overflow-x-auto flex flex-col items-center bg-white/5 rounded-md p-4 gap-4">
               <div className="relative bg-white shadow-lg" style={{ width: PAGE_WIDTH * scale, height: PAGE_HEIGHT * scale }}>
                 <canvas ref={canvasRef} className="absolute inset-0" />
                 {pageLoading && (
                   <div className="absolute inset-0 flex items-center justify-center bg-white/70 text-sm text-muted-foreground gap-2">
-                    <Loader2 className="h-4 w-4 animate-spin" /> Loading form…
+                    <Loader2 className="h-4 w-4 animate-spin" /> Loading formâ¦
                   </div>
                 )}
 
@@ -304,7 +309,7 @@ export function FillMealRestBreakPage({ docId }: Props) {
                       value={form.branch}
                       onChange={(e) => updateField("branch", e.target.value)}
                     >
-                      <option value="">Select…</option>
+                      <option value="">Selectâ¦</option>
                       {MEAL_REST_BREAK_BRANCHES.map((b) => <option key={b} value={b}>{b}</option>)}
                     </select>
 
@@ -340,7 +345,7 @@ export function FillMealRestBreakPage({ docId }: Props) {
               disabled={submitting}
               className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white mt-3 disabled:opacity-50"
             >
-              {submitting ? "Submitting…" : "Submit to HR"}
+              {submitting ? "Submittingâ¦" : "Submit to HR"}
             </button>
           </div>
         )}

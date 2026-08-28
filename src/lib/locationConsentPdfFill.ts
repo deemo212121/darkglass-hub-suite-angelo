@@ -56,16 +56,14 @@ export async function fillLocationConsentPdf(
   if (employeeSigBytes) {
     const png = await pdfDoc.embedPng(employeeSigBytes);
     const maxW = 195, maxH = 20;
-    const scale = Math.min(maxW / png.width, maxH / png.height, 1);
-    page2.drawImage(png, { x: 180, y: 698, width: png.width * scale, height: png.height * scale });
+    page2.drawImage(png, { x: 180, y: 698, width: maxW, height: maxH });
   }
   draw2(fmtDate(data.employeeDateSigned), 415.5, 698.5, 9);
 
   if (employerSigBytes) {
     const png = await pdfDoc.embedPng(employerSigBytes);
     const maxW = 125, maxH = 20;
-    const scale = Math.min(maxW / png.width, maxH / png.height, 1);
-    page2.drawImage(png, { x: 256, y: 673, width: png.width * scale, height: png.height * scale });
+    page2.drawImage(png, { x: 256, y: 673, width: maxW, height: maxH });
   }
   draw2(fmtDate(data.employerDateSigned), 419.8, 673.5, 9);
 

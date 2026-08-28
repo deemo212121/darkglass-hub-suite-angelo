@@ -22,7 +22,20 @@ import { addLogoHeader } from "./pdfLogoHeader";
 // right after the label, not a blank. Drawing the selected branch directly
 // there would print on top of that placeholder text, so it's covered with
 // a white rectangle first (leaving the "Branch:" label itself untouched).
-const BRANCH_PLACEHOLDER_COVER = { x: 183, y: 451, w: 250, h: 15 };
+// Coordinates re-measured against the real PDF text runs (pdf.js
+// getTextContent(), calibrated with @napi-rs/canvas's Calibri metrics) —
+// same measurement used to fix the live-fill overlay's coordinates in
+// FillEmployeeConfidentialityPage.tsx/ExternalFillEmployeeConfidentialityPage.tsx;
+// this file draws the final submitted PDF via a separate code path that
+// still had the old, eyeballed numbers. Padded generously so the cover
+// fully hides the bracketed text regardless of small font-metric error.
+// pdf-lib's drawRectangle() takes `width`/`height`, not `w`/`h` — using the
+// wrong keys here silently falls back to pdf-lib's own defaults (150x100)
+// instead of this box's real size, painting a WAY oversized white rectangle
+// that blanks out Full Name/Address/City/State/Zip above it too. This was
+// the actual cause of the submitted PDF looking corrupted, not a
+// coordinate or font issue.
+const BRANCH_PLACEHOLDER_COVER = { x: 180, y: 448, width: 256, height: 24 };
 
 const fmtDate = (v: string) => {
   if (!v) return "";
@@ -57,15 +70,15 @@ export async function fillEmployeeConfidentialityPdf(
 
   const page1 = pdfDoc.getPage(0);
   const dateText = fmtDate(data.dateSigned);
-  draw(page1, dateText, 330, 649, 9);
-  draw(page1, data.employeeName, 218, 532);
-  draw(page1, data.address, 204, 507);
-  draw(page1, data.city, 178, 482, 9);
-  draw(page1, data.state, 316, 482, 9);
-  draw(page1, data.zip, 406, 482, 9);
+  draw(page1, dateText, 327, 646, 9);
+  draw(page1, data.employeeName, 200, 529);
+  draw(page1, data.address, 190, 504);
+  draw(page1, data.city, 170, 479, 9);
+  draw(page1, data.state, 293, 479, 9);
+  draw(page1, data.zip, 370, 479, 9);
   if (data.branch) {
     page1.drawRectangle({ ...BRANCH_PLACEHOLDER_COVER, color: rgb(1, 1, 1) });
-    draw(page1, data.branch, 188, 454);
+    draw(page1, data.branch, 185, 454);
   }
 
   const page2 = pdfDoc.getPage(1);
@@ -73,8 +86,7 @@ export async function fillEmployeeConfidentialityPdf(
   if (signatureBytes) {
     const png = await pdfDoc.embedPng(signatureBytes);
     const maxW = 270, maxH = 20;
-    const scale = Math.min(maxW / png.width, maxH / png.height, 1);
-    page2.drawImage(png, { x: 180, y: 323, width: png.width * scale, height: png.height * scale });
+    page2.drawImage(png, { x: 180, y: 323, width: maxW, height: maxH });
   }
 
   return pdfDoc.save();

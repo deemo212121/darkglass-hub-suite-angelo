@@ -5,9 +5,10 @@ import { Footer } from "@/components/Footer";
 import { MapProviderToggle } from "@/components/MapProviderToggle";
 import { useAuth } from "@/lib/auth";
 import { getModule, DASHBOARD_GRID_EXCLUDED_SLUGS, type SubModuleDef } from "@/lib/modules";
-import { getDashboardRoleGate, hasDashboardAccess } from "@/lib/dashboardAccess";
+import { hasDashboardAccess } from "@/lib/dashboardAccess";
 import { getModuleRoleGate } from "@/lib/moduleAccess";
-import { isModuleAllowed, isSubmoduleAllowed } from "@/lib/roleLabels";
+import { isModuleAllowed } from "@/lib/roleLabels";
+import { canAccessSubmodule } from "@/lib/submoduleAccess";
 import { getMyRoles, getCompanyUsers } from "@/lib/supabase/users";
 import {
   getCompanyMapProvider,
@@ -335,12 +336,23 @@ function ModuleIndex() {
     }
   };
 
+  // Previously only fetched for the Dashboard module, on the assumption
+  // that only Dashboard's own submodule gate (getDashboardRoleGate) needed
+  // a secondary role. That stopped being true once canAccessSubmodule's
+  // fuller gate (admin-module/user-management/activity-log/company-
+  // settings, used by the tile-grid filters below) started checking
+  // extraRoles too: on every OTHER module this stayed the initial `[]`
+  // forever, so a user whose ADMIN access came only from a secondary role
+  // (extra_roles) would see the Admin module's own tiles disappear even
+  // though they could still open it directly via URL. isAdmin above (used
+  // elsewhere in this file, e.g. Parts' admin-only controls) had the same
+  // gap for the same reason.
   useEffect(() => {
-    if (!ready || !uid || m.slug !== "dashboard") return;
+    if (!ready || !uid) return;
     let cancelled = false;
     getMyRoles(uid).then(({ extraRoles }) => { if (!cancelled) setExtraRoles(extraRoles); });
     return () => { cancelled = true; };
-  }, [ready, uid, m.slug]);
+  }, [ready, uid]);
 
   if (!ready) return null;
   if (!email) return <Navigate to="/landing" replace />;
@@ -581,17 +593,11 @@ function ModuleIndex() {
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             {submodules
               .filter((s: SubModuleDef) => !DASHBOARD_GRID_EXCLUDED_SLUGS.has(s.slug))
-              .filter((s: SubModuleDef) => {
-                const allowed = getDashboardRoleGate(s.slug);
-                return !allowed || hasDashboardAccess(allowed, role, extraRoles);
-              })
-              // An explicit override (Accessibility Management's Module
-              // Access by Role grid) is authoritative and bypasses the
-              // CSR-department restriction — an admin who checked a role's
-              // box for this submodule means it, even for a normally
-              // CSR-restricted role. Without one, the CSR restriction
-              // applies exactly as before this system existed.
-              .filter((s: SubModuleDef) => Boolean(getModuleRoleGate(m.slug, s.slug)) || isSubmoduleAllowed(role, m.slug, s.slug, extraRoles))
+              // Full gate (see submoduleAccess.ts) — the same check the
+              // submodule route itself enforces, so a restricted tile is
+              // never shown here only to land on "Access restricted" once
+              // clicked.
+              .filter((s: SubModuleDef) => canAccessSubmodule(role, extraRoles, m.slug, s))
               .map((s: SubModuleDef) => (
               <Link
                 key={s.slug}
@@ -610,11 +616,9 @@ function ModuleIndex() {
         ) : (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             {submodules
-              .filter((s: SubModuleDef) => {
-                const allowed = getModuleRoleGate(m.slug, s.slug);
-                return !allowed || hasDashboardAccess(allowed, role, extraRoles);
-              })
-              .filter((s: SubModuleDef) => Boolean(getModuleRoleGate(m.slug, s.slug)) || isSubmoduleAllowed(role, m.slug, s.slug, extraRoles))
+              // Full gate (see submoduleAccess.ts) — the same check the
+              // submodule route itself enforces.
+              .filter((s: SubModuleDef) => canAccessSubmodule(role, extraRoles, m.slug, s))
               .map((s: SubModuleDef) => (
               <Link
                 key={s.slug}

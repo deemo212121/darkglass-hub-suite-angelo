@@ -50,7 +50,7 @@ import {
   type OnboardingDocumentColumn,
   type OnboardingGroupKey,
 } from "@/lib/supabase/onboardingDocumentColumns";
-import { uploadCoeCertificate, uploadWarningForm, uploadPromotionForm, uploadActionPlanForm, uploadTerminationForm, uploadW8benForm, uploadW4Form, uploadW4RForm, uploadI9Form, uploadWageAckForm, uploadCarIqAgreementForm, uploadVehicleAgreementForm, uploadEmployeeConfidentialityForm, uploadMealRestBreakForm, uploadPtoAckForm, uploadPartsResponsibilityForm, uploadMileageFuelForm, uploadLocationConsentForm, uploadDamageForm, uploadContractorDataForm, uploadDirectDepositForm, uploadSubstanceScreeningForm, uploadFlashTechnicianTravelForm, uploadSignableDocumentSignature } from "@/lib/firebase/storage";
+import { uploadCoeCertificate, uploadWarningForm, uploadPromotionForm, uploadActionPlanForm, uploadTerminationForm, uploadW8benForm, uploadW4Form, uploadW4RForm, uploadI9Form, uploadWageAckForm, uploadCarIqAgreementForm, uploadVehicleAgreementForm, uploadEmployeeConfidentialityForm, uploadMealRestBreakForm, uploadPtoAckForm, uploadPartsResponsibilityForm, uploadMileageFuelForm, uploadLocationConsentForm, uploadDamageForm, uploadContractorDataForm, uploadDirectDepositForm, uploadSubstanceScreeningForm, uploadFlashTechnicianTravelForm, uploadSignableDocumentSignature, refreshStorageAuthToken } from "@/lib/firebase/storage";
 import { captureHtmlToPdfBlob, loadAssetDataUrl as loadImageDataUrl } from "@/lib/pdfCapture";
 import {
   createSignableDocument,
@@ -62,6 +62,7 @@ import {
   reopenEmployerSignature,
   updateSignableDocumentPdfUrl,
   signDocument,
+  ROUTE_REQUIRED_DOCUMENT_TYPES,
   type SignableDocument,
   type SignableDocumentType,
 } from "@/lib/supabase/signableDocuments";
@@ -3534,6 +3535,9 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         setWageAckEmployerError("Please add your signature.");
         return;
       }
+      // Force a fresh ID token before uploading — see refreshStorageAuthToken's
+      // doc comment (HR may have had this dashboard open a while).
+      await refreshStorageAuthToken();
       const employerSigBytes = new Uint8Array(await (await fetch(dataUrl)).arrayBuffer());
       const signatureUrl = await uploadSignableDocumentSignature(wageAckEmployerDialog.companyId, wageAckEmployerDialog.id, "hr_staff", dataUrl);
       const signedAt = new Date().toISOString();
@@ -3810,6 +3814,9 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         setMealRestBreakEmployerError("Please add your signature.");
         return;
       }
+      // Force a fresh ID token before uploading — see refreshStorageAuthToken's
+      // doc comment (HR may have had this dashboard open a while).
+      await refreshStorageAuthToken();
       const employerSigBytes = new Uint8Array(await (await fetch(dataUrl)).arrayBuffer());
       const signatureUrl = await uploadSignableDocumentSignature(mealRestBreakEmployerDialog.companyId, mealRestBreakEmployerDialog.id, "hr_staff", dataUrl);
       const signedAt = new Date().toISOString();
@@ -4403,12 +4410,13 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
 
-  // ── Substance Screening & Conduct Agreement — same pattern as Employee
-  // Confidentiality above: single recipient, the recipient fills in
-  // everything themselves on FillSubstanceScreeningPage.tsx. No employer/HR
-  // co-signature step. The source PDF has no AcroForm fields at all (see
-  // substanceScreeningFormTemplate.ts's header comment) — every value is
-  // drawn directly onto the page. No branch field on this one. ──
+  // ── Substance Screening & Conduct Agreement — genuine two-party flow,
+  // same shape as Location Sharing Consent: the recipient fills in and
+  // signs first on FillSubstanceScreeningPage.tsx, then HR adds the
+  // "Company Representative Signature" via the "Complete Employer
+  // Signature" dialog below. The source PDF has no AcroForm fields at all
+  // (see substanceScreeningFormTemplate.ts's header comment) — every value
+  // is drawn directly onto the page. No branch field on this one. ──
   const [sentSubstanceScreeningForms, setSentSubstanceScreeningForms] = useState<SignableDocument[]>([]);
   const loadSentSubstanceScreeningForms = async () => {
     try {
@@ -4445,6 +4453,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     employeeName,
     dateSigned: "",
     signatureDataUrl: "",
+    employerDateSigned: "",
+    employerSignatureDataUrl: "",
   });
 
   /** Toggles the inline collapsible preview panel — collapsing just hides it (and revokes the blob URL); expanding (re)builds a fresh blank-filled sample from the currently-selected recipient's name. */
@@ -4583,6 +4593,67 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       setSubstanceScreeningActionError(err instanceof Error ? err.message : "Failed to delete.");
     } finally {
       setSubstanceScreeningActionBusyId(null);
+    }
+  };
+
+  // ── Complete Employer Signature — same shape as Location Consent's own
+  // dialog above: a plain signature pad (no fields to review), reassigns
+  // the document to the current HR user first so the RLS update policy
+  // allows it, then regenerates the whole PDF fresh with both signatures. ──
+  const [substanceScreeningEmployerDialog, setSubstanceScreeningEmployerDialog] = useState<SignableDocument | null>(null);
+  const [substanceScreeningEmployerSaving, setSubstanceScreeningEmployerSaving] = useState(false);
+  const [substanceScreeningEmployerError, setSubstanceScreeningEmployerError] = useState<string | null>(null);
+  const substanceScreeningEmployerSigPad = useSignaturePad({ width: 400, height: 120 });
+
+  const handleOpenSubstanceScreeningEmployerDialog = (doc: SignableDocument) => {
+    setSubstanceScreeningEmployerDialog(doc);
+    setSubstanceScreeningEmployerError(null);
+  };
+
+  const handleSaveSubstanceScreeningEmployerSignature = async () => {
+    if (!substanceScreeningEmployerDialog || !uid) return;
+    if (!substanceScreeningEmployerSigPad.hasContent()) {
+      setSubstanceScreeningEmployerError("Please add your signature.");
+      return;
+    }
+    setSubstanceScreeningEmployerSaving(true);
+    setSubstanceScreeningEmployerError(null);
+    try {
+      const myProfileId = await getMyProfileId(uid);
+      if (!myProfileId) throw new Error("Could not resolve your profile.");
+
+      await reassignSignableDocument(substanceScreeningEmployerDialog.id, { recipientId: myProfileId, recipientName: displayName || "HR" }, "hr_staff");
+
+      const existing = substanceScreeningEmployerDialog.formData as SubstanceScreeningFormData;
+      const employeeSigBytes = existing.signatureDataUrl
+        ? new Uint8Array(await (await fetch(existing.signatureDataUrl)).arrayBuffer())
+        : undefined;
+
+      const dataUrl = substanceScreeningEmployerSigPad.toDataURL();
+      if (!dataUrl) {
+        setSubstanceScreeningEmployerError("Please add your signature.");
+        return;
+      }
+      const employerSigBytes = new Uint8Array(await (await fetch(dataUrl)).arrayBuffer());
+      const signatureUrl = await uploadSignableDocumentSignature(substanceScreeningEmployerDialog.companyId, substanceScreeningEmployerDialog.id, "hr_staff", dataUrl);
+      const signedAt = new Date().toISOString();
+
+      const merged: SubstanceScreeningFormData = { ...existing, employerSignatureDataUrl: dataUrl, employerDateSigned: signedAt };
+
+      const pdfBytes = await fillSubstanceScreeningPdf(merged, employeeSigBytes, employerSigBytes);
+      const pdfUrl = await uploadSubstanceScreeningForm(substanceScreeningEmployerDialog.companyId, existing.employeeName || "substance-screening", new Blob([pdfBytes as unknown as BlobPart], { type: "application/pdf" }));
+
+      const entry = { name: displayName || "HR", url: signatureUrl, signedAt };
+      await signDocument(substanceScreeningEmployerDialog.id, "hr_staff", entry, pdfUrl, merged as unknown as Record<string, any>);
+      await confirmSignableDocument(substanceScreeningEmployerDialog.id, null);
+
+      void logActivity({ action: "substance_screening_employer_signed", targetType: "employee", targetLabel: existing.employeeName || "" });
+      setSubstanceScreeningEmployerDialog(null);
+      await loadSentSubstanceScreeningForms();
+    } catch (err) {
+      setSubstanceScreeningEmployerError(err instanceof Error ? err.message : "Failed to save signature.");
+    } finally {
+      setSubstanceScreeningEmployerSaving(false);
     }
   };
 
@@ -5035,6 +5106,9 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         setPartsResponsibilityManagerError("Please add your signature.");
         return;
       }
+      // Force a fresh ID token before uploading — see refreshStorageAuthToken's
+      // doc comment (HR may have had this dashboard open a while).
+      await refreshStorageAuthToken();
       const managerSigBytes = new Uint8Array(await (await fetch(dataUrl)).arrayBuffer());
       const signatureUrl = await uploadSignableDocumentSignature(partsResponsibilityManagerDialog.companyId, partsResponsibilityManagerDialog.id, "hr_staff", dataUrl);
       const signedAt = new Date().toISOString();
@@ -5312,6 +5386,9 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         setMileageFuelEmployerError("Please add your signature.");
         return;
       }
+      // Force a fresh ID token before uploading — see refreshStorageAuthToken's
+      // doc comment (HR may have had this dashboard open a while).
+      await refreshStorageAuthToken();
       const employerSigBytes = new Uint8Array(await (await fetch(dataUrl)).arrayBuffer());
       const signatureUrl = await uploadSignableDocumentSignature(mileageFuelEmployerDialog.companyId, mileageFuelEmployerDialog.id, "hr_staff", dataUrl);
       const signedAt = new Date().toISOString();
@@ -5855,6 +5932,9 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         setLocationConsentEmployerError("Please add your signature.");
         return;
       }
+      // Force a fresh ID token before uploading — see refreshStorageAuthToken's
+      // doc comment (HR may have had this dashboard open a while).
+      await refreshStorageAuthToken();
       const employerSigBytes = new Uint8Array(await (await fetch(dataUrl)).arrayBuffer());
       const signatureUrl = await uploadSignableDocumentSignature(locationConsentEmployerDialog.companyId, locationConsentEmployerDialog.id, "hr_staff", dataUrl);
       const signedAt = new Date().toISOString();
@@ -6127,6 +6207,9 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         setDamageEmployerError("Please add your signature.");
         return;
       }
+      // Force a fresh ID token before uploading — see refreshStorageAuthToken's
+      // doc comment (HR may have had this dashboard open a while).
+      await refreshStorageAuthToken();
       const employerSigBytes = new Uint8Array(await (await fetch(dataUrl)).arrayBuffer());
       const signatureUrl = await uploadSignableDocumentSignature(damageEmployerDialog.companyId, damageEmployerDialog.id, "hr_staff", dataUrl);
       const signedAt = new Date().toISOString();
@@ -6612,6 +6695,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           : doc.documentType === "mileage_fuel" ? "mileageFuel"
           : doc.documentType === "location_consent" ? "locationConsent"
           : doc.documentType === "damage" ? "damage"
+          : doc.documentType === "substance_screening" ? "substanceScreening"
           : doc.documentType === "flash_technician_travel" ? "flashTechnicianTravel"
           : "wageAck";
         const tabLink = `${getAppUrl()}/m/dashboard/hr-dashboard?tab=${tabKey}`;
@@ -6628,6 +6712,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             ? `📋 Please add the employer/representative signature to the Employee Mobile App Location Sharing Consent Agreement for ${employeeName} — [open the Location Sharing Consent tab](${tabLink}) in the HR Dashboard.`
             : doc.documentType === "damage"
             ? `📋 Please add the employer/representative signature to the Damage, Part Loss, and Tool Penalty Commission Deduction Agreement for ${employeeName} — [open the Damage Agreement tab](${tabLink}) in the HR Dashboard.`
+            : doc.documentType === "substance_screening"
+            ? `📋 Please add the company representative signature to the Substance Screening & Conduct Agreement for ${employeeName} — [open the Substance Screening & Conduct Agreement tab](${tabLink}) in the HR Dashboard.`
             : doc.documentType === "flash_technician_travel"
             ? `📋 Please add the employer/representative signature to the Flash Technician Travel & Out-of-State Policy for ${employeeName} — [open the Flash Technician Travel tab](${tabLink}) in the HR Dashboard.`
             : `📋 Please add the employer/representative signature to the Acknowledgment of Wage & Compensation Structure for ${employeeName} — [open the Acknowledgment of Wage tab](${tabLink}) in the HR Dashboard.`;
@@ -6646,6 +6732,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       else if (doc.documentType === "mileage_fuel") await loadSentMileageFuelForms();
       else if (doc.documentType === "location_consent") await loadSentLocationConsentForms();
       else if (doc.documentType === "damage") await loadSentDamageForms();
+      else if (doc.documentType === "substance_screening") await loadSentSubstanceScreeningForms();
       else if (doc.documentType === "flash_technician_travel") await loadSentFlashTechnicianTravelForms();
       else await loadSentWageAckForms();
     } catch (err) {
@@ -6769,7 +6856,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     { type: "wage_ack", label: "Acknowledgment of Wage" },
     { type: "car_iq_agreement", label: "Car IQ Technician Agreement" },
     { type: "vehicle_agreement", label: "Company Vehicle Use Agreement" },
-    { type: "contractor_data", label: "Contractor Data" },
+    { type: "contractor_data", label: "Employee Data" },
     { type: "damage", label: "Damage Agreement" },
     { type: "direct_deposit", label: "Direct Deposit Authorization" },
     { type: "employee_confidentiality", label: "Employee Confidentiality Agreement" },
@@ -6781,11 +6868,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     { type: "pto_ack", label: "PTO & Sick Leave Policy" },
     { type: "substance_screening", label: "Substance Screening & Conduct Agreement" },
   ];
-  // Flagged red in the checkbox grid below — no functional difference, just a visual call-out for this specific set of forms.
-  const HIGH_PRIORITY_FORM_TYPES = new Set<SignableDocumentType>([
-    "substance_screening", "parts_responsibility", "damage", "location_consent",
-    "mileage_fuel", "i9", "w4r", "car_iq_agreement", "meal_rest_break",
-  ]);
 
   const [combineFormsRecipientId, setCombineFormsRecipientId] = useState("");
   const [combineFormsRecipientSearch, setCombineFormsRecipientSearch] = useState("");
@@ -7003,6 +7085,9 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         setI9Section2Error("Please add your signature.");
         return;
       }
+      // Force a fresh ID token before uploading — see refreshStorageAuthToken's
+      // doc comment (HR may have had this dashboard open a while).
+      await refreshStorageAuthToken();
       const employerSigBytes = new Uint8Array(await (await fetch(dataUrl)).arrayBuffer());
       const signatureUrl = await uploadSignableDocumentSignature(i9Section2Dialog.companyId, i9Section2Dialog.id, "hr_staff", dataUrl);
       const signedAt = new Date().toISOString();
@@ -9533,18 +9618,27 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
 
+  // TECHNICIAN as a secondary/extra role counts the same as primary here —
+  // someone who's e.g. primarily a Parts Manager but also holds TECHNICIAN
+  // still needs the technician-specific onboarding paperwork (Car IQ,
+  // floor protection, parts responsibility, etc.), same "pile up" semantics
+  // getCompanyTechnicians() already uses for route-assignment dropdowns.
+  const isOnboardingTechnician = (employee: { position: string; extraRoles: string[] }) =>
+    normalizeRole(employee.position) === "TECHNICIAN" ||
+    employee.extraRoles.some((r) => normalizeRole(r) === "TECHNICIAN");
+
   // Same US-Technician/US-other/PH split as onboardingEmployees above, just evaluated for one specific employee — used to pick their document list regardless of whichever group tab happens to be selected at click-time.
-  const getOnboardingDocListForEmployee = (employee: { country: string; position: string }) =>
+  const getOnboardingDocListForEmployee = (employee: { country: string; position: string; extraRoles: string[] }) =>
     onboardingDocsForGroup(
       employee.country === "PH" ? "PH"
-      : normalizeRole(employee.position) === "TECHNICIAN" ? "TECHNICIAN"
+      : isOnboardingTechnician(employee) ? "TECHNICIAN"
       : "PARTS_MANAGER"
     );
   const onboardingEmployees = useMemo(() => {
     const byGroup =
       onboardingGroup === "PH" ? employees.filter((e) => e.country === "PH")
-      : onboardingGroup === "TECHNICIAN" ? employees.filter((e) => e.country === "US" && normalizeRole(e.position) === "TECHNICIAN")
-      : employees.filter((e) => e.country === "US" && normalizeRole(e.position) !== "TECHNICIAN");
+      : onboardingGroup === "TECHNICIAN" ? employees.filter((e) => e.country === "US" && isOnboardingTechnician(e))
+      : employees.filter((e) => e.country === "US" && !isOnboardingTechnician(e));
     const q = onboardingSearch.trim().toLowerCase();
     return q ? byGroup.filter((e) => e.name.toLowerCase().includes(q)) : byGroup;
   }, [employees, onboardingGroup, onboardingSearch]);
@@ -9575,6 +9669,26 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, onboardingSelectedEmployee?.id]);
   const onboardingDocColumns = onboardingDocsForGroup(onboardingGroup);
+  // Same 9 documents ROUTE_REQUIRED_DOCUMENT_TYPES (signableDocuments.ts)
+  // gates route assignment on, matched by the exact column label text since
+  // these onboarding columns are free-text (hr_onboarding_document_columns
+  // has no typed document reference) rather than real SignableDocumentTypes.
+  // "Parts Responsibility & Technician Floor Protection" only — the
+  // separate "Acknowledgement Form" column next to it in the live data is
+  // too generic to confidently flag as the same document; those two look
+  // like one column that got split into two by accident and are worth
+  // merging back into one.
+  const URGENT_ONBOARDING_COLUMN_LABELS = new Set([
+    "Substance Screening & Conduct Agreement",
+    "Parts Responsibility & Technician Floor Protection",
+    "Damage Agreement",
+    "Employee Mobile App Location Sharing Consent Agreement",
+    "Personal Vehicle Mileage & Fuel Policy Agreement",
+    "I-9",
+    "W-4R",
+    "Car IQ Technician Agreement",
+    "Employee Meal & Rest Break Policy",
+  ]);
 
   // Custom columns are company-wide (not filtered by the currently visible
   // employee list), so just load them once when the tab is first opened.
@@ -10307,6 +10421,26 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     return Array.from(byDept.values()).sort((a, b) => (b.Warnings + b.Terminated + b.Resigned) - (a.Warnings + a.Terminated + a.Resigned));
   }, [allNotes, employees, roleByProfileId, trendMode, trendMonth, trendFrom, trendTo]);
 
+  // Nav tab `key`s (not SignableDocumentType values — these are the UI's own
+  // ad-hoc camelCase ids below) covering every document in
+  // ROUTE_REQUIRED_DOCUMENT_TYPES, so a technician can't get a route without
+  // it and HR can see at a glance which of these forms still need chasing.
+  // "w8ben" stands in for w4r: that form doesn't have its own nav tab here —
+  // it's bundled into the combined "W-8 / W-9 / W-4 / W-4R Forms" tab, so
+  // that whole tab is flagged rather than leaving W-4R with no visual signal
+  // anywhere in this list.
+  const URGENT_AUTOMATED_FORM_TAB_KEYS = new Set([
+    "substanceScreening",
+    "partsResponsibility",
+    "damage",
+    "locationConsent",
+    "mileageFuel",
+    "i9",
+    "w8ben",
+    "carIqAgreement",
+    "mealRestBreak",
+  ]);
+
   // General/admin forms vs. technician-facing acknowledgment forms — kept as
   // two separate lists so the "Automated Forms" nav entry below can render
   // them as two labeled columns in a wide panel, rather than one very tall
@@ -10398,39 +10532,52 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
   const renderSidebarTabButton = (tab: NavTabDef) => {
     const active = activeTab === tab.key;
+    const urgent = URGENT_AUTOMATED_FORM_TAB_KEYS.has(tab.key);
     return (
       <button
         key={tab.key}
         type="button"
         onClick={() => { setActiveTab(tab.key as typeof activeTab); setSidebarOpen(false); }}
-        className={`w-full text-left pl-2.5 pr-2 py-2 rounded-lg text-sm flex items-center justify-between gap-2 transition-colors ${active ? "bg-primary/10 border border-primary/30 text-foreground font-semibold" : "border border-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}
+        className={`w-full text-left pl-2.5 pr-2 py-2 rounded-lg text-sm flex items-center justify-between gap-2 transition-colors ${
+          active
+            ? "bg-primary/10 border border-primary/30 text-foreground font-semibold"
+            : urgent
+            ? "bg-red-500/20 border border-red-500/40 text-foreground hover:bg-red-500/30"
+            : "border border-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"
+        }`}
       >
         <span className="flex items-center gap-2">
-          <span className={`flex items-center justify-center h-6 w-6 rounded-md shrink-0 ${active ? "bg-primary/20 text-primary" : "bg-white/5 text-muted-foreground"}`}>
+          <span className={`flex items-center justify-center h-6 w-6 rounded-md shrink-0 ${active ? "bg-primary/20 text-primary" : urgent ? "bg-red-500/20 text-red-300" : "bg-white/5 text-muted-foreground"}`}>
             <tab.icon className="h-3.5 w-3.5" />
           </span>
           {tab.label}
         </span>
         {tab.count > 0 && (
-          <span className={`px-1.5 py-0.5 rounded-full text-[10px] shrink-0 ${active ? "bg-primary/20 text-primary" : "bg-white/10 text-muted-foreground"}`}>{tab.count}</span>
+          <span className={`px-1.5 py-0.5 rounded-full text-[10px] shrink-0 ${active ? "bg-primary/20 text-primary" : urgent ? "bg-red-500/30 text-red-200" : "bg-white/10 text-muted-foreground"}`}>{tab.count}</span>
         )}
       </button>
     );
   };
 
-  const renderDropdownTabButton = (tab: NavTabDef) => (
-    <button
-      key={tab.key}
-      type="button"
-      onClick={() => { setActiveTab(tab.key as typeof activeTab); setOpenCategory(null); }}
-      className={`w-full text-left px-3.5 py-2 text-sm flex items-center justify-between gap-2 transition-colors ${activeTab === tab.key ? "text-primary bg-primary/10" : "text-muted-foreground hover:text-foreground hover:bg-white/5"}`}
-    >
-      <span className="flex items-center gap-2"><tab.icon className="h-3.5 w-3.5" />{tab.label}</span>
-      {tab.count > 0 && (
-        <span className={`px-1.5 py-0.5 rounded-full text-[10px] ${activeTab === tab.key ? "bg-primary/20 text-primary" : "bg-white/10 text-muted-foreground"}`}>{tab.count}</span>
-      )}
-    </button>
-  );
+  const renderDropdownTabButton = (tab: NavTabDef) => {
+    const active = activeTab === tab.key;
+    const urgent = URGENT_AUTOMATED_FORM_TAB_KEYS.has(tab.key);
+    return (
+      <button
+        key={tab.key}
+        type="button"
+        onClick={() => { setActiveTab(tab.key as typeof activeTab); setOpenCategory(null); }}
+        className={`w-full text-left px-3.5 py-2 text-sm flex items-center justify-between gap-2 transition-colors ${
+          active ? "text-primary bg-primary/10" : urgent ? "text-red-100 bg-red-500/20 hover:bg-red-500/30" : "text-muted-foreground hover:text-foreground hover:bg-white/5"
+        }`}
+      >
+        <span className="flex items-center gap-2"><tab.icon className="h-3.5 w-3.5" />{tab.label}</span>
+        {tab.count > 0 && (
+          <span className={`px-1.5 py-0.5 rounded-full text-[10px] ${active ? "bg-primary/20 text-primary" : urgent ? "bg-red-500/30 text-red-200" : "bg-white/10 text-muted-foreground"}`}>{tab.count}</span>
+        )}
+      </button>
+    );
+  };
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -11953,14 +12100,15 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         <div className="p-4 pt-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 border-b border-white/10">
           {GENERAL_FORM_TYPES.map(({ type, label }) => {
             const checked = selectedFormTypes.has(type);
+            const urgent = ROUTE_REQUIRED_DOCUMENT_TYPES.includes(type);
             return (
               <label
                 key={type}
                 className={`flex items-start gap-2.5 rounded-lg border p-3 cursor-pointer transition-colors ${
                   checked
                     ? "border-primary/50 bg-primary/10"
-                    : HIGH_PRIORITY_FORM_TYPES.has(type)
-                    ? "border-red-500/40 bg-red-500/10 hover:bg-red-500/20"
+                    : urgent
+                    ? "border-red-500/40 bg-red-500/20 hover:bg-red-500/30"
                     : "border-white/10 bg-white/5 hover:bg-white/10"
                 }`}
               >
@@ -11982,14 +12130,15 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         <div className="p-4 pt-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
           {TECHNICIAN_FORM_TYPES.map(({ type, label }) => {
             const checked = selectedFormTypes.has(type);
+            const urgent = ROUTE_REQUIRED_DOCUMENT_TYPES.includes(type);
             return (
               <label
                 key={type}
                 className={`flex items-start gap-2.5 rounded-lg border p-3 cursor-pointer transition-colors ${
                   checked
                     ? "border-primary/50 bg-primary/10"
-                    : HIGH_PRIORITY_FORM_TYPES.has(type)
-                    ? "border-red-500/40 bg-red-500/10 hover:bg-red-500/20"
+                    : urgent
+                    ? "border-red-500/40 bg-red-500/20 hover:bg-red-500/30"
                     : "border-white/10 bg-white/5 hover:bg-white/10"
                 }`}
               >
@@ -12109,7 +12258,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                   key={label}
                   value={label}
                   // Flagged urgent — same set as the Bulk Form Send checkbox grid.
-                  style={HIGH_PRIORITY_FORM_TYPES.has(type as SignableDocumentType) ? { backgroundColor: "#7f1d1d", color: "#fff" } : undefined}
+                  style={ROUTE_REQUIRED_DOCUMENT_TYPES.includes(type as SignableDocumentType) ? { backgroundColor: "#7f1d1d", color: "#fff" } : undefined}
                 >
                   {label}
                 </option>
@@ -12141,7 +12290,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                   className={`flex items-start gap-2.5 rounded-lg border p-3 cursor-pointer transition-colors ${
                     checked
                       ? "border-primary/50 bg-primary/10"
-                      : HIGH_PRIORITY_FORM_TYPES.has(doc.documentType)
+                      : ROUTE_REQUIRED_DOCUMENT_TYPES.includes(doc.documentType)
                       ? "border-red-500/40 bg-red-500/10 hover:bg-red-500/20"
                       : "border-white/10 bg-white/5 hover:bg-white/10"
                   }`}
@@ -12616,8 +12765,14 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                 <th className="px-1.5 py-2 text-left text-[10px] text-muted-foreground uppercase w-[7%]">{onboardingGroup === "PH" ? "Dept." : "Branch"}</th>
                 {onboardingDocColumns.map((doc) => {
                   const customCol = customOnboardingColumns.find((c) => c.groupKey === onboardingGroup && c.label === doc);
+                  const urgent = URGENT_ONBOARDING_COLUMN_LABELS.has(doc);
                   return (
-                    <th key={doc} className="px-1 py-2 text-center text-[9px] leading-tight text-muted-foreground uppercase break-words">
+                    <th
+                      key={doc}
+                      className={`px-1 py-2 text-center text-[9px] leading-tight uppercase break-words ${
+                        urgent ? "bg-red-500/20 text-red-200" : "text-muted-foreground"
+                      }`}
+                    >
                       {doc}
                       {customCol && (
                         <button
@@ -16384,7 +16539,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       <div className="panel p-0 overflow-hidden mt-4">
         <div className="px-4 py-4 border-b border-white/10">
           <h2 className="font-semibold text-sm">Sent Substance Screening & Conduct Agreement Forms</h2>
-          <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status.</p>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status. "Awaiting Employer Signature" means the employee finished — add your signature to finalize.</p>
         </div>
         {substanceScreeningActionError && (
           <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{substanceScreeningActionError}</p>
@@ -16408,6 +16563,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                   const data = doc.formData as Partial<SubstanceScreeningFormData>;
                   const recipient = employees.find((e) => e.id === doc.recipientId);
                   const busy = substanceScreeningActionBusyId === doc.id;
+                  const awaitingEmployer = isAwaitingEmployerStep(doc);
                   return (
                     <tr key={doc.id} className="border-b border-white/5 hover:bg-white/5">
                       <td className="px-4 py-3 font-medium">
@@ -16422,20 +16578,31 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                       <td className="px-4 py-3 text-muted-foreground">{doc.createdByName ?? "—"}</td>
                       <td className="px-4 py-3">
                         <span className={`px-2 py-1 rounded text-xs font-semibold ${
-                          doc.status === "signed" ? "bg-green-500/20 text-green-300"
+                          doc.status === "confirmed" ? "bg-green-500/20 text-green-300"
+                          : awaitingEmployer ? "bg-orange-500/20 text-orange-300"
                           : doc.status === "cancelled" ? "bg-slate-500/20 text-slate-400"
                           : "bg-yellow-500/20 text-yellow-300"
                         }`}>
-                          {doc.status === "signed" ? "Submitted" : doc.status === "cancelled" ? "Cancelled" : "Awaiting Completion"}
+                          {doc.status === "confirmed" ? "Completed" : awaitingEmployer ? "Awaiting Employer Signature" : doc.status === "cancelled" ? "Cancelled" : "Awaiting Employee"}
                         </span>
                       </td>
                       <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{new Date(doc.createdAt).toLocaleDateString()}</td>
                       <td className="px-4 py-3">
                         <div className="flex flex-wrap items-center gap-1.5">
-                          {doc.status === "pending_signature" && (
+                          {doc.status === "pending_signature" && doc.recipientSlot === "employee" && (
                             <button type="button" onClick={() => handleCopySubstanceScreeningLink(doc)} className="btn text-[10px] px-2 py-1">
                               Copy Link
                             </button>
+                          )}
+                          {awaitingEmployer && (
+                            <>
+                              <button type="button" onClick={() => handleOpenSubstanceScreeningEmployerDialog(doc)} className="btn text-[10px] px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white">
+                                Add Employer Signature →
+                              </button>
+                              <button type="button" onClick={() => handleOpenEmployerReassign(doc)} className="btn text-[10px] px-2 py-1">
+                                Send to Employer
+                              </button>
+                            </>
                           )}
                           {doc.pdfUrl && (
                             <button type="button" onClick={() => handleDownloadSubstanceScreeningPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
@@ -18924,6 +19091,42 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                 className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
               >
                 {locationConsentEmployerSaving ? "Saving…" : "Complete & Sign"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {substanceScreeningEmployerDialog && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-800 border border-white/10 rounded-lg p-6 max-w-sm w-full">
+            <h3 className="text-lg font-bold mb-2">Add Employer Signature</h3>
+            <p className="text-sm text-muted-foreground mb-4">
+              Company representative signature for{" "}
+              <span className="font-semibold text-white">{(substanceScreeningEmployerDialog.formData as Partial<SubstanceScreeningFormData>).employeeName || "—"}</span>'s
+              Substance Screening & Conduct Agreement.
+            </p>
+
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2 block">Add your signature</label>
+            <canvas
+              {...substanceScreeningEmployerSigPad.canvasProps}
+              className={`bg-white rounded-md border border-white/15 w-full ${substanceScreeningEmployerSigPad.canvasProps.className}`}
+            />
+            <div className="flex justify-center mt-2">
+              <SignaturePadControls pad={substanceScreeningEmployerSigPad} />
+            </div>
+
+            {substanceScreeningEmployerError && (
+              <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2 mt-3">{substanceScreeningEmployerError}</p>
+            )}
+            <div className="flex gap-2 justify-end mt-4">
+              <button onClick={() => setSubstanceScreeningEmployerDialog(null)} className="btn text-sm px-4 py-2">Cancel</button>
+              <button
+                onClick={handleSaveSubstanceScreeningEmployerSignature}
+                disabled={substanceScreeningEmployerSaving}
+                className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+              >
+                {substanceScreeningEmployerSaving ? "Saving…" : "Complete & Sign"}
               </button>
             </div>
           </div>

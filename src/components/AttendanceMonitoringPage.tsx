@@ -23,6 +23,7 @@ import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
 import { resolveTeamLeadOrManager, visibleAttendanceProfileIds } from "@/lib/notifyRouting";
 import { getCsrTeamComposition, type CsrTeamComposition } from "@/lib/supabase/csrTeams";
 import { ATTENDANCE_GRACE_MINUTES, addMinutesToHHMM, nowInTimezone, timezoneForBranch, DEFAULT_ATTENDANCE_TIMEZONE, payGraceMinutesFor, applyGraceToCheckIn, roundCheckOutToSchedule, toSeconds, ON_TIME_BUFFER_SECONDS } from "@/lib/attendanceGrace";
+import { getServerNow } from "@/lib/serverTime";
 import { formatClockTime } from "@/lib/payslipTemplate";
 import {
   getCompanyPtoRequests,
@@ -248,7 +249,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   const [searchEmployee, setSearchEmployee] = useState<string>("");
   const [filterDepartment, setFilterDepartment] = useState<string>("all");
   const [summaryDepartmentFilter, setSummaryDepartmentFilter] = useState<string>("all");
-  const [summaryBranchFilter, setSummaryBranchFilter] = useState<string>("all");
+  const [summaryLocationFilter, setSummaryLocationFilter] = useState<string>("all");
   // Weekly Attendance Summary: narrow the roster to who checked in (or was
   // absent) on one specific day of the current week, instead of always
   // showing everyone's full Mon-Fri row.
@@ -649,10 +650,11 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   // Weekly/Monthly summary tables get their own department + branch filters
   // since they're a separate section below the Daily Attendance table/filters.
   const summaryProfiles = useMemo(
-    () => visibleProfiles
-      .filter((p) => summaryDepartmentFilter === "all" || profileDepartment(p) === summaryDepartmentFilter)
-      .filter((p) => summaryBranchFilter === "all" || p.assigned_branch === summaryBranchFilter),
-    [visibleProfiles, summaryDepartmentFilter, summaryBranchFilter]
+    () =>
+      visibleProfiles
+        .filter((p) => summaryDepartmentFilter === "all" || profileDepartment(p) === summaryDepartmentFilter)
+        .filter((p) => summaryLocationFilter === "all" || p.assigned_branch === summaryLocationFilter),
+    [visibleProfiles, summaryDepartmentFilter, summaryLocationFilter]
   );
 
   // ---- Weekly summary (Mon–Fri of the current week) ----
@@ -926,7 +928,9 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   // Manager proxy clock-in — only ever clocks IN a direct-report technician
   // (never out; that stays the technician's own action). Stamps the
   // technician's own branch-local time, not the manager's, and records
-  // clocked_in_by so the row visibly shows it wasn't a self-punch.
+  // clocked_in_by so the row visibly shows it wasn't a self-punch. Uses the
+  // server-verified instant (see src/lib/serverTime.ts), not the manager's
+  // own browser clock, for the same reason self-punches do (TimeClockMenu.tsx).
   const [clockingInIds, setClockingInIds] = useState<Set<string>>(new Set());
   const handleProxyClockIn = async (record: DailyRecord) => {
     if (!myProfileId) return;
@@ -934,9 +938,9 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     setClockingInIds((prev) => new Set(prev).add(record.profileId));
     try {
       const branchTz = timezoneForBranch(record.location);
-      const now = new Date();
-      const hhmm = nowInTimezone(branchTz).hhmm;
-      const seconds = String(now.getSeconds()).padStart(2, "0");
+      const serverNow = await getServerNow();
+      const { hhmm } = nowInTimezone(branchTz, serverNow);
+      const seconds = String(serverNow.getSeconds()).padStart(2, "0");
       await saveTimecardEntry(
         record.profileId,
         todayISO,
@@ -1615,8 +1619,8 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                     <div className="flex items-center gap-2">
                       <span className="text-xs text-slate-400 uppercase">Branch</span>
                       <select
-                        value={summaryBranchFilter}
-                        onChange={(e) => setSummaryBranchFilter(e.target.value)}
+                        value={summaryLocationFilter}
+                        onChange={(e) => setSummaryLocationFilter(e.target.value)}
                         className="bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none"
                       >
                         <option value="all">All Branches</option>

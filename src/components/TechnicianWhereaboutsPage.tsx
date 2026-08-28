@@ -45,6 +45,7 @@ const ACTIVE_COLOR = "#a78bfa";
 
 const STATUS_STYLE: Record<TechnicianWhereabouts["status"], { color: string; label: string }> = {
   current: { color: "#22c55e", label: "At job now" },
+  scheduled: { color: "#2dd4bf", label: "Scheduled, not checked in" },
   last: { color: "#f59e0b", label: "Last stop today" },
   none: { color: "#64748b", label: "No job today" },
 };

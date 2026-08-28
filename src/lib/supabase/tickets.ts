@@ -462,12 +462,44 @@ export async function updateTicketAssignment(
   if (fields.timeSlot !== undefined) update.time_slot = fields.timeSlot || null;
   if (Object.keys(update).length === 0) return;
 
+  // A reassignment or reschedule invalidates any prior physical on-site
+  // check-in — carrying it forward would misreport a technician as "at" a
+  // job they haven't actually been dispatched to (yet, or anymore). See
+  // migration 0202.
+  if (fields.technician !== undefined || fields.scheduleDate !== undefined) {
+    update.onsite_arrived_at = null;
+    update.onsite_done_at = null;
+  }
+
   const { error } = await supabase
     .from("tickets")
     .update(update)
     .eq("ticket_no", ticketNo);
   if (error) {
     console.error("updateTicketAssignment error:", error.message);
+    throw new Error(error.message);
+  }
+}
+
+/**
+ * Record a real On-Site Check-In event — the "I'm Here"/"I'm Done" taps in
+ * MobileTechApp.tsx's On-Site Check-In card. See migration 0202: these are
+ * the structured signal technicianWhereabouts.ts gates "At job now" on,
+ * unlike the free-text comment log (addTicketComment) the same button also
+ * writes, which stays purely for the ticket's own visible audit trail.
+ */
+export async function setTicketOnsiteCheckIn(
+  ticketNo: string,
+  event: "arrived" | "done",
+  at: string
+): Promise<void> {
+  const column = event === "arrived" ? "onsite_arrived_at" : "onsite_done_at";
+  const { error } = await supabase
+    .from("tickets")
+    .update({ [column]: at })
+    .eq("ticket_no", ticketNo);
+  if (error) {
+    console.error("setTicketOnsiteCheckIn error:", error.message);
     throw new Error(error.message);
   }
 }

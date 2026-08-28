@@ -1,0 +1,19 @@
+-- Run this file ALONE in the SQL Editor, and only AFTER confirming 0194
+-- finished successfully:
+--   select indexname from pg_indexes where tablename = 'messages';
+-- idx_messages_company_channel_created_active must be listed before you
+-- run this — if it isn't, 0194's CONCURRENTLY build failed or was
+-- interrupted; re-run 0194 first.
+--
+-- DROP INDEX CONCURRENTLY also cannot run inside a transaction block (same
+-- reason as CREATE INDEX CONCURRENTLY — see 0194's header) and can only
+-- target one index per statement, which is also why this and 0197 are
+-- separate files rather than one.
+--
+-- Drops the now-redundant original from 0001_init.sql — idx_messages_channel
+-- (channel_id, created_at) is a strict subset of what
+-- idx_messages_company_channel_created_active from 0194 already covers for
+-- every real query (all of them filter deleted_at is null; RLS always adds
+-- company_id on top), so keeping both just doubles the index-maintenance
+-- cost on every message insert/edit/delete for no read benefit.
+drop index concurrently if exists public.idx_messages_channel;

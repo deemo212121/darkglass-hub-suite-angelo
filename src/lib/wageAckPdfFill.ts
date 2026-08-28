@@ -49,16 +49,14 @@ export async function fillWageAckPdf(data: WageAckFormData, employeeSigBytes?: U
   if (employeeSigBytes) {
     const png = await pdfDoc.embedPng(employeeSigBytes);
     const maxW = 195, maxH = 13;
-    const scale = Math.min(maxW / png.width, maxH / png.height, 1);
-    page2.drawImage(png, { x: 180, y: 513, width: png.width * scale, height: png.height * scale });
+    page2.drawImage(png, { x: 180, y: 513, width: maxW, height: maxH });
   }
   draw(page2, fmtDate(data.employeeDateSigned), 415, 514, 9);
 
   if (employerSigBytes) {
     const png = await pdfDoc.embedPng(employerSigBytes);
     const maxW = 125, maxH = 13;
-    const scale = Math.min(maxW / png.width, maxH / png.height, 1);
-    page2.drawImage(png, { x: 258, y: 488, width: png.width * scale, height: png.height * scale });
+    page2.drawImage(png, { x: 258, y: 488, width: maxW, height: maxH });
   }
   draw(page2, fmtDate(data.employerDateSigned), 422, 489, 9);
 

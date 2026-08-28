@@ -158,9 +158,16 @@ export function roundCheckOutToSchedule(checkOut: string, requiredCheckOut: stri
   return deltaSeconds <= ON_TIME_BUFFER_SECONDS ? requiredCheckOut : checkOut;
 }
 
-/** Current wall-clock time and date in the given IANA timezone, regardless of the caller's own local timezone. */
-export function nowInTimezone(timeZone: string): { hhmm: string; dateISO: string } {
-  const now = new Date();
+/**
+ * Wall-clock time and date in the given IANA timezone, regardless of the
+ * caller's own local timezone. `at` defaults to the caller's local clock
+ * (fine for read-only display, e.g. grace-period math) — anything that
+ * WRITES a punch (manager proxy clock-in) should pass a server-verified
+ * instant instead (see src/lib/serverTime.ts's getServerNow()), so a
+ * manager's manipulated computer clock can't produce a false timestamp.
+ */
+export function nowInTimezone(timeZone: string, at: Date = new Date()): { hhmm: string; dateISO: string } {
+  const now = at;
   const hhmm = new Intl.DateTimeFormat("en-GB", {
     timeZone,
     hour12: false,

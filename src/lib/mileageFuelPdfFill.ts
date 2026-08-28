@@ -53,8 +53,7 @@ export async function fillMileageFuelPdf(
   if (employeeSigBytes) {
     const png = await pdfDoc.embedPng(employeeSigBytes);
     const maxW = 280, maxH = 20;
-    const scale = Math.min(maxW / png.width, maxH / png.height, 1);
-    page1.drawImage(png, { x: 180, y: 118.1, width: png.width * scale, height: png.height * scale });
+    page1.drawImage(png, { x: 180, y: 118.1, width: maxW, height: maxH });
   }
   const employeeDateParts = fmtDateParts(data.employeeDateSigned);
   draw1(employeeDateParts.mm, MILEAGE_FUEL_DATE_X.mm, 93.2, 9);
@@ -69,8 +68,7 @@ export async function fillMileageFuelPdf(
   if (employerSigBytes) {
     const png = await pdfDoc.embedPng(employerSigBytes);
     const maxW = 215, maxH = 20;
-    const scale = Math.min(maxW / png.width, maxH / png.height, 1);
-    page2.drawImage(png, { x: 256, y: 695.5, width: png.width * scale, height: png.height * scale });
+    page2.drawImage(png, { x: 256, y: 695.5, width: maxW, height: maxH });
   }
   const employerDateParts = fmtDateParts(data.employerDateSigned);
   draw2(employerDateParts.mm, MILEAGE_FUEL_DATE_X.mm, 670.5, 9);
