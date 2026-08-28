@@ -493,10 +493,17 @@ export async function setTicketOnsiteCheckIn(
   event: "arrived" | "done",
   at: string
 ): Promise<void> {
-  const column = event === "arrived" ? "onsite_arrived_at" : "onsite_done_at";
+  // A fresh "arrived" also clears any earlier onsite_done_at — otherwise a
+  // technician re-checking into a ticket they'd already marked done once
+  // (a callback, a re-visit, or just tapping "I'm Here" again) advances
+  // onsite_arrived_at to the new time while the stale onsite_done_at from
+  // the earlier visit is left sitting there, now BEFORE the new arrival —
+  // a real "start after end" case confirmed on ticket 730812. "done"
+  // itself only ever needs to set its own column.
+  const update = event === "arrived" ? { onsite_arrived_at: at, onsite_done_at: null } : { onsite_done_at: at };
   const { error } = await supabase
     .from("tickets")
-    .update({ [column]: at })
+    .update(update)
     .eq("ticket_no", ticketNo);
   if (error) {
     console.error("setTicketOnsiteCheckIn error:", error.message);

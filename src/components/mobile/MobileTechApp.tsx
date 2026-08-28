@@ -3765,6 +3765,17 @@ function HomeOnSiteCard({
     const time = formatNow();
     const at = new Date().toISOString();
     setArrivedAt((prev) => ({ ...prev, [t.ticketNo]: time }));
+    // A fresh arrival invalidates any earlier "done" mark for this same
+    // ticket (re-checking in — a callback, a re-visit, or just a repeat
+    // tap) — matches setTicketOnsiteCheckIn's own onsite_done_at reset, so
+    // the local UI state doesn't keep showing a stale, now-earlier-than-
+    // arrival "Done" time alongside the new one.
+    setDoneAt((prev) => {
+      if (!(t.ticketNo in prev)) return prev;
+      const next = { ...prev };
+      delete next[t.ticketNo];
+      return next;
+    });
     setBusy(t.ticketNo);
     try {
       await Promise.all([
