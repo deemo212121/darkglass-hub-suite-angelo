@@ -3875,10 +3875,15 @@ function HomeOnSiteCard({
                     {isBusy ? "…" : "I'm Here"}
                   </button>
                 ) : (
+                  // No radius gate here, unlike "I'm Here" — the meaningful
+                  // proof-of-presence already happened at check-in; requiring
+                  // it again to close out just adds friction (GPS drift,
+                  // stepping to the truck for a part) without verifying
+                  // anything new.
                   <button
                     type="button"
                     className="mtech-home-onsite-btn mtech-home-onsite-btn-done"
-                    disabled={!inRadius || isBusy}
+                    disabled={isBusy}
                     onClick={() => handleImDone(t)}
                   >
                     {isBusy ? "…" : "I'm Done"}
