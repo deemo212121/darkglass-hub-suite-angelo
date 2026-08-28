@@ -686,7 +686,7 @@ export async function updateTicketFields(
 
 // ---- visits ----------------------------------------------------------------
 
-type UIVisit = NonNullable<Ticket["visits"]>[number];
+export type UIVisit = NonNullable<Ticket["visits"]>[number];
 
 /** Map a Supabase visit row to the flat UI visit shape. */
 function rowToVisit(row: any): UIVisit {

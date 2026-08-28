@@ -57,9 +57,11 @@ import { LOCATIONS } from "@/lib/locations";
 import { timezoneForBranch, nowInTimezone } from "@/lib/attendanceGrace";
 import { getServerNow, zonedDateKey, zonedTimeString, type ScheduleTimezone } from "@/lib/serverTime";
 import { getTicketComments, addTicketComment, type TicketComment } from "@/lib/supabase/comments";
+import { enqueueOnsiteCheckin, enqueueVisitSave } from "@/lib/offlineQueue";
 import { TicketPhotos } from "@/components/TicketPhotos";
 import { MessageBody } from "@/components/MessageBody";
 import { LocationSharingBadge } from "@/components/LocationSharingBadge";
+import { OfflineQueueBadge } from "@/components/OfflineQueueBadge";
 import { uploadTicketSignature, uploadPayrollDisputeAttachment } from "@/lib/firebase/storage";
 import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
 import { lookupZip } from "@/lib/zipCoverage";
@@ -988,6 +990,7 @@ function AppHeaderMobile({
         >
           {initials}
           <LocationSharingBadge />
+          <OfflineQueueBadge />
         </button>
         {menu && (
           <>
@@ -2207,40 +2210,46 @@ function RepairTab({ ticket, authorName }: { ticket: Ticket; authorName: string 
       return;
     }
     setSavingVisit(true);
+    const original = visits.find((row) => row.id === visitId);
+    const resolution = composeServicePerformed(parseServicePerformed(editDraft.service));
+    // updateTicketVisit overwrites every column (?? null fallback), so the
+    // full existing row must be spread first or fields the tech never
+    // touched (schedule date, technician, time slot, locked, ...) get
+    // silently nulled out. Fully self-contained, so it's also exactly what
+    // gets queued below if the write fails — nothing extra to fetch at
+    // sync time.
+    const payload = {
+      ...original,
+      repairStatus: editDraft.repairStatus,
+      diagnosis: editDraft.diagnosis,
+      resolution,
+      nonCompletionReason: editDraft.nonCompletionReason,
+      updateReason: `Tech ${authorName || ""} updated visit`.trim(),
+    } as any;
+    // Reflect changes locally immediately — same reasoning as the On-Site
+    // Check-In handlers: offline or a flaky connection both just throw
+    // from here, and either way the tech shouldn't be blocked waiting on a
+    // write that may not complete right now.
+    setVisits((prev) =>
+      prev.map((row) =>
+        row.id === visitId
+          ? {
+              ...row,
+              repairStatus: editDraft.repairStatus,
+              diagnosis: editDraft.diagnosis,
+              resolution,
+              nonCompletionReason: editDraft.nonCompletionReason,
+            }
+          : row,
+      ),
+    );
+    cancelEdit();
     try {
-      const original = visits.find((row) => row.id === visitId);
-      const resolution = composeServicePerformed(parseServicePerformed(editDraft.service));
-      // updateTicketVisit overwrites every column (?? null fallback), so the
-      // full existing row must be spread first or fields the tech never
-      // touched (schedule date, technician, time slot, locked, ...) get
-      // silently nulled out.
-      await updateTicketVisit(visitId, {
-        ...original,
-        repairStatus: editDraft.repairStatus,
-        diagnosis: editDraft.diagnosis,
-        resolution,
-        nonCompletionReason: editDraft.nonCompletionReason,
-        updateReason: `Tech ${authorName || ""} updated visit`.trim(),
-      } as any);
-      // Reflect changes locally so the row updates without a re-fetch.
-      setVisits((prev) =>
-        prev.map((row) =>
-          row.id === visitId
-            ? {
-                ...row,
-                repairStatus: editDraft.repairStatus,
-                diagnosis: editDraft.diagnosis,
-                resolution,
-                nonCompletionReason: editDraft.nonCompletionReason,
-              }
-            : row,
-        ),
-      );
-      cancelEdit();
+      await updateTicketVisit(visitId, payload);
     } catch (err) {
-      console.error("Failed to save visit edit", err);
-      alert(
-        `Failed to save visit: ${err instanceof Error ? err.message : "Unknown error"}`,
+      console.warn("Visit edit write failed, queuing for later sync", err);
+      await enqueueVisitSave({ visitId, visit: payload }).catch((qErr) =>
+        console.error("Failed to queue visit edit", qErr),
       );
     } finally {
       setSavingVisit(false);
@@ -3751,22 +3760,33 @@ function HomeOnSiteCard({
 
   const formatNow = () => new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
-  const logCheckIn = async (t: Ticket, label: string, time: string) => {
-    await addTicketComment(t.ticketNo, `On-site check-in: ${label} at ${time}`, userName, role || "");
-  };
+  const checkInCommentBody = (label: string, time: string) => `On-site check-in: ${label} at ${time}`;
 
+  // Updates local state immediately regardless of how the write goes —
+  // offline or a flaky connection (indistinguishable from here, both just
+  // throw) queues the same write for auto-sync instead of blocking the
+  // technician with an alert; either way they don't stand around waiting
+  // on a request that may never complete right now.
   const handleImHere = async (t: Ticket) => {
     const time = formatNow();
+    const at = new Date().toISOString();
+    setArrivedAt((prev) => ({ ...prev, [t.ticketNo]: time }));
     setBusy(t.ticketNo);
     try {
       await Promise.all([
-        logCheckIn(t, "arrived", time),
-        setTicketOnsiteCheckIn(t.ticketNo, "arrived", new Date().toISOString()),
+        addTicketComment(t.ticketNo, checkInCommentBody("arrived", time), userName, role || ""),
+        setTicketOnsiteCheckIn(t.ticketNo, "arrived", at),
       ]);
-      setArrivedAt((prev) => ({ ...prev, [t.ticketNo]: time }));
     } catch (e) {
-      console.error("on-site check-in: arrival log failed", e);
-      alert("Couldn't check in — please try again.");
+      console.warn("on-site check-in: arrival write failed, queuing for later sync", e);
+      await enqueueOnsiteCheckin({
+        ticketNo: t.ticketNo,
+        event: "arrived",
+        at,
+        commentBody: checkInCommentBody("arrived", time),
+        authorName: userName,
+        authorRole: role || "",
+      }).catch((qErr) => console.error("on-site check-in: failed to queue arrival", qErr));
     } finally {
       setBusy(null);
     }
@@ -3774,16 +3794,24 @@ function HomeOnSiteCard({
 
   const handleImDone = async (t: Ticket) => {
     const time = formatNow();
+    const at = new Date().toISOString();
+    setDoneAt((prev) => ({ ...prev, [t.ticketNo]: time }));
     setBusy(t.ticketNo);
     try {
       await Promise.all([
-        logCheckIn(t, "marked done", time),
-        setTicketOnsiteCheckIn(t.ticketNo, "done", new Date().toISOString()),
+        addTicketComment(t.ticketNo, checkInCommentBody("marked done", time), userName, role || ""),
+        setTicketOnsiteCheckIn(t.ticketNo, "done", at),
       ]);
-      setDoneAt((prev) => ({ ...prev, [t.ticketNo]: time }));
     } catch (e) {
-      console.error("on-site check-in: done log failed", e);
-      alert("Couldn't mark this done — please try again.");
+      console.warn("on-site check-in: done write failed, queuing for later sync", e);
+      await enqueueOnsiteCheckin({
+        ticketNo: t.ticketNo,
+        event: "done",
+        at,
+        commentBody: checkInCommentBody("marked done", time),
+        authorName: userName,
+        authorRole: role || "",
+      }).catch((qErr) => console.error("on-site check-in: failed to queue done", qErr));
     } finally {
       setBusy(null);
     }
