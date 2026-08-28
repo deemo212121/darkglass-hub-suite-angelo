@@ -8,7 +8,9 @@
  * event handler (same lazy-load reasoning as getLeaflet() in mapEngine.ts).
  */
 
-const ALLOWED_EXTENSIONS = ["jpg", "jpeg", "png", "heic", "heif", "webp"];
+// jfif is a JPEG under a different extension (same magic bytes/decoding
+// path as .jpg via <canvas>/<img>) — no HEIC-style conversion needed.
+const ALLOWED_EXTENSIONS = ["jpg", "jpeg", "jfif", "png", "heic", "heif", "webp"];
 const HEIC_EXTENSIONS = new Set(["heic", "heif"]);
 
 const MAX_DIMENSION = 1920;

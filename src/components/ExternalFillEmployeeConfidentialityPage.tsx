@@ -33,9 +33,11 @@ const PAGE_HEIGHT = 792;
 
 // Same field rectangles as FillEmployeeConfidentialityPage.tsx — see that
 // file's header comment for how these were derived. Re-measured against
-// the real PDF text runs — the previous numbers were eyeballed and
-// drifted far enough right/wide to overlap neighboring labels (City
-// spilling into "State:", Zip landing past its own blank entirely).
+// the real PDF text runs (pdf.js getTextContent(), calibrated with
+// @napi-rs/canvas's Calibri metrics against each line's known total
+// width) — the previous numbers were eyeballed and drifted far enough
+// right/wide to overlap neighboring labels (City spilling into "State:",
+// Zip landing past its own blank entirely).
 const PAGE1_RECT = {
   dateSigned: { x: 327, y: 646, w: 150, h: 13 },
   employeeName: { x: 199, y: 529, w: 299, h: 14 },

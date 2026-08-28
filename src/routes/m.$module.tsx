@@ -4,7 +4,7 @@ import { AppHeader } from "@/components/Header";
 import { Footer } from "@/components/Footer";
 import { MapProviderToggle } from "@/components/MapProviderToggle";
 import { useAuth } from "@/lib/auth";
-import { getModule, DASHBOARD_GRID_EXCLUDED_SLUGS, type SubModuleDef } from "@/lib/modules";
+import { getModule, DASHBOARD_GRID_EXCLUDED_SLUGS, type ModuleDef, type SubModuleDef } from "@/lib/modules";
 import { hasDashboardAccess } from "@/lib/dashboardAccess";
 import { getModuleRoleGate } from "@/lib/moduleAccess";
 import { isModuleAllowed } from "@/lib/roleLabels";
@@ -42,7 +42,7 @@ export const Route = createFileRoute("/m/$module")({
   head: ({ params }) => ({
     meta: [{ title: `${getModule(params.module)?.label ?? "Module"} — Admin Hub Solutions` }],
   }),
-  loader: ({ params }) => {
+  loader: async ({ params }) => {
     const m = getModule(params.module);
     if (!m) throw notFound();
     return { module: m };
@@ -68,7 +68,11 @@ export const Route = createFileRoute("/m/$module")({
 
 function ModuleIndex() {
   const { ready, email, role, uid, companyId, displayName } = useAuth();
-  const { module: m } = Route.useLoaderData();
+  // Route.useLoaderData()'s type resolves to `undefined` for this route in
+  // the current @tanstack/react-router version — a known inference gap for
+  // parent routes with children, not a real runtime issue (the loader
+  // always returns { module } or throws notFound() first).
+  const { module: m } = Route.useLoaderData() as { module: ModuleDef };
   const [extraRoles, setExtraRoles] = useState<string[]>([]);
   const isAdmin = [role, ...extraRoles].some((r) => ["ADMIN", "SUPERADMIN"].includes((r || "").toUpperCase()));
 

@@ -202,7 +202,7 @@ export async function notifyRequestReviewers(input: {
 }): Promise<void> {
   const profiles = await getCompanyUsers();
   const recipients = profiles.filter((p) => {
-    if (p.id === input.senderId) return false;
+    if (p.id === input.senderId || !p.is_active) return false;
     const primary = (p.role || "").toUpperCase();
     if (["ADMIN", "SUPERADMIN", "HR", "FINANCE"].includes(primary)) return true;
     return (p.extra_roles || []).some((r) => ["ADMIN", "SUPERADMIN", "HR", "FINANCE"].includes((r || "").toUpperCase()));

@@ -334,9 +334,11 @@ export async function reviewCorrectionStage(
     try {
       const roster = await getCompanyUsers();
       const requesterName = roster.find((p) => p.id === correction.profileId)?.display_name || "An employee";
-      const recipients = roster.filter(
-        (p) => ["HR", "FINANCE"].includes((p.role || "").toUpperCase()) && p.id !== reviewerId
-      );
+      const recipients = roster.filter((p) => {
+        if (p.id === reviewerId || !p.is_active) return false;
+        const heldRoles = [p.role, ...(p.extra_roles ?? [])].map((r) => (r || "").toUpperCase());
+        return heldRoles.includes("HR") || heldRoles.includes("FINANCE");
+      });
       await Promise.all(
         recipients.map((r) =>
           createNotification({

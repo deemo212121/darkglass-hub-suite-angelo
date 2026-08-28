@@ -33,6 +33,7 @@ interface Employee {
   name: string;
   department: string;
   country: "US" | "PH";
+  isActive: boolean;
 }
 interface SalaryEntry { profile_id: string; effective_date: string; hourly_rate: number; created_at: string }
 interface TimecardEntry { profile_id: string | null; employee_id: string | null; check_in: string | null; check_out: string | null; meal_start: string | null; meal_end: string | null }
@@ -113,7 +114,7 @@ export function ReportAccounting({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
             for (let from = 0; ; from += PAGE_SIZE) {
               const { data, error } = await supabase
                 .from("profiles")
-                .select("id,display_name,username,role,assigned_branch")
+                .select("id,display_name,username,role,assigned_branch,is_active")
                 .neq("role", "SUPERSUPERADMIN")
                 .range(from, from + PAGE_SIZE - 1);
               if (error) return { data: null, error };
@@ -168,6 +169,7 @@ export function ReportAccounting({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
           name: p.display_name || p.username || p.id,
           department: p.role ?? "Unspecified",
           country: p.assigned_branch === "Philippines" ? "PH" : "US",
+          isActive: p.is_active !== false,
         })));
         setSalaryEntries((salRes.data ?? []) as SalaryEntry[]);
         setTimecardEntries((tcRes.data ?? []) as TimecardEntry[]);
@@ -195,6 +197,13 @@ export function ReportAccounting({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
       hoursMap.set(key, (hoursMap.get(key) ?? 0) + hours);
     }
 
+    // Dollar totals stay historically inclusive — a since-deactivated
+    // employee who actually worked hours in this period genuinely earned
+    // that pay, and it belongs in the total. Headcounts (usCount/phCount,
+    // and the employee count avgPay divides by) are a present-tense
+    // question, though, so those count only currently-active staff —
+    // otherwise every account ever deactivated permanently inflates the
+    // roster size and dilutes "average pay per employee."
     let usTotal = 0, phTotal = 0, usCount = 0, phCount = 0;
     for (const emp of employees) {
       const rate = latestRateMap.get(emp.id) ?? 0;
@@ -202,10 +211,12 @@ export function ReportAccounting({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
       const reg = Math.min(hours, REGULAR_HOURS_PER_DAY * 14);
       const ot = Math.max(0, hours - reg);
       const gross = reg * rate + ot * rate * 1.5;
-      if (emp.country === "PH") { phTotal += gross; phCount++; } else { usTotal += gross; usCount++; }
+      if (emp.country === "PH") phTotal += gross; else usTotal += gross;
+      if (emp.isActive) { if (emp.country === "PH") phCount++; else usCount++; }
     }
     const total = usTotal + phTotal;
-    return { usTotal, phTotal, total, usCount, phCount, avgPay: employees.length > 0 ? total / employees.length : 0 };
+    const activeEmployeeCount = employees.filter((e) => e.isActive).length;
+    return { usTotal, phTotal, total, usCount, phCount, avgPay: activeEmployeeCount > 0 ? total / activeEmployeeCount : 0 };
   }, [employees, salaryEntries, timecardEntries]);
 
   // Monthly Payroll Totals — same grouping AccountingDashboard.tsx uses, by run period month.
@@ -257,7 +268,7 @@ export function ReportAccounting({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
       [],
       ["Summary — Current Period (Last 14 Days)"],
       ["Metric", "Value"],
-      ["Total Employees", employees.length],
+      ["Total Employees", currentPeriod.usCount + currentPeriod.phCount],
       ["Total Payroll", currentPeriod.total.toFixed(2)],
       ["US Payroll", currentPeriod.usTotal.toFixed(2)],
       ["PH Payroll", currentPeriod.phTotal.toFixed(2)],
@@ -305,7 +316,7 @@ export function ReportAccounting({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
         <>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6 mt-4">
           {[
-            ["Total Employees", employees.length, "text-white", Users],
+            ["Total Employees", currentPeriod.usCount + currentPeriod.phCount, "text-white", Users],
             ["Total Payroll (14d)", fmt(currentPeriod.total), "text-green-300", DollarSign],
             ["US / PH Split", `${fmt(currentPeriod.usTotal)} / ${fmt(currentPeriod.phTotal)}`, "text-blue-300", TrendingUp],
             ["Avg Pay / Employee", fmt(currentPeriod.avgPay), "text-yellow-300", DollarSign],

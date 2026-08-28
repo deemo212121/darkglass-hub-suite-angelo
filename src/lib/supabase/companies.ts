@@ -261,6 +261,7 @@ export async function getAllCompanyAdminAccountCounts(): Promise<Record<string, 
     const { data, error } = await supabase
       .from("profiles")
       .select("company:company_id(legacy_code)")
+      .eq("is_active", true)
       .or("role.in.(ADMIN,SUPERADMIN),extra_roles.cs.{ADMIN},extra_roles.cs.{SUPERADMIN}")
       .range(from, from + PAGE_SIZE - 1);
     if (error) throw new Error(error.message);

@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 // @lovable.dev/vite-tanstack-config already includes the following — do NOT add them manually
 // or the app will break with duplicate plugins:
 //   - tanstackStart, viteReact, tailwindcss, tsConfigPaths, cloudflare (build-only),
@@ -751,6 +752,7 @@ export default defineConfig({
     // lets a temporary cloudflared/ngrok tunnel hostname reach the local dev
     // server for testing webhooks (e.g. Jotform) that need a public URL.
     server: { allowedHosts: [".trycloudflare.com"] },
+    test: { globals: true, environment: "node" },
     plugins: [supabaseTokenDevPlugin(), serverTimeDevPlugin(), servicePowerDevPlugin(), marconeDevPlugin(), encompassDevPlugin(), nsaDevPlugin(), jotformDevPlugin(), customFormsDevPlugin(), imageProxyDevPlugin(), googleDriveDevPlugin(), gmailDevPlugin(), signableDocumentsDevPlugin(), liveChatDevPlugin(), liveChatStaffDevPlugin(), adminUpdateEmailDevPlugin(), adminResetPasswordDevPlugin(), loginLockoutDevPlugin()],
     build: {
       chunkSizeWarningLimit: 800,

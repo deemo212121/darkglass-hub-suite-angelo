@@ -25,6 +25,7 @@ export async function getPartsManagerBranchRoster(roles: string[]): Promise<Part
   const { data, error } = await supabase
     .from("profiles")
     .select("firebase_uid, role, extra_roles, branch_access")
+    .eq("is_active", true)
     .or(orClause);
   if (error) {
     console.error("getPartsManagerBranchRoster error:", error.message);

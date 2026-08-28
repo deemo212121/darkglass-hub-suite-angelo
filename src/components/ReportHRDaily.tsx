@@ -9675,10 +9675,18 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       : "PARTS_MANAGER"
     );
   const onboardingEmployees = useMemo(() => {
+    // employees (loadEmployees above) is the full historical HR roster on
+    // purpose — Master List needs terminated/resigned people for
+    // compliance history. Onboarding Documents is a "still needs to
+    // complete paperwork" tracker, not a history — a deactivated/
+    // terminated/resigned employee has nothing left to onboard, so filter
+    // to active here specifically, same as every other current-staff list
+    // (Attendance Monitoring, Payroll, etc.).
+    const activeOnly = employees.filter((e) => e.status === "active");
     const byGroup =
-      onboardingGroup === "PH" ? employees.filter((e) => e.country === "PH")
-      : onboardingGroup === "TECHNICIAN" ? employees.filter((e) => e.country === "US" && isOnboardingTechnician(e))
-      : employees.filter((e) => e.country === "US" && !isOnboardingTechnician(e));
+      onboardingGroup === "PH" ? activeOnly.filter((e) => e.country === "PH")
+      : onboardingGroup === "TECHNICIAN" ? activeOnly.filter((e) => e.country === "US" && isOnboardingTechnician(e))
+      : activeOnly.filter((e) => e.country === "US" && !isOnboardingTechnician(e));
     const q = onboardingSearch.trim().toLowerCase();
     return q ? byGroup.filter((e) => e.name.toLowerCase().includes(q)) : byGroup;
   }, [employees, onboardingGroup, onboardingSearch]);

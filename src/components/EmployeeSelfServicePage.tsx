@@ -383,7 +383,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
   // src/lib/supabase/notifications.ts.
   const notifyManagers = async (body: string, linkTo = "/m/dashboard/attendance-monitoring") => {
     const recipients = companyProfiles.filter((p) => {
-      if (p.id === myProfileId) return false;
+      if (p.id === myProfileId || !p.is_active) return false;
       const primary = (p.role || "").toUpperCase();
       if (["ADMIN", "SUPERADMIN", "HR", "FINANCE"].includes(primary)) return true;
       return (p.extra_roles || []).some((r) => ["ADMIN", "SUPERADMIN", "HR", "FINANCE"].includes((r || "").toUpperCase()));
@@ -480,7 +480,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
             const recipients = new Map<string, ProfileRow>();
             if (managerProfile && managerProfile.id !== myProfileId) recipients.set(managerProfile.id, managerProfile);
             for (const p of companyProfiles) {
-              if (p.id === myProfileId) continue;
+              if (p.id === myProfileId || !p.is_active) continue;
               const primary = (p.role || "").toUpperCase();
               if (primary === "HR" || (!managerProfile && (primary === "ADMIN" || primary === "SUPERADMIN"))) recipients.set(p.id, p);
             }
@@ -530,7 +530,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
             const recipients = new Map<string, ProfileRow>();
             if (managerProfile && managerProfile.id !== myProfileId) recipients.set(managerProfile.id, managerProfile);
             for (const p of companyProfiles) {
-              if (p.id === myProfileId) continue;
+              if (p.id === myProfileId || !p.is_active) continue;
               const primary = (p.role || "").toUpperCase();
               if (primary === "HR" || (!managerProfile && (primary === "ADMIN" || primary === "SUPERADMIN"))) recipients.set(p.id, p);
             }

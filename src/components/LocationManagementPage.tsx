@@ -1997,7 +1997,7 @@ export function LocationManagementPage({ mod, sub }: { mod: ModuleDef; sub: SubM
                           const isAssignedHere = tech.assignedBranch && newLocationRow.location && tech.assignedBranch === newLocationRow.location;
                           return (
                             <label key={tech.id || tech.name} className="flex items-start gap-2 rounded-md border border-white/10 bg-white/[0.02] px-2 py-1 text-xs text-slate-200">
-                              <input type="checkbox" className="mt-0.5" checked={checked} onChange={() => setNewLocationRow((current) => ({ ...current, coveredTechnicians: toggleStringValue(current.coveredTechnicians, tech.name) }))} />
+                              <input type="checkbox" className="mt-0.5" checked={checked} onChange={() => setNewLocationRow((current) => ({ ...current, coveredTechnicians: toggleListValue(current.coveredTechnicians, tech.name) }))} />
                               <span className="flex-1">
                                 <span>{tech.name}</span>
                                 {tech.assignedBranch ? (

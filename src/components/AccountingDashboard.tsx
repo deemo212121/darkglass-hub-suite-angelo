@@ -2505,6 +2505,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       if (branch) {
         const seniorBranchManager = allProfiles.find(
           (p) =>
+            p.is_active &&
             (p.assigned_branch || "").trim().toLowerCase() === branch &&
             [p.role, ...(p.extra_roles ?? [])].some((r) => normalizeRole(r) === "SENIOR_BRANCH_MANAGER")
         );

@@ -3,7 +3,8 @@ import { useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
 import { ChevronLeft } from "lucide-react";
 import { getLocationRanking, getOverallStatus, getTechRanking, getTickets } from "@/lib/db-api";
-import type { DashboardOverallStatus, LocationRankingRecord, ModuleDef, SubModuleDef, TechRankingRecord, Ticket } from "@/lib/db";
+import type { DashboardOverallStatus, LocationRankingRecord, TechRankingRecord, Ticket } from "@/lib/db";
+import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 
 type ForecastRow = {
