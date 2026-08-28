@@ -338,21 +338,21 @@ export function PartReturnStatusPage() {
           .meta-row { display: flex; justify-content: space-between; align-items: center; gap: 0.75rem; margin-bottom: 0.7rem; flex-wrap: wrap; }
           .result-info { font-size: 0.8rem; font-weight: 700; color: #bfdbfe; }
           .search-input { width: 260px; height: 34px; padding: 0.35rem 0.5rem; border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 6px; font-size: 0.8rem; color: #fff; background: rgba(17, 24, 39, 0.95); }
-          .table-wrap { overflow: auto; border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 10px; background: #fff; }
+          .table-wrap { overflow: auto; border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 10px; background: #111827; }
           .floating-table-scrollbar { position: fixed; left: 0; bottom: 0; z-index: 1100; overflow-x: auto; overflow-y: hidden; border: 1px solid rgba(148, 163, 184, 0.5); border-radius: 8px; background: rgba(255, 255, 255, 0.92); box-shadow: 0 10px 24px rgba(15, 23, 42, 0.18); display: none; max-width: 100vw; }
           .floating-table-scrollbar.is-visible { display: block; }
           .floating-table-scrollbar-inner { height: 1px; }
-          table.return-table { width: 100%; border-collapse: collapse; font-size: 0.74rem; color: #111827; }
-          .return-table th, .return-table td { border: 1px solid #d1d5db; padding: 0.4rem; white-space: nowrap; vertical-align: top; }
+          table.return-table { width: 100%; border-collapse: collapse; font-size: 0.74rem; color: #e5e7eb; }
+          .return-table th, .return-table td { border: 1px solid rgba(255, 255, 255, 0.12); padding: 0.4rem; white-space: nowrap; vertical-align: top; }
           .return-table th { background: #1f2937; color: #f8fafc; text-align: left; position: sticky; top: 0; z-index: 1; }
-          .return-table tbody tr:nth-child(even) { background: #f9fafb; }
-          .return-table tbody tr.totals-row { background: #e5e7eb; font-weight: 700; }
-          .return-table tbody tr.no-data td { text-align: center; color: #64748b; }
+          .return-table tbody tr:nth-child(even) { background: rgba(255, 255, 255, 0.03); }
+          .return-table tbody tr.totals-row { background: #374151; font-weight: 700; }
+          .return-table tbody tr.no-data td { text-align: center; color: #94a3b8; }
           .money { text-align: right; }
           .qty { text-align: center; }
           .table-input, .table-select { width: 100%; padding: 0.25rem 0.35rem; border: 1px solid rgba(255, 255, 255, 0.3); border-radius: 4px; background: rgba(255, 255, 255, 0.9); color: #111827; font-size: 0.72rem; }
-          .clickable-part-no { color: #1d4ed8; text-decoration: underline; cursor: pointer; font-weight: 500; }
-          .clickable-part-no:hover { color: #1e40af; }
+          .clickable-part-no { color: #60a5fa; text-decoration: underline; cursor: pointer; font-weight: 500; }
+          .clickable-part-no:hover { color: #93c5fd; }
           .part-info-modal-overlay { position: fixed; inset: 0; background: rgba(15, 23, 42, 0.45); display: none; align-items: center; justify-content: center; z-index: 2200; padding: 1rem; }
           .part-info-modal-overlay.is-open { display: flex; }
           .part-info-modal { width: min(980px, calc(100vw - 2rem)); max-height: calc(100vh - 2rem); overflow: auto; background: #ffffff; border: 1px solid #d1d5db; border-radius: 12px; box-shadow: 0 28px 70px rgba(15, 23, 42, 0.3); }

@@ -76,15 +76,15 @@ export function PartHistoryPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDe
           .meta-row { display: flex; align-items: center; justify-content: space-between; gap: 0.8rem; flex-wrap: wrap; margin: 0.8rem 0 0.6rem; }
           .record-count { font-size: 0.88rem; font-weight: 700; color: #bfdbfe; }
           .search-inline input { padding: 0.45rem 0.6rem; border-radius: 6px; border: 1px solid rgba(255, 255, 255, 0.2); background: rgba(17, 24, 39, 0.95); color: #fff; font-size: 0.84rem; min-width: 210px; }
-          .table-wrap { overflow-x: auto; border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 8px; background: #fff; }
-          table.history-table { width: 100%; border-collapse: collapse; font-size: 0.78rem; color: #111827; min-width: 1300px; }
-          .history-table th, .history-table td { border: 1px solid #d1d5db; padding: 0.45rem 0.6rem; text-align: left; vertical-align: top; white-space: nowrap; }
+          .table-wrap { overflow-x: auto; border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 8px; background: #111827; }
+          table.history-table { width: 100%; border-collapse: collapse; font-size: 0.78rem; color: #e5e7eb; min-width: 1300px; }
+          .history-table th, .history-table td { border: 1px solid rgba(255, 255, 255, 0.12); padding: 0.45rem 0.6rem; text-align: left; vertical-align: top; white-space: nowrap; }
           .history-table thead th { background: #1f2937; color: #f9fafb; }
-          .history-table tbody tr:nth-child(even) { background: #f9fafb; }
+          .history-table tbody tr:nth-child(even) { background: rgba(255, 255, 255, 0.03); }
           .qty { text-align: right; }
-          .no-records { text-align: center; color: #6b7280; padding: 1rem; }
-          .ticket-link { color: #2563eb; text-decoration: none; font-weight: 600; }
-          .ticket-link:hover { text-decoration: underline; }
+          .no-records { text-align: center; color: #94a3b8; padding: 1rem; }
+          .ticket-link { color: #60a5fa; text-decoration: none; font-weight: 600; }
+          .ticket-link:hover { text-decoration: underline; color: #93c5fd; }
           .history-summary-panel { margin-top: 0.8rem; font-size: 0.8rem; color: #94a3b8; line-height: 1.6; }
           .history-summary-panel p { margin: 0 0 0.3rem; }
           .history-summary-panel p:last-child { margin-bottom: 0; }

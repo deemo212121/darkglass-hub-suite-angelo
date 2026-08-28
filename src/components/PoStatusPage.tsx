@@ -157,18 +157,19 @@ export function PoStatusPage() {
           }
           .status-meta { display: flex; flex-wrap: wrap; gap: 1rem; margin-bottom: 1rem; color: #cbd5e1; font-size: 0.88rem; }
           .table-wrap { overflow-x: auto; }
-          table.status-table { width: 100%; border-collapse: collapse; background: #fff; color: #1f2937; border-radius: 8px; overflow: hidden; }
+          table.status-table { width: 100%; border-collapse: collapse; background: #111827; color: #e5e7eb; border-radius: 8px; overflow: hidden; }
           .status-table th, .status-table td {
-            border: 1px solid #d1d5db;
+            border: 1px solid rgba(255, 255, 255, 0.12);
             padding: 0.65rem 0.75rem;
             font-size: 0.82rem;
             white-space: nowrap;
             text-align: center;
           }
-          .status-table th { background: #f3f4f6; font-weight: 700; }
+          .status-table th { background: #1f2937; font-weight: 700; color: #f1f5f9; }
+          .status-table tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
           .status-table td:first-child, .status-table td:nth-child(2) { text-align: left; }
-          .ticket-link { color: #0369a1; text-decoration: none; font-weight: 600; cursor: pointer; pointer-events: auto; display: inline-block; }
-          .ticket-link:hover { text-decoration: underline; color: #0284c7; }
+          .ticket-link { color: #60a5fa; text-decoration: none; font-weight: 600; cursor: pointer; pointer-events: auto; display: inline-block; }
+          .ticket-link:hover { text-decoration: underline; color: #93c5fd; }
           .status-pill {
             display: inline-flex;
             align-items: center;

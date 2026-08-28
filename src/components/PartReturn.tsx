@@ -403,8 +403,8 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
           .field { display: flex; flex-direction: column; gap: 0.25rem; }
           .field label { font-size: 0.78rem; font-weight: 700; color: #e5e7eb; }
           .field label.required::after { content: " *"; color: #ef4444; }
-          .inventory-subhead th { background: #e2e8f0; font-size: 0.72rem; color: #1f2937; }
-          .lot-tag { font-size: 0.72rem; color: #6b7280; white-space: normal; }
+          .inventory-subhead th { background: #1e3a5f; font-size: 0.72rem; color: #fff; }
+          .lot-tag { font-size: 0.72rem; color: #94a3b8; white-space: normal; }
           .ra-label-btn { border: 1px solid #cbd5e1; background: #fff; color: #1f2937; border-radius: 6px; padding: 0.18rem 0.4rem; cursor: pointer; font-size: 0.7rem; font-weight: 600; }
           .ra-label-btn:hover { background: #f1f5f9; }
           .field input, .field select { width: 100%; padding: 0.55rem 0.65rem; border-radius: 6px; border: 1px solid rgba(255, 255, 255, 0.2); background: rgba(17, 24, 39, 0.95); color: #fff; font-size: 0.85rem; }
@@ -420,16 +420,16 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
           .tab-btn:hover { background: rgba(255, 255, 255, 0.1); }
           .tab-btn.active { background: #1d4ed8; border-color: #1d4ed8; }
           .tab-btn.active:hover { background: #1e40af; }
-          .table-wrap { overflow-x: auto; border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 8px; background: #fff; max-width: 100%; min-width: 0; }
+          .table-wrap { overflow-x: auto; border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 8px; background: #111827; max-width: 100%; min-width: 0; }
           .pr-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; white-space: nowrap; }
           .pr-table thead tr { background: #1e3a5f; color: #fff; }
           .pr-table th { padding: 0.55rem 0.7rem; text-align: left; font-weight: 700; border-bottom: 2px solid #2563eb; white-space: nowrap; }
-          .pr-table td { padding: 0.45rem 0.7rem; border-bottom: 1px solid #e5e7eb; color: #111827; vertical-align: middle; }
-          .pr-table tbody tr:hover { background: #eff6ff; }
+          .pr-table td { padding: 0.45rem 0.7rem; border-bottom: 1px solid rgba(255, 255, 255, 0.1); color: #e5e7eb; vertical-align: middle; }
+          .pr-table tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
           .pr-table tbody tr:last-child td { border-bottom: none; }
-          .ticket-link { color: #2563eb; text-decoration: none; font-weight: 600; }
-          .ticket-link:hover { text-decoration: underline; }
-          .part-link-btn { border: 0; background: transparent; padding: 0; margin: 0; font: inherit; color: #2563eb; font-weight: 600; text-decoration: none; cursor: pointer; }
+          .ticket-link { color: #60a5fa; text-decoration: none; font-weight: 600; }
+          .ticket-link:hover { text-decoration: underline; color: #93c5fd; }
+          .part-link-btn { border: 0; background: transparent; padding: 0; margin: 0; font: inherit; color: #60a5fa; font-weight: 600; text-decoration: none; cursor: pointer; }
           .part-link-btn:hover { text-decoration: underline; }
           .status-pill { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 999px; font-size: 0.72rem; font-weight: 700; white-space: nowrap; }
           .cell-input { width: 100%; min-width: 90px; padding: 0.25rem 0.4rem; border: 1px solid #d1d5db; border-radius: 4px; font-size: 0.78rem; color: #111827; }

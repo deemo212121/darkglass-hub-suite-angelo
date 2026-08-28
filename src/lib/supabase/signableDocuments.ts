@@ -1,7 +1,7 @@
 import { supabase } from "./client";
 import { deleteAgentNote } from "./csrAgentNotes";
 
-export type SignableDocumentType = "warning_form" | "w8ben" | "w4" | "w9" | "w4r" | "i9" | "wage_ack" | "car_iq_agreement" | "vehicle_agreement" | "employee_confidentiality" | "meal_rest_break" | "pto_ack" | "parts_responsibility" | "mileage_fuel" | "location_consent" | "damage" | "contractor_data" | "direct_deposit" | "promotion_form" | "action_plan_form" | "termination_form" | "substance_screening";
+export type SignableDocumentType = "warning_form" | "w8ben" | "w4" | "w9" | "w4r" | "i9" | "wage_ack" | "car_iq_agreement" | "vehicle_agreement" | "employee_confidentiality" | "meal_rest_break" | "pto_ack" | "parts_responsibility" | "mileage_fuel" | "location_consent" | "damage" | "contractor_data" | "direct_deposit" | "promotion_form" | "action_plan_form" | "termination_form" | "substance_screening" | "flash_technician_travel";
 /** "executive" only applies to promotion_form documents (see migration 0166) — every other document type just never uses that slot. */
 export type SignatureSlot = "employee" | "manager" | "senior_manager" | "hr_staff" | "executive";
 export type SignableDocumentStatus = "pending_signature" | "signed" | "confirmed" | "cancelled";
@@ -193,6 +193,30 @@ export async function confirmSignableDocument(id: string, agentNoteId: string | 
   const { error } = await supabase
     .from("hr_signable_documents")
     .update({ status: "confirmed", agent_note_id: agentNoteId, confirmed_at: new Date().toISOString() })
+    .eq("id", id);
+  if (error) throw new Error(error.message);
+}
+
+/**
+ * Undoes an already-confirmed document's employer step ONLY — reopens it
+ * for a fresh employer/manager signature while leaving the employee's
+ * original signature and formData completely untouched. Used when the
+ * employer signature needs to be redone (bad signature capture, wrong
+ * date, or any other mistake caught after confirming).
+ *
+ * Sets status back to "pending_signature" rather than "signed" — by the
+ * time a document reaches "confirmed", recipientSlot is already
+ * "hr_staff" (set when whoever signed as employer first claimed it via
+ * reassignSignableDocument), so "pending_signature" + "hr_staff" is the
+ * exact state isAwaitingEmployerStep already recognizes as awaiting an
+ * employer signature — same state "Send to Employer" produces, not a new
+ * one. The next "Add Employer Signature" claims and overwrites it as
+ * normal, no different from a first attempt.
+ */
+export async function reopenEmployerSignature(id: string): Promise<void> {
+  const { error } = await supabase
+    .from("hr_signable_documents")
+    .update({ status: "pending_signature", confirmed_at: null })
     .eq("id", id);
   if (error) throw new Error(error.message);
 }
