@@ -128,16 +128,16 @@ export function PartFootprintPage({ mod, sub }: { mod: ModuleDef; sub: SubModule
           .actions-row { display: flex; align-items: flex-start; gap: 0.6rem; flex-wrap: wrap; margin-bottom: 0.7rem; justify-content: space-between; }
           .result-info { font-size: 0.84rem; font-weight: 600; color: #bfdbfe; }
           .search-input { padding: 0.45rem 0.65rem; border-radius: 6px; border: 1px solid rgba(255, 255, 255, 0.2); background: rgba(17, 24, 39, 0.95); color: #fff; font-size: 0.84rem; min-width: 220px; }
-          .table-wrap { overflow-x: auto; border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 8px; background: #fff; max-width: 100%; min-width: 0; }
+          .table-wrap { overflow-x: auto; border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 8px; background: #111827; max-width: 100%; min-width: 0; }
           .fp-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; white-space: nowrap; }
           .fp-table thead tr { background: #1e3a5f; color: #fff; }
           .fp-table th { padding: 0.55rem 0.7rem; text-align: left; font-weight: 700; border-bottom: 2px solid #2563eb; white-space: nowrap; }
-          .fp-table td { padding: 0.45rem 0.7rem; border-bottom: 1px solid #e5e7eb; color: #111827; vertical-align: middle; }
-          .fp-table tbody tr:hover { background: #eff6ff; }
+          .fp-table td { padding: 0.45rem 0.7rem; border-bottom: 1px solid rgba(255, 255, 255, 0.1); color: #e5e7eb; vertical-align: middle; }
+          .fp-table tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
           .fp-table tbody tr:last-child td { border-bottom: none; }
-          .ticket-link { color: #2563eb; text-decoration: none; font-weight: 600; }
-          .ticket-link:hover { text-decoration: underline; }
-          .part-link-btn { border: 0; background: transparent; padding: 0; margin: 0; font: inherit; color: #2563eb; font-weight: 600; text-decoration: none; cursor: pointer; }
+          .ticket-link { color: #60a5fa; text-decoration: none; font-weight: 600; }
+          .ticket-link:hover { text-decoration: underline; color: #93c5fd; }
+          .part-link-btn { border: 0; background: transparent; padding: 0; margin: 0; font: inherit; color: #60a5fa; font-weight: 600; text-decoration: none; cursor: pointer; }
           .part-link-btn:hover { text-decoration: underline; }
           .part-info-modal-overlay { position: fixed; inset: 0; background: rgba(15, 23, 42, 0.45); display: none; align-items: center; justify-content: center; z-index: 2200; padding: 1rem; }
           .part-info-modal-overlay.is-open { display: flex; }

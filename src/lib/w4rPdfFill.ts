@@ -85,8 +85,7 @@ export async function fillW4RPdf(data: W4RFormData, signaturePngBytes?: Uint8Arr
     const png = await pdfDoc.embedPng(signaturePngBytes);
     const maxW = 360;
     const maxH = 22;
-    const scale = Math.min(maxW / png.width, maxH / png.height, 1);
-    page1.drawImage(png, { x: 74, y: 472, width: png.width * scale, height: png.height * scale });
+    page1.drawImage(png, { x: 74, y: 472, width: maxW, height: maxH });
   }
 
   // Locking every field is safe now — HR never edits this generated PDF

@@ -742,7 +742,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       await Promise.all(
         mileageOnHoldByTechnician.map((tech) => {
           const parts = tech.items.map((i) => (tech.items.some((o) => o.reason !== i.reason) ? `${i.ticketNo} (${i.reason === "manual" ? "manually held" : "no photos"})` : i.ticketNo));
-          const body = `🚫 ${tech.items.length} of your ${tech.items.length === 1 ? "ticket is" : "tickets are"} on hold for payroll: ${parts.join(", ")} — upload photos to release ${tech.items.length === 1 ? "it" : "them"}.`;
+          const body = `🚫 ${tech.items.length} of your ${tech.items.length === 1 ? "ticket is" : "tickets are"} on hold — please update: ${parts.join(", ")} — upload photos to release ${tech.items.length === 1 ? "it" : "them"}.`;
           const firstTicketNo = tech.items[0]?.ticketNo;
           return createNotification({
             recipientId: tech.profileId,

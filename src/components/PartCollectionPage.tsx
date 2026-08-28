@@ -200,11 +200,11 @@ export function PartCollectionPage({ mod, sub }: { mod: ModuleDef; sub: SubModul
           .ticket-link { color: #111827; font-weight: 700; text-decoration: none; }
           .ticket-link:hover { color: #111827; text-decoration: underline; }
           .ticket-count { color: #0b3b8f; background: #bfdbfe; border: 1px solid #60a5fa; border-radius: 999px; padding: 0.05rem 0.4rem; font-weight: 700; font-size: 0.78rem; margin-left: 0.35rem; cursor: help; }
-          .table-wrap { overflow-x: auto; border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 8px; background: #fff; max-width: 100%; min-width: 0; }
-          table.collection-table { width: 100%; min-width: 2300px; border-collapse: collapse; font-size: 0.75rem; color: #111827; }
-          .collection-table th, .collection-table td { border: 1px solid #d1d5db; padding: 0.42rem; vertical-align: top; white-space: nowrap; }
+          .table-wrap { overflow-x: auto; border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 8px; background: #111827; max-width: 100%; min-width: 0; }
+          table.collection-table { width: 100%; min-width: 2300px; border-collapse: collapse; font-size: 0.75rem; color: #e5e7eb; }
+          .collection-table th, .collection-table td { border: 1px solid rgba(255, 255, 255, 0.12); padding: 0.42rem; vertical-align: top; white-space: nowrap; }
           .collection-table th { background: #1f2937; color: #f9fafb; text-align: left; position: sticky; top: 0; z-index: 1; }
-          .collection-table tbody tr:nth-child(even) { background: #f9fafb; }
+          .collection-table tbody tr:nth-child(even) { background: rgba(255, 255, 255, 0.03); }
           .money, .num { text-align: right; }
           .comment-cell { max-width: 270px; white-space: normal; line-height: 1.25; }
           .floating-table-scrollbar { position: fixed; left: 0; bottom: 0; z-index: 1100; overflow-x: auto; overflow-y: hidden; border: 1px solid rgba(148, 163, 184, 0.5); border-radius: 8px; background: rgba(255, 255, 255, 0.92); box-shadow: 0 10px 24px rgba(15, 23, 42, 0.18); display: none; max-width: 100vw; }

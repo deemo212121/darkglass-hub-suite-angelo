@@ -18,6 +18,7 @@ import { TicketSearchFab } from "@/components/TicketSearchFab";
 import { ModuleNavigator } from "@/components/ModuleNavigator";
 import { SessionKickedOutBanner } from "@/components/SessionKickedOutBanner";
 import { TechnicianLocationTracker } from "@/components/TechnicianLocationTracker";
+import { LiveLocationProvider } from "@/lib/liveLocationContext";
 
 import appCss from "../styles.css?url";
 import faviconUrl from "@/assets/Admin Hub Solutions Logo no Text.png";
@@ -152,21 +153,23 @@ function RootComponent() {
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
         <AuthProvider>
-          <SuperSuperAdminGuard />
-          {/* Unconditional, same as SuperSuperAdminGuard above — must run
-              on /mobile too, since that's exactly where technicians clock
-              in/out day to day. */}
-          <TechnicianLocationTracker />
-          <SessionKickedOutBanner />
-          <MustChangePasswordGate hideChrome={hideChrome} />
-          {!hideChrome && <AnnouncementBanner />}
-          {!hideChrome && <PasswordChangeReminder />}
-          <Outlet />
-          {!hideChrome && <TicketSearchFab />}
-          {/* Floating module navigator — sits below the AppHeader on every
-              authenticated page so users can hop between modules without
-              going back to /home. */}
-          {!hideChrome && <ModuleNavigator />}
+          <LiveLocationProvider>
+            <SuperSuperAdminGuard />
+            {/* Unconditional, same as SuperSuperAdminGuard above — must run
+                on /mobile too, since that's exactly where technicians clock
+                in/out day to day. */}
+            <TechnicianLocationTracker />
+            <SessionKickedOutBanner />
+            <MustChangePasswordGate hideChrome={hideChrome} />
+            {!hideChrome && <AnnouncementBanner />}
+            {!hideChrome && <PasswordChangeReminder />}
+            <Outlet />
+            {!hideChrome && <TicketSearchFab />}
+            {/* Floating module navigator — sits below the AppHeader on every
+                authenticated page so users can hop between modules without
+                going back to /home. */}
+            {!hideChrome && <ModuleNavigator />}
+          </LiveLocationProvider>
         </AuthProvider>
       </ThemeProvider>
     </QueryClientProvider>

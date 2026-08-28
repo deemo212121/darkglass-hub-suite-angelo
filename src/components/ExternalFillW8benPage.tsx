@@ -20,6 +20,7 @@ import { getExternalSignableDocument, submitExternalSignature, type ExternalSign
 import { fillW8benPdf, loadBlankW8benBytes } from "@/lib/w8benPdfFill";
 import type { W8benAddress, W8benFormData } from "@/lib/w8benFormTemplate";
 import { useSignaturePad } from "@/hooks/useSignaturePad";
+import { useResponsivePdfScale } from "@/hooks/useResponsivePdfScale";
 import { SignaturePadControls } from "@/components/SignaturePad";
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 
@@ -72,7 +73,7 @@ export function ExternalFillW8benPage({ docId }: Props) {
   const [submittedPdfUrl, setSubmittedPdfUrl] = useState<string | null>(null);
 
   const [pageLoading, setPageLoading] = useState(true);
-  const [scale, setScale] = useState(1.3);
+  const { scale, containerRef } = useResponsivePdfScale(PAGE_WIDTH);
   const bgCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   const [form, setForm] = useState<W8benFormData>({
@@ -244,7 +245,7 @@ export function ExternalFillW8benPage({ docId }: Props) {
           <div className="panel p-4">
             <p className="text-xs text-muted-foreground mb-3">Fill in your information directly on the form below, add your signature, then submit.</p>
 
-            <div className="overflow-x-auto flex justify-center bg-white/5 rounded-md p-4">
+            <div ref={containerRef} className="overflow-x-auto flex justify-center bg-white/5 rounded-md p-4">
               <div className="relative bg-white shadow-lg" style={{ width: PAGE_WIDTH * scale, height: PAGE_HEIGHT * scale }}>
                 <canvas ref={bgCanvasRef} className="absolute inset-0" />
                 {pageLoading && (

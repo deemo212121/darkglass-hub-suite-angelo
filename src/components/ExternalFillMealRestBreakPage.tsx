@@ -21,6 +21,7 @@ import { fillMealRestBreakPdf, loadBlankMealRestBreakBytes } from "@/lib/mealRes
 import { MEAL_REST_BREAK_BRANCHES, type MealRestBreakFormData } from "@/lib/mealRestBreakFormTemplate";
 import { dateBlankPositions } from "@/lib/pdfDateBlankSplit";
 import { useSignaturePad } from "@/hooks/useSignaturePad";
+import { useResponsivePdfScale } from "@/hooks/useResponsivePdfScale";
 import { SignaturePadControls } from "@/components/SignaturePad";
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 
@@ -74,7 +75,7 @@ export function ExternalFillMealRestBreakPage({ docId }: Props) {
   const [submittedPdfUrl, setSubmittedPdfUrl] = useState<string | null>(null);
 
   const [pageLoading, setPageLoading] = useState(true);
-  const [scale, setScale] = useState(1.3);
+  const { scale, containerRef } = useResponsivePdfScale(PAGE_WIDTH);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   const [form, setForm] = useState<MealRestBreakFormData>({ ...BLANK_FORM });
@@ -223,7 +224,7 @@ export function ExternalFillMealRestBreakPage({ docId }: Props) {
               Read the break policy below, fill in your name and branch, add your signature, then submit.
             </p>
 
-            <div className="overflow-x-auto flex flex-col items-center bg-white/5 rounded-md p-4 gap-4">
+            <div ref={containerRef} className="overflow-x-auto flex flex-col items-center bg-white/5 rounded-md p-4 gap-4">
               <div className="relative bg-white shadow-lg" style={{ width: PAGE_WIDTH * scale, height: PAGE_HEIGHT * scale }}>
                 <canvas ref={canvasRef} className="absolute inset-0" />
                 {pageLoading && (

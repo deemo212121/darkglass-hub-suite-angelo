@@ -20,6 +20,7 @@ import { getExternalSignableDocument, submitExternalSignature, type ExternalSign
 import { fillSubstanceScreeningPdf, loadBlankSubstanceScreeningBytes } from "@/lib/substanceScreeningPdfFill";
 import type { SubstanceScreeningFormData } from "@/lib/substanceScreeningFormTemplate";
 import { useSignaturePad } from "@/hooks/useSignaturePad";
+import { useResponsivePdfScale } from "@/hooks/useResponsivePdfScale";
 import { SignaturePadControls } from "@/components/SignaturePad";
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 
@@ -49,6 +50,8 @@ const BLANK_FORM: SubstanceScreeningFormData = {
   employeeName: "",
   dateSigned: "",
   signatureDataUrl: "",
+  employerDateSigned: "",
+  employerSignatureDataUrl: "",
 };
 
 export function ExternalFillSubstanceScreeningPage({ docId }: Props) {
@@ -60,7 +63,7 @@ export function ExternalFillSubstanceScreeningPage({ docId }: Props) {
   const [submittedPdfUrl, setSubmittedPdfUrl] = useState<string | null>(null);
 
   const [pageLoading, setPageLoading] = useState(true);
-  const [scale, setScale] = useState(1.3);
+  const { scale, containerRef } = useResponsivePdfScale(PAGE_WIDTH);
   const [numPages, setNumPages] = useState(0);
   const pdfDocRef = useRef<any>(null);
   const pageCanvasRefs = useRef<(HTMLCanvasElement | null)[]>([]);
@@ -222,7 +225,7 @@ export function ExternalFillSubstanceScreeningPage({ docId }: Props) {
               Read the agreement below, fill in your information, add your signature, then submit.
             </p>
 
-            <div className="overflow-x-auto flex flex-col items-center bg-white/5 rounded-md p-4 gap-4">
+            <div ref={containerRef} className="overflow-x-auto flex flex-col items-center bg-white/5 rounded-md p-4 gap-4">
               {Array.from({ length: numPages || 1 }, (_, i) => i + 1).map((pageNum) => (
                 <div key={pageNum} className="relative bg-white shadow-lg" style={{ width: PAGE_WIDTH * scale, height: PAGE_HEIGHT * scale }}>
                   <canvas ref={(el) => { pageCanvasRefs.current[pageNum - 1] = el; }} className="absolute inset-0" />

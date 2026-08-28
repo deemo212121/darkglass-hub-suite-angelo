@@ -149,15 +149,13 @@ export async function fillI9Pdf(data: I9FormData, employeeSigBytes?: Uint8Array,
     const png = await pdfDoc.embedPng(employeeSigBytes);
     const maxW = 300;
     const maxH = 13;
-    const scale = Math.min(maxW / png.width, maxH / png.height, 1);
-    page1.drawImage(png, { x: 44, y: 421, width: png.width * scale, height: png.height * scale });
+    page1.drawImage(png, { x: 44, y: 421, width: maxW, height: maxH });
   }
   if (employerSigBytes) {
     const png = await pdfDoc.embedPng(employerSigBytes);
     const maxW = 185;
     const maxH = 18;
-    const scale = Math.min(maxW / png.width, maxH / png.height, 1);
-    page1.drawImage(png, { x: 296, y: 82, width: png.width * scale, height: png.height * scale });
+    page1.drawImage(png, { x: 296, y: 82, width: maxW, height: maxH });
   }
 
   // Locking every field is safe now regardless of whether Section 2 is

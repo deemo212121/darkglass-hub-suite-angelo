@@ -5,8 +5,18 @@
  * (see technicianLocationPings.ts / TechnicianLocationTracker.tsx) — a
  * technician only ever shows a live point while they're actually clocked in
  * AND have a confirmed Location Consent document on file; everyone else
- * (or anyone whose last ping has gone stale) falls back to the schedule
- * proxy exactly as before this existed.
+ * falls back to the schedule proxy exactly as before this existed.
+ *
+ * A ping is kept and preferred over the schedule proxy for as long as its
+ * row exists, however old — a technician who loses signal or closes the tab
+ * mid-shift should still show at their last real position, not silently
+ * snap back to their branch/ticket address just because a few minutes
+ * passed. The row only goes away (via clearMyLocationPing) the moment they
+ * actually clock out, which is the real "reset" boundary here: on clock-out
+ * TechnicianLocationTracker.tsx deletes it, and everyone naturally falls
+ * back to the schedule proxy for the next day. LIVE_FRESH_MS below is
+ * cosmetic only now — "Live" vs. "last known" wording, never a cutoff that
+ * drops the position.
  */
 
 import { supabase } from "./client";
@@ -15,10 +25,10 @@ import { getCompanyLocationPings } from "./technicianLocationPings";
 import { statusGroupOf } from "@/lib/ticketData";
 import { normalizeTimePeriod, FRAME_START_TIME } from "@/lib/timeframes";
 
-export type WhereaboutsStatus = "current" | "last" | "none";
+export type WhereaboutsStatus = "current" | "scheduled" | "last" | "none";
 
-/** A live ping is only trusted for this long before falling back to the schedule proxy — covers a technician who closed the tab/lost signal without formally clocking out. */
-const LIVE_STALE_MS = 15 * 60 * 1000;
+/** Below this age a ping reads as "Live"; older is still shown (and still preferred over the schedule proxy) but labeled "Active" instead — see the header comment above for why nothing gets dropped anymore. Exported so the map legend (TechnicianWhereaboutsPage.tsx) can state the real cutoff instead of a hardcoded number that could drift out of sync. */
+export const LIVE_FRESH_MS = 15 * 60 * 1000;
 
 export interface TechnicianWhereabouts {
   name: string;
@@ -28,8 +38,12 @@ export interface TechnicianWhereabouts {
   repairStatus: string | null;
   timeSlot: string | null;
   address: string | null;
-  /** Real GPS, when a fresh one exists — see LIVE_STALE_MS. Additive: `status` above still reflects today's job-schedule state regardless of whether this is set. */
-  liveLocation: { lat: number; lng: number; updatedAt: string } | null;
+  /**
+   * Real GPS, whenever a ping row exists for this technician — kept
+   * regardless of age (see the file header comment). Additive: `status`
+   * above still reflects today's job-schedule state independent of this.
+   */
+  liveLocation: { lat: number; lng: number; updatedAt: string; isLive: boolean } | null;
 }
 
 function formatAddress(row: any): string {
@@ -45,12 +59,22 @@ function slotSortKey(timeSlot: string | null | undefined): string {
 /**
  * One row per active technician (from getCompanyTechnicians — already
  * excludes deactivated accounts), each resolved to today's schedule:
- *  - "current": earliest still-open ticket scheduled today, by time slot.
- *  - "last": no open ticket left today, but at least one was completed —
- *    their last completed stop (by time slot). Cancelled-only days don't
- *    count here since a cancelled call is no real signal the tech ever
- *    went there.
- *  - "none": nothing scheduled today (or only cancelled calls).
+ *  - "current": a ticket the technician has actually checked into via the
+ *    mobile On-Site Check-In card (onsite_arrived_at set, onsite_done_at
+ *    not yet) — being scheduled for today alone no longer counts; see
+ *    migration 0202. If more than one somehow qualifies, the most
+ *    recently arrived wins.
+ *  - "scheduled": no on-site check-in in progress, but at least one open
+ *    ticket is on today's schedule — their earliest one, by time slot.
+ *    Distinct from "none" so "hasn't started yet" doesn't read as "nothing
+ *    to do today" (a real distinction technicians and dispatchers both
+ *    care about — see the wording issue this fixed).
+ *  - "last": no on-site check-in and nothing left open today, but at least
+ *    one ticket was completed today — their last completed stop (by time
+ *    slot). Cancelled-only days don't count here since a cancelled call is
+ *    no real signal the tech ever went there.
+ *  - "none": nothing scheduled, checked into, or completed today (or only
+ *    cancelled calls).
  */
 export async function getTechnicianWhereabouts(): Promise<TechnicianWhereabouts[]> {
   const technicians = await getCompanyTechnicians();
@@ -60,7 +84,7 @@ export async function getTechnicianWhereabouts(): Promise<TechnicianWhereabouts[
   const [{ data, error }, pings] = await Promise.all([
     supabase
       .from("tickets")
-      .select("ticket_no, technician, status, time_slot, customer:customers ( address, address2, city, state, zip )")
+      .select("ticket_no, technician, status, time_slot, onsite_arrived_at, onsite_done_at, customer:customers ( address, address2, city, state, zip )")
       .eq("schedule_date", today),
     // Best-effort: a non-Admin/SuperAdmin caller would get an RLS-empty
     // result here, not an error, but this function itself is only ever
@@ -86,21 +110,34 @@ export async function getTechnicianWhereabouts(): Promise<TechnicianWhereabouts[
   const now = Date.now();
   const liveByProfileId = new Map(
     pings
-      .filter((p) => now - new Date(p.updatedAt).getTime() < LIVE_STALE_MS)
-      .map((p) => [p.profileId, { lat: p.lat, lng: p.lng, updatedAt: p.updatedAt }])
+      // Every ping row is kept, however old — see the file header comment.
+      // isLive is cosmetic labeling only, never a reason to drop a position.
+      .map((p) => [p.profileId, { lat: p.lat, lng: p.lng, updatedAt: p.updatedAt, isLive: now - new Date(p.updatedAt).getTime() < LIVE_FRESH_MS }])
   );
 
   return technicians.map((tech): TechnicianWhereabouts => {
     const rows = byTech.get(tech.name.trim().toLowerCase()) ?? [];
-    const base = { name: tech.name, branch: tech.branch, liveLocation: liveByProfileId.get(tech.id) ?? null };
+    const base = {
+      name: tech.name,
+      branch: tech.branch,
+      liveLocation: liveByProfileId.get(tech.id) ?? null,
+    };
     if (rows.length === 0) {
       return { ...base, status: "none", ticketNo: null, repairStatus: null, timeSlot: null, address: null };
+    }
+
+    const checkedIn = rows
+      .filter((r) => r.onsite_arrived_at && !r.onsite_done_at)
+      .sort((a, b) => new Date(b.onsite_arrived_at).getTime() - new Date(a.onsite_arrived_at).getTime());
+    if (checkedIn.length > 0) {
+      const stop = checkedIn[0];
+      return { ...base, status: "current", ticketNo: stop.ticket_no, repairStatus: stop.status, timeSlot: stop.time_slot, address: formatAddress(stop.customer ?? {}) };
     }
 
     const open = rows.filter((r) => statusGroupOf(r.status) === "open").sort((a, b) => slotSortKey(a.time_slot).localeCompare(slotSortKey(b.time_slot)));
     if (open.length > 0) {
       const stop = open[0];
-      return { ...base, status: "current", ticketNo: stop.ticket_no, repairStatus: stop.status, timeSlot: stop.time_slot, address: formatAddress(stop.customer ?? {}) };
+      return { ...base, status: "scheduled", ticketNo: stop.ticket_no, repairStatus: stop.status, timeSlot: stop.time_slot, address: formatAddress(stop.customer ?? {}) };
     }
 
     const completed = rows.filter((r) => statusGroupOf(r.status) === "completed").sort((a, b) => slotSortKey(b.time_slot).localeCompare(slotSortKey(a.time_slot)));
@@ -124,6 +161,9 @@ export interface TechnicianRouteStop {
   statusGroup: ReturnType<typeof statusGroupOf>;
   timeSlot: string | null;
   address: string;
+  /** Real On-Site Check-In timestamps (migration 0202) — when the technician tapped "I'm Here"/"I'm Done" on this stop today, for the Today's Route popup's "Timestamp (Start - End)" row. Either can be null: not yet arrived, or arrived but not yet marked done. */
+  arrivedAt: string | null;
+  doneAt: string | null;
 }
 
 /** Every ticket scheduled today for one technician, in time-slot order — feeds the "today's route" map view opened by clicking their dot. */
@@ -131,7 +171,7 @@ export async function getTechnicianTodayRoute(technicianName: string): Promise<T
   const today = new Date().toISOString().slice(0, 10);
   const { data, error } = await supabase
     .from("tickets")
-    .select("ticket_no, technician, status, time_slot, customer:customers ( address, address2, city, state, zip )")
+    .select("ticket_no, technician, status, time_slot, onsite_arrived_at, onsite_done_at, customer:customers ( address, address2, city, state, zip )")
     .eq("schedule_date", today);
   if (error) {
     console.error("getTechnicianTodayRoute error:", error.message);
@@ -146,6 +186,8 @@ export async function getTechnicianTodayRoute(technicianName: string): Promise<T
       statusGroup: statusGroupOf(row.status),
       timeSlot: row.time_slot as string | null,
       address: formatAddress(row.customer ?? {}),
+      arrivedAt: row.onsite_arrived_at as string | null,
+      doneAt: row.onsite_done_at as string | null,
     }))
     .sort((a, b) => slotSortKey(a.timeSlot).localeCompare(slotSortKey(b.timeSlot)));
 }

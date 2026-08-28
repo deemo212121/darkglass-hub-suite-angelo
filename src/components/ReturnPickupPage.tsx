@@ -230,10 +230,11 @@ export function ReturnPickupPage() {
           .meta-row { display: flex; justify-content: space-between; align-items: center; gap: 0.75rem; margin-bottom: 0.7rem; flex-wrap: wrap; }
           .result-info { font-size: 0.8rem; font-weight: 700; color: #bfdbfe; }
           .search-input { width: 260px; height: 34px; padding: 0.35rem 0.5rem; border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 6px; font-size: 0.8rem; color: #fff; background: rgba(17, 24, 39, 0.95); }
-          .table-wrap { overflow: auto; border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 10px; background: #fff; }
-          table.data-table { width: 100%; border-collapse: collapse; background: #fff; color: #1f2937; }
-          .data-table th, .data-table td { border: 1px solid #d1d5db; padding: 0.5rem 0.6rem; font-size: 0.82rem; white-space: nowrap; text-align: center; }
-          .data-table th { background: #f3f4f6; font-weight: 700; }
+          .table-wrap { overflow: auto; border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 10px; background: #111827; }
+          table.data-table { width: 100%; border-collapse: collapse; background: #111827; color: #e5e7eb; }
+          .data-table th, .data-table td { border: 1px solid rgba(255, 255, 255, 0.12); padding: 0.5rem 0.6rem; font-size: 0.82rem; white-space: nowrap; text-align: center; }
+          .data-table th { background: #1f2937; font-weight: 700; color: #f1f5f9; }
+          .data-table tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
           .data-table td:first-child, .data-table td:nth-child(3), .data-table td:nth-child(4) { text-align: left; }
           .cell-input { width: 100%; min-width: 90px; padding: 0.25rem 0.4rem; border: 1px solid #d1d5db; border-radius: 4px; font-size: 0.78rem; color: #111827; }
           .floating-table-scrollbar { position: fixed; left: 0; bottom: 0; z-index: 1100; overflow-x: auto; overflow-y: hidden; border: 1px solid rgba(148, 163, 184, 0.5); border-radius: 8px; background: rgba(255, 255, 255, 0.92); box-shadow: 0 10px 24px rgba(15, 23, 42, 0.18); display: none; max-width: 100vw; }

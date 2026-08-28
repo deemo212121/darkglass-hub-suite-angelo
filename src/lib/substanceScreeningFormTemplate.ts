@@ -7,12 +7,13 @@
  * directly onto the page via pdf-lib in substanceScreeningPdfFill.ts,
  * there's nothing to name.
  *
- * Single-party, same shape as Car IQ/Vehicle Agreement/Employee
- * Confidentiality — one recipient fills in and signs, no employer/HR
- * co-signature step. The source PDF's own "Company Representative
- * Signature" line is left blank on the generated PDF (filled by hand
- * later, outside this app) — no separate "I AGREE" checkbox, signing
- * itself is the agreement.
+ * Genuine two-party flow, same shape as Location Sharing Consent: the
+ * employee fills in and signs first (FillSubstanceScreeningPage.tsx), and
+ * the source PDF's own "Company Representative Signature" line — no
+ * separate "I AGREE" checkbox, signing itself is the agreement — is added
+ * afterward, separately, by HR inside ReportHRDaily.tsx's "Complete
+ * Employer Signature" dialog, a plain signature pad since the source
+ * document asks for nothing else from the employer side.
  *
  * No branch field — unlike most of the other technician forms, this PDF
  * never references a branch anywhere.
@@ -25,4 +26,7 @@ export interface SubstanceScreeningFormData {
   dateSigned: string;
   /** Raw canvas PNG as a data: URL — see w4FormTemplate.ts's header comment for why this is stored alongside the durable Firebase Storage signature URL. */
   signatureDataUrl: string;
+  /** Blank until HR completes the "Complete Employer Signature" step. */
+  employerDateSigned: string;
+  employerSignatureDataUrl: string;
 }

@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as TimecardRouteImport } from './routes/timecard'
 import { Route as SuperadminRouteImport } from './routes/superadmin'
 import { Route as SignBundleExternalRouteImport } from './routes/sign-bundle-external'
+import { Route as SignBundleEmployerRouteImport } from './routes/sign-bundle-employer'
 import { Route as SignBundleRouteImport } from './routes/sign-bundle'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as ServicepowerTestRouteImport } from './routes/servicepower-test'
@@ -64,6 +65,8 @@ import { Route as FillLocationConsentExternalDocIdRouteImport } from './routes/f
 import { Route as FillI9DocIdRouteImport } from './routes/fill-i9.$docId'
 import { Route as FillI9ExternalDocIdRouteImport } from './routes/fill-i9-external.$docId'
 import { Route as FillFormFormIdRouteImport } from './routes/fill-form.$formId'
+import { Route as FillFlashTechnicianTravelDocIdRouteImport } from './routes/fill-flash-technician-travel.$docId'
+import { Route as FillFlashTechnicianTravelExternalDocIdRouteImport } from './routes/fill-flash-technician-travel-external.$docId'
 import { Route as FillEmployeeConfidentialityDocIdRouteImport } from './routes/fill-employee-confidentiality.$docId'
 import { Route as FillEmployeeConfidentialityExternalDocIdRouteImport } from './routes/fill-employee-confidentiality-external.$docId'
 import { Route as FillDirectDepositDocIdRouteImport } from './routes/fill-direct-deposit.$docId'
@@ -95,6 +98,11 @@ const SuperadminRoute = SuperadminRouteImport.update({
 const SignBundleExternalRoute = SignBundleExternalRouteImport.update({
   id: '/sign-bundle-external',
   path: '/sign-bundle-external',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SignBundleEmployerRoute = SignBundleEmployerRouteImport.update({
+  id: '/sign-bundle-employer',
+  path: '/sign-bundle-employer',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SignBundleRoute = SignBundleRouteImport.update({
@@ -372,6 +380,18 @@ const FillFormFormIdRoute = FillFormFormIdRouteImport.update({
   path: '/fill-form/$formId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const FillFlashTechnicianTravelDocIdRoute =
+  FillFlashTechnicianTravelDocIdRouteImport.update({
+    id: '/fill-flash-technician-travel/$docId',
+    path: '/fill-flash-technician-travel/$docId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const FillFlashTechnicianTravelExternalDocIdRoute =
+  FillFlashTechnicianTravelExternalDocIdRouteImport.update({
+    id: '/fill-flash-technician-travel-external/$docId',
+    path: '/fill-flash-technician-travel-external/$docId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const FillEmployeeConfidentialityDocIdRoute =
   FillEmployeeConfidentialityDocIdRouteImport.update({
     id: '/fill-employee-confidentiality/$docId',
@@ -479,6 +499,7 @@ export interface FileRoutesByFullPath {
   '/servicepower-test': typeof ServicepowerTestRoute
   '/settings': typeof SettingsRoute
   '/sign-bundle': typeof SignBundleRoute
+  '/sign-bundle-employer': typeof SignBundleEmployerRoute
   '/sign-bundle-external': typeof SignBundleExternalRoute
   '/superadmin': typeof SuperadminRouteWithChildren
   '/timecard': typeof TimecardRoute
@@ -496,6 +517,8 @@ export interface FileRoutesByFullPath {
   '/fill-direct-deposit/$docId': typeof FillDirectDepositDocIdRoute
   '/fill-employee-confidentiality-external/$docId': typeof FillEmployeeConfidentialityExternalDocIdRoute
   '/fill-employee-confidentiality/$docId': typeof FillEmployeeConfidentialityDocIdRoute
+  '/fill-flash-technician-travel-external/$docId': typeof FillFlashTechnicianTravelExternalDocIdRoute
+  '/fill-flash-technician-travel/$docId': typeof FillFlashTechnicianTravelDocIdRoute
   '/fill-form/$formId': typeof FillFormFormIdRoute
   '/fill-i9-external/$docId': typeof FillI9ExternalDocIdRoute
   '/fill-i9/$docId': typeof FillI9DocIdRoute
@@ -553,6 +576,7 @@ export interface FileRoutesByTo {
   '/servicepower-test': typeof ServicepowerTestRoute
   '/settings': typeof SettingsRoute
   '/sign-bundle': typeof SignBundleRoute
+  '/sign-bundle-employer': typeof SignBundleEmployerRoute
   '/sign-bundle-external': typeof SignBundleExternalRoute
   '/superadmin': typeof SuperadminRouteWithChildren
   '/timecard': typeof TimecardRoute
@@ -570,6 +594,8 @@ export interface FileRoutesByTo {
   '/fill-direct-deposit/$docId': typeof FillDirectDepositDocIdRoute
   '/fill-employee-confidentiality-external/$docId': typeof FillEmployeeConfidentialityExternalDocIdRoute
   '/fill-employee-confidentiality/$docId': typeof FillEmployeeConfidentialityDocIdRoute
+  '/fill-flash-technician-travel-external/$docId': typeof FillFlashTechnicianTravelExternalDocIdRoute
+  '/fill-flash-technician-travel/$docId': typeof FillFlashTechnicianTravelDocIdRoute
   '/fill-form/$formId': typeof FillFormFormIdRoute
   '/fill-i9-external/$docId': typeof FillI9ExternalDocIdRoute
   '/fill-i9/$docId': typeof FillI9DocIdRoute
@@ -628,6 +654,7 @@ export interface FileRoutesById {
   '/servicepower-test': typeof ServicepowerTestRoute
   '/settings': typeof SettingsRoute
   '/sign-bundle': typeof SignBundleRoute
+  '/sign-bundle-employer': typeof SignBundleEmployerRoute
   '/sign-bundle-external': typeof SignBundleExternalRoute
   '/superadmin': typeof SuperadminRouteWithChildren
   '/timecard': typeof TimecardRoute
@@ -645,6 +672,8 @@ export interface FileRoutesById {
   '/fill-direct-deposit/$docId': typeof FillDirectDepositDocIdRoute
   '/fill-employee-confidentiality-external/$docId': typeof FillEmployeeConfidentialityExternalDocIdRoute
   '/fill-employee-confidentiality/$docId': typeof FillEmployeeConfidentialityDocIdRoute
+  '/fill-flash-technician-travel-external/$docId': typeof FillFlashTechnicianTravelExternalDocIdRoute
+  '/fill-flash-technician-travel/$docId': typeof FillFlashTechnicianTravelDocIdRoute
   '/fill-form/$formId': typeof FillFormFormIdRoute
   '/fill-i9-external/$docId': typeof FillI9ExternalDocIdRoute
   '/fill-i9/$docId': typeof FillI9DocIdRoute
@@ -704,6 +733,7 @@ export interface FileRouteTypes {
     | '/servicepower-test'
     | '/settings'
     | '/sign-bundle'
+    | '/sign-bundle-employer'
     | '/sign-bundle-external'
     | '/superadmin'
     | '/timecard'
@@ -721,6 +751,8 @@ export interface FileRouteTypes {
     | '/fill-direct-deposit/$docId'
     | '/fill-employee-confidentiality-external/$docId'
     | '/fill-employee-confidentiality/$docId'
+    | '/fill-flash-technician-travel-external/$docId'
+    | '/fill-flash-technician-travel/$docId'
     | '/fill-form/$formId'
     | '/fill-i9-external/$docId'
     | '/fill-i9/$docId'
@@ -778,6 +810,7 @@ export interface FileRouteTypes {
     | '/servicepower-test'
     | '/settings'
     | '/sign-bundle'
+    | '/sign-bundle-employer'
     | '/sign-bundle-external'
     | '/superadmin'
     | '/timecard'
@@ -795,6 +828,8 @@ export interface FileRouteTypes {
     | '/fill-direct-deposit/$docId'
     | '/fill-employee-confidentiality-external/$docId'
     | '/fill-employee-confidentiality/$docId'
+    | '/fill-flash-technician-travel-external/$docId'
+    | '/fill-flash-technician-travel/$docId'
     | '/fill-form/$formId'
     | '/fill-i9-external/$docId'
     | '/fill-i9/$docId'
@@ -852,6 +887,7 @@ export interface FileRouteTypes {
     | '/servicepower-test'
     | '/settings'
     | '/sign-bundle'
+    | '/sign-bundle-employer'
     | '/sign-bundle-external'
     | '/superadmin'
     | '/timecard'
@@ -869,6 +905,8 @@ export interface FileRouteTypes {
     | '/fill-direct-deposit/$docId'
     | '/fill-employee-confidentiality-external/$docId'
     | '/fill-employee-confidentiality/$docId'
+    | '/fill-flash-technician-travel-external/$docId'
+    | '/fill-flash-technician-travel/$docId'
     | '/fill-form/$formId'
     | '/fill-i9-external/$docId'
     | '/fill-i9/$docId'
@@ -927,6 +965,7 @@ export interface RootRouteChildren {
   ServicepowerTestRoute: typeof ServicepowerTestRoute
   SettingsRoute: typeof SettingsRoute
   SignBundleRoute: typeof SignBundleRoute
+  SignBundleEmployerRoute: typeof SignBundleEmployerRoute
   SignBundleExternalRoute: typeof SignBundleExternalRoute
   SuperadminRoute: typeof SuperadminRouteWithChildren
   TimecardRoute: typeof TimecardRoute
@@ -944,6 +983,8 @@ export interface RootRouteChildren {
   FillDirectDepositDocIdRoute: typeof FillDirectDepositDocIdRoute
   FillEmployeeConfidentialityExternalDocIdRoute: typeof FillEmployeeConfidentialityExternalDocIdRoute
   FillEmployeeConfidentialityDocIdRoute: typeof FillEmployeeConfidentialityDocIdRoute
+  FillFlashTechnicianTravelExternalDocIdRoute: typeof FillFlashTechnicianTravelExternalDocIdRoute
+  FillFlashTechnicianTravelDocIdRoute: typeof FillFlashTechnicianTravelDocIdRoute
   FillFormFormIdRoute: typeof FillFormFormIdRoute
   FillI9ExternalDocIdRoute: typeof FillI9ExternalDocIdRoute
   FillI9DocIdRoute: typeof FillI9DocIdRoute
@@ -1005,6 +1046,13 @@ declare module '@tanstack/react-router' {
       path: '/sign-bundle-external'
       fullPath: '/sign-bundle-external'
       preLoaderRoute: typeof SignBundleExternalRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/sign-bundle-employer': {
+      id: '/sign-bundle-employer'
+      path: '/sign-bundle-employer'
+      fullPath: '/sign-bundle-employer'
+      preLoaderRoute: typeof SignBundleEmployerRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/sign-bundle': {
@@ -1371,6 +1419,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof FillFormFormIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/fill-flash-technician-travel/$docId': {
+      id: '/fill-flash-technician-travel/$docId'
+      path: '/fill-flash-technician-travel/$docId'
+      fullPath: '/fill-flash-technician-travel/$docId'
+      preLoaderRoute: typeof FillFlashTechnicianTravelDocIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/fill-flash-technician-travel-external/$docId': {
+      id: '/fill-flash-technician-travel-external/$docId'
+      path: '/fill-flash-technician-travel-external/$docId'
+      fullPath: '/fill-flash-technician-travel-external/$docId'
+      preLoaderRoute: typeof FillFlashTechnicianTravelExternalDocIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/fill-employee-confidentiality/$docId': {
       id: '/fill-employee-confidentiality/$docId'
       path: '/fill-employee-confidentiality/$docId'
@@ -1542,6 +1604,7 @@ const rootRouteChildren: RootRouteChildren = {
   ServicepowerTestRoute: ServicepowerTestRoute,
   SettingsRoute: SettingsRoute,
   SignBundleRoute: SignBundleRoute,
+  SignBundleEmployerRoute: SignBundleEmployerRoute,
   SignBundleExternalRoute: SignBundleExternalRoute,
   SuperadminRoute: SuperadminRouteWithChildren,
   TimecardRoute: TimecardRoute,
@@ -1560,6 +1623,9 @@ const rootRouteChildren: RootRouteChildren = {
   FillEmployeeConfidentialityExternalDocIdRoute:
     FillEmployeeConfidentialityExternalDocIdRoute,
   FillEmployeeConfidentialityDocIdRoute: FillEmployeeConfidentialityDocIdRoute,
+  FillFlashTechnicianTravelExternalDocIdRoute:
+    FillFlashTechnicianTravelExternalDocIdRoute,
+  FillFlashTechnicianTravelDocIdRoute: FillFlashTechnicianTravelDocIdRoute,
   FillFormFormIdRoute: FillFormFormIdRoute,
   FillI9ExternalDocIdRoute: FillI9ExternalDocIdRoute,
   FillI9DocIdRoute: FillI9DocIdRoute,

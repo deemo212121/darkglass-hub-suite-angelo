@@ -164,7 +164,18 @@ export function canReviewCorrectionStage(
   stage: CorrectionStage,
   viewerProfileId: string | null,
   viewerRole: string | null | undefined,
-  viewerExtraRoles?: string[] | null
+  viewerExtraRoles?: string[] | null,
+  /** The viewer's own display_name — only needed for the manager's-manager
+   *  fallback below; every existing caller that omits it just loses the
+   *  fallback, not correctness for the common case. */
+  viewerDisplayName?: string | null,
+  /** The requester's manager's OWN manager_name (profiles.manager_name of
+   *  whoever request.managerId resolved to), looked up fresh by the
+   *  caller — same "walk up one level" fallback canReviewPtoStage uses.
+   *  Lets that person (a senior manager, in practice) also act on the
+   *  manager stage when the direct manager is unavailable, scoped only to
+   *  this requester's own chain, not senior managers in general. */
+  requesterManagersManagerName?: string | null
 ): boolean {
   // Held roles pile up: a secondary HR/FINANCE/MANAGER role grants that
   // stage's authority just as well as holding it as the primary role.
@@ -172,7 +183,11 @@ export function canReviewCorrectionStage(
   const has = (r: string) => heldRoles.includes(r);
   if (has("SUPERADMIN") || has("SUPERSUPERADMIN")) return true;
   if (stage === "manager") {
-    if (request.managerId) return request.managerId === viewerProfileId;
+    if (request.managerId === viewerProfileId) return true;
+    const managersManagerName = (requesterManagersManagerName || "").trim().toLowerCase();
+    const viewerName = (viewerDisplayName || "").trim().toLowerCase();
+    if (managersManagerName && viewerName && managersManagerName === viewerName) return true;
+    if (request.managerId) return false;
     return has("MANAGER");
   }
   if (request.managerStatus !== "approved") return false;

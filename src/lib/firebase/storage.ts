@@ -571,6 +571,17 @@ export async function uploadMileageFuelForm(companyId: string, employeeName: str
   return getDownloadURL(snapshot.ref);
 }
 
+export async function uploadFlashTechnicianTravelForm(companyId: string, employeeName: string, pdfBlob: Blob): Promise<string> {
+  if (!isFirebaseReady() || !storage) {
+    throw new Error("Firebase Storage not configured");
+  }
+  const folder = `companies/${companyId}/flash-technician-travel-forms`;
+  const objectName = `${Date.now()}-${sanitizeFileName(employeeName || "flash-technician-travel")}.pdf`;
+  const objectRef = ref(storage, `${folder}/${objectName}`);
+  const snapshot = await uploadBytes(objectRef, pdfBlob, { contentType: "application/pdf" });
+  return getDownloadURL(snapshot.ref);
+}
+
 export async function uploadLocationConsentForm(companyId: string, employeeName: string, pdfBlob: Blob): Promise<string> {
   if (!isFirebaseReady() || !storage) {
     throw new Error("Firebase Storage not configured");

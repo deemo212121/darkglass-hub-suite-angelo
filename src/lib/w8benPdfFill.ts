@@ -100,9 +100,8 @@ export async function fillW8benPdf(data: W8benFormData, signaturePngBytes?: Uint
     const sigField = form.getField(F("f_20[0]"));
     const rect = sigField.acroField.getWidgets()[0].getRectangle();
     const png = await pdfDoc.embedPng(signaturePngBytes);
-    const scale = Math.min(rect.width / png.width, (rect.height * 2.5) / png.height, 1);
     const page = pdfDoc.getPage(0);
-    page.drawImage(png, { x: rect.x, y: rect.y, width: png.width * scale, height: png.height * scale });
+    page.drawImage(png, { x: rect.x, y: rect.y, width: rect.width, height: rect.height });
     // NOT form.removeField(sigField) — pdf-lib's removeField/flatten both
     // crash ("Unexpected N type: undefined") on this field, since a never-
     // signed PDFSignature widget has no appearance stream to look up. The

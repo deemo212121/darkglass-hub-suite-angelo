@@ -27,6 +27,8 @@ import { useAuth } from "@/lib/auth";
 import { getMyProfileId } from "@/lib/supabase/users";
 import { getEntryForDate } from "@/lib/supabase/timecards";
 import { hasConfirmedLocationConsent, upsertMyLocationPing, clearMyLocationPing } from "@/lib/supabase/technicianLocationPings";
+import { setLocationSharingStatus } from "@/lib/locationSharingStatus";
+import { useLiveLocation } from "@/lib/liveLocationContext";
 
 const POLL_MS = 60_000;
 const UPLOAD_THROTTLE_MS = 60_000;
@@ -43,6 +45,7 @@ function isTechnicianRole(role: string | null, extraRoles: string[]): boolean {
 
 export function TechnicianLocationTracker() {
   const { ready, uid, role, extraRoles } = useAuth();
+  const { setLiveLocation } = useLiveLocation();
   const [profileId, setProfileId] = useState<string | null>(null);
   const [consentConfirmed, setConsentConfirmed] = useState(false);
   const [clockedIn, setClockedIn] = useState(false);
@@ -53,6 +56,7 @@ export function TechnicianLocationTracker() {
   const lastUploadRef = useRef(0);
   const promptHandledThisShiftRef = useRef(false);
   const loadedDateKeyRef = useRef<string>(todayKey());
+  const wakeLockRef = useRef<{ release: () => Promise<void> } | null>(null);
 
   const eligible = ready && !!uid && isTechnicianRole(role, extraRoles);
 
@@ -72,6 +76,14 @@ export function TechnicianLocationTracker() {
   }, [eligible, uid]);
 
   const armed = eligible && !!profileId && consentConfirmed;
+
+  // Publish the same gating state other components (e.g. MobileTechApp.tsx's
+  // On-Site Check-In card) need to explain *why* there's no live position
+  // yet, rather than just guessing from a bare null.
+  useEffect(() => {
+    setLiveLocation({ consentConfirmed, clockedIn });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [consentConfirmed, clockedIn]);
 
   // Poll "am I clocked in today" independently of either clock-in UI —
   // same cadence TimeClockButtons.tsx already uses for its own resync.
@@ -108,6 +120,7 @@ export function TechnicianLocationTracker() {
       watchIdRef.current = null;
     }
     setWatching(false);
+    setLiveLocation({ watching: false, position: null });
   };
 
   const startWatch = () => {
@@ -116,15 +129,26 @@ export function TechnicianLocationTracker() {
     watchIdRef.current = navigator.geolocation.watchPosition(
       (pos) => {
         setWatching(true);
+        // Local consumers (the shared context) get every reading — cheap,
+        // no network cost. The upload to technician_location_pings below
+        // stays throttled since that one's a real network write.
+        setLiveLocation({ watching: true, position: { lat: pos.coords.latitude, lng: pos.coords.longitude } });
         const now = Date.now();
         if (now - lastUploadRef.current < UPLOAD_THROTTLE_MS) return;
         lastUploadRef.current = now;
+        // Deliberately NOT pos.timestamp — Safari/WebKit doesn't reliably
+        // report it in epoch milliseconds the way Chrome does, and a
+        // misinterpreted unit there produces a garbage date far enough out
+        // of range that Postgres rejects the write outright (confirmed via
+        // a real WebKit reproduction: "time zone displacement out of
+        // range"). The device's own current time is what "now" means for
+        // a live ping anyway.
         upsertMyLocationPing(
           profileId,
           pos.coords.latitude,
           pos.coords.longitude,
           pos.coords.accuracy ?? null,
-          new Date(pos.timestamp).toISOString()
+          new Date(now).toISOString()
         ).catch((err) => console.error("[TechnicianLocationTracker] upsertMyLocationPing failed:", err));
       },
       (err) => {
@@ -136,6 +160,54 @@ export function TechnicianLocationTracker() {
       { enableHighAccuracy: false, maximumAge: 30_000, timeout: 20_000 }
     );
   };
+
+  const releaseWakeLock = () => {
+    wakeLockRef.current?.release().catch(() => {});
+    wakeLockRef.current = null;
+  };
+
+  const requestWakeLock = () => {
+    const wakeLock = (navigator as any).wakeLock;
+    if (!wakeLock?.request || wakeLockRef.current) return;
+    wakeLock
+      .request("screen")
+      .then((sentinel: any) => {
+        wakeLockRef.current = sentinel;
+        sentinel.addEventListener("release", () => {
+          wakeLockRef.current = null;
+        });
+      })
+      .catch(() => {
+        // Battery Saver, OS-level denial, etc. — best-effort, tracking itself is unaffected.
+      });
+  };
+
+  // Screen Wake Lock is released by the browser the instant the tab is
+  // hidden, so it must be re-requested on every return to foreground —
+  // this only keeps the screen from auto-locking while actively watching
+  // AND visible; it can't survive the tab actually being backgrounded.
+  useEffect(() => {
+    if (!watching) {
+      releaseWakeLock();
+      return;
+    }
+    requestWakeLock();
+    const onVisible = () => {
+      if (document.visibilityState === "visible") requestWakeLock();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [watching]);
+
+  useEffect(() => () => releaseWakeLock(), []);
+
+  // Broadcast to anything else that wants to show a "live" indicator (e.g.
+  // MobileTechApp.tsx's own header badge) without duplicating the actual
+  // tracking logic — see locationSharingStatus.ts.
+  useEffect(() => {
+    setLocationSharingStatus(watching);
+    return () => setLocationSharingStatus(false);
+  }, [watching]);
 
   // Start/stop tracking as the clocked-in state itself flips.
   useEffect(() => {
@@ -188,13 +260,9 @@ export function TechnicianLocationTracker() {
     );
   }
 
-  if (watching) {
-    return (
-      <div className="fixed bottom-3 left-3 z-50 flex items-center gap-1.5 rounded-full border border-blue-400/30 bg-blue-500/15 px-2.5 py-1 text-[11px] font-medium text-blue-300 shadow-lg">
-        📍 Sharing location
-      </div>
-    );
-  }
-
+  // No more floating pill here — the "sharing" state now shows as a small
+  // badge on the user's own avatar (Header.tsx / MobileTechApp.tsx), via
+  // locationSharingStatus.ts, instead of a fixed-position element that
+  // used to sit right on top of the mobile bottom tab bar.
   return null;
 }

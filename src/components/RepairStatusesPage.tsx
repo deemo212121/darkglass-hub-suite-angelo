@@ -192,9 +192,9 @@ export function RepairStatusesPage({ mod }: { mod: ModuleDef }) {
           .search-row { display: flex; justify-content: space-between; align-items: center; gap: 0.75rem; flex-wrap: wrap; margin-bottom: 0.65rem; }
           .result-info { font-size: 0.8rem; font-weight: 700; color: #bfdbfe; }
           .search-input { width: 260px; height: 34px; padding: 0.35rem 0.5rem; border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 6px; font-size: 0.8rem; color: #fff; background: rgba(17, 24, 39, 0.95); }
-          .table-wrap { overflow: auto; border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 10px; background: #fff; }
-          table.status-table { width: 100%; border-collapse: collapse; background: #fff; color: #1f2937; font-size: 0.76rem; }
-          .status-table th, .status-table td { border: 1px solid #d1d5db; padding: 0.38rem 0.45rem; white-space: nowrap; text-align: center; vertical-align: middle; }
+          .table-wrap { overflow: auto; border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 10px; background: #111827; }
+          table.status-table { width: 100%; border-collapse: collapse; background: #111827; color: #e5e7eb; font-size: 0.76rem; }
+          .status-table th, .status-table td { border: 1px solid rgba(255, 255, 255, 0.12); padding: 0.38rem 0.45rem; white-space: nowrap; text-align: center; vertical-align: middle; }
           .status-table th { background: #4b5563; color: #ffffff; font-weight: 700; position: sticky; top: 0; z-index: 2; }
           .status-table td:first-child, .status-table td:nth-child(2), .status-table td:nth-child(4), .status-table td:nth-child(8) { text-align: left; }
           .status-table input, .status-table select {

@@ -535,17 +535,17 @@ export function PartInventoryPage({ mod, sub }: { mod: ModuleDef; sub: SubModule
           .tools-row label { display: inline-flex; align-items: center; gap: 0.45rem; font-size: 0.85rem; font-weight: 600; }
           .search-inline { display: flex; align-items: center; gap: 0.45rem; }
           .search-inline input { padding: 0.45rem 0.6rem; border-radius: 6px; border: 1px solid rgba(255, 255, 255, 0.2); background: rgba(17, 24, 39, 0.95); color: #fff; font-size: 0.84rem; min-width: 220px; }
-          .table-wrap { overflow-x: auto; border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 8px; background: #fff; }
+          .table-wrap { overflow-x: auto; border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 8px; background: #111827; }
           .floating-table-scrollbar { position: fixed; left: 0; bottom: 14px; z-index: 1100; overflow-x: auto; overflow-y: hidden; border: 1px solid rgba(148, 163, 184, 0.5); border-radius: 8px; background: rgba(255, 255, 255, 0.92); box-shadow: 0 10px 24px rgba(15, 23, 42, 0.18); display: none; max-width: calc(100vw - 28px); }
           .floating-table-scrollbar.is-visible { display: block; }
           .floating-table-scrollbar-inner { height: 1px; }
-          table.inventory-table { width: 100%; border-collapse: collapse; font-size: 0.75rem; color: #111827; min-width: 1900px; }
-          .inventory-table th, .inventory-table td { border: 1px solid #d1d5db; padding: 0.42rem; text-align: left; vertical-align: top; white-space: nowrap; }
+          table.inventory-table { width: 100%; border-collapse: collapse; font-size: 0.75rem; color: #e5e7eb; min-width: 1900px; }
+          .inventory-table th, .inventory-table td { border: 1px solid rgba(255, 255, 255, 0.12); padding: 0.42rem; text-align: left; vertical-align: top; white-space: nowrap; }
           .inventory-table thead th { background: #1f2937; color: #f9fafb; position: sticky; top: 0; z-index: 1; }
           .inventory-table thead .subhead th { background: #374151; font-weight: 600; font-size: 0.7rem; }
-          .inventory-table tbody tr:nth-child(even) { background: #f9fafb; }
+          .inventory-table tbody tr:nth-child(even) { background: rgba(255, 255, 255, 0.03); }
           .qty, .status-num, .aging, .price { text-align: right; }
-          .unique-id-link, .ticket-no-link, .part-no-link, .description-link, .lot-link { color: #111827; text-decoration: none; font-weight: 400; background: none; border: none; padding: 0; cursor: pointer; font: inherit; }
+          .unique-id-link, .ticket-no-link, .part-no-link, .description-link, .lot-link { color: #60a5fa; text-decoration: none; font-weight: 400; background: none; border: none; padding: 0; cursor: pointer; font: inherit; }
           .unique-id-link:hover, .ticket-no-link:hover, .part-no-link:hover, .description-link:hover, .lot-link:hover { text-decoration: underline; }
           .action-btn { padding: 0.22rem 0.5rem; font-size: 0.72rem; border-radius: 4px; border: 1px solid #ef4444; background: #fee2e2; color: #991b1b; cursor: pointer; }
           .return-btn { padding: 0.22rem 0.5rem; font-size: 0.72rem; border-radius: 4px; border: 1px solid #2563eb; background: #dbeafe; color: #1e40af; cursor: pointer; }

@@ -1290,7 +1290,16 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
             <div className="grid gap-3 md:grid-cols-2">
               <button
                 type="button"
-                onClick={() => { setModalType("pto"); setShowModal(true); }}
+                onClick={() => {
+                  const myProfile = companyProfiles.find((p) => p.id === myProfileId);
+                  setFormData((prev) => ({
+                    ...prev,
+                    position: myProfile?.role || prev.position,
+                    branch: myProfile?.assigned_branch || prev.branch,
+                  }));
+                  setModalType("pto");
+                  setShowModal(true);
+                }}
                 disabled={!ptoEligible}
                 title={!ptoEligible ? `Not eligible until ${ptoEligibleOn}` : undefined}
                 className="px-4 py-3 bg-green-600 hover:bg-green-700 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-green-600 text-white rounded-lg text-sm font-semibold transition flex items-center justify-center gap-2"
@@ -1300,7 +1309,16 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
               </button>
               <button
                 type="button"
-                onClick={() => { setModalType("sick"); setShowModal(true); }}
+                onClick={() => {
+                  const myProfile = companyProfiles.find((p) => p.id === myProfileId);
+                  setFormData((prev) => ({
+                    ...prev,
+                    position: myProfile?.role || prev.position,
+                    branch: myProfile?.assigned_branch || prev.branch,
+                  }));
+                  setModalType("sick");
+                  setShowModal(true);
+                }}
                 className="px-4 py-3 bg-teal-600 hover:bg-teal-700 text-white rounded-lg text-sm font-semibold transition flex items-center justify-center gap-2"
               >
                 <Plus className="h-4 w-4" />

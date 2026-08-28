@@ -277,6 +277,18 @@ export function haversineMiles(a: LatLng, b: LatLng): number {
 }
 
 export const metersToMiles = (m: number): number => m / 1609.344;
+export const milesToMeters = (mi: number): number => mi * 1609.344;
+
+/**
+ * On-Site Check-In geofence radius — how close a technician must be to a
+ * ticket's address before "I'm Here"/"I'm Done" become tappable in
+ * MobileTechApp.tsx's On-Site Check-In card, and the radius drawn around
+ * each stop on TechnicianDayRouteModal's admin route map. Single shared
+ * constant so the two stay in sync. Kept in miles (distanceFor/haversineMiles
+ * compare against it directly) but defined from the real-world 200m spec via
+ * metersToMiles for precision.
+ */
+export const ON_SITE_CHECKIN_RADIUS_MILES = metersToMiles(200);
 
 export function formatDuration(seconds: number): string {
   const mins = Math.round(seconds / 60);

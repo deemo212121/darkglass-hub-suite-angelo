@@ -12,7 +12,7 @@ import { Link } from "@tanstack/react-router";
 import type * as Leaflet from "leaflet";
 import { ChevronLeft, Loader2, MapPin, RefreshCw, Search, X } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
-import { getTechnicianWhereabouts, distinctBranches, type TechnicianWhereabouts } from "@/lib/supabase/technicianWhereabouts";
+import { getTechnicianWhereabouts, distinctBranches, LIVE_FRESH_MS, type TechnicianWhereabouts } from "@/lib/supabase/technicianWhereabouts";
 import { TechnicianDayRouteModal } from "@/components/TechnicianDayRouteModal";
 import { getCompanyMapProvider } from "@/lib/supabase/companySettings";
 import {
@@ -36,9 +36,16 @@ function timeAgo(iso: string): string {
 }
 
 const LIVE_COLOR = "#3b82f6";
+// A ping older than LIVE_FRESH_MS (technicianWhereabouts.ts) is still shown
+// and still preferred over the schedule proxy — never dropped just because
+// it's stale — but reads as "Active" in a dimmer violet instead of "Live"
+// in blue, so an admin isn't told someone is live right now when they've
+// actually gone quiet (lost signal, closed the tab) mid-shift.
+const ACTIVE_COLOR = "#a78bfa";
 
 const STATUS_STYLE: Record<TechnicianWhereabouts["status"], { color: string; label: string }> = {
   current: { color: "#22c55e", label: "At job now" },
+  scheduled: { color: "#2dd4bf", label: "Scheduled, not checked in" },
   last: { color: "#f59e0b", label: "Last stop today" },
   none: { color: "#64748b", label: "No job today" },
 };
@@ -233,13 +240,13 @@ export function TechnicianWhereaboutsPage({ mod, sub }: { mod: ModuleDef; sub: S
         const map = leafletMapRef.current!;
         spread.forEach(({ pt, tech }) => {
           const tooltipText = tech.liveLocation
-            ? `${tech.name} — 📍 Live · updated ${timeAgo(tech.liveLocation.updatedAt)}`
+            ? `${tech.name} — 📍 ${tech.liveLocation.isLive ? "Live" : "Active"} · updated ${timeAgo(tech.liveLocation.updatedAt)}`
             : `${tech.name} — ${STATUS_STYLE[tech.status].label}`;
           if (tech.liveLocation) {
             const halo = L.circleMarker([pt.lat, pt.lng], {
               radius: 13,
               fillOpacity: 0,
-              color: LIVE_COLOR,
+              color: tech.liveLocation.isLive ? LIVE_COLOR : ACTIVE_COLOR,
               weight: 2,
               className: "whereabouts-live-halo",
             }).addTo(map);
@@ -264,13 +271,13 @@ export function TechnicianWhereaboutsPage({ mod, sub }: { mod: ModuleDef; sub: S
         const bounds = new g.maps.LatLngBounds();
         spread.forEach(({ pt, tech }) => {
           const title = tech.liveLocation
-            ? `${tech.name} — 📍 Live · updated ${timeAgo(tech.liveLocation.updatedAt)}`
+            ? `${tech.name} — 📍 ${tech.liveLocation.isLive ? "Live" : "Active"} · updated ${timeAgo(tech.liveLocation.updatedAt)}`
             : `${tech.name} — ${STATUS_STYLE[tech.status].label}`;
           if (tech.liveLocation) {
             const halo = new g.maps.Marker({
               map,
               position: pt,
-              icon: { path: g.maps.SymbolPath.CIRCLE, scale: 13, fillOpacity: 0, strokeColor: LIVE_COLOR, strokeWeight: 2 },
+              icon: { path: g.maps.SymbolPath.CIRCLE, scale: 13, fillOpacity: 0, strokeColor: tech.liveLocation.isLive ? LIVE_COLOR : ACTIVE_COLOR, strokeWeight: 2 },
               clickable: false,
               zIndex: 1,
             });
@@ -385,6 +392,10 @@ export function TechnicianWhereaboutsPage({ mod, sub }: { mod: ModuleDef; sub: S
                   <span className="h-2.5 w-2.5 rounded-full bg-slate-600" style={{ boxShadow: `0 0 0 2px ${LIVE_COLOR}` }} />
                   Live GPS (blue halo)
                 </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="h-2.5 w-2.5 rounded-full bg-slate-600" style={{ boxShadow: `0 0 0 2px ${ACTIVE_COLOR}` }} />
+                  Active GPS (violet halo) — updated {LIVE_FRESH_MS / 60_000}+ minutes ago
+                </span>
               </div>
             </div>
 
@@ -427,7 +438,7 @@ export function TechnicianWhereaboutsPage({ mod, sub }: { mod: ModuleDef; sub: S
                     style={{
                       background: technicianColor(tech.name),
                       boxShadow: tech.liveLocation
-                        ? `0 0 0 2px ${STATUS_STYLE[tech.status].color}, 0 0 0 4px ${LIVE_COLOR}`
+                        ? `0 0 0 2px ${STATUS_STYLE[tech.status].color}, 0 0 0 4px ${tech.liveLocation.isLive ? LIVE_COLOR : ACTIVE_COLOR}`
                         : `0 0 0 2px ${STATUS_STYLE[tech.status].color}`,
                     }}
                   />
@@ -455,8 +466,8 @@ export function TechnicianWhereaboutsPage({ mod, sub }: { mod: ModuleDef; sub: S
                       {tech.timeSlot && ` · ${tech.timeSlot}`}
                     </p>
                     {tech.liveLocation ? (
-                      <p className="mt-0.5 flex items-center gap-1" style={{ color: LIVE_COLOR }}>
-                        <MapPin className="h-3 w-3 shrink-0" />📍 Live · updated {timeAgo(tech.liveLocation.updatedAt)}
+                      <p className="mt-0.5 flex items-center gap-1" style={{ color: tech.liveLocation.isLive ? LIVE_COLOR : ACTIVE_COLOR }}>
+                        <MapPin className="h-3 w-3 shrink-0" />📍 {tech.liveLocation.isLive ? "Live" : "Active"} · updated {timeAgo(tech.liveLocation.updatedAt)}
                       </p>
                     ) : (
                       tech.address && <p className="text-slate-500 mt-0.5 truncate flex items-center gap-1"><MapPin className="h-3 w-3 shrink-0" />{tech.address}</p>
@@ -479,14 +490,16 @@ export function TechnicianWhereaboutsPage({ mod, sub }: { mod: ModuleDef; sub: S
                         style={{
                           background: technicianColor(tech.name),
                           boxShadow: tech.liveLocation
-                            ? `0 0 0 2px ${STATUS_STYLE.none.color}, 0 0 0 4px ${LIVE_COLOR}`
+                            ? `0 0 0 2px ${STATUS_STYLE.none.color}, 0 0 0 4px ${tech.liveLocation.isLive ? LIVE_COLOR : ACTIVE_COLOR}`
                             : `0 0 0 2px ${STATUS_STYLE.none.color}`,
                         }}
                       />
                       <span className="text-slate-300">{tech.name}</span>
                       <span className="text-slate-500">· {tech.branch || "No branch"}</span>
                       {tech.liveLocation && (
-                        <span className="ml-auto shrink-0" style={{ color: LIVE_COLOR }}>📍 Live</span>
+                        <span className="ml-auto shrink-0" style={{ color: tech.liveLocation.isLive ? LIVE_COLOR : ACTIVE_COLOR }}>
+                          📍 {tech.liveLocation.isLive ? "Live" : "Active"}
+                        </span>
                       )}
                     </div>
                   ))}
@@ -504,6 +517,7 @@ export function TechnicianWhereaboutsPage({ mod, sub }: { mod: ModuleDef; sub: S
         <TechnicianDayRouteModal
           technicianName={routeModalTech.name}
           branch={routeModalTech.branch}
+          liveLocation={routeModalTech.liveLocation}
           onClose={() => setRouteModalTech(null)}
         />
       )}

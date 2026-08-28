@@ -143,6 +143,36 @@ export async function getLiveChatMessages(sessionId: string): Promise<LiveChatMe
   return (data as LiveChatMessageRow[]) ?? [];
 }
 
+/**
+ * Cheap "did anything change?" checks for LiveChatSupportPage.tsx's polling
+ * fallbacks — realtime is the fast path, these just need to notice drift
+ * without paying for a full listLiveChatSessions()/getLiveChatMessages()
+ * (the latter also writes delivered_at/read_at, so re-running it every tick
+ * was firing an update every 4s regardless of whether anything was new).
+ */
+
+/** One small-column query across every session, used as a signature to detect ANY session change (new session, status change, reassignment, new message) without the full row set + inbox-previews RPC. */
+export async function peekLiveChatSessionsSignature(): Promise<string> {
+  const { data, error } = await supabase
+    .from("live_chat_sessions")
+    .select("id, status, last_message_at, assigned_to")
+    .order("last_message_at", { ascending: false });
+  if (error) throw new Error(error.message);
+  return (data ?? []).map((r: any) => `${r.id}:${r.status}:${r.last_message_at}:${r.assigned_to ?? ""}`).join("|");
+}
+
+/** Latest message id for one session — a change here means getLiveChatMessages() is actually worth calling. */
+export async function peekLatestLiveChatMessageId(sessionId: string): Promise<string | null> {
+  const { data, error } = await supabase
+    .from("live_chat_messages")
+    .select("id")
+    .eq("session_id", sessionId)
+    .order("created_at", { ascending: false })
+    .limit(1);
+  if (error) throw new Error(error.message);
+  return (data ?? [])[0]?.id ?? null;
+}
+
 /** Throttle this client-side (see LiveChatSupportPage.tsx) — no need to hit the DB on every keystroke. */
 export async function setLiveChatStaffTyping(sessionId: string): Promise<void> {
   const { error } = await supabase
