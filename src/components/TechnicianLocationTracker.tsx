@@ -30,6 +30,15 @@ import { hasConfirmedLocationConsent, upsertMyLocationPing, clearMyLocationPing 
 import { setLocationSharingStatus } from "@/lib/locationSharingStatus";
 import { useLiveLocation } from "@/lib/liveLocationContext";
 
+// Routine tracing -- "not eligible" fires on every load for every
+// non-technician account (Admin/CSR/HR/SUPERADMIN...), which is the normal,
+// expected case, not a problem. Useful when debugging eligibility/consent
+// locally, pure noise in a real user's production console. Same pattern as
+// auth.tsx's own devLog.
+const devLog = (...args: unknown[]) => {
+  if (import.meta.env.DEV) console.log(...args);
+};
+
 const POLL_MS = 60_000;
 const UPLOAD_THROTTLE_MS = 60_000;
 
@@ -63,7 +72,7 @@ export function TechnicianLocationTracker() {
   // Resolve profile id + consent status once, when eligible.
   useEffect(() => {
     if (!eligible || !uid) {
-      console.warn("[TechnicianLocationTracker] consent check skipped — not eligible", { eligible, uid, role, extraRoles });
+      devLog("[TechnicianLocationTracker] consent check skipped — not eligible", { eligible, uid, role, extraRoles });
       return;
     }
     let cancelled = false;
@@ -78,7 +87,7 @@ export function TechnicianLocationTracker() {
         console.error("[TechnicianLocationTracker] hasConfirmedLocationConsent failed:", err);
         return false;
       });
-      console.log("[TechnicianLocationTracker] consent check:", { profileId: pid, confirmed });
+      devLog("[TechnicianLocationTracker] consent check:", { profileId: pid, confirmed });
       if (!cancelled) setConsentConfirmed(confirmed);
     });
     return () => {
