@@ -555,7 +555,7 @@ function UserDetailsPage() {
             const v = (r || "").toUpperCase();
             return v === "ADMIN" || v === "SUPERADMIN" || v.includes("MANAGER");
           };
-          const eligible = all.filter((u) => [u.role, ...(u.extra_roles ?? [])].some(isManagerish));
+          const eligible = all.filter((u) => u.is_active && [u.role, ...(u.extra_roles ?? [])].some(isManagerish));
           setManagerCandidates(
             Array.from(new Set(eligible.map((u) => u.display_name || u.email).filter(Boolean))).sort((a, b) => a.localeCompare(b))
           );

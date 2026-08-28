@@ -33,7 +33,7 @@ export async function resolveTeamLeadOrManager(
       const mine = members.find((m) => m.profileId === profile.id);
       if (mine) {
         const leader = members.find((m) => m.teamId === mine.teamId && m.isLeader);
-        const leaderProfile = leader ? allProfiles.find((p) => p.id === leader.profileId) : null;
+        const leaderProfile = leader ? allProfiles.find((p) => p.id === leader.profileId && p.is_active) : null;
         if (leaderProfile) return leaderProfile;
       }
     } catch {
@@ -43,7 +43,11 @@ export async function resolveTeamLeadOrManager(
 
   const managerName = (profile.manager_name || "").trim().toLowerCase();
   if (!managerName) return null;
-  return allProfiles.find((p) => (p.display_name || "").trim().toLowerCase() === managerName) ?? null;
+  // A deactivated manager shouldn't still be resolved as a live "notify my
+  // manager" recipient — every caller of this function (mileage/PTO/note
+  // notifications, etc.) would otherwise silently ping an account nobody
+  // reads anymore instead of falling through to whoever's actually covering.
+  return allProfiles.find((p) => p.is_active && (p.display_name || "").trim().toLowerCase() === managerName) ?? null;
 }
 
 /**

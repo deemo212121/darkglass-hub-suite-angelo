@@ -4640,7 +4640,7 @@ function MobileTimeOffView({ userName, profileId }: { userName: string; profileI
       const recipients = new Map<string, ProfileRow>();
       if (managerProfile && managerProfile.id !== profileId) recipients.set(managerProfile.id, managerProfile);
       for (const p of companyProfiles) {
-        if (p.id === profileId) continue;
+        if (p.id === profileId || !p.is_active) continue;
         const primary = (p.role || "").toUpperCase();
         if (primary === "HR" || (!managerProfile && (primary === "ADMIN" || primary === "SUPERADMIN"))) recipients.set(p.id, p);
       }
@@ -4957,6 +4957,7 @@ function MobileTimeCorrectionView({ userName, profileId }: { userName: string; p
       const recipients = new Map<string, ProfileRow>();
       if (managerProfile && managerProfile.id !== profileId) recipients.set(managerProfile.id, managerProfile);
       for (const p of companyProfiles) {
+        if (!p.is_active) continue;
         const primary = (p.role || "").toUpperCase();
         if (primary === "HR" || primary === "FINANCE") recipients.set(p.id, p);
       }

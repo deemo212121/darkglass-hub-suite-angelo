@@ -311,6 +311,7 @@ export async function getFirebaseUidsForRoles(roleCodes: string[]): Promise<stri
   const { data, error } = await supabase
     .from("profiles")
     .select("firebase_uid, role, extra_roles")
+    .eq("is_active", true)
     .or(roleCodes.map((code) => `role.eq.${code},extra_roles.cs.{${code}}`).join(","));
   if (error) {
     console.error("getFirebaseUidsForRoles error:", error.message);
@@ -624,6 +625,7 @@ export async function getCompanyTechnicianHomes(): Promise<TechnicianHome[]> {
   const { data, error } = await supabase
     .from("profiles")
     .select("display_name, username, email, role, extra_roles, assigned_branch, employee_info")
+    .eq("is_active", true)
     .or("role.eq.TECHNICIAN,extra_roles.cs.{TECHNICIAN}");
   if (error) {
     console.error("getCompanyTechnicianHomes error:", error.message);
