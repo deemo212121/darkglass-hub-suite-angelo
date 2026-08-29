@@ -285,64 +285,27 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
   const [tickets, setTickets] = useState<TicketItem[]>([]);
   const [ticketsLoading, setTicketsLoading] = useState(true);
 
-  // Overlay each ticket's derived "Part Order" state (from visits +
-  // parts tables) onto the row. Runs in a single bulk pass so the
-  // Ticket List column can show "Not Diagnosed / Part Not Needed /
-  // Part Ordered / Partially Ordered" without extra round-trips per
-  // ticket. Errors are logged and swallowed — the column just falls
-  // back to whatever was stored on tickets.part_order.
-  const overlayPartOrderState = async (rows: TicketItem[]): Promise<TicketItem[]> => {
-    try {
-      const ids = rows
-        .map((t: any) => String(t?._id ?? "").trim())
-        .filter(Boolean);
-      if (ids.length === 0) return rows;
-      const stateMap = await getPartOrderStateByTicketIds(ids);
-      for (const t of rows as any[]) {
-        const tid = String(t?._id ?? "").trim();
-        const derived = tid ? stateMap.get(tid) : undefined;
-        if (derived) t.partOrder = derived;
-      }
-    } catch (err) {
-      console.warn("Ticket List: part-order overlay skipped:", err);
-    }
-    return rows;
-  };
-
-  // Overlay each ticket's latest Visit Log Triage Note — same single-bulk-
-  // pass rationale as overlayPartOrderState above. Errors are logged and
-  // swallowed — the column just shows blank rather than breaking the list.
-  const overlayTriageNotes = async (rows: TicketItem[]): Promise<TicketItem[]> => {
-    try {
-      const ids = rows
-        .map((t: any) => String(t?._id ?? "").trim())
-        .filter(Boolean);
-      if (ids.length === 0) return rows;
-      const noteMap = await getLatestVisitTriageNoteByTicketIds(ids);
-      for (const t of rows as any[]) {
-        const tid = String(t?._id ?? "").trim();
-        const note = tid ? noteMap.get(tid) : undefined;
-        if (note) t.triageNotes = note;
-      }
-    } catch (err) {
-      console.warn("Ticket List: triage-notes overlay skipped:", err);
-    }
-    return rows;
-  };
+  // Ticket ids whose derived "Part Order" state + latest Visit Log Triage
+  // Note have already been fetched. These two columns come from the visits/
+  // parts tables, not `tickets`, so they need a separate lookup — but doing
+  // it for the whole company up-front meant three queries each carrying a
+  // ~3k-element `.in(...)` filter (which PostgREST also silently caps at
+  // 1000 rows, so past that the columns were just wrong). It's now done a
+  // page at a time — see the enrichment effect below `pagedItems`.
+  const enrichedIdsRef = useRef<Set<string>>(new Set());
 
   const reloadTickets = useCallback(async () => {
     try {
       setTicketsLoading(true);
+      enrichedIdsRef.current = new Set();
       const rows = await getCompanyTickets();
-      const enriched = await overlayTriageNotes(await overlayPartOrderState(rows as TicketItem[]));
-      setTickets(enriched);
+      setTickets(rows as TicketItem[]);
     } catch (err) {
       console.error("Failed to load tickets:", err);
       setTickets([]);
     } finally {
       setTicketsLoading(false);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -350,19 +313,8 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
     const load = async () => {
       try {
         setTicketsLoading(true);
-        // First, pull any approved customer-portal requests into our tickets so
-        // they appear in the list (best-effort; never blocks the load).
-        try {
-          const result = await syncApprovedPortalRequests();
-          if (result.pulled > 0) {
-            console.log(`📥 Pulled ${result.pulled} approved portal request(s) into tickets.`);
-          }
-        } catch (e) {
-          console.warn("Portal request sync skipped:", e);
-        }
         const rows = await getCompanyTickets();
-        const enriched = await overlayTriageNotes(await overlayPartOrderState(rows as TicketItem[]));
-        if (!cancelled) setTickets(enriched);
+        if (!cancelled) setTickets(rows as TicketItem[]);
       } catch (err) {
         console.error("Failed to load tickets:", err);
         if (!cancelled) setTickets([]);
@@ -371,6 +323,23 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
       }
     };
     load();
+
+    // Pull any approved customer-portal requests into our tickets in the
+    // background — it used to be awaited *before* the first fetch, adding
+    // its full round-trip to every page open. Only reload the list if it
+    // actually pulled something new.
+    (async () => {
+      try {
+        const result = await syncApprovedPortalRequests();
+        if (!cancelled && result.pulled > 0) {
+          console.log(`📥 Pulled ${result.pulled} approved portal request(s) into tickets.`);
+          reloadTickets();
+        }
+      } catch (e) {
+        console.warn("Portal request sync skipped:", e);
+      }
+    })();
+
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -876,6 +845,74 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
     const start = (safePage - 1) * pageSize;
     return sortedItems.slice(start, start + pageSize);
   }, [sortedItems, safePage, pageSize]);
+
+  // Derive the "Part Order" and "Triage Notes" columns for the rows that are
+  // actually on screen. Both live in the visits/parts tables rather than on
+  // `tickets`, so they need a follow-up lookup; scoping it to the visible
+  // page keeps that to ~25 ids instead of the whole company table (the old
+  // whole-table pass was the main Ticket List slowdown and also tripped
+  // PostgREST's 1000-row cap). Results are cached in enrichedIdsRef so
+  // paging back and forth doesn't refetch. Errors are swallowed — the
+  // columns just fall back to tickets.part_order / blank.
+  useEffect(() => {
+    const ids = pagedItems
+      .map((t) => String((t as { _id?: string })._id ?? "").trim())
+      .filter((id) => id && !enrichedIdsRef.current.has(id));
+    if (ids.length === 0) return;
+
+    let cancelled = false;
+    (async () => {
+      // Batch so an "All" page-size (thousands of rows) still can't build a
+      // single oversized `.in(...)` / blow past the 1000-row response cap,
+      // and cap how many batches are in flight at once.
+      const BATCH = 200;
+      const CONCURRENCY = 5;
+      const batches: string[][] = [];
+      for (let i = 0; i < ids.length; i += BATCH) batches.push(ids.slice(i, i + BATCH));
+
+      const partOrder = new Map<string, string>();
+      const triage = new Map<string, string>();
+      try {
+        for (let i = 0; i < batches.length; i += CONCURRENCY) {
+          if (cancelled) return;
+          await Promise.all(
+            batches.slice(i, i + CONCURRENCY).map(async (batch) => {
+              const [stateMap, noteMap] = await Promise.all([
+                getPartOrderStateByTicketIds(batch),
+                getLatestVisitTriageNoteByTicketIds(batch),
+              ]);
+              stateMap.forEach((v, k) => partOrder.set(k, v));
+              noteMap.forEach((v, k) => triage.set(k, v));
+            }),
+          );
+        }
+      } catch (err) {
+        console.warn("Ticket List: page enrichment skipped:", err);
+        return;
+      }
+      if (cancelled) return;
+
+      for (const id of ids) enrichedIdsRef.current.add(id);
+      if (partOrder.size === 0 && triage.size === 0) return;
+
+      setTickets((prev) =>
+        prev.map((t) => {
+          const id = String((t as { _id?: string })._id ?? "").trim();
+          if (!id) return t;
+          const derived = partOrder.get(id);
+          const note = triage.get(id);
+          if (!derived && !note) return t;
+          return {
+            ...t,
+            ...(derived ? { partOrder: derived } : null),
+            ...(note ? { triageNotes: note } : null),
+          };
+        }),
+      );
+    })();
+
+    return () => { cancelled = true; };
+  }, [pagedItems]);
 
   // Export current filtered/sorted list (not just the current page) to an
   // .xlsx workbook with one sheet per table - Tickets, Visit Log, and
