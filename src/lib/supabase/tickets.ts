@@ -286,22 +286,52 @@ const PAGE_SIZE = 1000;
 
 /**
  * Get all tickets for the caller's company (RLS-scoped).
+ *
+ * Pages are fetched concurrently rather than one-after-another: at a few
+ * thousand rows per company the serial `await` per 1000-row page was a
+ * measurable slice of every consumer's load (Ticket List, dashboards,
+ * daily reports…).
  */
 export async function getCompanyTickets(): Promise<Ticket[]> {
-  const all: Ticket[] = [];
-  for (let from = 0; ; from += PAGE_SIZE) {
-    const { data, error } = await supabase
+  // created_at is NOT unique — a bulk import can give thousands of rows the
+  // same timestamp, and range()-based paging over a non-unique sort key
+  // silently drops/duplicates rows across page boundaries. id is the stable
+  // tiebreaker (and matches idx_tickets_company_created).
+  const pageQuery = (i: number) =>
+    supabase
       .from("tickets")
       .select(SELECT)
       .order("created_at", { ascending: false })
-      .range(from, from + PAGE_SIZE - 1);
+      .order("id", { ascending: false })
+      .range(i * PAGE_SIZE, i * PAGE_SIZE + PAGE_SIZE - 1);
 
+  // First page carries an exact count so we know how many more to fetch.
+  // Small tenants (<= PAGE_SIZE) are done in this one request; larger ones
+  // get the remaining pages concurrently instead of one-after-another.
+  const first = await supabase
+    .from("tickets")
+    .select(SELECT, { count: "exact" })
+    .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
+    .range(0, PAGE_SIZE - 1);
+  if (first.error) {
+    console.error("getCompanyTickets error:", first.error.message);
+    throw new Error(first.error.message);
+  }
+
+  const all: Ticket[] = (first.data ?? []).map(rowToTicket);
+  const total = first.count ?? all.length;
+  if (total <= PAGE_SIZE) return all;
+
+  const rest = await Promise.all(
+    Array.from({ length: Math.ceil(total / PAGE_SIZE) - 1 }, (_, k) => pageQuery(k + 1)),
+  );
+  for (const { data, error } of rest) {
     if (error) {
       console.error("getCompanyTickets error:", error.message);
       throw new Error(error.message);
     }
     all.push(...(data ?? []).map(rowToTicket));
-    if (!data || data.length < PAGE_SIZE) break;
   }
   return all;
 }
