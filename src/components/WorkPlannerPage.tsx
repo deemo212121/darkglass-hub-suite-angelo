@@ -16,7 +16,7 @@ import { getLocations as sbGetLocations } from "@/lib/supabase/locationManagemen
 import { getCompanyTechnicians, type TechnicianOption, type TechnicianHome } from "@/lib/supabase/users";
 import { lookupZip } from "@/lib/zipCoverage";
 import { useAuth } from "@/lib/auth";
-import { getCompanyMapProvider, type MapProvider } from "@/lib/supabase/companySettings";
+import { getCompanyMapProvider, getCompanyDefaultTechnician, type MapProvider } from "@/lib/supabase/companySettings";
 import { useSmartBack } from "@/hooks/useSmartBack";
 import { loadGoogleMapsScript, getLeaflet, makeGeocoder, addRouteDirectionArrow, attachLeafletResizeFix, createBadgeDivIcon, OSM_TILE_URL, OSM_ATTRIBUTION } from "@/lib/mapEngine";
 
@@ -216,11 +216,21 @@ function createPlannerTickets(rows: TicketRecord[], liveTechnicians: TechnicianO
   });
 }
 
-function getSelectedTechRoster(location: string, liveTechnicians: TechnicianOption[]) {
+// defaultTechName is the branch's resolved catch-all technician (Location
+// Management's Rep Tech, falling back to the company-wide default) -- it
+// often isn't a real technician profile at all (e.g. "Memphis Admin"), so
+// it wouldn't otherwise be found by liveTechnicians and would vanish from
+// the planner the moment its tickets get reassigned elsewhere. Always
+// pinning it to the roster keeps that branch's catch-all column visible
+// even with zero tickets right now.
+function getSelectedTechRoster(location: string, liveTechnicians: TechnicianOption[], defaultTechName: string) {
   if (!location) return [];
   const roster = liveTechnicians.filter((t) => t.branch === location).map((t) => t.name);
-  if (roster.length) return roster;
-  return liveTechnicians.map((t) => t.name);
+  const base = roster.length ? roster : liveTechnicians.map((t) => t.name);
+  if (defaultTechName && !base.includes(defaultTechName)) {
+    return [defaultTechName, ...base];
+  }
+  return base;
 }
 
 export function WorkPlannerPage({ mod, sub }: Props) {
@@ -231,6 +241,24 @@ export function WorkPlannerPage({ mod, sub }: Props) {
     ? (LOCATION_OPTIONS as unknown as string[])
     : (LOCATION_OPTIONS as unknown as string[]).filter((l) => allowedLocations.includes(l));
   const [location, setLocation] = useState("");
+  // Per-branch default/catch-all technician: Location Management's Rep Tech
+  // field, falling back to the company-wide default technician (same
+  // resolution NewTicketPage.tsx uses for new-ticket auto-assignment). A
+  // branch can be flagged forceUnassigned to stay blank regardless of the
+  // company default. Keyed by normalizeBranch so it matches `location`.
+  const [locationOverrides, setLocationOverrides] = useState<Map<string, { repTech: string; forceUnassigned: boolean }>>(new Map());
+  const [companyDefaultTechnician, setCompanyDefaultTechnician] = useState("");
+  useEffect(() => {
+    getCompanyDefaultTechnician()
+      .then(setCompanyDefaultTechnician)
+      .catch((err) => console.error("Work Planner: failed to load company default technician:", err));
+  }, []);
+  const branchDefaultTechnician = useMemo(() => {
+    if (!location) return "";
+    const override = locationOverrides.get(normalizeBranch(location));
+    if (override?.forceUnassigned) return "";
+    return override?.repTech || companyDefaultTechnician;
+  }, [location, locationOverrides, companyDefaultTechnician]);
   // Real, active technicians (role=TECHNICIAN, primary or secondary) — the
   // planner's technician columns, map markers/colors, and auto-assignment
   // fallback all read from this instead of the old hand-maintained static
@@ -356,6 +384,15 @@ export function WorkPlannerPage({ mod, sub }: Props) {
             JSON.stringify({ rows: locs }),
           );
         }
+        const overrides = new Map<string, { repTech: string; forceUnassigned: boolean }>();
+        for (const row of locs) {
+          if (!row.repTech && !row.forceUnassigned) continue;
+          overrides.set(normalizeBranch(row.location), {
+            repTech: row.repTech || "",
+            forceUnassigned: row.forceUnassigned === true,
+          });
+        }
+        setLocationOverrides(overrides);
       } catch (err) {
         console.error("Work Planner: failed to load locations:", err);
       }
@@ -389,7 +426,7 @@ export function WorkPlannerPage({ mod, sub }: Props) {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
-  const selectedTechRoster = useMemo(() => getSelectedTechRoster(location, liveTechnicians), [location, liveTechnicians]);
+  const selectedTechRoster = useMemo(() => getSelectedTechRoster(location, liveTechnicians, branchDefaultTechnician), [location, liveTechnicians, branchDefaultTechnician]);
 
   const visibleTickets = useMemo(() => {
     const selectedDate = plannerDate;
