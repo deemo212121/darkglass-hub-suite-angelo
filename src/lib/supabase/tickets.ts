@@ -292,28 +292,51 @@ const PAGE_SIZE = 1000;
  * measurable slice of every consumer's load (Ticket List, dashboards,
  * daily reports…).
  */
+// Firing several pages concurrently (below) means a single flaky connection
+// (seen in the wild as net::ERR_QUIC_PROTOCOL_ERROR / ERR_HTTP2_PROTOCOL_ERROR
+// / ERR_CONNECTION_CLOSED on an unreliable network) previously took down the
+// ENTIRE ticket list -- Promise.all had no retry, so one dropped page meant
+// every caller (Ticket List, Work Planner, every dashboard) silently rendered
+// zero tickets instead of just being briefly slower. Retry each page a
+// couple of times with a short backoff before actually giving up.
+const PAGE_FETCH_RETRIES = 2;
+const PAGE_FETCH_RETRY_DELAY_MS = 400;
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchTicketPage(
+  i: number,
+  withCount: boolean,
+): Promise<{ data: any[] | null; error: { message: string } | null; count?: number | null }> {
+  let lastError: { message: string } | null = null;
+  for (let attempt = 0; attempt <= PAGE_FETCH_RETRIES; attempt++) {
+    const query = supabase
+      .from("tickets")
+      .select(SELECT, withCount ? { count: "exact" } : undefined)
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false })
+      .range(i * PAGE_SIZE, i * PAGE_SIZE + PAGE_SIZE - 1);
+    const { data, error, count } = await query;
+    if (!error) return { data, error: null, count };
+    lastError = error;
+    console.warn(`getCompanyTickets: page ${i} failed (attempt ${attempt + 1}/${PAGE_FETCH_RETRIES + 1}):`, error.message);
+    if (attempt < PAGE_FETCH_RETRIES) await sleep(PAGE_FETCH_RETRY_DELAY_MS * (attempt + 1));
+  }
+  return { data: null, error: lastError };
+}
+
 export async function getCompanyTickets(): Promise<Ticket[]> {
   // created_at is NOT unique — a bulk import can give thousands of rows the
   // same timestamp, and range()-based paging over a non-unique sort key
   // silently drops/duplicates rows across page boundaries. id is the stable
   // tiebreaker (and matches idx_tickets_company_created).
-  const pageQuery = (i: number) =>
-    supabase
-      .from("tickets")
-      .select(SELECT)
-      .order("created_at", { ascending: false })
-      .order("id", { ascending: false })
-      .range(i * PAGE_SIZE, i * PAGE_SIZE + PAGE_SIZE - 1);
 
   // First page carries an exact count so we know how many more to fetch.
   // Small tenants (<= PAGE_SIZE) are done in this one request; larger ones
   // get the remaining pages concurrently instead of one-after-another.
-  const first = await supabase
-    .from("tickets")
-    .select(SELECT, { count: "exact" })
-    .order("created_at", { ascending: false })
-    .order("id", { ascending: false })
-    .range(0, PAGE_SIZE - 1);
+  const first = await fetchTicketPage(0, true);
   if (first.error) {
     console.error("getCompanyTickets error:", first.error.message);
     throw new Error(first.error.message);
@@ -324,7 +347,7 @@ export async function getCompanyTickets(): Promise<Ticket[]> {
   if (total <= PAGE_SIZE) return all;
 
   const rest = await Promise.all(
-    Array.from({ length: Math.ceil(total / PAGE_SIZE) - 1 }, (_, k) => pageQuery(k + 1)),
+    Array.from({ length: Math.ceil(total / PAGE_SIZE) - 1 }, (_, k) => fetchTicketPage(k + 1, false)),
   );
   for (const { data, error } of rest) {
     if (error) {
