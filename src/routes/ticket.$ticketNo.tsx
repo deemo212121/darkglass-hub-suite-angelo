@@ -4232,6 +4232,12 @@ function TicketDetailsPage() {
   }, [authReady]);
   const technicianOptions = useMemo(() => {
     const names = new Set<string>(liveTechnicians.map((t) => t.name));
+    // Memphis Admin / Nashville Admin (see defaultTechnicianForLocation
+    // above) are the per-branch catch-all placeholders, not real technician
+    // profiles -- always offer both rather than only showing whichever one
+    // this ticket already happens to be set to.
+    names.add("Memphis Admin");
+    names.add("Nashville Admin");
     if (ticket?.technician) names.add(ticket.technician);
     return Array.from(names).sort((a, b) => a.localeCompare(b));
   }, [liveTechnicians, ticket?.technician]);
