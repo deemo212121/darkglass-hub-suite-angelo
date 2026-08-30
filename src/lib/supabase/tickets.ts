@@ -860,36 +860,35 @@ export async function getPartOrderStateByTicketIds(
   // 1. Diagnosed set — every ticket that has at least one visit with a
   //    non-empty cause_of_failure.
   const diagnosed = new Set<string>();
-  {
-    const { data, error } = await supabase
-      .from("visits")
-      .select("ticket_id, cause_of_failure")
-      .in("ticket_id", uniq)
-      .not("cause_of_failure", "is", null);
-    if (error) {
-      console.error("getPartOrderStateByTicketIds visits error:", error.message);
+  const needsPo = new Set(["", "need po"]);
+  const partsByTicket = new Map<string, { total: number; needPo: number }>();
+  await runBatched(uniq, async (batch) => {
+    const [visitsRes, partsRes] = await Promise.all([
+      supabase
+        .from("visits")
+        .select("ticket_id, cause_of_failure")
+        .in("ticket_id", batch)
+        .not("cause_of_failure", "is", null),
+      supabase
+        .from("parts")
+        .select("ticket_id, status")
+        .in("ticket_id", batch),
+    ]);
+    if (visitsRes.error) {
+      console.error("getPartOrderStateByTicketIds visits error:", visitsRes.error.message);
     } else {
-      for (const row of data ?? []) {
+      for (const row of visitsRes.data ?? []) {
         const tid = (row as any).ticket_id as string | null;
         const cf = String((row as any).cause_of_failure ?? "").trim();
         if (tid && cf) diagnosed.add(tid);
       }
     }
-  }
-
-  // 2. Parts per ticket, with each row's status. Statuses that count as
-  //    "still needs a PO" — anything else is considered "past ordering".
-  const needsPo = new Set(["", "need po"]);
-  const partsByTicket = new Map<string, { total: number; needPo: number }>();
-  {
-    const { data, error } = await supabase
-      .from("parts")
-      .select("ticket_id, status")
-      .in("ticket_id", uniq);
-    if (error) {
-      console.error("getPartOrderStateByTicketIds parts error:", error.message);
+    // 2. Parts per ticket, with each row's status. Statuses that count as
+    //    "still needs a PO" — anything else is considered "past ordering".
+    if (partsRes.error) {
+      console.error("getPartOrderStateByTicketIds parts error:", partsRes.error.message);
     } else {
-      for (const row of data ?? []) {
+      for (const row of partsRes.data ?? []) {
         const tid = (row as any).ticket_id as string | null;
         if (!tid) continue;
         const statusRaw = String((row as any).status ?? "").trim().toLowerCase();
@@ -899,7 +898,7 @@ export async function getPartOrderStateByTicketIds(
         partsByTicket.set(tid, bucket);
       }
     }
-  }
+  });
 
   for (const tid of uniq) {
     if (!diagnosed.has(tid)) {
@@ -945,29 +944,31 @@ export async function getCsrVisitDatesByTicketIds(
   const uniq = Array.from(new Set(ticketIds.filter(Boolean)));
   if (uniq.length === 0) return out;
   const RESCHEDULE_ACTIONS = ["RESCHEDULE", "OSR"];
-  const { data, error } = await supabase
-    .from("visits")
-    .select("ticket_id, schedule_date, action_type")
-    .in("ticket_id", uniq)
-    .not("schedule_date", "is", null)
-    .in("action_type", RESCHEDULE_ACTIONS);
-  if (error) {
-    console.error("getCsrVisitDatesByTicketIds error:", error.message);
-    return out;
-  }
-  for (const row of data ?? []) {
-    const tid = (row as any).ticket_id as string | null;
-    const raw = (row as any).schedule_date as string | null;
-    if (!tid || !raw) continue;
-    const ymd = String(raw).slice(0, 10);
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) continue;
-    let set = out.get(tid);
-    if (!set) {
-      set = new Set<string>();
-      out.set(tid, set);
+  await runBatched(uniq, async (batch) => {
+    const { data, error } = await supabase
+      .from("visits")
+      .select("ticket_id, schedule_date, action_type")
+      .in("ticket_id", batch)
+      .not("schedule_date", "is", null)
+      .in("action_type", RESCHEDULE_ACTIONS);
+    if (error) {
+      console.error("getCsrVisitDatesByTicketIds error:", error.message);
+      return;
     }
-    set.add(ymd);
-  }
+    for (const row of data ?? []) {
+      const tid = (row as any).ticket_id as string | null;
+      const raw = (row as any).schedule_date as string | null;
+      if (!tid || !raw) continue;
+      const ymd = String(raw).slice(0, 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) continue;
+      let set = out.get(tid);
+      if (!set) {
+        set = new Set<string>();
+        out.set(tid, set);
+      }
+      set.add(ymd);
+    }
+  });
   return out;
 }
 
@@ -1001,28 +1002,58 @@ export async function getLatestVisitScheduleByTicketIds(
  * technician are skipped. Ordered newest-first so the most recent
  * assignment wins.
  */
+// A single `.in("ticket_id", uniq)` with thousands of UUIDs (e.g. a caller
+// passing every ticket in the company, not just a page of it) builds a URL
+// well past what real-world networks/proxies reliably deliver -- seen in
+// practice as a wall of net::ERR_CONNECTION_RESET / ERR_HTTP2_PROTOCOL_ERROR
+// / ERR_QUIC_PROTOCOL_ERROR on every such request. TicketList.tsx already
+// worked around this at its own call site (see its "page enrichment"
+// effect); batching here instead protects every caller, including the ones
+// that don't chunk their own ids (WorkPlannerPage.tsx, MobileTechApp.tsx,
+// TicketListMap.tsx, TicketsMapWorkMap.tsx).
+const BULK_LOOKUP_BATCH_SIZE = 200;
+const BULK_LOOKUP_CONCURRENCY = 5;
+
+function chunkArray<T>(items: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < items.length; i += size) chunks.push(items.slice(i, i + size));
+  return chunks;
+}
+
+async function runBatched<T>(
+  items: T[],
+  worker: (batch: T[]) => Promise<void>,
+): Promise<void> {
+  const batches = chunkArray(items, BULK_LOOKUP_BATCH_SIZE);
+  for (let i = 0; i < batches.length; i += BULK_LOOKUP_CONCURRENCY) {
+    await Promise.all(batches.slice(i, i + BULK_LOOKUP_CONCURRENCY).map(worker));
+  }
+}
+
 export async function getLatestVisitTechnicianByTicketIds(
   ticketIds: string[],
 ): Promise<Map<string, string>> {
   const out = new Map<string, string>();
   const uniq = Array.from(new Set(ticketIds.filter(Boolean)));
   if (uniq.length === 0) return out;
-  const { data, error } = await supabase
-    .from("visits")
-    .select("ticket_id, technician, created_at")
-    .in("ticket_id", uniq)
-    .not("technician", "is", null)
-    .order("created_at", { ascending: false });
-  if (error) {
-    console.error("getLatestVisitTechnicianByTicketIds error:", error.message);
-    return out;
-  }
-  for (const row of data ?? []) {
-    const tid = (row as any).ticket_id as string | null;
-    const tech = String((row as any).technician ?? "").trim();
-    if (!tid || !tech) continue;
-    if (!out.has(tid)) out.set(tid, tech);
-  }
+  await runBatched(uniq, async (batch) => {
+    const { data, error } = await supabase
+      .from("visits")
+      .select("ticket_id, technician, created_at")
+      .in("ticket_id", batch)
+      .not("technician", "is", null)
+      .order("created_at", { ascending: false });
+    if (error) {
+      console.error("getLatestVisitTechnicianByTicketIds error:", error.message);
+      return;
+    }
+    for (const row of data ?? []) {
+      const tid = (row as any).ticket_id as string | null;
+      const tech = String((row as any).technician ?? "").trim();
+      if (!tid || !tech) continue;
+      if (!out.has(tid)) out.set(tid, tech);
+    }
+  });
   return out;
 }
 
@@ -1040,22 +1071,24 @@ export async function getLatestVisitTriageNoteByTicketIds(
   const out = new Map<string, string>();
   const uniq = Array.from(new Set(ticketIds.filter(Boolean)));
   if (uniq.length === 0) return out;
-  const { data, error } = await supabase
-    .from("visits")
-    .select("ticket_id, triage_note, created_at")
-    .in("ticket_id", uniq)
-    .not("triage_note", "is", null)
-    .order("created_at", { ascending: false });
-  if (error) {
-    console.error("getLatestVisitTriageNoteByTicketIds error:", error.message);
-    return out;
-  }
-  for (const row of data ?? []) {
-    const tid = (row as any).ticket_id as string | null;
-    const note = String((row as any).triage_note ?? "").trim();
-    if (!tid || !note) continue;
-    if (!out.has(tid)) out.set(tid, note);
-  }
+  await runBatched(uniq, async (batch) => {
+    const { data, error } = await supabase
+      .from("visits")
+      .select("ticket_id, triage_note, created_at")
+      .in("ticket_id", batch)
+      .not("triage_note", "is", null)
+      .order("created_at", { ascending: false });
+    if (error) {
+      console.error("getLatestVisitTriageNoteByTicketIds error:", error.message);
+      return;
+    }
+    for (const row of data ?? []) {
+      const tid = (row as any).ticket_id as string | null;
+      const note = String((row as any).triage_note ?? "").trim();
+      if (!tid || !note) continue;
+      if (!out.has(tid)) out.set(tid, note);
+    }
+  });
   return out;
 }
 
@@ -1070,22 +1103,24 @@ export async function getVisitsByTicketIds(ticketIds: string[]): Promise<Map<str
   const out = new Map<string, UIVisit[]>();
   const uniq = Array.from(new Set(ticketIds.filter(Boolean)));
   if (uniq.length === 0) return out;
-  const { data, error } = await supabase
-    .from("visits")
-    .select("*")
-    .in("ticket_id", uniq)
-    .order("created_at", { ascending: false });
-  if (error) {
-    console.error("getVisitsByTicketIds error:", error.message);
-    return out;
-  }
-  for (const row of data ?? []) {
-    const tid = (row as any).ticket_id as string | null;
-    if (!tid) continue;
-    const list = out.get(tid) ?? [];
-    list.push(rowToVisit(row));
-    out.set(tid, list);
-  }
+  await runBatched(uniq, async (batch) => {
+    const { data, error } = await supabase
+      .from("visits")
+      .select("*")
+      .in("ticket_id", batch)
+      .order("created_at", { ascending: false });
+    if (error) {
+      console.error("getVisitsByTicketIds error:", error.message);
+      return;
+    }
+    for (const row of data ?? []) {
+      const tid = (row as any).ticket_id as string | null;
+      if (!tid) continue;
+      const list = out.get(tid) ?? [];
+      list.push(rowToVisit(row));
+      out.set(tid, list);
+    }
+  });
   return out;
 }
 
@@ -1098,21 +1133,23 @@ export async function getPartsByTicketIds(ticketIds: string[]): Promise<Map<stri
   const out = new Map<string, UIPartRow[]>();
   const uniq = Array.from(new Set(ticketIds.filter(Boolean)));
   if (uniq.length === 0) return out;
-  const { data, error } = await supabase
-    .from("parts")
-    .select("*")
-    .in("ticket_id", uniq);
-  if (error) {
-    console.error("getPartsByTicketIds error:", error.message);
-    return out;
-  }
-  for (const row of data ?? []) {
-    const tid = (row as any).ticket_id as string | null;
-    if (!tid) continue;
-    const list = out.get(tid) ?? [];
-    list.push(rowToPart(row));
-    out.set(tid, list);
-  }
+  await runBatched(uniq, async (batch) => {
+    const { data, error } = await supabase
+      .from("parts")
+      .select("*")
+      .in("ticket_id", batch);
+    if (error) {
+      console.error("getPartsByTicketIds error:", error.message);
+      return;
+    }
+    for (const row of data ?? []) {
+      const tid = (row as any).ticket_id as string | null;
+      if (!tid) continue;
+      const list = out.get(tid) ?? [];
+      list.push(rowToPart(row));
+      out.set(tid, list);
+    }
+  });
   return out;
 }
 
