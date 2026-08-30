@@ -26,7 +26,25 @@ function normalise(addr: string): string {
  * Cheap browser-side hash — not cryptographic, but collision-resistant enough
  * for an address-key lookup.  Uses the Web Crypto API (SubtleCrypto) so it
  * works in Cloudflare Workers, modern browsers, and Node 18+.
+ *
+ * SubtleCrypto only exists in a secure context (HTTPS, or the special-cased
+ * localhost/127.0.0.1) — it's `undefined` when the dev server is reached
+ * over plain http:// from another device on the LAN (e.g. http://192.168.x.x:8080),
+ * which is fine for local testing but means the geocode cache can't hash
+ * anything there. Warn once per session instead of once per address.
  */
+let warnedNoSubtleCrypto = false;
+function hasSubtleCrypto(): boolean {
+  const available = typeof crypto !== "undefined" && !!crypto.subtle;
+  if (!available && !warnedNoSubtleCrypto) {
+    warnedNoSubtleCrypto = true;
+    console.warn(
+      "geocodeCache: crypto.subtle unavailable (not a secure context — http:// on a non-localhost address) — geocode caching disabled for this session, addresses will be re-geocoded every time."
+    );
+  }
+  return available;
+}
+
 async function sha256hex(text: string): Promise<string> {
   const encoder = new TextEncoder();
   const data = encoder.encode(text);
@@ -47,6 +65,7 @@ export interface GeoPoint {
  */
 export async function lookupGeocode(address: string): Promise<GeoPoint | null> {
   if (!address?.trim()) return null;
+  if (!hasSubtleCrypto()) return null;
   try {
     const hash = await sha256hex(normalise(address));
     const { data, error } = await supabase
@@ -73,6 +92,7 @@ export async function lookupGeocode(address: string): Promise<GeoPoint | null> {
  */
 export async function storeGeocode(address: string, point: GeoPoint): Promise<void> {
   if (!address?.trim()) return;
+  if (!hasSubtleCrypto()) return;
   try {
     const hash = await sha256hex(normalise(address));
     await supabase.from("geocode_cache").upsert(
