@@ -1024,8 +1024,8 @@ input::-ms-clear {
   .time-slot {
     border-bottom: 1px solid rgba(255, 255, 255, 0.05);
     border-right: 1px solid rgba(255, 255, 255, 0.05);
-    padding: 0.75rem;
-    min-height: 92px;
+    padding: 0.85rem;
+    min-height: 100px;
   }
   /* Right column: no trailing right border */
   .time-slot-grid .time-slot:nth-child(even) {
@@ -1053,10 +1053,11 @@ input::-ms-clear {
   .work-order-card {
     background: rgba(30, 41, 59, 0.8);
     border: 1px solid rgba(148, 163, 184, 0.2);
-    border-radius: 4px;
-    padding: 0.65rem;
-    margin-bottom: 0.5rem;
+    border-radius: 6px;
+    padding: 0.85rem;
+    margin-bottom: 0.65rem;
     font-size: 0.75rem;
+    line-height: 1.45;
     cursor: pointer;
     transition: all 0.2s;
   }
@@ -1072,8 +1073,9 @@ input::-ms-clear {
   .work-order-ticket {
     display: block;
     font-weight: 600;
+    font-size: 0.85rem;
     color: #60a5fa;
-    margin-bottom: 0.2rem;
+    margin-bottom: 0.35rem;
     cursor: pointer;
     text-decoration: underline;
     transition: all 0.2s;
@@ -1086,25 +1088,30 @@ input::-ms-clear {
 
   .work-order-address {
     color: #cbd5e1;
-    font-size: 0.7rem;
+    font-size: 0.72rem;
+    line-height: 1.4;
+    margin-top: 0.15rem;
+    overflow-wrap: anywhere;
   }
 
   .work-order-customer {
     color: #94a3b8;
-    font-size: 0.7rem;
-    margin-top: 0.2rem;
+    font-size: 0.72rem;
+    line-height: 1.4;
+    margin-top: 0.15rem;
+    overflow-wrap: anywhere;
   }
 
   .work-order-status {
     display: inline-flex;
     align-items: center;
     gap: 0.4rem;
-    padding: 0.2rem 0.45rem;
+    padding: 0.25rem 0.55rem;
     background: rgba(59, 130, 246, 0.12);
     border-radius: 999px;
     color: #cfe3ff;
     font-weight: 600;
-    margin-top: 0.35rem;
+    margin-top: 0.5rem;
     line-height: 1.2;
   }
 
@@ -7061,8 +7068,8 @@ a.mtech-phone-link:active { opacity: 0.7; }
   .time-slot {
     border-bottom: 1px solid rgba(255, 255, 255, 0.05);
     border-right: 1px solid rgba(255, 255, 255, 0.05);
-    padding: 0.75rem;
-    min-height: 92px;
+    padding: 0.85rem;
+    min-height: 100px;
   }
   /* Right column: no trailing right border */
   .time-slot-grid .time-slot:nth-child(even) {
@@ -7090,10 +7097,11 @@ a.mtech-phone-link:active { opacity: 0.7; }
   .work-order-card {
     background: rgba(30, 41, 59, 0.8);
     border: 1px solid rgba(148, 163, 184, 0.2);
-    border-radius: 4px;
-    padding: 0.65rem;
-    margin-bottom: 0.5rem;
+    border-radius: 6px;
+    padding: 0.85rem;
+    margin-bottom: 0.65rem;
     font-size: 0.75rem;
+    line-height: 1.45;
     cursor: pointer;
     transition: all 0.2s;
   }
@@ -7109,8 +7117,9 @@ a.mtech-phone-link:active { opacity: 0.7; }
   .work-order-ticket {
     display: block;
     font-weight: 600;
+    font-size: 0.85rem;
     color: #60a5fa;
-    margin-bottom: 0.2rem;
+    margin-bottom: 0.35rem;
     cursor: pointer;
     text-decoration: underline;
     transition: all 0.2s;
@@ -7123,25 +7132,30 @@ a.mtech-phone-link:active { opacity: 0.7; }
 
   .work-order-address {
     color: #cbd5e1;
-    font-size: 0.7rem;
+    font-size: 0.72rem;
+    line-height: 1.4;
+    margin-top: 0.15rem;
+    overflow-wrap: anywhere;
   }
 
   .work-order-customer {
     color: #94a3b8;
-    font-size: 0.7rem;
-    margin-top: 0.2rem;
+    font-size: 0.72rem;
+    line-height: 1.4;
+    margin-top: 0.15rem;
+    overflow-wrap: anywhere;
   }
 
   .work-order-status {
     display: inline-flex;
     align-items: center;
     gap: 0.4rem;
-    padding: 0.2rem 0.45rem;
+    padding: 0.25rem 0.55rem;
     background: rgba(59, 130, 246, 0.12);
     border-radius: 999px;
     color: #cfe3ff;
     font-weight: 600;
-    margin-top: 0.35rem;
+    margin-top: 0.5rem;
     line-height: 1.2;
   }
 
