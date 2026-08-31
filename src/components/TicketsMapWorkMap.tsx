@@ -15,7 +15,7 @@ import { useAuth } from "@/lib/auth";
 import { isTechnicianOnlyRole } from "@/lib/roleLabels";
 import { usePersistedTab } from "@/lib/usePersistedTab";
 import { getCompanyMapProvider, type MapProvider } from "@/lib/supabase/companySettings";
-import { loadGoogleMapsScript, getLeaflet, makeGeocoder, addRouteDirectionArrow, attachLeafletResizeFix, createBadgeDivIcon, OSM_TILE_URL, OSM_ATTRIBUTION } from "@/lib/mapEngine";
+import { loadGoogleMapsScript, getLeaflet, makeGeocoder, warmGeocodeCache, addRouteDirectionArrow, attachLeafletResizeFix, createBadgeDivIcon, OSM_TILE_URL, OSM_ATTRIBUTION } from "@/lib/mapEngine";
 
 type ColorMode = "status" | "tech";
 type SidebarTab = "tickets" | "status";
@@ -91,6 +91,28 @@ function getInitials(value: string | null | undefined) {
   
   // Fallback: if only one word, use first two letters
   return value.slice(0, 2).toUpperCase();
+}
+
+/**
+ * Build the best geocode query string from a ticket's real fields (street +
+ * city/state/zip, falling back to just zip or location). Shared between the
+ * cache pre-warm pass and the actual per-ticket geocode() call so the two
+ * can never drift apart -- if they built the query differently, warming the
+ * cache with one string wouldn't be a hit for geocode()'s different string.
+ */
+function buildTicketGeocodeQuery(ticket: TicketRecord): string {
+  const streetAddr = ticket.address || ticket.customer_address || "";
+  const cityName = ticket.city || ticket.customer_city || "";
+  const stateName = ticket.state || ticket.customer_state || "";
+  const zipCode = ticket.zip || ticket.customer_zip || "";
+
+  const parts: string[] = [];
+  if (streetAddr) parts.push(streetAddr);
+  const cityStateZip = [cityName, [stateName, zipCode].filter(Boolean).join(" ")]
+    .filter(Boolean)
+    .join(", ");
+  if (cityStateZip) parts.push(cityStateZip);
+  return parts.join(", ").trim() || zipCode || ticket.location || "";
 }
 
 function getToneClass(mode: ColorMode, ticket: TicketRecord, index: number) {
@@ -570,32 +592,37 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
     // Ordered geocoded stops per technician, for drawing route lines.
     const routePointsByTech = new Map<string, Array<{ order: number; position: any }>>();
 
-    const ticketPositions = visibleTickets.map(async (ticket) => {
-      const directLat = typeof ticket.lat === "number" ? ticket.lat : typeof ticket.latitude === "number" ? ticket.latitude : null;
-      const directLng = typeof ticket.lng === "number" ? ticket.lng : typeof ticket.longitude === "number" ? ticket.longitude : null;
-      if (directLat != null && directLng != null) {
-        return { ticket, position: { lat: directLat, lng: directLng } };
-      }
+    // Pre-warm the cache with one bulk DB query for every address this pass
+    // will need, instead of each ticket's geocode() call paying its own
+    // network round-trip through the (throttled) per-call DB lookup --
+    // that's what was actually making the "Loading tickets…" pill take so
+    // long on a normal day where most addresses are already cached.
+    const queriesToWarm = visibleTickets
+      .filter((ticket) => {
+        const directLat = typeof ticket.lat === "number" ? ticket.lat : typeof ticket.latitude === "number" ? ticket.latitude : null;
+        const directLng = typeof ticket.lng === "number" ? ticket.lng : typeof ticket.longitude === "number" ? ticket.longitude : null;
+        return directLat == null || directLng == null;
+      })
+      .map((ticket) => buildTicketGeocodeQuery(ticket))
+      .filter(Boolean) as string[];
 
-      // Build the best geocode query from the ticket's real fields.
-      const streetAddr = ticket.address || ticket.customer_address || "";
-      const cityName = ticket.city || ticket.customer_city || "";
-      const stateName = ticket.state || ticket.customer_state || "";
-      const zipCode = ticket.zip || ticket.customer_zip || "";
+    warmGeocodeCache(queriesToWarm).then(() => {
+      if (cancelled) return;
 
-      const parts: string[] = [];
-      if (streetAddr) parts.push(streetAddr);
-      const cityStateZip = [cityName, [stateName, zipCode].filter(Boolean).join(" ")]
-        .filter(Boolean)
-        .join(", ");
-      if (cityStateZip) parts.push(cityStateZip);
-      const fullQuery = parts.join(", ").trim() || zipCode || ticket.location || "";
-      if (!fullQuery) return { ticket, position: null };
+      const ticketPositions = visibleTickets.map(async (ticket) => {
+        const directLat = typeof ticket.lat === "number" ? ticket.lat : typeof ticket.latitude === "number" ? ticket.latitude : null;
+        const directLng = typeof ticket.lng === "number" ? ticket.lng : typeof ticket.longitude === "number" ? ticket.longitude : null;
+        if (directLat != null && directLng != null) {
+          return { ticket, position: { lat: directLat, lng: directLng } };
+        }
 
-      return { ticket, position: await geocode(fullQuery) };
-    });
+        const fullQuery = buildTicketGeocodeQuery(ticket);
+        if (!fullQuery) return { ticket, position: null };
 
-    Promise.all(ticketPositions).then((results) => {
+        return { ticket, position: await geocode(fullQuery) };
+      });
+
+      Promise.all(ticketPositions).then((results) => {
       if (cancelled || !activeMap) return;
       setPinsLoading(false);
 
@@ -809,6 +836,7 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
           }
         });
       }
+      });
     });
 
     return () => {

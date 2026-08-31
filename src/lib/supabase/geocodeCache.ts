@@ -86,6 +86,64 @@ export async function lookupGeocode(address: string): Promise<GeoPoint | null> {
 }
 
 /**
+ * Bulk version of lookupGeocode for many addresses at once -- one batched
+ * query against geocode_cache instead of a network round-trip per address.
+ * Used to pre-warm the in-memory geocode cache before a page geocodes a
+ * whole ticket list (Work Map, Work Planner): already-cached addresses
+ * resolve instantly with zero network calls afterward, instead of each one
+ * paying its own round-trip through geocode()'s throttled per-call path.
+ *
+ * Returns a Map keyed by the exact input address string (not normalized/
+ * hashed) -> GeoPoint. An address absent from the map is a cache miss --
+ * caller falls through to a live geocode() + storeGeocode() for it as usual.
+ */
+const GEOCODE_LOOKUP_BATCH_SIZE = 200;
+const GEOCODE_LOOKUP_CONCURRENCY = 5;
+
+export async function bulkLookupGeocode(addresses: string[]): Promise<Map<string, GeoPoint>> {
+  const out = new Map<string, GeoPoint>();
+  const uniqueAddresses = Array.from(new Set(addresses.filter((a) => a?.trim())));
+  if (uniqueAddresses.length === 0 || !hasSubtleCrypto()) return out;
+
+  // Multiple raw address strings can normalize to the same hash (e.g.
+  // "123 Main St." vs "123 main st") -- keep every original so all of them
+  // get the resolved point, not just whichever happened to hash last.
+  const hashToAddresses = new Map<string, string[]>();
+  await Promise.all(
+    uniqueAddresses.map(async (addr) => {
+      const hash = await sha256hex(normalise(addr));
+      const list = hashToAddresses.get(hash) ?? [];
+      list.push(addr);
+      hashToAddresses.set(hash, list);
+    })
+  );
+
+  const hashes = Array.from(hashToAddresses.keys());
+  const batches: string[][] = [];
+  for (let i = 0; i < hashes.length; i += GEOCODE_LOOKUP_BATCH_SIZE) batches.push(hashes.slice(i, i + GEOCODE_LOOKUP_BATCH_SIZE));
+
+  for (let i = 0; i < batches.length; i += GEOCODE_LOOKUP_CONCURRENCY) {
+    await Promise.all(
+      batches.slice(i, i + GEOCODE_LOOKUP_CONCURRENCY).map(async (batch) => {
+        const { data, error } = await supabase
+          .from("geocode_cache")
+          .select("address_hash, lat, lng")
+          .in("address_hash", batch);
+        if (error) {
+          console.warn("bulkLookupGeocode error:", error.message);
+          return;
+        }
+        for (const row of data ?? []) {
+          const point = { lat: Number((row as any).lat), lng: Number((row as any).lng) };
+          for (const addr of hashToAddresses.get((row as any).address_hash) ?? []) out.set(addr, point);
+        }
+      })
+    );
+  }
+  return out;
+}
+
+/**
  * Store a geocoded address in the Supabase cache.
  * Silently ignores errors (e.g. if RLS blocks the insert for unauthenticated
  * routes) so the geocode result still works even if caching fails.

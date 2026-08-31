@@ -21,7 +21,7 @@
  */
 
 import type * as Leaflet from "leaflet";
-import { lookupGeocode, storeGeocode } from "@/lib/supabase/geocodeCache";
+import { lookupGeocode, storeGeocode, bulkLookupGeocode } from "@/lib/supabase/geocodeCache";
 import { normalizeLocationForRegionMatch, normalizeLocationName } from "@/lib/locations";
 import { LOCATIONS_DATA } from "@/lib/zipCoverage";
 
@@ -271,6 +271,29 @@ export function makeGeocoder(provider: "google" | "leaflet", cache: Map<string, 
       releaseGeocodeSlot();
     }
   };
+}
+
+/**
+ * Pre-warms `cache` with every already-cached address's coordinates via one
+ * bulk DB query (bulkLookupGeocode), instead of each address paying its own
+ * network round-trip through geocode()'s per-call DB lookup -- that lookup
+ * happens inside the same concurrency-throttled path as a live provider
+ * call, so on a page with hundreds of tickets whose addresses are already
+ * known, that throttle was the actual bottleneck, not Geoapify/Google.
+ *
+ * Call this with every query string a page is about to geocode, BEFORE
+ * looping geocode() over the list -- cache hits resolve synchronously with
+ * zero network calls once this resolves; genuine misses still fall through
+ * to geocode()'s normal (throttled) live-provider path unchanged.
+ */
+export async function warmGeocodeCache(queries: string[], cache: Map<string, LatLng | null> = sessionGeocodeCache): Promise<void> {
+  const uncached = queries.filter((q) => q && !cache.has(q));
+  if (uncached.length === 0) return;
+  const results = await bulkLookupGeocode(uncached);
+  for (const q of uncached) {
+    const hit = results.get(q);
+    if (hit) cache.set(q, hit);
+  }
 }
 
 async function geocodeUncached(
