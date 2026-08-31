@@ -9,7 +9,7 @@ import {
 } from "@/lib/firebase/storage";
 import { compressImage, validateImageFile, formatBytes } from "@/lib/imageCompression";
 
-const MAX_PHOTOS = 10;
+const MAX_PHOTOS = 20;
 
 interface UploadQueueItem {
   id: string;
