@@ -275,6 +275,11 @@ export function WorkPlannerPage({ mod, sub }: Props) {
   }, []);
   const [plannerDate, setPlannerDate] = useState(() => getLocalDateStr());
   const [showRescheduled, setShowRescheduled] = useState(false);
+  // Technician columns/rows with zero tickets for the selected day are
+  // hidden by default -- unchecked to bring them back (e.g. to confirm
+  // someone genuinely has nothing scheduled, vs. them just being filtered
+  // out of view).
+  const [showEmptyTechs, setShowEmptyTechs] = useState(false);
   const [plannerTickets, setPlannerTickets] = useState<PlannerTicket[]>([]);
   const [changedTickets, setChangedTickets] = useState<Array<{ type: string; ticketNum: string; scheduleDate: string; newTimeSlot: string; previousTimeSlot: string; technician: string; timestamp: string }>>([]);
   const [selectedTicket, setSelectedTicket] = useState<PlannerTicket | null>(null);
@@ -500,6 +505,11 @@ export function WorkPlannerPage({ mod, sub }: Props) {
       ),
     }));
   }, [selectedTechRoster, visibleTickets, plannerDate, slotOrder]);
+
+  const visibleGroupedTickets = useMemo(
+    () => (showEmptyTechs ? groupedTickets : groupedTickets.filter(({ slots }) => slots.some((s) => s.length > 0))),
+    [groupedTickets, showEmptyTechs],
+  );
 
   const techSummary = useMemo(() => {
     return selectedTechRoster.map((tech, index) => {
@@ -1098,14 +1108,20 @@ export function WorkPlannerPage({ mod, sub }: Props) {
                 <span>{item.label}</span>
               </div>
             ))}
+            <label className="checkbox-group legend-item">
+              <input type="checkbox" checked={showEmptyTechs} onChange={(event) => setShowEmptyTechs(event.target.checked)} />
+              <span>Show technicians with no tickets</span>
+            </label>
           </div>
         </div>
 
         <div className="tech-schedule" id="techSchedule">
           {selectedTechRoster.length === 0 ? (
             <div className="no-records">No technicians available for {currentLocationLabel}.</div>
+          ) : visibleGroupedTickets.length === 0 ? (
+            <div className="no-records">No technicians with tickets for this day — check "Show technicians with no tickets" above to see the full roster.</div>
           ) : (
-            groupedTickets.map(({ tech, slots }, techIndex) => (
+            visibleGroupedTickets.map(({ tech, slots }, techIndex) => (
               <div key={tech} className="tech-column">
                 <div className="tech-header">
                   {tech} <span className="tech-header-count">({slots.flat().length})</span>
@@ -1259,9 +1275,13 @@ export function WorkPlannerPage({ mod, sub }: Props) {
               </tr>
             </thead>
             <tbody>
-              {techSummary.length === 0 ? (
-                <tr><td colSpan={5} className="no-records">No technician summary available.</td></tr>
-              ) : techSummary.map((entry) => (
+              {(() => {
+                const visibleSummary = showEmptyTechs
+                  ? techSummary
+                  : techSummary.filter((entry) => entry.ready + entry.pending + entry.completed > 0);
+                return visibleSummary.length === 0 ? (
+                  <tr><td colSpan={5} className="no-records">No technician summary available.</td></tr>
+                ) : visibleSummary.map((entry) => (
                 <tr key={entry.tech}>
                   <td><span className={`legend-color-dot ${entry.color}`} /></td>
                   <td>{entry.tech}</td>
@@ -1269,7 +1289,8 @@ export function WorkPlannerPage({ mod, sub }: Props) {
                   <td>{entry.pending}</td>
                   <td>{entry.completed}</td>
                 </tr>
-              ))}
+                ));
+              })()}
             </tbody>
           </table>
         </div>
