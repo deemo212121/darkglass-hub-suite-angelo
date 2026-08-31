@@ -10,7 +10,7 @@ import { getCompanySalaryEntries, rateEffectiveOn, entryEffectiveOn, currentRate
 import { EmployeePayrollDetailModal } from "@/components/EmployeePayrollDetailModal";
 import { ActivityLogPanel } from "@/components/ActivityLogPanel";
 import { logModuleActivity } from "@/lib/supabase/moduleActivityLog";
-import { getRoleDepartmentBreakdown, normalizeRole } from "@/lib/roleLabels";
+import { getRoleDepartmentBreakdown } from "@/lib/roleLabels";
 import { payGraceMinutesFor, applyGraceToCheckIn, roundCheckOutToSchedule } from "@/lib/attendanceGrace";
 
 const REGULAR_HOURS_PER_DAY = 8;
@@ -121,7 +121,7 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
       let regularHours = 0;
       let overtimeHours = 0;
       let grossPay = 0;
-      const graceMinutes = payGraceMinutesFor(profileCountry(p), normalizeRole(p.role) === "TECHNICIAN");
+      const graceMinutes = payGraceMinutesFor(profileCountry(p));
       for (const day of dayEntries) {
         if (!day.checkIn || !day.checkOut) continue;
         const paidCheckIn = p.required_check_in
@@ -401,7 +401,7 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
           workingHours={detailProfile.working_hours}
           mealMinutes={detailProfile.meal_minutes}
           offDays={detailProfile.off_days || undefined}
-          graceMinutes={payGraceMinutesFor(profileCountry(detailProfile), normalizeRole(detailProfile.role) === "TECHNICIAN")}
+          graceMinutes={payGraceMinutesFor(profileCountry(detailProfile))}
           initialStart={startDate || undefined}
           initialEnd={endDate || undefined}
           onClose={() => setDetailProfile(null)}

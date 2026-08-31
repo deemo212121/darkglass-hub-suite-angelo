@@ -143,13 +143,6 @@ function isCsrRole(role: string | null | undefined, extraRoles?: string[] | null
   });
 }
 
-// Technicians are commission/piece-rate (paid per completed repair ticket),
-// not hourly — no pay-affecting grace period applies to them. Same
-// role === TECHNICIAN convention as AccountingDashboard.tsx's isTechRole.
-function isTechRole(role: string | null | undefined): boolean {
-  return normalizeRole(role) === "TECHNICIAN";
-}
-
 function resolveCreds(env: Record<string, string | undefined>) {
   const g = globalThis as any;
   const supabaseUrl =
@@ -300,7 +293,7 @@ export async function runAttendanceAlertCheck(
 
     const nowHHMM = nowHHMMByTimezone.get(timezoneForBranch(p.assigned_branch))!;
     const country = p.assigned_branch === "Philippines" ? "PH" : "US";
-    const graceMinutes = payGraceMinutesFor(country, isTechRole(p.role));
+    const graceMinutes = payGraceMinutesFor(country);
     const graceIn = p.required_check_in ? addMinutesToHHMM(p.required_check_in, graceMinutes) : null;
     const graceOut = p.required_check_out ? addMinutesToHHMM(p.required_check_out, graceMinutes) : null;
 

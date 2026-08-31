@@ -7,7 +7,7 @@ import { useAuth } from "@/lib/auth";
 import { usePersistedTab } from "@/lib/usePersistedTab";
 import { getCompanyUsers, getProfileEmployeeInfo, type ProfileRow } from "@/lib/supabase/users";
 import { resolvePresenceStatus, PRESENCE_DOT_CLASS, PRESENCE_LABEL } from "@/lib/presence";
-import { getRoleDepartmentBreakdown, canSubmitConductNote, normalizeRole, isAttendanceManagerTierRole } from "@/lib/roleLabels";
+import { getRoleDepartmentBreakdown, canSubmitConductNote, normalizeRole, isAttendanceManagerTierRole, TECHNICIAN_PAY_ROLES } from "@/lib/roleLabels";
 import { addAgentNote, getAllAgentNotes, type CsrAgentNote } from "@/lib/supabase/csrAgentNotes";
 import {
   getCompanyTimecardEntries,
@@ -546,7 +546,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
       // definitively missing (see computeAlerts' nowHHMM=null doc comment).
       const rowNowHHMM = isToday ? (nowByTimezone[branchTz] ?? nowInTimezone(branchTz).hhmm) : null;
       const country = p.assigned_branch === "Philippines" ? "PH" : "US";
-      const graceMinutes = payGraceMinutesFor(country, normalizeRole(p.role) === "TECHNICIAN");
+      const graceMinutes = payGraceMinutesFor(country);
       const alerts = computeAlerts(checkIn, checkOut, mealIn, mealOut, p.required_check_in || "", p.required_check_out || "", isOffDay, rowNowHHMM, graceMinutes, p.working_hours);
       const clockedInByName = entry?.clockedInBy ? allProfileById.get(entry.clockedInBy)?.display_name || null : null;
       return {
@@ -717,7 +717,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
         const checkOut = entry?.checkOut || "";
         if (checkIn) present++;
         const monthlyCountry = p.assigned_branch === "Philippines" ? "PH" : "US";
-        const monthlyGraceMinutes = payGraceMinutesFor(monthlyCountry, normalizeRole(p.role) === "TECHNICIAN");
+        const monthlyGraceMinutes = payGraceMinutesFor(monthlyCountry);
         const alerts = computeAlerts(checkIn, checkOut, entry?.mealStart || "", entry?.mealEnd || "", p.required_check_in || "", p.required_check_out || "", false, null, monthlyGraceMinutes, p.working_hours);
         if (alerts.some(isPenalizedLateAlert)) late++;
       }
@@ -928,12 +928,15 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     }
   };
 
-  // Manager proxy clock-in — only ever clocks IN a direct-report technician
-  // (never out; that stays the technician's own action). Stamps the
-  // technician's own branch-local time, not the manager's, and records
-  // clocked_in_by so the row visibly shows it wasn't a self-punch. Uses the
-  // server-verified instant (see src/lib/serverTime.ts), not the manager's
-  // own browser clock, for the same reason self-punches do (TimeClockMenu.tsx).
+  // Manager proxy clock-in — only ever clocks IN a technician who's visible
+  // to this viewer (a direct report via manager_name, or — for Parts
+  // Manager — any technician-tier employee at their own branch, see
+  // visibleAttendanceProfileIds), never OUT (that stays the technician's
+  // own action). Stamps the technician's own branch-local time, not the
+  // manager's, and records clocked_in_by so the row visibly shows it wasn't
+  // a self-punch. Uses the server-verified instant (see
+  // src/lib/serverTime.ts), not the manager's own browser clock, for the
+  // same reason self-punches do (TimeClockMenu.tsx).
   const [clockingInIds, setClockingInIds] = useState<Set<string>>(new Set());
   const handleProxyClockIn = async (record: DailyRecord) => {
     if (!myProfileId) return;
@@ -1491,7 +1494,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                               (by {record.clockedInBy})
                             </span>
                           )}
-                          {(record.date ?? dailyDate) === todayISO && record.role === "TECHNICIAN" && record.checkIn === "—" && !record.isOffDay && (
+                          {(record.date ?? dailyDate) === todayISO && TECHNICIAN_PAY_ROLES.has(record.role) && record.checkIn === "—" && !record.isOffDay && (
                             <button
                               type="button"
                               disabled={clockingInIds.has(record.profileId)}

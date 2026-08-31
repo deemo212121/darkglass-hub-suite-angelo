@@ -24,7 +24,7 @@ interface Props {
   workingHours?: number | null;
   mealMinutes?: number | null;
   offDays?: number[];
-  /** Pre-computed by the caller via payGraceMinutesFor(country, isTechnician) — see attendanceGrace.ts. Defaults to 0 (no forgiveness) so existing callers aren't required to pass it. */
+  /** Pre-computed by the caller via payGraceMinutesFor(country) — see attendanceGrace.ts. Defaults to 0 (no forgiveness) so existing callers aren't required to pass it. */
   graceMinutes?: number;
   /** The payroll period selected on the caller's own page (e.g. genStart/
    *  genEnd on AccountingDashboard, startDate/endDate on

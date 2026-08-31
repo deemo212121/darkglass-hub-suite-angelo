@@ -75,7 +75,7 @@ export function TechActivityReportModal({
   savingCategoryOverrideKey,
   onClose,
 }: Props) {
-  const { employee, techManual, techCategoryCounts, ticketsAssigned, ticketsCompleted, workingDays, twoTechCount } = row;
+  const { employee, techManual, techCategoryCounts, ticketsAssigned, ticketsCompleted, workingDays, twoTechCount, hoursWorked, overtimeHours, hourlyRate, techHourlyPay } = row;
   const branch = employee.assigned_branch || "";
 
   const techRateFor = (category: string): number => {
@@ -211,7 +211,7 @@ export function TechActivityReportModal({
   const subtotal =
     categoryPayments.reduce((s, c) => s + c.payment, 0) +
     techManual.ldtPay + techManual.mileagePay + techManual.trainingPay +
-    twoTechPayment + mcaPayment + completedTicketsPayment + customLinesTotal;
+    twoTechPayment + mcaPayment + completedTicketsPayment + customLinesTotal + row.techHourlyPay;
   const owIncentivePay = (techManual.owIncentivePct / 100) * subtotal;
   const totalPayment = subtotal + owIncentivePay;
 
@@ -276,6 +276,15 @@ export function TechActivityReportModal({
                       </div>
                     </td>
                     <td className="px-3 py-2 text-right text-slate-200">{fmt(completedTicketsPayment)}</td>
+                  </tr>
+
+                  <tr title="Hours actually worked this period (regular + overtime at 1.5x) × this technician's hourly rate. Set via their name link on the Tech Payroll table → Add Rate Change, same as an office employee's rate.">
+                    <td className="px-3 py-2 text-slate-300">Hourly Pay</td>
+                    <td className="px-3 py-2 text-right text-slate-300">
+                      {hoursWorked.toFixed(1)}{overtimeHours > 0 ? ` + ${overtimeHours.toFixed(1)} OT` : ""}
+                    </td>
+                    <td className="px-3 py-2 text-right text-slate-300">{fmt(hourlyRate)}/hr</td>
+                    <td className="px-3 py-2 text-right text-slate-200">{fmt(techHourlyPay)}</td>
                   </tr>
 
                   {(["ldtCount", "mileage", "trainingValue"] as const).map((field) => {

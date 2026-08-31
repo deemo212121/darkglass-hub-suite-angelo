@@ -22,6 +22,7 @@ import {
   MapPin,
   Trash2,
   Activity,
+  Clock,
   X,
   Ban,
   Columns3,
@@ -43,7 +44,7 @@ import { supabase } from "@/lib/supabase/client";
 import { EmployeePayrollDetailModal } from "@/components/EmployeePayrollDetailModal";
 import { getRepairStatuses, type RepairStatus } from "@/lib/supabase/repairStatuses";
 import { TicketColumnFilter } from "@/components/TicketColumnFilter";
-import { getRoleDepartmentBreakdown, normalizeRole } from "@/lib/roleLabels";
+import { getRoleDepartmentBreakdown, normalizeRole, TECHNICIAN_PAY_ROLES } from "@/lib/roleLabels";
 import { calcWorkedHours, getMyProfileSchedule, resolveScheduledNetHours, getAttendanceForRange } from "@/lib/supabase/timecards";
 import { payGraceMinutesFor, applyGraceToCheckIn, roundCheckOutToSchedule } from "@/lib/attendanceGrace";
 import { updatePayrollLineItemExtra, updatePayrollLineItemPaid } from "@/lib/supabase/payslips";
@@ -259,6 +260,16 @@ export interface EmployeePayrollRow {
    */
   techManual: { ldtCount: number; ldtPay: number; mileage: number; mileagePay: number; trainingValue: number; trainingPay: number; owIncentivePct: number };
   /**
+   * Tech Payroll only — hoursWorked × hourlyRate, plus overtimeHours ×
+   * hourlyRate × 1.5, using the same hourly rate Finance sets via the
+   * employee's payroll detail (salary_entries) that office employees
+   * already use. Paid ON TOP OF the piece-rate total below (a technician's
+   * grossPay is piece-rate + this), not instead of it. Already included in
+   * grossPay/grossPayUSD; broken out here so it can show as its own line.
+   * 0 for Office/fixed-salary rows.
+   */
+  techHourlyPay: number;
+  /**
    * True for a row representing the tech-portion of someone's pay (piece-
    * rate ticket/mileage/category totals), false/undefined for their office-
    * portion row (hours × rate, or fixed salary). Drives the Office/Tech
@@ -329,9 +340,7 @@ function computeHoursMap(
     dates.add(tc.work_date);
     punchedDates.set(key, dates);
     const emp = employeeById.get(key);
-    const graceMinutes = emp
-      ? payGraceMinutesFor(emp.country, normalizeRole(emp.role) === "TECHNICIAN")
-      : 0;
+    const graceMinutes = emp ? payGraceMinutesFor(emp.country) : 0;
     const paidCheckIn = emp?.requiredCheckIn
       ? applyGraceToCheckIn(tc.check_in, emp.requiredCheckIn, graceMinutes)
       : tc.check_in;
@@ -1285,15 +1294,21 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   const hoursMap = computeHoursMap(timecardEntries, employees, ptoRequests, genStart, genEnd);
 
   // Technicians are paid per completed repair ticket (Tech Payroll) instead
-  // of hourly-or-fixed — role === TECHNICIAN only (TECHNICIAN_MANAGER and
-  // everyone else stays on the Office Payroll calculation below).
-  const isTechRole = (emp: SupabaseEmployee) => normalizeRole(emp.role) === "TECHNICIAN";
-  // Holds TECHNICIAN as a secondary/extra role while their primary role is
-  // something else (e.g. a CSR Agent who also picks up technician work) —
-  // gets an ADDITIONAL tech-portion payroll row alongside their normal
-  // office row, rather than replacing it (see EmployeePayrollRow.isTechPortion).
+  // of hourly-or-fixed — any field-technician tier (TECHNICIAN,
+  // TECHNICIAN_MANAGER, TECHNICAL_DIRECTOR, TECHNICAL_ASSISTANT_DIRECTOR —
+  // see TECHNICIAN_PAY_ROLES), not just the bare "TECHNICIAN" code. A Tech
+  // Manager/Director still does real ticket work and clocks real hours the
+  // same as a plain Technician, so they get the same piece-rate + tech
+  // hourly treatment instead of silently falling through to a plain
+  // office hourly row.
+  const isTechRole = (emp: SupabaseEmployee) => TECHNICIAN_PAY_ROLES.has(normalizeRole(emp.role));
+  // Holds a technician-tier role as a secondary/extra role while their
+  // primary role is something else (e.g. a CSR Agent who also picks up
+  // technician work) — gets an ADDITIONAL tech-portion payroll row
+  // alongside their normal office row, rather than replacing it (see
+  // EmployeePayrollRow.isTechPortion).
   const hasSecondaryTechRole = (emp: SupabaseEmployee) =>
-    !isTechRole(emp) && (emp.extraRoles ?? []).some((r) => normalizeRole(r) === "TECHNICIAN");
+    !isTechRole(emp) && (emp.extraRoles ?? []).some((r) => TECHNICIAN_PAY_ROLES.has(normalizeRole(r)));
   const getsTechPortion = (emp: SupabaseEmployee) => isTechRole(emp) || hasSecondaryTechRole(emp);
 
   // Rate lookup: an exact (repair_type, branch) match wins; otherwise fall
@@ -1473,12 +1488,19 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     // on top of that ticket's own repair-type rate already in tech.grossPay.
     const completedTicketsPay = includeTech ? (tech?.ticketsCompleted ?? 0) * techRateFor("Completed Tickets", techBranch) : 0;
     const customPay = includeTech ? techCustomTotalByProfile.get(emp.id) ?? 0 : 0;
+    // Technicians are piece-rate by default, but can now ALSO earn hourly
+    // pay on top of it once Finance sets a rate for them (same
+    // salary_entries hourly_rate office employees use, same regular +
+    // overtime×1.5 formula as officeGrossPay below) — a tech with no rate
+    // ever set has hourlyRate 0, so this stays $0 and existing behavior is
+    // unchanged until Finance actually enters one.
+    const techHourlyPay = includeTech ? hours.regular * hourlyRate + hours.overtime * hourlyRate * 1.5 : 0;
     // Gated on includeTech, not on `tech` — a technician with zero
     // completed tickets this period (so techGrossByProfile has no entry
     // for them) can still have real pay owed via manual LDT/Mileage/
     // Training, a custom line, or an approved Payroll Dispute; the old
     // `tech ? ... : 0` gate silently dropped all of that to $0 for them.
-    const techGrossPay = includeTech ? (tech?.grossPay ?? 0) + manualTotal + twoTechPay + mcaBonus + completedTicketsPay + customPay : 0;
+    const techGrossPay = includeTech ? (tech?.grossPay ?? 0) + manualTotal + twoTechPay + mcaBonus + completedTicketsPay + customPay + techHourlyPay : 0;
 
     const techRow: EmployeePayrollRow | null =
       includeTech && (isTechRole(emp) || techGrossPay > 0)
@@ -1510,6 +1532,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
               trainingPay: manual?.trainingPay ?? 0,
               owIncentivePct: manual?.owIncentivePct ?? 0,
             },
+            techHourlyPay,
             dutyHours,
             grossPay: techGrossPay,
             grossPayUSD: techGrossPay,
@@ -1539,6 +1562,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       workingDays,
       twoTechCount: 0,
       techManual: { ldtCount: 0, ldtPay: 0, mileage: 0, mileagePay: 0, trainingValue: 0, trainingPay: 0, owIncentivePct: 0 },
+      techHourlyPay: 0,
       dutyHours,
       grossPay: officeGrossPay,
       grossPayUSD: officeGrossPay,
@@ -1549,7 +1573,18 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
 
   const usRows = payrollRows.filter((r) => r.employee.country === "US");
   const phRows = payrollRows.filter((r) => r.employee.country === "PH");
-  const usOfficeRows = usRows.filter((r) => !r.isTechPortion);
+  // A plain technician-tier employee's only row IS their tech row (no
+  // separate office row exists for them — see the flatMap above), but it
+  // still needs to show on Office Payroll too so Finance has a natural
+  // place to check their attendance and set/edit their hourly rate — same
+  // detail modal, same underlying row (isTechRole(...) check, not
+  // isTechPortion, so this doesn't pull in someone else's secondary-role
+  // tech portion, which already has its own separate office row here).
+  // Gross Pay shown there is their real total (piece-rate + hourly), same
+  // number as on the Tech Payroll tab — displayed in both places, paid
+  // once (payroll generation reads the underlying deduped row, not these
+  // view-only lists).
+  const usOfficeRows = usRows.filter((r) => !r.isTechPortion || isTechRole(r.employee));
   const usTechRows = usRows.filter((r) => r.isTechPortion);
 
   // Employees who never draw a salary through this system (e.g. the owner)
@@ -2018,7 +2053,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     // attendance recorded" when dailyRows is empty).
     const dailyRows: PayslipDailyRow[] = row.compensationType === "fixed" ? [] : await (async () => {
       const emp = row.employee;
-      const graceMinutes = payGraceMinutesFor(emp.country, normalizeRole(emp.role) === "TECHNICIAN");
+      const graceMinutes = payGraceMinutesFor(emp.country);
       const attendanceRows = await getAttendanceForRange(emp.id, genStart, genEnd, {
         requiredCheckIn: emp.requiredCheckIn,
         requiredCheckOut: emp.requiredCheckOut,
@@ -3198,6 +3233,14 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                                 </button>
                                 <button
                                   type="button"
+                                  onClick={() => setDetailEmployee(row.employee)}
+                                  title="Set hourly rate / view attendance — same detail view as Office Payroll"
+                                  className="p-1.5 rounded text-purple-400 hover:text-purple-300 hover:bg-white/10 transition"
+                                >
+                                  <Clock className="h-3.5 w-3.5" />
+                                </button>
+                                <button
+                                  type="button"
                                   onClick={() => handleSendPayslip(row)}
                                   disabled={sendingPayslipId === row.employee.id || !gmailStatus?.connected}
                                   title={gmailStatus?.connected ? "Send a test payslip email to this technician" : "Connect Gmail above first"}
@@ -4256,7 +4299,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
           workingHours={detailEmployee.workingHours}
           mealMinutes={detailEmployee.mealMinutes}
           offDays={detailEmployee.offDays}
-          graceMinutes={payGraceMinutesFor(detailEmployee.country, normalizeRole(detailEmployee.role) === "TECHNICIAN")}
+          graceMinutes={payGraceMinutesFor(detailEmployee.country)}
           initialStart={genStart || undefined}
           initialEnd={genEnd || undefined}
           onClose={() => setDetailEmployee(null)}

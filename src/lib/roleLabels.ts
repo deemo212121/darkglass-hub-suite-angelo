@@ -104,6 +104,23 @@ export const ROLE_DEPARTMENT_BREAKDOWN: Record<string, { department: string; rol
   TRIAGE_MANAGER: { department: "Triage", roleLabel: "Manager" },
 };
 
+/**
+ * Every role code whose ROLE_DEPARTMENT_BREAKDOWN department is
+ * "Technician" — the full set of field-technician pay tiers (plain
+ * Technician up through Tech Manager/Technical Director/Technical
+ * Assistant Director). Used by AccountingDashboard.tsx's Tech Payroll
+ * split so a Tech Manager or Director still gets piece-rate + tech hourly
+ * pay like a plain Technician, instead of falling through to a plain
+ * office hourly row just because their role code isn't the literal string
+ * "TECHNICIAN". Derived from the breakdown map (not hand-duplicated) so a
+ * future technician-tier role added there is picked up automatically.
+ */
+export const TECHNICIAN_PAY_ROLES = new Set(
+  Object.entries(ROLE_DEPARTMENT_BREAKDOWN)
+    .filter(([, v]) => v.department === "Technician")
+    .map(([code]) => code)
+);
+
 /** Falls back to the flat ROLE_LABELS value for both fields if the role isn't in the breakdown map above. */
 export function getRoleDepartmentBreakdown(role: string | null | undefined): { department: string; roleLabel: string } {
   const code = normalizeRole(role);
@@ -351,6 +368,20 @@ export function isAttendanceFullAccessRole(role: string | null | undefined, extr
 
 /** Array form for spreading into a DASHBOARD_ROLE_GATES entry. */
 export const ATTENDANCE_MANAGER_TIER_ROLES_ARRAY = Array.from(ATTENDANCE_MANAGER_TIER_ROLES);
+
+const PARTS_MANAGER_ROLES = new Set(["PARTS_MANAGER"]);
+
+/**
+ * Parts Manager needs to proxy clock-in the technicians physically working
+ * out of their own branch — but those technicians report to a Technician
+ * Manager/Director, not the Parts Manager, so the manager_name-based
+ * scoping in visibleAttendanceProfileIds wouldn't surface any of them.
+ * "Any held role" pile-up semantics — a secondary Parts Manager role grants
+ * this the same as a primary one.
+ */
+export function isPartsManagerRole(role: string | null | undefined, extraRoles?: string[] | null): boolean {
+  return anyHeldRoleIn(PARTS_MANAGER_ROLES, role, extraRoles);
+}
 
 /**
  * The Technical Support department — TRIAGE_USER ("Technical Support") and

@@ -87,7 +87,7 @@ export function dayStatus(entry: CompanyTimecardEntry | undefined, requiredCheck
 /** Mirrors AttendanceMonitoringPage's own country/role -> grace-minutes resolution exactly, so both pages agree on what counts as "late". */
 export function graceMinutesFor(p: ProfileRow): number {
   const country = p.assigned_branch === "Philippines" ? "PH" : "US";
-  return payGraceMinutesFor(country, normalizeRole(p.role) === "TECHNICIAN");
+  return payGraceMinutesFor(country);
 }
 
 type DailyStatus = "present" | "late" | "absent" | "day-off";

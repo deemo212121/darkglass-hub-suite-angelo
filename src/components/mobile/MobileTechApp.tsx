@@ -55,7 +55,7 @@ import { getMyPayslips, payslipStatusLabel, type MyPayslipRow } from "@/lib/supa
 import { getMyProfileSchedule, getMonthEntries, getCompanyTimecardEntries, saveEntry as saveTimecardEntry, resolveScheduledShiftHours, type UITimeEntry, type CompanyTimecardEntry } from "@/lib/supabase/timecards";
 import { visibleAttendanceProfileIds } from "@/lib/notifyRouting";
 import { getCsrTeamComposition } from "@/lib/supabase/csrTeams";
-import { isAttendanceManagerTierRole, normalizeRole, ROLE_LABELS } from "@/lib/roleLabels";
+import { isAttendanceManagerTierRole, normalizeRole, ROLE_LABELS, TECHNICIAN_PAY_ROLES } from "@/lib/roleLabels";
 import { LOCATIONS } from "@/lib/locations";
 import { timezoneForBranch, nowInTimezone } from "@/lib/attendanceGrace";
 import { getServerNow, zonedDateKey, zonedTimeString, type ScheduleTimezone } from "@/lib/serverTime";
@@ -4204,7 +4204,7 @@ function MobileHomeView({
     },
     {
       key: "clockinteam", label: "Clock In Team",
-      description: "Your direct-report technicians, today",
+      description: "Your team's technicians, today",
       onClick: onOpenClockInTeam, show: showClockInTeam,
     },
   ].filter((t) => t.show);
@@ -4695,11 +4695,12 @@ function MobileTimecardView({
   );
 }
 
-// Clock In Team: a manager-tier viewer's direct-report technicians, each
-// with a Clock In button — reachable from the profile menu. Deliberately
-// Clock-In-only; there is no Clock Out or Meal action here at all, since
-// only the technician themselves ends their own shift. Reuses the exact
-// same manager -> direct-reports scoping already built for Attendance
+// Clock In Team: a manager-tier viewer's visible technicians (direct
+// reports via manager_name, or — for Parts Manager — every technician at
+// their own branch), each with a Clock In button — reachable from the
+// profile menu. Deliberately Clock-In-only; there is no Clock Out or Meal
+// action here at all, since only the technician themselves ends their own
+// shift. Reuses the exact same scoping already built for Attendance
 // Monitoring (visibleAttendanceProfileIds), so "my team" here always
 // matches what that dashboard already shows for this same viewer.
 interface ClockInTechRow {
@@ -4740,7 +4741,7 @@ function MobileClockInTeamView({ profileId }: { profileId: string | null }) {
       const entryByProfile = new Map<string, CompanyTimecardEntry>(todayEntries.map((e) => [e.profileId, e]));
       const scoped = visibleAttendanceProfileIds(myProfile, allProfiles, csrComposition);
       const myTechnicians = allProfiles.filter(
-        (p) => p.is_active && (scoped === null || scoped.has(p.id)) && normalizeRole(p.role) === "TECHNICIAN"
+        (p) => p.is_active && (scoped === null || scoped.has(p.id)) && TECHNICIAN_PAY_ROLES.has(normalizeRole(p.role))
       );
       setRows(
         myTechnicians

@@ -388,7 +388,11 @@ export async function syncMileageFromTickets(input: {
       }
       return { data: all, error: null };
     })(),
-    supabase.from("mileage_entries").select("id, ticket_id, total_mileage").eq("source", "auto").not("ticket_id", "is", null),
+    supabase
+      .from("mileage_entries")
+      .select("id, ticket_id, total_mileage, work_date, profile_id, technician_name")
+      .eq("source", "auto")
+      .not("ticket_id", "is", null),
     getCompanyMapProvider(),
   ]);
   if (ticketsErr) {
@@ -396,8 +400,29 @@ export async function syncMileageFromTickets(input: {
     return result;
   }
   if (existingErr) console.error("syncMileageFromTickets (existing sync check) error:", existingErr.message);
+
+  // Identity for a technician name: the real profile id when it resolves to
+  // a known technician, else the raw ticket text itself (lowercased) — kept
+  // symmetric between "current" (from the ticket, below) and "stored" (from
+  // an existing row, below) so the two are directly comparable. Comparing by
+  // id rather than name for matched technicians also means a later display-
+  // name change alone never looks like a reassignment.
+  const identityFor = (rawName: string): string => {
+    const trimmed = rawName.trim();
+    const matched = techByNormalizedName.get(trimmed.toLowerCase());
+    return matched ? `id:${matched.profileId}` : `name:${trimmed.toLowerCase()}`;
+  };
+
   const existingByTicketId = new Map(
-    (existingRows ?? []).map((r: any) => [r.ticket_id as string, { id: r.id as string, totalMileage: Number(r.total_mileage) || 0 }])
+    (existingRows ?? []).map((r: any) => [
+      r.ticket_id as string,
+      {
+        id: r.id as string,
+        totalMileage: Number(r.total_mileage) || 0,
+        workDate: r.work_date as string,
+        identity: r.profile_id ? `id:${r.profile_id}` : `name:${String(r.technician_name || "").trim().toLowerCase()}`,
+      },
+    ])
   );
 
   // Every ticket with a technician assigned and an actual date to log the
@@ -423,25 +448,46 @@ export async function syncMileageFromTickets(input: {
     .map(([name, count]) => ({ name, count }))
     .sort((a, b) => b.count - a.count);
 
-  // Group EVERY assigned ticket (already-synced AND pending) by
-  // (technician key, work date) — a day's route depends on ALL of that
+  // Group EVERY assigned ticket (already-synced AND pending) by its CURRENT
+  // (technician identity, work date) — a day's route depends on ALL of that
   // day's stops, not just the ones that happen to be new, so an
   // already-partially-synced day still needs its full stop list to
-  // recompute correctly once a new ticket joins it.
+  // recompute correctly once a new ticket joins it. Using CURRENT values
+  // means a rescheduled or reassigned ticket lands in its NEW day/
+  // technician's group here, not its old one.
   const groups = new Map<string, any[]>();
   for (const t of allAssignedTickets as any[]) {
-    const key = `${String(t.technician).trim().toLowerCase()}|${t.schedule_date}`;
+    const key = `${identityFor(String(t.technician))}|${t.schedule_date}`;
     const list = groups.get(key) ?? [];
     list.push(t);
     groups.set(key, list);
   }
 
-  // Only touch a group that has at least one ticket without an existing
-  // row — a day where nothing changed since the last sync needs no new
-  // route lookups at all.
-  const groupsToProcess = Array.from(groups.values()).filter((tickets) =>
-    tickets.some((t) => !existingByTicketId.has(t.id))
-  );
+  // A group needs (re)processing if a ticket is new (no row yet) or just
+  // moved IN (its existing row is still stored under a different day/
+  // technician). Separately, a group can also need processing purely
+  // because it lost a ticket that moved OUT — its remaining tickets are all
+  // otherwise unchanged, so neither of the above catches it; detected by
+  // comparing, per stored (identity, date) key, the ticket ids an existing
+  // row claims against the ticket ids that key's CURRENT group actually has.
+  const currentTicketIdsByKey = new Map<string, Set<string>>();
+  for (const [key, tickets] of groups) currentTicketIdsByKey.set(key, new Set(tickets.map((t) => t.id)));
+  const keysThatLostATicket = new Set<string>();
+  for (const [ticketId, existing] of existingByTicketId) {
+    const storedKey = `${existing.identity}|${existing.workDate}`;
+    if (!(currentTicketIdsByKey.get(storedKey)?.has(ticketId) ?? false)) keysThatLostATicket.add(storedKey);
+  }
+
+  const groupsToProcess = Array.from(groups.entries())
+    .filter(([key, tickets]) => {
+      const hasNewOrMovedInTicket = tickets.some((t) => {
+        const existing = existingByTicketId.get(t.id);
+        if (!existing) return true;
+        return `${existing.identity}|${existing.workDate}` !== key;
+      });
+      return hasNewOrMovedInTicket || keysThatLostATicket.has(key);
+    })
+    .map(([, tickets]) => tickets);
   const untouchedTicketCount = allAssignedTickets.length - groupsToProcess.reduce((s, g) => s + g.length, 0);
   result.skipped = untouchedTicketCount;
 
@@ -476,13 +522,25 @@ export async function syncMileageFromTickets(input: {
     // route_order: a human-set stop order no longer describes this day
     // now that its stop list has changed, so it resets to the automatic
     // heuristic (used above) rather than silently keeping a sequence that
-    // doesn't include the new stop.
+    // doesn't include the new stop. work_date/profile_id/technician_name/
+    // branch are re-set to this group's own values too — a no-op for a
+    // ticket that was already here, but for one that just got rescheduled
+    // or reassigned, this is what actually MOVES its row onto the new day
+    // / new technician rather than leaving it stale under the old ones.
     for (const t of orderedTickets) {
       const existing = existingByTicketId.get(t.id);
       if (existing) {
         const { error: updateErr } = await supabase
           .from("mileage_entries")
-          .update({ total_mileage: roundedMiles, route_order: null, route_return_to: null })
+          .update({
+            total_mileage: roundedMiles,
+            route_order: null,
+            route_return_to: null,
+            work_date: t.schedule_date,
+            profile_id: technician?.profileId ?? null,
+            technician_name: technician ? null : rawName,
+            branch,
+          })
           .eq("id", existing.id);
         if (updateErr) result.errors.push(`Ticket ${t.ticket_no}: failed to refresh mileage — ${updateErr.message}`);
       }

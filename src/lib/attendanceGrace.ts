@@ -107,14 +107,19 @@ export const ON_TIME_BUFFER_SECONDS = 60;
 /**
  * Pay-affecting grace period (distinct from the flat ATTENDANCE_GRACE_MINUTES
  * alert softener above — this is the actual per-region policy Finance uses to
- * decide how much lateness gets forgiven in paid hours). PH: 5 min. US office
- * (any non-technician role): 15 min. Technicians: 0 — they're paid per
- * completed repair ticket (Tech Payroll), not hourly, so grace doesn't apply.
- * Callers pass `isTechnician` (normalizeRole(role) === "TECHNICIAN") rather
- * than a raw role string, so this file never needs to import role logic.
+ * decide how much lateness gets forgiven in paid hours). PH: 5 min. Everyone
+ * else (US, including every technician tier): 15 min.
+ *
+ * Technicians used to be a 0-min exception here — piece-rate pay (Tech
+ * Payroll) meant their computed hours were purely informational, never
+ * multiplying into a dollar amount, so grace was moot for them either way.
+ * That stopped being true once technicians could also earn hourly pay on
+ * top of piece-rate (tech_hourly_pay) — those hours now ARE real dollars,
+ * same as an office employee's, so they get the same forgiveness (decided
+ * 2026-08-31: technicians follow the same 15-min US grace as everyone else,
+ * not a stricter 0-min rule).
  */
-export function payGraceMinutesFor(country: string | null | undefined, isTechnician: boolean): number {
-  if (isTechnician) return 0;
+export function payGraceMinutesFor(country: string | null | undefined): number {
   return country === "PH" ? 5 : 15;
 }
 
