@@ -225,8 +225,12 @@ function createPlannerTickets(rows: TicketRecord[], liveTechnicians: TechnicianO
 // even with zero tickets right now.
 function getSelectedTechRoster(location: string, liveTechnicians: TechnicianOption[], defaultTechName: string) {
   if (!location) return [];
-  const roster = liveTechnicians.filter((t) => t.branch === location).map((t) => t.name);
-  const base = roster.length ? roster : liveTechnicians.map((t) => t.name);
+  // No "show every technician in the company" fallback here anymore -- a
+  // branch with zero technicians on assigned_branch (e.g. Dallas, which has
+  // none) used to dump all 95+ company-wide technicians into its roster,
+  // which is exactly the wrong list for that branch. defaultTechName above
+  // already guarantees a non-empty, branch-appropriate roster on its own.
+  const base = liveTechnicians.filter((t) => t.branch === location).map((t) => t.name);
   if (defaultTechName && !base.includes(defaultTechName)) {
     return [defaultTechName, ...base];
   }
