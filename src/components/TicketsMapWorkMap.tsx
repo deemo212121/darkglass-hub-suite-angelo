@@ -12,6 +12,7 @@ import { getLocations as sbGetLocations } from "@/lib/supabase/locationManagemen
 import { getCompanyTechnicians, type TechnicianOption } from "@/lib/supabase/users";
 import { getLocationManagementZoomAddress, getLocationManagementCoordinates } from "@/components/LocationManagementPage";
 import { useAuth } from "@/lib/auth";
+import { isTechnicianOnlyRole } from "@/lib/roleLabels";
 import { usePersistedTab } from "@/lib/usePersistedTab";
 import { getCompanyMapProvider, type MapProvider } from "@/lib/supabase/companySettings";
 import { loadGoogleMapsScript, getLeaflet, makeGeocoder, addRouteDirectionArrow, attachLeafletResizeFix, createBadgeDivIcon, OSM_TILE_URL, OSM_ATTRIBUTION } from "@/lib/mapEngine";
@@ -173,7 +174,14 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
   // Re-render trigger so the portal mounts on the first selection (when
   // infoContentRef has just been created).
   const [infoHostReady, setInfoHostReady] = useState(false);
-  const { ready: authReady, allowedLocations } = useAuth();
+  const { ready: authReady, allowedLocations, role, extraRoles } = useAuth();
+  // Unassigned tickets are a CSR/dispatch queue for deciding who to hand
+  // work to -- hidden from a viewer whose only role is Technician/Tech
+  // Manager, even though they otherwise use this same map to see their own
+  // assigned work. An elevated role (Admin, Superadmin, CSR, ...) always
+  // sees the full unassigned queue, even if that account also carries
+  // Technician as a secondary role.
+  const hideUnassigned = isTechnicianOnlyRole(role, extraRoles);
   const [tickets, setTickets] = useState<TicketRecord[]>([]);
 
   // Load tickets from Supabase (company-scoped via RLS), gated on auth ready.
@@ -450,12 +458,16 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
       return sourceDates.some(inWindow);
     });
 
+    const assignmentFiltered = hideUnassigned
+      ? dateFiltered.filter((ticket) => Boolean(ticket.technician_name || ticket.technician))
+      : dateFiltered;
+
     // Apply filters based on current filter mode
     if (filterMode === "technician") {
       // Filter by technician visibility
       // selectedTechnicians contains the HIDDEN technicians (unchecked)
       if (selectedTechnicians.size > 0) {
-        return dateFiltered.filter((ticket) => {
+        return assignmentFiltered.filter((ticket) => {
           const techName = ticket.technician_name || ticket.technician || "Unassigned";
           return !selectedTechnicians.has(techName);
         });
@@ -464,7 +476,7 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
       // Filter by status visibility
       // selectedStatuses contains the HIDDEN statuses (unchecked)
       if (selectedStatuses.size > 0) {
-        return dateFiltered.filter((ticket) => {
+        return assignmentFiltered.filter((ticket) => {
           const status = ticket.status || "";
           return !selectedStatuses.has(status);
         });
@@ -472,8 +484,8 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
     }
 
     // If no filters are applied, show all tickets
-    return dateFiltered;
-  }, [tickets, selectedLocation, mapDate, mapDateEnd, dateRangeMode, showOtherDayTickets, selectedTechnicians, selectedStatuses, filterMode]);
+    return assignmentFiltered;
+  }, [tickets, selectedLocation, mapDate, mapDateEnd, dateRangeMode, showOtherDayTickets, selectedTechnicians, selectedStatuses, filterMode, hideUnassigned]);
 
   // Get all technicians for the selected location (not just those with scheduled tickets)
   const uniqueTechnicians = useMemo(() => {

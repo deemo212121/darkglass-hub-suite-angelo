@@ -6,6 +6,8 @@ import { getCompanyTickets } from "@/lib/supabase/tickets";
 import type { Ticket } from "@/lib/ticketData";
 import { normalizeTimePeriod, FRAME_START_TIME } from "@/lib/timeframes";
 import { getCompanyTechnicians } from "@/lib/supabase/users";
+import { useAuth } from "@/lib/auth";
+import { isTechnicianOnlyRole } from "@/lib/roleLabels";
 import { usePersistedTab } from "@/lib/usePersistedTab";
 import { useSmartBack } from "@/hooks/useSmartBack";
 
@@ -188,7 +190,17 @@ export function WorkCalendarPage({ mod, sub }: Props) {
     setMonthDraft(monthValue);
   }, [monthValue]);
 
-  const allRows = useMemo(() => buildRowsFromTickets(tickets), [tickets]);
+  const { role, extraRoles } = useAuth();
+  // Unassigned tickets are a CSR/dispatch queue for deciding who to hand
+  // work to -- hidden from a viewer whose only role is Technician/Tech
+  // Manager, same as the Work Map fix. An elevated role always sees the
+  // full unassigned queue, even if it also carries Technician as a
+  // secondary role.
+  const hideUnassigned = isTechnicianOnlyRole(role, extraRoles);
+  const allRows = useMemo(() => {
+    const rows = buildRowsFromTickets(tickets);
+    return hideUnassigned ? rows.filter((r) => r.technician !== "Unassigned") : rows;
+  }, [tickets, hideUnassigned]);
 
   // Full live technician roster, not just techs with a scheduled ticket in
   // view — otherwise the dropdown would shrink to whoever happens to have

@@ -374,3 +374,20 @@ const TRIAGE_ROLES = new Set(["TRIAGE_USER", "TRIAGE_MANAGER"]);
 export function isTriageRole(role: string | null | undefined): boolean {
   return TRIAGE_ROLES.has(normalizeRole(role));
 }
+
+/**
+ * Unassigned tickets are a CSR/dispatch queue for deciding who to hand work
+ * to — a field technician has no reason to see work nobody's been given
+ * yet, only their own. Restricted only if EVERY role this person holds is
+ * plain Technician/Tech Manager (same "any unrestricted role wins" pile-up
+ * semantics as isCsrRestrictedRole above) — a SUPERADMIN/ADMIN/dispatcher
+ * who also happens to carry TECHNICIAN as a secondary role should still see
+ * the full unassigned queue, since their elevated role's needs come first.
+ * Used by TicketsMapWorkMap.tsx (Work Map) to hide "Unassigned" ticket pins/
+ * rows from technician-only viewers.
+ */
+const TECHNICIAN_ONLY_ROLES = new Set(["TECHNICIAN", "TECHNICIAN_MANAGER"]);
+
+export function isTechnicianOnlyRole(role: string | null | undefined, extraRoles?: string[] | null): boolean {
+  return everyHeldRoleIn(TECHNICIAN_ONLY_ROLES, role, extraRoles);
+}
