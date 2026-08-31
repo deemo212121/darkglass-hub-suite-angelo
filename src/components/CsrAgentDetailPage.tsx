@@ -16,6 +16,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { AlertTriangle, CheckCircle, ChevronLeft, Clock, Loader2, Trash2, Users, XCircle } from "lucide-react";
+import { BrandedLoader } from "@/components/BrandedLoader";
 import { AppHeader } from "@/components/Header";
 import { useAuth } from "@/lib/auth";
 import { normalizeRole, ROLE_LABELS, canSubmitConductNote, canFastTrackConductNote } from "@/lib/roleLabels";
@@ -227,8 +228,8 @@ export function CsrAgentDetailPage({ agentId }: { agentId: string }) {
         </div>
 
         {loading ? (
-          <div className="panel p-8 flex items-center justify-center gap-2 text-sm text-muted-foreground">
-            <Loader2 className="h-4 w-4 animate-spin" /> Loading agent…
+          <div className="panel p-8">
+            <BrandedLoader label="Loading agent…" />
           </div>
         ) : error ? (
           <div className="panel p-8 text-center text-sm text-red-300">{error}</div>

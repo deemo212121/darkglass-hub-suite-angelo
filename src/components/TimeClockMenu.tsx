@@ -17,9 +17,17 @@
  * at all (same rule as the full timecard page), so they only ever see Time
  * In / Time Out.
  *
- * Once a step is punched, its recorded time is stamped permanently
- * underneath that button (read straight from the saved entry, not a
- * transient toast) — so it stays visible/correct even after a refresh.
+ * Once a step is punched, its button's own label swaps to the recorded time
+ * (read straight from the saved entry, not a transient toast) — so it stays
+ * visible/correct even after a refresh. That swap happens in place, inside
+ * the button's own normal-flow box, rather than as a label stamped below it:
+ * this row sits in the header's icon strip, which scrolls horizontally on
+ * narrow viewports (see Header.tsx) via overflow-x-auto — and overflow-x
+ * auto forces overflow-y to compute to auto too, clipping anything that
+ * pokes out of a child's own box. Keeping the punched state inside the
+ * button avoids that entirely, and keeps this row exactly h-9 like every
+ * other header icon (see the height note on ModuleNavigator.tsx and the
+ * mobile ticket page's tab strip, which both assume that).
  */
 import { useEffect, useRef, useState } from "react";
 import { useAuth } from "@/lib/auth";
@@ -251,71 +259,55 @@ export function TimeClockButtons() {
     withLock(() => void persistPunch("mealEnd"));
   };
 
-  const btnClass =
-    "rounded-full px-2.5 py-1.5 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-30";
-  // Stamps are absolutely positioned (not stacked in normal flow) so this
-  // component's box stays exactly h-9, same as every other header icon.
-  // ModuleNavigator.tsx (and the mobile ticket page's tab strip) both
-  // hardcode an assumed header height and float/stick relative to it — if
-  // this grew the header's actual rendered height, those would silently
-  // start overlapping the header on every page.
-  const stampClass = "pointer-events-none absolute left-1/2 top-full mt-1 -translate-x-1/2 whitespace-nowrap text-[10px] font-semibold";
+  const btnClass = "rounded-full px-2.5 py-1.5 text-xs font-semibold transition-colors disabled:cursor-not-allowed whitespace-nowrap";
+  // Dimming (disabled:opacity-30) only belongs on a button that's blocked
+  // and hasn't recorded anything yet (e.g. Meal Out before Meal In) — once a
+  // step is actually punched, its time should stay fully legible instead of
+  // fading like an unavailable button.
+  const blockedDim = "disabled:opacity-30";
 
   return (
     <div className="flex h-9 items-center gap-1 rounded-full border border-[var(--color-panel-border)] bg-[var(--color-panel)] px-1">
-      <div className="relative">
+      <button
+        type="button"
+        onClick={handleTimeIn}
+        disabled={saving || locked || !!entry.checkIn || onApprovedPtoToday}
+        title={entry.checkIn ? `Timed in at ${fmtTime(entry.checkIn)}` : onApprovedPtoToday ? "You have an approved PTO for today" : "Time In"}
+        className={`${btnClass} text-green-300 ${entry.checkIn ? "" : `hover:bg-green-500/15 ${blockedDim}`}`}
+      >
+        {entry.checkIn ? fmtTime(entry.checkIn) : !entry.checkIn && onApprovedPtoToday ? "On PTO" : "Time In"}
+      </button>
+      {mealEligible && (
         <button
           type="button"
-          onClick={handleTimeIn}
-          disabled={saving || locked || !!entry.checkIn || onApprovedPtoToday}
-          title={onApprovedPtoToday ? "You have an approved PTO for today" : undefined}
-          className={`${btnClass} text-green-300 hover:bg-green-500/15`}
+          onClick={handleMealIn}
+          disabled={saving || locked || !entry.checkIn || !!entry.checkOut || !!entry.mealStart || onApprovedPtoToday}
+          title={entry.mealStart ? `Meal started at ${fmtTime(entry.mealStart)}` : onApprovedPtoToday ? "You have an approved PTO for today" : "Meal In"}
+          className={`${btnClass} text-orange-300 ${entry.mealStart ? "" : `hover:bg-orange-500/15 ${blockedDim}`}`}
         >
-          Time In
+          {entry.mealStart ? fmtTime(entry.mealStart) : "Meal In"}
         </button>
-        {entry.checkIn && <span className={`${stampClass} text-green-300/80`}>{fmtTime(entry.checkIn)}</span>}
-        {!entry.checkIn && onApprovedPtoToday && <span className={`${stampClass} text-purple-300/80`}>On PTO</span>}
-      </div>
-      {mealEligible && (
-        <div className="relative">
-          <button
-            type="button"
-            onClick={handleMealIn}
-            disabled={saving || locked || !entry.checkIn || !!entry.checkOut || !!entry.mealStart || onApprovedPtoToday}
-            title={onApprovedPtoToday ? "You have an approved PTO for today" : undefined}
-            className={`${btnClass} text-orange-300 hover:bg-orange-500/15`}
-          >
-            Meal In
-          </button>
-          {entry.mealStart && <span className={`${stampClass} text-orange-300/80`}>{fmtTime(entry.mealStart)}</span>}
-        </div>
       )}
       {mealEligible && (
-        <div className="relative">
-          <button
-            type="button"
-            onClick={handleMealOut}
-            disabled={saving || locked || !!entry.checkOut || !entry.mealStart || !!entry.mealEnd || onApprovedPtoToday}
-            title={onApprovedPtoToday ? "You have an approved PTO for today" : undefined}
-            className={`${btnClass} text-orange-300 hover:bg-orange-500/15`}
-          >
-            Meal Out
-          </button>
-          {entry.mealEnd && <span className={`${stampClass} text-orange-300/80`}>{fmtTime(entry.mealEnd)}</span>}
-        </div>
-      )}
-      <div className="relative">
         <button
           type="button"
-          onClick={handleTimeOut}
-          disabled={saving || locked || !entry.checkIn || !!entry.checkOut || onApprovedPtoToday}
-          title={onApprovedPtoToday ? "You have an approved PTO for today" : undefined}
-          className={`${btnClass} text-red-300 hover:bg-red-500/15`}
+          onClick={handleMealOut}
+          disabled={saving || locked || !!entry.checkOut || !entry.mealStart || !!entry.mealEnd || onApprovedPtoToday}
+          title={entry.mealEnd ? `Meal ended at ${fmtTime(entry.mealEnd)}` : onApprovedPtoToday ? "You have an approved PTO for today" : "Meal Out"}
+          className={`${btnClass} text-orange-300 ${entry.mealEnd ? "" : `hover:bg-orange-500/15 ${blockedDim}`}`}
         >
-          Time Out
+          {entry.mealEnd ? fmtTime(entry.mealEnd) : "Meal Out"}
         </button>
-        {entry.checkOut && <span className={`${stampClass} text-red-300/80`}>{fmtTime(entry.checkOut)}</span>}
-      </div>
+      )}
+      <button
+        type="button"
+        onClick={handleTimeOut}
+        disabled={saving || locked || !entry.checkIn || !!entry.checkOut || onApprovedPtoToday}
+        title={entry.checkOut ? `Timed out at ${fmtTime(entry.checkOut)}` : onApprovedPtoToday ? "You have an approved PTO for today" : "Time Out"}
+        className={`${btnClass} text-red-300 ${entry.checkOut ? "" : `hover:bg-red-500/15 ${blockedDim}`}`}
+      >
+        {entry.checkOut ? fmtTime(entry.checkOut) : "Time Out"}
+      </button>
     </div>
   );
 }

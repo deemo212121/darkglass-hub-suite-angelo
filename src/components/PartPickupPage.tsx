@@ -422,12 +422,6 @@ export function PartPickupPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
       <main className="flex-1 max-w-[1400px] mx-auto w-full px-6 py-8">
         <style>{`
           .pickup-panel {
-            background: rgba(255, 255, 255, 0.08);
-            border: 1px solid rgba(255, 255, 255, 0.15);
-            border-radius: 10px;
-            padding: 1rem;
-            color: #fff;
-            backdrop-filter: blur(10px);
             width: 100%;
             min-width: 0;
           }
@@ -474,27 +468,27 @@ export function PartPickupPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
           .part-link-btn:hover { text-decoration: underline; }
           .part-info-modal-overlay { position: fixed; inset: 0; background: rgba(15, 23, 42, 0.45); display: none; align-items: center; justify-content: center; z-index: 2200; padding: 1rem; }
           .part-info-modal-overlay.is-open { display: flex; }
-          .part-info-modal { width: min(980px, calc(100vw - 2rem)); max-height: calc(100vh - 2rem); overflow: auto; background: #ffffff; border: 1px solid #d1d5db; border-radius: 12px; box-shadow: 0 28px 70px rgba(15, 23, 42, 0.3); }
-          .part-info-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 0.9rem 1rem; border-bottom: 1px solid #e5e7eb; background: #f8fafc; }
-          .part-info-title { font-size: 1rem; font-weight: 700; color: #111827; }
-          .part-info-close { border: 1px solid #cbd5e1; background: #ffffff; color: #111827; border-radius: 8px; padding: 0.32rem 0.6rem; cursor: pointer; }
+          .part-info-modal { width: min(980px, calc(100vw - 2rem)); max-height: calc(100vh - 2rem); overflow: auto; background: #111827; border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 12px; box-shadow: 0 28px 70px rgba(15, 23, 42, 0.3); }
+          .part-info-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 0.9rem 1rem; border-bottom: 1px solid rgba(255, 255, 255, 0.12); background: #1f2937; }
+          .part-info-title { font-size: 1rem; font-weight: 700; color: #e5e7eb; }
+          .part-info-close { border: 1px solid rgba(255, 255, 255, 0.15); background: #1f2937; color: #e5e7eb; border-radius: 8px; padding: 0.32rem 0.6rem; cursor: pointer; }
           .part-info-tabs { display: flex; gap: 0.45rem; padding: 0.75rem 1rem 0; }
-          .part-info-tab-btn { border: 1px solid #cbd5e1; background: #ffffff; color: #1f2937; padding: 0.4rem 0.85rem; border-radius: 999px; cursor: pointer; font-size: 0.82rem; font-weight: 600; }
-          .part-info-tab-btn.active { background: #0f172a; color: #ffffff; border-color: #0f172a; }
+          .part-info-tab-btn { border: 1px solid rgba(255, 255, 255, 0.15); background: #1f2937; color: #e5e7eb; padding: 0.4rem 0.85rem; border-radius: 999px; cursor: pointer; font-size: 0.82rem; font-weight: 600; }
+          .part-info-tab-btn.active { background: #2563eb; color: #ffffff; border-color: #2563eb; }
           .part-info-body { padding: 0.8rem 1rem 1rem; }
           .part-info-pane { display: none; }
           .part-info-pane.active { display: block; }
           .part-info-matrix { width: 100%; border-collapse: collapse; font-size: 0.79rem; margin-bottom: 0.85rem; }
-          .part-info-matrix th, .part-info-matrix td { border: 1px solid #d1d5db; padding: 0.45rem; text-align: left; }
-          .part-info-matrix thead th { background: #f3f4f6; font-weight: 700; }
-          .part-info-section-title { font-size: 0.82rem; font-weight: 700; color: #111827; margin: 0.2rem 0 0.4rem; }
-          .part-info-section-subtitle { font-size: 0.76rem; color: #4b5563; margin-bottom: 0.35rem; }
-          .part-info-empty { padding: 0.7rem; border: 1px dashed #d1d5db; border-radius: 8px; font-size: 0.78rem; color: #6b7280; }
+          .part-info-matrix th, .part-info-matrix td { border: 1px solid rgba(255, 255, 255, 0.12); padding: 0.45rem; text-align: left; }
+          .part-info-matrix thead th { background: #1f2937; font-weight: 700; }
+          .part-info-section-title { font-size: 0.82rem; font-weight: 700; color: #e5e7eb; margin: 0.2rem 0 0.4rem; }
+          .part-info-section-subtitle { font-size: 0.76rem; color: #9ca3af; margin-bottom: 0.35rem; }
+          .part-info-empty { padding: 0.7rem; border: 1px dashed rgba(255, 255, 255, 0.15); border-radius: 8px; font-size: 0.78rem; color: #9ca3af; }
           .footer-copy { margin-top: 1rem; opacity: 0.7; }
-          #partInfoModalOverlay .part-info-modal, #partInfoModalOverlay .part-info-modal th, #partInfoModalOverlay .part-info-modal td, #partInfoModalOverlay .part-info-title, #partInfoModalOverlay .part-info-close, #partInfoModalOverlay .part-info-section-title, #partInfoModalOverlay .part-info-section-subtitle, #partInfoModalOverlay .part-info-empty, #partInfoModalOverlay .part-info-tab-btn { color: #111827 !important; }
+          #partInfoModalOverlay .part-info-modal, #partInfoModalOverlay .part-info-modal th, #partInfoModalOverlay .part-info-modal td, #partInfoModalOverlay .part-info-title, #partInfoModalOverlay .part-info-close, #partInfoModalOverlay .part-info-section-title, #partInfoModalOverlay .part-info-section-subtitle, #partInfoModalOverlay .part-info-empty, #partInfoModalOverlay .part-info-tab-btn { color: #e5e7eb !important; }
           #partInfoModalOverlay .part-info-tab-btn.active { color: #ffffff !important; }
-          .picked { color: #047857; font-weight: 700; }
-          .group-row td { background: #e5e7eb; font-weight: 700; color: #111827; }
+          .picked { color: #10b981; font-weight: 700; }
+          .group-row td { background: #1f2937; font-weight: 700; color: #e5e7eb; }
           .floating-table-scrollbar { position: fixed; left: 0; bottom: 0; z-index: 1100; overflow-x: auto; overflow-y: hidden; border: 1px solid rgba(148, 163, 184, 0.5); border-radius: 8px; background: rgba(255, 255, 255, 0.92); box-shadow: 0 10px 24px rgba(15, 23, 42, 0.18); display: none; max-width: 100vw; }
           .floating-table-scrollbar.is-visible { display: block; }
           .floating-table-scrollbar-inner { height: 1px; }
@@ -513,7 +507,7 @@ export function PartPickupPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
           <p className="text-lg text-muted-foreground">{sub.description}</p>
         </div>
 
-        <div className="pickup-panel">
+        <div className="glass-panel pickup-panel">
           <div className="controls-grid">
             <div className="field">
               <label htmlFor="locationFilter">Location*</label>
@@ -538,7 +532,7 @@ export function PartPickupPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
           </div>
         </div>
 
-        <div id="pickupResultsPanel" className="pickup-panel">
+        <div id="pickupResultsPanel" className="glass-panel pickup-panel">
           <div className="actions-row">
             <div className="scan-stack">
               <span className="input-label">Scan Parts Here</span>

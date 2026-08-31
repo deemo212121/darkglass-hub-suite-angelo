@@ -13,6 +13,7 @@ import { createPortal } from "react-dom";
 import { useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
 import { ChevronLeft, Users, UserCheck, UserX, Clock, Loader2, Download } from "lucide-react";
+import { BrandedLoader } from "@/components/BrandedLoader";
 import { Bar, BarChart, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import * as XLSX from "xlsx";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
@@ -467,7 +468,7 @@ export function ReportAttendanceMonitoring({
         {error && <div className="mb-3 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">{error}</div>}
 
         {loading ? (
-          <div className="panel p-6 mb-3 flex items-center justify-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading Attendance Monitoring Report…</div>
+          <div className="panel p-6 mb-3"><BrandedLoader label="Loading Attendance Monitoring Report…" /></div>
         ) : (
         <>
         <div className="grid grid-cols-2 md:grid-cols-6 gap-2 mb-3">

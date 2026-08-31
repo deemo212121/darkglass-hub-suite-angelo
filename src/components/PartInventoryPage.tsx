@@ -519,7 +519,7 @@ export function PartInventoryPage({ mod, sub }: { mod: ModuleDef; sub: SubModule
     <div className="min-h-screen flex flex-col">
       <main className="flex-1 max-w-[1400px] mx-auto w-full px-6 py-8">
         <style>{`
-          .inventory-panel { background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.15); border-radius: 10px; padding: 1rem; color: #fff; backdrop-filter: blur(10px); width: 100%; }
+          .inventory-panel { width: 100%; }
           .filter-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0.9rem; margin-bottom: 0.9rem; }
           .field { display: flex; flex-direction: column; gap: 0.25rem; }
           .field label { font-size: 0.78rem; font-weight: 600; color: #e5e7eb; letter-spacing: 0.02em; }
@@ -549,8 +549,8 @@ export function PartInventoryPage({ mod, sub }: { mod: ModuleDef; sub: SubModule
           .unique-id-link:hover, .ticket-no-link:hover, .part-no-link:hover, .description-link:hover, .lot-link:hover { text-decoration: underline; }
           .action-btn { padding: 0.22rem 0.5rem; font-size: 0.72rem; border-radius: 4px; border: 1px solid #ef4444; background: #fee2e2; color: #991b1b; cursor: pointer; }
           .return-btn { padding: 0.22rem 0.5rem; font-size: 0.72rem; border-radius: 4px; border: 1px solid #2563eb; background: #dbeafe; color: #1e40af; cursor: pointer; }
-          .history-btn { padding: 0.22rem 0.5rem; font-size: 0.72rem; border-radius: 4px; border: 1px solid #6b7280; background: #f3f4f6; color: #374151; cursor: pointer; }
-          .total-row td { background: #e5e7eb; font-weight: 700; }
+          .history-btn { padding: 0.22rem 0.5rem; font-size: 0.72rem; border-radius: 4px; border: 1px solid #6b7280; background: #374151; color: #e5e7eb; cursor: pointer; }
+          .total-row td { background: #1f2937; font-weight: 700; }
           .footer-actions { display: flex; gap: 0.6rem; margin-top: 0.8rem; }
           .footer-actions button, .footer-actions a { padding: 0.5rem 0.9rem; border-radius: 6px; text-decoration: none; display: inline-flex; align-items: center; justify-content: center; }
           .notes { margin-top: 0.9rem; font-size: 0.78rem; line-height: 1.45; color: #d1d5db; }
@@ -574,13 +574,13 @@ export function PartInventoryPage({ mod, sub }: { mod: ModuleDef; sub: SubModule
           .part-image-preview { max-width: 180px; max-height: 120px; border-radius: 6px; border: 1px solid rgba(255, 255, 255, 0.2); background: rgba(15, 23, 42, 0.85); display: none; }
           .part-image-preview.is-visible { display: block; }
           .lot-summary-grid { display: grid; grid-template-columns: repeat(2, minmax(220px, 1fr)); gap: 0.75rem; margin-bottom: 0.9rem; }
-          .lot-table { width: 100%; border-collapse: collapse; background: #fff; color: #111827; border-radius: 8px; overflow: hidden; }
-          .lot-table th, .lot-table td { border: 1px solid #d1d5db; padding: 0.5rem; text-align: left; }
+          .lot-table { width: 100%; border-collapse: collapse; background: #111827; color: #e5e7eb; border-radius: 8px; overflow: hidden; }
+          .lot-table th, .lot-table td { border: 1px solid rgba(255, 255, 255, 0.12); padding: 0.5rem; text-align: left; }
           .lot-table th { background: #1f2937; color: #f9fafb; }
           .lot-qty-input { width: 100%; max-width: 110px; padding: 0.4rem 0.5rem; border: 1px solid #cbd5e1; border-radius: 6px; }
           .row-history-table-wrap { overflow: auto; flex: 1; margin-top: 0.75rem; border-radius: 8px; }
-          .row-history-table { width: 100%; border-collapse: collapse; font-size: 0.73rem; color: #111827; background: #fff; min-width: 1200px; }
-          .row-history-table th, .row-history-table td { border: 1px solid #d1d5db; padding: 0.4rem 0.5rem; white-space: nowrap; text-align: left; vertical-align: middle; }
+          .row-history-table { width: 100%; border-collapse: collapse; font-size: 0.73rem; color: #e5e7eb; background: #111827; min-width: 1200px; }
+          .row-history-table th, .row-history-table td { border: 1px solid rgba(255, 255, 255, 0.12); padding: 0.4rem 0.5rem; white-space: nowrap; text-align: left; vertical-align: middle; }
           .row-history-table thead th { background: #1f2937; color: #f9fafb; position: sticky; top: 0; z-index: 1; }
           .row-history-table thead .history-subhead th { background: #374151; font-size: 0.68rem; }
           .qty-header { text-align: center; }
@@ -601,7 +601,7 @@ export function PartInventoryPage({ mod, sub }: { mod: ModuleDef; sub: SubModule
           <p className="text-lg text-muted-foreground">{sub.description}</p>
         </div>
 
-        <div className="inventory-panel">
+        <div className="glass-panel inventory-panel">
           <div className="filter-grid">
             <div className="field">
               <label htmlFor="locationFilter">Location</label>

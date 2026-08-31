@@ -128,12 +128,7 @@ export function PoStatusPage() {
       <main className="flex-1 max-w-[1400px] mx-auto w-full px-6 py-8">
         <style>{`
           .status-panel {
-            background: rgba(255, 255, 255, 0.08);
-            border: 1px solid rgba(255, 255, 255, 0.15);
-            border-radius: 10px;
             padding: 1.25rem;
-            color: #fff;
-            backdrop-filter: blur(10px);
           }
           .status-controls {
             display: grid;
@@ -223,16 +218,16 @@ export function PoStatusPage() {
           .po-status-footer-note { margin-top: 1rem; opacity: 0.7; }
         `}</style>
 
-        <div className="mb-4">
-          <div className="flex items-center gap-3 mb-4">
+        <div className="mb-6">
+          <div className="flex items-center gap-3 mb-6">
             <button type="button" onClick={goBack} className="back-btn">
               <ChevronLeft className="h-4 w-4" /> Parts
             </button>
           </div>
-          <h1 className="text-2xl font-semibold leading-tight text-white">P/O Status</h1>
+          <h1 className="text-4xl font-display font-bold tracking-tight mb-2">P/O Status</h1>
         </div>
 
-        <div className="status-panel">
+        <div className="glass-panel status-panel">
           <div className="status-controls">
             <div className="control-group">
               <label htmlFor="ticketNo">Ticket #</label>

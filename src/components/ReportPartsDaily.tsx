@@ -21,6 +21,7 @@ import { createPortal } from "react-dom";
 import { useSearch, useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
 import { ChevronLeft, Loader2, LayoutDashboard, CheckCheck, Building2, ClipboardList, RotateCcw, Download } from "lucide-react";
+import { BrandedLoader } from "@/components/BrandedLoader";
 import { Bar, BarChart, ResponsiveContainer, Tooltip, XAxis, YAxis, Legend } from "recharts";
 import * as XLSX from "xlsx";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
@@ -458,7 +459,7 @@ export function ReportPartsDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
         {tab === "overview" && (
         <>
         {loading ? (
-          <div className="panel p-8 mb-6 flex items-center justify-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading Part Daily Report…</div>
+          <div className="panel p-8 mb-6"><BrandedLoader label="Loading Part Daily Report…" /></div>
         ) : (
         <>
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
@@ -568,7 +569,7 @@ export function ReportPartsDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
         {tab === "pending-queue" && (
         <>
         {branchProgressLoading ? (
-          <div className="panel p-8 mb-6 flex items-center justify-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading Pending Queue…</div>
+          <div className="panel p-8 mb-6"><BrandedLoader label="Loading Pending Queue…" /></div>
         ) : (
         <>
         <div className="grid grid-cols-3 gap-4 mb-6">
@@ -741,7 +742,7 @@ export function ReportPartsDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
         {tab === "ra-returns" && (
         <>
         {raReturnsLoading ? (
-          <div className="panel p-8 mb-6 flex items-center justify-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading RA &amp; Returns…</div>
+          <div className="panel p-8 mb-6"><BrandedLoader label="Loading RA & Returns…" /></div>
         ) : (
         <>
         {(() => {
@@ -921,8 +922,8 @@ export function ReportPartsDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
           </div>
 
           {doneActivityLoading ? (
-            <div className="panel p-8 flex items-center justify-center gap-2 text-sm text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" /> Loading Done activity…
+            <div className="panel p-8">
+              <BrandedLoader label="Loading Done activity…" />
             </div>
           ) : doneActivity.length === 0 ? (
             <div className="panel text-sm text-muted-foreground">No one has clicked "Done" on the Parts hub yet.</div>

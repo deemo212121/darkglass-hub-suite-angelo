@@ -35,7 +35,8 @@ import {
 import { getMyProfileId, getMyFullProfile } from "@/lib/supabase/users";
 import { getTechPayrollBreakdown, type TechPayrollBreakdown } from "@/lib/supabase/techPayroll";
 import { getCompanyMapProvider, type MapProvider } from "@/lib/supabase/companySettings";
-import { loadGoogleMapsScript, getLeaflet, makeGeocoder, haversineMiles, routeGeoapify, metersToMiles, formatDuration, attachLeafletResizeFix, createBadgeDivIcon, OSM_TILE_URL, OSM_ATTRIBUTION, ON_SITE_CHECKIN_RADIUS_MILES } from "@/lib/mapEngine";
+import { loadGoogleMapsScript, getLeaflet, makeGeocoder, haversineMiles, routeGeoapify, metersToMiles, formatDuration, attachLeafletResizeFix, createBadgeDivIcon, OSM_TILE_URL, OSM_ATTRIBUTION, ON_SITE_CHECKIN_RADIUS_MILES, getOfficeCoordinates } from "@/lib/mapEngine";
+import { getCompanyFlashTechTrips, type FlashTechTrip } from "@/lib/supabase/flashTechTrips";
 import type * as Leaflet from "leaflet";
 import {
   getDmMessages,
@@ -234,6 +235,67 @@ function getInitials(value: string | null | undefined): string {
   return value.slice(0, 2).toUpperCase();
 }
 
+// Hardcoded local-only stand-ins for testing the Flash Tech route-origin
+// override — never shipped: only merged in under import.meta.env.DEV (false
+// in any production build), same gating already used for the GPS "Dev:
+// Simulate" button elsewhere in this file. Writes nothing to the database.
+//
+// Models one specific scenario: Aug 31, 2026 — a normal day, 4 tickets in
+// Atlanta (his real branch, no Flash Tech yet). Sep 1, 2026 — flash-teched
+// to Columbus, 3 tickets there. The matching dev-only Flash Tech trip
+// (Atlanta → Columbus, Sep 1–1) is built separately in RouteMapView itself,
+// since it needs the real logged-in myProfileId to actually match — see
+// buildDevTestFlashTechTrip below.
+function buildDevTestRouteTickets(): Ticket[] {
+  const base = {
+    warranty: "OW",
+    manufacturer: "Whirlpool",
+    model: "TEST-MODEL",
+    internalNote: "",
+    diagnosed: "",
+    technician: "Angelo Mendoza",
+    customerPref: "",
+    phone: "706-555-0100",
+    redo: "N",
+    aging: 0,
+    calls: 0,
+    partOrder: "",
+  };
+  const atlanta = { location: "Atlanta", city: "Atlanta", state: "GA", schedule: "2026-08-31", created: "2026-08-31" };
+  const columbus = { location: "Columbus", city: "Columbus", state: "GA", schedule: "2026-09-01", created: "2026-09-01" };
+  return [
+    { ...base, ...atlanta, ticketNo: "DEVTEST-001", customer: "Dev Test Atlanta 1", address: "233 Peachtree St NE", zip: "30303", timeSlot: "8-12", status: "OP-Ready for Service" },
+    { ...base, ...atlanta, ticketNo: "DEVTEST-002", customer: "Dev Test Atlanta 2", address: "191 Peachtree St NE", zip: "30303", timeSlot: "8-12", status: "OP-Ready for Service" },
+    { ...base, ...atlanta, ticketNo: "DEVTEST-003", customer: "Dev Test Atlanta 3", address: "75 Ted Turner Dr SW", zip: "30303", timeSlot: "1-5", status: "OP-Ready for Service" },
+    { ...base, ...atlanta, ticketNo: "DEVTEST-004", customer: "Dev Test Atlanta 4", address: "101 Marietta St NW", zip: "30303", timeSlot: "1-5", status: "OP-Ready for Service" },
+    { ...base, ...columbus, ticketNo: "DEVTEST-005", customer: "Dev Test Columbus 1", address: "1200 Broadway", zip: "31901", timeSlot: "8-12", status: "OP-Ready for Service" },
+    { ...base, ...columbus, ticketNo: "DEVTEST-006", customer: "Dev Test Columbus 2", address: "233 12th St", zip: "31901", timeSlot: "8-12", status: "OP-Ready for Service" },
+    { ...base, ...columbus, ticketNo: "DEVTEST-007", customer: "Dev Test Columbus 3", address: "500 10th Ave", zip: "31901", timeSlot: "1-5", status: "OP-Ready for Service" },
+  ];
+}
+
+// The matching dev-only Flash Tech trip for the scenario above — Atlanta to
+// Columbus, Sep 1 only. Needs the real logged-in myProfileId to actually
+// match RouteMapView's technicianProfileId filter, so it's built at the call
+// site (dev-only) rather than baked into a static constant.
+function buildDevTestFlashTechTrip(profileId: string): FlashTechTrip {
+  return {
+    id: "dev-test-trip-001",
+    technicianProfileId: profileId,
+    technicianName: "Angelo Mendoza",
+    originLocation: "Atlanta",
+    destinationLocation: "Columbus",
+    startDate: "2026-09-01",
+    endDate: "2026-09-01",
+    notes: "Dev test — local only",
+    createdBy: null,
+    createdByName: null,
+    createdAt: "2026-08-31T00:00:00.000Z",
+    hotelExpense: null,
+    transportationExpense: null,
+  };
+}
+
 export function MobileTechApp() {
   const { email, displayName, role, extraRoles, companyId, allowedLocations, logout, uid } = useAuth();
   const navigate = useNavigate();
@@ -251,6 +313,25 @@ export function MobileTechApp() {
     if (!uid) return;
     let cancelled = false;
     getMyProfileId(uid).then((id) => { if (!cancelled) setProfileId(id); });
+    return () => { cancelled = true; };
+  }, [uid]);
+
+  // Own assigned branch — RouteMapView's fallback "starting point before
+  // the day starts" when live GPS isn't available yet (see its own comment),
+  // instead of a real branch office point actually being used there. Not
+  // needed for anything else at this level, but simplest to fetch once here.
+  const [myAssignedBranch, setMyAssignedBranch] = useState("");
+  useEffect(() => {
+    if (!uid) return;
+    let cancelled = false;
+    getMyFullProfile(uid).then((p) => {
+      if (cancelled) return;
+      // Dev-only: the Aug 31 test scenario needs a real branch to fall back
+      // to before GPS kicks in — only fills in when the real profile has
+      // none on file, never overrides an actual assigned branch.
+      const real = p?.assignedBranch || "";
+      setMyAssignedBranch(import.meta.env.DEV && !real ? "Atlanta" : real);
+    });
     return () => { cancelled = true; };
   }, [uid]);
 
@@ -399,7 +480,7 @@ export function MobileTechApp() {
         } catch (visitErr) {
           console.warn("Mobile: tech overlay skipped", visitErr);
         }
-        if (!cancelled) setTickets(rows);
+        if (!cancelled) setTickets(import.meta.env.DEV ? [...rows, ...buildDevTestRouteTickets()] : rows);
       } catch (e) {
         console.error("Mobile: failed to load tickets", e);
         if (!cancelled) setTickets([]);
@@ -789,6 +870,8 @@ export function MobileTechApp() {
               return true;
             })}
             onBackToTickets={() => setView("tickets")}
+            myProfileId={profileId}
+            myBranch={myAssignedBranch}
           />
         )}
 
@@ -1330,9 +1413,13 @@ function MobileOnHoldTicketsView({
 function RouteMapView({
   tickets,
   onBackToTickets,
+  myProfileId,
+  myBranch,
 }: {
   tickets: Ticket[];
   onBackToTickets: () => void;
+  myProfileId: string | null;
+  myBranch: string;
 }) {
   const mapEl = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<any>(null);
@@ -1353,7 +1440,11 @@ function RouteMapView({
   const [mapReady, setMapReady] = useState(false);
 
   const [error, setError] = useState<string | null>(null);
-  const [origin, setOrigin] = useState<{ lat: number; lng: number } | null>(null);
+  // Live GPS, when we have it — wins over the branch fallback below since
+  // it's the most accurate "where they actually are" once the day's
+  // underway. `origin` itself (derived further down, once effectiveBranch
+  // exists) falls back to the branch office point whenever this is null.
+  const [gpsOrigin, setGpsOrigin] = useState<{ lat: number; lng: number } | null>(null);
 
   // Which day's stops to show — defaults to today, shiftable via the
   // prev/next buttons next to the date label so a tech can preview
@@ -1367,6 +1458,39 @@ function RouteMapView({
       return isoDate(d);
     });
   };
+
+  // Flash Tech — if this technician has a trip covering the selected day,
+  // that trip's destination branch becomes their "starting point before the
+  // day starts" instead of their normal assigned branch (see the origin
+  // fallback below); reverts on its own once the trip's date range ends.
+  const [flashTechTrips, setFlashTechTrips] = useState<FlashTechTrip[]>([]);
+  useEffect(() => {
+    if (!myProfileId) return;
+    let cancelled = false;
+    getCompanyFlashTechTrips()
+      .then((trips) => {
+        if (cancelled) return;
+        const mine = trips.filter((t) => t.technicianProfileId === myProfileId);
+        setFlashTechTrips(import.meta.env.DEV ? [...mine, buildDevTestFlashTechTrip(myProfileId)] : mine);
+      })
+      .catch((err) => console.error("RouteMapView: failed to load Flash Tech trips", err));
+    return () => { cancelled = true; };
+  }, [myProfileId]);
+  // Dev-only override — flips the effective branch to a Flash Tech
+  // destination regardless of the selected date/whether a real trip covers
+  // it, so the origin swap can be tested without navigating dates. Local
+  // only, never shipped (see the Dev button in the JSX below).
+  const [devSimulateFlashTech, setDevSimulateFlashTech] = useState(false);
+  const effectiveBranch = useMemo(() => {
+    if (import.meta.env.DEV && devSimulateFlashTech) return "Columbus";
+    const activeTrip = flashTechTrips.find((t) => t.startDate <= selectedDateIso && selectedDateIso <= t.endDate);
+    return activeTrip?.destinationLocation || myBranch;
+  }, [flashTechTrips, selectedDateIso, myBranch, devSimulateFlashTech]);
+  // The route's actual starting point: live GPS whenever we have it, else
+  // the effective branch office point (which already accounts for an
+  // active Flash Tech trip on the selected day).
+  const origin = useMemo(() => gpsOrigin ?? getOfficeCoordinates(effectiveBranch), [gpsOrigin, effectiveBranch]);
+
   const dailyTickets = useMemo(() => {
     return tickets.filter((t) => {
       const rawDate = String(t.schedule || (t as any).schedule_date || "").trim();
@@ -1428,13 +1552,15 @@ function RouteMapView({
     return () => window.clearTimeout(t);
   }, [expanded, stops, origin, mapProvider, L]);
 
-  // Try to get the technician's current location for the route origin.
+  // Try to get the technician's current location for the route origin — if
+  // it's denied/unavailable, `origin` above already falls back to the
+  // branch office point on its own, no extra handling needed here.
   useEffect(() => {
     if (!navigator.geolocation) return;
     navigator.geolocation.getCurrentPosition(
-      (p) => setOrigin({ lat: p.coords.latitude, lng: p.coords.longitude }),
+      (p) => setGpsOrigin({ lat: p.coords.latitude, lng: p.coords.longitude }),
       () => {
-        /* permission denied — we'll route between stops only */
+        /* denied/unavailable — origin already falls back to the branch point */
       },
       { enableHighAccuracy: true, timeout: 8000 }
     );
@@ -1812,6 +1938,15 @@ function RouteMapView({
           <div className="mtech-directions-title">
             {routing ? "Building route…" : `Route · ${legs.length} stop${legs.length === 1 ? "" : "s"}`}
           </div>
+          {import.meta.env.DEV && (
+            <button
+              type="button"
+              className="mtech-home-onsite-devbtn"
+              onClick={() => setDevSimulateFlashTech((v) => !v)}
+            >
+              {devSimulateFlashTech ? "✓ " : ""}Dev: simulate Flash Tech → Columbus (local only)
+            </button>
+          )}
           {legs.map((leg, i) => (
             <button
               key={`${leg.ticketNo}-${i}`}

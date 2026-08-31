@@ -14,6 +14,7 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
 import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, Clock, Loader2, CalendarOff } from "lucide-react";
+import { BrandedLoader } from "@/components/BrandedLoader";
 import { useEffect, useMemo, useState } from "react";
 import { AppHeader } from "@/components/Header";
 import { Footer } from "@/components/Footer";
@@ -204,9 +205,7 @@ function EmployeeDetailsPage() {
         {error && <div className="mb-4 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">{error}</div>}
 
         {loading ? (
-          <div className="flex items-center justify-center gap-2 text-sm text-slate-400 py-16">
-            <Loader2 className="h-4 w-4 animate-spin" /> Loading employee details…
-          </div>
+          <BrandedLoader label="Loading employee details…" />
         ) : employee ? (
         <div className="space-y-6">
           {/* Working Hours */}

@@ -14,6 +14,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
 import { AlertTriangle, CheckCircle, ChevronLeft, Clock, Loader2, MessageSquare, ShieldAlert, Users } from "lucide-react";
+import { BrandedLoader } from "@/components/BrandedLoader";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { getCompanyUsers, getMyProfileId } from "@/lib/supabase/users";
@@ -287,8 +288,8 @@ export function CSRTeamLeaderDashboard({ mod, sub }: { mod: ModuleDef; sub: SubM
         )}
 
         {loading ? (
-          <div className="panel p-8 mb-6 flex items-center justify-center gap-2 text-sm text-muted-foreground">
-            <Loader2 className="h-4 w-4 animate-spin" /> Loading your dashboard…
+          <div className="panel p-8 mb-6">
+            <BrandedLoader label="Loading your dashboard…" />
           </div>
         ) : !isCsr ? (
           <p className="panel p-8 text-center text-sm text-muted-foreground">

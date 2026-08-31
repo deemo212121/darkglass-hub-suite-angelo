@@ -400,7 +400,7 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
     <div className="min-h-screen flex flex-col">
       <main className="flex-1 max-w-[1400px] mx-auto w-full px-6 py-8">
         <style>{`
-          .pr-panel { background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.15); border-radius: 10px; padding: 1rem; color: #fff; backdrop-filter: blur(10px); width: 100%; min-width: 0; }
+          .pr-panel { width: 100%; min-width: 0; }
           .pr-panel + .pr-panel { margin-top: 0.9rem; }
           .controls-grid { display: grid; grid-template-columns: repeat(4, minmax(160px, 1fr)); gap: 0.75rem; margin-bottom: 0.7rem; }
           .field { display: flex; flex-direction: column; gap: 0.25rem; }
@@ -408,8 +408,8 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
           .field label.required::after { content: " *"; color: #ef4444; }
           .inventory-subhead th { background: #1e3a5f; font-size: 0.72rem; color: #fff; }
           .lot-tag { font-size: 0.72rem; color: #94a3b8; white-space: normal; }
-          .ra-label-btn { border: 1px solid #cbd5e1; background: #fff; color: #1f2937; border-radius: 6px; padding: 0.18rem 0.4rem; cursor: pointer; font-size: 0.7rem; font-weight: 600; }
-          .ra-label-btn:hover { background: #f1f5f9; }
+          .ra-label-btn { border: 1px solid rgba(255, 255, 255, 0.15); background: #1f2937; color: #e5e7eb; border-radius: 6px; padding: 0.18rem 0.4rem; cursor: pointer; font-size: 0.7rem; font-weight: 600; }
+          .ra-label-btn:hover { background: #374151; }
           .field input, .field select { width: 100%; padding: 0.55rem 0.65rem; border-radius: 6px; border: 1px solid rgba(255, 255, 255, 0.2); background: rgba(17, 24, 39, 0.95); color: #fff; font-size: 0.85rem; }
           .aging-range { display: flex; align-items: center; gap: 0.4rem; }
           .aging-range input { width: 70px; text-align: center; }
@@ -439,35 +439,37 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
           .money { text-align: right; }
           .part-info-modal-overlay { position: fixed; inset: 0; background: rgba(15, 23, 42, 0.45); display: none; align-items: center; justify-content: center; z-index: 2200; padding: 1rem; }
           .part-info-modal-overlay.is-open { display: flex; }
-          .part-info-modal { width: min(980px, calc(100vw - 2rem)); max-height: calc(100vh - 2rem); overflow: auto; background: #ffffff; border: 1px solid #d1d5db; border-radius: 12px; box-shadow: 0 28px 70px rgba(15, 23, 42, 0.3); }
-          .part-info-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 0.9rem 1rem; border-bottom: 1px solid #e5e7eb; background: #f8fafc; }
-          .part-info-title { font-size: 1rem; font-weight: 700; color: #111827; }
-          .part-info-close { border: 1px solid #cbd5e1; background: #ffffff; color: #111827; border-radius: 8px; padding: 0.32rem 0.6rem; cursor: pointer; }
+          .part-info-modal { width: min(980px, calc(100vw - 2rem)); max-height: calc(100vh - 2rem); overflow: auto; background: #111827; border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 12px; box-shadow: 0 28px 70px rgba(15, 23, 42, 0.3); }
+          .part-info-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 0.9rem 1rem; border-bottom: 1px solid rgba(255, 255, 255, 0.12); background: #1f2937; }
+          .part-info-title { font-size: 1rem; font-weight: 700; color: #e5e7eb; }
+          .part-info-close { border: 1px solid rgba(255, 255, 255, 0.15); background: #1f2937; color: #e5e7eb; border-radius: 8px; padding: 0.32rem 0.6rem; cursor: pointer; }
           .part-info-tabs { display: flex; gap: 0.45rem; padding: 0.75rem 1rem 0; }
-          .part-info-tab-btn { border: 1px solid #cbd5e1; background: #ffffff; color: #1f2937; padding: 0.4rem 0.85rem; border-radius: 999px; cursor: pointer; font-size: 0.82rem; font-weight: 600; }
-          .part-info-tab-btn.active { background: #0f172a; color: #ffffff; border-color: #0f172a; }
+          .part-info-tab-btn { border: 1px solid rgba(255, 255, 255, 0.15); background: #1f2937; color: #e5e7eb; padding: 0.4rem 0.85rem; border-radius: 999px; cursor: pointer; font-size: 0.82rem; font-weight: 600; }
+          .part-info-tab-btn.active { background: #2563eb; color: #ffffff; border-color: #2563eb; }
           .part-info-body { padding: 0.8rem 1rem 1rem; }
           .part-info-pane { display: none; }
           .part-info-pane.active { display: block; }
-          .part-info-matrix { width: 100%; border-collapse: collapse; font-size: 0.79rem; margin-bottom: 0.85rem; color: #111827; }
-          .part-info-matrix th, .part-info-matrix td { border: 1px solid #d1d5db; padding: 0.45rem; text-align: left; }
-          .part-info-matrix thead th { background: #f3f4f6; font-weight: 700; }
-          .part-info-section-title { font-size: 0.82rem; font-weight: 700; color: #111827; margin: 0.2rem 0 0.4rem; }
-          .part-info-section-subtitle { font-size: 0.76rem; color: #4b5563; margin-bottom: 0.35rem; }
-          .part-info-empty { padding: 0.7rem; border: 1px dashed #d1d5db; border-radius: 8px; font-size: 0.78rem; color: #6b7280; }
+          .part-info-matrix { width: 100%; border-collapse: collapse; font-size: 0.79rem; margin-bottom: 0.85rem; color: #e5e7eb; }
+          .part-info-matrix th, .part-info-matrix td { border: 1px solid rgba(255, 255, 255, 0.12); padding: 0.45rem; text-align: left; }
+          .part-info-matrix thead th { background: #1f2937; font-weight: 700; }
+          .part-info-section-title { font-size: 0.82rem; font-weight: 700; color: #e5e7eb; margin: 0.2rem 0 0.4rem; }
+          .part-info-section-subtitle { font-size: 0.76rem; color: #9ca3af; margin-bottom: 0.35rem; }
+          .part-info-empty { padding: 0.7rem; border: 1px dashed rgba(255, 255, 255, 0.15); border-radius: 8px; font-size: 0.78rem; color: #9ca3af; }
           #partInfoModalOverlay .part-info-tab-btn.active { color: #ffffff !important; }
           @media (max-width: 1100px) { .controls-grid { grid-template-columns: repeat(2, minmax(160px, 1fr)); } }
           @media (max-width: 700px) { .controls-grid { grid-template-columns: 1fr; } }
           @media print { .no-print { display: none !important; } }
         `}</style>
 
-        <div className="flex items-center gap-3 mb-6 no-print">
-          <button type="button" onClick={goBack} className="btn hover:bg-white/15"><ChevronLeft className="h-4 w-4" /></button>
-          <h1 className="text-2xl font-bold">{sub.title}</h1>
+        <div className="mb-6 no-print">
+          <div className="flex items-center gap-3 mb-6">
+            <button type="button" onClick={goBack} className="btn hover:bg-white/15"><ChevronLeft className="h-4 w-4" /></button>
+          </div>
+          <h1 className="text-4xl font-display font-bold tracking-tight mb-2">{sub.title}</h1>
         </div>
         {saveError && <p className="text-sm text-red-400 mb-3 no-print">{saveError}</p>}
 
-        <div className="pr-panel no-print">
+        <div className="glass-panel pr-panel no-print">
           <div className="controls-grid">
             <div className="field">
               <label className="required" htmlFor="providerFilter">Part Provider</label>
@@ -516,7 +518,7 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
           <button type="button" className={`tab-btn ${tab === "core" ? "active" : ""}`} onClick={() => setTab("core")}>Core Part Return</button>
         </div>
 
-        <div className="pr-panel">
+        <div className="glass-panel pr-panel">
           <div className="actions-row no-print">
             <div className="result-info">{rows.length} record{rows.length !== 1 ? "s" : ""} found</div>
             <div className="flex items-center gap-3">

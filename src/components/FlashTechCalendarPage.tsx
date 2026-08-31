@@ -4,7 +4,7 @@ import { ChevronLeft, ChevronRight, RefreshCw, Plus, X, Trash2 } from "lucide-re
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { normalizeRole } from "@/lib/roleLabels";
-import { getCompanyUsers, getMyProfileId, type ProfileRow } from "@/lib/supabase/users";
+import { getCompanyUsers, getMyProfileId, getTechnicianContactInfoByIds, type ProfileRow } from "@/lib/supabase/users";
 import {
   getCompanyFlashTechTrips,
   createFlashTechTrip,
@@ -12,12 +12,22 @@ import {
   deleteFlashTechTrip,
   type FlashTechTrip,
 } from "@/lib/supabase/flashTechTrips";
+import { REGIONS, REGION_LOCATIONS } from "@/lib/locations";
 const WEEKDAY_LABELS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const CHIP_COLORS = ["bg-blue-500/80", "bg-purple-500/80", "bg-emerald-500/80", "bg-amber-500/80", "bg-pink-500/80", "bg-cyan-500/80"];
+// Every real branch, for the Destination dropdown.
+const ALL_BRANCHES = REGIONS.flatMap((r) => REGION_LOCATIONS[r]);
 
 interface Props {
   mod: ModuleDef;
   sub: SubModuleDef;
+  /** Rendered inside another page's tab (Accounting Dashboard's Flash Tech
+   *  tab) instead of as its own standalone page reached from Expense
+   *  Tracking — suppresses this component's own page chrome (back-link,
+   *  title/description, outer page padding) since the host page already
+   *  provides those. The calendar + Schedule Trip submission flow is
+   *  unchanged either way. */
+  embedded?: boolean;
 }
 
 function pad2(n: number): string {
@@ -116,7 +126,7 @@ function expenseBadge(label: string, expense: FlashTechTrip["hotelExpense"]) {
   );
 }
 
-export function FlashTechCalendarPage({ mod, sub }: Props) {
+export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
   const { uid, role, extraRoles, displayName } = useAuth();
   const canManage = [role, ...extraRoles].some((r) => ["ADMIN", "SUPERADMIN", "FINANCE"].includes(normalizeRole(r)));
 
@@ -131,6 +141,10 @@ export function FlashTechCalendarPage({ mod, sub }: Props) {
   const [form, setForm] = useState<TripFormState>(emptyForm());
   const [technicianQuery, setTechnicianQuery] = useState("");
   const [technicianDropdownOpen, setTechnicianDropdownOpen] = useState(false);
+  // The selected technician's home address — display-only, alongside their
+  // (also auto-filled, locked) Origin branch. Fetched on selection since
+  // the technician list itself (getCompanyUsers) doesn't carry it.
+  const [technicianAddress, setTechnicianAddress] = useState("");
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
@@ -185,6 +199,7 @@ export function FlashTechCalendarPage({ mod, sub }: Props) {
     setEditingTripId(null);
     setForm(emptyForm());
     setTechnicianQuery("");
+    setTechnicianAddress("");
     setShowModal(true);
   };
 
@@ -202,6 +217,12 @@ export function FlashTechCalendarPage({ mod, sub }: Props) {
       includeTransportationExpense: Boolean(trip.transportationExpense),
     });
     setTechnicianQuery(trip.technicianName);
+    setTechnicianAddress("");
+    if (trip.technicianProfileId) {
+      getTechnicianContactInfoByIds([trip.technicianProfileId]).then((map) => {
+        setTechnicianAddress(map.get(trip.technicianProfileId!)?.address || "");
+      });
+    }
     setShowModal(true);
   };
 
@@ -211,9 +232,15 @@ export function FlashTechCalendarPage({ mod, sub }: Props) {
   };
 
   const handleSelectTechnician = (u: ProfileRow) => {
-    setForm((f) => ({ ...f, technicianProfileId: u.id, technicianName: u.display_name || u.email }));
+    // Origin locks to wherever they actually belong — not free-typed, so a
+    // trip's origin always reflects their real assigned branch.
+    setForm((f) => ({ ...f, technicianProfileId: u.id, technicianName: u.display_name || u.email, originLocation: u.assigned_branch || "" }));
     setTechnicianQuery(u.display_name || u.email);
     setTechnicianDropdownOpen(false);
+    setTechnicianAddress("");
+    getTechnicianContactInfoByIds([u.id]).then((map) => {
+      setTechnicianAddress(map.get(u.id)?.address || "");
+    });
   };
 
   const handleSave = async () => {
@@ -275,17 +302,21 @@ export function FlashTechCalendarPage({ mod, sub }: Props) {
   const editingTrip = editingTripId ? trips.find((t) => t.id === editingTripId) ?? null : null;
 
   return (
-    <main className="flex-1 bg-slate-950 py-6">
-      <div className="max-w-[1600px] mx-auto px-6">
+    <main className={embedded ? "" : "flex-1 bg-slate-950 py-6"}>
+      <div className={embedded ? "" : "max-w-[1600px] mx-auto px-6"}>
         <div className="mb-4 flex flex-wrap items-center gap-3 text-white">
-          <Link to="/m/$module/$submodule" params={{ module: mod.slug, submodule: "expense-tracking" }} className="btn">
-            <ChevronLeft className="h-4 w-4" />
-            Expense Tracking
-          </Link>
-          <div>
-            <h1 className="text-2xl font-semibold leading-tight">{sub.title}</h1>
-            <p className="text-sm text-muted-foreground">{sub.description}</p>
-          </div>
+          {!embedded && (
+            <Link to="/m/$module/$submodule" params={{ module: mod.slug, submodule: "expense-tracking" }} className="btn">
+              <ChevronLeft className="h-4 w-4" />
+              Expense Tracking
+            </Link>
+          )}
+          {!embedded && (
+            <div>
+              <h1 className="text-2xl font-semibold leading-tight">{sub.title}</h1>
+              <p className="text-sm text-muted-foreground">{sub.description}</p>
+            </div>
+          )}
           <button
             onClick={() => void loadData()}
             disabled={loading}
@@ -451,20 +482,43 @@ export function FlashTechCalendarPage({ mod, sub }: Props) {
                   <label className="text-xs font-semibold uppercase text-slate-400">Origin</label>
                   <input
                     value={form.originLocation}
-                    onChange={(e) => setForm((f) => ({ ...f, originLocation: e.target.value }))}
-                    placeholder="e.g. Jackson, MS"
-                    className="glass-input mt-1 w-full"
+                    readOnly
+                    disabled
+                    placeholder="Pick a technician first"
+                    title="Auto-filled from the technician's own assigned branch — not editable"
+                    className="glass-input mt-1 w-full cursor-not-allowed opacity-70"
                   />
                 </div>
                 <div>
                   <label className="text-xs font-semibold uppercase text-slate-400">Destination</label>
-                  <input
+                  <select
                     value={form.destinationLocation}
                     onChange={(e) => setForm((f) => ({ ...f, destinationLocation: e.target.value }))}
-                    placeholder="e.g. New Orleans"
                     className="glass-input mt-1 w-full"
-                  />
+                  >
+                    <option value="">Select branch…</option>
+                    {ALL_BRANCHES.filter((b) => b !== form.originLocation).map((b) => (
+                      <option key={b} value={b}>{b}</option>
+                    ))}
+                  </select>
                 </div>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold uppercase text-slate-400">Technician Address</label>
+                <input
+                  value={technicianAddress}
+                  readOnly
+                  disabled
+                  placeholder={form.technicianProfileId ? "No home address on file for this technician" : "Pick a technician from the search results first"}
+                  title="The technician's own home address on file — not editable here"
+                  className="glass-input mt-1 w-full cursor-not-allowed opacity-70"
+                />
+                {technicianQuery && !form.technicianProfileId && (
+                  <p className="mt-1 text-[11px] text-amber-300">
+                    Not linked to a real technician profile — click the search box above and pick a name from the dropdown, or this trip won't apply to their mobile route.
+                  </p>
+                )}
               </div>
 
               <div className="grid grid-cols-2 gap-3">

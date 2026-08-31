@@ -62,12 +62,6 @@ export function PartHistoryPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDe
       <main className="flex-1 max-w-[1400px] mx-auto w-full px-6 py-8">
         <style>{`
           .history-panel {
-            background: rgba(255, 255, 255, 0.08);
-            border: 1px solid rgba(255, 255, 255, 0.15);
-            border-radius: 10px;
-            padding: 1rem;
-            color: #fff;
-            backdrop-filter: blur(10px);
             width: 100%;
           }
           .page-title { font-size: 1.1rem; font-weight: 700; margin: 0 0 0.8rem; color: #dbeafe; }
@@ -104,7 +98,7 @@ export function PartHistoryPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDe
           <p className="text-lg text-muted-foreground">{sub.description}</p>
         </div>
 
-        <div className="history-panel">
+        <div className="glass-panel history-panel">
           <h3 className="page-title">Part In/Out History</h3>
 
           <div className="top-controls">
@@ -192,7 +186,7 @@ export function PartHistoryPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDe
           )}
         </div>
 
-        <div className="history-panel history-summary-panel">
+        <div className="glass-panel history-panel history-summary-panel">
           <p><strong>*Note:</strong> This shows the part's current real state (ticket, PO #, status, RA # if returned) — it isn't a chronological event log. No per-event history is recorded anywhere in this app yet, so a full in/out timeline isn't available.</p>
         </div>
       </main>

@@ -18,6 +18,7 @@ import { createPortal } from "react-dom";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
 import { ChevronLeft, LayoutDashboard, Package, AlertTriangle, Truck, ClipboardList, DollarSign, Loader2, Users, Download, Calendar, Building2, CalendarClock } from "lucide-react";
+import { BrandedLoader } from "@/components/BrandedLoader";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 import * as XLSX from "xlsx";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
@@ -740,8 +741,8 @@ export function PartsOrderDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         )}
 
         {loading ? (
-          <div className="panel p-8 mb-6 flex items-center justify-center gap-2 text-sm text-muted-foreground">
-            <Loader2 className="h-4 w-4 animate-spin" /> Loading Parts Order Dashboard…
+          <div className="panel p-8 mb-6">
+            <BrandedLoader label="Loading Parts Order Dashboard…" />
           </div>
         ) : !showGenerateReport && (
         <>

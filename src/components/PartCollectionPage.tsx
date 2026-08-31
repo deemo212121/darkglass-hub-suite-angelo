@@ -170,12 +170,6 @@ export function PartCollectionPage({ mod, sub }: { mod: ModuleDef; sub: SubModul
       <main className="flex-1 max-w-[1400px] mx-auto w-full px-6 py-8">
         <style>{`
           .collection-panel {
-            background: rgba(255, 255, 255, 0.08);
-            border: 1px solid rgba(255, 255, 255, 0.15);
-            border-radius: 10px;
-            padding: 1rem;
-            color: #fff;
-            backdrop-filter: blur(10px);
             width: 100%;
             min-width: 0;
           }
@@ -223,7 +217,7 @@ export function PartCollectionPage({ mod, sub }: { mod: ModuleDef; sub: SubModul
           <p className="text-lg text-muted-foreground">{sub.description}</p>
         </div>
 
-        <div className="collection-panel">
+        <div className="glass-panel collection-panel">
           <div className="controls-grid">
             <div className="field">
               <label htmlFor="locationFilter">Location*</label>
@@ -264,7 +258,7 @@ export function PartCollectionPage({ mod, sub }: { mod: ModuleDef; sub: SubModul
           </div>
         </div>
 
-        <div id="collectionResultsPanel" className={`collection-panel ${location ? "" : "is-hidden"}`}>
+        <div id="collectionResultsPanel" className={`glass-panel collection-panel ${location ? "" : "is-hidden"}`}>
           <div className="collection-search-row">
             <div className="search-left">
               <div className="search-left-top">

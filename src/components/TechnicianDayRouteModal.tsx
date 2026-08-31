@@ -9,9 +9,11 @@
 import { useEffect, useRef, useState } from "react";
 import type * as Leaflet from "leaflet";
 import { X, Loader2, AlertCircle } from "lucide-react";
+import { BrandedLoader } from "@/components/BrandedLoader";
 import { Link } from "@tanstack/react-router";
 import { getTechnicianTodayRoute, type TechnicianRouteStop } from "@/lib/supabase/technicianWhereabouts";
 import { getCompanyMapProvider } from "@/lib/supabase/companySettings";
+import { getCompanyFlashTechTrips } from "@/lib/supabase/flashTechTrips";
 import {
   getLeaflet,
   loadGoogleMapsScript,
@@ -49,12 +51,14 @@ const LIVE_TRIANGLE_SVG =
 interface Props {
   technicianName: string;
   branch: string;
+  /** Real profile id — used to match an active Flash Tech trip (flash_tech_trips.technicianProfileId), same key TechnicianWhereaboutsPage already uses for the live GPS ping match. */
+  profileId: string;
   /** Real GPS, whenever a ping row exists — kept regardless of age, same as TechnicianWhereabouts's own liveLocation (see technicianWhereabouts.ts). Passed down rather than re-fetched here since the caller already has it. */
   liveLocation: { lat: number; lng: number; updatedAt: string; isLive: boolean } | null;
   onClose: () => void;
 }
 
-export function TechnicianDayRouteModal({ technicianName, branch, liveLocation, onClose }: Props) {
+export function TechnicianDayRouteModal({ technicianName, branch, profileId, liveLocation, onClose }: Props) {
   const [stops, setStops] = useState<TechnicianRouteStop[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [mapProvider, setMapProvider] = useState<"google" | "leaflet" | null>(null);
@@ -62,6 +66,28 @@ export function TechnicianDayRouteModal({ technicianName, branch, liveLocation, 
   useEffect(() => {
     void getCompanyMapProvider().then(setMapProvider);
   }, []);
+
+  // Flash Tech — same override as the mobile Route view: if this
+  // technician has a trip covering today, that trip's destination branch
+  // becomes the route's starting point instead of their normal branch.
+  // Read-only here — getTechnicianTodayRoute is always scoped to today, so
+  // unlike mobile's date-navigable Route view there's no date to check
+  // against beyond "right now."
+  const [flashTechDestination, setFlashTechDestination] = useState<string | null>(null);
+  useEffect(() => {
+    if (!profileId) return;
+    let cancelled = false;
+    getCompanyFlashTechTrips()
+      .then((trips) => {
+        if (cancelled) return;
+        const today = new Date().toISOString().slice(0, 10);
+        const active = trips.find((t) => t.technicianProfileId === profileId && t.startDate <= today && today <= t.endDate);
+        setFlashTechDestination(active?.destinationLocation ?? null);
+      })
+      .catch((err) => console.error("TechnicianDayRouteModal: failed to load Flash Tech trips", err));
+    return () => { cancelled = true; };
+  }, [profileId]);
+  const effectiveBranch = flashTechDestination || branch;
 
   useEffect(() => {
     let cancelled = false;
@@ -139,8 +165,8 @@ export function TechnicianDayRouteModal({ technicianName, branch, liveLocation, 
     (async () => {
       setMapBuilding(true);
       const geocode = makeGeocoder(mapProvider);
-      const officePt = getOfficeCoordinates(branch);
-      const originPt = officePt ?? (await geocode(branch));
+      const officePt = getOfficeCoordinates(effectiveBranch);
+      const originPt = officePt ?? (await geocode(effectiveBranch));
       if (cancelled || !originPt) {
         setMapBuilding(false);
         return;
@@ -269,7 +295,7 @@ export function TechnicianDayRouteModal({ technicianName, branch, liveLocation, 
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mapProvider, mapReady, L, stops]);
+  }, [mapProvider, mapReady, L, stops, effectiveBranch]);
 
   // Live-position triangle, split into two effects so a routine liveLocation
   // refresh (TechnicianWhereaboutsPage polls every AUTO_REFRESH_MS, handing
@@ -349,7 +375,14 @@ export function TechnicianDayRouteModal({ technicianName, branch, liveLocation, 
           <div>
             <h3 className="text-lg font-semibold text-white">{technicianName} — Today's Route</h3>
             <p className="text-xs text-slate-400 mt-0.5">
-              {branch || "No branch"}
+              {flashTechDestination ? (
+                <>
+                  <span className="line-through opacity-60">{branch || "No branch"}</span>{" "}
+                  <span className="text-amber-300 font-semibold">→ {flashTechDestination} (Flash Tech today)</span>
+                </>
+              ) : (
+                branch || "No branch"
+              )}
               {routeMiles != null && <> · <span className="font-semibold text-white">{routeMiles.toFixed(1)} mi</span> (approximate)</>}
             </p>
           </div>
@@ -383,9 +416,7 @@ export function TechnicianDayRouteModal({ technicianName, branch, liveLocation, 
 
             <div className="lg:col-span-2">
               {!stops ? (
-                <div className="flex items-center gap-2 text-sm text-slate-400 py-6">
-                  <Loader2 className="h-4 w-4 animate-spin" /> Loading today's stops…
-                </div>
+                <BrandedLoader label="Loading today's stops…" />
               ) : (
                 <>
                   <p className="text-xs font-semibold text-slate-300 mb-2">Stops ({stops.length})</p>

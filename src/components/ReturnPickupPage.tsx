@@ -253,35 +253,35 @@ export function ReturnPickupPage() {
           .ticket-link:hover { text-decoration: underline; }
           .part-info-modal-overlay { position: fixed; inset: 0; background: rgba(15, 23, 42, 0.45); display: none; align-items: center; justify-content: center; z-index: 2200; padding: 1rem; }
           .part-info-modal-overlay.is-open { display: flex; }
-          .part-info-modal { width: min(980px, calc(100vw - 2rem)); max-height: calc(100vh - 2rem); overflow: auto; background: #ffffff; border: 1px solid #d1d5db; border-radius: 12px; box-shadow: 0 28px 70px rgba(15, 23, 42, 0.3); }
-          .part-info-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 0.9rem 1rem; border-bottom: 1px solid #e5e7eb; background: #f8fafc; }
-          .part-info-title { font-size: 1rem; font-weight: 700; color: #111827; }
-          .part-info-close { border: 1px solid #cbd5e1; background: #ffffff; color: #111827; border-radius: 8px; padding: 0.32rem 0.6rem; cursor: pointer; }
+          .part-info-modal { width: min(980px, calc(100vw - 2rem)); max-height: calc(100vh - 2rem); overflow: auto; background: #111827; border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 12px; box-shadow: 0 28px 70px rgba(15, 23, 42, 0.3); }
+          .part-info-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 0.9rem 1rem; border-bottom: 1px solid rgba(255, 255, 255, 0.12); background: #1f2937; }
+          .part-info-title { font-size: 1rem; font-weight: 700; color: #e5e7eb; }
+          .part-info-close { border: 1px solid rgba(255, 255, 255, 0.15); background: #1f2937; color: #e5e7eb; border-radius: 8px; padding: 0.32rem 0.6rem; cursor: pointer; }
           .part-info-tabs { display: flex; gap: 0.45rem; padding: 0.75rem 1rem 0; }
-          .part-info-tab-btn { border: 1px solid #cbd5e1; background: #ffffff; color: #1f2937; padding: 0.4rem 0.85rem; border-radius: 999px; cursor: pointer; font-size: 0.82rem; font-weight: 600; }
-          .part-info-tab-btn.active { background: #0f172a; color: #ffffff; border-color: #0f172a; }
+          .part-info-tab-btn { border: 1px solid rgba(255, 255, 255, 0.15); background: #1f2937; color: #e5e7eb; padding: 0.4rem 0.85rem; border-radius: 999px; cursor: pointer; font-size: 0.82rem; font-weight: 600; }
+          .part-info-tab-btn.active { background: #2563eb; color: #ffffff; border-color: #2563eb; }
           .part-info-body { padding: 0.8rem 1rem 1rem; }
           .part-info-pane { display: none; }
           .part-info-pane.active { display: block; }
           .part-info-matrix { width: 100%; border-collapse: collapse; font-size: 0.79rem; margin-bottom: 0.85rem; }
-          .part-info-matrix th, .part-info-matrix td { border: 1px solid #d1d5db; padding: 0.45rem; text-align: left; }
-          .part-info-matrix thead th { background: #f3f4f6; font-weight: 700; }
-          .part-info-section-title { font-size: 0.82rem; font-weight: 700; color: #111827; margin: 0.2rem 0 0.4rem; }
-          .part-info-section-subtitle { font-size: 0.76rem; color: #4b5563; margin-bottom: 0.35rem; }
-          .part-info-empty { padding: 0.7rem; border: 1px dashed #d1d5db; border-radius: 8px; font-size: 0.78rem; color: #6b7280; }
-          #partInfoModalOverlay .part-info-modal, #partInfoModalOverlay .part-info-modal th, #partInfoModalOverlay .part-info-modal td, #partInfoModalOverlay .part-info-title, #partInfoModalOverlay .part-info-close, #partInfoModalOverlay .part-info-section-title, #partInfoModalOverlay .part-info-section-subtitle, #partInfoModalOverlay .part-info-empty, #partInfoModalOverlay .part-info-tab-btn { color: #111827 !important; }
+          .part-info-matrix th, .part-info-matrix td { border: 1px solid rgba(255, 255, 255, 0.12); padding: 0.45rem; text-align: left; }
+          .part-info-matrix thead th { background: #1f2937; font-weight: 700; }
+          .part-info-section-title { font-size: 0.82rem; font-weight: 700; color: #e5e7eb; margin: 0.2rem 0 0.4rem; }
+          .part-info-section-subtitle { font-size: 0.76rem; color: #9ca3af; margin-bottom: 0.35rem; }
+          .part-info-empty { padding: 0.7rem; border: 1px dashed rgba(255, 255, 255, 0.15); border-radius: 8px; font-size: 0.78rem; color: #9ca3af; }
+          #partInfoModalOverlay .part-info-modal, #partInfoModalOverlay .part-info-modal th, #partInfoModalOverlay .part-info-modal td, #partInfoModalOverlay .part-info-title, #partInfoModalOverlay .part-info-close, #partInfoModalOverlay .part-info-section-title, #partInfoModalOverlay .part-info-section-subtitle, #partInfoModalOverlay .part-info-empty, #partInfoModalOverlay .part-info-tab-btn { color: #e5e7eb !important; }
           #partInfoModalOverlay .part-info-tab-btn.active { color: #ffffff !important; }
           @media (max-width: 1200px) { .controls-grid { grid-template-columns: repeat(2, minmax(160px, 1fr)); } }
           @media (max-width: 768px) { .controls-grid { grid-template-columns: 1fr; } .search-input { width: 100%; } .action-buttons { flex-direction: column; } .btn { width: 100%; } }
         `}</style>
 
-        <div className="mb-4">
-          <div className="flex items-center gap-3 mb-4">
+        <div className="mb-6">
+          <div className="flex items-center gap-3 mb-6">
             <button type="button" onClick={goBack} className="back-btn">
               <ChevronLeft className="h-4 w-4" /> Parts
             </button>
           </div>
-          <h1 className="text-2xl font-semibold leading-tight text-white">Return &amp; Pickup</h1>
+          <h1 className="text-4xl font-display font-bold tracking-tight mb-2">Return &amp; Pickup</h1>
         </div>
 
         {saveError && <p className="text-sm text-red-400 mb-3">{saveError}</p>}

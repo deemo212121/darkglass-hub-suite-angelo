@@ -18,6 +18,45 @@
   isolation: isolate;
 }
 
+/* Hides the scrollbar on an element that still scrolls via touch/drag/wheel
+   — used where a strip of content is allowed to overflow horizontally on
+   narrow screens without showing a visible scrollbar track. */
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* Shared "glass" surface used by the Parts module's page panels — was
+   copy-pasted under 8 different names (.inventory-panel, .pr-panel, etc.)
+   with an identical body; consolidated here so they stay in sync. */
+.glass-panel {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 10px;
+  padding: 1rem;
+  color: #fff;
+  backdrop-filter: blur(10px);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  @keyframes fade-up {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  .page-fade-in {
+    animation: fade-up 0.35s cubic-bezier(0.4, 0, 0.2, 1) both;
+  }
+}
+
 /* Password fields have their own custom show/hide eye button (see
    landing.tsx/profile.tsx) — Chromium Edge still renders its own native
    reveal icon on top via ::-ms-reveal (a legacy EdgeHTML pseudo-element

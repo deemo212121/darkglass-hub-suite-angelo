@@ -38,6 +38,14 @@ const FORCE_UNASSIGNED = "__FORCE_UNASSIGNED__";
 // ?tab=done-activity handling), not just the module's Overview.
 const PARTS_DONE_DIGEST_LINK = "/m/report/report-parts-daily?tab=done-activity";
 
+// A handful of Claims/Report tiles carry a leading "(A)"/"(R)" marker (e.g.
+// "(A) Closing Report") — stripped here for sort purposes only (still shown
+// on the tile itself) so those land alphabetically among the rest by their
+// actual name instead of clumping together at the front of every grid.
+function submoduleSortKey(title: string): string {
+  return title.replace(/^\([A-Z]\)\s*/, "");
+}
+
 export const Route = createFileRoute("/m/$module")({
   head: ({ params }) => ({
     meta: [{ title: `${getModule(params.module)?.label ?? "Module"} — Admin Hub Solutions` }],
@@ -383,7 +391,7 @@ function ModuleIndex() {
     return (
       <>
         <AppHeader />
-        <main className="max-w-[1400px] mx-auto px-6 py-8">
+        <main className="max-w-[1400px] mx-auto px-6 py-8 page-fade-in">
           <div className="panel text-center max-w-md mx-auto">
             <h1 className="text-xl font-semibold">Access restricted</h1>
             <p className="text-sm text-muted-foreground mt-2">Your role doesn't have access to the {m.label} module.</p>
@@ -452,7 +460,7 @@ function ModuleIndex() {
   return (
     <>
       <AppHeader />
-      <main className="max-w-[1400px] mx-auto px-6 py-8">
+      <main className="max-w-[1400px] mx-auto px-6 py-8 page-fade-in">
         <div className="flex items-center justify-between gap-3 mb-5">
           <div className="flex items-center gap-3">
             <Link to="/home" className="btn"><ChevronLeft className="h-4 w-4" />Home</Link>
@@ -602,6 +610,8 @@ function ModuleIndex() {
               // never shown here only to land on "Access restricted" once
               // clicked.
               .filter((s: SubModuleDef) => canAccessSubmodule(role, extraRoles, m.slug, s))
+              // Alphabetical, same as every other module's grid below.
+              .sort((a: SubModuleDef, b: SubModuleDef) => submoduleSortKey(a.title).localeCompare(submoduleSortKey(b.title)))
               .map((s: SubModuleDef) => (
               <Link
                 key={s.slug}
@@ -623,6 +633,7 @@ function ModuleIndex() {
               // Full gate (see submoduleAccess.ts) — the same check the
               // submodule route itself enforces.
               .filter((s: SubModuleDef) => canAccessSubmodule(role, extraRoles, m.slug, s))
+              .sort((a: SubModuleDef, b: SubModuleDef) => submoduleSortKey(a.title).localeCompare(submoduleSortKey(b.title)))
               .map((s: SubModuleDef) => (
               <Link
                 key={s.slug}

@@ -16,6 +16,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { RotateCcw, GripVertical, Users, Plus, X, Crown, UserCog, Pencil, Loader2 } from "lucide-react";
+import { BrandedLoader } from "@/components/BrandedLoader";
 import { getCompanyUsers } from "@/lib/supabase/users";
 import {
   assignCsrMember,
@@ -259,8 +260,8 @@ export function CsrTeamComposition() {
 
   if (loading) {
     return (
-      <div className="panel p-8 mb-6 flex items-center justify-center gap-2 text-sm text-muted-foreground">
-        <Loader2 className="h-4 w-4 animate-spin" /> Loading team composition…
+      <div className="panel p-8 mb-6">
+        <BrandedLoader label="Loading team composition…" />
       </div>
     );
   }

@@ -19,6 +19,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
 import { ChevronLeft, FileText, Clock, CheckCircle2, AlertTriangle, Users, Loader2, Download, LayoutDashboard, CalendarClock } from "lucide-react";
+import { BrandedLoader } from "@/components/BrandedLoader";
 import { Bar, BarChart, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import * as XLSX from "xlsx";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
@@ -352,8 +353,8 @@ export function ClaimsDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModuleDe
         )}
 
         {loading ? (
-          <div className="panel p-8 mb-6 flex items-center justify-center gap-2 text-sm text-muted-foreground">
-            <Loader2 className="h-4 w-4 animate-spin" /> Loading Claims Dashboard…
+          <div className="panel p-8 mb-6">
+            <BrandedLoader label="Loading Claims Dashboard…" />
           </div>
         ) : (
         <>

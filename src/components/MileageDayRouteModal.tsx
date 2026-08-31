@@ -11,6 +11,7 @@
 import { useEffect, useRef, useState } from "react";
 import type * as Leaflet from "leaflet";
 import { X, ArrowUp, ArrowDown, Loader2, AlertCircle, RotateCcw } from "lucide-react";
+import { BrandedLoader } from "@/components/BrandedLoader";
 import { Link } from "@tanstack/react-router";
 import {
   getMileageDayRouteStops,
@@ -539,9 +540,7 @@ export function MileageDayRouteModal({ technicianName, workDate, branch, homeAdd
 
             <div className="lg:col-span-2">
               {!stops ? (
-                <div className="flex items-center gap-2 text-sm text-slate-400 py-6">
-                  <Loader2 className="h-4 w-4 animate-spin" /> Loading this day's stops…
-                </div>
+                <BrandedLoader label="Loading this day's stops…" />
               ) : (
               <>
               <p className="text-xs font-semibold text-slate-300 mb-2">Stops ({orderedStops.length}) — reorder to match the real visit order</p>

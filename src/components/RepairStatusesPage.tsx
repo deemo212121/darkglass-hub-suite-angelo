@@ -168,7 +168,6 @@ export function RepairStatusesPage({ mod }: { mod: ModuleDef }) {
           }
           .repair-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; margin-bottom: 0.9rem; }
           .repair-title-wrap { display: flex; align-items: center; gap: 0.85rem; }
-          .repair-title { font-size: 1.9rem; font-weight: 700; color: #fff; line-height: 1.1; }
           .repair-subtitle { color: #cbd5e1; font-size: 0.9rem; }
           .top-actions { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
           .btn {
@@ -216,11 +215,11 @@ export function RepairStatusesPage({ mod }: { mod: ModuleDef }) {
           .draft-row { background: #fffdf2; }
           .draft-row td { background: #fffdf2; }
           .role-cell { position: relative; }
-          .role-cell-btn { width: 100%; height: 28px; border: 1px solid #cbd5e1; border-radius: 4px; background: #f8fafc; color: #1f2937; font-size: 0.68rem; cursor: pointer; padding: 0 0.3rem; }
+          .role-cell-btn { width: 100%; height: 28px; border: 1px solid rgba(255, 255, 255, 0.15); border-radius: 4px; background: #1f2937; color: #e5e7eb; font-size: 0.68rem; cursor: pointer; padding: 0 0.3rem; }
           .role-cell-btn:hover { border-color: #94a3b8; }
-          .role-cell-popover { position: absolute; z-index: 10; top: 100%; left: 0; margin-top: 2px; width: 220px; max-height: 260px; overflow-y: auto; background: #fff; border: 1px solid #94a3b8; border-radius: 6px; box-shadow: 0 8px 24px rgba(0,0,0,0.25); padding: 0.35rem; text-align: left; }
-          .role-cell-option { display: flex; align-items: center; gap: 0.4rem; padding: 0.2rem 0.3rem; font-size: 0.72rem; color: #1f2937; cursor: pointer; white-space: nowrap; }
-          .role-cell-option:hover { background: #f1f5f9; border-radius: 4px; }
+          .role-cell-popover { position: absolute; z-index: 10; top: 100%; left: 0; margin-top: 2px; width: 220px; max-height: 260px; overflow-y: auto; background: #1f2937; border: 1px solid #94a3b8; border-radius: 6px; box-shadow: 0 8px 24px rgba(0,0,0,0.25); padding: 0.35rem; text-align: left; }
+          .role-cell-option { display: flex; align-items: center; gap: 0.4rem; padding: 0.2rem 0.3rem; font-size: 0.72rem; color: #e5e7eb; cursor: pointer; white-space: nowrap; }
+          .role-cell-option:hover { background: #374151; border-radius: 4px; }
           .role-cell-option input { width: 14px; height: 14px; min-width: 14px; }
           .group-head { background: #4b5563; font-weight: 700; }
           .notes { margin-top: 0.9rem; color: #cbd5e1; font-size: 0.82rem; line-height: 1.4; }
@@ -231,8 +230,8 @@ export function RepairStatusesPage({ mod }: { mod: ModuleDef }) {
           .link-btn:hover { text-decoration: underline; }
           .toolbar-icon { width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; color: #14a6e2; border: 0; background: transparent; cursor: pointer; }
           .toolbar-icon:hover { color: #0ea5e9; }
-          .toolbar-search { display: inline-flex; align-items: center; gap: 0.35rem; border: 2px solid #4f46e5; border-radius: 999px; padding: 0.15rem 0.55rem; background: #fff; }
-          .toolbar-search input { border: 0; outline: none; width: 170px; font-size: 0.72rem; }
+          .toolbar-search { display: inline-flex; align-items: center; gap: 0.35rem; border: 2px solid #4f46e5; border-radius: 999px; padding: 0.15rem 0.55rem; background: #1f2937; }
+          .toolbar-search input { border: 0; outline: none; width: 170px; font-size: 0.72rem; background: transparent; color: #e5e7eb; }
           .top-right-tools { display: flex; align-items: center; gap: 0.25rem; }
           @media (max-width: 1100px) { .search-input { width: 100%; } }
         `}</style>
@@ -243,7 +242,7 @@ export function RepairStatusesPage({ mod }: { mod: ModuleDef }) {
               <ChevronLeft className="h-4 w-4" /> {mod.label}
             </button>
             <div>
-              <div className="repair-title">Repair Statuses</div>
+              <div className="text-4xl font-display font-bold tracking-tight">Repair Statuses</div>
               <div className="repair-subtitle">{filteredRows.length} records found</div>
             </div>
           </div>

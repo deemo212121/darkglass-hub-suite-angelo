@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef, Fragment } from "react";
 import { Link, useSearch, useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
 import { usePersistedTab } from "@/lib/usePersistedTab";
+import { BrandedLoader } from "@/components/BrandedLoader";
 import {
   ChevronLeft,
   DollarSign,
@@ -28,6 +29,7 @@ import {
   Columns3,
   Route as RouteIcon,
   Bell,
+  Users,
 } from "lucide-react";
 import {
   BarChart,
@@ -79,6 +81,8 @@ import {
 import { TechActivityReportModal } from "@/components/TechActivityReportModal";
 import { getMileageEntries, deleteMileageEntry, syncMileageFromTickets, setMileageEntryPayrollExcluded, reconcileMileageNoPhotoHolds, mileageEffectiveTotal, type MileageEntry } from "@/lib/supabase/mileage";
 import { MileageDayRouteModal } from "@/components/MileageDayRouteModal";
+import { FlashTechCalendarPage } from "@/components/FlashTechCalendarPage";
+import { ExpenseTrackingPage } from "@/components/ExpenseTrackingPage";
 import { getCompanyEmployeeRequests, updateEmployeeRequestStatus, linkPayrollDisputeCustomPayItem, type EmployeeRequestRow } from "@/lib/supabase/employeeRequests";
 import { perCutoffSalary } from "@/lib/supabase/salary";
 import { useAuth } from "@/lib/auth";
@@ -549,6 +553,19 @@ function parseGmailRegionParam(value: string | null): GmailRegion {
   return value === "PH" ? "PH" : "US";
 }
 
+type AccountingDashboardTabId = "overview" | "payroll" | "techPayroll" | "mileage" | "payrollDisputes" | "reports" | "flashTech";
+// Shared by the top tab row and the floating left quick-nav so the two
+// never drift out of sync.
+const ACCOUNTING_DASHBOARD_TABS: { id: AccountingDashboardTabId; label: string; Icon: typeof PieChartIcon }[] = [
+  { id: "overview", label: "Overview", Icon: PieChartIcon },
+  { id: "payroll", label: "Office Payroll", Icon: DollarSign },
+  { id: "techPayroll", label: "Tech Payroll", Icon: Wrench },
+  { id: "mileage", label: "Mileage", Icon: MapPin },
+  { id: "payrollDisputes", label: "Payroll Disputes", Icon: AlertCircle },
+  { id: "flashTech", label: "Flash Tech", Icon: RouteIcon },
+  { id: "reports", label: "Reports", Icon: FileText },
+];
+
 // ─── Component ───────────────────────────────────────────────────────────────
 export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
   const navigate = useNavigate();
@@ -556,9 +573,31 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   const { uid, role, displayName, email, companyId } = useAuth();
   const canConnectGmail = String(role || "").toUpperCase() === "ADMIN" || String(role || "").toUpperCase() === "SUPERADMIN";
   const [myProfileId, setMyProfileId] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = usePersistedTab<"overview" | "payroll" | "techPayroll" | "mileage" | "payrollDisputes" | "reports">(
+  // Floating left quick-nav — collapsed (icon-only) by default so it stays
+  // out of the way of this page's already-wide tables; expands to show
+  // labels too. Persisted like the active tab itself so it doesn't reset
+  // every visit.
+  const [sidebarExpanded, setSidebarExpanded] = useState(() => {
+    try {
+      return localStorage.getItem("ahs:accounting-dashboard-sidebar-expanded") === "1";
+    } catch {
+      return false;
+    }
+  });
+  const toggleSidebarExpanded = () => {
+    setSidebarExpanded((v) => {
+      const next = !v;
+      try {
+        localStorage.setItem("ahs:accounting-dashboard-sidebar-expanded", next ? "1" : "0");
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  };
+  const [activeTab, setActiveTab] = usePersistedTab<AccountingDashboardTabId>(
     "ahs:accounting-dashboard-active-tab",
-    ["overview", "payroll", "techPayroll", "mileage", "payrollDisputes", "reports"],
+    ["overview", "payroll", "techPayroll", "mileage", "payrollDisputes", "flashTech", "reports"],
     "overview",
   );
   // Deep link from a bell-icon notification straight into the Payroll
@@ -636,6 +675,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       alert(`Failed to update dispute: ${err instanceof Error ? err.message : "Unknown error"}`);
     }
   };
+
   // Overview KPI cards default to the live current-period preview, but can
   // be pointed at any previously generated payroll run instead.
   const [selectedRunId, setSelectedRunId] = useState<string>("current");
@@ -2683,10 +2723,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
-        <div className="flex items-center gap-3 text-slate-400">
-          <Loader2 className="h-6 w-6 animate-spin" />
-          <span>Loading accounting data…</span>
-        </div>
+        <BrandedLoader label="Loading accounting data…" />
       </div>
     );
   }
@@ -2741,6 +2778,51 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
 
   return (
     <div className="min-h-screen flex flex-col">
+      {/* Floating quick-nav — duplicates the top tab row as a left-edge
+          panel so jumping between tabs doesn't need scrolling back up on a
+          long page. Collapsed to icons-only by default (this page's tables
+          are already wide); the chevron expands it to show labels too. */}
+      <nav className="fixed left-3 top-1/2 z-40 flex -translate-y-1/2 flex-col gap-1 rounded-2xl border border-white/10 bg-slate-900/85 p-1.5 shadow-lg backdrop-blur-md motion-safe:transition-[width] motion-safe:duration-200">
+        <button
+          type="button"
+          onClick={toggleSidebarExpanded}
+          title={sidebarExpanded ? "Collapse" : "Expand"}
+          className="flex items-center justify-center rounded-lg p-1.5 text-slate-400 hover:bg-white/10 hover:text-white transition-colors"
+        >
+          {sidebarExpanded ? <ChevronLeft className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+        </button>
+        <div className="h-px bg-white/10 mx-1" />
+        {ACCOUNTING_DASHBOARD_TABS.map((tab) => {
+          const Icon = tab.Icon;
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setActiveTab(tab.id)}
+              title={tab.label}
+              className={`flex items-center gap-2 rounded-lg px-2 py-2 text-sm whitespace-nowrap transition-colors ${
+                activeTab === tab.id
+                  ? "bg-blue-500/20 text-blue-300"
+                  : "text-slate-400 hover:bg-white/10 hover:text-slate-200"
+              }`}
+            >
+              <Icon className="h-4 w-4 shrink-0" />
+              {sidebarExpanded && <span>{tab.label}</span>}
+            </button>
+          );
+        })}
+        <div className="h-px bg-white/10 mx-1" />
+        <Link
+          to="/m/$module/$submodule"
+          params={{ module: "admin", submodule: "user-management" }}
+          title="User Management"
+          className="flex items-center gap-2 rounded-lg px-2 py-2 text-sm whitespace-nowrap text-slate-400 hover:bg-white/10 hover:text-slate-200 transition-colors"
+        >
+          <Users className="h-4 w-4 shrink-0" />
+          {sidebarExpanded && <span>User Management</span>}
+        </Link>
+      </nav>
+
       <main className="flex-1 max-w-[1600px] mx-auto w-full px-6 py-8">
 
         {/* Header */}
@@ -2765,19 +2847,12 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
 
         {/* Tabs */}
         <div className="flex gap-2 mb-8 border-b border-white/10 overflow-x-auto">
-          {[
-            { id: "overview", label: "Overview", Icon: PieChartIcon },
-            { id: "payroll", label: "Office Payroll", Icon: DollarSign },
-            { id: "techPayroll", label: "Tech Payroll", Icon: Wrench },
-            { id: "mileage", label: "Mileage", Icon: MapPin },
-            { id: "payrollDisputes", label: "Payroll Disputes", Icon: AlertCircle },
-            { id: "reports", label: "Reports", Icon: FileText },
-          ].map((tab) => {
+          {ACCOUNTING_DASHBOARD_TABS.map((tab) => {
             const Icon = tab.Icon;
             return (
               <button
                 key={tab.id}
-                onClick={() => setActiveTab(tab.id as "overview" | "payroll" | "techPayroll" | "mileage" | "payrollDisputes" | "reports")}
+                onClick={() => setActiveTab(tab.id)}
                 className={`px-4 py-2 border-b-2 transition whitespace-nowrap flex items-center gap-2 ${
                   activeTab === tab.id
                     ? "border-blue-500 text-blue-300"
@@ -4059,6 +4134,24 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
             </div>
             )}
           </div>
+        )}
+
+        {/* ── Flash Tech Tab ───────────────────────────────────────────────── */}
+        {/* Moved here from its old standalone page (reached via a button on
+            Expense Tracking) — same component, same flash_tech_trips table,
+            just embedded instead of its own page. The calendar view and its
+            Schedule Trip modal are the actual submission flow: pick a
+            technician, origin/destination, date range, notes, optional
+            hotel/transportation expense, then Save creates the trip (and,
+            for the Add Hotel/Transportation checkboxes, matching Pending
+            expense rows in Expense Tracking). */}
+        {activeTab === "flashTech" && (
+          <>
+            <FlashTechCalendarPage mod={mod} sub={sub} embedded />
+            <div className="mt-8 pt-6 border-t border-white/10">
+              <ExpenseTrackingPage mod={mod} sub={sub} embedded />
+            </div>
+          </>
         )}
 
         {/* ── Reports Tab ──────────────────────────────────────────────────── */}
