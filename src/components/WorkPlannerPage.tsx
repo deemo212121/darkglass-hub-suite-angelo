@@ -430,8 +430,6 @@ export function WorkPlannerPage({ mod, sub }: Props) {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
-  const selectedTechRoster = useMemo(() => getSelectedTechRoster(location, liveTechnicians, branchDefaultTechnician), [location, liveTechnicians, branchDefaultTechnician]);
-
   const visibleTickets = useMemo(() => {
     const selectedDate = plannerDate;
     // Statuses that explicitly mean the ticket is NOT yet scheduled for a
@@ -457,6 +455,19 @@ export function WorkPlannerPage({ mod, sub }: Props) {
       return true;
     });
   }, [plannerTickets, plannerDate, location, showRescheduled]);
+
+  // Roster (assigned_branch match + this branch's default technician) PLUS
+  // anyone who actually has a real ticket here today even if their own
+  // assigned_branch is elsewhere -- e.g. a technician normally rostered in
+  // Raleigh covering Chattanooga tickets today. Matches Work Map's
+  // uniqueTechnicians so the two tools agree on "who's really working this
+  // branch today" instead of Work Planner only ever showing the roster and
+  // silently missing cross-branch coverage.
+  const selectedTechRoster = useMemo(() => {
+    const base = getSelectedTechRoster(location, liveTechnicians, branchDefaultTechnician);
+    const ticketTechs = visibleTickets.map((t) => t.technician).filter(Boolean);
+    return Array.from(new Set([...base, ...ticketTechs]));
+  }, [location, liveTechnicians, branchDefaultTechnician, visibleTickets]);
 
   const groupedTickets = useMemo(() => {
     // Apply the manual per-cell order (date, tech, slot) on top of the
