@@ -543,7 +543,13 @@ export async function getCompanyTechnicians(): Promise<TechnicianOption[]> {
       const roles = [u.role, ...(u.extra_roles ?? [])].map((r) => (r || "").toUpperCase());
       return u.is_active && (roles.includes("TECHNICIAN") || roles.includes("TECHNICIAN_MANAGER"));
     })
-    .map((u) => ({ id: u.id, name: u.display_name || u.email, branch: u.assigned_branch || "" }))
+    // .trim() the name -- a stray leading/trailing space or tab in
+    // display_name (real data seen in production: "Alexxis Henry\t") makes
+    // this string silently fail every exact `ticket.technician === tech`
+    // comparison Work Planner and Work Map do, since the ticket's own
+    // technician text is clean. The tech's column still renders (the
+    // whitespace is invisible), it just always shows 0 tickets.
+    .map((u) => ({ id: u.id, name: (u.display_name || u.email).trim(), branch: u.assigned_branch || "" }))
     .filter((t) => t.name)
     .sort((a, b) => a.name.localeCompare(b.name));
 }
