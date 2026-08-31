@@ -1160,7 +1160,10 @@ function TicketsView({
               {/* Card body */}
               <div className="mtech-ticket-body">
                 <div className="mtech-ticket-row-top">
-                  <span className="mtech-ticket-no">{t.ticketNo}</span>
+                  <span className="mtech-ticket-no">
+                    {t.ticketNo}
+                    {t.schedulePeriod && <span className="mtech-ticket-sched-time">{t.schedulePeriod}</span>}
+                  </span>
                   <span className={`mtech-ticket-tone-badge ${statusTone(t.status)}`}>
                     {openDays(t)}d
                   </span>
