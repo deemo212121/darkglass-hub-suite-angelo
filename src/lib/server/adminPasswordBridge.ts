@@ -1,9 +1,13 @@
 /**
- * Admin "reset to default password" bridge — lets an ADMIN/SUPERADMIN
+ * Admin "reset to default password" bridge — lets an ADMIN/SUPERADMIN/HR
  * force-set a single LOCKED-OUT user's Firebase Auth password back to the
  * same default used at account creation (see AdminUserManagementPage.tsx's
  * createCompanyUser, "Welcome2024!"), no old password needed, no reset
- * email required.
+ * email required. HR is included because HR already has full access to the
+ * User Management page (USER_MANAGEMENT_ROLES in submoduleAccess.ts) and
+ * account-recovery is squarely HR's job. The role is matched against the
+ * caller's PRIMARY role or any of their extra_roles — a held secondary
+ * role grants the same access as a primary one, per the app-wide rule.
  *
  * A version of this existed once before as a free-form "admin types any
  * new password" tool and was removed in favor of a must_change_password
@@ -55,7 +59,9 @@ function readEnv(env?: Record<string, string | undefined>): EnvBag | { error: st
   return { supabaseUrl, supabaseServiceKey, firebaseProjectId, serviceAccountEmail, privateKey };
 }
 
-const ADMIN_ROLES = new Set(["ADMIN", "SUPERADMIN"]);
+// Roles allowed to trigger a reset-to-default. Matched against the caller's
+// primary role AND their extra_roles (see holdsResetRole).
+const RESET_PASSWORD_ROLES = new Set(["ADMIN", "SUPERADMIN", "HR"]);
 
 // Same value used at account creation — see AdminUserManagementPage.tsx's
 // createCompanyUser call. Never accepted from the client — this endpoint
@@ -115,13 +121,20 @@ async function getIdentityToolkitAccessToken(serviceAccountEmail: string, privat
 interface ProfileLookup {
   id: string;
   role: string;
+  extra_roles: string[] | null;
   company_id: string;
   firebase_uid: string | null;
 }
 
+/** Caller passes the gate if their primary role OR any held secondary role is allowed. */
+function holdsResetRole(profile: ProfileLookup): boolean {
+  const held = [profile.role, ...(profile.extra_roles ?? [])].map((r) => String(r || "").toUpperCase().trim());
+  return held.some((r) => RESET_PASSWORD_ROLES.has(r));
+}
+
 async function fetchProfile(env: EnvBag, filter: { firebase_uid: string } | { id: string }): Promise<ProfileLookup | null> {
   const [[field, value]] = Object.entries(filter);
-  const url = `${env.supabaseUrl}/rest/v1/profiles?${field}=eq.${encodeURIComponent(value)}&select=id,role,company_id,firebase_uid&limit=1`;
+  const url = `${env.supabaseUrl}/rest/v1/profiles?${field}=eq.${encodeURIComponent(value)}&select=id,role,extra_roles,company_id,firebase_uid&limit=1`;
   const res = await fetch(url, { headers: { apikey: env.supabaseServiceKey, Authorization: `Bearer ${env.supabaseServiceKey}` } });
   if (!res.ok) throw new Error(`Profile lookup failed (${res.status}): ${await res.text()}`);
   const rows = (await res.json()) as ProfileLookup[];
@@ -158,10 +171,11 @@ export async function handleAdminPasswordRequest(request: Request, env?: Record<
     // 1. Confirm the caller is really who their ID token says they are.
     const claims = await verifyFirebaseToken(idToken, envBag.firebaseProjectId);
 
-    // 2. Confirm the caller holds ADMIN/SUPERADMIN via their OWN profile row
-    //    (never trust a client-supplied role) and load the target's row.
+    // 2. Confirm the caller holds an allowed role (ADMIN/SUPERADMIN/HR),
+    //    primary or secondary, via their OWN profile row (never trust a
+    //    client-supplied role) and load the target's row.
     const callerProfile = await fetchProfile(envBag, { firebase_uid: claims.sub });
-    if (!callerProfile || !ADMIN_ROLES.has(String(callerProfile.role || "").toUpperCase())) {
+    if (!callerProfile || !holdsResetRole(callerProfile)) {
       return json({ error: "Not authorized to reset passwords" }, 403);
     }
     const targetProfile = await fetchProfile(envBag, { id: targetProfileId });
