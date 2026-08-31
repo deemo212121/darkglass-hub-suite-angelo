@@ -366,7 +366,7 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
     mapRef.current.setMapTypeId(mapMode === "satellite" ? maps.MapTypeId.SATELLITE : maps.MapTypeId.ROADMAP);
   }, [mapMode, mapReady, mapProvider]);
 
-  const visibleTickets = useMemo(() => {
+  const dayTickets = useMemo(() => {
     const filtered = selectedLocation
       ? tickets.filter((ticket) => normalizeLocationName(ticket.location || ticket.customer_city || ticket.city || "Richmond, VA") === selectedLocation)
       : tickets;
@@ -458,16 +458,25 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
       return sourceDates.some(inWindow);
     });
 
-    const assignmentFiltered = hideUnassigned
+    return hideUnassigned
       ? dateFiltered.filter((ticket) => Boolean(ticket.technician_name || ticket.technician))
       : dateFiltered;
+    // dayTickets deliberately does NOT apply the technician/status hide
+    // filters -- uniqueTechnicians below is built from this, not from
+    // visibleTickets, so unchecking a technician only hides their tickets
+    // from the map/list, it can never also remove their own checkbox from
+    // "Filter by Technician" (that would be a one-way trap: uncheck them
+    // once, their name vanishes since it was only ever there via ticket-
+    // derived matching, no way left to re-check them back on).
+  }, [tickets, selectedLocation, mapDate, mapDateEnd, dateRangeMode, showOtherDayTickets, hideUnassigned]);
 
+  const visibleTickets = useMemo(() => {
     // Apply filters based on current filter mode
     if (filterMode === "technician") {
       // Filter by technician visibility
       // selectedTechnicians contains the HIDDEN technicians (unchecked)
       if (selectedTechnicians.size > 0) {
-        return assignmentFiltered.filter((ticket) => {
+        return dayTickets.filter((ticket) => {
           const techName = ticket.technician_name || ticket.technician || "Unassigned";
           return !selectedTechnicians.has(techName);
         });
@@ -476,7 +485,7 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
       // Filter by status visibility
       // selectedStatuses contains the HIDDEN statuses (unchecked)
       if (selectedStatuses.size > 0) {
-        return assignmentFiltered.filter((ticket) => {
+        return dayTickets.filter((ticket) => {
           const status = ticket.status || "";
           return !selectedStatuses.has(status);
         });
@@ -484,8 +493,8 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
     }
 
     // If no filters are applied, show all tickets
-    return assignmentFiltered;
-  }, [tickets, selectedLocation, mapDate, mapDateEnd, dateRangeMode, showOtherDayTickets, selectedTechnicians, selectedStatuses, filterMode, hideUnassigned]);
+    return dayTickets;
+  }, [dayTickets, selectedTechnicians, selectedStatuses, filterMode]);
 
   // Get all technicians for the selected location (not just those with scheduled tickets)
   const uniqueTechnicians = useMemo(() => {
@@ -497,12 +506,14 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
 
     // Also include any technicians that have tickets scheduled (in case
     // they're not an active user, e.g. a historical/former technician).
-    const ticketTechs = visibleTickets.map(t => t.technician_name || t.technician).filter(Boolean);
+    // Built from dayTickets (pre technician-hide-filter), not
+    // visibleTickets -- see the comment on dayTickets above.
+    const ticketTechs = dayTickets.map(t => t.technician_name || t.technician).filter(Boolean);
 
     // Combine and deduplicate, prioritizing roster order
     const combined = [...locationTechs, ...ticketTechs];
     return Array.from(new Set(combined)).filter(tech => tech !== "Unassigned");
-  }, [selectedLocation, visibleTickets, liveTechnicians]);
+  }, [selectedLocation, dayTickets, liveTechnicians]);
 
   // Helper to get technician color
   const getTechColor = (techName: string) => {
