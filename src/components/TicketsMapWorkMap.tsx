@@ -793,7 +793,7 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
         }
       } else if (selectedLocation) {
         geocodeOfficeLocation(selectedLocation).then((position) => {
-          if (!position || !activeMap) return;
+          if (cancelled || !position || !activeMap) return;
           if (mapProvider === "google") {
             activeMap.setCenter(position);
             activeMap.setZoom(MIN_LOCATION_ZOOM);
