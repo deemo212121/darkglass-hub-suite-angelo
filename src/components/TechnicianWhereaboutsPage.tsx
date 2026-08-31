@@ -12,6 +12,7 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
 import type * as Leaflet from "leaflet";
 import { ChevronLeft, Loader2, MapPin, RefreshCw, Search, X } from "lucide-react";
+import { BrandedLoader } from "@/components/BrandedLoader";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { getTechnicianWhereabouts, distinctBranches, LIVE_FRESH_MS, type TechnicianWhereabouts } from "@/lib/supabase/technicianWhereabouts";
 import { TechnicianDayRouteModal } from "@/components/TechnicianDayRouteModal";
@@ -424,9 +425,7 @@ export function TechnicianWhereaboutsPage({ mod, sub }: { mod: ModuleDef; sub: S
               </div>
               <div className="space-y-1.5 overflow-y-auto flex-1">
               {!rows ? (
-                <div className="flex items-center gap-2 text-sm text-slate-400 py-6">
-                  <Loader2 className="h-4 w-4 animate-spin" /> Loading technicians…
-                </div>
+                <BrandedLoader label="Loading technicians…" />
               ) : (
               <>
               {withJob.map((tech) => (
@@ -520,6 +519,7 @@ export function TechnicianWhereaboutsPage({ mod, sub }: { mod: ModuleDef; sub: S
         <TechnicianDayRouteModal
           technicianName={routeModalTech.name}
           branch={routeModalTech.branch}
+          profileId={routeModalTech.profileId}
           liveLocation={routeModalTech.liveLocation}
           onClose={() => setRouteModalTech(null)}
         />

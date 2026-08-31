@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { ChevronLeft, Download, Loader2, Search } from "lucide-react";
+import { BrandedLoader } from "@/components/BrandedLoader";
 import {
   Bar,
   BarChart,
@@ -319,8 +320,8 @@ export function ReportCSRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
         </div>
 
         {loading ? (
-          <div className="panel p-8 mb-6 flex items-center justify-center gap-2 text-sm text-muted-foreground">
-            <Loader2 className="h-4 w-4 animate-spin" /> Loading CSR Daily Report…
+          <div className="panel p-8 mb-6">
+            <BrandedLoader label="Loading CSR Daily Report…" />
           </div>
         ) : agents.length === 0 ? (
           <p className="panel p-8 mb-6 text-center text-sm text-muted-foreground">

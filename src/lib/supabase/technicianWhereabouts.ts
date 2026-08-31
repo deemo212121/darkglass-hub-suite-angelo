@@ -31,6 +31,8 @@ export type WhereaboutsStatus = "current" | "scheduled" | "last" | "none";
 export const LIVE_FRESH_MS = 15 * 60 * 1000;
 
 export interface TechnicianWhereabouts {
+  /** Real profile id — used by TechnicianDayRouteModal to match an active Flash Tech trip (flash_tech_trips.technicianProfileId), same key TechnicianWhereaboutsPage already uses to match a live GPS ping. */
+  profileId: string;
   name: string;
   branch: string;
   status: WhereaboutsStatus;
@@ -118,6 +120,7 @@ export async function getTechnicianWhereabouts(): Promise<TechnicianWhereabouts[
   return technicians.map((tech): TechnicianWhereabouts => {
     const rows = byTech.get(tech.name.trim().toLowerCase()) ?? [];
     const base = {
+      profileId: tech.id,
       name: tech.name,
       branch: tech.branch,
       liveLocation: liveByProfileId.get(tech.id) ?? null,

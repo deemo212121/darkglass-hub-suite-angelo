@@ -335,6 +335,15 @@ const dashboardMod: ModuleDef = {
       count: 0,
       seed: () => ({}),
     },
+    {
+      slug: "operations-dashboard",
+      title: "Operations Dashboard",
+      description: "Company-wide ticket overview — region breakdown, status funnel, and BizOps staff.",
+      custom: "operations-dashboard" as any,
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
   ],
 };
 

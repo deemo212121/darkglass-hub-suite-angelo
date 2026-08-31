@@ -2,6 +2,7 @@ import { useMemo, useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
+import { BrandedLoader } from "@/components/BrandedLoader";
 import { ChevronDown, ChevronLeft, Check, Filter, Search, Loader2, KeyRound, RotateCcw, Ban, CheckCircle2 } from "lucide-react";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
@@ -1443,8 +1444,8 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
               <tbody className="divide-y divide-white/10 bg-slate-950/60 text-slate-200">
                 {loading ? (
                   <tr>
-                    <td colSpan={11} className="px-4 py-10 text-center text-slate-400">
-                      Loading users...
+                    <td colSpan={11} className="px-4 py-2">
+                      <BrandedLoader label="Loading users…" />
                     </td>
                   </tr>
                 ) : filtered.length === 0 ? (

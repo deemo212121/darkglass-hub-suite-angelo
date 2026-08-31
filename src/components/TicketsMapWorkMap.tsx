@@ -916,7 +916,7 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
             <p className="text-gray-500">Loading map...</p>
           </div>
         ) : (
-          <div className="map-panel">
+          <div className="glass-panel map-panel">
             <div className="map-topbar">
               <div className="topbar-location-group">
                 <label htmlFor="locationSelect" className="topbar-label">Location</label>
@@ -1397,7 +1397,7 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
       )}
 
       <style>{`
-        .map-panel { background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15); border-radius: 10px; overflow: hidden; color: #fff; backdrop-filter: blur(10px); display: flex; flex-direction: column; }
+        .map-panel { padding: 0; overflow: hidden; display: flex; flex-direction: column; }
         .map-topbar { display: flex; align-items: center; justify-content: center; gap: 1rem; padding: 0.65rem 1rem; background: rgba(17,24,39,0.75); border-bottom: 1px solid rgba(255,255,255,0.12); flex-wrap: wrap; position: relative; }
         .date-nav { display: flex; align-items: center; gap: 0.55rem; }
         .date-nav-btn { width: 32px; height: 32px; border-radius: 50%; border: 1px solid rgba(96,165,250,0.5); background: transparent; color: #60a5fa; font-size: 1.05rem; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center; }

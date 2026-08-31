@@ -11,6 +11,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
 import { ChevronLeft, DollarSign, Users, TrendingUp, Loader2, Download } from "lucide-react";
+import { BrandedLoader } from "@/components/BrandedLoader";
 import { Bar, BarChart, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import * as XLSX from "xlsx";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
@@ -311,7 +312,7 @@ export function ReportAccounting({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
         {error && <div className="mb-4 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">{error}</div>}
 
         {loading ? (
-          <div className="panel p-8 mb-6 flex items-center justify-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading Accounting Report…</div>
+          <div className="panel p-8 mb-6"><BrandedLoader label="Loading Accounting Report…" /></div>
         ) : (
         <>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6 mt-4">

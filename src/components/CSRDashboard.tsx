@@ -3,6 +3,7 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
 import { CsrTeamComposition } from "@/components/CsrTeamComposition";
 import { WorkHoursPanel } from "@/components/WorkHoursPanel";
+import { BrandedLoader } from "@/components/BrandedLoader";
 import { useAuth } from "@/lib/auth";
 import { normalizeRole } from "@/lib/roleLabels";
 import {
@@ -393,8 +394,8 @@ export function CSRDashboard({ mod }: { mod: ModuleDef; sub: SubModuleDef }) {
   // don't flash the manager-only overview in either case.
   if (!ready || shouldRedirectToPersonalDashboard) {
     return (
-      <div className="min-h-screen flex items-center justify-center gap-2 text-sm text-muted-foreground">
-        <Loader2 className="h-4 w-4 animate-spin" /> Loading…
+      <div className="min-h-screen flex items-center justify-center">
+        <BrandedLoader />
       </div>
     );
   }
@@ -566,8 +567,8 @@ export function CSRDashboard({ mod }: { mod: ModuleDef; sub: SubModuleDef }) {
         </div>
 
         {loading ? (
-          <div className="panel p-6 mb-4 flex items-center justify-center gap-2 text-sm text-muted-foreground">
-            <Loader2 className="h-4 w-4 animate-spin" /> Loading CSR Dashboard…
+          <div className="panel p-6 mb-4">
+            <BrandedLoader label="Loading CSR Dashboard…" />
           </div>
         ) : agents.length === 0 ? (
           <p className="panel p-6 mb-4 text-center text-sm text-muted-foreground">

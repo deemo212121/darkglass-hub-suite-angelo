@@ -18,6 +18,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
 import { ChevronLeft, LayoutDashboard, Package, AlertTriangle, CheckCircle, Truck, ClipboardList, Loader2, Users, Download } from "lucide-react";
+import { BrandedLoader } from "@/components/BrandedLoader";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 import * as XLSX from "xlsx";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
@@ -448,8 +449,8 @@ export function PartsDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
         )}
 
         {loading ? (
-          <div className="panel p-8 mb-6 flex items-center justify-center gap-2 text-sm text-muted-foreground">
-            <Loader2 className="h-4 w-4 animate-spin" /> Loading Parts Dashboard…
+          <div className="panel p-8 mb-6">
+            <BrandedLoader label="Loading Parts Dashboard…" />
           </div>
         ) : !showGenerateReport && (
         <>

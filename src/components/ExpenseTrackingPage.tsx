@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
-import { ChevronLeft, Download, DollarSign, Clock, CheckCircle, Wallet, Pencil, Trash2, XCircle, Paperclip, X, Loader2, CalendarDays } from "lucide-react";
+import { ChevronLeft, Download, DollarSign, Clock, CheckCircle, Wallet, Pencil, Trash2, XCircle, Paperclip, X, Loader2 } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { randomId } from "@/lib/utils";
@@ -50,7 +50,7 @@ function isPdfReceipt(url: string): boolean {
   return /\.pdf(\?|$)/i.test(url);
 }
 
-export function ExpenseTrackingPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
+export function ExpenseTrackingPage({ mod, sub, embedded }: { mod: ModuleDef; sub: SubModuleDef; embedded?: boolean }) {
   const navigate = useNavigate();
   const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
   const { uid, ready, companyId } = useAuth();
@@ -281,33 +281,26 @@ export function ExpenseTrackingPage({ mod, sub }: { mod: ModuleDef; sub: SubModu
   };
 
   return (
-    <div className="min-h-screen flex flex-col">
-      <main className="flex-1 max-w-[1400px] mx-auto w-full px-6 py-8">
-        <div className="mb-8">
-          <div className="flex items-center gap-3 mb-6">
-            <button type="button" onClick={goBack} className="btn hover:bg-white/15">
-              <ChevronLeft className="h-4 w-4" /> {mod.label}
-            </button>
-          </div>
-          <div className="flex items-start gap-3">
-            <div>
-              <h1 className="text-2xl font-semibold tracking-tight flex items-center gap-2">
-                <span className="inline-block h-2.5 w-2.5 rounded-full bg-primary" />
-                {sub.title}
-              </h1>
-              <p className="text-sm text-muted-foreground">{sub.description}</p>
+    <div className={embedded ? "" : "min-h-screen flex flex-col"}>
+      <main className={embedded ? "" : "flex-1 max-w-[1400px] mx-auto w-full px-6 py-8"}>
+        {!embedded && (
+          <div className="mb-8">
+            <div className="flex items-center gap-3 mb-6">
+              <button type="button" onClick={goBack} className="btn hover:bg-white/15">
+                <ChevronLeft className="h-4 w-4" /> {mod.label}
+              </button>
             </div>
-            <Link
-              to="/m/$module/$submodule"
-              params={{ module: mod.slug, submodule: "flash-tech-calendar" }}
-              className="ml-auto btn hover:bg-white/15 shrink-0 inline-flex items-center gap-2"
-              title="Flash Tech Calendar"
-            >
-              <CalendarDays className="h-4 w-4" />
-              Flash Tech
-            </Link>
+            <div className="flex items-start gap-3">
+              <div>
+                <h1 className="text-2xl font-semibold tracking-tight flex items-center gap-2">
+                  <span className="inline-block h-2.5 w-2.5 rounded-full bg-primary" />
+                  {sub.title}
+                </h1>
+                <p className="text-sm text-muted-foreground">{sub.description}</p>
+              </div>
+            </div>
           </div>
-        </div>
+        )}
 
         <div className="space-y-6">
           {/* KPI Cards */}

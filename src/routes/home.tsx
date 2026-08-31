@@ -49,7 +49,7 @@ function Home() {
   return (
     <>
       <AppHeader />
-      <main className="max-w-[1400px] mx-auto px-6 py-8">
+      <main className="max-w-[1400px] mx-auto px-6 py-8 page-fade-in">
         <div className="mb-6">
           <h1 className="text-3xl font-semibold tracking-tight">Welcome back</h1>
           <p className="text-muted-foreground">Choose a module to get started.</p>

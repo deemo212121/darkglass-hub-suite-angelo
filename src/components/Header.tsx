@@ -155,22 +155,33 @@ export function AppHeader() {
           </div>
         </Link>
         <CentralClock zoneKey={profileZone || "CST"} />
-        <div className="ml-auto flex items-center gap-2 text-sm">
-          {ready && email && <TimeClockButtons />}
-          {ready && email && (
-            <button
-              type="button"
-              onClick={toggleTheme}
-              className="grid h-9 w-9 place-items-center rounded-full border border-[var(--color-panel-border)] bg-[var(--color-panel)] text-muted-foreground transition-colors hover:bg-[var(--color-secondary)] hover:text-foreground"
-              title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
-              aria-label="Toggle theme"
-            >
-              {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-            </button>
-          )}
-          {ready && email && <AnnouncementsMenu />}
-          {ready && email && <NotificationsMenu />}
-          {ready && email && <MessagesMenu />}
+        {/* The icon strip (clock buttons, theme toggle, announcements,
+            notifications, messages) can genuinely be wider than a phone
+            viewport — this desktop header has no mobile layout of its own,
+            it's only ever seen on a phone by accident (someone bounced off
+            the real mobile experience). Rather than let the WHOLE header
+            overflow and force a horizontal drag to reach the profile menu
+            (the only way back to Mobile View), only this strip scrolls
+            internally; the profile button stays pinned and always
+            reachable without scrolling. */}
+        <div className="ml-auto flex items-center gap-2 text-sm min-w-0">
+          <div className="flex items-center gap-2 overflow-x-auto no-scrollbar min-w-0">
+            {ready && email && <TimeClockButtons />}
+            {ready && email && (
+              <button
+                type="button"
+                onClick={toggleTheme}
+                className="grid h-9 w-9 shrink-0 place-items-center rounded-full border border-[var(--color-panel-border)] bg-[var(--color-panel)] text-muted-foreground transition-colors hover:bg-[var(--color-secondary)] hover:text-foreground"
+                title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+                aria-label="Toggle theme"
+              >
+                {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+              </button>
+            )}
+            {ready && email && <AnnouncementsMenu />}
+            {ready && email && <NotificationsMenu />}
+            {ready && email && <MessagesMenu />}
+          </div>
           {ready && email && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
