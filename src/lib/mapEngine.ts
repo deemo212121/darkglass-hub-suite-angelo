@@ -233,31 +233,71 @@ async function geocodeZipCode(zip: string): Promise<LatLng | null> {
  */
 const sessionGeocodeCache = new Map<string, LatLng | null>();
 const BARE_ZIP_QUERY = /^(\d{5})(?:-\d{4})?,\s*USA$/i;
+
+// Callers throw a `Promise.all` over every visible ticket's address at once
+// (Work Map, Work Planner) -- fine for a handful of tickets, but a location/
+// day with a couple thousand tickets fires that many concurrent geocode()
+// calls in one shot, which blows past what the browser can even track
+// (net::ERR_INSUFFICIENT_RESOURCES) and floods Geoapify/Google well past
+// their rate limits. Capping in-flight geocode() calls here protects every
+// caller automatically instead of requiring each Promise.all site to batch
+// its own tickets -- module-level so it's a real global cap, not just
+// per-geocoder-instance (multiple components can hold a geocoder at once).
+const MAX_CONCURRENT_GEOCODES = 8;
+let activeGeocodes = 0;
+const geocodeQueue: Array<() => void> = [];
+async function acquireGeocodeSlot(): Promise<void> {
+  if (activeGeocodes < MAX_CONCURRENT_GEOCODES) {
+    activeGeocodes++;
+    return;
+  }
+  await new Promise<void>((resolve) => geocodeQueue.push(resolve));
+  activeGeocodes++;
+}
+function releaseGeocodeSlot(): void {
+  activeGeocodes--;
+  const next = geocodeQueue.shift();
+  if (next) next();
+}
+
 export function makeGeocoder(provider: "google" | "leaflet", cache: Map<string, LatLng | null> = sessionGeocodeCache) {
   return async function geocode(query: string): Promise<LatLng | null> {
     if (!query) return null;
     if (cache.has(query)) return cache.get(query)!;
-    const dbHit = await lookupGeocode(query);
-    if (dbHit) {
-      cache.set(query, dbHit);
-      return dbHit;
+    await acquireGeocodeSlot();
+    try {
+      return await geocodeUncached(query, provider, cache);
+    } finally {
+      releaseGeocodeSlot();
     }
-    // No fallback to the general geocoder for a bare ZIP: an audit of the
-    // existing cache turned up 68 US ZIP codes (not just 28750) that
-    // Geoapify's postcode index had placed hundreds to 2000+ miles from
-    // their real location (e.g. Atlanta-area ZIPs resolved to Washington
-    // state, Oregon, Puerto Rico). Falling back to it here would just
-    // silently reintroduce that same class of wrong-but-confident result
-    // whenever zippopotam.us has a hiccup. zippopotam covers effectively
-    // every real US ZIP, so a genuine miss just leaves that pin unplotted.
-    const zipMatch = query.match(BARE_ZIP_QUERY);
-    const result = zipMatch
-      ? await geocodeZipCode(zipMatch[1])
-      : provider === "google" ? await geocodeWithGoogle(query) : await geocodeWithGeoapify(query);
-    cache.set(query, result);
-    if (result) void storeGeocode(query, result); // fire-and-forget
-    return result;
   };
+}
+
+async function geocodeUncached(
+  query: string,
+  provider: "google" | "leaflet",
+  cache: Map<string, LatLng | null>,
+): Promise<LatLng | null> {
+  const dbHit = await lookupGeocode(query);
+  if (dbHit) {
+    cache.set(query, dbHit);
+    return dbHit;
+  }
+  // No fallback to the general geocoder for a bare ZIP: an audit of the
+  // existing cache turned up 68 US ZIP codes (not just 28750) that
+  // Geoapify's postcode index had placed hundreds to 2000+ miles from
+  // their real location (e.g. Atlanta-area ZIPs resolved to Washington
+  // state, Oregon, Puerto Rico). Falling back to it here would just
+  // silently reintroduce that same class of wrong-but-confident result
+  // whenever zippopotam.us has a hiccup. zippopotam covers effectively
+  // every real US ZIP, so a genuine miss just leaves that pin unplotted.
+  const zipMatch = query.match(BARE_ZIP_QUERY);
+  const result = zipMatch
+    ? await geocodeZipCode(zipMatch[1])
+    : provider === "google" ? await geocodeWithGoogle(query) : await geocodeWithGeoapify(query);
+  cache.set(query, result);
+  if (result) void storeGeocode(query, result); // fire-and-forget
+  return result;
 }
 
 // ─────────────────────────────────────────────────────────────────────────
