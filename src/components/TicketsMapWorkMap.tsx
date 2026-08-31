@@ -140,6 +140,10 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
   const [showOtherDayTickets, setShowOtherDayTickets] = useState(true);
   const [ready, setReady] = useState(false);
   const [mapReady, setMapReady] = useState(false);
+  // True while pins for the current filters are still being geocoded/
+  // placed -- can take a while now that geocode() throttles to 8
+  // concurrent calls, especially for a wide date range or "All Locations".
+  const [pinsLoading, setPinsLoading] = useState(false);
   const [mapError, setMapError] = useState<string | null>(null);
   const [isPanelCollapsed, setIsPanelCollapsed] = useState(false);
   const [selectedTechnicians, setSelectedTechnicians] = useState<Set<string>>(new Set());
@@ -530,12 +534,14 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
   };
 
   useEffect(() => {
-    if (!mapReady || !mapProvider) return;
+    if (!mapReady || !mapProvider) { setPinsLoading(false); return; }
     const activeMap = mapProvider === "google" ? mapRef.current : leafletMapRef.current;
-    if (!activeMap) return;
+    if (!activeMap) { setPinsLoading(false); return; }
     const maps = (window as Window & { google?: any }).google?.maps;
-    if (mapProvider === "google" && !maps) return;
-    if (mapProvider === "leaflet" && !L) return;
+    if (mapProvider === "google" && !maps) { setPinsLoading(false); return; }
+    if (mapProvider === "leaflet" && !L) { setPinsLoading(false); return; }
+
+    setPinsLoading(true);
 
     markersRef.current.forEach((marker) => marker.setMap(null));
     markersRef.current = [];
@@ -591,6 +597,7 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
 
     Promise.all(ticketPositions).then((results) => {
       if (cancelled || !activeMap) return;
+      setPinsLoading(false);
 
       const bounds = mapProvider === "google" ? new maps.LatLngBounds() : L!.latLngBounds([]);
       const extendBounds = (pos: { lat: number; lng: number }) =>
@@ -1072,6 +1079,13 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
                   </div>
                 )}
 
+                {mapReady && pinsLoading && (
+                  <div className="map-pins-loading">
+                    <span className="map-pins-loading-spinner" />
+                    Loading tickets…
+                  </div>
+                )}
+
                 <div className="selected-day-panel">
                   <div 
                     className="selected-day-header" 
@@ -1447,6 +1461,9 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
         .map-type-btn.active { background: #fff; box-shadow: inset 0 -2px 0 #3b82f6; }
         .map-placeholder-inner { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.75rem; pointer-events: none; }
         .map-placeholder-icon { opacity: 0.35; }
+        .map-pins-loading { position: absolute; top: 1rem; left: 50%; transform: translateX(-50%); z-index: 6; display: flex; align-items: center; gap: 0.5rem; background: rgba(10,15,30,0.92); border: 1px solid rgba(255,255,255,0.15); color: #e2e8f0; font-size: 0.8rem; font-weight: 600; padding: 0.45rem 0.9rem; border-radius: 999px; pointer-events: none; box-shadow: 0 2px 8px rgba(0,0,0,0.35); }
+        .map-pins-loading-spinner { width: 12px; height: 12px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.25); border-top-color: #60a5fa; animation: map-pins-spin 0.7s linear infinite; }
+        @keyframes map-pins-spin { to { transform: rotate(360deg); } }
         .selected-day-panel { position: absolute; top: 1rem; right: 1rem; width: 240px; max-height: 500px; background: rgba(10,15,30,0.97); border: 1px solid rgba(255,255,255,0.15); border-radius: 6px; z-index: 20; overflow: hidden; }
         .selected-day-header { background: #0f172a; padding: 0.55rem 0.9rem; font-size: 0.88rem; font-weight: 700; color: #fff; border-bottom: 1px solid rgba(255,255,255,0.1); }
         .selected-day-filters { display: flex; flex-direction: column; gap: 0; padding: 0.55rem 0.85rem; max-height: 400px; overflow-y: auto; }
