@@ -40,6 +40,15 @@ function formatStopAddress(stop: MileageDayStop): string {
   return [stop.address, [stop.city, stop.state].filter(Boolean).join(", "), stop.zip].filter((p) => p && p.trim()).join(", ");
 }
 
+/** Same "resched" status check used everywhere else in the app (e.g.
+ *  MobileTechApp.tsx's route filter, WorkPlannerPage.tsx). A ticket whose
+ *  CURRENT status has moved to a reschedule variant is no longer really
+ *  part of this day's drive, even though its mileage_entries row (created
+ *  back when it still was) still exists here. */
+function isReschedStatus(status: string | null): boolean {
+  return String(status || "").toLowerCase().includes("resched");
+}
+
 interface Props {
   technicianName: string;
   workDate: string;
@@ -81,7 +90,10 @@ export function MileageDayRouteModal({ technicianName, workDate, branch, homeAdd
         const dayStops = await getMileageDayRouteStops(entries.map((e) => ({ ticketId: e.ticketId, routeOrder: e.routeOrder })));
         if (cancelled) return;
         setStops(dayStops);
-        setOrder(dayStops.map((s) => s.ticketId));
+        // Rescheduled stops are excluded from the reorderable route from the
+        // start (see reschedStops below) -- they're shown separately,
+        // read-only, never part of `order`'s reorder mechanics.
+        setOrder(dayStops.filter((s) => !isReschedStatus(s.status)).map((s) => s.ticketId));
       } catch (err) {
         if (!cancelled) setLoadError(err instanceof Error ? err.message : "Failed to load this day's stops.");
       }
@@ -103,8 +115,20 @@ export function MileageDayRouteModal({ technicianName, workDate, branch, homeAdd
   };
 
   const stopsById = new Map((stops ?? []).map((s) => [s.ticketId, s]));
+  // Rescheduled stops (current ticket status, not a stale snapshot -- see
+  // MileageDayStop.status) are pulled out of the reorderable route and
+  // shown separately, read-only -- a ticket that's been rescheduled off
+  // this day never really happened as part of this drive, so it shouldn't
+  // count toward (or be reorderable within) the route/total.
+  const reschedStops = (stops ?? []).filter((s) => isReschedStatus(s.status));
+  const activeStopIds = (stops ?? []).filter((s) => !isReschedStatus(s.status)).map((s) => s.ticketId);
   const orderedStops = order.map((id) => stopsById.get(id)).filter((s): s is MileageDayStop => !!s);
-  const orderChanged = stops != null && order.join(",") !== stops.map((s) => s.ticketId).join(",");
+  const orderChanged = stops != null && order.join(",") !== activeStopIds.join(",");
+  // True the moment a rescheduled stop exists that hasn't yet had its
+  // day recalculated to exclude it -- lets Save stay actionable even when
+  // the tech-visible order itself hasn't changed, since dropping a stale
+  // stop from the shared day total is itself a real recalculation.
+  const needsReschedExclusion = reschedStops.length > 0;
 
   // Whether the day's final leg goes home or loops back to the branch —
   // defaults to the last SAVED choice (route_return_to), falling back to
@@ -584,11 +608,42 @@ export function MileageDayRouteModal({ technicianName, workDate, branch, homeAdd
               {saveError && <p className="text-xs text-red-400 mt-2">{saveError}</p>}
               <button
                 onClick={handleSaveOrder}
-                disabled={saving || (!orderChanged && !returnTargetChanged)}
+                disabled={saving || (!orderChanged && !returnTargetChanged && !needsReschedExclusion)}
                 className="mt-3 w-full rounded-md bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white text-xs font-semibold px-3 py-2"
               >
-                {saving ? "Recalculating…" : orderChanged || returnTargetChanged ? "Save this order & recalculate" : "No changes to save"}
+                {saving
+                  ? "Recalculating…"
+                  : orderChanged || returnTargetChanged || needsReschedExclusion
+                  ? "Save this order & recalculate"
+                  : "No changes to save"}
               </button>
+
+              {reschedStops.length > 0 && (
+                <div className="mt-3 rounded-md border border-amber-500/30 bg-amber-500/10 px-2.5 py-2">
+                  <p className="text-[11px] font-semibold text-amber-300 mb-1.5">
+                    Rescheduled — excluded from this route ({reschedStops.length})
+                  </p>
+                  <div className="space-y-1">
+                    {reschedStops.map((stop) => (
+                      <div key={stop.ticketId} className="flex items-center justify-between gap-2 text-[11px]">
+                        <Link
+                          to="/ticket/$ticketNo"
+                          params={{ ticketNo: stop.ticketNo }}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="font-mono text-amber-300 hover:text-amber-200 hover:underline truncate"
+                        >
+                          {stop.ticketNo}
+                        </Link>
+                        <span className="text-amber-400/80 truncate">{stop.status}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="text-[10px] text-amber-400/70 mt-1.5">
+                    No longer counted toward this day's mileage. Click Save above to update the saved total.
+                  </p>
+                </div>
+              )}
               </>
               )}
             </div>
