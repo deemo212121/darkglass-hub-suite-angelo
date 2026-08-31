@@ -461,7 +461,7 @@ const WEEK_DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 // just the email field like canEditEmail below. Checked against primary
 // role OR any extra_roles entry, same "holding it either way counts"
 // convention as everywhere else in this file.
-const ACCOUNT_EDIT_ROLES = new Set(["ADMIN", "SUPERADMIN", "SUPERSUPERADMIN", "HR"]);
+const ACCOUNT_EDIT_ROLES = new Set(["ADMIN", "SUPERADMIN", "SUPERSUPERADMIN", "HR", "FINANCE"]);
 function canEditAccountDetails(role: string | null | undefined, extraRoles: string[] | null | undefined): boolean {
   const held = [role, ...(extraRoles ?? [])].map((r) => normalizeRole(r));
   return held.some((r) => ACCOUNT_EDIT_ROLES.has(r));

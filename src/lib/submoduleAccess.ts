@@ -16,7 +16,7 @@ import { getDashboardRoleGate, hasDashboardAccess } from "./dashboardAccess";
 import { getModuleRoleGate } from "./moduleAccess";
 
 export const ADMIN_MODULE_ROLES = ["ADMIN", "SUPERADMIN"];
-export const USER_MANAGEMENT_ROLES = ["HR", "MANAGER", "SENIOR_BRANCH_MANAGER", "ADMIN", "SUPERADMIN"];
+export const USER_MANAGEMENT_ROLES = ["HR", "FINANCE", "MANAGER", "SENIOR_BRANCH_MANAGER", "ADMIN", "SUPERADMIN"];
 export const ACTIVITY_LOG_ROLES = ["SENIOR_BRANCH_MANAGER", "ADMIN", "SUPERADMIN"];
 // Technical Director oversees dispatch/route visibility company-wide, same
 // operational reason Senior Branch Manager already gets a broader carve-out
