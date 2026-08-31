@@ -775,6 +775,10 @@ export function MobileTechApp() {
 
         {view === "map" && (
           <RouteMapView
+            // Date filtering (which day's stops to show) lives inside
+            // RouteMapView itself now, alongside its prev/next date
+            // navigation — only the status filters (which are day-
+            // independent) belong here.
             tickets={myTickets.filter((t) => {
               if (isDone(t.status)) return false;
               const status = String(t.status || "").toLowerCase();
@@ -782,21 +786,7 @@ export function MobileTechApp() {
               if (status.startsWith("csr-needs scheduling")) return false;
               if (status.startsWith("pt-")) return false;
               if (status.includes("resched")) return false;
-              const rawDate = String(t.schedule || (t as any).schedule_date || "").trim();
-              if (!rawDate) return false;
-              const today = new Date();
-              const yyyy = today.getFullYear();
-              const mm = String(today.getMonth() + 1).padStart(2, "0");
-              const dd = String(today.getDate()).padStart(2, "0");
-              const todayIso = `${yyyy}-${mm}-${dd}`;
-              if (rawDate.startsWith(todayIso)) return true;
-              const usMatch = rawDate.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
-              if (usMatch) {
-                const yy = usMatch[3].length === 2 ? `20${usMatch[3]}` : usMatch[3];
-                const iso = `${yy}-${usMatch[1].padStart(2, "0")}-${usMatch[2].padStart(2, "0")}`;
-                return iso === todayIso;
-              }
-              return false;
+              return true;
             })}
             onBackToTickets={() => setView("tickets")}
           />
@@ -1361,6 +1351,34 @@ function RouteMapView({
 
   const [error, setError] = useState<string | null>(null);
   const [origin, setOrigin] = useState<{ lat: number; lng: number } | null>(null);
+
+  // Which day's stops to show — defaults to today, shiftable via the
+  // prev/next buttons next to the date label so a tech can preview
+  // tomorrow's route or glance back at yesterday's.
+  const isoDate = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const [selectedDateIso, setSelectedDateIso] = useState(() => isoDate(new Date()));
+  const shiftSelectedDate = (days: number) => {
+    setSelectedDateIso((prev) => {
+      const d = new Date(`${prev}T00:00:00`);
+      d.setDate(d.getDate() + days);
+      return isoDate(d);
+    });
+  };
+  const dailyTickets = useMemo(() => {
+    return tickets.filter((t) => {
+      const rawDate = String(t.schedule || (t as any).schedule_date || "").trim();
+      if (!rawDate) return false;
+      if (rawDate.startsWith(selectedDateIso)) return true;
+      const usMatch = rawDate.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
+      if (usMatch) {
+        const yy = usMatch[3].length === 2 ? `20${usMatch[3]}` : usMatch[3];
+        const iso = `${yy}-${usMatch[1].padStart(2, "0")}-${usMatch[2].padStart(2, "0")}`;
+        return iso === selectedDateIso;
+      }
+      return false;
+    });
+  }, [tickets, selectedDateIso]);
+
   const [stops, setStops] = useState<Array<{ ticket: Ticket; pos: { lat: number; lng: number } }>>([]);
   const [legs, setLegs] = useState<
     Array<{ ticketNo: string; customer: string; address: string; distance: string; duration: string; pos: { lat: number; lng: number } }>
@@ -1498,7 +1516,7 @@ function RouteMapView({
 
       // Geocode each ticket stop in ticket order.
       const resolved: Array<{ ticket: Ticket; pos: { lat: number; lng: number } }> = [];
-      for (const t of tickets) {
+      for (const t of dailyTickets) {
         const addr = fmtAddress(t) || t.city || t.location;
         if (!addr) continue;
         const pos = await geocode(addr);
@@ -1676,7 +1694,7 @@ function RouteMapView({
       leafletMarkersRef.current = [];
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tickets, origin, mapProvider, mapReady, L]);
+  }, [dailyTickets, origin, mapProvider, mapReady, L]);
 
   // Format a stop's destination string for the Google Maps deep link.
   // Passing the real street address makes Google Maps drop a properly
@@ -1724,7 +1742,7 @@ function RouteMapView({
     pos: { lat: number; lng: number } | null,
   ) => {
     const t = ticketNoOrNull
-      ? tickets.find((x) => x.ticketNo === ticketNoOrNull)
+      ? dailyTickets.find((x) => x.ticketNo === ticketNoOrNull)
       : undefined;
     const dest = stopDestination(t, pos);
     if (!dest) return;
@@ -1740,8 +1758,26 @@ function RouteMapView({
   return (
     <div className={`mtech-route ${expanded ? "mtech-route-expanded" : ""}`}>
       {!expanded && (
-        <div className="mtech-subbar">
-          <span className="mtech-date">{new Date().toLocaleDateString("en-US")}</span>
+        <div className="mtech-subbar mtech-route-datebar">
+          <button
+            type="button"
+            className="mtech-route-date-nav"
+            onClick={() => shiftSelectedDate(-1)}
+            title="Previous day"
+            aria-label="Previous day"
+          >
+            ‹
+          </button>
+          <span className="mtech-date">{new Date(`${selectedDateIso}T00:00:00`).toLocaleDateString("en-US")}</span>
+          <button
+            type="button"
+            className="mtech-route-date-nav"
+            onClick={() => shiftSelectedDate(1)}
+            title="Next day"
+            aria-label="Next day"
+          >
+            ›
+          </button>
         </div>
       )}
 

@@ -2032,6 +2032,26 @@ input::-ms-clear {
   font-weight: 700;
   font-size: 0.9rem;
 }
+.mtech-route-date-nav {
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--mt-surface);
+  color: var(--mt-blue);
+  border: 1px solid var(--mt-surface-border);
+  border-radius: 999px;
+  font-size: 1.1rem;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+}
+.mtech-route-date-nav:active {
+  background: var(--mt-blue);
+  color: #fff;
+}
 .mtech-route-btn {
   background: var(--mt-surface);
   color: var(--mt-blue);
@@ -8083,6 +8103,26 @@ a.mtech-phone-link:active { opacity: 0.7; }
   padding: 0.4rem 0.8rem;
   font-weight: 700;
   font-size: 0.9rem;
+}
+.mtech-route-date-nav {
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--mt-surface);
+  color: var(--mt-blue);
+  border: 1px solid var(--mt-surface-border);
+  border-radius: 999px;
+  font-size: 1.1rem;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+}
+.mtech-route-date-nav:active {
+  background: var(--mt-blue);
+  color: #fff;
 }
 .mtech-route-btn {
   background: var(--mt-surface);
