@@ -18,7 +18,7 @@ import { lookupZip } from "@/lib/zipCoverage";
 import { useAuth } from "@/lib/auth";
 import { getCompanyMapProvider, getCompanyDefaultTechnician, type MapProvider } from "@/lib/supabase/companySettings";
 import { useSmartBack } from "@/hooks/useSmartBack";
-import { loadGoogleMapsScript, getLeaflet, makeGeocoder, addRouteDirectionArrow, attachLeafletResizeFix, createBadgeDivIcon, OSM_TILE_URL, OSM_ATTRIBUTION } from "@/lib/mapEngine";
+import { loadGoogleMapsScript, getLeaflet, makeGeocoder, warmGeocodeCache, addRouteDirectionArrow, attachLeafletResizeFix, createBadgeDivIcon, OSM_TILE_URL, OSM_ATTRIBUTION } from "@/lib/mapEngine";
 
 type TicketRecord = Record<string, any> & {
   ticketNo: string;
@@ -754,52 +754,67 @@ export function WorkPlannerPage({ mod, sub }: Props) {
       else (activeMap as Leaflet.Map).fitBounds(bounds, { padding: [40, 40] });
     };
 
-    Promise.all(
-      visibleTickets.map(async (ticket) => {
-        const cacheKey = `${ticket.location}:${ticket.ticketNo}`;
-        if (geocodeCacheRef.current.has(cacheKey)) {
-          return { ticket, position: geocodeCacheRef.current.get(cacheKey) };
-        }
+    // Pre-warm the shared geocode cache with one bulk DB query for every
+    // ticket's primary address (the first thing each one tries below)
+    // instead of each address paying its own network round-trip through
+    // geocode()'s throttled per-call DB lookup -- see the matching fix on
+    // Work Map. Only covers the primary attempt; the fallback chain below
+    // (city+state+zip, city+state, zip, location name) still runs live and
+    // unchanged for tickets whose primary address is a genuine cache miss.
+    const primaryQueries = visibleTickets
+      .filter((ticket) => !geocodeCacheRef.current.has(`${ticket.location}:${ticket.ticketNo}`))
+      .map((ticket) => ticket.address)
+      .filter(Boolean) as string[];
 
-        // Try full address first
-        let position = ticket.address ? await geocode(ticket.address) : null;
-        
-        const tState = (ticket as any).state || "";
-        const tZip = (ticket as any).zip || "";
+    warmGeocodeCache(primaryQueries).then(() => {
+      if (cancelled) return;
 
-        // Fallback 1: city + state + zip
-        if (!position && ticket.city) {
-          const cityStateZip = `${ticket.city}, ${tState} ${tZip}`.replace(/\s+/g, " ").trim();
-          console.log(`Trying fallback for ${ticket.ticketNo}: ${cityStateZip}`);
-          position = await geocode(cityStateZip);
-        }
-        
-        // Fallback 2: city + state
-        if (!position && ticket.city) {
-          const cityState = `${ticket.city}, ${tState}`.replace(/\s+/g, " ").trim();
-          console.log(`Trying city fallback for ${ticket.ticketNo}: ${cityState}`);
-          position = await geocode(cityState);
-        }
+      Promise.all(
+        visibleTickets.map(async (ticket) => {
+          const cacheKey = `${ticket.location}:${ticket.ticketNo}`;
+          if (geocodeCacheRef.current.has(cacheKey)) {
+            return { ticket, position: geocodeCacheRef.current.get(cacheKey) };
+          }
 
-        // Fallback 3: zip only
-        if (!position && tZip) {
-          position = await geocode(tZip);
-        }
-        
-        // Fallback 4: Try location name
-        if (!position && ticket.location) {
-          console.log(`Trying location fallback for ${ticket.ticketNo}: ${ticket.location}`);
-          position = await geocode(ticket.location);
-        }
-        
-        if (!position) {
-          console.error(`All geocoding attempts failed for ticket ${ticket.ticketNo}`);
-        }
-        
-        geocodeCacheRef.current.set(cacheKey, position);
-        return { ticket, position };
-      }),
-    ).then((results) => {
+          // Try full address first
+          let position = ticket.address ? await geocode(ticket.address) : null;
+
+          const tState = (ticket as any).state || "";
+          const tZip = (ticket as any).zip || "";
+
+          // Fallback 1: city + state + zip
+          if (!position && ticket.city) {
+            const cityStateZip = `${ticket.city}, ${tState} ${tZip}`.replace(/\s+/g, " ").trim();
+            console.log(`Trying fallback for ${ticket.ticketNo}: ${cityStateZip}`);
+            position = await geocode(cityStateZip);
+          }
+
+          // Fallback 2: city + state
+          if (!position && ticket.city) {
+            const cityState = `${ticket.city}, ${tState}`.replace(/\s+/g, " ").trim();
+            console.log(`Trying city fallback for ${ticket.ticketNo}: ${cityState}`);
+            position = await geocode(cityState);
+          }
+
+          // Fallback 3: zip only
+          if (!position && tZip) {
+            position = await geocode(tZip);
+          }
+
+          // Fallback 4: Try location name
+          if (!position && ticket.location) {
+            console.log(`Trying location fallback for ${ticket.ticketNo}: ${ticket.location}`);
+            position = await geocode(ticket.location);
+          }
+
+          if (!position) {
+            console.error(`All geocoding attempts failed for ticket ${ticket.ticketNo}`);
+          }
+
+          geocodeCacheRef.current.set(cacheKey, position);
+          return { ticket, position };
+        }),
+      ).then((results) => {
       if (cancelled || !activeMap) return;
 
       // Order stops by time slot so route numbering follows the daily schedule
@@ -902,6 +917,7 @@ export function WorkPlannerPage({ mod, sub }: Props) {
 
       if (location) {
         geocodeOfficeLocation(location).then((position) => {
+          if (cancelled) return;
           if (position && activeMap) {
             setMapCenterZoom(position, 10);
             return;
@@ -915,13 +931,15 @@ export function WorkPlannerPage({ mod, sub }: Props) {
       } else {
         const fallbackLocation = visibleTickets[0]?.location || selectedTechRoster[0] || location;
         geocodeOfficeLocation(fallbackLocation).then((position) => {
-          if (position && activeMap) {
+          if (cancelled || !activeMap) return;
+          if (position) {
             setMapCenterZoom(position, 10);
-          } else if (activeMap) {
+          } else {
             setMapCenterZoom({ lat: 37.0902, lng: -95.7129 }, 4);
           }
         });
       }
+      });
     });
 
     return () => { cancelled = true; };
