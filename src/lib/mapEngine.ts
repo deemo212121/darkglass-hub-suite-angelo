@@ -307,6 +307,18 @@ export const ON_SITE_CHECKIN_RADIUS_MILES = metersToMiles(400);
  */
 export const ON_SITE_CHECKIN_ACCURACY_SLACK_CAP_MILES = metersToMiles(250);
 
+/**
+ * How far out the On-Site Check-In card still offers a manual "I'm here
+ * anyway" override for a ticket the automatic geofence rejected. Covers the
+ * real failure modes — a street number interpolated along a rural road
+ * segment, a coarse GPS fix that never sharpened — which are off by hundreds
+ * of metres to about a mile, never tens of miles. Outside this the override
+ * is hidden, so it can't double as "check in from home". (An address that
+ * didn't geocode at all is handled separately: the override shows regardless
+ * of distance since there's nothing to measure against.)
+ */
+export const ON_SITE_CHECKIN_MANUAL_OVERRIDE_MAX_MILES = 3;
+
 export function formatDuration(seconds: number): string {
   const mins = Math.round(seconds / 60);
   if (mins < 60) return `${mins} min`;

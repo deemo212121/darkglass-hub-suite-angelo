@@ -35,7 +35,7 @@ import {
 import { getMyProfileId, getMyFullProfile } from "@/lib/supabase/users";
 import { getTechPayrollBreakdown, type TechPayrollBreakdown } from "@/lib/supabase/techPayroll";
 import { getCompanyMapProvider, type MapProvider } from "@/lib/supabase/companySettings";
-import { loadGoogleMapsScript, getLeaflet, makeGeocoder, haversineMiles, routeGeoapify, metersToMiles, formatDuration, attachLeafletResizeFix, createBadgeDivIcon, OSM_TILE_URL, OSM_ATTRIBUTION, ON_SITE_CHECKIN_RADIUS_MILES, ON_SITE_CHECKIN_ACCURACY_SLACK_CAP_MILES } from "@/lib/mapEngine";
+import { loadGoogleMapsScript, getLeaflet, makeGeocoder, haversineMiles, routeGeoapify, metersToMiles, formatDuration, attachLeafletResizeFix, createBadgeDivIcon, OSM_TILE_URL, OSM_ATTRIBUTION, ON_SITE_CHECKIN_RADIUS_MILES, ON_SITE_CHECKIN_ACCURACY_SLACK_CAP_MILES, ON_SITE_CHECKIN_MANUAL_OVERRIDE_MAX_MILES } from "@/lib/mapEngine";
 import type * as Leaflet from "leaflet";
 import {
   getDmMessages,
@@ -3771,7 +3771,7 @@ function HomeOnSiteCard({
   // geofence. Whenever there's a ticket to check into that isn't done yet,
   // take periodic one-shot high-accuracy (real GPS) fixes and use those for
   // the distance test. `at` is used to ignore a fix that's gone stale (e.g.
-  // one taken while still driving). See the effect below focusTicket.
+  // one taken while still driving). See the effect below focusTickets.
   const [preciseFix, setPreciseFix] = useState<
     { pos: { lat: number; lng: number }; accuracyM: number; at: number } | null
   >(null);
@@ -3840,32 +3840,52 @@ function HomeOnSiteCard({
     return haversineMiles(myPos, pos);
   };
 
-  // Snap to a single ticket instead of listing the whole active queue at
-  // once. Priority: (1) a ticket already checked in ("I'm Here" tapped) but
-  // not yet marked done stays pinned regardless of distance — stepping away
-  // mid-visit (a supply run, a distraction) shouldn't lose an unfinished
-  // check-in; (2) otherwise the nearest ticket currently inside the
-  // geofence; (3) otherwise the nearest ticket overall, shown dimmed with
-  // its distance so there's still context on where they're headed. null
-  // only while every ticket's distance is still unresolved (map provider or
-  // geocoding not ready yet) or there's nothing active to check into. In
-  // devSimulate mode with no real fix at all (myPos never resolved — e.g. no
-  // GPS available in this test environment), distance is meaningless anyway,
-  // so just pick the first candidate rather than staying stuck on null.
-  const focusTicket = useMemo(() => {
-    const inProgress = visibleTickets.filter((t) => arrivedAt[t.ticketNo] && !doneAt[t.ticketNo]);
-    const pool = inProgress.length > 0 ? inProgress : visibleTickets;
-    if (pool.length === 0) return null;
-    const withDist = pool
-      .map((t) => ({ t, d: distanceFor(t) }))
-      .filter((x): x is { t: Ticket; d: number } => x.d !== null);
-    if (withDist.length === 0) return devSimulate ? pool[0] : null;
-    if (inProgress.length > 0) {
-      return withDist.reduce((a, b) => (b.d < a.d ? b : a)).t;
+  // Which tickets the card offers a check-in for right now, in priority:
+  //   1. every ticket already checked in ("Work Start" tapped) but not yet
+  //      marked done — pinned regardless of distance so stepping away
+  //      mid-visit (a supply run) doesn't drop an open check-in;
+  //   2. plus every not-yet-started ticket currently inside the geofence.
+  //      More than one when two customers' zones overlap or several
+  //      appliances share one address — the tech picks the right ticket
+  //      instead of the app snapping to whichever centroid reads nearest;
+  //   3. if that yields nothing, the single nearest ticket overall, shown
+  //      dimmed with its distance for context on where they're headed.
+  // Sorted nearest-first, capped so a stack of same-address tickets can't
+  // bury the card. Empty only while distances are unresolved (map provider /
+  // geocoding not ready) or there's nothing to check into.
+  const MAX_ONSITE_ROWS = 5;
+  const focusTickets = useMemo(() => {
+    const notDone = visibleTickets.filter((t) => !doneAt[t.ticketNo]);
+    const withD = (t: Ticket) => ({ t, d: distanceFor(t) });
+    const byDist = (a: { d: number | null }, b: { d: number | null }) =>
+      (a.d ?? Infinity) - (b.d ?? Infinity);
+
+    const inProgress = notDone.filter((t) => arrivedAt[t.ticketNo]);
+    const inRadius = notDone
+      .filter((t) => !arrivedAt[t.ticketNo])
+      .map(withD)
+      .filter((x) => x.d !== null && (devSimulate || x.d <= checkinRadiusMiles))
+      .map((x) => x.t);
+
+    const active = [...inProgress, ...inRadius];
+    if (active.length > 0) {
+      return active.map(withD).sort(byDist).slice(0, MAX_ONSITE_ROWS).map((x) => x.t);
     }
-    const inRadius = withDist.filter((x) => devSimulate || x.d <= checkinRadiusMiles);
-    const candidates = inRadius.length > 0 ? inRadius : withDist;
-    return candidates.reduce((a, b) => (b.d < a.d ? b : a)).t;
+
+    const ranked = notDone.map(withD).filter((x) => x.d !== null).sort(byDist);
+    if (ranked.length > 0) return [ranked[0].t];
+
+    // No measurable distance for anything. If that's because the addresses
+    // genuinely won't geocode (ticketPos resolved to null, not just "not
+    // fetched yet"), still surface the un-started ones so the manual "I'm
+    // here anyway" path stays reachable — the row shows "Address not on the
+    // map". A pending geocode or a missing GPS fix just leaves this empty.
+    const ungeocodable = notDone.filter(
+      (t) => !arrivedAt[t.ticketNo] && ticketPos[t.ticketNo] === null,
+    );
+    if (ungeocodable.length > 0) return ungeocodable.slice(0, MAX_ONSITE_ROWS);
+
+    return devSimulate && notDone.length > 0 ? [notDone[0]] : [];
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visibleTickets, ticketPos, myPos, arrivedAt, doneAt, devSimulate, checkinRadiusMiles]);
 
@@ -3876,12 +3896,26 @@ function HomeOnSiteCard({
   // already proven) or the ticket is done; only runs for a clocked-in tech
   // who's confirmed location sharing (same prerequisites as the shared
   // watcher) and never in the dev simulate mode.
-  const focusTicketNo = focusTicket?.ticketNo ?? null;
+  // Comma-joined ticket numbers still awaiting check-in among the rows shown
+  // that actually have a geocoded point to measure against — non-empty means
+  // "the tech is arriving somewhere we can verify", so keep refining. Rows
+  // that only exist for the manual override (address wouldn't geocode) don't
+  // count: there's nothing for a sharper fix to help with.
+  const arrivingKey = useMemo(
+    () =>
+      focusTickets
+        .filter(
+          (t) => !arrivedAt[t.ticketNo] && !doneAt[t.ticketNo] && ticketPos[t.ticketNo] != null,
+        )
+        .map((t) => t.ticketNo)
+        .sort()
+        .join(","),
+    [focusTickets, arrivedAt, doneAt, ticketPos],
+  );
   useEffect(() => {
     if (typeof navigator === "undefined" || !navigator.geolocation) return;
-    if (!focusTicketNo || permissionDenied || devSimulate) { setRefiningFix(false); return; }
+    if (!arrivingKey || permissionDenied || devSimulate) { setRefiningFix(false); return; }
     if (!clockedIn || !consentConfirmed) { setRefiningFix(false); return; }
-    if (arrivedAt[focusTicketNo] || doneAt[focusTicketNo]) { setRefiningFix(false); return; }
 
     let cancelled = false;
     const takeFix = () => {
@@ -3904,21 +3938,23 @@ function HomeOnSiteCard({
     takeFix();
     const id = window.setInterval(takeFix, 12_000);
     return () => { cancelled = true; window.clearInterval(id); setRefiningFix(false); };
-  }, [focusTicketNo, arrivedAt, doneAt, permissionDenied, devSimulate, clockedIn, consentConfirmed]);
+  }, [arrivingKey, permissionDenied, devSimulate, clockedIn, consentConfirmed]);
 
   const formatNow = () => new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   const formatTimeAt = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
-  const checkInCommentBody = (label: string, time: string) => `On-site check-in: ${label} at ${time}`;
+  const checkInCommentBody = (label: string, time: string, note?: string) =>
+    `On-site check-in: ${label} at ${time}${note ? ` — ${note}` : ""}`;
 
   // Updates local state immediately regardless of how the write goes —
   // offline or a flaky connection (indistinguishable from here, both just
   // throw) queues the same write for auto-sync instead of blocking the
   // technician with an alert; either way they don't stand around waiting
   // on a request that may never complete right now.
-  const handleImHere = async (t: Ticket) => {
+  const handleImHere = async (t: Ticket, manualNote?: string) => {
     const time = formatNow();
     const at = new Date().toISOString();
+    const body = checkInCommentBody("arrived", time, manualNote);
     setArrivedAt((prev) => ({ ...prev, [t.ticketNo]: time }));
     // A fresh arrival invalidates any earlier "done" mark for this same
     // ticket (re-checking in — a callback, a re-visit, or just a repeat
@@ -3934,7 +3970,7 @@ function HomeOnSiteCard({
     setBusy(t.ticketNo);
     try {
       await Promise.all([
-        addTicketComment(t.ticketNo, checkInCommentBody("arrived", time), userName, role || ""),
+        addTicketComment(t.ticketNo, body, userName, role || ""),
         setTicketOnsiteCheckIn(t.ticketNo, "arrived", at),
       ]);
     } catch (e) {
@@ -3943,13 +3979,32 @@ function HomeOnSiteCard({
         ticketNo: t.ticketNo,
         event: "arrived",
         at,
-        commentBody: checkInCommentBody("arrived", time),
+        commentBody: body,
         authorName: userName,
         authorRole: role || "",
       }).catch((qErr) => console.error("on-site check-in: failed to queue arrival", qErr));
     } finally {
       setBusy(null);
     }
+  };
+
+  // "I'm here anyway" — used when the automatic geofence rejects a ticket the
+  // technician is genuinely standing at (address geocoded to the wrong point,
+  // GPS never sharpened, or the address didn't geocode at all). Skips the
+  // distance gate but records what the check *did* measure, in the ticket
+  // comment, so a manual override is visible to dispatch and its distance
+  // can be sanity-checked after the fact. Offered only within
+  // ON_SITE_CHECKIN_MANUAL_OVERRIDE_MAX_MILES (or when there's no geocode to
+  // measure against) — see the render below.
+  const handleManualCheckIn = (t: Ticket, measuredMiles: number | null) => {
+    const measured =
+      measuredMiles === null
+        ? "address could not be located on the map"
+        : `GPS placed me about ${measuredMiles < 0.1 ? "0.1" : measuredMiles.toFixed(1)} mi from the address`;
+    if (!window.confirm(
+      `Check in to ${t.ticketNo} anyway?\n\nThe app couldn't confirm you're on site — ${measured}. Only do this if you're actually at the customer's address. It's logged on the ticket.`,
+    )) return;
+    void handleImHere(t, `manual override — ${measured}`);
   };
 
   const handleImDone = async (t: Ticket) => {
@@ -3980,15 +4035,18 @@ function HomeOnSiteCard({
   return (
     <div className="mtech-home-onsite">
       <div className="mtech-home-onsite-title">On-Site Check-In</div>
-      {!focusTicket ? (
+      {focusTickets.length === 0 ? (
         <div className="mtech-home-onsite-empty">
           {visibleTickets.length === 0 ? "No active tickets to check into right now." : "Locating nearby tickets…"}
         </div>
       ) : (
       <div className="mtech-home-onsite-list">
-        {(() => {
-          const t = focusTicket;
+        {focusTickets.length > 1 && (
+          <div className="mtech-home-onsite-hint">More than one address is within range — pick the ticket you're actually at.</div>
+        )}
+        {focusTickets.map((t) => {
           const dist = distanceFor(t);
+          const geocoded = ticketPos[t.ticketNo] != null;
           const inRadius = devSimulate || (dist !== null && dist <= checkinRadiusMiles);
           const hereAt = arrivedAt[t.ticketNo];
           const finishedAt = doneAt[t.ticketNo];
@@ -3997,9 +4055,15 @@ function HomeOnSiteCard({
           // Refining the fix (real-GPS one-shot in flight) and still only
           // holding a coarse position — "1.2 mi away" from a cell-tower fix
           // is noise, so say we're still locating rather than show it.
-          const locating = pending && refiningFix && !preciseFresh;
+          const locating = pending && refiningFix && !preciseFresh && geocoded;
+          // Manual "I'm here anyway" — offered while the automatic check is
+          // failing but the tech is plausibly on site: within the override
+          // cap, or there's no geocode at all to measure against.
+          const canManual =
+            pending && !locating &&
+            (!geocoded || (dist !== null && dist <= ON_SITE_CHECKIN_MANUAL_OVERRIDE_MAX_MILES));
           return (
-            <div className={`mtech-home-onsite-row${pending ? " mtech-home-onsite-row--pending" : ""}`}>
+            <div key={t.ticketNo} className={`mtech-home-onsite-row${pending ? " mtech-home-onsite-row--pending" : ""}`}>
               <div className="mtech-home-onsite-info">
                 <span className="mtech-home-onsite-location">{resolveLocation(t)}</span>
                 <span className="mtech-home-onsite-ticket">{t.ticketNo}</span>
@@ -4010,10 +4074,12 @@ function HomeOnSiteCard({
                     {finishedAt && `Done ${finishedAt}`}
                   </span>
                 ) : (
-                  pending && (locating || dist !== null) && (
+                  (locating || !geocoded || dist !== null) && (
                     <span className="mtech-home-onsite-distance">
                       {locating
                         ? "Getting precise location…"
+                        : !geocoded
+                        ? "Address not on the map"
                         : dist! < 0.1
                         ? "Almost there…"
                         : `${dist!.toFixed(1)} mi away`}
@@ -4023,14 +4089,26 @@ function HomeOnSiteCard({
               </div>
               {!finishedAt && (
                 !hereAt ? (
-                  <button
-                    type="button"
-                    className="mtech-home-onsite-btn"
-                    disabled={!inRadius || isBusy || locating}
-                    onClick={() => handleImHere(t)}
-                  >
-                    {isBusy ? "…" : locating ? "Locating…" : "Work Start"}
-                  </button>
+                  <div className="mtech-home-onsite-actions">
+                    <button
+                      type="button"
+                      className="mtech-home-onsite-btn"
+                      disabled={!inRadius || isBusy || locating}
+                      onClick={() => handleImHere(t)}
+                    >
+                      {isBusy ? "…" : locating ? "Locating…" : "Work Start"}
+                    </button>
+                    {canManual && (
+                      <button
+                        type="button"
+                        className="mtech-home-onsite-btn mtech-home-onsite-btn--manual"
+                        disabled={isBusy}
+                        onClick={() => handleManualCheckIn(t, dist)}
+                      >
+                        I'm here anyway
+                      </button>
+                    )}
+                  </div>
                 ) : (
                   // No radius gate here, unlike "I'm Here" — the meaningful
                   // proof-of-presence already happened at check-in; requiring
@@ -4049,7 +4127,7 @@ function HomeOnSiteCard({
               )}
             </div>
           );
-        })()}
+        })}
       </div>
       )}
       <div className="mtech-home-onsite-hint">Work Start unlocks once your phone's GPS puts you at the customer's address (roughly within a few hundred metres, allowing for GPS and map accuracy).</div>
