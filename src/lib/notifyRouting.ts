@@ -6,7 +6,7 @@
 
 import { getCsrTeamComposition, type CsrTeamComposition } from "@/lib/supabase/csrTeams";
 import type { ProfileRow } from "@/lib/supabase/users";
-import { isAttendanceManagerTierRole, isAttendanceFullAccessRole, isPartsManagerRole, TECHNICIAN_PAY_ROLES, normalizeRole } from "@/lib/roleLabels";
+import { isAttendanceManagerTierRole, isAttendanceFullAccessRole, isPartsStaffRole, TECHNICIAN_PAY_ROLES, normalizeRole } from "@/lib/roleLabels";
 
 const CSR_ROLES = new Set(["CSR", "CSR_AGENT", "CSR_TEAM_LEADER", "CSR_MANAGER"]);
 
@@ -95,12 +95,13 @@ export function visibleAttendanceProfileIds(
         .forEach((m) => ids.add(m.profileId));
     }
   }
-  // Parts Manager: also every technician-tier employee (any TECHNICIAN_PAY_ROLES
-  // tier, not just plain "Technician") at their OWN branch — those techs report
-  // to a Technician Manager/Director, not the Parts Manager, so manager_name
-  // above never surfaces them, but Parts Manager still needs to see them here
-  // to proxy clock them in when they're physically at the branch.
-  if (isPartsManagerRole(viewer.role, viewer.extra_roles) && viewer.assigned_branch) {
+  // Parts branch staff (PARTS or PARTS_MANAGER — see isPartsStaffRole): also
+  // every technician-tier employee (any TECHNICIAN_PAY_ROLES tier, not just
+  // plain "Technician") at their OWN branch — those techs report to a
+  // Technician Manager/Director, not Parts, so manager_name above never
+  // surfaces them, but Parts still needs to see them here to proxy clock
+  // them in when they're physically at the branch.
+  if (isPartsStaffRole(viewer.role, viewer.extra_roles) && viewer.assigned_branch) {
     allProfiles.forEach((p) => {
       if (p.assigned_branch === viewer.assigned_branch && TECHNICIAN_PAY_ROLES.has(normalizeRole(p.role))) ids.add(p.id);
     });

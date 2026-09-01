@@ -2694,10 +2694,20 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                           <p className="text-xs text-slate-400 mt-1">{record.department || "—"} • {record.location || "—"}</p>
                           <p className="text-xs text-slate-500 mt-2">Manager: {record.manager || "—"}</p>
                         </div>
-                        <div className="text-right">
+                        <div className="text-right flex flex-col items-end gap-1.5">
                           <span className="inline-block px-3 py-1 bg-red-500/20 text-red-300 text-xs font-semibold rounded border border-red-500/40">
                             No Clock In
                           </span>
+                          {record.date === todayISO && TECHNICIAN_PAY_ROLES.has(record.role) && (
+                            <button
+                              type="button"
+                              disabled={clockingInIds.has(record.profileId)}
+                              onClick={() => handleProxyClockIn(record)}
+                              className="inline-flex items-center px-2 py-0.5 rounded-md bg-green-500/20 hover:bg-green-500/30 disabled:opacity-50 text-green-300 text-xs font-semibold transition"
+                            >
+                              {clockingInIds.has(record.profileId) ? "Clocking in…" : "Clock In"}
+                            </button>
+                          )}
                         </div>
                       </div>
                     </div>

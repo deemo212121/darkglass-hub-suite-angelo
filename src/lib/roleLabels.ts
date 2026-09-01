@@ -330,6 +330,12 @@ export function isJotformHrRole(role: string | null | undefined, extraRoles?: st
  * role. These roles see only their own direct reports on that page (resolved
  * via manager_name / CSR team leadership — see notifyRouting.ts), unlike
  * ADMIN/SUPERADMIN/HR/FINANCE who continue to see the whole company.
+ *
+ * PARTS (base tier, not just PARTS_MANAGER/PARTS_TEAM_LEADER) is included so
+ * a branch whose only Parts employee was never formally promoted to the
+ * Manager role code still gets page access at all — without this they can't
+ * reach Attendance Monitoring, so the branch-scoped technician visibility in
+ * visibleAttendanceProfileIds (see isPartsStaffRole) is unreachable for them.
  */
 const ATTENDANCE_MANAGER_TIER_ROLES = new Set([
   "MANAGER",
@@ -339,6 +345,7 @@ const ATTENDANCE_MANAGER_TIER_ROLES = new Set([
   "CSR_TEAM_LEADER",
   "BRANCH_MANAGER",
   "SENIOR_BRANCH_MANAGER",
+  "PARTS",
   "PARTS_MANAGER",
   "PARTS_TEAM_LEADER",
   "CLAIMS_MANAGER",
@@ -369,18 +376,25 @@ export function isAttendanceFullAccessRole(role: string | null | undefined, extr
 /** Array form for spreading into a DASHBOARD_ROLE_GATES entry. */
 export const ATTENDANCE_MANAGER_TIER_ROLES_ARRAY = Array.from(ATTENDANCE_MANAGER_TIER_ROLES);
 
-const PARTS_MANAGER_ROLES = new Set(["PARTS_MANAGER"]);
+// PARTS (base tier) included alongside PARTS_MANAGER — a single-person Parts
+// counter at a branch is often never formally promoted to the Manager role
+// code even though they're the de facto branch parts lead, so requiring the
+// Manager tier specifically left branches with only a plain "PARTS" employee
+// unable to use this at all. PARTS_TEAM_LEADER/PARTS_ORDER deliberately left
+// out — not asked for, and PARTS_ORDER in particular is a narrower clerical
+// role, not branch floor staff.
+const PARTS_STAFF_ROLES = new Set(["PARTS", "PARTS_MANAGER"]);
 
 /**
- * Parts Manager needs to proxy clock-in the technicians physically working
- * out of their own branch — but those technicians report to a Technician
- * Manager/Director, not the Parts Manager, so the manager_name-based
- * scoping in visibleAttendanceProfileIds wouldn't surface any of them.
- * "Any held role" pile-up semantics — a secondary Parts Manager role grants
- * this the same as a primary one.
+ * Parts branch staff need to proxy clock-in the technicians physically
+ * working out of their own branch — but those technicians report to a
+ * Technician Manager/Director, not Parts, so the manager_name-based scoping
+ * in visibleAttendanceProfileIds wouldn't surface any of them. "Any held
+ * role" pile-up semantics — a secondary Parts role grants this the same as
+ * a primary one.
  */
-export function isPartsManagerRole(role: string | null | undefined, extraRoles?: string[] | null): boolean {
-  return anyHeldRoleIn(PARTS_MANAGER_ROLES, role, extraRoles);
+export function isPartsStaffRole(role: string | null | undefined, extraRoles?: string[] | null): boolean {
+  return anyHeldRoleIn(PARTS_STAFF_ROLES, role, extraRoles);
 }
 
 /**
