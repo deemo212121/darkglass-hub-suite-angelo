@@ -22,7 +22,7 @@ import { ActivityLogPanel } from "@/components/ActivityLogPanel";
 import { logModuleActivity } from "@/lib/supabase/moduleActivityLog";
 import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
 import { setTicketOnsiteCheckIn } from "@/lib/supabase/tickets";
-import { getCompanyTicketAttendance, type TicketAttendanceRow } from "@/lib/supabase/technicianWhereabouts";
+import { getCompanyTicketAttendance, slotSortKey, type TicketAttendanceRow } from "@/lib/supabase/technicianWhereabouts";
 import { TIME_ZONES } from "@/lib/serverTime";
 import { resolveTeamLeadOrManager, visibleAttendanceProfileIds } from "@/lib/notifyRouting";
 import { getCsrTeamComposition, type CsrTeamComposition } from "@/lib/supabase/csrTeams";
@@ -1204,7 +1204,10 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
         const checkedIn = rows.filter((r) => r.arrivedAt).length;
         const missingCheckIn = rows.filter((r) => !r.arrivedAt && r.statusGroup !== "cancelled" && !disputedTicketNosApproved.has(r.ticketNo)).length;
         const missingCheckOut = rows.filter((r) => r.arrivedAt && !r.doneAt && r.statusGroup !== "cancelled" && !disputedTicketNosApproved.has(r.ticketNo)).length;
-        return { technician, rows: rows.sort((a, b) => a.scheduleDate.localeCompare(b.scheduleDate) || (a.timeSlot || "").localeCompare(b.timeSlot || "")), scheduled, checkedIn, missingCheckIn, missingCheckOut };
+        // Date then route order (slotSortKey, same helper Technician
+        // Whereabouts' numbered Stops list sorts by) — so a technician's
+        // stop #3 there lines up with row #3 here.
+        return { technician, rows: rows.sort((a, b) => a.scheduleDate.localeCompare(b.scheduleDate) || slotSortKey(a.timeSlot).localeCompare(slotSortKey(b.timeSlot))), scheduled, checkedIn, missingCheckIn, missingCheckOut };
       })
       .sort((a, b) => a.technician.localeCompare(b.technician));
   }, [ticketAttendanceRows, ticketAttendanceSearch, disputedTicketNosApproved]);
@@ -2114,6 +2117,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                               <table className="w-full text-xs">
                                 <thead>
                                   <tr className="text-slate-500">
+                                    <th className="px-2 py-1 text-left">#</th>
                                     <th className="px-2 py-1 text-left">Ticket</th>
                                     <th className="px-2 py-1 text-left">Date</th>
                                     <th className="px-2 py-1 text-left">Status</th>
@@ -2123,15 +2127,23 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                                   </tr>
                                 </thead>
                                 <tbody>
-                                  {t.rows.map((r) => (
+                                  {/* Numbered in the same date-then-timeSlot route order Technician
+                                      Whereabouts' "Stops" list uses, so a technician's stop #3 there
+                                      is also row #3 here — timeSlot shown next to Status the same way
+                                      that list shows "8-12 · OP-Ready for Service". */}
+                                  {t.rows.map((r, i) => (
                                     <tr key={r.ticketNo} className="border-t border-white/5">
+                                      <td className="px-2 py-1.5 text-slate-500 font-semibold text-center">{i + 1}</td>
                                       <td className="px-2 py-1.5">
                                         <a href={`/ticket/${r.ticketNo}`} target="_blank" rel="noopener noreferrer" className="text-blue-300 hover:text-blue-200 hover:underline">
                                           {r.ticketNo}
                                         </a>
                                       </td>
                                       <td className="px-2 py-1.5 text-slate-300">{r.scheduleDate}</td>
-                                      <td className="px-2 py-1.5 text-slate-300">{r.status}</td>
+                                      <td className="px-2 py-1.5 text-slate-300">
+                                        {r.timeSlot && <span className="text-slate-500">{r.timeSlot} · </span>}
+                                        {r.status}
+                                      </td>
                                       <td className="px-2 py-1.5 text-slate-400">{r.address || "—"}</td>
                                       <td className="px-2 py-1.5">
                                         {r.arrivedAt ? (

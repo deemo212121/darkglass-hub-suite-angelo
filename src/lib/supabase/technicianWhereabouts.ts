@@ -53,7 +53,8 @@ function formatAddress(row: any): string {
   return parts.filter((p) => p && String(p).trim()).join(", ");
 }
 
-function slotSortKey(timeSlot: string | null | undefined): string {
+/** Exported so callers that need the same route-order sort outside this file (e.g. Attendance Monitoring's Ticket Attendance tab, matching Technician Whereabouts' numbered Stops list) don't have to duplicate it. */
+export function slotSortKey(timeSlot: string | null | undefined): string {
   const frame = normalizeTimePeriod(timeSlot);
   return FRAME_START_TIME[frame ?? "ANYTIME"] ?? "17:30";
 }
@@ -238,5 +239,9 @@ export async function getCompanyTicketAttendance(dateFrom: string, dateTo: strin
       address: formatAddress(row.customer ?? {}),
       arrivedAt: row.onsite_arrived_at as string | null,
       doneAt: row.onsite_done_at as string | null,
-    }));
+    }))
+    // Date then time-slot order — same route order Technician Whereabouts'
+    // numbered Stops list uses, so a technician's stop #3 there is also
+    // row #3 here.
+    .sort((a, b) => a.scheduleDate.localeCompare(b.scheduleDate) || slotSortKey(a.timeSlot).localeCompare(slotSortKey(b.timeSlot)));
 }
