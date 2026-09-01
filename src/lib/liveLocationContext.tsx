@@ -16,6 +16,8 @@ import { createContext, useCallback, useContext, useState, type ReactNode } from
 
 export interface LiveLocationState {
   position: { lat: number; lng: number } | null;
+  /** Reported accuracy of `position` in metres (navigator.geolocation's `coords.accuracy`), or null when unknown. The shared watcher runs at coarse accuracy for battery, so this is often large — the On-Site Check-In card uses it to widen its geofence test and to decide when to take a one-shot high-accuracy fix. */
+  accuracy: number | null;
   watching: boolean;
   consentConfirmed: boolean;
   clockedIn: boolean;
@@ -29,6 +31,7 @@ interface LiveLocationContextValue extends LiveLocationState {
 
 const DEFAULT_STATE: LiveLocationState = {
   position: null,
+  accuracy: null,
   watching: false,
   consentConfirmed: false,
   clockedIn: false,

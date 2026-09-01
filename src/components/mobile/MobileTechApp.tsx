@@ -35,7 +35,7 @@ import {
 import { getMyProfileId, getMyFullProfile } from "@/lib/supabase/users";
 import { getTechPayrollBreakdown, type TechPayrollBreakdown } from "@/lib/supabase/techPayroll";
 import { getCompanyMapProvider, type MapProvider } from "@/lib/supabase/companySettings";
-import { loadGoogleMapsScript, getLeaflet, makeGeocoder, haversineMiles, routeGeoapify, metersToMiles, formatDuration, attachLeafletResizeFix, createBadgeDivIcon, OSM_TILE_URL, OSM_ATTRIBUTION, ON_SITE_CHECKIN_RADIUS_MILES } from "@/lib/mapEngine";
+import { loadGoogleMapsScript, getLeaflet, makeGeocoder, haversineMiles, routeGeoapify, metersToMiles, formatDuration, attachLeafletResizeFix, createBadgeDivIcon, OSM_TILE_URL, OSM_ATTRIBUTION, ON_SITE_CHECKIN_RADIUS_MILES, ON_SITE_CHECKIN_ACCURACY_SLACK_CAP_MILES } from "@/lib/mapEngine";
 import type * as Leaflet from "leaflet";
 import {
   getDmMessages,
@@ -3763,7 +3763,30 @@ function HomeOnSiteCard({
   // has confirmed Location Consent AND is clocked in; consentConfirmed/
   // clockedIn are exposed here so this card can explain which of those is
   // missing instead of a generic error.
-  const { position: myPos, watching, consentConfirmed, clockedIn, permissionDenied } = useLiveLocation();
+  const { position: coarsePos, accuracy: coarseAccuracyM, watching, consentConfirmed, clockedIn, permissionDenied } = useLiveLocation();
+
+  // The shared watcher (TechnicianLocationTracker) runs at coarse accuracy
+  // — cell-tower / Wi-Fi, routinely 1 km+ off — which is right for the
+  // dispatch breadcrumb but nowhere near tight enough to clear a check-in
+  // geofence. Whenever there's a ticket to check into that isn't done yet,
+  // take periodic one-shot high-accuracy (real GPS) fixes and use those for
+  // the distance test. `at` is used to ignore a fix that's gone stale (e.g.
+  // one taken while still driving). See the effect below focusTicket.
+  const [preciseFix, setPreciseFix] = useState<
+    { pos: { lat: number; lng: number }; accuracyM: number; at: number } | null
+  >(null);
+  const [refiningFix, setRefiningFix] = useState(false);
+  const preciseFresh = preciseFix != null && Date.now() - preciseFix.at < 45_000;
+  const myPos = preciseFresh ? preciseFix!.pos : coarsePos;
+  const fixAccuracyM = preciseFresh ? preciseFix!.accuracyM : coarseAccuracyM;
+  // Give the technician the benefit of the doubt equal to the fix's own
+  // reported uncertainty, capped so a coarse "±3 km" fix can't widen the
+  // zone into meaninglessness.
+  const accuracySlackMiles = Math.min(
+    metersToMiles(fixAccuracyM ?? 0),
+    ON_SITE_CHECKIN_ACCURACY_SLACK_CAP_MILES,
+  );
+  const checkinRadiusMiles = ON_SITE_CHECKIN_RADIUS_MILES + accuracySlackMiles;
 
   // Dev-only escape hatch for testing the in-radius UI without real GPS
   // (e.g. location permission unavailable in this environment). Gated on
@@ -3840,11 +3863,48 @@ function HomeOnSiteCard({
     if (inProgress.length > 0) {
       return withDist.reduce((a, b) => (b.d < a.d ? b : a)).t;
     }
-    const inRadius = withDist.filter((x) => devSimulate || x.d <= ON_SITE_CHECKIN_RADIUS_MILES);
+    const inRadius = withDist.filter((x) => devSimulate || x.d <= checkinRadiusMiles);
     const candidates = inRadius.length > 0 ? inRadius : withDist;
     return candidates.reduce((a, b) => (b.d < a.d ? b : a)).t;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visibleTickets, ticketPos, myPos, arrivedAt, doneAt, devSimulate]);
+  }, [visibleTickets, ticketPos, myPos, arrivedAt, doneAt, devSimulate, checkinRadiusMiles]);
+
+  // Take real-GPS fixes while there's a ticket the technician still needs to
+  // check into. One-shot getCurrentPosition (cheap, unlike a second
+  // watchPosition) on a short interval so it converges as GPS settles and as
+  // they walk in from the truck. Stops once Work Start is tapped (presence is
+  // already proven) or the ticket is done; only runs for a clocked-in tech
+  // who's confirmed location sharing (same prerequisites as the shared
+  // watcher) and never in the dev simulate mode.
+  const focusTicketNo = focusTicket?.ticketNo ?? null;
+  useEffect(() => {
+    if (typeof navigator === "undefined" || !navigator.geolocation) return;
+    if (!focusTicketNo || permissionDenied || devSimulate) { setRefiningFix(false); return; }
+    if (!clockedIn || !consentConfirmed) { setRefiningFix(false); return; }
+    if (arrivedAt[focusTicketNo] || doneAt[focusTicketNo]) { setRefiningFix(false); return; }
+
+    let cancelled = false;
+    const takeFix = () => {
+      if (cancelled) return;
+      setRefiningFix(true);
+      navigator.geolocation.getCurrentPosition(
+        (p) => {
+          if (cancelled) return;
+          setRefiningFix(false);
+          setPreciseFix({
+            pos: { lat: p.coords.latitude, lng: p.coords.longitude },
+            accuracyM: Number.isFinite(p.coords.accuracy) ? p.coords.accuracy : 9999,
+            at: Date.now(),
+          });
+        },
+        () => { if (!cancelled) setRefiningFix(false); },
+        { enableHighAccuracy: true, maximumAge: 0, timeout: 15_000 },
+      );
+    };
+    takeFix();
+    const id = window.setInterval(takeFix, 12_000);
+    return () => { cancelled = true; window.clearInterval(id); setRefiningFix(false); };
+  }, [focusTicketNo, arrivedAt, doneAt, permissionDenied, devSimulate, clockedIn, consentConfirmed]);
 
   const formatNow = () => new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   const formatTimeAt = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -3929,11 +3989,15 @@ function HomeOnSiteCard({
         {(() => {
           const t = focusTicket;
           const dist = distanceFor(t);
-          const inRadius = devSimulate || (dist !== null && dist <= ON_SITE_CHECKIN_RADIUS_MILES);
+          const inRadius = devSimulate || (dist !== null && dist <= checkinRadiusMiles);
           const hereAt = arrivedAt[t.ticketNo];
           const finishedAt = doneAt[t.ticketNo];
           const isBusy = busy === t.ticketNo;
           const pending = !inRadius && !hereAt && !finishedAt;
+          // Refining the fix (real-GPS one-shot in flight) and still only
+          // holding a coarse position — "1.2 mi away" from a cell-tower fix
+          // is noise, so say we're still locating rather than show it.
+          const locating = pending && refiningFix && !preciseFresh;
           return (
             <div className={`mtech-home-onsite-row${pending ? " mtech-home-onsite-row--pending" : ""}`}>
               <div className="mtech-home-onsite-info">
@@ -3946,10 +4010,13 @@ function HomeOnSiteCard({
                     {finishedAt && `Done ${finishedAt}`}
                   </span>
                 ) : (
-                  pending &&
-                  dist !== null && (
+                  pending && (locating || dist !== null) && (
                     <span className="mtech-home-onsite-distance">
-                      {dist < 0.1 ? "Almost there…" : `${dist.toFixed(1)} mi away`}
+                      {locating
+                        ? "Getting precise location…"
+                        : dist! < 0.1
+                        ? "Almost there…"
+                        : `${dist!.toFixed(1)} mi away`}
                     </span>
                   )
                 )}
@@ -3959,10 +4026,10 @@ function HomeOnSiteCard({
                   <button
                     type="button"
                     className="mtech-home-onsite-btn"
-                    disabled={!inRadius || isBusy}
+                    disabled={!inRadius || isBusy || locating}
                     onClick={() => handleImHere(t)}
                   >
-                    {isBusy ? "…" : "Work Start"}
+                    {isBusy ? "…" : locating ? "Locating…" : "Work Start"}
                   </button>
                 ) : (
                   // No radius gate here, unlike "I'm Here" — the meaningful
@@ -3985,7 +4052,7 @@ function HomeOnSiteCard({
         })()}
       </div>
       )}
-      <div className="mtech-home-onsite-hint">This feature appears once you're within about 200 meters of the customer's address.</div>
+      <div className="mtech-home-onsite-hint">Work Start unlocks once your phone's GPS puts you at the customer's address (roughly within a few hundred metres, allowing for GPS and map accuracy).</div>
       <div className="mtech-home-onsite-status-row">
         <span className={`mtech-home-onsite-status ${consentConfirmed ? "is-ok" : "is-bad"}`}>
           {consentConfirmed ? <Check className="h-3 w-3" /> : <X className="h-3 w-3" />} Consent

@@ -285,10 +285,27 @@ export const milesToMeters = (mi: number): number => mi * 1609.344;
  * MobileTechApp.tsx's On-Site Check-In card, and the radius drawn around
  * each stop on TechnicianDayRouteModal's admin route map. Single shared
  * constant so the two stay in sync. Kept in miles (distanceFor/haversineMiles
- * compare against it directly) but defined from the real-world 200m spec via
- * metersToMiles for precision.
+ * compare against it directly) but defined in metres for precision.
+ *
+ * Widened from the original 200 m: address geocoding interpolates a street
+ * number along a road segment, which on long rural/highway addresses lands
+ * the pin hundreds of metres — sometimes over a mile — from the actual
+ * building, so a 200 m circle around the geocoded point routinely excluded a
+ * technician who was genuinely standing at the door. The check-in card also
+ * adds the GPS fix's own reported accuracy on top of this (capped — see
+ * ON_SITE_CHECKIN_ACCURACY_SLACK_CAP_MILES).
  */
-export const ON_SITE_CHECKIN_RADIUS_MILES = metersToMiles(200);
+export const ON_SITE_CHECKIN_RADIUS_MILES = metersToMiles(400);
+
+/**
+ * Extra slack the On-Site Check-In card adds to the geofence test, equal to
+ * the GPS fix's own reported accuracy but no more than this cap. A fix that
+ * reports "±120 m" means the technician may already be inside the base radius
+ * even when the point-to-point distance reads a little over it; a coarse
+ * cell-tower fix that reports "±3 km" tells us almost nothing, so the benefit
+ * of the doubt is capped rather than letting it swallow the whole check.
+ */
+export const ON_SITE_CHECKIN_ACCURACY_SLACK_CAP_MILES = metersToMiles(250);
 
 export function formatDuration(seconds: number): string {
   const mins = Math.round(seconds / 60);
