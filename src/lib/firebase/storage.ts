@@ -332,6 +332,28 @@ export async function uploadPayrollDisputeAttachment(companyId: string, disputeK
 }
 
 /**
+ * Upload proof (photo/PDF) for a Ticket Time Dispute (employee_requests,
+ * request_type "ticket_time_dispute" — migration 0206). Same
+ * client-generated-key-before-insert convention as
+ * uploadPayrollDisputeAttachment above — the resulting URL goes into that
+ * same createEmployeeRequest call's `attachments` array.
+ */
+export async function uploadTicketTimeDisputeAttachment(companyId: string, disputeKey: string, file: File): Promise<{ url: string; fullPath: string }> {
+  if (!isFirebaseReady() || !storage) {
+    throw new Error("Firebase Storage not configured");
+  }
+  const folder = `companies/${companyId}/ticket-time-disputes/${disputeKey}`;
+  const objectName = `${Date.now()}-${sanitizeFileName(file.name)}`;
+  const objectRef = ref(storage, `${folder}/${objectName}`);
+  const snapshot = await uploadBytes(objectRef, file, {
+    contentType: file.type || "application/octet-stream",
+    customMetadata: { uploadedAt: new Date().toISOString() },
+  });
+  const url = await getDownloadURL(snapshot.ref);
+  return { url, fullPath: snapshot.ref.fullPath };
+}
+
+/**
  * Upload a screenshot for an IT ticket (IT Support page). Stored under
  * companies/{companyId}/it-tickets/{ticketKey}/, same convention as
  * expense receipts above. `ticketKey` is a client-generated placeholder
