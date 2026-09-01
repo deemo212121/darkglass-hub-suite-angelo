@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import { X, Plus } from "lucide-react";
+import { X, Plus, Pencil, Check } from "lucide-react";
 import { useAuth } from "@/lib/auth";
-import { getAttendanceForRange, type AttendanceRow } from "@/lib/supabase/timecards";
+import { getAttendanceForRange, saveEntry, getProfileIdByFirebaseUid, type AttendanceRow } from "@/lib/supabase/timecards";
 import {
   getSalaryHistory,
   addSalaryEntry,
@@ -89,8 +89,9 @@ export function EmployeePayrollDetailModal({
   onClose,
   onRateChanged,
 }: Props) {
-  const { displayName, email } = useAuth();
+  const { uid, displayName, email } = useAuth();
   const actorName = displayName || email || "Unknown";
+  const [myProfileId, setMyProfileId] = useState<string | null>(null);
   const fallbackMonth = currentMonthBounds();
   const [rangeStart, setRangeStart] = useState(initialStart || fallbackMonth.start);
   const [rangeEnd, setRangeEnd] = useState(initialEnd || fallbackMonth.end);
@@ -111,6 +112,16 @@ export function EmployeePayrollDetailModal({
   // input's raw string value while the user is editing it.
   const [rateEdits, setRateEdits] = useState<Record<string, string>>({});
   const [savingRates, setSavingRates] = useState(false);
+  // Manual time correction — one day's Check In/Meal In/Meal Out/Check Out
+  // edited inline in the Attendance table below.
+  const [editingDate, setEditingDate] = useState<string | null>(null);
+  const [editForm, setEditForm] = useState({ checkIn: "", mealStart: "", mealEnd: "", checkOut: "" });
+  const [savingEdit, setSavingEdit] = useState(false);
+
+  useEffect(() => {
+    if (!uid) return;
+    getProfileIdByFirebaseUid(uid).then(setMyProfileId).catch(() => {});
+  }, [uid]);
 
   const load = async (cancelledRef: { current: boolean }) => {
     setLoading(true);
@@ -237,6 +248,37 @@ export function EmployeePayrollDetailModal({
       alert(`Failed to save rate changes: ${err instanceof Error ? err.message : "Unknown error"}`);
     } finally {
       setSavingRates(false);
+    }
+  };
+
+  const startEditRow = (row: AttendanceRow) => {
+    setEditingDate(row.date);
+    setEditForm({ checkIn: row.clockIn, mealStart: row.mealStart, mealEnd: row.mealEnd, checkOut: row.clockOut });
+  };
+
+  const cancelEditRow = () => setEditingDate(null);
+
+  // Manual correction — upserts the day's timecard_entries row directly
+  // (same saveEntry the self-service Timecard page and proxy clock-in use),
+  // so a corrected day recalculates hours/status/pay exactly like a real
+  // punch would. Recorded under clocked_in_by (myProfileId) for the same
+  // "not a self-punch" audit trail proxy clock-ins already use.
+  const saveEditRow = async (date: string) => {
+    setSavingEdit(true);
+    try {
+      await saveEntry(
+        profileId,
+        date,
+        { checkIn: editForm.checkIn, checkOut: editForm.checkOut, mealStart: editForm.mealStart, mealEnd: editForm.mealEnd, notes: "" },
+        myProfileId ? { clockedInBy: myProfileId } : undefined
+      );
+      setEditingDate(null);
+      await load({ current: false });
+      onRateChanged?.();
+    } catch (err) {
+      alert(`Failed to save attendance edit: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setSavingEdit(false);
     }
   };
 
@@ -449,26 +491,75 @@ export function EmployeePayrollDetailModal({
             ) : attendance.length === 0 ? (
               <p className="text-xs text-slate-500 text-center py-4">No attendance records for this period.</p>
             ) : (
-              <div className="max-h-64 overflow-y-auto">
+              <div className="max-h-64 overflow-auto">
                 <table className="w-full text-xs">
                   <thead className="sticky top-0 bg-slate-800">
                     <tr className="text-slate-400 border-b border-white/10">
                       <th className="text-left py-1.5">Date</th>
                       <th className="text-left py-1.5">Check In</th>
+                      <th className="text-left py-1.5">Meal In</th>
+                      <th className="text-left py-1.5">Meal Out</th>
                       <th className="text-left py-1.5">Check Out</th>
                       <th className="text-right py-1.5">Hours</th>
                       <th className="text-right py-1.5">Rate</th>
                       <th className="text-right py-1.5">Status</th>
+                      <th className="text-center py-1.5">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
                     {attendance.map((row) => {
                       const dayIsFixed = entryEffectiveOn(history, row.date)?.compensationType === "fixed";
+                      const isEditing = editingDate === row.date;
                       return (
                       <tr key={row.date} className="border-b border-white/5">
-                        <td className="py-1.5 text-slate-200">{row.date}</td>
-                        <td className="py-1.5 text-slate-300">{row.clockIn || "—"}</td>
-                        <td className="py-1.5 text-slate-300">{row.clockOut || "—"}</td>
+                        <td className="py-1.5 text-slate-200 whitespace-nowrap">{row.date}</td>
+                        {isEditing ? (
+                          <>
+                            <td className="py-1.5">
+                              <input
+                                type="time"
+                                step="1"
+                                value={editForm.checkIn}
+                                onChange={(e) => setEditForm((f) => ({ ...f, checkIn: e.target.value }))}
+                                className="w-24 bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-slate-100 focus:outline-none focus:border-blue-500"
+                              />
+                            </td>
+                            <td className="py-1.5">
+                              <input
+                                type="time"
+                                step="1"
+                                value={editForm.mealStart}
+                                onChange={(e) => setEditForm((f) => ({ ...f, mealStart: e.target.value }))}
+                                className="w-24 bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-slate-100 focus:outline-none focus:border-blue-500"
+                              />
+                            </td>
+                            <td className="py-1.5">
+                              <input
+                                type="time"
+                                step="1"
+                                value={editForm.mealEnd}
+                                onChange={(e) => setEditForm((f) => ({ ...f, mealEnd: e.target.value }))}
+                                className="w-24 bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-slate-100 focus:outline-none focus:border-blue-500"
+                              />
+                            </td>
+                            <td className="py-1.5">
+                              <input
+                                type="time"
+                                step="1"
+                                value={editForm.checkOut}
+                                onChange={(e) => setEditForm((f) => ({ ...f, checkOut: e.target.value }))}
+                                className="w-24 bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-slate-100 focus:outline-none focus:border-blue-500"
+                              />
+                            </td>
+                          </>
+                        ) : (
+                          <>
+                            <td className="py-1.5 text-slate-300">{row.clockIn || "—"}</td>
+                            <td className="py-1.5 text-slate-300">{row.mealStart || "—"}</td>
+                            <td className="py-1.5 text-slate-300">{row.mealEnd || "—"}</td>
+                            <td className="py-1.5 text-slate-300">{row.clockOut || "—"}</td>
+                          </>
+                        )}
                         <td className="py-1.5 text-right text-slate-200">{row.hoursWorked ? row.hoursWorked.toFixed(1) : "—"}</td>
                         <td className="py-1.5 text-right">
                           {dayIsFixed ? (
@@ -489,6 +580,41 @@ export function EmployeePayrollDetailModal({
                           )}
                         </td>
                         <td className={`py-1.5 text-right font-semibold ${STATUS_COLOR[row.status]}`}>{STATUS_LABEL[row.status]}</td>
+                        <td className="py-1.5">
+                          <div className="flex items-center justify-center gap-1">
+                            {isEditing ? (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => saveEditRow(row.date)}
+                                  disabled={savingEdit}
+                                  title="Done editing — save this day's times"
+                                  className="p-1 rounded bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white"
+                                >
+                                  <Check className="h-3 w-3" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={cancelEditRow}
+                                  disabled={savingEdit}
+                                  title="Cancel"
+                                  className="p-1 rounded bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-white"
+                                >
+                                  <X className="h-3 w-3" />
+                                </button>
+                              </>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => startEditRow(row)}
+                                title="Manually correct this day's times"
+                                className="p-1 rounded bg-slate-700 hover:bg-slate-600 text-white"
+                              >
+                                <Pencil className="h-3 w-3" />
+                              </button>
+                            )}
+                          </div>
+                        </td>
                       </tr>
                       );
                     })}

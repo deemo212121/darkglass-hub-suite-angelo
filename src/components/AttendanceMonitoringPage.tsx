@@ -293,6 +293,8 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   const [notifyTeamLead, setNotifyTeamLead] = useState(false);
   const [alertModalOpen, setAlertModalOpen] = useState(false);
   const [selectedAlertType, setSelectedAlertType] = useState<"missing-clockin" | "missing-clockout" | "late-arrival" | null>(null);
+  const [alertDeptFilter, setAlertDeptFilter] = useState("all");
+  const [alertLocationFilter, setAlertLocationFilter] = useState("all");
   // Custom Attendance Summary — clicking a row's Present/Absent/Late count
   // opens a day-by-day breakdown for that one employee over the picked range.
   const [customDetailModal, setCustomDetailModal] = useState<{ profileId: string; name: string; type: "present" | "absent" | "late" } | null>(null);
@@ -621,6 +623,33 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   const absentToday = dailyRecords.filter((r) => r.checkIn === "—" && !r.isOffDay).length;
   const lateToday = dailyRecords.filter((r) => r.alerts.some(isPenalizedLateAlert)).length;
   const ptoPendingApproval = visiblePtoRequests.filter((r) => r.status === "pending").length;
+
+  // Alert Details Modal (Missing Clock In/Out, Late Arrival) — the raw list
+  // for whichever alert is open, before the Department/Location filters
+  // below narrow it down.
+  const alertBaseRecords = useMemo(() => {
+    if (selectedAlertType === "missing-clockin") return dailyRecords.filter((r) => r.checkIn === "—" && !r.isOffDay);
+    if (selectedAlertType === "missing-clockout") return dailyRecords.filter((r) => r.checkOut === "—" && r.checkIn !== "—");
+    if (selectedAlertType === "late-arrival") return dailyRecords.filter((r) => r.alerts.some(isPenalizedLateAlert));
+    return [];
+  }, [selectedAlertType, dailyRecords]);
+  // Options are scoped to this alert's own records, so the dropdown never
+  // offers a department/location with nothing to show for it.
+  const alertDepartments = useMemo(
+    () => Array.from(new Set(alertBaseRecords.map((r) => r.department).filter(Boolean))).sort((a, b) => a.localeCompare(b)),
+    [alertBaseRecords]
+  );
+  const alertLocations = useMemo(
+    () => Array.from(new Set(alertBaseRecords.map((r) => r.location).filter(Boolean))).sort((a, b) => a.localeCompare(b)),
+    [alertBaseRecords]
+  );
+  const alertFilteredRecords = useMemo(
+    () =>
+      alertBaseRecords.filter(
+        (r) => (alertDeptFilter === "all" || r.department === alertDeptFilter) && (alertLocationFilter === "all" || r.location === alertLocationFilter)
+      ),
+    [alertBaseRecords, alertDeptFilter, alertLocationFilter]
+  );
 
   const getAlertColor = (alert: string) => {
     if (alert.includes("Over Time")) return "bg-blue-500/20 text-blue-300 border-blue-500/30";
@@ -1377,7 +1406,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                   </h2>
                   <div className="grid gap-2 sm:grid-cols-3">
                     <button
-                      onClick={() => { setSelectedAlertType("missing-clockin"); setAlertModalOpen(true); }}
+                      onClick={() => { setSelectedAlertType("missing-clockin"); setAlertDeptFilter("all"); setAlertLocationFilter("all"); setAlertModalOpen(true); }}
                       className="bg-gradient-to-br from-red-500/15 to-red-600/5 border border-red-500/40 rounded p-2 hover:border-red-500/60 hover:bg-red-500/20 transition cursor-pointer"
                     >
                       <div className="flex items-center gap-2">
@@ -1394,7 +1423,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                       </div>
                     </button>
                     <button
-                      onClick={() => { setSelectedAlertType("missing-clockout"); setAlertModalOpen(true); }}
+                      onClick={() => { setSelectedAlertType("missing-clockout"); setAlertDeptFilter("all"); setAlertLocationFilter("all"); setAlertModalOpen(true); }}
                       className="bg-gradient-to-br from-yellow-500/15 to-yellow-600/5 border border-yellow-500/40 rounded p-2 hover:border-yellow-500/60 hover:bg-yellow-500/20 transition cursor-pointer"
                     >
                       <div className="flex items-center gap-2">
@@ -1411,7 +1440,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                       </div>
                     </button>
                     <button
-                      onClick={() => { setSelectedAlertType("late-arrival"); setAlertModalOpen(true); }}
+                      onClick={() => { setSelectedAlertType("late-arrival"); setAlertDeptFilter("all"); setAlertLocationFilter("all"); setAlertModalOpen(true); }}
                       className="bg-gradient-to-br from-orange-500/15 to-orange-600/5 border border-orange-500/40 rounded p-2 hover:border-orange-500/60 hover:bg-orange-500/20 transition cursor-pointer"
                     >
                       <div className="flex items-center gap-2">
@@ -3110,10 +3139,47 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                 </button>
               </div>
 
+              {/* Department / Location filters */}
+              <div className="flex items-center gap-2 px-6 py-3 border-b border-white/10 bg-slate-900/60">
+                <select
+                  value={alertDeptFilter}
+                  onChange={(e) => setAlertDeptFilter(e.target.value)}
+                  className="bg-slate-800 border border-white/10 rounded px-2 py-1.5 text-xs text-white"
+                >
+                  <option value="all">All Departments</option>
+                  {alertDepartments.map((d) => (
+                    <option key={d} value={d}>{d}</option>
+                  ))}
+                </select>
+                <select
+                  value={alertLocationFilter}
+                  onChange={(e) => setAlertLocationFilter(e.target.value)}
+                  className="bg-slate-800 border border-white/10 rounded px-2 py-1.5 text-xs text-white"
+                >
+                  <option value="all">All Locations</option>
+                  {alertLocations.map((l) => (
+                    <option key={l} value={l}>{l}</option>
+                  ))}
+                </select>
+                {(alertDeptFilter !== "all" || alertLocationFilter !== "all") && (
+                  <button
+                    type="button"
+                    onClick={() => { setAlertDeptFilter("all"); setAlertLocationFilter("all"); }}
+                    className="text-xs text-slate-400 hover:text-white transition ml-1"
+                  >
+                    Clear
+                  </button>
+                )}
+                <span className="ml-auto text-xs text-slate-500">{alertFilteredRecords.length} of {alertBaseRecords.length}</span>
+              </div>
+
               {/* Modal Content */}
               <div className="flex-1 overflow-y-auto p-6">
                 <div className="space-y-3">
-                  {selectedAlertType === "missing-clockin" && dailyRecords.filter(r => r.checkIn === "—" && !r.isOffDay).map(record => (
+                  {alertFilteredRecords.length === 0 && (
+                    <p className="text-sm text-slate-500 text-center py-6">No matching employees for this filter.</p>
+                  )}
+                  {selectedAlertType === "missing-clockin" && alertFilteredRecords.map(record => (
                     <div key={record.profileId} className="bg-slate-800/50 border border-red-500/30 rounded-lg p-4 hover:bg-slate-800/70 transition">
                       <div className="flex items-start justify-between">
                         <div className="flex-1">
@@ -3140,7 +3206,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                     </div>
                   ))}
 
-                  {selectedAlertType === "missing-clockout" && dailyRecords.filter(r => r.checkOut === "—" && r.checkIn !== "—").map(record => (
+                  {selectedAlertType === "missing-clockout" && alertFilteredRecords.map(record => (
                     <div key={record.profileId} className="bg-slate-800/50 border border-yellow-500/30 rounded-lg p-4 hover:bg-slate-800/70 transition">
                       <div className="flex items-start justify-between">
                         <div className="flex-1">
@@ -3158,7 +3224,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                     </div>
                   ))}
 
-                  {selectedAlertType === "late-arrival" && dailyRecords.filter(r => r.alerts.some(isPenalizedLateAlert)).map(record => (
+                  {selectedAlertType === "late-arrival" && alertFilteredRecords.map(record => (
                     <div key={record.profileId} className="bg-slate-800/50 border border-orange-500/30 rounded-lg p-4 hover:bg-slate-800/70 transition">
                       <div className="flex items-start justify-between">
                         <div className="flex-1">
