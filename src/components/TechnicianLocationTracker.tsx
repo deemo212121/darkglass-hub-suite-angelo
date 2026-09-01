@@ -140,7 +140,7 @@ export function TechnicianLocationTracker() {
       watchIdRef.current = null;
     }
     setWatching(false);
-    setLiveLocation({ watching: false, position: null });
+    setLiveLocation({ watching: false, position: null, accuracy: null });
   };
 
   const startWatch = () => {
@@ -155,7 +155,12 @@ export function TechnicianLocationTracker() {
         // Local consumers (the shared context) get every reading — cheap,
         // no network cost. The upload to technician_location_pings below
         // stays throttled since that one's a real network write.
-        setLiveLocation({ watching: true, position: { lat: pos.coords.latitude, lng: pos.coords.longitude }, permissionDenied: false });
+        setLiveLocation({
+          watching: true,
+          position: { lat: pos.coords.latitude, lng: pos.coords.longitude },
+          accuracy: Number.isFinite(pos.coords.accuracy) ? pos.coords.accuracy : null,
+          permissionDenied: false,
+        });
         const now = Date.now();
         if (now - lastUploadRef.current < UPLOAD_THROTTLE_MS) return;
         lastUploadRef.current = now;

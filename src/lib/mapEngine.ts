@@ -149,7 +149,13 @@ export function loadGoogleMapsScript(): Promise<void> {
 // Geocoding — cache-first, then provider-matched.
 // ─────────────────────────────────────────────────────────────────────────
 
-async function geocodeWithGoogle(query: string): Promise<LatLng | null> {
+/** LatLng plus a flag set when the provider itself signalled the match is
+ *  fuzzy / not address-precise (Google partial_match or APPROXIMATE
+ *  location_type; Geoapify street/postcode/city result_type or low rank
+ *  confidence). geocodeAddress folds this into its `approximate` output. */
+type ProviderHit = LatLng & { fuzzy: boolean };
+
+async function geocodeWithGoogle(query: string): Promise<ProviderHit | null> {
   await loadGoogleMapsScript();
   const maps = (window as any).google?.maps;
   if (!maps) return null;
@@ -161,8 +167,10 @@ async function geocodeWithGoogle(query: string): Promise<LatLng | null> {
     // resolve to entirely the wrong country.
     geocoder.geocode({ address: query, componentRestrictions: { country: "US" } }, (results: any, status: string) => {
       if (status === "OK" && results?.[0]) {
-        const pos = results[0].geometry.location;
-        resolve({ lat: pos.lat(), lng: pos.lng() });
+        const r = results[0];
+        const pos = r.geometry.location;
+        const fuzzy = r.partial_match === true || r.geometry?.location_type === "APPROXIMATE";
+        resolve({ lat: pos.lat(), lng: pos.lng(), fuzzy });
       } else {
         resolve(null);
       }
@@ -170,7 +178,7 @@ async function geocodeWithGoogle(query: string): Promise<LatLng | null> {
   });
 }
 
-async function geocodeWithGeoapify(query: string): Promise<LatLng | null> {
+async function geocodeWithGeoapify(query: string): Promise<ProviderHit | null> {
   if (!GEOAPIFY_API_KEY) {
     console.warn("geocodeWithGeoapify: VITE_GEOAPIFY_API_KEY is not set — cannot geocode in Leaflet mode.");
     return null;
@@ -188,7 +196,12 @@ async function geocodeWithGeoapify(query: string): Promise<LatLng | null> {
     const feature = data?.features?.[0];
     const coords = feature?.geometry?.coordinates; // [lng, lat]
     if (!Array.isArray(coords) || coords.length < 2) return null;
-    return { lat: coords[1], lng: coords[0] };
+    const rt = feature?.properties?.result_type;
+    const conf = feature?.properties?.rank?.confidence;
+    const fuzzy =
+      (typeof rt === "string" && ["street", "postcode", "city", "district", "state"].includes(rt)) ||
+      (typeof conf === "number" && conf < 0.5);
+    return { lat: coords[1], lng: coords[0], fuzzy };
   } catch (err) {
     console.warn("geocodeWithGeoapify failed:", err);
     return null;
@@ -222,17 +235,174 @@ async function geocodeZipCode(zip: string): Promise<LatLng | null> {
   }
 }
 
+// Uncommon USPS street-suffix abbreviations that actually trip the
+// geocoders — "109 BRONCO RDG PLEASANTON TX" misses where "…BRONCO RIDGE…"
+// hits (Geoapify/OSM especially). Deliberately NOT the everyday ones
+// (RD/ST/AVE/DR/LN/CT/BLVD/CIR…) — every geocoder already handles those,
+// and expanding "ST" would wreck "ST CHARLES". Word-boundary, case-
+// insensitive; each entry here is unambiguous in an address.
+const US_ADDR_SUFFIX_ABBREV: Record<string, string> = {
+  RDG: "RIDGE", HWY: "HIGHWAY", XING: "CROSSING", HOLW: "HOLLOW",
+  TRCE: "TRACE", CRK: "CREEK", BRK: "BROOK", BLF: "BLUFF", MDW: "MEADOW",
+  MDWS: "MEADOWS", GRV: "GROVE", GLN: "GLEN", HLS: "HILLS", KNL: "KNOLL",
+  LNDG: "LANDING", MTN: "MOUNTAIN", PNES: "PINES", SPGS: "SPRINGS",
+  VLY: "VALLEY", VLG: "VILLAGE", CTR: "CENTER", PLZ: "PLAZA", HBR: "HARBOR",
+  EXPY: "EXPRESSWAY", FWY: "FREEWAY", TPKE: "TURNPIKE", PSGE: "PASSAGE",
+  FRST: "FOREST", MNR: "MANOR", XRD: "CROSSROAD", CSWY: "CAUSEWAY",
+};
+function expandAddrAbbrev(s: string): string {
+  let out = s
+    // County / state / US highway forms, before the generic suffix pass.
+    .replace(/\bCO(?:UNTY)?\.?\s+RD\b\.?/gi, "COUNTY ROAD")
+    .replace(/\bCR\s+(\d)/gi, "COUNTY ROAD $1")
+    .replace(/\bCO(?:UNTY)?\.?\s+HWY\b\.?/gi, "COUNTY HIGHWAY")
+    // Directional right after the house number ("80 S Nixon Ave").
+    .replace(/\b(\d+)\s+(N|S|E|W|NE|NW|SE|SW)\s+/gi, (_m, n, d) => {
+      const full: Record<string, string> = {
+        N: "NORTH", S: "SOUTH", E: "EAST", W: "WEST",
+        NE: "NORTHEAST", NW: "NORTHWEST", SE: "SOUTHEAST", SW: "SOUTHWEST",
+      };
+      return `${n} ${full[String(d).toUpperCase()]} `;
+    });
+  for (const [abbr, expanded] of Object.entries(US_ADDR_SUFFIX_ABBREV)) {
+    out = out.replace(new RegExp(`\\b${abbr}\\b`, "gi"), expanded);
+  }
+  return out;
+}
+
+/** Strip junk the address feeds carry ("NULL"/"N/A" segments, doubled unit
+ *  text, stray punctuation) and expand abbreviations, so the geocoder sees a
+ *  clean string. */
+function cleanAddressQuery(s: string): string {
+  return expandAddrAbbrev(
+    s
+      .replace(/\b(NULL|N\/A|NA|UNKNOWN)\b/gi, " ")
+      .replace(/\s*#\s*/g, " ")
+      .replace(/[.]/g, " "),
+  )
+    .replace(/\s*,\s*/g, ", ")
+    .replace(/\s+/g, " ")
+    .replace(/(^[\s,]+|[\s,]+$)/g, "")
+    .trim();
+}
+
+export interface GeocodeResult {
+  lat: number;
+  lng: number;
+  /** true when only a coarse anchor could be found — street centroid, city,
+   *  or ZIP centroid — because the exact address wouldn't resolve. Callers
+   *  that gate on being physically *at* a point (the On-Site Check-In
+   *  geofence) must not hard-pass on an approximate result. */
+  approximate: boolean;
+}
+
 /**
- * Resolve an address string to coordinates. Checks the in-memory `cache`
- * (module-level by default, so it survives across re-renders and page
- * navigations within the same tab — every call site used to pass its own
- * fresh `new Map()`, so the same address got re-looked-up from Supabase on
- * every single page visit even seconds apart) then the Supabase DB cache
- * before hitting the live provider — a given address is only ever geocoded
- * once, ever, regardless of which provider does it.
+ * Progressively-coarser queries to try when the exact address won't
+ * geocode. Only the first (full, cleaned address) is exact; every fallback
+ * is flagged approximate. Operates on the comma-joined "street, city,
+ * state zip" form that fmtAddress()/getLocationManagementZoomAddress() emit.
+ */
+function deriveQueryTiers(query: string): Array<{ q: string; zip?: string; approximate: boolean }> {
+  const cleaned = cleanAddressQuery(query);
+  const tiers: Array<{ q: string; zip?: string; approximate: boolean }> = [
+    { q: cleaned, approximate: false },
+  ];
+  const segs = cleaned.split(",").map((x) => x.trim()).filter(Boolean);
+  if (segs.length >= 2) {
+    // Drop the house number → street centroid.
+    const noNumber = segs[0].replace(/^\d+\s+/, "");
+    if (noNumber && noNumber !== segs[0]) {
+      tiers.push({ q: [noNumber, ...segs.slice(1)].join(", "), approximate: true });
+    }
+    // City + state (+ zip) only.
+    tiers.push({ q: segs.slice(1).join(", "), approximate: true });
+  }
+  // ZIP is the trailing token on a fmtAddress() string ("…, TX 78064") —
+  // end-anchored so a 5-digit house number ("12483 NW 139TH CT…") isn't
+  // mistaken for one.
+  const zip = cleaned.match(/(\d{5})(?:-\d{4})?\s*$/);
+  if (zip) tiers.push({ q: zip[1], zip: zip[1], approximate: true });
+  return tiers;
+}
+
+const BARE_ZIP_QUERY = /^(\d{5})(?:-\d{4})?,\s*USA$/i;
+
+async function providerGeocode(provider: "google" | "leaflet", q: string): Promise<ProviderHit | null> {
+  const primary = provider === "google" ? await geocodeWithGoogle(q) : await geocodeWithGeoapify(q);
+  if (primary && !primary.fuzzy) return primary;
+  // Secondary provider — Google mode falls back to Geoapify (when the key is
+  // set); Leaflet mode does NOT fall back to Google, to keep "Leaflet =
+  // zero Google API reliance" true. Different indexes, so one often has a
+  // rural road the other is missing. A non-fuzzy secondary hit beats a fuzzy
+  // primary one.
+  if (provider === "google" && GEOAPIFY_API_KEY) {
+    const secondary = await geocodeWithGeoapify(q);
+    if (secondary && !secondary.fuzzy) return secondary;
+    return primary ?? secondary;
+  }
+  return primary;
+}
+
+const sessionDetailedCache = new Map<string, GeocodeResult | null>();
+
+/**
+ * Resolve an address to coordinates with a precision flag and a fallback
+ * chain. Order: session cache → bare-ZIP shortcut → Supabase DB cache
+ * (exact hits only) → tiered attempts (full cleaned address, then street /
+ * city / ZIP-centroid, each flagged approximate), with a cross-provider
+ * retry per tier. Only exact hits are written back to the DB cache — a ZIP
+ * centroid must not get promoted to "the address" on the next session.
+ */
+export async function geocodeAddress(
+  provider: "google" | "leaflet",
+  query: string,
+): Promise<GeocodeResult | null> {
+  if (!query) return null;
+  if (sessionDetailedCache.has(query)) return sessionDetailedCache.get(query)!;
+
+  const zipShortcut = query.match(BARE_ZIP_QUERY);
+  if (zipShortcut) {
+    const p = await geocodeZipCode(zipShortcut[1]);
+    const res = p ? { ...p, approximate: false } : null;
+    sessionDetailedCache.set(query, res);
+    return res;
+  }
+
+  const dbHit = await lookupGeocode(query);
+  if (dbHit) {
+    const res: GeocodeResult = { ...dbHit, approximate: false };
+    sessionDetailedCache.set(query, res);
+    return res;
+  }
+
+  for (const tier of deriveQueryTiers(query)) {
+    if (!tier.q) continue;
+    const hit = tier.zip ? await geocodeZipCode(tier.zip) : await providerGeocode(provider, tier.q);
+    if (!hit) continue;
+    const fuzzy = "fuzzy" in hit ? Boolean(hit.fuzzy) : false;
+    const approximate: boolean = tier.approximate || fuzzy;
+    const res: GeocodeResult = { lat: hit.lat, lng: hit.lng, approximate };
+    sessionDetailedCache.set(query, res);
+    // Only a clean, address-precise hit is written back to the shared DB
+    // cache — a ZIP centroid or a fuzzy match must not get promoted to
+    // "the address" for every other session and caller.
+    if (!approximate) void storeGeocode(query, { lat: hit.lat, lng: hit.lng });
+    return res;
+  }
+
+  sessionDetailedCache.set(query, null);
+  return null;
+}
+
+/**
+ * Resolve an address string to coordinates. Back-compat wrapper over
+ * geocodeAddress that drops the precision flag — every existing map/route
+ * caller keeps its `LatLng | null` contract while transparently gaining the
+ * abbreviation-expansion + street/city/ZIP fallback chain (a pin at a ZIP
+ * centroid still beats no pin on a route map). The `cache` param is kept for
+ * call-site compatibility and written through as the LatLng view.
  */
 const sessionGeocodeCache = new Map<string, LatLng | null>();
-const BARE_ZIP_QUERY = /^(\d{5})(?:-\d{4})?,\s*USA$/i;
 
 // Callers throw a `Promise.all` over every visible ticket's address at once
 // (Work Map, Work Planner) -- fine for a handful of tickets, but a location/
@@ -266,7 +436,10 @@ export function makeGeocoder(provider: "google" | "leaflet", cache: Map<string, 
     if (cache.has(query)) return cache.get(query)!;
     await acquireGeocodeSlot();
     try {
-      return await geocodeUncached(query, provider, cache);
+      const detailed = await geocodeAddress(provider, query);
+      const result: LatLng | null = detailed ? { lat: detailed.lat, lng: detailed.lng } : null;
+      cache.set(query, result);
+      return result;
     } finally {
       releaseGeocodeSlot();
     }
@@ -296,33 +469,6 @@ export async function warmGeocodeCache(queries: string[], cache: Map<string, Lat
   }
 }
 
-async function geocodeUncached(
-  query: string,
-  provider: "google" | "leaflet",
-  cache: Map<string, LatLng | null>,
-): Promise<LatLng | null> {
-  const dbHit = await lookupGeocode(query);
-  if (dbHit) {
-    cache.set(query, dbHit);
-    return dbHit;
-  }
-  // No fallback to the general geocoder for a bare ZIP: an audit of the
-  // existing cache turned up 68 US ZIP codes (not just 28750) that
-  // Geoapify's postcode index had placed hundreds to 2000+ miles from
-  // their real location (e.g. Atlanta-area ZIPs resolved to Washington
-  // state, Oregon, Puerto Rico). Falling back to it here would just
-  // silently reintroduce that same class of wrong-but-confident result
-  // whenever zippopotam.us has a hiccup. zippopotam covers effectively
-  // every real US ZIP, so a genuine miss just leaves that pin unplotted.
-  const zipMatch = query.match(BARE_ZIP_QUERY);
-  const result = zipMatch
-    ? await geocodeZipCode(zipMatch[1])
-    : provider === "google" ? await geocodeWithGoogle(query) : await geocodeWithGeoapify(query);
-  cache.set(query, result);
-  if (result) void storeGeocode(query, result); // fire-and-forget
-  return result;
-}
-
 // ─────────────────────────────────────────────────────────────────────────
 // Distance / routing.
 // ─────────────────────────────────────────────────────────────────────────
@@ -348,10 +494,39 @@ export const milesToMeters = (mi: number): number => mi * 1609.344;
  * MobileTechApp.tsx's On-Site Check-In card, and the radius drawn around
  * each stop on TechnicianDayRouteModal's admin route map. Single shared
  * constant so the two stay in sync. Kept in miles (distanceFor/haversineMiles
- * compare against it directly) but defined from the real-world 200m spec via
- * metersToMiles for precision.
+ * compare against it directly) but defined in metres for precision.
+ *
+ * Widened from the original 200 m: address geocoding interpolates a street
+ * number along a road segment, which on long rural/highway addresses lands
+ * the pin hundreds of metres — sometimes over a mile — from the actual
+ * building, so a 200 m circle around the geocoded point routinely excluded a
+ * technician who was genuinely standing at the door. The check-in card also
+ * adds the GPS fix's own reported accuracy on top of this (capped — see
+ * ON_SITE_CHECKIN_ACCURACY_SLACK_CAP_MILES).
  */
-export const ON_SITE_CHECKIN_RADIUS_MILES = metersToMiles(200);
+export const ON_SITE_CHECKIN_RADIUS_MILES = metersToMiles(400);
+
+/**
+ * Extra slack the On-Site Check-In card adds to the geofence test, equal to
+ * the GPS fix's own reported accuracy but no more than this cap. A fix that
+ * reports "±120 m" means the technician may already be inside the base radius
+ * even when the point-to-point distance reads a little over it; a coarse
+ * cell-tower fix that reports "±3 km" tells us almost nothing, so the benefit
+ * of the doubt is capped rather than letting it swallow the whole check.
+ */
+export const ON_SITE_CHECKIN_ACCURACY_SLACK_CAP_MILES = metersToMiles(250);
+
+/**
+ * How far out the On-Site Check-In card still offers a manual "I'm here
+ * anyway" override for a ticket the automatic geofence rejected. Covers the
+ * real failure modes — a street number interpolated along a rural road
+ * segment, a coarse GPS fix that never sharpened — which are off by hundreds
+ * of metres to about a mile, never tens of miles. Outside this the override
+ * is hidden, so it can't double as "check in from home". (An address that
+ * didn't geocode at all is handled separately: the override shows regardless
+ * of distance since there's nothing to measure against.)
+ */
+export const ON_SITE_CHECKIN_MANUAL_OVERRIDE_MAX_MILES = 3;
 
 export function formatDuration(seconds: number): string {
   const mins = Math.round(seconds / 60);

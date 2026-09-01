@@ -5322,6 +5322,26 @@ a.mtech-phone-link:active { opacity: 0.7; }
   background: #cbd5e1;
   cursor: not-allowed;
 }
+.mtech-home-onsite-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.4rem;
+  flex-shrink: 0;
+}
+.mtech-home-onsite-btn--manual {
+  padding: 0.3rem 0.7rem;
+  font-size: 0.66rem;
+  font-weight: 600;
+  background: transparent;
+  color: #f59e0b;
+  border: 1px solid rgba(245, 158, 11, 0.55);
+}
+.mtech-home-onsite-btn--manual:disabled {
+  background: transparent;
+  color: #94a3b8;
+  border-color: rgba(148, 163, 184, 0.4);
+}
 .mtech-home-divider {
   height: 1px;
   background: #e2e8f0;
@@ -11403,6 +11423,26 @@ a.mtech-phone-link:active { opacity: 0.7; }
 .mtech-home-onsite-btn:disabled {
   background: #cbd5e1;
   cursor: not-allowed;
+}
+.mtech-home-onsite-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.4rem;
+  flex-shrink: 0;
+}
+.mtech-home-onsite-btn--manual {
+  padding: 0.3rem 0.7rem;
+  font-size: 0.66rem;
+  font-weight: 600;
+  background: transparent;
+  color: #f59e0b;
+  border: 1px solid rgba(245, 158, 11, 0.55);
+}
+.mtech-home-onsite-btn--manual:disabled {
+  background: transparent;
+  color: #94a3b8;
+  border-color: rgba(148, 163, 184, 0.4);
 }
 .mtech-home-divider {
   height: 1px;
