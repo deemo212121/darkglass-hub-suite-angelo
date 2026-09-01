@@ -333,7 +333,7 @@ export async function uploadPayrollDisputeAttachment(companyId: string, disputeK
 
 /**
  * Upload proof (photo/PDF) for a Ticket Time Dispute (employee_requests,
- * request_type "ticket_time_dispute" — migration 0206). Same
+ * request_type "ticket_time_dispute" — migration 0207). Same
  * client-generated-key-before-insert convention as
  * uploadPayrollDisputeAttachment above — the resulting URL goes into that
  * same createEmployeeRequest call's `attachments` array.

@@ -3,7 +3,7 @@
  * tab, and Payroll Dispute / Ticket Time Dispute on the mobile tech app.
  * Covers attendance disputes (legacy, no longer created — see
  * ticket_time_dispute below), payroll inquiries, payroll disputes, and
- * ticket time disputes (see migrations 0034, 0182, 0206). PTO requests and
+ * ticket time disputes (see migrations 0034, 0182, 0207). PTO requests and
  * time corrections are handled by pto.ts and timecardCorrections.ts
  * respectively — this table exists for the request types that didn't have
  * a real table yet.
@@ -16,7 +16,7 @@ import { createNotification } from "./notifications";
 /** "payroll_dispute" (0182) is reviewed the same way attendance_dispute is
  *  (Approve/Reject) — distinct from payroll_inquiry, which is a general
  *  question closed with a single "Respond & Close".
- *  "ticket_time_dispute" (0206) replaced the old plain-text attendance
+ *  "ticket_time_dispute" (0207) replaced the old plain-text attendance
  *  dispute flow — "attendance_dispute" stays in this union only so old rows
  *  still type-check/read correctly; the mobile UI no longer creates new ones. */
 export type EmployeeRequestType = "attendance_dispute" | "payroll_inquiry" | "payroll_dispute" | "ticket_time_dispute";
@@ -58,7 +58,7 @@ export interface EmployeeRequestRow {
    *  created to actually add missingAmount into that period's Tech
    *  Activity Report, so Revert-to-Pending can find and delete it again. */
   customPayItemId: string | null;
-  /** ticket_time_dispute only (0206) — the technician's claimed actual
+  /** ticket_time_dispute only (0207) — the technician's claimed actual
    *  start/end time for the disputed ticket, written straight onto that
    *  ticket's onsite_arrived_at/onsite_done_at on Approve. Null on every
    *  other request type. */

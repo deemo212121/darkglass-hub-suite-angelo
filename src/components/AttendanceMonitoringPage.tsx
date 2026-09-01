@@ -1084,7 +1084,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   };
 
   // payroll_dispute (0182) is reviewed on Accounting Dashboard's own
-  // "Payroll Disputes" tab instead, and ticket_time_dispute (0206) on this
+  // "Payroll Disputes" tab instead, and ticket_time_dispute (0207) on this
   // page's own separate "Ticket Time Disputes" tab below — both excluded
   // here so neither gets reviewed (and potentially double-actioned) from
   // two different places. attendance_dispute rows are legacy (that mobile
