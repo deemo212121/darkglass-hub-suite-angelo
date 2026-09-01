@@ -1,10 +1,12 @@
 /**
  * Supabase employee-requests service — Employee Self-Service "My Requests"
- * tab, and Payroll Dispute on the mobile tech app. Covers attendance
- * disputes, payroll inquiries, and payroll disputes (see migrations 0034
- * and 0182). PTO requests and time corrections are handled by pto.ts and
- * timecardCorrections.ts respectively — this table exists for the request
- * types that didn't have a real table yet.
+ * tab, and Payroll Dispute / Ticket Time Dispute on the mobile tech app.
+ * Covers attendance disputes (legacy, no longer created — see
+ * ticket_time_dispute below), payroll inquiries, payroll disputes, and
+ * ticket time disputes (see migrations 0034, 0182, 0206). PTO requests and
+ * time corrections are handled by pto.ts and timecardCorrections.ts
+ * respectively — this table exists for the request types that didn't have
+ * a real table yet.
  */
 
 import { supabase } from "./client";
@@ -13,8 +15,11 @@ import { createNotification } from "./notifications";
 
 /** "payroll_dispute" (0182) is reviewed the same way attendance_dispute is
  *  (Approve/Reject) — distinct from payroll_inquiry, which is a general
- *  question closed with a single "Respond & Close". */
-export type EmployeeRequestType = "attendance_dispute" | "payroll_inquiry" | "payroll_dispute";
+ *  question closed with a single "Respond & Close".
+ *  "ticket_time_dispute" (0206) replaced the old plain-text attendance
+ *  dispute flow — "attendance_dispute" stays in this union only so old rows
+ *  still type-check/read correctly; the mobile UI no longer creates new ones. */
+export type EmployeeRequestType = "attendance_dispute" | "payroll_inquiry" | "payroll_dispute" | "ticket_time_dispute";
 export type EmployeeRequestStatus = "pending" | "approved" | "rejected" | "closed";
 
 export interface EmployeeRequestAttachment {
@@ -53,6 +58,12 @@ export interface EmployeeRequestRow {
    *  created to actually add missingAmount into that period's Tech
    *  Activity Report, so Revert-to-Pending can find and delete it again. */
   customPayItemId: string | null;
+  /** ticket_time_dispute only (0206) — the technician's claimed actual
+   *  start/end time for the disputed ticket, written straight onto that
+   *  ticket's onsite_arrived_at/onsite_done_at on Approve. Null on every
+   *  other request type. */
+  disputedStartTime: string | null;
+  disputedEndTime: string | null;
 }
 
 function mapRow(row: any): EmployeeRequestRow {
@@ -77,11 +88,13 @@ function mapRow(row: any): EmployeeRequestRow {
     periodStart: row.period_start ?? null,
     periodEnd: row.period_end ?? null,
     customPayItemId: row.custom_pay_item_id ?? null,
+    disputedStartTime: row.disputed_start_time ?? null,
+    disputedEndTime: row.disputed_end_time ?? null,
   };
 }
 
 const SELECT_COLUMNS =
-  "id, profile_id, request_type, details, status, requested_by, reviewed_by, reviewed_at, review_note, created_at, pay_period, total_received, total_expected, missing_amount, dispute_reason, attachments, ticket_no, period_start, period_end, custom_pay_item_id";
+  "id, profile_id, request_type, details, status, requested_by, reviewed_by, reviewed_at, review_note, created_at, pay_period, total_received, total_expected, missing_amount, dispute_reason, attachments, ticket_no, period_start, period_end, custom_pay_item_id, disputed_start_time, disputed_end_time";
 
 // Supabase caps an unbounded select at 1000 rows — a company's full request
 // history can exceed that. Page through in chunks of 1000.
@@ -125,6 +138,8 @@ export async function createEmployeeRequest(input: {
   ticketNo?: string;
   periodStart?: string;
   periodEnd?: string;
+  disputedStartTime?: string;
+  disputedEndTime?: string;
 }): Promise<void> {
   const { error } = await supabase.from("employee_requests").insert({
     profile_id: input.profileId,
@@ -141,6 +156,8 @@ export async function createEmployeeRequest(input: {
     ticket_no: input.ticketNo || null,
     period_start: input.periodStart || null,
     period_end: input.periodEnd || null,
+    disputed_start_time: input.disputedStartTime || null,
+    disputed_end_time: input.disputedEndTime || null,
   });
   if (error) {
     console.error("createEmployeeRequest error:", error.message);

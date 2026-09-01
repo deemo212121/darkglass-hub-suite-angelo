@@ -194,3 +194,49 @@ export async function getTechnicianTodayRoute(technicianName: string): Promise<T
     }))
     .sort((a, b) => slotSortKey(a.timeSlot).localeCompare(slotSortKey(b.timeSlot)));
 }
+
+export interface TicketAttendanceRow {
+  ticketNo: string;
+  technician: string;
+  scheduleDate: string;
+  status: string;
+  statusGroup: ReturnType<typeof statusGroupOf>;
+  timeSlot: string | null;
+  address: string;
+  /** Real On-Site Check-In timestamps (migration 0202) — see TechnicianRouteStop above. */
+  arrivedAt: string | null;
+  doneAt: string | null;
+}
+
+/**
+ * Every ticket scheduled within [dateFrom, dateTo] company-wide, across every
+ * technician — the Ticket Attendance tab's data source (Attendance
+ * Monitoring), a company-wide/date-range version of getTechnicianTodayRoute
+ * above (which is scoped to one technician's "today"). Used to answer "did
+ * this technician actually check into their scheduled tickets," separate
+ * from the general clock In/Out attendance the rest of this page tracks.
+ */
+export async function getCompanyTicketAttendance(dateFrom: string, dateTo: string): Promise<TicketAttendanceRow[]> {
+  const { data, error } = await supabase
+    .from("tickets")
+    .select("ticket_no, technician, schedule_date, status, time_slot, onsite_arrived_at, onsite_done_at, customer:customers ( address, address2, city, state, zip )")
+    .gte("schedule_date", dateFrom)
+    .lte("schedule_date", dateTo);
+  if (error) {
+    console.error("getCompanyTicketAttendance error:", error.message);
+    throw new Error(error.message);
+  }
+  return (data ?? [])
+    .filter((row: any) => String(row.technician || "").trim())
+    .map((row: any) => ({
+      ticketNo: row.ticket_no as string,
+      technician: String(row.technician).trim(),
+      scheduleDate: row.schedule_date as string,
+      status: row.status as string,
+      statusGroup: statusGroupOf(row.status),
+      timeSlot: row.time_slot as string | null,
+      address: formatAddress(row.customer ?? {}),
+      arrivedAt: row.onsite_arrived_at as string | null,
+      doneAt: row.onsite_done_at as string | null,
+    }));
+}

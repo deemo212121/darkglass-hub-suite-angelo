@@ -59,14 +59,15 @@ import { getCsrTeamComposition } from "@/lib/supabase/csrTeams";
 import { isAttendanceManagerTierRole, normalizeRole, ROLE_LABELS } from "@/lib/roleLabels";
 import { LOCATIONS } from "@/lib/locations";
 import { timezoneForBranch, nowInTimezone } from "@/lib/attendanceGrace";
-import { getServerNow, zonedDateKey, zonedTimeString, type ScheduleTimezone } from "@/lib/serverTime";
+import { getServerNow, zonedDateKey, zonedTimeString, zonedWallClockToUtcIso, TIME_ZONES, type ScheduleTimezone } from "@/lib/serverTime";
 import { getTicketComments, addTicketComment, type TicketComment } from "@/lib/supabase/comments";
 import { enqueueOnsiteCheckin, enqueueVisitSave } from "@/lib/offlineQueue";
 import { TicketPhotos } from "@/components/TicketPhotos";
 import { MessageBody } from "@/components/MessageBody";
 import { LocationSharingBadge } from "@/components/LocationSharingBadge";
 import { OfflineQueueBadge } from "@/components/OfflineQueueBadge";
-import { uploadTicketSignature, uploadPayrollDisputeAttachment } from "@/lib/firebase/storage";
+import { uploadTicketSignature, uploadPayrollDisputeAttachment, uploadTicketTimeDisputeAttachment } from "@/lib/firebase/storage";
+import { getTechnicianTodayRoute, type TechnicianRouteStop } from "@/lib/supabase/technicianWhereabouts";
 import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
 import { lookupZip } from "@/lib/zipCoverage";
 import { resolveTierCode } from "@/lib/tierCodes";
@@ -104,7 +105,7 @@ type View =
   | "itsupport"
   | "payrolldispute"
   | "timeoff"
-  | "attendancedispute"
+  | "tickettimedispute"
   | "correction"
   | "notifications";
 type DetailTab = "general" | "tracking" | "parts" | "billing";
@@ -211,6 +212,15 @@ function productLabel(t: Ticket): string {
 function fmtAddress(t: Ticket): string {
   const parts = [t.address, t.city, [t.state, t.zip].filter(Boolean).join(" ")].filter(Boolean);
   return parts.join(", ");
+}
+
+// Formats a UTC instant as wall-clock time explicitly in `tz`, labeled with
+// the zone abbreviation — used for Ticket Time Dispute times so they read
+// unambiguously the same way regardless of the viewer's own device
+// timezone (matches serverTime.ts's zonedTimeString convention).
+function fmtTimeInZone(iso: string | null, tz: ScheduleTimezone): string {
+  if (!iso) return "?";
+  return new Intl.DateTimeFormat("en-US", { timeZone: TIME_ZONES[tz].timeZone, hour: "numeric", minute: "2-digit" }).format(new Date(iso));
 }
 
 // Resolve a ticket's branch/location. If the stored location is missing or
@@ -320,7 +330,13 @@ export function MobileTechApp() {
   // the day starts" when live GPS isn't available yet (see its own comment),
   // instead of a real branch office point actually being used there. Not
   // needed for anything else at this level, but simplest to fetch once here.
+  // Also grabs scheduleTimezone (CST/EST) in the same call — Ticket Time
+  // Dispute needs it so a technician's typed "10:00 AM" is interpreted as
+  // 10:00 AM in THEIR scheduled timezone, not whatever timezone their
+  // device's clock happens to be set to (same convention Time Clock punches
+  // already use — see serverTime.ts).
   const [myAssignedBranch, setMyAssignedBranch] = useState("");
+  const [myScheduleTimezone, setMyScheduleTimezone] = useState<ScheduleTimezone>("CST");
   useEffect(() => {
     if (!uid) return;
     let cancelled = false;
@@ -331,9 +347,55 @@ export function MobileTechApp() {
       // none on file, never overrides an actual assigned branch.
       const real = p?.assignedBranch || "";
       setMyAssignedBranch(import.meta.env.DEV && !real ? "Atlanta" : real);
+      setMyScheduleTimezone(p?.scheduleTimezone || "CST");
     });
     return () => { cancelled = true; };
   }, [uid]);
+
+  // Ticket Time Disputes (pending or approved), keyed by the ticket they're
+  // tied to — a small "Disputed Time" note on that ticket's row in the
+  // Tickets tab (To Do or Done, doesn't matter which — TicketsView renders
+  // both from the same code), so the adjusted/claimed check-in time stays
+  // visible on the ticket itself, not just buried in the dispute's own "My
+  // Disputes" list.
+  //
+  // A ticket can end up with more than one dispute over time. A still-
+  // PENDING one always wins the display (labeled "In Progress") — it's the
+  // one actually awaiting action right now. With no pending one, falls back
+  // to the MOST RECENTLY APPROVED one (labeled "Completed") — since each
+  // Approve action writes straight onto the ticket's own onsite_arrived_at/
+  // onsite_done_at (see AttendanceMonitoringPage.tsx's
+  // handleEmployeeRequestAction), that's always what's actually sitting on
+  // the real ticket record. Picked by reviewedAt, not createdAt/array
+  // order, since a dispute filed earlier could still get approved later
+  // than one filed after it.
+  const [disputedTimeByTicketNo, setDisputedTimeByTicketNo] = useState<Map<string, { time: string; status: "pending" | "approved" }>>(new Map());
+  useEffect(() => {
+    let cancelled = false;
+    getCompanyEmployeeRequests()
+      .then((all) => {
+        if (cancelled) return;
+        const pendingByTicketNo = new Map<string, EmployeeRequestRow>();
+        const approvedByTicketNo = new Map<string, EmployeeRequestRow>();
+        for (const r of all) {
+          if (r.requestType !== "ticket_time_dispute" || !r.ticketNo) continue;
+          if (r.status === "pending") {
+            const existing = pendingByTicketNo.get(r.ticketNo);
+            if (!existing || r.createdAt > existing.createdAt) pendingByTicketNo.set(r.ticketNo, r);
+          } else if (r.status === "approved") {
+            const existing = approvedByTicketNo.get(r.ticketNo);
+            if (!existing || (r.reviewedAt || "") > (existing.reviewedAt || "")) approvedByTicketNo.set(r.ticketNo, r);
+          }
+        }
+        const fmtEntry = (r: EmployeeRequestRow) => `${fmtTimeInZone(r.disputedStartTime, myScheduleTimezone)} – ${fmtTimeInZone(r.disputedEndTime, myScheduleTimezone)} ${myScheduleTimezone}`;
+        const map = new Map<string, { time: string; status: "pending" | "approved" }>();
+        for (const [ticketNo, r] of approvedByTicketNo) map.set(ticketNo, { time: fmtEntry(r), status: "approved" });
+        for (const [ticketNo, r] of pendingByTicketNo) map.set(ticketNo, { time: fmtEntry(r), status: "pending" });
+        setDisputedTimeByTicketNo(map);
+      })
+      .catch((e) => console.error("Failed to load disputed check-in times:", e));
+    return () => { cancelled = true; };
+  }, [myScheduleTimezone]);
 
   // Red badge on the Chat bottom-nav tab — total unread DMs across every
   // thread, kept live independent of whether ChatView is even mounted.
@@ -398,7 +460,7 @@ export function MobileTechApp() {
       "itsupport",
       "payrolldispute",
       "timeoff",
-      "attendancedispute",
+      "tickettimedispute",
       "correction",
     ];
     if (stored && (known as string[]).includes(stored)) {
@@ -779,7 +841,7 @@ export function MobileTechApp() {
         view === "itsupport" ||
         view === "payrolldispute" ||
         view === "timeoff" ||
-        view === "attendancedispute" ||
+        view === "tickettimedispute" ||
         view === "correction" ||
         view === "notifications"
       ? "home" // Home's own quick-action tiles reach all of these sub-pages
@@ -796,15 +858,17 @@ export function MobileTechApp() {
   // PTO and Time Correction, which can't be told apart from the URL alone)
   // are a deliberate no-op rather than breaking out to an un-adapted
   // desktop screen. Specific tab checks (pto-management/corrections/
-  // disputes-inquiries) must come before the generic "attendance-monitoring"
-  // substring since all three of those links contain it.
+  // ticket-time-disputes) must come before the generic "attendance-monitoring"
+  // substring since all three of those links contain it. Old notifications
+  // linking to the now-removed "disputes-inquiries" attendance-dispute view
+  // fall through as a no-op — nothing left to open.
   const handleNotificationLink = (linkTo: string) => {
     const lower = linkTo.toLowerCase();
     if (lower.includes("it-tickets") || lower.includes("itsupport")) { setView("itsupport"); return; }
     if (lower.includes("payrolldisputes") || lower.includes("accounting-dashboard")) { setPayrollDisputePrefill(null); setView("payrolldispute"); return; }
     if (lower.includes("pto-management")) { setView("timeoff"); return; }
     if (lower.includes("corrections")) { setView("correction"); return; }
-    if (lower.includes("disputes-inquiries")) { setView("attendancedispute"); return; }
+    if (lower.includes("ticket-time-disputes")) { setView("tickettimedispute"); return; }
     if (lower.includes("ticket-list") || lower.includes("/ticket/")) { setView(isSelfRole ? "tickets" : "roster"); return; }
   };
 
@@ -851,6 +915,7 @@ export function MobileTechApp() {
             setSearch={setSearch}
             onOpen={openTicket}
             techLabel={scopeTech || ""}
+            disputedTimeByTicketNo={disputedTimeByTicketNo}
           />
         )}
 
@@ -941,8 +1006,8 @@ export function MobileTechApp() {
           <MobileTimeOffView userName={headerName} profileId={profileId} />
         )}
 
-        {view === "attendancedispute" && (
-          <MobileAttendanceDisputeView userName={headerName} profileId={profileId} />
+        {view === "tickettimedispute" && (
+          <MobileTicketTimeDisputeView userName={headerName} profileId={profileId} companyId={companyId} technicianName={headerName} scheduleTimezone={myScheduleTimezone} />
         )}
 
         {view === "correction" && (
@@ -976,7 +1041,7 @@ export function MobileTechApp() {
             onOpenItSupport={() => setView("itsupport")}
             onOpenPayrollDispute={() => { setPayrollDisputePrefill(null); setView("payrolldispute"); }}
             onOpenTimeOff={() => setView("timeoff")}
-            onOpenAttendanceDispute={() => setView("attendancedispute")}
+            onOpenTicketTimeDispute={() => setView("tickettimedispute")}
             onOpenCorrection={() => setView("correction")}
           />
         )}
@@ -1193,6 +1258,7 @@ function TicketsView({
   setSearch,
   onOpen,
   techLabel,
+  disputedTimeByTicketNo,
 }: {
   loading: boolean;
   tickets: Ticket[];
@@ -1202,6 +1268,7 @@ function TicketsView({
   setSearch: (s: string) => void;
   onOpen: (t: Ticket) => void;
   techLabel: string;
+  disputedTimeByTicketNo: Map<string, { time: string; status: "pending" | "approved" }>;
 }) {
   const today = new Date().toLocaleDateString("en-US");
   return (
@@ -1261,6 +1328,34 @@ function TicketsView({
                     {t.model ? ` · ${t.model}` : ""}
                   </div>
                 )}
+                {disputedTimeByTicketNo.has(t.ticketNo) && (() => {
+                  const dispute = disputedTimeByTicketNo.get(t.ticketNo)!;
+                  const isPending = dispute.status === "pending";
+                  const accent = isPending ? "#ca8a04" : "#16a34a";
+                  return (
+                    <div
+                      style={{
+                        marginTop: "0.35rem",
+                        padding: "0.35rem 0.5rem",
+                        borderRadius: "6px",
+                        background: isPending ? "rgba(202,138,4,0.12)" : "rgba(22,163,74,0.12)",
+                        border: `1px solid ${isPending ? "rgba(202,138,4,0.35)" : "rgba(22,163,74,0.35)"}`,
+                      }}
+                    >
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.4rem" }}>
+                        <span style={{ fontSize: "0.66rem", fontWeight: 700, color: accent, textTransform: "uppercase", letterSpacing: "0.03em" }}>
+                          Disputed Time
+                        </span>
+                        <span style={{ fontSize: "0.62rem", fontWeight: 700, color: accent, textTransform: "uppercase", letterSpacing: "0.03em" }}>
+                          {isPending ? "In Progress" : "Completed"}
+                        </span>
+                      </div>
+                      <div style={{ fontSize: "0.78rem", color: "#e2e8f0", marginTop: "0.1rem" }}>
+                        {dispute.time}
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
               <span className="mtech-ticket-chev-icon">
                 <ChevronRight className="h-4 w-4" />
@@ -4160,7 +4255,7 @@ function MobileHomeView({
   onOpenItSupport,
   onOpenPayrollDispute,
   onOpenTimeOff,
-  onOpenAttendanceDispute,
+  onOpenTicketTimeDispute,
   onOpenCorrection,
 }: {
   userName: string;
@@ -4177,7 +4272,7 @@ function MobileHomeView({
   onOpenItSupport: () => void;
   onOpenPayrollDispute: () => void;
   onOpenTimeOff: () => void;
-  onOpenAttendanceDispute: () => void;
+  onOpenTicketTimeDispute: () => void;
   onOpenCorrection: () => void;
 }) {
   const hourNow = new Date().getHours();
@@ -4320,9 +4415,9 @@ function MobileHomeView({
       onClick: onOpenTimeOff, show: true,
     },
     {
-      key: "attendancedispute", label: "Attendance Dispute",
-      description: "Flag an issue with your attendance record",
-      onClick: onOpenAttendanceDispute, show: true,
+      key: "tickettimedispute", label: "Ticket Time Dispute",
+      description: "Report a failed on-site check-in for a ticket",
+      onClick: onOpenTicketTimeDispute, show: true,
     },
     {
       key: "payrolldispute", label: "Payroll Dispute",
@@ -5617,24 +5712,56 @@ function MobileTimeOffView({ userName, profileId }: { userName: string; profileI
   );
 }
 
-// Submit an attendance dispute and track your own — the simplest of the
-// three new mobile request views: a plain details textarea, reviewed on
-// desktop's existing (untouched) Attendance Monitoring > Disputes &
-// Inquiries tab, same as before mobile could submit one at all.
-function MobileAttendanceDisputeView({ userName, profileId }: { userName: string; profileId: string | null }) {
+// Submit a Ticket Time Dispute and track your own — replaces the old plain
+// free-text Attendance Dispute (migration 0206): reports a failed On-Site
+// Check-In (Work Start/Work Done only succeed within ON_SITE_CHECKIN_RADIUS_
+// MILES of the customer's address — outside it, the button just silently
+// disables, per handleImHere/handleImDone above) by picking the actual
+// ticket and stating the real start/end time. Reviewed on desktop's
+// Attendance Monitoring > Ticket Time Disputes tab (separate from the old
+// Disputes & Inquiries tab, which still handles any already-pending legacy
+// attendance_dispute rows). Approving writes these times straight onto the
+// ticket's own onsite_arrived_at/onsite_done_at — not just a paper trail.
+function MobileTicketTimeDisputeView({ userName, profileId, companyId, technicianName, scheduleTimezone }: { userName: string; profileId: string | null; companyId: string | null; technicianName: string; scheduleTimezone: ScheduleTimezone }) {
   const [requests, setRequests] = useState<EmployeeRequestRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [todaysStops, setTodaysStops] = useState<TechnicianRouteStop[]>([]);
+  const [ticketNo, setTicketNo] = useState("");
+  const [startTime, setStartTime] = useState("");
+  const [endTime, setEndTime] = useState("");
   const [details, setDetails] = useState("");
+  const [files, setFiles] = useState<File[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [msg, setMsg] = useState("");
+
+  // This technician's own existing dispute status per ticket — shown right
+  // in the dropdown, with the actual claimed time, so they can see at a
+  // glance whether — and what — they've already disputed on a ticket before
+  // filing another one. A still-pending one wins over an older approved one
+  // for the same ticket (same priority the ticket-row indicator elsewhere
+  // uses — it's the one actually awaiting action right now).
+  const myDisputeStatusByTicketNo = useMemo(() => {
+    const map = new Map<string, { status: "pending" | "approved"; time: string }>();
+    for (const r of requests) {
+      if (!r.ticketNo) continue;
+      const existing = map.get(r.ticketNo);
+      if (existing?.status === "pending") continue; // a pending one already won this ticket
+      if (r.status !== "pending" && r.status !== "approved") continue;
+      map.set(r.ticketNo, {
+        status: r.status as "pending" | "approved",
+        time: `${fmtTimeInZone(r.disputedStartTime, scheduleTimezone)} – ${fmtTimeInZone(r.disputedEndTime, scheduleTimezone)} ${scheduleTimezone}`,
+      });
+    }
+    return map;
+  }, [requests, scheduleTimezone]);
 
   const load = async () => {
     setLoading(true);
     try {
       const all = await getCompanyEmployeeRequests();
-      setRequests(all.filter((r) => r.requestType === "attendance_dispute" && r.profileId === profileId));
+      setRequests(all.filter((r) => r.requestType === "ticket_time_dispute" && r.profileId === profileId));
     } catch (e) {
-      console.error("attendance dispute: load requests failed", e);
+      console.error("ticket time dispute: load requests failed", e);
     } finally {
       setLoading(false);
     }
@@ -5643,31 +5770,96 @@ function MobileAttendanceDisputeView({ userName, profileId }: { userName: string
     void load();
   }, [profileId]);
 
+  // Dev-only: getTechnicianTodayRoute is a live DB query, so it has no idea
+  // about the hardcoded local-only test tickets used elsewhere in this file
+  // (buildDevTestRouteTickets) — those never touch the real `tickets` table.
+  // These fake stops are set immediately, independent of whether the real
+  // query below succeeds, fails, or is still loading, so the dropdown is
+  // never empty while testing locally. Submitting/approving against one of
+  // these still exercises the full dispute flow (create, review, approve/
+  // reject) — the one thing it CAN'T prove is the approve side-effect
+  // actually landing on a ticket, since setTicketOnsiteCheckIn's update just
+  // silently matches zero rows for a ticket number that doesn't really
+  // exist. To verify that part specifically, pick a real scheduled ticket.
+  const devTestStops: TechnicianRouteStop[] = import.meta.env.DEV
+    ? [
+        { ticketNo: "DEVTEST-001", status: "OP-Ready for Service", statusGroup: "open", timeSlot: "8-12", address: "233 Peachtree St NE, Atlanta, GA", arrivedAt: null, doneAt: null },
+        { ticketNo: "DEVTEST-002", status: "OP-Ready for Service", statusGroup: "open", timeSlot: "8-12", address: "191 Peachtree St NE, Atlanta, GA", arrivedAt: null, doneAt: null },
+      ]
+    : [];
+  useEffect(() => {
+    setTodaysStops(devTestStops);
+    if (!technicianName) return;
+    getTechnicianTodayRoute(technicianName)
+      .then((real) => setTodaysStops([...real, ...devTestStops]))
+      .catch((e) => console.error("ticket time dispute: load today's tickets failed", e));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [technicianName]);
+
   const submit = async () => {
     if (!profileId) {
       setMsg("Your profile hasn't loaded yet — try again in a moment.");
       return;
     }
+    if (!ticketNo) {
+      setMsg("Pick which ticket this is about.");
+      return;
+    }
+    if (!startTime || !endTime) {
+      setMsg("Enter the time you actually started and finished.");
+      return;
+    }
     if (!details.trim()) {
-      setMsg("Describe what looks wrong on your attendance record.");
+      setMsg("Describe what went wrong with the check-in.");
       return;
     }
     setSubmitting(true);
     setMsg("");
     try {
+      let attachments: { url: string; name: string }[] = [];
+      if (files.length > 0 && companyId) {
+        const disputeKey = crypto.randomUUID();
+        attachments = await Promise.all(
+          files.map(async (f) => {
+            const { url } = await uploadTicketTimeDisputeAttachment(companyId, disputeKey, f);
+            return { url, name: f.name };
+          })
+        );
+      }
+      // A typed "10:00 AM" means 10:00 AM in the technician's own SCHEDULED
+      // timezone (CST/EST, profiles.schedule_timezone) — not whatever
+      // timezone their device's clock happens to be set to, same convention
+      // Time Clock punches already follow (serverTime.ts). Confirmed bug
+      // without this: a Central-time technician typing 10:00 AM was coming
+      // back as 5:00 AM, since the earlier fix used the browser's own local
+      // time instead of the technician's actual scheduled zone.
+      const todayKey = zonedDateKey(new Date(), scheduleTimezone);
+      const [y, mo, d] = todayKey.split("-").map(Number);
+      const [startHour, startMin] = startTime.split(":").map(Number);
+      const [endHour, endMin] = endTime.split(":").map(Number);
+      const disputedStart = zonedWallClockToUtcIso(y, mo, d, startHour, startMin, scheduleTimezone);
+      const disputedEnd = zonedWallClockToUtcIso(y, mo, d, endHour, endMin, scheduleTimezone);
       await createEmployeeRequest({
         profileId,
-        requestType: "attendance_dispute",
+        requestType: "ticket_time_dispute",
         details: details.trim(),
         requestedBy: profileId,
+        ticketNo,
+        disputedStartTime: disputedStart,
+        disputedEndTime: disputedEnd,
+        attachments,
       });
       void notifyRequestReviewers({
-        body: `⚠️ New Attendance Dispute from ${userName}.`,
-        linkTo: "/m/dashboard/attendance-monitoring?tab=disputes-inquiries",
+        body: `⚠️ New Ticket Time Dispute from ${userName} (Ticket ${ticketNo}).`,
+        linkTo: "/m/dashboard/attendance-monitoring?tab=ticket-time-disputes",
         senderId: profileId,
         senderName: userName,
       });
+      setTicketNo("");
+      setStartTime("");
+      setEndTime("");
       setDetails("");
+      setFiles([]);
       setMsg("Dispute submitted.");
       await load();
     } catch (e) {
@@ -5681,19 +5873,77 @@ function MobileAttendanceDisputeView({ userName, profileId }: { userName: string
   return (
     <div className="mtech-scroll">
       <div className="mtech-payroll-heading">
-        <div className="mtech-payroll-name">Attendance Dispute</div>
-        <div className="mtech-payroll-sub">Flag an issue with your attendance record</div>
+        <div className="mtech-payroll-name">Ticket Time Dispute</div>
+        <div className="mtech-payroll-sub">Report a failed on-site check-in for a ticket</div>
       </div>
 
       <div className="mtech-panel" style={{ marginTop: 0 }}>
-        <div className="mtech-section-title" style={{ marginTop: 0 }}>What's wrong?</div>
+        <div className="mtech-section-title" style={{ marginTop: 0 }}>Ticket</div>
+        <select className="mtech-bill-input full" value={ticketNo} onChange={(e) => setTicketNo(e.target.value)}>
+          <option value="">Select a ticket from today…</option>
+          {todaysStops.map((s) => {
+            const dispute = myDisputeStatusByTicketNo.get(s.ticketNo);
+            // Colored option text so a technician can see at a glance
+            // they've already filed on this one (and what time) before
+            // starting another — <option> styling support is inconsistent
+            // across mobile browsers (notably iOS), so the label text
+            // itself always spells it out too, not just the color.
+            if (dispute) {
+              const isPending = dispute.status === "pending";
+              return (
+                <option key={s.ticketNo} value={s.ticketNo} style={{ color: isPending ? "#ca8a04" : "#16a34a" }}>
+                  {s.ticketNo} — Already disputed ({isPending ? "Pending" : "Approved"}): {dispute.time}
+                </option>
+              );
+            }
+            return (
+              <option key={s.ticketNo} value={s.ticketNo}>
+                {s.ticketNo} — {s.address || "No address"}{s.timeSlot ? ` (${s.timeSlot})` : ""}
+              </option>
+            );
+          })}
+        </select>
+        {todaysStops.length === 0 && (
+          <p className="mtech-muted" style={{ padding: "0.15rem 0 0.25rem" }}>No tickets found for today yet.</p>
+        )}
+
+        <div className="mtech-section-title">Start Time ({scheduleTimezone})</div>
+        <input
+          className="mtech-bill-input full"
+          type="time"
+          value={startTime}
+          onChange={(e) => setStartTime(e.target.value)}
+        />
+
+        <div className="mtech-section-title">End Time ({scheduleTimezone})</div>
+        <input
+          className="mtech-bill-input full"
+          type="time"
+          value={endTime}
+          onChange={(e) => setEndTime(e.target.value)}
+        />
+
+        <div className="mtech-section-title">What's wrong?</div>
         <textarea
           className="mtech-bill-input full"
-          rows={5}
+          rows={4}
           value={details}
           onChange={(e) => setDetails(e.target.value)}
-          placeholder="Describe the issue — date, what happened, etc."
+          placeholder="Describe the issue — e.g. GPS wouldn't register, signal was down, etc."
         />
+
+        <div className="mtech-section-title">Proof (optional)</div>
+        <input
+          className="mtech-bill-input full"
+          type="file"
+          multiple
+          accept="image/*,.pdf"
+          onChange={(e) => setFiles(Array.from(e.target.files || []))}
+        />
+        {files.length > 0 && (
+          <p className="mtech-muted" style={{ padding: "0.25rem 0" }}>{files.length} file{files.length === 1 ? "" : "s"} selected</p>
+        )}
+
         <button type="button" className="mtech-save-btn" onClick={submit} disabled={submitting}>
           {submitting ? "Submitting…" : "Submit Dispute"}
         </button>
@@ -5716,7 +5966,22 @@ function MobileAttendanceDisputeView({ userName, profileId }: { userName: string
                 </div>
               </div>
               <div className="mtech-payroll-row-body" style={{ display: "block", padding: "0.4rem 0.85rem 0.7rem" }}>
+                {r.ticketNo && <p className="mtech-muted" style={{ padding: "0.25rem 0", fontWeight: 600, color: "#93c5fd" }}>Ticket {r.ticketNo}</p>}
+                {(r.disputedStartTime || r.disputedEndTime) && (
+                  <p className="mtech-muted" style={{ padding: "0.25rem 0" }}>
+                    {fmtTimeInZone(r.disputedStartTime, scheduleTimezone)} – {fmtTimeInZone(r.disputedEndTime, scheduleTimezone)} {scheduleTimezone}
+                  </p>
+                )}
                 <p className="mtech-muted" style={{ padding: "0.25rem 0" }}>{r.details}</p>
+                {r.attachments.length > 0 && (
+                  <p className="mtech-muted" style={{ padding: "0.25rem 0" }}>
+                    {r.attachments.map((a, i) => (
+                      <a key={a.url} href={a.url} target="_blank" rel="noopener noreferrer" style={{ color: "#93c5fd", marginRight: "0.5rem" }}>
+                        {a.name}{i < r.attachments.length - 1 ? "," : ""}
+                      </a>
+                    ))}
+                  </p>
+                )}
                 {r.reviewNote && (
                   <p className="mtech-muted" style={{ color: "#16a34a", fontWeight: 600, padding: "0.25rem 0" }}>Response: {r.reviewNote}</p>
                 )}
