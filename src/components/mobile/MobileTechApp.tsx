@@ -35,7 +35,7 @@ import {
 import { getMyProfileId, getMyFullProfile } from "@/lib/supabase/users";
 import { getTechPayrollBreakdown, type TechPayrollBreakdown } from "@/lib/supabase/techPayroll";
 import { getCompanyMapProvider, type MapProvider } from "@/lib/supabase/companySettings";
-import { loadGoogleMapsScript, getLeaflet, makeGeocoder, haversineMiles, routeGeoapify, metersToMiles, formatDuration, attachLeafletResizeFix, createBadgeDivIcon, OSM_TILE_URL, OSM_ATTRIBUTION, ON_SITE_CHECKIN_RADIUS_MILES, ON_SITE_CHECKIN_ACCURACY_SLACK_CAP_MILES, ON_SITE_CHECKIN_MANUAL_OVERRIDE_MAX_MILES } from "@/lib/mapEngine";
+import { loadGoogleMapsScript, getLeaflet, makeGeocoder, geocodeAddress, haversineMiles, routeGeoapify, metersToMiles, formatDuration, attachLeafletResizeFix, createBadgeDivIcon, OSM_TILE_URL, OSM_ATTRIBUTION, ON_SITE_CHECKIN_RADIUS_MILES, ON_SITE_CHECKIN_ACCURACY_SLACK_CAP_MILES, ON_SITE_CHECKIN_MANUAL_OVERRIDE_MAX_MILES } from "@/lib/mapEngine";
 import type * as Leaflet from "leaflet";
 import {
   getDmMessages,
@@ -3719,7 +3719,7 @@ function HomeOnSiteCard({
   role: string | null;
 }) {
   const [mapProvider, setMapProvider] = useState<MapProvider | null>(null);
-  const [ticketPos, setTicketPos] = useState<Record<string, { lat: number; lng: number } | null>>({});
+  const [ticketPos, setTicketPos] = useState<Record<string, { lat: number; lng: number; approximate: boolean } | null>>({});
   const [arrivedAt, setArrivedAt] = useState<Record<string, string>>({});
   const [doneAt, setDoneAt] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<string | null>(null);
@@ -3815,19 +3815,24 @@ function HomeOnSiteCard({
 
   const visibleTickets = tickets;
 
-  // Geocode each visible ticket's address once we know the map provider —
-  // same geocode() helper (with its own DB-backed cache) RouteMapView uses.
+  // Geocode each visible ticket's address once we know the map provider.
+  // geocodeAddress (vs the plain geocode() the route maps use) also returns
+  // an `approximate` flag — set when only a street / city / ZIP-centroid
+  // anchor could be found because the exact address wouldn't resolve. The
+  // check-in geofence must not hard-pass on an approximate anchor.
   useEffect(() => {
     if (!mapProvider) return;
     let cancelled = false;
-    const geocode = makeGeocoder(mapProvider);
     (async () => {
       for (const t of visibleTickets) {
         if (ticketPos[t.ticketNo] !== undefined) continue;
         const addr = fmtAddress(t) || t.city || t.location;
-        const pos = addr ? await geocode(addr) : null;
+        const hit = addr ? await geocodeAddress(mapProvider, addr) : null;
         if (cancelled) return;
-        setTicketPos((prev) => ({ ...prev, [t.ticketNo]: pos }));
+        setTicketPos((prev) => ({
+          ...prev,
+          [t.ticketNo]: hit ? { lat: hit.lat, lng: hit.lng, approximate: hit.approximate } : null,
+        }));
       }
     })();
     return () => { cancelled = true; };
@@ -3864,7 +3869,12 @@ function HomeOnSiteCard({
     const inRadius = notDone
       .filter((t) => !arrivedAt[t.ticketNo])
       .map(withD)
-      .filter((x) => x.d !== null && (devSimulate || x.d <= checkinRadiusMiles))
+      .filter(
+        (x) =>
+          x.d !== null &&
+          (devSimulate ||
+            (ticketPos[x.t.ticketNo]?.approximate !== true && x.d <= checkinRadiusMiles)),
+      )
       .map((x) => x.t);
 
     const active = [...inProgress, ...inRadius];
@@ -3897,15 +3907,20 @@ function HomeOnSiteCard({
   // who's confirmed location sharing (same prerequisites as the shared
   // watcher) and never in the dev simulate mode.
   // Comma-joined ticket numbers still awaiting check-in among the rows shown
-  // that actually have a geocoded point to measure against — non-empty means
-  // "the tech is arriving somewhere we can verify", so keep refining. Rows
-  // that only exist for the manual override (address wouldn't geocode) don't
-  // count: there's nothing for a sharper fix to help with.
+  // that have a precise point to measure against — non-empty means "the tech
+  // is arriving somewhere we can verify", so keep refining. Rows that only
+  // have an approximate anchor (or none) don't count: a sharper device fix
+  // can't make an approximate geofence pass, so those go straight to the
+  // manual override.
   const arrivingKey = useMemo(
     () =>
       focusTickets
         .filter(
-          (t) => !arrivedAt[t.ticketNo] && !doneAt[t.ticketNo] && ticketPos[t.ticketNo] != null,
+          (t) =>
+            !arrivedAt[t.ticketNo] &&
+            !doneAt[t.ticketNo] &&
+            ticketPos[t.ticketNo] != null &&
+            ticketPos[t.ticketNo]?.approximate !== true,
         )
         .map((t) => t.ticketNo)
         .sort()
@@ -3996,11 +4011,14 @@ function HomeOnSiteCard({
   // can be sanity-checked after the fact. Offered only within
   // ON_SITE_CHECKIN_MANUAL_OVERRIDE_MAX_MILES (or when there's no geocode to
   // measure against) — see the render below.
-  const handleManualCheckIn = (t: Ticket, measuredMiles: number | null) => {
+  const handleManualCheckIn = (t: Ticket, measuredMiles: number | null, approximate: boolean) => {
+    const anchor = approximate ? "the mapped area" : "the address";
     const measured =
       measuredMiles === null
         ? "address could not be located on the map"
-        : `GPS placed me about ${measuredMiles < 0.1 ? "0.1" : measuredMiles.toFixed(1)} mi from the address`;
+        : `GPS placed me about ${measuredMiles < 0.1 ? "0.1" : measuredMiles.toFixed(1)} mi from ${anchor}${
+            approximate ? " (address only approximately mapped)" : ""
+          }`;
     if (!window.confirm(
       `Check in to ${t.ticketNo} anyway?\n\nThe app couldn't confirm you're on site — ${measured}. Only do this if you're actually at the customer's address. It's logged on the ticket.`,
     )) return;
@@ -4046,22 +4064,30 @@ function HomeOnSiteCard({
         )}
         {focusTickets.map((t) => {
           const dist = distanceFor(t);
-          const geocoded = ticketPos[t.ticketNo] != null;
-          const inRadius = devSimulate || (dist !== null && dist <= checkinRadiusMiles);
+          const pos = ticketPos[t.ticketNo];
+          const geocoded = pos != null;
+          // An approximate anchor (street / city / ZIP centroid, or a fuzzy
+          // provider match) can be a mile+ from the real building, so it
+          // never hard-passes the geofence — those go through the manual
+          // override, same as an address that wouldn't geocode at all.
+          const approx = pos?.approximate === true;
+          const inRadius =
+            devSimulate || (dist !== null && !approx && dist <= checkinRadiusMiles);
           const hereAt = arrivedAt[t.ticketNo];
           const finishedAt = doneAt[t.ticketNo];
           const isBusy = busy === t.ticketNo;
           const pending = !inRadius && !hereAt && !finishedAt;
           // Refining the fix (real-GPS one-shot in flight) and still only
           // holding a coarse position — "1.2 mi away" from a cell-tower fix
-          // is noise, so say we're still locating rather than show it.
-          const locating = pending && refiningFix && !preciseFresh && geocoded;
+          // is noise, so say we're still locating rather than show it. Not
+          // for approximate anchors: a sharper fix can't help there.
+          const locating = pending && refiningFix && !preciseFresh && geocoded && !approx;
           // Manual "I'm here anyway" — offered while the automatic check is
-          // failing but the tech is plausibly on site: within the override
-          // cap, or there's no geocode at all to measure against.
+          // failing but the tech is plausibly on site: no usable geocode, an
+          // approximate-only anchor, or a precise point within the cap.
           const canManual =
             pending && !locating &&
-            (!geocoded || (dist !== null && dist <= ON_SITE_CHECKIN_MANUAL_OVERRIDE_MAX_MILES));
+            (!geocoded || approx || (dist !== null && dist <= ON_SITE_CHECKIN_MANUAL_OVERRIDE_MAX_MILES));
           return (
             <div key={t.ticketNo} className={`mtech-home-onsite-row${pending ? " mtech-home-onsite-row--pending" : ""}`}>
               <div className="mtech-home-onsite-info">
@@ -4080,6 +4106,10 @@ function HomeOnSiteCard({
                         ? "Getting precise location…"
                         : !geocoded
                         ? "Address not on the map"
+                        : approx
+                        ? dist === null
+                          ? "Approximate area only"
+                          : `~${dist.toFixed(1)} mi from the mapped area`
                         : dist! < 0.1
                         ? "Almost there…"
                         : `${dist!.toFixed(1)} mi away`}
@@ -4103,7 +4133,7 @@ function HomeOnSiteCard({
                         type="button"
                         className="mtech-home-onsite-btn mtech-home-onsite-btn--manual"
                         disabled={isBusy}
-                        onClick={() => handleManualCheckIn(t, dist)}
+                        onClick={() => handleManualCheckIn(t, dist, approx)}
                       >
                         I'm here anyway
                       </button>
