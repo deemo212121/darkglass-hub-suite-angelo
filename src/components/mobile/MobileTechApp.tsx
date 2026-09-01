@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth";
 import { setDesktopOverride } from "@/lib/device";
@@ -274,10 +274,14 @@ function buildDevTestRouteTickets(): Ticket[] {
   const atlanta = { location: "Atlanta", city: "Atlanta", state: "GA", schedule: "2026-08-31", created: "2026-08-31" };
   const columbus = { location: "Columbus", city: "Columbus", state: "GA", schedule: "2026-09-01", created: "2026-09-01" };
   return [
-    { ...base, ...atlanta, ticketNo: "DEVTEST-001", customer: "Dev Test Atlanta 1", address: "233 Peachtree St NE", zip: "30303", timeSlot: "8-12", status: "OP-Ready for Service" },
+    { ...base, ...atlanta, ticketNo: "DEVTEST-003", customer: "Dev Test Atlanta 1", address: "233 Peachtree St NE", zip: "30303", timeSlot: "8-12", status: "OP-Ready for Service" },
     { ...base, ...atlanta, ticketNo: "DEVTEST-002", customer: "Dev Test Atlanta 2", address: "191 Peachtree St NE", zip: "30303", timeSlot: "8-12", status: "OP-Ready for Service" },
-    { ...base, ...atlanta, ticketNo: "DEVTEST-003", customer: "Dev Test Atlanta 3", address: "75 Ted Turner Dr SW", zip: "30303", timeSlot: "1-5", status: "OP-Ready for Service" },
-    { ...base, ...atlanta, ticketNo: "DEVTEST-004", customer: "Dev Test Atlanta 4", address: "101 Marietta St NW", zip: "30303", timeSlot: "1-5", status: "OP-Ready for Service" },
+    { ...base, ...atlanta, ticketNo: "DEVTEST-001", customer: "Dev Test Atlanta 3", address: "75 Ted Turner Dr SW", zip: "30303", timeSlot: "1-5", status: "OP-Ready for Service" },
+    // Deliberately "CL-Ready to Complete" with no Work Start/Work Done ever
+    // recorded (setTicketOnsiteCheckIn no-ops for a fake ticket_no, so this
+    // one can never accidentally pick up a timestamp) — exercises the
+    // missingTimestampTicketNos orange flag in TicketsView.
+    { ...base, ...atlanta, ticketNo: "DEVTEST-004", customer: "Dev Test Atlanta 4", address: "101 Marietta St NW", zip: "30303", timeSlot: "1-5", status: "CL-Ready to Complete" },
     { ...base, ...columbus, ticketNo: "DEVTEST-005", customer: "Dev Test Columbus 1", address: "1200 Broadway", zip: "31901", timeSlot: "8-12", status: "OP-Ready for Service" },
     { ...base, ...columbus, ticketNo: "DEVTEST-006", customer: "Dev Test Columbus 2", address: "233 12th St", zip: "31901", timeSlot: "8-12", status: "OP-Ready for Service" },
     { ...base, ...columbus, ticketNo: "DEVTEST-007", customer: "Dev Test Columbus 3", address: "500 10th Ave", zip: "31901", timeSlot: "1-5", status: "OP-Ready for Service" },
@@ -352,51 +356,6 @@ export function MobileTechApp() {
     return () => { cancelled = true; };
   }, [uid]);
 
-  // Ticket Time Disputes (pending or approved), keyed by the ticket they're
-  // tied to — a small "Disputed Time" note on that ticket's row in the
-  // Tickets tab (To Do or Done, doesn't matter which — TicketsView renders
-  // both from the same code), so the adjusted/claimed check-in time stays
-  // visible on the ticket itself, not just buried in the dispute's own "My
-  // Disputes" list.
-  //
-  // A ticket can end up with more than one dispute over time. A still-
-  // PENDING one always wins the display (labeled "In Progress") — it's the
-  // one actually awaiting action right now. With no pending one, falls back
-  // to the MOST RECENTLY APPROVED one (labeled "Completed") — since each
-  // Approve action writes straight onto the ticket's own onsite_arrived_at/
-  // onsite_done_at (see AttendanceMonitoringPage.tsx's
-  // handleEmployeeRequestAction), that's always what's actually sitting on
-  // the real ticket record. Picked by reviewedAt, not createdAt/array
-  // order, since a dispute filed earlier could still get approved later
-  // than one filed after it.
-  const [disputedTimeByTicketNo, setDisputedTimeByTicketNo] = useState<Map<string, { time: string; status: "pending" | "approved" }>>(new Map());
-  useEffect(() => {
-    let cancelled = false;
-    getCompanyEmployeeRequests()
-      .then((all) => {
-        if (cancelled) return;
-        const pendingByTicketNo = new Map<string, EmployeeRequestRow>();
-        const approvedByTicketNo = new Map<string, EmployeeRequestRow>();
-        for (const r of all) {
-          if (r.requestType !== "ticket_time_dispute" || !r.ticketNo) continue;
-          if (r.status === "pending") {
-            const existing = pendingByTicketNo.get(r.ticketNo);
-            if (!existing || r.createdAt > existing.createdAt) pendingByTicketNo.set(r.ticketNo, r);
-          } else if (r.status === "approved") {
-            const existing = approvedByTicketNo.get(r.ticketNo);
-            if (!existing || (r.reviewedAt || "") > (existing.reviewedAt || "")) approvedByTicketNo.set(r.ticketNo, r);
-          }
-        }
-        const fmtEntry = (r: EmployeeRequestRow) => `${fmtTimeInZone(r.disputedStartTime, myScheduleTimezone)} – ${fmtTimeInZone(r.disputedEndTime, myScheduleTimezone)} ${myScheduleTimezone}`;
-        const map = new Map<string, { time: string; status: "pending" | "approved" }>();
-        for (const [ticketNo, r] of approvedByTicketNo) map.set(ticketNo, { time: fmtEntry(r), status: "approved" });
-        for (const [ticketNo, r] of pendingByTicketNo) map.set(ticketNo, { time: fmtEntry(r), status: "pending" });
-        setDisputedTimeByTicketNo(map);
-      })
-      .catch((e) => console.error("Failed to load disputed check-in times:", e));
-    return () => { cancelled = true; };
-  }, [myScheduleTimezone]);
-
   // Red badge on the Chat bottom-nav tab — total unread DMs across every
   // thread, kept live independent of whether ChatView is even mounted.
   // getUnreadCounts is the same batched query MessagesMenu.tsx (desktop)
@@ -468,6 +427,92 @@ export function MobileTechApp() {
     }
     return isSelfRole ? "home" : "roster";
   });
+
+  // Real on-site Work Start/Work Done times, lifted up here (rather than
+  // living only inside HomeOnSiteCard as before) so both the Home card AND
+  // the Tickets tab's own list read the exact same live state — tapping
+  // Work Start/Done on Home now shows up immediately on that ticket's card
+  // in the Tickets tab too, not just on Home. Local-only and blank on
+  // mount; seeded below from what's actually persisted (`prev` wins on
+  // merge so an optimistic tap made while a seed fetch is still in flight
+  // isn't clobbered) — same reasoning HomeOnSiteCard's seed used to have.
+  const [arrivedAt, setArrivedAt] = useState<Record<string, string>>({});
+  const [doneAt, setDoneAt] = useState<Record<string, string>>({});
+  const formatTimeAt = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const ticketNoKey = tickets.map((t) => t.ticketNo).join(",");
+  useEffect(() => {
+    if (!ticketNoKey) return;
+    let cancelled = false;
+    getOnsiteCheckins(ticketNoKey.split(","))
+      .then((checkins) => {
+        if (cancelled) return;
+        const arrived: Record<string, string> = {};
+        const done: Record<string, string> = {};
+        for (const [ticketNo, v] of Object.entries(checkins)) {
+          if (v.arrivedAt) arrived[ticketNo] = formatTimeAt(v.arrivedAt);
+          if (v.doneAt) done[ticketNo] = formatTimeAt(v.doneAt);
+        }
+        setArrivedAt((prev) => ({ ...arrived, ...prev }));
+        setDoneAt((prev) => ({ ...done, ...prev }));
+      })
+      .catch((e) => console.warn("Failed to load on-site check-in status", e));
+    return () => { cancelled = true; };
+    // Also re-fetched on `view` change, same reasoning as
+    // disputedTimeByTicketNo below — an Approve on desktop (which writes
+    // straight onto onsite_arrived_at/onsite_done_at) should be visible
+    // here without needing a full page reload.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ticketNoKey, view]);
+
+  // Ticket Time Disputes (pending or approved), keyed by the ticket they're
+  // tied to — a small "Disputed Time" note on that ticket's row in the
+  // Tickets tab (To Do or Done, doesn't matter which — TicketsView renders
+  // both from the same code), so the adjusted/claimed check-in time stays
+  // visible on the ticket itself, not just buried in the dispute's own "My
+  // Disputes" list.
+  //
+  // A ticket can end up with more than one dispute over time. A still-
+  // PENDING one always wins the display (labeled "In Progress") — it's the
+  // one actually awaiting action right now. With no pending one, falls back
+  // to the MOST RECENTLY APPROVED one (labeled "Completed") — since each
+  // Approve action writes straight onto the ticket's own onsite_arrived_at/
+  // onsite_done_at (see AttendanceMonitoringPage.tsx's
+  // handleEmployeeRequestAction), that's always what's actually sitting on
+  // the real ticket record. Picked by reviewedAt, not createdAt/array
+  // order, since a dispute filed earlier could still get approved later
+  // than one filed after it.
+  //
+  // Re-fetched on every `view` change (not just once on mount) — an Admin
+  // approving a dispute on desktop while this tab stays open needs a way to
+  // pick that up without a full page reload; switching to the Tickets tab
+  // (or back to it) is the natural moment to refresh.
+  const [disputedTimeByTicketNo, setDisputedTimeByTicketNo] = useState<Map<string, { time: string; status: "pending" | "approved" }>>(new Map());
+  useEffect(() => {
+    let cancelled = false;
+    getCompanyEmployeeRequests()
+      .then((all) => {
+        if (cancelled) return;
+        const pendingByTicketNo = new Map<string, EmployeeRequestRow>();
+        const approvedByTicketNo = new Map<string, EmployeeRequestRow>();
+        for (const r of all) {
+          if (r.requestType !== "ticket_time_dispute" || !r.ticketNo) continue;
+          if (r.status === "pending") {
+            const existing = pendingByTicketNo.get(r.ticketNo);
+            if (!existing || r.createdAt > existing.createdAt) pendingByTicketNo.set(r.ticketNo, r);
+          } else if (r.status === "approved") {
+            const existing = approvedByTicketNo.get(r.ticketNo);
+            if (!existing || (r.reviewedAt || "") > (existing.reviewedAt || "")) approvedByTicketNo.set(r.ticketNo, r);
+          }
+        }
+        const fmtEntry = (r: EmployeeRequestRow) => `${fmtTimeInZone(r.disputedStartTime, myScheduleTimezone)} – ${fmtTimeInZone(r.disputedEndTime, myScheduleTimezone)} ${myScheduleTimezone}`;
+        const map = new Map<string, { time: string; status: "pending" | "approved" }>();
+        for (const [ticketNo, r] of approvedByTicketNo) map.set(ticketNo, { time: fmtEntry(r), status: "approved" });
+        for (const [ticketNo, r] of pendingByTicketNo) map.set(ticketNo, { time: fmtEntry(r), status: "pending" });
+        setDisputedTimeByTicketNo(map);
+      })
+      .catch((e) => console.error("Failed to load disputed check-in times:", e));
+    return () => { cancelled = true; };
+  }, [myScheduleTimezone, view]);
 
   // ChatView clears unread server-side the moment a thread is opened, but
   // the 30s poll above wouldn't reflect that right away — re-poll as soon
@@ -593,6 +638,11 @@ export function MobileTechApp() {
   // arriving via that same "Dispute" button (see MobileOnHoldTicketsView).
   const [disputedTicketNos, setDisputedTicketNos] = useState<Set<string>>(new Set());
   const [payrollDisputePrefill, setPayrollDisputePrefill] = useState<{ ticketNo: string; payPeriod?: string; periodStart?: string; periodEnd?: string } | null>(null);
+  // Same idea for the Tickets tab's own "Dispute" button (shown on a ticket
+  // flagged missing its Work Start/Work Done timestamp) — jumps straight to
+  // Ticket Time Dispute with that ticket pre-selected instead of making the
+  // tech find it again in the dropdown.
+  const [ticketTimeDisputePrefillTicketNo, setTicketTimeDisputePrefillTicketNo] = useState<string | null>(null);
   useEffect(() => {
     if (!profileId) return;
     let cancelled = false;
@@ -665,6 +715,45 @@ export function MobileTechApp() {
       return Array.from(candidates).some((c) => tt.includes(c) || c.includes(tt));
     });
   }, [locScoped, scopeTech]);
+
+  // Ticket rows flagged "CL-Ready to Complete" but with neither Work Start
+  // nor Work Done ever actually stamped — a real gap between what the
+  // status claims and what the On-Site Check-In flow actually recorded
+  // (missed geofence, forgot to tap it, etc.), surfaced directly in the
+  // ticket list so it doesn't need a trip to Attendance Monitoring's
+  // Ticket Attendance tab to notice. Derived from the same arrivedAt/doneAt
+  // state above — no separate fetch.
+  //
+  // Scoped to myTickets (this technician's own tickets), NOT the raw
+  // company-wide `tickets` — otherwise the count/badge includes every OTHER
+  // technician's flagged tickets too, which this tech never actually sees a
+  // banner for in their own list, making the badge count not match what's
+  // visibly flagged.
+  //
+  // Also scoped to the last 14 days (by schedule date) — On-Site Check-In
+  // timestamps are a new feature, so plenty of real tickets marked
+  // CL-Ready to Complete long before it existed will never have one; without
+  // this window, the flag/badge counts that entire backlog instead of just
+  // the recent, actually-actionable misses.
+  const MISSING_TIMESTAMP_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
+  const missingTimestampTicketNos = useMemo(() => {
+    const missing = new Set<string>();
+    const cutoff = Date.now() - MISSING_TIMESTAMP_WINDOW_MS;
+    for (const t of myTickets) {
+      if (t.status !== "CL-Ready to Complete" || arrivedAt[t.ticketNo] || doneAt[t.ticketNo]) continue;
+      // An APPROVED Ticket Time Dispute means the check-in time now exists
+      // — it's just recorded via the dispute (and, for a real ticket, also
+      // written straight onto onsite_arrived_at/onsite_done_at by the
+      // approve action) rather than a normal Work Start/Work Done tap. A
+      // still-pending dispute doesn't clear the flag — nothing's actually
+      // been confirmed yet.
+      if (disputedTimeByTicketNo.get(t.ticketNo)?.status === "approved") continue;
+      const scheduled = t.schedule ? new Date(t.schedule).getTime() : NaN;
+      if (!isNaN(scheduled) && scheduled < cutoff) continue;
+      missing.add(t.ticketNo);
+    }
+    return missing;
+  }, [myTickets, arrivedAt, doneAt, disputedTimeByTicketNo]);
 
   // Home landing page's "Assigned Today" list — same tickets To Do would
   // show, further narrowed to today's schedule date.
@@ -916,6 +1005,10 @@ export function MobileTechApp() {
             onOpen={openTicket}
             techLabel={scopeTech || ""}
             disputedTimeByTicketNo={disputedTimeByTicketNo}
+            missingTimestampTicketNos={missingTimestampTicketNos}
+            arrivedAt={arrivedAt}
+            doneAt={doneAt}
+            onDispute={(ticketNo) => { setTicketTimeDisputePrefillTicketNo(ticketNo); setView("tickettimedispute"); }}
           />
         )}
 
@@ -1007,7 +1100,14 @@ export function MobileTechApp() {
         )}
 
         {view === "tickettimedispute" && (
-          <MobileTicketTimeDisputeView userName={headerName} profileId={profileId} companyId={companyId} technicianName={headerName} scheduleTimezone={myScheduleTimezone} />
+          <MobileTicketTimeDisputeView
+            userName={headerName}
+            profileId={profileId}
+            companyId={companyId}
+            technicianName={headerName}
+            scheduleTimezone={myScheduleTimezone}
+            prefillTicketNo={ticketTimeDisputePrefillTicketNo}
+          />
         )}
 
         {view === "correction" && (
@@ -1043,6 +1143,10 @@ export function MobileTechApp() {
             onOpenTimeOff={() => setView("timeoff")}
             onOpenTicketTimeDispute={() => setView("tickettimedispute")}
             onOpenCorrection={() => setView("correction")}
+            arrivedAt={arrivedAt}
+            setArrivedAt={setArrivedAt}
+            doneAt={doneAt}
+            setDoneAt={setDoneAt}
           />
         )}
 
@@ -1058,6 +1162,7 @@ export function MobileTechApp() {
       <BottomNav
         active={activeBottomTab}
         unreadDmCount={unreadDmCount}
+        missingTimestampCount={missingTimestampTicketNos.size}
         onSelect={(tab) => {
           if (tab === "tickets") setView(isSelfRole ? "tickets" : "roster");
           else if (tab === "route") setView("map");
@@ -1191,32 +1296,38 @@ const BOTTOM_TABS: Array<{ id: BottomTab; label: string; icon: React.ReactNode }
 function BottomNav({
   active,
   unreadDmCount,
+  missingTimestampCount,
   onSelect,
 }: {
   active: BottomTab;
   unreadDmCount: number;
+  /** Tickets flagged CL-Ready to Complete with no Work Start/Work Done recorded (this technician's own, last 14 days — same scope as the Done tab's badge). */
+  missingTimestampCount: number;
   onSelect: (tab: BottomTab) => void;
 }) {
   return (
     <nav className="mtech-bottom-nav" aria-label="Main navigation">
-      {BOTTOM_TABS.map((tab) => (
+      {BOTTOM_TABS.map((tab) => {
+        const badgeCount = tab.id === "chat" ? unreadDmCount : tab.id === "tickets" ? missingTimestampCount : 0;
+        return (
         <button
           key={tab.id}
           type="button"
           className={`mtech-bottom-tab${active === tab.id ? " mtech-bottom-tab-active" : ""}`}
           onClick={() => onSelect(tab.id)}
-          aria-label={tab.id === "chat" && unreadDmCount > 0 ? `${tab.label}, ${unreadDmCount} unread` : tab.label}
+          aria-label={badgeCount > 0 ? `${tab.label}, ${badgeCount} ${tab.id === "chat" ? "unread" : "missing timestamp"}` : tab.label}
           aria-current={active === tab.id ? "page" : undefined}
         >
           <span className="mtech-bottom-tab-icon">
             {tab.icon}
-            {tab.id === "chat" && unreadDmCount > 0 && (
-              <span className="mtech-bottom-tab-badge">{unreadDmCount > 9 ? "9+" : unreadDmCount}</span>
+            {badgeCount > 0 && (
+              <span className="mtech-bottom-tab-badge">{badgeCount > 9 ? "9+" : badgeCount}</span>
             )}
           </span>
           <span className="mtech-bottom-tab-label">{tab.label}</span>
         </button>
-      ))}
+        );
+      })}
     </nav>
   );
 }
@@ -1259,6 +1370,10 @@ function TicketsView({
   onOpen,
   techLabel,
   disputedTimeByTicketNo,
+  missingTimestampTicketNos,
+  arrivedAt,
+  doneAt,
+  onDispute,
 }: {
   loading: boolean;
   tickets: Ticket[];
@@ -1269,6 +1384,13 @@ function TicketsView({
   onOpen: (t: Ticket) => void;
   techLabel: string;
   disputedTimeByTicketNo: Map<string, { time: string; status: "pending" | "approved" }>;
+  /** Ticket numbers marked "CL-Ready to Complete" with neither Work Start nor Work Done ever stamped — flagged red/amber in the list below. */
+  missingTimestampTicketNos: Set<string>;
+  /** Same live On-Site Check-In state HomeOnSiteCard tracks — shown per-ticket below so a Work Start/Done tap on Home is visible here too. */
+  arrivedAt: Record<string, string>;
+  doneAt: Record<string, string>;
+  /** Opens Ticket Time Dispute pre-selected to this ticket — offered on a missing-timestamp card so filing one doesn't need a trip through the dropdown. */
+  onDispute: (ticketNo: string) => void;
 }) {
   const today = new Date().toLocaleDateString("en-US");
   return (
@@ -1281,8 +1403,31 @@ function TicketsView({
         <button className={tab === "todo" ? "active" : ""} onClick={() => setTab("todo")} type="button">
           To Do
         </button>
-        <button className={tab === "done" ? "active" : ""} onClick={() => setTab("done")} type="button">
+        <button className={tab === "done" ? "active" : ""} onClick={() => setTab("done")} type="button" style={{ position: "relative" }}>
           Done
+          {missingTimestampTicketNos.size > 0 && (
+            <span
+              style={{
+                position: "absolute",
+                top: "0.15rem",
+                right: "0.15rem",
+                minWidth: "1.1rem",
+                height: "1.1rem",
+                padding: "0 0.25rem",
+                borderRadius: "999px",
+                background: "#dc2626",
+                color: "#fff",
+                fontSize: "0.62rem",
+                fontWeight: 700,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                lineHeight: 1,
+              }}
+            >
+              {missingTimestampTicketNos.size > 9 ? "9+" : missingTimestampTicketNos.size}
+            </span>
+          )}
         </button>
         <button className={tab === "search" ? "active" : ""} onClick={() => setTab("search")} type="button">
           Search
@@ -1303,8 +1448,16 @@ function TicketsView({
         {loading && <div className="mtech-empty">Loading tickets…</div>}
         {!loading && tickets.length === 0 && <div className="mtech-empty">No tickets here.</div>}
         {!loading &&
-          tickets.map((t, i) => (
-            <button key={t.ticketNo} className="mtech-ticket-card" onClick={() => onOpen(t)} type="button">
+          tickets.map((t, i) => {
+            const isMissingTimestamp = missingTimestampTicketNos.has(t.ticketNo);
+            return (
+            <button
+              key={t.ticketNo}
+              className="mtech-ticket-card"
+              onClick={() => onOpen(t)}
+              type="button"
+              style={isMissingTimestamp ? { border: "1px solid rgba(234,88,12,0.55)", background: "rgba(234,88,12,0.08)" } : undefined}
+            >
               {/* Left accent strip with tone color */}
               <div className={`mtech-ticket-accent ${statusTone(t.status)}`} />
               {/* Card body */}
@@ -1329,6 +1482,63 @@ function TicketsView({
                   <div className="mtech-ticket-sched">
                     {t.schedule}
                     {t.model ? ` · ${t.model}` : ""}
+                  </div>
+                )}
+                {isMissingTimestamp && (
+                  <div
+                    style={{
+                      marginTop: "0.35rem",
+                      padding: "0.35rem 0.5rem",
+                      borderRadius: "6px",
+                      background: "rgba(234,88,12,0.14)",
+                      border: "1px solid rgba(234,88,12,0.4)",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: "0.5rem",
+                    }}
+                  >
+                    <span style={{ fontSize: "0.66rem", fontWeight: 700, color: "#ea580c", textTransform: "uppercase", letterSpacing: "0.03em" }}>
+                      ⚠ No Work Start/Work Done Recorded
+                    </span>
+                    {/* A <span> here, not a nested <button> — this whole card is already a <button>. */}
+                    <span
+                      role="button"
+                      tabIndex={0}
+                      onClick={(e) => { e.stopPropagation(); onDispute(t.ticketNo); }}
+                      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.stopPropagation(); e.preventDefault(); onDispute(t.ticketNo); } }}
+                      style={{
+                        fontSize: "0.66rem",
+                        fontWeight: 700,
+                        color: "#fff",
+                        background: "#ea580c",
+                        padding: "0.25rem 0.55rem",
+                        borderRadius: "999px",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      Dispute
+                    </span>
+                  </div>
+                )}
+                {(arrivedAt[t.ticketNo] || doneAt[t.ticketNo]) && (
+                  <div
+                    style={{
+                      marginTop: "0.35rem",
+                      padding: "0.35rem 0.5rem",
+                      borderRadius: "6px",
+                      background: "rgba(22,163,74,0.1)",
+                      border: "1px solid rgba(22,163,74,0.3)",
+                      display: "flex",
+                      gap: "0.75rem",
+                    }}
+                  >
+                    <span style={{ fontSize: "0.72rem", color: "#e2e8f0" }}>
+                      <span style={{ color: "#4ade80", fontWeight: 700 }}>Work Start:</span> {arrivedAt[t.ticketNo] || "—"}
+                    </span>
+                    <span style={{ fontSize: "0.72rem", color: "#e2e8f0" }}>
+                      <span style={{ color: "#4ade80", fontWeight: 700 }}>Work Done:</span> {doneAt[t.ticketNo] || "—"}
+                    </span>
                   </div>
                 )}
                 {disputedTimeByTicketNo.has(t.ticketNo) && (() => {
@@ -1364,7 +1574,8 @@ function TicketsView({
                 <ChevronRight className="h-4 w-4" />
               </span>
             </button>
-          ))}
+            );
+          })}
       </div>
     </>
   );
@@ -3946,15 +4157,25 @@ function HomeOnSiteCard({
   tickets,
   userName,
   role,
+  arrivedAt,
+  setArrivedAt,
+  doneAt,
+  setDoneAt,
 }: {
   tickets: Ticket[];
   userName: string;
   role: string | null;
+  /** Lifted to MobileTechApp (the top-level component) so the Tickets tab
+   * can show the same live Work Start/Work Done times this card records —
+   * see missingTimestampTicketNos and the ticket-card timestamp row in
+   * TicketsView. */
+  arrivedAt: Record<string, string>;
+  setArrivedAt: Dispatch<SetStateAction<Record<string, string>>>;
+  doneAt: Record<string, string>;
+  setDoneAt: Dispatch<SetStateAction<Record<string, string>>>;
 }) {
   const [mapProvider, setMapProvider] = useState<MapProvider | null>(null);
   const [ticketPos, setTicketPos] = useState<Record<string, { lat: number; lng: number; approximate: boolean } | null>>({});
-  const [arrivedAt, setArrivedAt] = useState<Record<string, string>>({});
-  const [doneAt, setDoneAt] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<string | null>(null);
 
   useEffect(() => {
@@ -3962,33 +4183,6 @@ function HomeOnSiteCard({
     getCompanyMapProvider().then((p) => { if (!cancelled) setMapProvider(p); });
     return () => { cancelled = true; };
   }, []);
-
-  // arrivedAt/doneAt above are local-only and start blank on every mount —
-  // without this, a tech who checks in, then navigates away (e.g. to the
-  // ticket's Visit Log to fill in Cause of Failure/Service Performed) and
-  // back to Home, would see this card forget the check-in (back to "I'm
-  // Here") even though onsite_arrived_at was already written. Seed from
-  // what's actually persisted; `prev` wins over the fetch on merge so an
-  // optimistic tap made while this was still in flight isn't clobbered.
-  const ticketNoKey = tickets.map((t) => t.ticketNo).join(",");
-  useEffect(() => {
-    if (!ticketNoKey) return;
-    let cancelled = false;
-    getOnsiteCheckins(ticketNoKey.split(","))
-      .then((checkins) => {
-        if (cancelled) return;
-        const arrived: Record<string, string> = {};
-        const done: Record<string, string> = {};
-        for (const [ticketNo, v] of Object.entries(checkins)) {
-          if (v.arrivedAt) arrived[ticketNo] = formatTimeAt(v.arrivedAt);
-          if (v.doneAt) done[ticketNo] = formatTimeAt(v.doneAt);
-        }
-        setArrivedAt((prev) => ({ ...arrived, ...prev }));
-        setDoneAt((prev) => ({ ...done, ...prev }));
-      })
-      .catch((e) => console.warn("Failed to load on-site check-in status", e));
-    return () => { cancelled = true; };
-  }, [ticketNoKey]);
 
   // Same live position TechnicianLocationTracker.tsx already watches (and
   // uploads to technician_location_pings) — no second navigator.geolocation
@@ -4082,11 +4276,16 @@ function HomeOnSiteCard({
   //   1. every ticket already checked in ("Work Start" tapped) but not yet
   //      marked done — pinned regardless of distance so stepping away
   //      mid-visit (a supply run) doesn't drop an open check-in;
-  //   2. plus every not-yet-started ticket currently inside the geofence.
+  //   2. every just-finished ticket ("Work Done" tapped) the tech is still
+  //      physically at — kept visible instead of instantly swapping to the
+  //      next ticket the moment Done is tapped, so packing up/writing notes
+  //      on-site doesn't feel like the app rushing them along. Drops off
+  //      once they've actually left the geofence, same radius as check-in;
+  //   3. plus every not-yet-started ticket currently inside the geofence.
   //      More than one when two customers' zones overlap or several
   //      appliances share one address — the tech picks the right ticket
   //      instead of the app snapping to whichever centroid reads nearest;
-  //   3. if that yields nothing, the single nearest ticket overall, shown
+  //   4. if that yields nothing, the single nearest ticket overall, shown
   //      dimmed with its distance for context on where they're headed.
   // Sorted nearest-first, capped so a stack of same-address tickets can't
   // bury the card. Empty only while distances are unresolved (map provider /
@@ -4099,6 +4298,11 @@ function HomeOnSiteCard({
       (a.d ?? Infinity) - (b.d ?? Infinity);
 
     const inProgress = notDone.filter((t) => arrivedAt[t.ticketNo]);
+    const justDoneStillHere = visibleTickets.filter((t) => {
+      if (!doneAt[t.ticketNo]) return false;
+      const d = distanceFor(t);
+      return devSimulate || (d !== null && d <= checkinRadiusMiles);
+    });
     const inRadius = notDone
       .filter((t) => !arrivedAt[t.ticketNo])
       .map(withD)
@@ -4110,7 +4314,7 @@ function HomeOnSiteCard({
       )
       .map((x) => x.t);
 
-    const active = [...inProgress, ...inRadius];
+    const active = [...inProgress, ...justDoneStillHere, ...inRadius];
     if (active.length > 0) {
       return active.map(withD).sort(byDist).slice(0, MAX_ONSITE_ROWS).map((x) => x.t);
     }
@@ -4189,7 +4393,6 @@ function HomeOnSiteCard({
   }, [arrivingKey, permissionDenied, devSimulate, clockedIn, consentConfirmed]);
 
   const formatNow = () => new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  const formatTimeAt = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
   const checkInCommentBody = (label: string, time: string, note?: string) =>
     `On-site check-in: ${label} at ${time}${note ? ` — ${note}` : ""}`;
@@ -4435,6 +4638,10 @@ function MobileHomeView({
   onOpenTimeOff,
   onOpenTicketTimeDispute,
   onOpenCorrection,
+  arrivedAt,
+  setArrivedAt,
+  doneAt,
+  setDoneAt,
 }: {
   userName: string;
   role: string | null;
@@ -4452,6 +4659,10 @@ function MobileHomeView({
   onOpenTimeOff: () => void;
   onOpenTicketTimeDispute: () => void;
   onOpenCorrection: () => void;
+  arrivedAt: Record<string, string>;
+  setArrivedAt: Dispatch<SetStateAction<Record<string, string>>>;
+  doneAt: Record<string, string>;
+  setDoneAt: Dispatch<SetStateAction<Record<string, string>>>;
 }) {
   const hourNow = new Date().getHours();
   const greeting =
@@ -4650,7 +4861,15 @@ function MobileHomeView({
         />
       </div>
 
-      <HomeOnSiteCard tickets={activeTickets} userName={userName} role={role} />
+      <HomeOnSiteCard
+        tickets={activeTickets}
+        userName={userName}
+        role={role}
+        arrivedAt={arrivedAt}
+        setArrivedAt={setArrivedAt}
+        doneAt={doneAt}
+        setDoneAt={setDoneAt}
+      />
 
       <div className="mtech-home-divider" />
 
@@ -5901,17 +6120,26 @@ function MobileTimeOffView({ userName, profileId }: { userName: string; profileI
 // Disputes & Inquiries tab, which still handles any already-pending legacy
 // attendance_dispute rows). Approving writes these times straight onto the
 // ticket's own onsite_arrived_at/onsite_done_at — not just a paper trail.
-function MobileTicketTimeDisputeView({ userName, profileId, companyId, technicianName, scheduleTimezone }: { userName: string; profileId: string | null; companyId: string | null; technicianName: string; scheduleTimezone: ScheduleTimezone }) {
+function MobileTicketTimeDisputeView({ userName, profileId, companyId, technicianName, scheduleTimezone, prefillTicketNo }: { userName: string; profileId: string | null; companyId: string | null; technicianName: string; scheduleTimezone: ScheduleTimezone; prefillTicketNo?: string | null }) {
   const [requests, setRequests] = useState<EmployeeRequestRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [todaysStops, setTodaysStops] = useState<TechnicianRouteStop[]>([]);
   const [ticketNo, setTicketNo] = useState("");
+  // Arriving from the Tickets tab's "Dispute" button (a missing-timestamp
+  // card) — pre-select that ticket instead of leaving the dropdown blank.
+  useEffect(() => {
+    if (prefillTicketNo) setTicketNo(prefillTicketNo);
+  }, [prefillTicketNo]);
   const [startTime, setStartTime] = useState("");
   const [endTime, setEndTime] = useState("");
   const [details, setDetails] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [msg, setMsg] = useState("");
+  // .mtech-save-msg is styled green by default (a "saved" confirmation) —
+  // this flips it red for a validation/submit failure instead of showing
+  // an error in success-green.
+  const [msgIsError, setMsgIsError] = useState(false);
 
   // This technician's own existing dispute status per ticket — shown right
   // in the dropdown, with the actual claimed time, so they can see at a
@@ -5923,6 +6151,10 @@ function MobileTicketTimeDisputeView({ userName, profileId, companyId, technicia
     const map = new Map<string, { status: "pending" | "approved"; time: string }>();
     for (const r of requests) {
       if (!r.ticketNo) continue;
+      // Same dev-test sandbox exclusion as disputedTimeByTicketNo above —
+      // a real dispute filed against a DEVTEST-* ticket shouldn't stick
+      // around forever and block re-testing.
+      if (import.meta.env.DEV && r.ticketNo.startsWith("DEVTEST-")) continue;
       const existing = map.get(r.ticketNo);
       if (existing?.status === "pending") continue; // a pending one already won this ticket
       if (r.status !== "pending" && r.status !== "approved") continue;
@@ -5962,8 +6194,9 @@ function MobileTicketTimeDisputeView({ userName, profileId, companyId, technicia
   // exist. To verify that part specifically, pick a real scheduled ticket.
   const devTestStops: TechnicianRouteStop[] = import.meta.env.DEV
     ? [
-        { ticketNo: "DEVTEST-001", status: "OP-Ready for Service", statusGroup: "open", timeSlot: "8-12", address: "233 Peachtree St NE, Atlanta, GA", arrivedAt: null, doneAt: null },
+        { ticketNo: "DEVTEST-003", status: "OP-Ready for Service", statusGroup: "open", timeSlot: "8-12", address: "233 Peachtree St NE, Atlanta, GA", arrivedAt: null, doneAt: null },
         { ticketNo: "DEVTEST-002", status: "OP-Ready for Service", statusGroup: "open", timeSlot: "8-12", address: "191 Peachtree St NE, Atlanta, GA", arrivedAt: null, doneAt: null },
+        { ticketNo: "DEVTEST-004", status: "CL-Ready to Complete", statusGroup: "completed", timeSlot: "1-5", address: "101 Marietta St NW, Atlanta, GA", arrivedAt: null, doneAt: null },
       ]
     : [];
   useEffect(() => {
@@ -5977,22 +6210,32 @@ function MobileTicketTimeDisputeView({ userName, profileId, companyId, technicia
 
   const submit = async () => {
     if (!profileId) {
+      setMsgIsError(true);
       setMsg("Your profile hasn't loaded yet — try again in a moment.");
       return;
     }
     if (!ticketNo) {
+      setMsgIsError(true);
       setMsg("Pick which ticket this is about.");
       return;
     }
     if (!startTime || !endTime) {
+      setMsgIsError(true);
       setMsg("Enter the time you actually started and finished.");
       return;
     }
     if (!details.trim()) {
+      setMsgIsError(true);
       setMsg("Describe what went wrong with the check-in.");
       return;
     }
+    if (files.length === 0) {
+      setMsgIsError(true);
+      setMsg("Attach proof (a photo or screenshot) before submitting.");
+      return;
+    }
     setSubmitting(true);
+    setMsgIsError(false);
     setMsg("");
     try {
       let attachments: { url: string; name: string }[] = [];
@@ -6042,6 +6285,7 @@ function MobileTicketTimeDisputeView({ userName, profileId, companyId, technicia
       setMsg("Dispute submitted.");
       await load();
     } catch (e) {
+      setMsgIsError(true);
       setMsg(e instanceof Error ? e.message : "Failed to submit dispute.");
     } finally {
       setSubmitting(false);
@@ -6111,7 +6355,7 @@ function MobileTicketTimeDisputeView({ userName, profileId, companyId, technicia
           placeholder="Describe the issue — e.g. GPS wouldn't register, signal was down, etc."
         />
 
-        <div className="mtech-section-title">Proof (optional)</div>
+        <div className="mtech-section-title">Proof</div>
         <input
           className="mtech-bill-input full"
           type="file"
@@ -6126,7 +6370,7 @@ function MobileTicketTimeDisputeView({ userName, profileId, companyId, technicia
         <button type="button" className="mtech-save-btn" onClick={submit} disabled={submitting}>
           {submitting ? "Submitting…" : "Submit Dispute"}
         </button>
-        {msg && <div className="mtech-save-msg">{msg}</div>}
+        {msg && <div className="mtech-save-msg" style={msgIsError ? { color: "#f87171" } : undefined}>{msg}</div>}
       </div>
 
       <div style={{ fontWeight: 800, fontSize: "0.95rem", color: "#f1f5f9", margin: "0.4rem 0 0.1rem" }}>My Disputes</div>

@@ -112,11 +112,12 @@ export function EmployeePayrollDetailModal({
   // input's raw string value while the user is editing it.
   const [rateEdits, setRateEdits] = useState<Record<string, string>>({});
   const [savingRates, setSavingRates] = useState(false);
-  // Manual time correction — one day's Check In/Meal In/Meal Out/Check Out
-  // edited inline in the Attendance table below.
-  const [editingDate, setEditingDate] = useState<string | null>(null);
-  const [editForm, setEditForm] = useState({ checkIn: "", mealStart: "", mealEnd: "", checkOut: "" });
-  const [savingEdit, setSavingEdit] = useState(false);
+  // Manual time correction — one centralized "Edit" toggle for the whole
+  // Attendance table: every row's Check In/Meal In/Meal Out/Check Out
+  // becomes editable at once, keyed by date, saved together on "Done".
+  const [attendanceEditing, setAttendanceEditing] = useState(false);
+  const [attendanceEdits, setAttendanceEdits] = useState<Record<string, { checkIn: string; mealStart: string; mealEnd: string; checkOut: string }>>({});
+  const [savingAttendanceEdits, setSavingAttendanceEdits] = useState(false);
 
   useEffect(() => {
     if (!uid) return;
@@ -251,41 +252,62 @@ export function EmployeePayrollDetailModal({
     }
   };
 
-  const startEditRow = (row: AttendanceRow) => {
-    setEditingDate(row.date);
-    setEditForm({ checkIn: row.clockIn, mealStart: row.mealStart, mealEnd: row.mealEnd, checkOut: row.clockOut });
+  const startEditingAttendance = () => {
+    const seed: typeof attendanceEdits = {};
+    for (const row of attendance) {
+      seed[row.date] = { checkIn: row.clockIn, mealStart: row.mealStart, mealEnd: row.mealEnd, checkOut: row.clockOut };
+    }
+    setAttendanceEdits(seed);
+    setAttendanceEditing(true);
   };
 
-  const cancelEditRow = () => setEditingDate(null);
+  const cancelEditingAttendance = () => {
+    setAttendanceEditing(false);
+    setAttendanceEdits({});
+  };
 
-  // Manual correction — upserts the day's timecard_entries row directly
-  // (same saveEntry the self-service Timecard page and proxy clock-in use),
-  // so a corrected day recalculates hours/status/pay exactly like a real
-  // punch would. Recorded under clocked_in_by (myProfileId) for the same
-  // "not a self-punch" audit trail proxy clock-ins already use.
-  const saveEditRow = async (date: string) => {
-    setSavingEdit(true);
+  const handleAttendanceEdit = (date: string, field: "checkIn" | "mealStart" | "mealEnd" | "checkOut", value: string) => {
+    setAttendanceEdits((prev) => ({ ...prev, [date]: { ...prev[date], [field]: value } }));
+  };
+
+  // Manual correction — upserts each changed day's timecard_entries row
+  // directly (same saveEntry the self-service Timecard page and proxy
+  // clock-in use), so a corrected day recalculates hours/status/pay exactly
+  // like a real punch would. Recorded under clocked_in_by (myProfileId) for
+  // the same "not a self-punch" audit trail proxy clock-ins already use.
+  // Only rows that actually changed get written, to avoid touching the
+  // rest of the range on a no-op "Done".
+  const saveAttendanceEdits = async () => {
+    setSavingAttendanceEdits(true);
     try {
-      await saveEntry(
-        profileId,
-        date,
-        { checkIn: editForm.checkIn, checkOut: editForm.checkOut, mealStart: editForm.mealStart, mealEnd: editForm.mealEnd, notes: "" },
-        myProfileId ? { clockedInBy: myProfileId } : undefined
-      );
-      setEditingDate(null);
+      const changed = attendance.filter((row) => {
+        const e = attendanceEdits[row.date];
+        return e && (e.checkIn !== row.clockIn || e.mealStart !== row.mealStart || e.mealEnd !== row.mealEnd || e.checkOut !== row.clockOut);
+      });
+      for (const row of changed) {
+        const e = attendanceEdits[row.date];
+        await saveEntry(
+          profileId,
+          row.date,
+          { checkIn: e.checkIn, checkOut: e.checkOut, mealStart: e.mealStart, mealEnd: e.mealEnd, notes: "" },
+          myProfileId ? { clockedInBy: myProfileId } : undefined
+        );
+      }
+      setAttendanceEditing(false);
+      setAttendanceEdits({});
       await load({ current: false });
       onRateChanged?.();
     } catch (err) {
-      alert(`Failed to save attendance edit: ${err instanceof Error ? err.message : "Unknown error"}`);
+      alert(`Failed to save attendance edits: ${err instanceof Error ? err.message : "Unknown error"}`);
     } finally {
-      setSavingEdit(false);
+      setSavingAttendanceEdits(false);
     }
   };
 
   return (
     <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={onClose}>
       <div
-        className="bg-slate-900 border border-white/15 rounded-xl w-full max-w-3xl max-h-[90vh] flex flex-col shadow-2xl"
+        className="bg-slate-900 border border-white/15 rounded-xl w-full max-w-5xl max-h-[90vh] flex flex-col shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-5 py-4 border-b border-white/10 bg-slate-950 rounded-t-xl">
@@ -472,26 +494,57 @@ export function EmployeePayrollDetailModal({
           <div className="bg-slate-800/30 border border-white/10 rounded-lg p-4">
             <div className="flex items-center justify-between mb-1">
               <h3 className="text-sm font-semibold text-white">Attendance — {rangeStart} to {rangeEnd}</h3>
-              {pendingRateChanges.length > 0 && (
-                <button
-                  type="button"
-                  onClick={handleSaveRateEdits}
-                  disabled={savingRates}
-                  className="text-xs px-2 py-1 rounded bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white flex items-center gap-1"
-                >
-                  {savingRates ? "Saving…" : `Save Rate Changes (${pendingRateChanges.length})`}
-                </button>
-              )}
+              <div className="flex items-center gap-2">
+                {pendingRateChanges.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleSaveRateEdits}
+                    disabled={savingRates}
+                    className="text-xs px-2 py-1 rounded bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white flex items-center gap-1"
+                  >
+                    {savingRates ? "Saving…" : `Save Rate Changes (${pendingRateChanges.length})`}
+                  </button>
+                )}
+                {attendanceEditing ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={saveAttendanceEdits}
+                      disabled={savingAttendanceEdits}
+                      className="text-xs px-2 py-1 rounded bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white flex items-center gap-1"
+                    >
+                      <Check className="h-3 w-3" /> {savingAttendanceEdits ? "Saving…" : "Done Editing"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={cancelEditingAttendance}
+                      disabled={savingAttendanceEdits}
+                      className="text-xs px-2 py-1 rounded bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-white"
+                    >
+                      Cancel
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={startEditingAttendance}
+                    disabled={loading || attendance.length === 0}
+                    className="text-xs px-2 py-1 rounded bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white flex items-center gap-1"
+                  >
+                    <Pencil className="h-3 w-3" /> Edit
+                  </button>
+                )}
+              </div>
             </div>
             <p className="text-[10px] text-slate-500 mb-2">
-              Editing a day's rate adds a new rate effective from that date forward (it also applies to later days, until the next rate change).
+              Editing a day's rate adds a new rate effective from that date forward (it also applies to later days, until the next rate change). Use Edit above for manual time corrections (Check In/Meal In/Meal Out/Check Out).
             </p>
             {loading ? (
               <p className="text-xs text-slate-400 text-center py-4">Loading…</p>
             ) : attendance.length === 0 ? (
               <p className="text-xs text-slate-500 text-center py-4">No attendance records for this period.</p>
             ) : (
-              <div className="max-h-64 overflow-auto">
+              <div className="max-h-96 overflow-auto">
                 <table className="w-full text-xs">
                   <thead className="sticky top-0 bg-slate-800">
                     <tr className="text-slate-400 border-b border-white/10">
@@ -503,24 +556,24 @@ export function EmployeePayrollDetailModal({
                       <th className="text-right py-1.5">Hours</th>
                       <th className="text-right py-1.5">Rate</th>
                       <th className="text-right py-1.5">Status</th>
-                      <th className="text-center py-1.5">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
                     {attendance.map((row) => {
                       const dayIsFixed = entryEffectiveOn(history, row.date)?.compensationType === "fixed";
-                      const isEditing = editingDate === row.date;
+                      const edit = attendanceEdits[row.date];
+                      const isRestDay = row.status === "day-off";
                       return (
-                      <tr key={row.date} className="border-b border-white/5">
+                      <tr key={row.date} className={`border-b border-white/5${isRestDay ? " opacity-40" : ""}`}>
                         <td className="py-1.5 text-slate-200 whitespace-nowrap">{row.date}</td>
-                        {isEditing ? (
+                        {attendanceEditing ? (
                           <>
                             <td className="py-1.5">
                               <input
                                 type="time"
                                 step="1"
-                                value={editForm.checkIn}
-                                onChange={(e) => setEditForm((f) => ({ ...f, checkIn: e.target.value }))}
+                                value={edit?.checkIn ?? row.clockIn}
+                                onChange={(e) => handleAttendanceEdit(row.date, "checkIn", e.target.value)}
                                 className="w-24 bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-slate-100 focus:outline-none focus:border-blue-500"
                               />
                             </td>
@@ -528,8 +581,8 @@ export function EmployeePayrollDetailModal({
                               <input
                                 type="time"
                                 step="1"
-                                value={editForm.mealStart}
-                                onChange={(e) => setEditForm((f) => ({ ...f, mealStart: e.target.value }))}
+                                value={edit?.mealStart ?? row.mealStart}
+                                onChange={(e) => handleAttendanceEdit(row.date, "mealStart", e.target.value)}
                                 className="w-24 bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-slate-100 focus:outline-none focus:border-blue-500"
                               />
                             </td>
@@ -537,8 +590,8 @@ export function EmployeePayrollDetailModal({
                               <input
                                 type="time"
                                 step="1"
-                                value={editForm.mealEnd}
-                                onChange={(e) => setEditForm((f) => ({ ...f, mealEnd: e.target.value }))}
+                                value={edit?.mealEnd ?? row.mealEnd}
+                                onChange={(e) => handleAttendanceEdit(row.date, "mealEnd", e.target.value)}
                                 className="w-24 bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-slate-100 focus:outline-none focus:border-blue-500"
                               />
                             </td>
@@ -546,8 +599,8 @@ export function EmployeePayrollDetailModal({
                               <input
                                 type="time"
                                 step="1"
-                                value={editForm.checkOut}
-                                onChange={(e) => setEditForm((f) => ({ ...f, checkOut: e.target.value }))}
+                                value={edit?.checkOut ?? row.clockOut}
+                                onChange={(e) => handleAttendanceEdit(row.date, "checkOut", e.target.value)}
                                 className="w-24 bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-slate-100 focus:outline-none focus:border-blue-500"
                               />
                             </td>
@@ -580,41 +633,6 @@ export function EmployeePayrollDetailModal({
                           )}
                         </td>
                         <td className={`py-1.5 text-right font-semibold ${STATUS_COLOR[row.status]}`}>{STATUS_LABEL[row.status]}</td>
-                        <td className="py-1.5">
-                          <div className="flex items-center justify-center gap-1">
-                            {isEditing ? (
-                              <>
-                                <button
-                                  type="button"
-                                  onClick={() => saveEditRow(row.date)}
-                                  disabled={savingEdit}
-                                  title="Done editing — save this day's times"
-                                  className="p-1 rounded bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white"
-                                >
-                                  <Check className="h-3 w-3" />
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={cancelEditRow}
-                                  disabled={savingEdit}
-                                  title="Cancel"
-                                  className="p-1 rounded bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-white"
-                                >
-                                  <X className="h-3 w-3" />
-                                </button>
-                              </>
-                            ) : (
-                              <button
-                                type="button"
-                                onClick={() => startEditRow(row)}
-                                title="Manually correct this day's times"
-                                className="p-1 rounded bg-slate-700 hover:bg-slate-600 text-white"
-                              >
-                                <Pencil className="h-3 w-3" />
-                              </button>
-                            )}
-                          </div>
-                        </td>
                       </tr>
                       );
                     })}

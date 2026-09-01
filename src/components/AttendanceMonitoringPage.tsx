@@ -1,4 +1,4 @@
-import { AlertCircle, AlertTriangle, Clock, Users, UserCheck, UserX, Bell, MessageSquare, ChevronLeft, Download, Calendar, FileText, CheckCircle, XCircle, Loader2, Paperclip, X } from "lucide-react";
+import { AlertCircle, AlertTriangle, Clock, Users, UserCheck, UserX, Bell, MessageSquare, ChevronLeft, ChevronRight, Download, Calendar, FileText, CheckCircle, XCircle, Loader2, Paperclip, X } from "lucide-react";
 import { useState, useEffect, useMemo, useCallback, Fragment } from "react";
 import { useSearch, useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
@@ -243,6 +243,28 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     ATTENDANCE_TABS,
     "daily-attendance",
   );
+  // Floating left quick-nav — same pattern as Accounting Dashboard's:
+  // collapsed (icon-only) by default so it stays out of the way of this
+  // page's already-wide tables, expands to show labels via the chevron.
+  // Persisted so it doesn't reset every visit.
+  const [sidebarExpanded, setSidebarExpanded] = useState(() => {
+    try {
+      return localStorage.getItem("ahs:attendance-monitoring-sidebar-expanded") === "1";
+    } catch {
+      return false;
+    }
+  });
+  const toggleSidebarExpanded = () => {
+    setSidebarExpanded((v) => {
+      const next = !v;
+      try {
+        localStorage.setItem("ahs:attendance-monitoring-sidebar-expanded", next ? "1" : "0");
+      } catch {
+        // best-effort
+      }
+      return next;
+    });
+  };
   // Deep-link support (e.g. the Accounting Dashboard's payroll-blocked
   // errors — missing clock-out or pending time correction — link straight
   // to whichever tab actually lets Finance fix it) — same ?tab= pattern
@@ -1283,8 +1305,76 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     });
   }, [correctionHistory, corrections, teamScopedIds]);
 
+  const tabConfig = [
+    { id: "corrections", label: "Corrections", Icon: FileText },
+    { id: "daily-attendance", label: "Daily Attendance", Icon: Clock },
+    ...(isFullRequestsAdmin ? [{ id: "disputes-inquiries", label: "Disputes & Inquiries", Icon: MessageSquare }] : []),
+    { id: "pto-management", label: "PTO Management", Icon: Calendar },
+    { id: "ticket-attendance", label: "Ticket Attendance", Icon: FileText },
+    ...(isFullRequestsAdmin ? [{ id: "ticket-time-disputes", label: "Ticket Time Disputes", Icon: Clock }] : []),
+    { id: "warnings", label: "Warnings", Icon: AlertTriangle },
+  ];
+
   return (
     <div className="min-h-screen flex flex-col">
+      {/* Floating quick-nav — duplicates the tab row below as a left-edge
+          panel so jumping between tabs doesn't need scrolling back up on a
+          long page. Collapsed to icons-only by default; the chevron
+          expands it to show labels too. */}
+      <nav className="fixed left-3 top-1/2 z-40 flex -translate-y-1/2 flex-col gap-1 rounded-2xl border border-white/10 bg-slate-900/85 p-1.5 shadow-lg backdrop-blur-md motion-safe:transition-[width] motion-safe:duration-200">
+        <button
+          type="button"
+          onClick={toggleSidebarExpanded}
+          title={sidebarExpanded ? "Collapse" : "Expand"}
+          className="flex items-center justify-center rounded-lg p-1.5 text-slate-400 hover:bg-white/10 hover:text-white transition-colors"
+        >
+          {sidebarExpanded ? <ChevronLeft className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+        </button>
+        <div className="h-px bg-white/10 mx-1" />
+        {tabConfig.map((tab) => {
+          const Icon = tab.Icon;
+          return (
+            <div key={tab.id}>
+              <button
+                type="button"
+                onClick={() => setActiveTab(tab.id as any)}
+                title={tab.label}
+                className={`flex w-full items-center gap-2 rounded-lg px-2 py-2 text-sm whitespace-nowrap transition-colors ${
+                  activeTab === tab.id
+                    ? "bg-blue-500/20 text-blue-300"
+                    : "text-slate-400 hover:bg-white/10 hover:text-slate-200"
+                }`}
+              >
+                <Icon className="h-4 w-4 shrink-0" />
+                {sidebarExpanded && <span>{tab.label}</span>}
+              </button>
+              {/* Only "Ticket Time Disputes" has real sub-tabs (Pending/
+                  History) — shown once it's the active tab, same
+                  ticketTimeDisputeSubTab state the tab's own content uses. */}
+              {tab.id === "ticket-time-disputes" && activeTab === "ticket-time-disputes" && (
+                <div className={`mt-0.5 flex flex-col gap-0.5 ${sidebarExpanded ? "pl-6" : "items-center"}`}>
+                  {(["pending", "history"] as const).map((sub) => (
+                    <button
+                      key={sub}
+                      type="button"
+                      onClick={() => setTicketTimeDisputeSubTab(sub)}
+                      title={sub === "pending" ? "Pending" : "History"}
+                      className={`rounded-md px-2 py-1 text-xs whitespace-nowrap transition-colors ${
+                        ticketTimeDisputeSubTab === sub
+                          ? "bg-blue-500/15 text-blue-300"
+                          : "text-slate-500 hover:bg-white/10 hover:text-slate-300"
+                      }`}
+                    >
+                      {sidebarExpanded ? (sub === "pending" ? "Pending" : "History") : (sub === "pending" ? "P" : "H")}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </nav>
+
       <main className="flex-1 max-w-[1400px] mx-auto w-full px-6 py-8">
         <div className="mb-8">
           <div className="flex items-center gap-3 mb-6">
@@ -1376,15 +1466,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
 
           {/* Tabs */}
           <div className="flex gap-2 border-b border-white/10 overflow-x-auto">
-            {[
-              { id: "daily-attendance", label: "Daily Attendance", Icon: Clock },
-              { id: "ticket-attendance", label: "Ticket Attendance", Icon: FileText },
-              { id: "pto-management", label: "PTO Management", Icon: Calendar },
-              { id: "corrections", label: "Corrections", Icon: FileText },
-              ...(isFullRequestsAdmin ? [{ id: "disputes-inquiries", label: "Disputes & Inquiries", Icon: MessageSquare }] : []),
-              ...(isFullRequestsAdmin ? [{ id: "ticket-time-disputes", label: "Ticket Time Disputes", Icon: Clock }] : []),
-              { id: "warnings", label: "Warnings", Icon: AlertTriangle },
-            ].map(tab => {
+            {tabConfig.map(tab => {
               const Icon = tab.Icon;
               return (
                 <button key={tab.id} onClick={() => setActiveTab(tab.id as any)} className={`px-4 py-2 border-b-2 transition whitespace-nowrap flex items-center gap-2 ${activeTab === tab.id ? "border-blue-500 text-blue-300" : "border-transparent text-slate-400 hover:text-slate-300"}`}>

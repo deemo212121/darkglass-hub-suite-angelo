@@ -549,6 +549,30 @@ function rateLabel(row: EmployeePayrollRow): string {
   return `$${row.hourlyRateUSD.toFixed(2)}`;
 }
 
+// Keeps one row per unique email (case-insensitive) out of raw `profiles`
+// rows — see the call site in fetchData for why this exists. Prefers
+// whichever duplicate is currently active when they disagree; otherwise
+// keeps whichever was returned first. A row with no email at all (blank)
+// is never merged with anything, since that can't be confirmed as the same
+// person.
+function dedupeProfilesByEmail(rows: any[]): any[] {
+  const byKey = new Map<string, any>();
+  const order: string[] = [];
+  let blankIdx = 0;
+  for (const row of rows) {
+    const email = (row.email || "").trim().toLowerCase();
+    const key = email || `__blank_${blankIdx++}`;
+    const existing = byKey.get(key);
+    if (!existing) {
+      byKey.set(key, row);
+      order.push(key);
+    } else if (!existing.is_active && row.is_active) {
+      byKey.set(key, row);
+    }
+  }
+  return order.map((key) => byKey.get(key));
+}
+
 function parseGmailRegionParam(value: string | null): GmailRegion {
   return value === "PH" ? "PH" : "US";
 }
@@ -557,13 +581,13 @@ type AccountingDashboardTabId = "overview" | "payroll" | "techPayroll" | "mileag
 // Shared by the top tab row and the floating left quick-nav so the two
 // never drift out of sync.
 const ACCOUNTING_DASHBOARD_TABS: { id: AccountingDashboardTabId; label: string; Icon: typeof PieChartIcon }[] = [
-  { id: "overview", label: "Overview", Icon: PieChartIcon },
-  { id: "payroll", label: "Office Payroll", Icon: DollarSign },
-  { id: "techPayroll", label: "Tech Payroll", Icon: Wrench },
-  { id: "mileage", label: "Mileage", Icon: MapPin },
-  { id: "payrollDisputes", label: "Payroll Disputes", Icon: AlertCircle },
   { id: "flashTech", label: "Flash Tech", Icon: RouteIcon },
+  { id: "mileage", label: "Mileage", Icon: MapPin },
+  { id: "payroll", label: "Office Payroll", Icon: DollarSign },
+  { id: "overview", label: "Overview", Icon: PieChartIcon },
+  { id: "payrollDisputes", label: "Payroll Disputes", Icon: AlertCircle },
   { id: "reports", label: "Reports", Icon: FileText },
+  { id: "techPayroll", label: "Tech Payroll", Icon: Wrench },
 ];
 
 // ─── Component ───────────────────────────────────────────────────────────────
@@ -969,7 +993,16 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
             all.push(...(data ?? []));
             if (!data || data.length < PAGE_SIZE) break;
           }
-          return { data: all, error: null };
+          // Two `profiles` rows can end up with the same real-world person
+          // (no unique constraint on email/display_name, and neither
+          // "Add User" flow checks for an existing match before inserting —
+          // most likely from the old Firestore migration overlapping with a
+          // manual re-add). Left alone, every payroll list/total below
+          // silently counts that person's hours and pay TWICE. Collapse to
+          // one row per email here — this is a display-time stopgap, not a
+          // fix for the underlying duplicate row, which should still be
+          // found and deactivated in User Management.
+          return { data: dedupeProfilesByEmail(all), error: null };
         })(),
         (async () => {
           const all: any[] = [];
@@ -1126,22 +1159,24 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     return () => { cancelled = true; };
   }, [uid]);
 
-  // Reload attendance whenever Finance changes the generation period —
-  // everything below (hoursMap, payrollRows, the Payroll tab's totals, and
-  // the Overview tab's "Current Period (Live)" preview) derives from this.
-  useEffect(() => {
+  // Reload attendance for the current generation period — everything below
+  // (hoursMap, payrollRows, the Payroll tab's totals, and the Overview
+  // tab's "Current Period (Live)" preview) derives from this. Pulled out
+  // of the effect below so a manual time correction saved in
+  // EmployeePayrollDetailModal (which edits timecard_entries directly, not
+  // through fetchData's own queries) can also trigger it on demand instead
+  // of only reacting to genStart/genEnd changing.
+  const reloadTimecardEntries = useCallback(() => {
     if (!genStart || !genEnd || genStart > genEnd) {
       setTimecardEntries([]);
       return;
     }
-    let cancelled = false;
     supabase
       .from("timecard_entries")
       .select("profile_id,employee_id,work_date,check_in,check_out,meal_start,meal_end,status")
       .gte("work_date", genStart)
       .lte("work_date", genEnd)
       .then(({ data, error }) => {
-        if (cancelled) return;
         if (error) {
           console.error("Failed to load attendance for selected payroll period:", error.message);
           setTimecardEntries([]);
@@ -1149,8 +1184,11 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
           setTimecardEntries((data ?? []) as TimecardEntry[]);
         }
       });
-    return () => { cancelled = true; };
   }, [genStart, genEnd]);
+
+  useEffect(() => {
+    reloadTimecardEntries();
+  }, [reloadTimecardEntries]);
 
   // Tech Payroll's completed-repair counts for the same picked period.
   useEffect(() => {
@@ -1534,7 +1572,14 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     // overtime×1.5 formula as officeGrossPay below) — a tech with no rate
     // ever set has hourlyRate 0, so this stays $0 and existing behavior is
     // unchanged until Finance actually enters one.
-    const techHourlyPay = includeTech ? hours.regular * hourlyRate + hours.overtime * hourlyRate * 1.5 : 0;
+    // Gated to isTechRole(emp) (a PRIMARY technician), not just includeTech
+    // — someone who merely holds Technician as a SECONDARY role has no
+    // separate field-tech punch system; `hours` here is their normal office
+    // attendance, the exact same hours officeGrossPay below already pays
+    // them for. Without this gate they'd be paid twice for one shift the
+    // moment Finance sets any hourly rate for them, surfacing as an
+    // identical-looking "duplicate" row alongside their real office row.
+    const techHourlyPay = includeTech && isTechRole(emp) ? hours.regular * hourlyRate + hours.overtime * hourlyRate * 1.5 : 0;
     // Gated on includeTech, not on `tech` — a technician with zero
     // completed tickets this period (so techGrossByProfile has no entry
     // for them) can still have real pay owed via manual LDT/Mileage/
@@ -2300,8 +2345,8 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   const isTechView = effectiveCurrency === "USD" && payrollView === "tech";
   // Office/PH table only (the Tech table below is a fully separate layout
   // with its own hardcoded colSpans): checkbox, Name, Department, Role,
-  // Gross Pay, Payslip (6) + Branch (US only) + Reg/Duty/OT Hours + Rate (4).
-  const payrollColCount = 6 + (effectiveCurrency === "USD" ? 1 : 0) + 4;
+  // Gross Pay, Payslip (6) + Branch (US only) + Reg/Duty/OT/Meal + Rate (5).
+  const payrollColCount = 6 + (effectiveCurrency === "USD" ? 1 : 0) + 5;
 
   // Excel-autofilter convention (matches TicketColumnFilter/TicketList): a
   // column's own option list reflects every OTHER active filter, so opening
@@ -3430,6 +3475,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                       </th>
                       <th className="px-4 py-3 text-center text-xs text-slate-400 uppercase" title="Expected hours based on the employee's set schedule, for comparison against Reg. Hours">Duty Hours</th>
                       <th className="px-4 py-3 text-center text-xs text-slate-400 uppercase">OT Hours</th>
+                      <th className="px-4 py-3 text-center text-xs text-slate-400 uppercase" title="Scheduled meal break, same as Duty Hours — a fixed per-shift amount, not a period total">Meal Time</th>
                       <th className="px-4 py-3 text-center text-xs text-slate-400 uppercase">
                         <span className="inline-flex items-center justify-center">
                           Rate
@@ -3506,6 +3552,9 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                               </td>
                               <td className="px-4 py-3 text-center text-orange-300">
                                 {row.overtimeHours.toFixed(1)}
+                              </td>
+                              <td className="px-4 py-3 text-center text-slate-400">
+                                {row.employee.mealMinutes ? `${row.employee.mealMinutes} min` : "—"}
                               </td>
                               <td className="px-4 py-3 text-center text-slate-300" title={row.compensationType === "fixed" && row.annualSalary ? `$${perCutoffSalary(row.annualSalary).toFixed(2)}/cutoff` : undefined}>
                                 {rateLabel(row)}
@@ -4396,7 +4445,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
           initialStart={genStart || undefined}
           initialEnd={genEnd || undefined}
           onClose={() => setDetailEmployee(null)}
-          onRateChanged={fetchData}
+          onRateChanged={() => { fetchData(); reloadTimecardEntries(); }}
         />
       )}
 
