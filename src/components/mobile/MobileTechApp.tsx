@@ -16,6 +16,7 @@ import {
   ExternalLink,
   Home,
   X,
+  WifiOff,
 } from "lucide-react";
 // Mobile shell is an isolated surface — no navigation to desktop routes,
 // no device-override toggle. The desktop UI is available only from an
@@ -61,7 +62,8 @@ import { LOCATIONS } from "@/lib/locations";
 import { timezoneForBranch, nowInTimezone } from "@/lib/attendanceGrace";
 import { getServerNow, zonedDateKey, zonedTimeString, zonedWallClockToUtcIso, TIME_ZONES, type ScheduleTimezone } from "@/lib/serverTime";
 import { getTicketComments, addTicketComment, type TicketComment } from "@/lib/supabase/comments";
-import { enqueueOnsiteCheckin, enqueueVisitSave } from "@/lib/offlineQueue";
+import { enqueueOnsiteCheckin, enqueueVisitSave, enqueueTicketComment, enqueueTimecardPunch, cacheTicketGeocode, getCachedTicketGeocode, cacheRead, getCachedRead } from "@/lib/offlineQueue";
+import { useIsOnline, useManualOfflineMode, setManualOfflineMode, isManualOfflineModeActive } from "@/lib/isOnline";
 import { TicketPhotos } from "@/components/TicketPhotos";
 import { MessageBody } from "@/components/MessageBody";
 import { LocationSharingBadge } from "@/components/LocationSharingBadge";
@@ -454,8 +456,23 @@ export function MobileTechApp() {
         }
         setArrivedAt((prev) => ({ ...arrived, ...prev }));
         setDoneAt((prev) => ({ ...done, ...prev }));
+        if (profileId) void cacheRead(`checkins:${profileId}`, checkins);
       })
-      .catch((e) => console.warn("Failed to load on-site check-in status", e));
+      .catch(async (e) => {
+        console.warn("Failed to load on-site check-in status, trying local cache", e);
+        const cached = profileId
+          ? await getCachedRead<Record<string, { arrivedAt: string | null; doneAt: string | null }>>(`checkins:${profileId}`)
+          : undefined;
+        if (cancelled || !cached) return;
+        const arrived: Record<string, string> = {};
+        const done: Record<string, string> = {};
+        for (const [ticketNo, v] of Object.entries(cached)) {
+          if (v.arrivedAt) arrived[ticketNo] = formatTimeAt(v.arrivedAt);
+          if (v.doneAt) done[ticketNo] = formatTimeAt(v.doneAt);
+        }
+        setArrivedAt((prev) => ({ ...arrived, ...prev }));
+        setDoneAt((prev) => ({ ...done, ...prev }));
+      });
     return () => { cancelled = true; };
     // Also re-fetched on `view` change, same reasoning as
     // disputedTimeByTicketNo below — an Approve on desktop (which writes
@@ -589,8 +606,15 @@ export function MobileTechApp() {
         }
         if (!cancelled) setTickets(import.meta.env.DEV ? [...rows, ...buildDevTestRouteTickets()] : rows);
       } catch (e) {
-        console.error("Mobile: failed to load tickets", e);
-        if (!cancelled) setTickets([]);
+        console.error("Mobile: failed to load tickets, trying local cache", e);
+        // Offline (or the tab/app was closed and just reopened with no
+        // connection yet) — fall back to this technician's own last-cached
+        // ticket list (see the effect below that writes it) instead of
+        // showing a blank screen. Already scoped to just their own tickets,
+        // so setting `tickets` straight to it is enough — the downstream
+        // locScoped/myTickets filters are then effectively no-ops on it.
+        const cached = profileId ? await getCachedRead<Ticket[]>(`tickets:${profileId}`) : undefined;
+        if (!cancelled) setTickets(cached ?? []);
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -715,6 +739,17 @@ export function MobileTechApp() {
       return Array.from(candidates).some((c) => tt.includes(c) || c.includes(tt));
     });
   }, [locScoped, scopeTech]);
+
+  // Offline read cache — this technician's own ticket list, re-cached every
+  // time it changes so a later app close/reopen with no connection yet
+  // still has something real to show (see the fetch effect above's catch
+  // block, which reads this back). Scoped per profileId, not company-wide,
+  // to keep it small and so a shared/borrowed device never shows a
+  // different technician's cached tickets.
+  useEffect(() => {
+    if (!profileId || myTickets.length === 0) return;
+    void cacheRead(`tickets:${profileId}`, myTickets);
+  }, [myTickets, profileId]);
 
   // Ticket rows flagged "CL-Ready to Complete" but with neither Work Start
   // nor Work Done ever actually stamped — a real gap between what the
@@ -947,17 +982,19 @@ export function MobileTechApp() {
   // PTO and Time Correction, which can't be told apart from the URL alone)
   // are a deliberate no-op rather than breaking out to an un-adapted
   // desktop screen. Specific tab checks (pto-management/corrections/
-  // ticket-time-disputes) must come before the generic "attendance-monitoring"
-  // substring since all three of those links contain it. Old notifications
-  // linking to the now-removed "disputes-inquiries" attendance-dispute view
-  // fall through as a no-op — nothing left to open.
+  // tickettimedisputes) must come before the generic "attendance-monitoring"/
+  // "accounting-dashboard" substrings since ticket-time-disputes' own link
+  // (now under Accounting Dashboard, alongside Payroll Disputes) contains
+  // "accounting-dashboard" too. Old notifications linking to the now-removed
+  // "disputes-inquiries" attendance-dispute view fall through as a no-op —
+  // nothing left to open.
   const handleNotificationLink = (linkTo: string) => {
     const lower = linkTo.toLowerCase();
     if (lower.includes("it-tickets") || lower.includes("itsupport")) { setView("itsupport"); return; }
-    if (lower.includes("payrolldisputes") || lower.includes("accounting-dashboard")) { setPayrollDisputePrefill(null); setView("payrolldispute"); return; }
     if (lower.includes("pto-management")) { setView("timeoff"); return; }
     if (lower.includes("corrections")) { setView("correction"); return; }
-    if (lower.includes("ticket-time-disputes")) { setView("tickettimedispute"); return; }
+    if (lower.includes("tickettimedisputes") || lower.includes("ticket-time-disputes")) { setView("tickettimedispute"); return; }
+    if (lower.includes("payrolldisputes") || lower.includes("accounting-dashboard")) { setPayrollDisputePrefill(null); setView("payrolldispute"); return; }
     if (lower.includes("ticket-list") || lower.includes("/ticket/")) { setView(isSelfRole ? "tickets" : "roster"); return; }
   };
 
@@ -1173,6 +1210,12 @@ export function MobileTechApp() {
   );
 }
 
+// Height of the "you're offline" banner AppHeaderMobile shows above its own
+// (position: fixed) header — kept as one constant since both the banner
+// itself and the --mt-header-h shift that makes room for it need the exact
+// same value.
+const OFFLINE_BANNER_H = "28px";
+
 // ── New top header — logo left, profile bubble right ─────────────────────
 function AppHeaderMobile({
   logoSrc,
@@ -1200,12 +1243,84 @@ function AppHeaderMobile({
   onLogout: () => void;
 }) {
   const [menu, setMenu] = useState(false);
+  const isOnline = useIsOnline();
+  const manualOfflineMode = useManualOfflineMode();
+
+  // This is a browser tab, not an installed native app — a reload (pull-to-
+  // refresh, browser chrome's refresh button, or the OS silently discarding
+  // and reloading a backgrounded tab) throws away every bit of in-memory
+  // state the moment it happens. The service worker + local caches mean the
+  // app itself comes back, but anything not yet queued/saved at that exact
+  // instant is gone. Warn before it happens while offline, when there's
+  // nowhere for an in-flight action to actually go.
+  //
+  // Browsers deliberately ignore any custom message passed here (a security
+  // standard since ~2016, to stop phishing pages faking "are you sure"
+  // text) — event.preventDefault()/returnValue only controls WHETHER the
+  // browser's own generic confirmation shows, not its wording. So this is
+  // paired with a plain-language, always-visible banner (below) that says
+  // the real thing, since the native dialog itself can't.
+  useEffect(() => {
+    if (!isOnline) {
+      const handler = (e: BeforeUnloadEvent) => {
+        e.preventDefault();
+        e.returnValue = "";
+      };
+      window.addEventListener("beforeunload", handler);
+      return () => window.removeEventListener("beforeunload", handler);
+    }
+  }, [isOnline]);
+
+  // The offline banner below needs its own space above the app's normal
+  // fixed header — but --mt-header-h drives every "sits below the header"
+  // position in this file (the content area, floating badges, etc. — see
+  // styles.css), not just this header's own height. Growing that one
+  // variable while the banner shows, instead of hardcoding an offset here,
+  // makes everything downstream shift correctly with zero other CSS
+  // changes. Shrinks back the moment connectivity returns.
+  useEffect(() => {
+    document.documentElement.style.setProperty("--mt-header-h", isOnline ? "52px" : `calc(52px + ${OFFLINE_BANNER_H})`);
+    return () => { document.documentElement.style.removeProperty("--mt-header-h"); };
+  }, [isOnline]);
+
   const initials = userName
     .split(/[\s.@]/)[0]
     .slice(0, 2)
     .toUpperCase() || "U";
   return (
-    <header className="mtech-app-header">
+    <>
+    {!isOnline && (
+      // Fixed, not static — the header below is position:fixed and ignores
+      // normal document flow entirely, so a plain in-flow banner placed
+      // "before" it in the DOM would just render underneath it, invisible.
+      // This sits above the header instead; the --mt-header-h effect above
+      // is what shifts the header (and everything that positions itself
+      // relative to it) down to make room, so nothing overlaps.
+      <div
+        style={{
+          position: "fixed",
+          top: 0,
+          left: 0,
+          right: 0,
+          zIndex: 41,
+          height: OFFLINE_BANNER_H,
+          boxSizing: "border-box",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          background: "#292008",
+          borderBottom: "1px solid rgba(251,191,36,0.35)",
+          color: "#fbbf24",
+          fontSize: "0.7rem",
+          fontWeight: 600,
+          textAlign: "center",
+          padding: "0 0.75rem",
+        }}
+      >
+        ⚠ You're offline — don't reload or pull-to-refresh, it can lose anything not yet saved
+      </div>
+    )}
+    <header className="mtech-app-header" style={{ top: isOnline ? 0 : OFFLINE_BANNER_H }}>
       {/* Left: optional back arrow for sub-views like detail/map */}
       <div className="mtech-app-header-left">
         {showBack ? (
@@ -1222,8 +1337,33 @@ function AppHeaderMobile({
         )}
       </div>
 
-      {/* Center: app name wordmark */}
-      <div className="mtech-app-header-title">Admin Hub</div>
+      {/* Center: app name wordmark, plus a small offline pill when real
+          connectivity (useIsOnline, not just the queue badge) is down —
+          distinct from OfflineQueueBadge below, which reflects queue
+          backlog, not connectivity. */}
+      <div className="mtech-app-header-title" style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "0.4rem" }}>
+        Admin Hub
+        {!isOnline && (
+          <span
+            title="No connection — actions will be saved and sent once you're back online"
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "0.2rem",
+              fontSize: "0.62rem",
+              fontWeight: 700,
+              color: "#fbbf24",
+              background: "rgba(251,191,36,0.14)",
+              border: "1px solid rgba(251,191,36,0.4)",
+              borderRadius: "999px",
+              padding: "0.1rem 0.45rem",
+            }}
+          >
+            <WifiOff className="h-3 w-3" />
+            Offline
+          </span>
+        )}
+      </div>
 
       {/* Right: notification bell + profile bubble → logout dropdown */}
       <div className="mtech-app-header-right">
@@ -1267,6 +1407,16 @@ function AppHeaderMobile({
               >
                 🖥️ Desktop Site
               </button>
+              {import.meta.env.DEV && (
+                <button
+                  type="button"
+                  className="mtech-app-profile-timecard"
+                  title="Testing only — genuinely blocks every write (comments, timecard, on-site check-in, visit saves) instead of attempting the real network call, so the offline queue path can be verified on a real connection"
+                  onClick={() => setManualOfflineMode(!manualOfflineMode)}
+                >
+                  {manualOfflineMode ? "✅ Offline Mode (Simulated — On)" : "📵 Offline Mode (Testing)"}
+                </button>
+              )}
               <button
                 type="button"
                 className="mtech-app-profile-logout"
@@ -1279,6 +1429,7 @@ function AppHeaderMobile({
         )}
       </div>
     </header>
+    </>
   );
 }
 
@@ -2736,12 +2887,14 @@ function RepairTab({ ticket, authorName }: { ticket: Ticket; authorName: string 
     );
     cancelEdit();
     try {
+      if (isManualOfflineModeActive()) throw new Error("Offline mode simulator is on — skipping real write");
       await updateTicketVisit(visitId, payload);
     } catch (err) {
       console.warn("Visit edit write failed, queuing for later sync", err);
-      await enqueueVisitSave({ visitId, visit: payload }).catch((qErr) =>
-        console.error("Failed to queue visit edit", qErr),
-      );
+      await enqueueVisitSave({ visitId, visit: payload }).catch((qErr) => {
+        console.error("Failed to queue visit edit", qErr);
+        alert("Couldn't save this visit edit or save it for later — please try again.");
+      });
     } finally {
       setSavingVisit(false);
     }
@@ -2992,8 +3145,11 @@ function CommentThread({
       setLoading(true);
       const rows = await getTicketComments(ticket.ticketNo);
       setComments(rows);
+      void cacheRead(`comments:${ticket.ticketNo}`, rows);
     } catch (e) {
-      console.error("load comments failed", e);
+      console.warn("load comments failed, trying local cache", e);
+      const cached = await getCachedRead<TicketComment[]>(`comments:${ticket.ticketNo}`);
+      if (cached) setComments(cached);
     } finally {
       setLoading(false);
     }
@@ -3016,11 +3172,24 @@ function CommentThread({
     if (!body) return;
     setSending(true);
     try {
+      if (isManualOfflineModeActive()) throw new Error("Offline mode simulator is on — skipping real write");
       const added = await addTicketComment(ticket.ticketNo, body, authorName, authorRole);
       setComments((prev) => [...prev, added]);
       setText("");
     } catch (e: any) {
-      console.error("send comment failed", e);
+      console.warn("send comment failed, queuing for later sync", e);
+      // Optimistic local echo — a synthetic id, since there's no real row
+      // yet. Gets superseded by the real one next time comments reload;
+      // never patched in place, same simplification the on-site check-in
+      // queue already accepts.
+      setComments((prev) => [...prev, { id: `offline-${Date.now()}`, body, authorName, authorRole, isInternal: true, createdAt: new Date().toISOString() }]);
+      setText("");
+      try {
+        await enqueueTicketComment({ ticketNo: ticket.ticketNo, body, authorName, authorRole });
+      } catch (qErr) {
+        console.error("Failed to queue comment", qErr);
+        alert("Couldn't send or save this comment for later — please try again.");
+      }
     } finally {
       setSending(false);
     }
@@ -4247,12 +4416,24 @@ function HomeOnSiteCard({
   // an `approximate` flag — set when only a street / city / ZIP-centroid
   // anchor could be found because the exact address wouldn't resolve. The
   // check-in geofence must not hard-pass on an approximate anchor.
+  //
+  // Checks the local offline geocode cache first (works with zero network —
+  // see offlineQueue.ts's header comment on why this exists), only calling
+  // the real geocodeAddress() when nothing's cached yet. A fresh resolve is
+  // written back to that same cache so it's available offline for the rest
+  // of the day even if this component remounts.
   useEffect(() => {
     if (!mapProvider) return;
     let cancelled = false;
     (async () => {
       for (const t of visibleTickets) {
         if (ticketPos[t.ticketNo] !== undefined) continue;
+        const cached = await getCachedTicketGeocode(t.ticketNo).catch(() => undefined);
+        if (cancelled) return;
+        if (cached) {
+          setTicketPos((prev) => ({ ...prev, [t.ticketNo]: { lat: cached.lat, lng: cached.lng, approximate: cached.approximate } }));
+          continue;
+        }
         const addr = fmtAddress(t) || t.city || t.location;
         const hit = addr ? await geocodeAddress(mapProvider, addr) : null;
         if (cancelled) return;
@@ -4260,6 +4441,7 @@ function HomeOnSiteCard({
           ...prev,
           [t.ticketNo]: hit ? { lat: hit.lat, lng: hit.lng, approximate: hit.approximate } : null,
         }));
+        if (hit) void cacheTicketGeocode(t.ticketNo, hit.lat, hit.lng, hit.approximate).catch((err) => console.warn("Failed to cache ticket geocode", err));
       }
     })();
     return () => { cancelled = true; };
@@ -4420,6 +4602,7 @@ function HomeOnSiteCard({
     });
     setBusy(t.ticketNo);
     try {
+      if (isManualOfflineModeActive()) throw new Error("Offline mode simulator is on — skipping real write");
       await Promise.all([
         addTicketComment(t.ticketNo, body, userName, role || ""),
         setTicketOnsiteCheckIn(t.ticketNo, "arrived", at),
@@ -4433,7 +4616,10 @@ function HomeOnSiteCard({
         commentBody: body,
         authorName: userName,
         authorRole: role || "",
-      }).catch((qErr) => console.error("on-site check-in: failed to queue arrival", qErr));
+      }).catch((qErr) => {
+        console.error("on-site check-in: failed to queue arrival", qErr);
+        alert("Couldn't record this check-in or save it for later — please try again.");
+      });
     } finally {
       setBusy(null);
     }
@@ -4467,6 +4653,7 @@ function HomeOnSiteCard({
     setDoneAt((prev) => ({ ...prev, [t.ticketNo]: time }));
     setBusy(t.ticketNo);
     try {
+      if (isManualOfflineModeActive()) throw new Error("Offline mode simulator is on — skipping real write");
       await Promise.all([
         addTicketComment(t.ticketNo, checkInCommentBody("marked done", time), userName, role || ""),
         setTicketOnsiteCheckIn(t.ticketNo, "done", at),
@@ -4480,15 +4667,47 @@ function HomeOnSiteCard({
         commentBody: checkInCommentBody("marked done", time),
         authorName: userName,
         authorRole: role || "",
-      }).catch((qErr) => console.error("on-site check-in: failed to queue done", qErr));
+      }).catch((qErr) => {
+        console.error("on-site check-in: failed to queue done", qErr);
+        alert("Couldn't record this as done or save it for later — please try again.");
+      });
     } finally {
       setBusy(null);
     }
   };
 
+  // Offline-readiness progress — how many of today's tickets have a cached
+  // geocode yet (see the effect above, and cacheTicketGeocode/offlineQueue.ts).
+  // Once every visible ticket has one, the On-Site Check-In radius gate can
+  // run with zero network for all of them, not just whichever happened to
+  // resolve first — this is the one piece of "getting ready for offline"
+  // that genuinely progresses incrementally, so it's what the bar tracks.
+  const geocodeReadyCount = visibleTickets.filter((t) => ticketPos[t.ticketNo] !== undefined).length;
+  const geocodeTotal = visibleTickets.length;
+  const offlineReady = geocodeTotal > 0 && geocodeReadyCount === geocodeTotal;
+
   return (
     <div className="mtech-home-onsite">
       <div className="mtech-home-onsite-title">On-Site Check-In</div>
+      {geocodeTotal > 0 && (
+        <div style={{ margin: "0.1rem 0 0.6rem" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: "0.68rem", color: offlineReady ? "#4ade80" : "#94a3b8", marginBottom: "0.25rem" }}>
+            <span>{offlineReady ? "✓ Ready for offline" : "Preparing for offline…"}</span>
+            <span>{geocodeReadyCount}/{geocodeTotal}</span>
+          </div>
+          <div style={{ height: "4px", borderRadius: "999px", background: "rgba(148,163,184,0.2)", overflow: "hidden" }}>
+            <div
+              style={{
+                height: "100%",
+                width: `${(geocodeReadyCount / geocodeTotal) * 100}%`,
+                background: offlineReady ? "#4ade80" : "#3b82f6",
+                borderRadius: "999px",
+                transition: "width 0.3s ease",
+              }}
+            />
+          </div>
+        </div>
+      )}
       {focusTickets.length === 0 ? (
         <div className="mtech-home-onsite-empty">
           {visibleTickets.length === 0 ? "No active tickets to check into right now." : "Locating nearby tickets…"}
@@ -4720,10 +4939,16 @@ function MobileHomeView({
     setEntry(next);
     setSaving(true);
     try {
+      if (isManualOfflineModeActive()) throw new Error("Offline mode simulator is on — skipping real write");
       await saveTimecardEntry(scheduleProfileId, todayKey, next);
     } catch (e) {
-      console.error("MobileHomeView: save failed", e);
-      alert(`Failed to save: ${e instanceof Error ? e.message : "Unknown error"}`);
+      console.warn("MobileHomeView: save failed, queuing for later sync", e);
+      try {
+        await enqueueTimecardPunch({ scheduleProfileId, dateKey: todayKey, entry: next });
+      } catch (qErr) {
+        console.error("MobileHomeView: failed to queue punch", qErr);
+        alert(`Failed to save: ${e instanceof Error ? e.message : "Unknown error"}`);
+      }
     } finally {
       setSaving(false);
     }
@@ -6273,7 +6498,7 @@ function MobileTicketTimeDisputeView({ userName, profileId, companyId, technicia
       });
       void notifyRequestReviewers({
         body: `⚠️ New Ticket Time Dispute from ${userName} (Ticket ${ticketNo}).`,
-        linkTo: "/m/dashboard/attendance-monitoring?tab=ticket-time-disputes",
+        linkTo: "/m/dashboard/accounting-dashboard?tab=ticketTimeDisputes",
         senderId: profileId,
         senderName: userName,
       });

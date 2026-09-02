@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, Fragment } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef, Fragment } from "react";
 import { Link, useSearch, useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
 import { usePersistedTab } from "@/lib/usePersistedTab";
@@ -30,6 +30,7 @@ import {
   Route as RouteIcon,
   Bell,
   Users,
+  Paperclip,
 } from "lucide-react";
 import {
   BarChart,
@@ -84,6 +85,9 @@ import { MileageDayRouteModal } from "@/components/MileageDayRouteModal";
 import { FlashTechCalendarPage } from "@/components/FlashTechCalendarPage";
 import { ExpenseTrackingPage } from "@/components/ExpenseTrackingPage";
 import { getCompanyEmployeeRequests, updateEmployeeRequestStatus, linkPayrollDisputeCustomPayItem, type EmployeeRequestRow } from "@/lib/supabase/employeeRequests";
+import { setTicketOnsiteCheckIn } from "@/lib/supabase/tickets";
+import { getCompanyTicketAttendance, slotSortKey, type TicketAttendanceRow } from "@/lib/supabase/technicianWhereabouts";
+import { TIME_ZONES, type ScheduleTimezone } from "@/lib/serverTime";
 import { perCutoffSalary } from "@/lib/supabase/salary";
 import { useAuth } from "@/lib/auth";
 import { getGmailConnectionStatus, disconnectGmail, sendPayslipEmail, type GmailConnectionStatus, type GmailRegion } from "@/lib/supabase/gmailConnection";
@@ -160,6 +164,8 @@ export interface SupabaseEmployee {
   requiredCheckOut?: string;
   workingHours?: number | null;
   mealMinutes?: number | null;
+  /** profiles.schedule_timezone — used to show a Ticket Time Dispute's claimed time in the disputing technician's own zone (same convention Time Clock/Mobile use), not the admin's. */
+  scheduleTimezone?: ScheduleTimezone;
   /** Never draws a salary through this system (e.g. the owner) — skipped by
    *  generatePayroll(), the missing-clock-out gate, and the nation/department
    *  export, but stays visible in the Payroll tab table so it can be
@@ -577,7 +583,7 @@ function parseGmailRegionParam(value: string | null): GmailRegion {
   return value === "PH" ? "PH" : "US";
 }
 
-type AccountingDashboardTabId = "overview" | "payroll" | "techPayroll" | "mileage" | "payrollDisputes" | "reports" | "flashTech";
+type AccountingDashboardTabId = "overview" | "payroll" | "techPayroll" | "mileage" | "payrollDisputes" | "reports" | "flashTech" | "ticketAttendance" | "ticketTimeDisputes";
 // Shared by the top tab row and the floating left quick-nav so the two
 // never drift out of sync.
 const ACCOUNTING_DASHBOARD_TABS: { id: AccountingDashboardTabId; label: string; Icon: typeof PieChartIcon }[] = [
@@ -588,13 +594,15 @@ const ACCOUNTING_DASHBOARD_TABS: { id: AccountingDashboardTabId; label: string; 
   { id: "payrollDisputes", label: "Payroll Disputes", Icon: AlertCircle },
   { id: "reports", label: "Reports", Icon: FileText },
   { id: "techPayroll", label: "Tech Payroll", Icon: Wrench },
+  { id: "ticketAttendance", label: "Ticket Attendance", Icon: FileText },
+  { id: "ticketTimeDisputes", label: "Ticket Time Disputes", Icon: Clock },
 ];
 
 // ─── Component ───────────────────────────────────────────────────────────────
 export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
   const navigate = useNavigate();
   const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
-  const { uid, role, displayName, email, companyId } = useAuth();
+  const { uid, role, extraRoles, displayName, email, companyId } = useAuth();
   const canConnectGmail = String(role || "").toUpperCase() === "ADMIN" || String(role || "").toUpperCase() === "SUPERADMIN";
   const [myProfileId, setMyProfileId] = useState<string | null>(null);
   // Floating left quick-nav — collapsed (icon-only) by default so it stays
@@ -621,15 +629,18 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   };
   const [activeTab, setActiveTab] = usePersistedTab<AccountingDashboardTabId>(
     "ahs:accounting-dashboard-active-tab",
-    ["overview", "payroll", "techPayroll", "mileage", "payrollDisputes", "flashTech", "reports"],
+    ["overview", "payroll", "techPayroll", "mileage", "payrollDisputes", "flashTech", "reports", "ticketAttendance", "ticketTimeDisputes"],
     "overview",
   );
   // Deep link from a bell-icon notification straight into the Payroll
   // Disputes tab (a new dispute was submitted) — same ?tab= convention
-  // Employee Self-Service/PartInventory.tsx already use.
+  // Employee Self-Service/PartInventory.tsx already use. Ticket Time
+  // Disputes' own notification (MobileTechApp.tsx's notifyRequestReviewers)
+  // uses the same convention.
   const routeSearch = (useSearch({ strict: false }) as { tab?: string }) ?? {};
   useEffect(() => {
     if (routeSearch.tab === "payrollDisputes") setActiveTab("payrollDisputes");
+    else if (routeSearch.tab === "ticketTimeDisputes") setActiveTab("ticketTimeDisputes");
   }, [routeSearch.tab]);
 
   // Payroll Disputes tab — employee_requests rows with request_type
@@ -727,6 +738,129 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
 
   // Raw data
   const [employees, setEmployees] = useState<SupabaseEmployee[]>([]);
+
+  // Only ADMIN/SUPERADMIN/HR/FINANCE review Ticket Time Disputes — same gate
+  // Attendance Monitoring's Disputes & Inquiries tab uses (moved here
+  // alongside Ticket Time Disputes/Ticket Attendance).
+  const isFullRequestsAdmin = [role, ...extraRoles].some((r) => ["ADMIN", "SUPERADMIN", "HR", "FINANCE"].includes(normalizeRole(r)));
+  const employeeById = new Map(employees.map((e) => [e.id, e]));
+  const profileName = (id: string | null) => {
+    if (!id) return "—";
+    const e = employeeById.get(id);
+    return e?.display_name || e?.email || "—";
+  };
+  // The disputing technician's own scheduled timezone (CST/EST) — a Ticket
+  // Time Dispute's claimed time is stored in real UTC but should always be
+  // shown labeled in the technician's own zone, not the reviewer's (same
+  // convention Time Clock/mobile use).
+  const profileTimezone = (id: string | null): ScheduleTimezone => {
+    if (!id) return "CST";
+    return employeeById.get(id)?.scheduleTimezone || "CST";
+  };
+  const fmtTimeInZone = (iso: string | null, tz: ScheduleTimezone): string =>
+    iso ? new Intl.DateTimeFormat("en-US", { timeZone: TIME_ZONES[tz].timeZone, hour: "numeric", minute: "2-digit" }).format(new Date(iso)) : "?";
+  const [previewAttachmentUrl, setPreviewAttachmentUrl] = useState<string | null>(null);
+  const isPdfAttachment = (url: string) => /\.pdf(\?|$)/i.test(url);
+
+  // Ticket Time Disputes tab — employee_requests rows with request_type
+  // "ticket_time_dispute", submitted from the mobile tech app when an
+  // on-site check-in failed to register. Moved here (from Attendance
+  // Monitoring) alongside Ticket Attendance since both are about the same
+  // underlying On-Site Check-In data. Loaded lazily, only once this tab is
+  // opened.
+  const [ticketTimeDisputes, setTicketTimeDisputes] = useState<EmployeeRequestRow[]>([]);
+  const [ticketTimeDisputesLoaded, setTicketTimeDisputesLoaded] = useState(false);
+  const [ticketTimeDisputeNote, setTicketTimeDisputeNote] = useState<Record<string, string>>({});
+  useEffect(() => {
+    if (activeTab !== "ticketTimeDisputes" || ticketTimeDisputesLoaded) return;
+    getCompanyEmployeeRequests()
+      .then((rows) => { setTicketTimeDisputes(rows.filter((r) => r.requestType === "ticket_time_dispute")); setTicketTimeDisputesLoaded(true); })
+      .catch((err) => console.error("Failed to load ticket time disputes:", err));
+  }, [activeTab, ticketTimeDisputesLoaded]);
+  const [ticketTimeDisputeSubTab, setTicketTimeDisputeSubTab] = useState<"pending" | "history">("pending");
+  const pendingTicketTimeDisputes = ticketTimeDisputes.filter((r) => r.status === "pending");
+  const historyTicketTimeDisputes = ticketTimeDisputes
+    .filter((r) => r.status === "approved" || r.status === "rejected")
+    .sort((a, b) => (b.reviewedAt || b.createdAt).localeCompare(a.reviewedAt || a.createdAt));
+  // Approving doesn't just change the request's own status — it writes the
+  // technician's claimed start/end time straight onto the disputed ticket's
+  // own onsite_arrived_at/onsite_done_at columns, the same columns the
+  // mobile Work Start/Work Done buttons write. "arrived" must go first:
+  // setTicketOnsiteCheckIn's own "arrived" path clears onsite_done_at as a
+  // side effect, so doing "done" first would just get wiped out.
+  const handleTicketTimeDisputeAction = async (id: string, status: "approved" | "rejected") => {
+    try {
+      if (status === "approved") {
+        const dispute = ticketTimeDisputes.find((d) => d.id === id);
+        if (dispute?.ticketNo && dispute.disputedStartTime && dispute.disputedEndTime) {
+          await setTicketOnsiteCheckIn(dispute.ticketNo, "arrived", dispute.disputedStartTime);
+          await setTicketOnsiteCheckIn(dispute.ticketNo, "done", dispute.disputedEndTime);
+        }
+      }
+      await updateEmployeeRequestStatus(id, status, myProfileId, ticketTimeDisputeNote[id]);
+      const rows = await getCompanyEmployeeRequests();
+      setTicketTimeDisputes(rows.filter((r) => r.requestType === "ticket_time_dispute"));
+      setTicketTimeDisputeNote((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+    } catch (err) {
+      alert(`Failed to update request: ${err instanceof Error ? err.message : "Unknown error"}`);
+    }
+  };
+
+  // Ticket Attendance tab — did each technician actually check into their
+  // scheduled tickets (On-Site Check-In), separate from clock In/Out
+  // attendance. Loaded lazily, only once this tab is opened.
+  const todayISOForTicketAttendance = new Date().toISOString().slice(0, 10);
+  const [ticketAttendanceDateFrom, setTicketAttendanceDateFrom] = useState(todayISOForTicketAttendance);
+  const [ticketAttendanceDateTo, setTicketAttendanceDateTo] = useState(todayISOForTicketAttendance);
+  const [ticketAttendanceSearch, setTicketAttendanceSearch] = useState("");
+  const [ticketAttendanceRows, setTicketAttendanceRows] = useState<TicketAttendanceRow[]>([]);
+  const [ticketAttendanceLoading, setTicketAttendanceLoading] = useState(false);
+  const [ticketAttendanceLoaded, setTicketAttendanceLoaded] = useState(false);
+  const [expandedTicketAttendanceTech, setExpandedTicketAttendanceTech] = useState<string | null>(null);
+  const loadTicketAttendance = () => {
+    setTicketAttendanceLoading(true);
+    getCompanyTicketAttendance(ticketAttendanceDateFrom, ticketAttendanceDateTo)
+      .then((rows) => { setTicketAttendanceRows(rows); setTicketAttendanceLoaded(true); })
+      .catch((err) => console.error("Failed to load ticket attendance:", err))
+      .finally(() => setTicketAttendanceLoading(false));
+  };
+  useEffect(() => {
+    if (activeTab !== "ticketAttendance" || ticketAttendanceLoaded) return;
+    loadTicketAttendance();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, ticketAttendanceLoaded]);
+  // A ticket already covered by an approved Ticket Time Dispute doesn't
+  // count as missing on the Ticket Attendance tab.
+  const disputedTicketNosApproved = useMemo(
+    () => new Set(ticketTimeDisputes.filter((r) => r.status === "approved" && r.ticketNo).map((r) => r.ticketNo!)),
+    [ticketTimeDisputes]
+  );
+  const ticketAttendanceByTechnician = useMemo(() => {
+    const q = ticketAttendanceSearch.trim().toLowerCase();
+    const byTech = new Map<string, TicketAttendanceRow[]>();
+    for (const row of ticketAttendanceRows) {
+      if (q && !row.technician.toLowerCase().includes(q)) continue;
+      if (!byTech.has(row.technician)) byTech.set(row.technician, []);
+      byTech.get(row.technician)!.push(row);
+    }
+    return Array.from(byTech.entries())
+      .map(([technician, rows]) => {
+        const scheduled = rows.length;
+        const checkedIn = rows.filter((r) => r.arrivedAt).length;
+        const missingCheckIn = rows.filter((r) => !r.arrivedAt && r.statusGroup !== "cancelled" && !disputedTicketNosApproved.has(r.ticketNo)).length;
+        const missingCheckOut = rows.filter((r) => r.arrivedAt && !r.doneAt && r.statusGroup !== "cancelled" && !disputedTicketNosApproved.has(r.ticketNo)).length;
+        // Date then route order (slotSortKey) — same helper Technician
+        // Whereabouts' numbered Stops list sorts by, so a technician's stop
+        // #3 there lines up with row #3 here.
+        return { technician, rows: rows.sort((a, b) => a.scheduleDate.localeCompare(b.scheduleDate) || slotSortKey(a.timeSlot).localeCompare(slotSortKey(b.timeSlot))), scheduled, checkedIn, missingCheckIn, missingCheckOut };
+      })
+      .sort((a, b) => a.technician.localeCompare(b.technician));
+  }, [ticketAttendanceRows, ticketAttendanceSearch, disputedTicketNosApproved]);
+
   const [salaryEntries, setSalaryEntries] = useState<SalaryEntry[]>([]);
   const [timecardEntries, setTimecardEntries] = useState<TimecardEntry[]>([]);
   const [payrollRuns, setPayrollRuns] = useState<PayrollRun[]>([]);
@@ -986,7 +1120,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
           for (let from = 0; ; from += PAGE_SIZE) {
             const { data, error } = await supabase
               .from("profiles")
-              .select("id,display_name,username,role,extra_roles,assigned_branch,email,off_days,required_check_in,required_check_out,payroll_excluded,is_active")
+              .select("id,display_name,username,role,extra_roles,assigned_branch,email,off_days,required_check_in,required_check_out,payroll_excluded,is_active,schedule_timezone")
               .neq("role", "SUPERSUPERADMIN")
               .range(from, from + PAGE_SIZE - 1);
             if (error) return { data: null, error };
@@ -1100,6 +1234,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         requiredCheckOut: p.required_check_out ?? undefined,
         workingHours: workScheduleById.get(p.id)?.working_hours ?? null,
         mealMinutes: workScheduleById.get(p.id)?.meal_minutes ?? null,
+        scheduleTimezone: (p.schedule_timezone as ScheduleTimezone | null) ?? "CST",
         payrollExcluded: p.payroll_excluded ?? false,
         isActive: p.is_active ?? true,
         };
@@ -4185,6 +4320,346 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
           </div>
         )}
 
+        {/* ── Ticket Attendance Tab ────────────────────────────────────────── */}
+        {/* Moved here from Attendance Monitoring, alongside Ticket Time
+            Disputes — both are about the same underlying On-Site Check-In
+            data (tickets.onsite_arrived_at/onsite_done_at). */}
+        {activeTab === "ticketAttendance" && (
+          <div className="space-y-6">
+            <p className="text-xs text-slate-400">
+              Did each technician actually check into their scheduled tickets (On-Site Check-In) — a different thing from clock In/Out attendance. A ticket already covered by an approved Ticket Time Dispute doesn't count as missing here.
+            </p>
+
+            <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
+              <div className="grid gap-3 md:grid-cols-4 items-end">
+                <div>
+                  <label className="block text-xs text-slate-400 uppercase mb-2">Date From</label>
+                  <input
+                    type="date"
+                    value={ticketAttendanceDateFrom}
+                    max={ticketAttendanceDateTo}
+                    onChange={(e) => setTicketAttendanceDateFrom(e.target.value)}
+                    className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-slate-400 uppercase mb-2">Date To</label>
+                  <input
+                    type="date"
+                    value={ticketAttendanceDateTo}
+                    min={ticketAttendanceDateFrom}
+                    onChange={(e) => setTicketAttendanceDateTo(e.target.value)}
+                    className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-slate-400 uppercase mb-2">Search Technician</label>
+                  <input
+                    type="text"
+                    placeholder="Enter technician name..."
+                    value={ticketAttendanceSearch}
+                    onChange={(e) => setTicketAttendanceSearch(e.target.value)}
+                    className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm placeholder-slate-500 focus:border-blue-500 focus:outline-none"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => { setTicketAttendanceLoaded(false); loadTicketAttendance(); }}
+                  disabled={ticketAttendanceLoading}
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg text-sm font-semibold transition"
+                >
+                  {ticketAttendanceLoading ? "Loading…" : "Refresh"}
+                </button>
+              </div>
+            </div>
+
+            <div className="bg-slate-900/50 border border-white/10 rounded-lg p-6 overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-white/10">
+                    <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Technician</th>
+                    <th className="px-3 py-3 text-right text-xs font-semibold text-slate-400 uppercase">Scheduled</th>
+                    <th className="px-3 py-3 text-right text-xs font-semibold text-slate-400 uppercase">Checked In</th>
+                    <th className="px-3 py-3 text-right text-xs font-semibold text-slate-400 uppercase">Missing Check-In</th>
+                    <th className="px-3 py-3 text-right text-xs font-semibold text-slate-400 uppercase">Missing Check-Out</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {ticketAttendanceLoading ? (
+                    <tr><td colSpan={5} className="px-3 py-8 text-center text-slate-400">Loading ticket attendance…</td></tr>
+                  ) : ticketAttendanceByTechnician.length === 0 ? (
+                    <tr><td colSpan={5} className="px-3 py-8 text-center text-slate-400">No tickets scheduled in this range.</td></tr>
+                  ) : ticketAttendanceByTechnician.map((t) => (
+                    <Fragment key={t.technician}>
+                      <tr
+                        className="border-b border-white/5 hover:bg-white/5 transition cursor-pointer"
+                        onClick={() => setExpandedTicketAttendanceTech((cur) => (cur === t.technician ? null : t.technician))}
+                      >
+                        <td className="px-3 py-3 text-white font-medium">{t.technician}</td>
+                        <td className="px-3 py-3 text-right text-slate-300">{t.scheduled}</td>
+                        <td className="px-3 py-3 text-right text-emerald-300">{t.checkedIn}</td>
+                        <td className={`px-3 py-3 text-right font-semibold ${t.missingCheckIn > 0 ? "text-red-300" : "text-slate-500"}`}>{t.missingCheckIn}</td>
+                        <td className={`px-3 py-3 text-right font-semibold ${t.missingCheckOut > 0 ? "text-yellow-300" : "text-slate-500"}`}>{t.missingCheckOut}</td>
+                      </tr>
+                      {expandedTicketAttendanceTech === t.technician && (
+                        <tr>
+                          <td colSpan={5} className="px-3 py-3 bg-white/[0.02]">
+                            <table className="w-full text-xs">
+                              <thead>
+                                <tr className="text-slate-500">
+                                  <th className="px-2 py-1 text-left">#</th>
+                                  <th className="px-2 py-1 text-left">Ticket</th>
+                                  <th className="px-2 py-1 text-left">Date</th>
+                                  <th className="px-2 py-1 text-left">Status</th>
+                                  <th className="px-2 py-1 text-left">Address</th>
+                                  <th className="px-2 py-1 text-left">Arrived</th>
+                                  <th className="px-2 py-1 text-left">Done</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {/* Numbered in the same date-then-timeSlot route order Technician
+                                    Whereabouts' "Stops" list uses, so a technician's stop #3 there
+                                    is also row #3 here — timeSlot shown next to Status the same way
+                                    that list shows "8-12 · OP-Ready for Service". */}
+                                {t.rows.map((r, i) => (
+                                  <tr key={r.ticketNo} className="border-t border-white/5">
+                                    <td className="px-2 py-1.5 text-slate-500 font-semibold text-center">{i + 1}</td>
+                                    <td className="px-2 py-1.5">
+                                      <a href={`/ticket/${r.ticketNo}`} target="_blank" rel="noopener noreferrer" className="text-blue-300 hover:text-blue-200 hover:underline">
+                                        {r.ticketNo}
+                                      </a>
+                                    </td>
+                                    <td className="px-2 py-1.5 text-slate-300">{r.scheduleDate}</td>
+                                    <td className="px-2 py-1.5 text-slate-300">
+                                      {r.timeSlot && <span className="text-slate-500">{r.timeSlot} · </span>}
+                                      {r.status}
+                                    </td>
+                                    <td className="px-2 py-1.5 text-slate-400">{r.address || "—"}</td>
+                                    <td className="px-2 py-1.5">
+                                      {r.arrivedAt ? (
+                                        <span className="text-emerald-300">{new Date(r.arrivedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>
+                                      ) : disputedTicketNosApproved.has(r.ticketNo) ? (
+                                        <span className="text-blue-300">Fixed via dispute</span>
+                                      ) : r.statusGroup === "cancelled" ? (
+                                        <span className="text-slate-500">—</span>
+                                      ) : (
+                                        <span className="text-red-300">Missing</span>
+                                      )}
+                                    </td>
+                                    <td className="px-2 py-1.5">
+                                      {r.doneAt ? (
+                                        <span className="text-emerald-300">{new Date(r.doneAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>
+                                      ) : disputedTicketNosApproved.has(r.ticketNo) ? (
+                                        <span className="text-blue-300">Fixed via dispute</span>
+                                      ) : !r.arrivedAt || r.statusGroup === "cancelled" ? (
+                                        <span className="text-slate-500">—</span>
+                                      ) : (
+                                        <span className="text-yellow-300">Missing</span>
+                                      )}
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* ── Ticket Time Disputes Tab ─────────────────────────────────────── */}
+        {/* Moved here from Attendance Monitoring's own tab of the same name. */}
+        {activeTab === "ticketTimeDisputes" && isFullRequestsAdmin && (
+          <div className="space-y-6">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
+                <p className="text-xs text-slate-400 mb-1">Pending Ticket Time Disputes</p>
+                <p className="text-2xl font-bold text-yellow-300">{pendingTicketTimeDisputes.length}</p>
+              </div>
+              <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
+                <p className="text-xs text-slate-400 mb-1">Resolved (History)</p>
+                <p className="text-2xl font-bold text-slate-300">{historyTicketTimeDisputes.length}</p>
+              </div>
+            </div>
+
+            <div className="flex gap-2 border-b border-white/10">
+              <button
+                type="button"
+                onClick={() => setTicketTimeDisputeSubTab("pending")}
+                className={`px-4 py-2 border-b-2 transition text-sm font-medium ${ticketTimeDisputeSubTab === "pending" ? "border-yellow-400 text-yellow-300" : "border-transparent text-slate-400 hover:text-slate-300"}`}
+              >
+                Pending
+              </button>
+              <button
+                type="button"
+                onClick={() => setTicketTimeDisputeSubTab("history")}
+                className={`px-4 py-2 border-b-2 transition text-sm font-medium ${ticketTimeDisputeSubTab === "history" ? "border-blue-400 text-blue-300" : "border-transparent text-slate-400 hover:text-slate-300"}`}
+              >
+                History
+              </button>
+            </div>
+
+            {ticketTimeDisputeSubTab === "pending" && (
+            <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
+              <h3 className="text-sm font-bold text-white mb-4">Ticket Time Disputes — Pending</h3>
+              <p className="text-xs text-slate-400 mb-4">
+                A technician's on-site check-in failed to register (GPS/radius issue) and they're reporting the real start/end time. Approving writes these times straight onto the ticket's own check-in record.
+              </p>
+              {pendingTicketTimeDisputes.length === 0 ? (
+                <p className="text-sm text-slate-400">No pending ticket time disputes.</p>
+              ) : (
+                <div className="space-y-3">
+                  {pendingTicketTimeDisputes.map((r) => (
+                    <div key={r.id} className="border border-white/10 rounded-lg p-3">
+                      <p className="text-sm font-semibold text-white">{profileName(r.profileId)}</p>
+                      <p className="text-xs text-slate-400 mt-1">Submitted: {r.createdAt.slice(0, 10)}</p>
+                      {r.ticketNo && (
+                        <p className="text-sm mt-2">
+                          Ticket:{" "}
+                          <a href={`/ticket/${r.ticketNo}`} target="_blank" rel="noopener noreferrer" className="text-blue-300 hover:text-blue-200 hover:underline font-semibold">
+                            {r.ticketNo}
+                          </a>
+                        </p>
+                      )}
+                      {(r.disputedStartTime || r.disputedEndTime) && (
+                        <p className="text-sm text-slate-300 mt-1">
+                          Claimed time:{" "}
+                          <span className="font-semibold text-white">
+                            {fmtTimeInZone(r.disputedStartTime, profileTimezone(r.profileId))}
+                            {" – "}
+                            {fmtTimeInZone(r.disputedEndTime, profileTimezone(r.profileId))}
+                            {" "}{profileTimezone(r.profileId)}
+                          </span>
+                        </p>
+                      )}
+                      <p className="text-sm text-slate-300 mt-2">{r.details}</p>
+                      {r.attachments.length > 0 && (
+                        <div className="flex flex-wrap gap-2 mt-2">
+                          {r.attachments.map((a) => (
+                            <button
+                              key={a.url}
+                              type="button"
+                              onClick={() => setPreviewAttachmentUrl(a.url)}
+                              title={a.name}
+                              className="block h-12 w-12 overflow-hidden rounded border border-white/10 bg-slate-800 hover:border-blue-500 transition"
+                            >
+                              {isPdfAttachment(a.url) ? (
+                                <span className="flex h-full w-full items-center justify-center text-slate-400">
+                                  <Paperclip className="h-4 w-4" />
+                                </span>
+                              ) : (
+                                <img src={a.url} alt={a.name} className="h-full w-full object-cover" />
+                              )}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      <textarea
+                        placeholder="Optional response note (visible to the employee)..."
+                        value={ticketTimeDisputeNote[r.id] || ""}
+                        onChange={(e) => setTicketTimeDisputeNote({ ...ticketTimeDisputeNote, [r.id]: e.target.value })}
+                        rows={2}
+                        className="w-full mt-2 px-3 py-2 bg-slate-800 border border-white/10 rounded text-white text-sm focus:outline-none focus:border-blue-500 placeholder-slate-500"
+                      />
+                      <div className="flex gap-2 mt-2">
+                        <button
+                          type="button"
+                          onClick={() => handleTicketTimeDisputeAction(r.id, "approved")}
+                          className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded text-xs font-semibold transition"
+                        >
+                          Approve
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleTicketTimeDisputeAction(r.id, "rejected")}
+                          className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded text-xs font-semibold transition"
+                        >
+                          Reject
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            )}
+
+            {ticketTimeDisputeSubTab === "history" && (
+            <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
+              <h3 className="text-sm font-bold text-white mb-4">Ticket Time Disputes — History</h3>
+              {historyTicketTimeDisputes.length === 0 ? (
+                <p className="text-sm text-slate-400">No resolved ticket time disputes yet.</p>
+              ) : (
+                <div className="space-y-3">
+                  {historyTicketTimeDisputes.map((r) => (
+                    <div key={r.id} className="border border-white/10 rounded-lg p-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="text-sm font-semibold text-white">{profileName(r.profileId)}</p>
+                        <span className={`inline-block px-2 py-0.5 rounded text-xs font-semibold border ${r.status === "approved" ? "text-emerald-300 border-emerald-400/40 bg-emerald-500/10" : "text-red-300 border-red-400/40 bg-red-500/10"}`}>
+                          {r.status === "approved" ? "Approved" : "Rejected"}
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-400 mt-1">
+                        Submitted: {r.createdAt.slice(0, 10)}{r.reviewedAt ? ` · Reviewed: ${r.reviewedAt.slice(0, 10)}` : ""}
+                      </p>
+                      {r.ticketNo && (
+                        <p className="text-sm mt-2">
+                          Ticket:{" "}
+                          <a href={`/ticket/${r.ticketNo}`} target="_blank" rel="noopener noreferrer" className="text-blue-300 hover:text-blue-200 hover:underline font-semibold">
+                            {r.ticketNo}
+                          </a>
+                        </p>
+                      )}
+                      {(r.disputedStartTime || r.disputedEndTime) && (
+                        <p className="text-sm text-slate-300 mt-1">
+                          Claimed time:{" "}
+                          <span className="font-semibold text-white">
+                            {fmtTimeInZone(r.disputedStartTime, profileTimezone(r.profileId))}
+                            {" – "}
+                            {fmtTimeInZone(r.disputedEndTime, profileTimezone(r.profileId))}
+                            {" "}{profileTimezone(r.profileId)}
+                          </span>
+                        </p>
+                      )}
+                      <p className="text-sm text-slate-300 mt-2">{r.details}</p>
+                      {r.attachments.length > 0 && (
+                        <div className="flex flex-wrap gap-2 mt-2">
+                          {r.attachments.map((a) => (
+                            <button
+                              key={a.url}
+                              type="button"
+                              onClick={() => setPreviewAttachmentUrl(a.url)}
+                              title={a.name}
+                              className="block h-12 w-12 overflow-hidden rounded border border-white/10 bg-slate-800 hover:border-blue-500 transition"
+                            >
+                              {isPdfAttachment(a.url) ? (
+                                <span className="flex h-full w-full items-center justify-center text-slate-400">
+                                  <Paperclip className="h-4 w-4" />
+                                </span>
+                              ) : (
+                                <img src={a.url} alt={a.name} className="h-full w-full object-cover" />
+                              )}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      {r.reviewNote && (
+                        <p className="text-sm text-emerald-300 font-semibold mt-2">Response: {r.reviewNote}</p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            )}
+          </div>
+        )}
+
         {/* ── Flash Tech Tab ───────────────────────────────────────────────── */}
         {/* Moved here from its old standalone page (reached via a button on
             Expense Tracking) — same component, same flash_tech_trips table,
@@ -4430,6 +4905,33 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         )}
 
       </main>
+
+      {previewAttachmentUrl && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={() => setPreviewAttachmentUrl(null)}>
+          <div className="relative max-h-[90vh] max-w-3xl w-full" onClick={(e) => e.stopPropagation()}>
+            <button
+              type="button"
+              onClick={() => setPreviewAttachmentUrl(null)}
+              className="absolute -top-10 right-0 text-slate-300 hover:text-white"
+            >
+              <X className="h-6 w-6" />
+            </button>
+            {isPdfAttachment(previewAttachmentUrl) ? (
+              <iframe src={previewAttachmentUrl} title="Attachment" className="w-full h-[80vh] bg-white rounded-lg" />
+            ) : (
+              <img src={previewAttachmentUrl} alt="Attachment" className="max-h-[85vh] w-full object-contain rounded-lg" />
+            )}
+            <a
+              href={previewAttachmentUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-2 inline-block text-xs text-blue-300 hover:text-blue-200 hover:underline"
+            >
+              Open in new tab
+            </a>
+          </div>
+        </div>
+      )}
 
       {detailEmployee && (
         <EmployeePayrollDetailModal

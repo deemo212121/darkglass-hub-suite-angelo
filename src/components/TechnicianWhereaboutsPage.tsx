@@ -11,10 +11,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
 import type * as Leaflet from "leaflet";
-import { ChevronLeft, Loader2, MapPin, RefreshCw, Search, X } from "lucide-react";
+import { Check, ChevronLeft, ClipboardList, Loader2, MapPin, RefreshCw, Search, X } from "lucide-react";
 import { BrandedLoader } from "@/components/BrandedLoader";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { getTechnicianWhereabouts, distinctBranches, LIVE_FRESH_MS, type TechnicianWhereabouts } from "@/lib/supabase/technicianWhereabouts";
+import { getSignableDocuments } from "@/lib/supabase/signableDocuments";
 import { TechnicianDayRouteModal } from "@/components/TechnicianDayRouteModal";
 import { getCompanyMapProvider } from "@/lib/supabase/companySettings";
 import {
@@ -152,6 +153,34 @@ export function TechnicianWhereaboutsPage({ mod, sub }: { mod: ModuleDef; sub: S
   // finishes building, read by the sidebar's click-to-zoom handler below.
   const techPointsRef = useRef<Map<string, LatLng>>(new Map());
   const [routeModalTech, setRouteModalTech] = useState<TechnicianWhereabouts | null>(null);
+
+  // Technicians Permission List — who actually has a fully-signed Location
+  // Consent document and who's ever gotten a real GPS ping through (proof
+  // sharing has actually worked for them, not just that they clicked
+  // "allow"). Loaded lazily, only the first time the panel is opened.
+  const [showPermissionList, setShowPermissionList] = useState(false);
+  const [confirmedConsentProfileIds, setConfirmedConsentProfileIds] = useState<Set<string> | null>(null);
+  const [permissionListError, setPermissionListError] = useState<string | null>(null);
+  const [permissionListSearch, setPermissionListSearch] = useState("");
+  const [permissionListBranchFilter, setPermissionListBranchFilter] = useState("");
+  const [permissionListConsentFilter, setPermissionListConsentFilter] = useState<"all" | "has" | "missing">("all");
+  const openPermissionList = async () => {
+    setShowPermissionList(true);
+    if (confirmedConsentProfileIds) return;
+    try {
+      const docs = await getSignableDocuments("location_consent");
+      setConfirmedConsentProfileIds(
+        new Set(
+          docs
+            .filter((d) => d.status === "confirmed")
+            .map((d) => (d.formData as { employeeId?: string })?.employeeId)
+            .filter((id): id is string => !!id)
+        )
+      );
+    } catch (err) {
+      setPermissionListError(err instanceof Error ? err.message : "Failed to load consent status.");
+    }
+  };
 
   const zoomToTechnician = (name: string) => {
     const pt = techPointsRef.current.get(name);
@@ -330,6 +359,14 @@ export function TechnicianWhereaboutsPage({ mod, sub }: { mod: ModuleDef; sub: S
               Live GPS while a technician is clocked in and sharing — otherwise inferred from today's schedule.
             </p>
           </div>
+          <button
+            type="button"
+            onClick={() => void openPermissionList()}
+            className="btn ml-auto text-sm shrink-0"
+          >
+            <ClipboardList className="h-4 w-4" />
+            Technicians Permission List
+          </button>
         </div>
 
         <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -523,6 +560,102 @@ export function TechnicianWhereaboutsPage({ mod, sub }: { mod: ModuleDef; sub: S
           liveLocation={routeModalTech.liveLocation}
           onClose={() => setRouteModalTech(null)}
         />
+      )}
+
+      {showPermissionList && (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => setShowPermissionList(false)}>
+          <div
+            className="bg-slate-900 border border-white/10 rounded-lg max-w-2xl w-full max-h-[85vh] overflow-hidden flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
+              <div>
+                <h2 className="text-lg font-bold text-white">Technicians Permission List</h2>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Consent = Location Sharing Consent document signed by both sides. Sharing = has ever sent a real GPS ping.
+                </p>
+              </div>
+              <button type="button" onClick={() => setShowPermissionList(false)} className="p-1 hover:bg-white/10 rounded transition text-slate-300 hover:text-white">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="px-5 py-3 border-b border-white/10 flex flex-wrap items-center gap-2">
+              <input
+                type="text"
+                placeholder="Search technician name..."
+                value={permissionListSearch}
+                onChange={(e) => setPermissionListSearch(e.target.value)}
+                className="glass-input text-sm py-1.5 px-3 rounded-md w-52"
+              />
+              <select
+                value={permissionListBranchFilter}
+                onChange={(e) => setPermissionListBranchFilter(e.target.value)}
+                className="glass-input text-sm py-1.5 px-3 rounded-md w-40"
+              >
+                <option value="">All Branches</option>
+                {branches.map((b) => (
+                  <option key={b} value={b}>{b}</option>
+                ))}
+              </select>
+              <select
+                value={permissionListConsentFilter}
+                onChange={(e) => setPermissionListConsentFilter(e.target.value as "all" | "has" | "missing")}
+                className="glass-input text-sm py-1.5 px-3 rounded-md w-44"
+              >
+                <option value="all">Any Consent Status</option>
+                <option value="has">Has Consent</option>
+                <option value="missing">Missing Consent</option>
+              </select>
+            </div>
+            <div className="flex-1 overflow-y-auto">
+              {permissionListError ? (
+                <p className="p-5 text-sm text-red-400">{permissionListError}</p>
+              ) : !rows || !confirmedConsentProfileIds ? (
+                <div className="p-8 flex justify-center"><Loader2 className="h-5 w-5 animate-spin text-slate-400" /></div>
+              ) : (
+                <table className="w-full text-sm">
+                  <thead className="sticky top-0 bg-slate-900">
+                    <tr className="border-b border-white/10 text-slate-400 text-xs uppercase">
+                      <th className="px-5 py-2 text-left">Technician</th>
+                      <th className="px-5 py-2 text-left">Branch</th>
+                      <th className="px-5 py-2 text-center">Consent</th>
+                      <th className="px-5 py-2 text-center">Location Sharing</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[...rows]
+                      .filter((tech) => {
+                        const q = permissionListSearch.trim().toLowerCase();
+                        if (q && !tech.name.toLowerCase().includes(q)) return false;
+                        if (permissionListBranchFilter && tech.branch !== permissionListBranchFilter) return false;
+                        const hasConsent = confirmedConsentProfileIds.has(tech.profileId);
+                        if (permissionListConsentFilter === "has" && !hasConsent) return false;
+                        if (permissionListConsentFilter === "missing" && hasConsent) return false;
+                        return true;
+                      })
+                      .sort((a, b) => a.name.localeCompare(b.name))
+                      .map((tech) => {
+                      const hasConsent = confirmedConsentProfileIds.has(tech.profileId);
+                      const hasSharing = !!tech.liveLocation;
+                      return (
+                        <tr key={tech.profileId} className="border-b border-white/5">
+                          <td className="px-5 py-2.5 text-white font-medium">{tech.name}</td>
+                          <td className="px-5 py-2.5 text-slate-400">{tech.branch || "—"}</td>
+                          <td className="px-5 py-2.5 text-center">
+                            {hasConsent ? <Check className="h-4 w-4 text-emerald-400 inline" /> : <X className="h-4 w-4 text-red-400 inline" />}
+                          </td>
+                          <td className="px-5 py-2.5 text-center">
+                            {hasSharing ? <Check className="h-4 w-4 text-emerald-400 inline" /> : <X className="h-4 w-4 text-red-400 inline" />}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        </div>
       )}
     </main>
   );
