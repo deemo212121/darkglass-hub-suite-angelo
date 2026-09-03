@@ -31,6 +31,7 @@ import {
   Bell,
   Users,
   Paperclip,
+  RotateCcw,
 } from "lucide-react";
 import {
   BarChart,
@@ -80,7 +81,7 @@ import {
   type TechCategoryOverride,
 } from "@/lib/supabase/techPayroll";
 import { TechActivityReportModal } from "@/components/TechActivityReportModal";
-import { getMileageEntries, deleteMileageEntry, syncMileageFromTickets, setMileageEntryPayrollExcluded, reconcileMileageNoPhotoHolds, mileageEffectiveTotal, type MileageEntry } from "@/lib/supabase/mileage";
+import { getMileageEntries, softDeleteMileageEntry, restoreMileageEntry, syncMileageFromTickets, setMileageEntryPayrollExcluded, reconcileMileageNoPhotoHolds, mileageEffectiveTotal, type MileageEntry } from "@/lib/supabase/mileage";
 import { MileageDayRouteModal } from "@/components/MileageDayRouteModal";
 import { FlashTechCalendarPage } from "@/components/FlashTechCalendarPage";
 import { ExpenseTrackingPage } from "@/components/ExpenseTrackingPage";
@@ -126,6 +127,7 @@ const MILEAGE_COLUMNS = [
   { key: "address", label: "Address" },
   { key: "contactNumber", label: "Contact Number" },
   { key: "email", label: "Email" },
+  { key: "legMileage", label: "This Stop (mi)" },
   { key: "totalMileage", label: "Total Mileage" },
   { key: "payroll", label: "Payroll" },
   { key: "actions", label: "Actions" },
@@ -880,6 +882,19 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   const [techCustomPayItemsAll, setTechCustomPayItemsAll] = useState<TechCustomPayItem[]>([]);
   const [techCategoryOverrides, setTechCategoryOverrides] = useState<TechCategoryOverride[]>([]);
   const [mileageEntries, setMileageEntries] = useState<MileageEntry[]>([]);
+  // Ticket Attendance's own Mileage column/total — one non-deleted mileage
+  // entry per ticket # (auto-synced entries are already one row per
+  // ticket). legMileage (this ticket's own leg of its day's route, see
+  // migration 0210) is what's shown; a ticket not yet mileage-synced, or
+  // whose day hasn't been recalculated since legMileage shipped, has none.
+  const mileageByTicketNo = useMemo(() => {
+    const map = new Map<string, MileageEntry>();
+    for (const e of mileageEntries) {
+      if (e.deletedAt || !e.ticketNo || map.has(e.ticketNo)) continue;
+      map.set(e.ticketNo, e);
+    }
+    return map;
+  }, [mileageEntries]);
 
   // UI state
   const [loading, setLoading] = useState(true);
@@ -910,6 +925,17 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   const [employeeInfoByProfileId, setEmployeeInfoByProfileId] = useState<Map<string, EmployeeInfo>>(new Map());
 
   const [deletingMileageEntryId, setDeletingMileageEntryId] = useState<string | null>(null);
+  // Delete-reason modal for the Mileage tab's Trash action — a soft delete
+  // (see softDeleteMileageEntry) that requires a note instead of a bare
+  // window.confirm, since the row stays visible (marked "Deleted") and the
+  // reason shows in its audit trail.
+  const [deleteMileageEntryTarget, setDeleteMileageEntryTarget] = useState<MileageEntry | null>(null);
+  const [deleteMileageReason, setDeleteMileageReason] = useState("");
+  const [restoringMileageEntryId, setRestoringMileageEntryId] = useState<string | null>(null);
+  // Clicking the "Deleted" badge/reason opens this — full, untruncated
+  // detail (who/when/why) plus a Restore action, instead of relying on a
+  // hover tooltip.
+  const [deletedInfoEntry, setDeletedInfoEntry] = useState<MileageEntry | null>(null);
   const [payrollExcludingId, setPayrollExcludingId] = useState<string | null>(null);
   const [mileageBranchFilter, setMileageBranchFilter] = useState("");
   const [mileageNameFilter, setMileageNameFilter] = useState("");
@@ -991,6 +1017,16 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   const [mileageSyncProfileId, setMileageSyncProfileId] = useState("");
   const [syncingMileage, setSyncingMileage] = useState(false);
   const [mileageSyncMessage, setMileageSyncMessage] = useState<string | null>(null);
+  // Live progress while a sync run is in flight — syncMileageFromTickets
+  // reports back after each technician-day it (re)computes, since route
+  // lookups are the slow part and a run can cover many days (especially
+  // the first sync after leg_mileage/migration 0210 shipped, which
+  // reprocesses every previously-synced day once to backfill it).
+  const [mileageSyncProgress, setMileageSyncProgress] = useState<{ done: number; total: number } | null>(null);
+  // Lets the Stop button cancel an in-flight sync (see syncMileageFromTickets's
+  // `signal` param) — a ref, not state, since nothing needs to re-render
+  // off the controller itself, only off syncingMileage.
+  const mileageSyncAbortRef = useRef<AbortController | null>(null);
   // Tickets whose technician text didn't match ANY technician — even after
   // trim/lowercase, so a real name mismatch (not just a role issue) shows
   // up as something fixable instead of just silently not syncing. Starts
@@ -2654,6 +2690,9 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     setSyncingMileage(true);
     setMileageSyncMessage(null);
     setMileageUnmatched([]);
+    setMileageSyncProgress(null);
+    const controller = new AbortController();
+    mileageSyncAbortRef.current = controller;
     try {
       const contactInfo = await getTechnicianContactInfoByIds(targets.map((t) => t.id));
       const result = await syncMileageFromTickets({
@@ -2668,19 +2707,33 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
             homeAddress: contact?.address,
           };
         }),
+        onProgress: (done, total) => setMileageSyncProgress({ done, total }),
+        signal: controller.signal,
       });
       const parts = [`${result.created} new ${result.created === 1 ? "entry" : "entries"} created`];
+      if (result.recalculatedDays > 0) parts.push(`${result.recalculatedDays} ${result.recalculatedDays === 1 ? "day" : "days"} recalculated`);
       if (result.skipped > 0) parts.push(`${result.skipped} already synced`);
       if (result.errors.length > 0) parts.push(`${result.errors.length} skipped (${result.errors[0]}${result.errors.length > 1 ? `, +${result.errors.length - 1} more` : ""})`);
       if (targets.length > 1) parts.push(`across ${targets.length} technicians`);
-      setMileageSyncMessage(parts.join(" — "));
+      setMileageSyncMessage((result.stopped ? "Stopped — " : "") + parts.join(" — "));
       setMileageUnmatched(result.unmatchedTechnicians);
-      if (result.created > 0) setMileageEntries(await getMileageEntries());
+      // Recalculated-only days (e.g. the leg_mileage backfill) update
+      // existing rows without creating any new ones — created alone would
+      // miss those, leaving the table showing stale/blank values until a
+      // manual refresh. Everything up to a Stop click already committed, so
+      // this still applies even when result.stopped is true.
+      if (result.created > 0 || result.recalculatedDays > 0) setMileageEntries(await getMileageEntries());
     } catch (err) {
       setMileageSyncMessage(`Sync failed: ${err instanceof Error ? err.message : "Unknown error"}`);
     } finally {
       setSyncingMileage(false);
+      setMileageSyncProgress(null);
+      mileageSyncAbortRef.current = null;
     }
+  };
+
+  const handleStopMileageSync = () => {
+    mileageSyncAbortRef.current?.abort();
   };
 
   // Auto-runs the sync (all technicians, all-time — no date bound by
@@ -2731,16 +2784,46 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     };
   }, [mileagePhotoModalEntry, companyId]);
 
-  const handleDeleteMileageEntry = async (entry: MileageEntry) => {
-    if (!window.confirm(`Remove this mileage entry for ${mileageRowName(entry)} on ${entry.workDate}?`)) return;
+  // Opens the delete-reason modal — the actual soft-delete happens in
+  // handleConfirmDeleteMileageEntry once a reason is submitted.
+  const handleDeleteMileageEntry = (entry: MileageEntry) => {
+    setDeleteMileageEntryTarget(entry);
+    setDeleteMileageReason("");
+  };
+
+  const handleConfirmDeleteMileageEntry = async () => {
+    const entry = deleteMileageEntryTarget;
+    if (!entry) return;
     setDeletingMileageEntryId(entry.id);
     try {
-      await deleteMileageEntry(entry.id);
-      setMileageEntries((prev) => prev.filter((e) => e.id !== entry.id));
+      await softDeleteMileageEntry(entry.id, deleteMileageReason, myProfileId, displayName || email || "Admin");
+      setMileageEntries((prev) =>
+        prev.map((e) =>
+          e.id === entry.id
+            ? { ...e, deletedAt: new Date().toISOString(), deletedByName: displayName || email || "Admin", deleteReason: deleteMileageReason.trim() || null }
+            : e
+        )
+      );
+      setDeleteMileageEntryTarget(null);
+      setDeleteMileageReason("");
     } catch (err) {
-      alert(`Failed to remove mileage entry: ${err instanceof Error ? err.message : "Unknown error"}`);
+      alert(`Failed to delete mileage entry: ${err instanceof Error ? err.message : "Unknown error"}`);
     } finally {
       setDeletingMileageEntryId(null);
+    }
+  };
+
+  const handleRestoreMileageEntry = async (entry: MileageEntry) => {
+    setRestoringMileageEntryId(entry.id);
+    try {
+      await restoreMileageEntry(entry.id);
+      setMileageEntries((prev) =>
+        prev.map((e) => (e.id === entry.id ? { ...e, deletedAt: null, deletedByName: null, deleteReason: null } : e))
+      );
+    } catch (err) {
+      alert(`Failed to restore mileage entry: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setRestoringMileageEntryId(null);
     }
   };
 
@@ -3775,15 +3858,40 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                     ))}
                   </select>
                 </label>
-                <button
-                  onClick={handleSyncMileage}
-                  disabled={syncingMileage || mileageTechnicians.length === 0}
-                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white rounded-lg text-sm font-semibold transition flex items-center justify-center gap-2"
-                >
-                  {syncingMileage && <Loader2 className="h-4 w-4 animate-spin" />}
-                  {mileageSyncProfileId ? "Sync" : "Sync All"}
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={handleSyncMileage}
+                    disabled={syncingMileage || mileageTechnicians.length === 0}
+                    className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white rounded-lg text-sm font-semibold transition flex items-center justify-center gap-2"
+                  >
+                    {syncingMileage && <Loader2 className="h-4 w-4 animate-spin" />}
+                    {mileageSyncProfileId ? "Sync" : "Sync All"}
+                  </button>
+                  {syncingMileage && (
+                    <button
+                      onClick={handleStopMileageSync}
+                      title="Stop after the day currently in progress finishes — nothing already saved is undone"
+                      className="px-3 py-2 border border-red-500/40 text-red-300 hover:bg-red-500/10 rounded-lg text-sm font-semibold transition"
+                    >
+                      Stop
+                    </button>
+                  )}
+                </div>
               </div>
+              {syncingMileage && mileageSyncProgress && mileageSyncProgress.total > 0 && (
+                <div className="mt-3">
+                  <div className="flex items-center justify-between gap-2 text-[11px] text-slate-400 mb-1">
+                    <span>Recalculating routes…</span>
+                    <span>{mileageSyncProgress.done} / {mileageSyncProgress.total} days</span>
+                  </div>
+                  <div className="h-1.5 w-full rounded-full bg-white/10 overflow-hidden">
+                    <div
+                      className="h-full bg-blue-500 transition-[width] duration-200"
+                      style={{ width: `${Math.min(100, Math.round((mileageSyncProgress.done / mileageSyncProgress.total) * 100))}%` }}
+                    />
+                  </div>
+                </div>
+              )}
               {mileageSyncMessage && (
                 <p className="mt-3 text-xs text-slate-300">{mileageSyncMessage}</p>
               )}
@@ -3986,6 +4094,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                           {isMileageColVisible("address") && <th className="px-3 py-3 text-xs font-semibold text-slate-200 text-left">Address</th>}
                           {isMileageColVisible("contactNumber") && <th className="px-3 py-3 text-xs font-semibold text-slate-200 text-left">Contact Number</th>}
                           {isMileageColVisible("email") && <th className="px-3 py-3 text-xs font-semibold text-slate-200 text-left">Email</th>}
+                          {isMileageColVisible("legMileage") && <th className="px-3 py-3 text-xs font-semibold text-slate-200 text-left" title="This ticket's own leg of the day's route — distance from the previous stop to this one">This Stop (mi)</th>}
                           {isMileageColVisible("totalMileage") && <th className="px-3 py-3 text-xs font-semibold text-slate-200 text-left">Total Mileage</th>}
                           {isMileageColVisible("payroll") && <th className="px-3 py-3 text-xs font-semibold text-slate-200 text-left">Payroll</th>}
                           {isMileageColVisible("actions") && <th className="px-3 py-3 text-xs font-semibold text-slate-200 text-left">Actions</th>}
@@ -4059,6 +4168,15 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                             {isMileageColVisible("address") && <td className="px-3 py-2.5 text-slate-300">{entry.address}</td>}
                             {isMileageColVisible("contactNumber") && <td className="px-3 py-2.5 text-slate-300">{entry.contactNumber || "—"}</td>}
                             {isMileageColVisible("email") && <td className="px-3 py-2.5 text-slate-300">{entry.email || "—"}</td>}
+                            {isMileageColVisible("legMileage") && (
+                              <td className="px-3 py-2.5 text-slate-300">
+                                {entry.legMileage != null ? (
+                                  entry.legMileage.toFixed(1)
+                                ) : (
+                                  <span className="text-slate-600" title="Manual entry, unresolved address, or not yet recalculated since this column shipped">—</span>
+                                )}
+                              </td>
+                            )}
                             {isMileageColVisible("totalMileage") && (
                             <td className="px-3 py-2.5 text-slate-300">
                               {mileageEffectiveTotal(entry).toFixed(1)}
@@ -4076,6 +4194,25 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                             <td className="px-3 py-2.5">
                               {(() => {
                                 const noPhotosHold = mileageNoPhotosHold(entry);
+                                if (entry.deletedAt) {
+                                  return (
+                                    <button
+                                      type="button"
+                                      onClick={() => setDeletedInfoEntry(entry)}
+                                      title="Click for full details"
+                                      className="text-left"
+                                    >
+                                      <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold uppercase tracking-wide bg-slate-500/20 text-slate-300 hover:bg-slate-500/30">
+                                        Deleted
+                                      </span>
+                                      {entry.deleteReason && (
+                                        <p className="mt-0.5 text-[10px] text-slate-500 italic max-w-[160px] truncate hover:text-slate-400">
+                                          "{entry.deleteReason}"
+                                        </p>
+                                      )}
+                                    </button>
+                                  );
+                                }
                                 if (entry.payrollExcluded) {
                                   return (
                                     <span
@@ -4131,22 +4268,34 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                                     {sendingReminderId === entry.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
                                   </button>
                                 )}
-                                <button
-                                  onClick={() => handleTogglePayrollExclude(entry)}
-                                  disabled={payrollExcludingId === entry.id}
-                                  title={entry.payrollExcluded ? "Take this ticket off hold" : "Put this ticket on hold for payroll"}
-                                  className={`disabled:opacity-40 ${entry.payrollExcluded ? "text-amber-400 hover:text-amber-300" : "text-slate-400 hover:text-red-300"}`}
-                                >
-                                  {payrollExcludingId === entry.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Ban className="h-3.5 w-3.5" />}
-                                </button>
-                                <button
-                                  onClick={() => handleDeleteMileageEntry(entry)}
-                                  disabled={deletingMileageEntryId === entry.id}
-                                  title="Delete this mileage entry"
-                                  className="text-red-400 hover:text-red-300 disabled:opacity-40"
-                                >
-                                  {deletingMileageEntryId === entry.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
-                                </button>
+                                {entry.deletedAt ? (
+                                  <button
+                                    onClick={() => handleRestoreMileageEntry(entry)}
+                                    disabled={restoringMileageEntryId === entry.id}
+                                    title={`Restore this mileage entry (deleted by ${entry.deletedByName || "someone"}${entry.deleteReason ? ` — "${entry.deleteReason}"` : ""})`}
+                                    className="text-blue-400 hover:text-blue-300 disabled:opacity-40"
+                                  >
+                                    {restoringMileageEntryId === entry.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
+                                  </button>
+                                ) : (
+                                  <>
+                                    <button
+                                      onClick={() => handleTogglePayrollExclude(entry)}
+                                      disabled={payrollExcludingId === entry.id}
+                                      title={entry.payrollExcluded ? "Take this ticket off hold" : "Technician drove there — hold this ticket's pay only, keep it in the route"}
+                                      className={`disabled:opacity-40 ${entry.payrollExcluded ? "text-amber-400 hover:text-amber-300" : "text-slate-400 hover:text-red-300"}`}
+                                    >
+                                      {payrollExcludingId === entry.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Ban className="h-3.5 w-3.5" />}
+                                    </button>
+                                    <button
+                                      onClick={() => handleDeleteMileageEntry(entry)}
+                                      title="Technician never made this stop — remove it from the route/mileage entirely"
+                                      className="text-red-400 hover:text-red-300 disabled:opacity-40"
+                                    >
+                                      <Trash2 className="h-3.5 w-3.5" />
+                                    </button>
+                                  </>
+                                )}
                               </div>
                             </td>
                             )}
@@ -4429,6 +4578,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                                   <th className="px-2 py-1 text-left">Address</th>
                                   <th className="px-2 py-1 text-left">Arrived</th>
                                   <th className="px-2 py-1 text-left">Done</th>
+                                  <th className="px-2 py-1 text-right">Mileage</th>
                                 </tr>
                               </thead>
                               <tbody>
@@ -4472,8 +4622,19 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                                         <span className="text-yellow-300">Missing</span>
                                       )}
                                     </td>
+                                    <td className="px-2 py-1.5 text-right text-slate-300">
+                                      {mileageByTicketNo.get(r.ticketNo)?.legMileage != null
+                                        ? `${mileageByTicketNo.get(r.ticketNo)!.legMileage!.toFixed(1)} mi`
+                                        : <span className="text-slate-600">—</span>}
+                                    </td>
                                   </tr>
                                 ))}
+                                <tr className="border-t border-white/10">
+                                  <td colSpan={7} className="px-2 py-1.5 text-right text-slate-400 font-semibold uppercase tracking-wide text-[10px]">Total Mileage</td>
+                                  <td className="px-2 py-1.5 text-right text-white font-semibold">
+                                    {t.rows.reduce((sum, r) => sum + (mileageByTicketNo.get(r.ticketNo)?.legMileage ?? 0), 0).toFixed(1)} mi
+                                  </td>
+                                </tr>
                               </tbody>
                             </table>
                           </td>
@@ -4997,7 +5158,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
           >
             {(() => {
               const techEntries = mileageEntries
-                .filter((e) => mileageRowKey(e) === mileageTechDetailId)
+                .filter((e) => mileageRowKey(e) === mileageTechDetailId && !e.deletedAt)
                 .sort((a, b) => b.workDate.localeCompare(a.workDate));
               // Every ticket on the same day shares that day's route total —
               // sum each distinct work_date once, not once per ticket, or a
@@ -5110,7 +5271,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       )}
 
       {mileageDayRouteKey && (() => {
-        const dayEntries = mileageEntries.filter((e) => mileageDayKey(e) === mileageDayRouteKey);
+        const dayEntries = mileageEntries.filter((e) => mileageDayKey(e) === mileageDayRouteKey && !e.deletedAt);
         if (dayEntries.length === 0) return null;
         const first = dayEntries[0];
         return (
@@ -5129,6 +5290,110 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
           />
         );
       })()}
+
+      {deleteMileageEntryTarget && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+          onClick={() => !deletingMileageEntryId && setDeleteMileageEntryTarget(null)}
+        >
+          <div
+            className="w-full max-w-sm rounded-xl border border-white/10 bg-slate-900 p-5"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-lg font-semibold text-white mb-1">Delete mileage entry</h3>
+            <p className="text-xs text-slate-400 mb-3">
+              {mileageRowName(deleteMileageEntryTarget)} — {deleteMileageEntryTarget.workDate}
+            </p>
+            <ul className="text-xs text-slate-400 mb-3 space-y-1 list-disc pl-4">
+              <li>Use when the technician never made this stop (cancelled, couldn't get there) — it's removed from this day's route and mileage total.</li>
+              <li>Stop they DID drive to but shouldn't be paid for yet? Use On Hold instead — it stays in the route.</li>
+              <li>Reversible any time via the restore button.</li>
+            </ul>
+            <label className="block text-[10px] text-slate-500 uppercase tracking-wide mb-1">Reason (shown in the audit trail)</label>
+            <input
+              type="text"
+              autoFocus
+              value={deleteMileageReason}
+              onChange={(e) => setDeleteMileageReason(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter" && deleteMileageReason.trim() && deletingMileageEntryId == null) void handleConfirmDeleteMileageEntry(); }}
+              placeholder="e.g. Customer cancelled, technician couldn't make it"
+              className="w-full rounded-md border border-white/15 bg-slate-800 px-2 py-1.5 text-sm text-white mb-4"
+            />
+            <div className="flex items-center justify-end gap-2">
+              <button
+                onClick={() => setDeleteMileageEntryTarget(null)}
+                disabled={deletingMileageEntryId != null}
+                className="rounded-md border border-white/15 text-slate-300 hover:bg-white/5 text-xs font-semibold px-3 py-1.5 disabled:opacity-40"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => void handleConfirmDeleteMileageEntry()}
+                disabled={deletingMileageEntryId != null || !deleteMileageReason.trim()}
+                className="rounded-md bg-red-600 hover:bg-red-500 disabled:opacity-40 text-white text-xs font-semibold px-3 py-1.5"
+              >
+                {deletingMileageEntryId != null ? "Deleting…" : "Delete"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {deletedInfoEntry && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+          onClick={() => setDeletedInfoEntry(null)}
+        >
+          <div
+            className="w-full max-w-sm rounded-xl border border-white/10 bg-slate-900 p-5"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3 mb-1">
+              <h3 className="text-lg font-semibold text-white">Deleted mileage entry</h3>
+              <button onClick={() => setDeletedInfoEntry(null)} className="text-slate-400 hover:text-white text-xl leading-none">×</button>
+            </div>
+            <p className="text-xs text-slate-400 mb-4">
+              {mileageRowName(deletedInfoEntry)} — {deletedInfoEntry.workDate}
+              {deletedInfoEntry.ticketNo ? ` — Ticket ${deletedInfoEntry.ticketNo}` : ""}
+            </p>
+            <div className="space-y-3 mb-4">
+              <div>
+                <p className="text-[10px] text-slate-500 uppercase tracking-wide mb-0.5">Deleted by</p>
+                <p className="text-sm text-slate-200">
+                  {deletedInfoEntry.deletedByName || "Someone"}
+                  {deletedInfoEntry.deletedAt ? ` on ${new Date(deletedInfoEntry.deletedAt).toLocaleString()}` : ""}
+                </p>
+              </div>
+              <div>
+                <p className="text-[10px] text-slate-500 uppercase tracking-wide mb-0.5">Reason</p>
+                <p className="text-sm text-slate-200 whitespace-pre-wrap">
+                  {deletedInfoEntry.deleteReason || <span className="text-slate-500 italic">No reason given</span>}
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-2">
+              <button
+                onClick={() => setDeletedInfoEntry(null)}
+                className="rounded-md border border-white/15 text-slate-300 hover:bg-white/5 text-xs font-semibold px-3 py-1.5"
+              >
+                Close
+              </button>
+              <button
+                onClick={() => {
+                  const entry = deletedInfoEntry;
+                  setDeletedInfoEntry(null);
+                  void handleRestoreMileageEntry(entry);
+                }}
+                disabled={restoringMileageEntryId === deletedInfoEntry.id}
+                className="rounded-md bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white text-xs font-semibold px-3 py-1.5 inline-flex items-center gap-1.5"
+              >
+                <RotateCcw className="h-3.5 w-3.5" />
+                Restore
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {notifyOnHoldModalOpen && (
         <div

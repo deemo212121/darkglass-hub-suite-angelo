@@ -809,6 +809,19 @@ export async function computeOfficeDistanceMiles(
 // by work date and sorts them into visit order before calling this.
 // ─────────────────────────────────────────────────────────────────────────
 
+export interface DailyRouteMilesResult {
+  /** The whole day's route distance — unchanged meaning from before this
+   *  had a leg breakdown; still what payroll reimburses. */
+  totalMiles: number;
+  /** One entry per input `stops`, same order/length — the distance from
+   *  the PREVIOUS stop (or the branch, for index 0) to that stop. `null`
+   *  when that stop failed to geocode (silently skipped, same as always).
+   *  The final "way home" leg is folded into the LAST resolved stop's own
+   *  value, so summing every non-null entry reconstructs `totalMiles`
+   *  exactly — callers (mileage.ts) persist this as leg_mileage per row. */
+  legMiles: (number | null)[];
+}
+
 async function distanceMatrixLeg(
   service: any,
   maps: any,
@@ -844,7 +857,7 @@ async function computeDailyRouteMilesGoogle(
   office: LatLng | null,
   stopCandidates: string[][],
   homeCandidates: string[],
-): Promise<number | null> {
+): Promise<DailyRouteMilesResult | null> {
   const apiKey = GOOGLE_MAPS_API_KEY;
   if (!apiKey) return null;
   await loadGoogleMapsScript();
@@ -856,21 +869,28 @@ async function computeDailyRouteMilesGoogle(
   let currentOrigin: any = startPoint;
   let total = 0;
   let anyLegSucceeded = false;
-  for (const candidates of stopCandidates) {
-    const leg = await distanceMatrixLeg(service, maps, currentOrigin, candidates);
+  const legMiles: (number | null)[] = new Array(stopCandidates.length).fill(null);
+  let lastResolvedIndex = -1;
+  for (let i = 0; i < stopCandidates.length; i++) {
+    const leg = await distanceMatrixLeg(service, maps, currentOrigin, stopCandidates[i]);
     if (!leg) continue; // stop couldn't be resolved — skip it, keep the route going from the last good point
     total += leg.miles;
+    legMiles[i] = leg.miles;
+    lastResolvedIndex = i;
     currentOrigin = leg.destination;
     anyLegSucceeded = true;
   }
   if (!anyLegSucceeded) return null;
 
-  // Final leg home — or back to the starting point if no home address is on file.
+  // Final leg home — or back to the starting point if no home address is on
+  // file. Folded into the last resolved stop's own leg mile figure so
+  // summing legMiles reconstructs `total` exactly.
   const homeLeg = homeCandidates.length > 0 ? await distanceMatrixLeg(service, maps, currentOrigin, homeCandidates) : null;
+  let homeMiles: number | null = null;
   if (homeLeg) {
-    total += homeLeg.miles;
+    homeMiles = homeLeg.miles;
   } else if (homeCandidates.length === 0) {
-    const backLeg = await new Promise<number | null>((resolve) => {
+    homeMiles = await new Promise<number | null>((resolve) => {
       service.getDistanceMatrix(
         { origins: [currentOrigin], destinations: [startPoint], travelMode: maps.TravelMode.DRIVING, unitSystem: maps.UnitSystem.IMPERIAL },
         (response: any, status: string) => {
@@ -880,9 +900,12 @@ async function computeDailyRouteMilesGoogle(
         },
       );
     });
-    if (backLeg != null) total += backLeg;
   }
-  return total;
+  if (homeMiles != null) {
+    total += homeMiles;
+    if (lastResolvedIndex >= 0) legMiles[lastResolvedIndex] = (legMiles[lastResolvedIndex] ?? 0) + homeMiles;
+  }
+  return { totalMiles: total, legMiles };
 }
 
 async function computeDailyRouteMilesLeaflet(
@@ -890,19 +913,26 @@ async function computeDailyRouteMilesLeaflet(
   office: LatLng | null,
   stopCandidates: string[][],
   homeCandidates: string[],
-): Promise<number | null> {
+): Promise<DailyRouteMilesResult | null> {
   const geocode = makeGeocoder("leaflet");
   const originPt = overrideOrigin ? await geocode(overrideOrigin) : office;
   if (!originPt) return null;
 
   const points: LatLng[] = [originPt];
-  for (const candidates of stopCandidates) {
+  // Which original stopCandidates index each resolved point (points[1..]) came
+  // from — a stop that fails to geocode is skipped, so this can be shorter
+  // than stopCandidates, and needed to map legs back to the right ticket.
+  const resolvedStopIndexes: number[] = [];
+  for (let i = 0; i < stopCandidates.length; i++) {
     let pt: LatLng | null = null;
-    for (const candidate of candidates) {
+    for (const candidate of stopCandidates[i]) {
       pt = await geocode(candidate);
       if (pt) break;
     }
-    if (pt) points.push(pt); // stop couldn't be resolved — skip it, keep the route going
+    if (pt) {
+      points.push(pt); // stop couldn't be resolved — skip it, keep the route going
+      resolvedStopIndexes.push(i);
+    }
   }
   if (points.length < 2) return null; // not even one stop resolved
 
@@ -914,11 +944,33 @@ async function computeDailyRouteMilesLeaflet(
   points.push(homePt ?? originPt); // no home address on file — route back to the branch
 
   const route = await routeGeoapify(points, "drive");
-  if (route) return metersToMiles(route.totalDistanceMeters);
-  // Routing call itself failed — sum consecutive straight-line legs rather than losing the whole day's mileage.
-  let total = 0;
-  for (let i = 1; i < points.length; i++) total += haversineMiles(points[i - 1], points[i]);
-  return total;
+  // One entry per consecutive points pair: branch->stop1, stop1->stop2, ...,
+  // lastStop->home — length is always resolvedStopIndexes.length + 1.
+  const legMilesRaw: number[] = [];
+  let total: number;
+  if (route) {
+    total = metersToMiles(route.totalDistanceMeters);
+    for (const leg of route.legs) legMilesRaw.push(metersToMiles(leg.distanceMeters));
+  } else {
+    // Routing call itself failed — sum consecutive straight-line legs rather than losing the whole day's mileage.
+    total = 0;
+    for (let i = 1; i < points.length; i++) {
+      const m = haversineMiles(points[i - 1], points[i]);
+      legMilesRaw.push(m);
+      total += m;
+    }
+  }
+
+  // Fold the final (home) leg into the last resolved stop's own leg mile
+  // figure so summing legMiles reconstructs `total` exactly.
+  const legMiles: (number | null)[] = new Array(stopCandidates.length).fill(null);
+  resolvedStopIndexes.forEach((origIdx, i) => { legMiles[origIdx] = legMilesRaw[i]; });
+  const homeLegMiles = legMilesRaw[legMilesRaw.length - 1] ?? 0;
+  if (resolvedStopIndexes.length > 0) {
+    const lastOrigIdx = resolvedStopIndexes[resolvedStopIndexes.length - 1];
+    legMiles[lastOrigIdx] = (legMiles[lastOrigIdx] ?? 0) + homeLegMiles;
+  }
+  return { totalMiles: total, legMiles };
 }
 
 /**
@@ -928,6 +980,10 @@ async function computeDailyRouteMilesLeaflet(
  * consecutive legs and sums them, it doesn't re-sequence anything.
  * `originStop` (typically the day's first stop) is only used to resolve the
  * Electrolux/Huntsville branch override, same as computeOfficeDistanceMiles.
+ *
+ * Returns both the day's total (unchanged meaning — what payroll pays for)
+ * and a per-stop leg breakdown (`legMiles`, same length/order as `stops`,
+ * `null` for any stop that couldn't be resolved) — see DailyRouteMilesResult.
  */
 export async function computeDailyRouteMiles(
   officeLocation: string,
@@ -935,20 +991,39 @@ export async function computeDailyRouteMiles(
   stops: MileageTicketInput[],
   homeAddress: string | undefined,
   mapProvider: "google" | "leaflet" | null,
-): Promise<number | null> {
+): Promise<DailyRouteMilesResult | null> {
   if (!mapProvider || stops.length === 0) return null;
   const overrideOrigin = getElectroluxHuntsvilleMileageOrigin(originStop);
   const office = overrideOrigin ? null : getOfficeCoordinates(officeLocation);
   if (!overrideOrigin && !office) return null;
 
-  const stopCandidates = stops.map(destinationCandidatesFor).filter((c) => c.length > 0);
+  // Some stops may have no resolvable address candidates at all
+  // (destinationCandidatesFor returns []) — kept out of what's actually
+  // routed below, but the original `stops` index of each one that DOES
+  // make it through is tracked here so the final legMiles can still be
+  // sized/ordered to match `stops` 1:1 (null for a stop with no candidates
+  // at all, same as one whose geocode simply failed).
+  const stopCandidates: string[][] = [];
+  const origIndexByFilteredIndex: number[] = [];
+  stops.forEach((s, i) => {
+    const candidates = destinationCandidatesFor(s);
+    if (candidates.length > 0) {
+      stopCandidates.push(candidates);
+      origIndexByFilteredIndex.push(i);
+    }
+  });
   if (stopCandidates.length === 0) return null;
   const homeCandidates =
     homeAddress && homeAddress.trim() && homeAddress !== "(no address on file)" ? [homeAddress.trim()] : [];
 
-  return mapProvider === "leaflet"
-    ? computeDailyRouteMilesLeaflet(overrideOrigin, office, stopCandidates, homeCandidates)
-    : computeDailyRouteMilesGoogle(overrideOrigin, office, stopCandidates, homeCandidates);
+  const result = mapProvider === "leaflet"
+    ? await computeDailyRouteMilesLeaflet(overrideOrigin, office, stopCandidates, homeCandidates)
+    : await computeDailyRouteMilesGoogle(overrideOrigin, office, stopCandidates, homeCandidates);
+  if (!result) return null;
+
+  const legMiles: (number | null)[] = new Array(stops.length).fill(null);
+  result.legMiles.forEach((m, filteredIdx) => { legMiles[origIndexByFilteredIndex[filteredIdx]] = m; });
+  return { totalMiles: result.totalMiles, legMiles };
 }
 
 // ─────────────────────────────────────────────────────────────────────────

@@ -468,6 +468,7 @@ export async function getTechAutoMileageTotals(periodStart: string, periodEnd: s
       .from("mileage_entries")
       .select("profile_id, work_date, total_mileage, mileage_override, mileage_adjustment, payroll_excluded")
       .not("profile_id", "is", null)
+      .is("deleted_at", null)
       .gte("work_date", periodStart)
       .lte("work_date", periodEnd)
       .range(from, from + PAGE_SIZE - 1);
@@ -484,7 +485,9 @@ export async function getTechAutoMileageTotals(periodStart: string, periodEnd: s
   // multi-ticket day would be double/triple-counted here. Reads the
   // EFFECTIVE total (a Finance override/adjustment, if any, on top of the
   // calculated total_mileage), not the raw calculated figure, so a manual
-  // correction actually reaches payroll.
+  // correction actually reaches payroll. The deleted_at filter above keeps
+  // a soft-deleted entry (softDeleteMileageEntry, migration 0209 — a stop
+  // the technician never actually made) out of this entirely.
   const perDay = new Map<string, number>();
   for (const row of (data ?? []) as any[]) {
     if (row.payroll_excluded) continue;

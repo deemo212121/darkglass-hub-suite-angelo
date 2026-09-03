@@ -866,7 +866,7 @@ export function MobileTechApp() {
   const onHoldTickets = useMemo(() => {
     const heldTicketNos = new Set(
       mileageEntries
-        .filter((e) => e.payrollExcluded && e.ticketNo)
+        .filter((e) => e.payrollExcluded && e.ticketNo && !e.deletedAt)
         .filter((e) => (isSelfRole ? e.profileId === profileId : allowedLocations === null || allowedLocations.includes(e.branch)))
         .map((e) => e.ticketNo as string)
     );
@@ -900,7 +900,7 @@ export function MobileTechApp() {
     const recentCutoff = Date.now() - RECENTLY_RELEASED_WINDOW_MS;
 
     for (const e of mileageEntries) {
-      if (!e.payrollReleasedAt || !e.ticketNo) continue;
+      if (!e.payrollReleasedAt || !e.ticketNo || e.deletedAt) continue;
       const inScope = isSelfRole ? e.profileId === profileId : allowedLocations === null || allowedLocations.includes(e.branch);
       if (!inScope) continue;
       const ticket = tickets.find((t) => t.ticketNo === e.ticketNo);

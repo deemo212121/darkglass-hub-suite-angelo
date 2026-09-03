@@ -12,7 +12,7 @@
 
 import { supabase } from "./client";
 import { getCompanyMapProvider } from "./companySettings";
-import { computeDailyRouteMiles, type MileageTicketInput } from "@/lib/mapEngine";
+import { computeDailyRouteMiles, type MileageTicketInput, type DailyRouteMilesResult } from "@/lib/mapEngine";
 
 export interface MileageEntry {
   id: string;
@@ -83,6 +83,29 @@ export interface MileageEntry {
    *  hold is released. Cleared again if the entry is ever re-held.
    *  Migration 0186. */
   payrollReleasedAt: string | null;
+  /** Soft-delete (migration 0209) — for a stop the technician never
+   *  actually made (customer cancelled, couldn't get there, etc.), so it
+   *  needs to come OUT of the day's route and mileage total entirely.
+   *  Different from payrollExcluded ("On Hold"), which is for a stop the
+   *  technician DID drive to but that shouldn't count for payroll yet —
+   *  On Hold stays in the route; deletedAt removes it. The row itself
+   *  stays in place either way (still visible in the Mileage tab table,
+   *  its Payroll status reads "Deleted"). See softDeleteMileageEntry.
+   *  Reversible via restoreMileageEntry. */
+  deletedAt: string | null;
+  deletedByName: string | null;
+  deleteReason: string | null;
+  /** This ticket's OWN leg of the day's route — distance from the previous
+   *  stop (or the branch, for the day's first stop) to this one, with the
+   *  final "way home" leg folded into the day's LAST stop. Purely a display
+   *  breakdown of totalMileage/mileageEffectiveTotal (which stays the
+   *  shared day total payroll reads, unaffected by this) — summing every
+   *  entry's legMileage for one day reconstructs that same day total. Null
+   *  for manual entries (no route/stop-order concept), a stop that failed
+   *  to geocode, or a row not yet recalculated since migration 0210.
+   *  Computed in syncMileageFromTickets/recalculateMileageDayRoute via
+   *  computeDailyRouteMiles's legMiles (mapEngine.ts). */
+  legMileage: number | null;
 }
 
 /**
@@ -129,11 +152,15 @@ function mapRow(r: any): MileageEntry {
     adjustedByName: r.adjusted_by_name ?? null,
     adjustedAt: r.adjusted_at ?? null,
     payrollReleasedAt: r.payroll_released_at ?? null,
+    deletedAt: r.deleted_at ?? null,
+    deletedByName: r.deleted_by_name ?? null,
+    deleteReason: r.delete_reason ?? null,
+    legMileage: r.leg_mileage != null ? Number(r.leg_mileage) : null,
   };
 }
 
 const ENTRY_COLUMNS =
-  "id, profile_id, technician_name, branch, work_date, address, contact_number, email, total_mileage, google_map_link, created_by_name, created_at, ticket_id, ticket_no, ticket_status, source, payroll_excluded, payroll_excluded_at, payroll_excluded_by_name, payroll_hold_reason, route_order, route_return_to, mileage_override, mileage_adjustment, adjustment_note, adjusted_by_name, adjusted_at, payroll_released_at";
+  "id, profile_id, technician_name, branch, work_date, address, contact_number, email, total_mileage, google_map_link, created_by_name, created_at, ticket_id, ticket_no, ticket_status, source, payroll_excluded, payroll_excluded_at, payroll_excluded_by_name, payroll_hold_reason, route_order, route_return_to, mileage_override, mileage_adjustment, adjustment_note, adjusted_by_name, adjusted_at, payroll_released_at, deleted_at, deleted_by_name, delete_reason, leg_mileage";
 
 // Supabase caps an unbounded select at 1000 rows — mileage_entries is
 // queried all-time, no date range. Page through in chunks of 1000 instead.
@@ -228,8 +255,38 @@ export async function reconcileMileageNoPhotoHolds(
   return changed;
 }
 
-export async function deleteMileageEntry(id: string): Promise<void> {
-  const { error } = await supabase.from("mileage_entries").delete().eq("id", id);
+/**
+ * Soft-deletes a mileage entry — see MileageEntry.deletedAt. The row stays
+ * in place; getMileageEntries still returns it (so the Mileage tab can
+ * keep showing it with a "Deleted" badge and a way to restore it), but
+ * mileageDayRoute-style consumers should filter deletedAt out before
+ * summing totals or building a route. Requires a reason, shown in the
+ * audit trail the same way an adjustment note already is.
+ */
+export async function softDeleteMileageEntry(
+  id: string,
+  reason: string,
+  deletedByProfileId: string | null,
+  deletedByName: string | null
+): Promise<void> {
+  const { error } = await supabase
+    .from("mileage_entries")
+    .update({
+      deleted_at: new Date().toISOString(),
+      deleted_by: deletedByProfileId,
+      deleted_by_name: deletedByName,
+      delete_reason: reason.trim() || null,
+    })
+    .eq("id", id);
+  if (error) throw new Error(error.message);
+}
+
+/** Reverses softDeleteMileageEntry — clears every deletion field, restoring the row to normal. */
+export async function restoreMileageEntry(id: string): Promise<void> {
+  const { error } = await supabase
+    .from("mileage_entries")
+    .update({ deleted_at: null, deleted_by: null, deleted_by_name: null, delete_reason: null })
+    .eq("id", id);
   if (error) throw new Error(error.message);
 }
 
@@ -323,6 +380,18 @@ export interface MileageSyncResult {
    *  future sync links their tickets to a real profile) instead of
    *  looking identical to any other synced entry. */
   unmatchedTechnicians: { name: string; count: number }[];
+  /** How many technician-days actually got (re)processed this run — new
+   *  tickets, moved tickets, AND days recalculated purely to backfill
+   *  leg_mileage (see the hasMissingLegMileage check above). A run that
+   *  only backfills existing days has `created === 0` but this is still
+   *  > 0 — callers should refetch/refresh on this, not just on `created`. */
+  recalculatedDays: number;
+  /** True if `signal` was aborted before every day finished — everything
+   *  counted above still genuinely happened/saved, this just means the run
+   *  didn't reach the end of groupsToProcess. Re-running later (or clicking
+   *  Sync again) picks up exactly where it left off — an unprocessed day
+   *  still looks unprocessed, nothing was left half-written. */
+  stopped: boolean;
 }
 
 /**
@@ -364,8 +433,20 @@ export interface MileageSyncResult {
  */
 export async function syncMileageFromTickets(input: {
   technicians: { profileId: string; fullName: string; branch: string; phone?: string; email?: string; homeAddress?: string }[];
+  /** Called after each technician-day finishes recomputing (route lookups
+   *  are the slow part — one per day that needs (re)processing, awaited in
+   *  sequence below) — lets the caller show live progress instead of one
+   *  opaque spinner for however long the whole run takes. `total` is fixed
+   *  once known (right before the loop starts); `done` counts up to it. */
+  onProgress?: (done: number, total: number) => void;
+  /** Checked between technician-days (not mid-day — a day's own route
+   *  lookups always finish once started, so a partial/half-saved day never
+   *  happens) — when aborted, the loop stops early and returns whatever
+   *  was already saved rather than throwing, since every write up to that
+   *  point already committed and shouldn't be treated as a failure. */
+  signal?: AbortSignal;
 }): Promise<MileageSyncResult> {
-  const result: MileageSyncResult = { created: 0, skipped: 0, errors: [], unmatchedTechnicians: [] };
+  const result: MileageSyncResult = { created: 0, skipped: 0, errors: [], unmatchedTechnicians: [], recalculatedDays: 0, stopped: false };
   const techByNormalizedName = new Map(
     input.technicians.filter((t) => t.fullName.trim()).map((t) => [t.fullName.trim().toLowerCase(), t])
   );
@@ -390,7 +471,7 @@ export async function syncMileageFromTickets(input: {
     })(),
     supabase
       .from("mileage_entries")
-      .select("id, ticket_id, total_mileage, work_date, profile_id, technician_name")
+      .select("id, ticket_id, total_mileage, leg_mileage, work_date, profile_id, technician_name")
       .eq("source", "auto")
       .not("ticket_id", "is", null),
     getCompanyMapProvider(),
@@ -419,6 +500,7 @@ export async function syncMileageFromTickets(input: {
       {
         id: r.id as string,
         totalMileage: Number(r.total_mileage) || 0,
+        hasLegMileage: r.leg_mileage != null,
         workDate: r.work_date as string,
         identity: r.profile_id ? `id:${r.profile_id}` : `name:${String(r.technician_name || "").trim().toLowerCase()}`,
       },
@@ -485,13 +567,31 @@ export async function syncMileageFromTickets(input: {
         if (!existing) return true;
         return `${existing.identity}|${existing.workDate}` !== key;
       });
-      return hasNewOrMovedInTicket || keysThatLostATicket.has(key);
+      // Backfill: a day fully synced before leg_mileage existed (migration
+      // 0210) has every row's total_mileage already correct, so neither
+      // check above would ever re-touch it — without this it would stay
+      // stuck showing "—" in the Mileage tab's This Stop column forever,
+      // since nothing about the day's tickets ever actually changes.
+      const hasMissingLegMileage = tickets.some((t) => !existingByTicketId.get(t.id)?.hasLegMileage);
+      return hasNewOrMovedInTicket || keysThatLostATicket.has(key) || hasMissingLegMileage;
     })
     .map(([, tickets]) => tickets);
   const untouchedTicketCount = allAssignedTickets.length - groupsToProcess.reduce((s, g) => s + g.length, 0);
   result.skipped = untouchedTicketCount;
+  result.recalculatedDays = groupsToProcess.length;
 
-  for (const groupTickets of groupsToProcess) {
+  input.onProgress?.(0, groupsToProcess.length);
+  for (let groupIdx = 0; groupIdx < groupsToProcess.length; groupIdx++) {
+    if (input.signal?.aborted) {
+      result.stopped = true;
+      result.recalculatedDays = groupIdx; // only what actually got processed before stopping
+      break;
+    }
+    // finally, not just an end-of-body call — every early `continue` below
+    // (route lookup failed/threw) still needs to advance the progress
+    // count, or it visibly stalls instead of just moving past a skipped day.
+    try {
+    const groupTickets = groupsToProcess[groupIdx];
     const orderedTickets = sortStopsByHeuristic(groupTickets);
 
     const rawName = String(orderedTickets[0].technician).trim();
@@ -502,18 +602,27 @@ export async function syncMileageFromTickets(input: {
       return { location: t.location, city: customer.city, address: customer.address, state: customer.state, zip: customer.zip, account: t.account };
     });
 
-    let miles: number | null = null;
+    let routeResult: DailyRouteMilesResult | null = null;
     try {
-      miles = await computeDailyRouteMiles(branch, routeStops[0], routeStops, technician?.homeAddress, mapProvider);
+      routeResult = await computeDailyRouteMiles(branch, routeStops[0], routeStops, technician?.homeAddress, mapProvider);
     } catch (err) {
       result.errors.push(`${orderedTickets[0].schedule_date} (${rawName}): ${err instanceof Error ? err.message : "route lookup failed"}`);
       continue;
     }
-    if (miles === null) {
+    if (routeResult === null) {
       result.errors.push(`${orderedTickets[0].schedule_date} (${rawName}): no route found — skipped.`);
       continue;
     }
-    const roundedMiles = Math.round(miles * 10) / 10;
+    const roundedMiles = Math.round(routeResult.totalMiles * 10) / 10;
+    // legMiles is index-aligned with orderedTickets/routeStops — this
+    // ticket's own leg (previous stop -> this stop, home leg folded into
+    // the day's last stop), null if it couldn't be geocoded. Purely a
+    // display breakdown; roundedMiles (the day total) is still what
+    // payroll reads, unaffected by this.
+    const legMileageAt = (idx: number): number | null => {
+      const m = routeResult!.legMiles[idx];
+      return m != null ? Math.round(m * 10) / 10 : null;
+    };
 
     // Refresh every already-synced ticket in this group — a new stop
     // joined, so the whole day's route (and therefore every existing
@@ -527,13 +636,15 @@ export async function syncMileageFromTickets(input: {
     // ticket that was already here, but for one that just got rescheduled
     // or reassigned, this is what actually MOVES its row onto the new day
     // / new technician rather than leaving it stale under the old ones.
-    for (const t of orderedTickets) {
+    for (let idx = 0; idx < orderedTickets.length; idx++) {
+      const t = orderedTickets[idx];
       const existing = existingByTicketId.get(t.id);
       if (existing) {
         const { error: updateErr } = await supabase
           .from("mileage_entries")
           .update({
             total_mileage: roundedMiles,
+            leg_mileage: legMileageAt(idx),
             route_order: null,
             route_return_to: null,
             work_date: t.schedule_date,
@@ -570,6 +681,7 @@ export async function syncMileageFromTickets(input: {
         contact_number: technician?.phone || null,
         email: technician?.email || null,
         total_mileage: roundedMiles,
+        leg_mileage: legMileageAt(orderedTickets.indexOf(ticket)),
         google_map_link: googleMapLink || null,
         created_by_name: "Auto-sync",
         ticket_id: ticket.id,
@@ -585,6 +697,9 @@ export async function syncMileageFromTickets(input: {
         continue;
       }
       result.created++;
+    }
+    } finally {
+      input.onProgress?.(groupIdx + 1, groupsToProcess.length);
     }
   }
 
@@ -629,17 +744,20 @@ export async function recalculateMileageDayRoute(input: {
 
   const mapProvider = await getCompanyMapProvider();
   const effectiveHomeAddress = input.returnTo === "home" ? input.homeAddress : undefined;
-  const miles = await computeDailyRouteMiles(input.branch, orderedStops[0], orderedStops, effectiveHomeAddress, mapProvider);
-  if (miles === null) throw new Error("No route found for this stop order.");
-  const roundedMiles = Math.round(miles * 10) / 10;
+  const routeResult = await computeDailyRouteMiles(input.branch, orderedStops[0], orderedStops, effectiveHomeAddress, mapProvider);
+  if (routeResult === null) throw new Error("No route found for this stop order.");
+  const roundedMiles = Math.round(routeResult.totalMiles * 10) / 10;
 
   const orderIndexByTicketId = new Map(input.orderedTicketIds.map((id, idx) => [id, idx]));
   for (const entry of input.entries) {
+    const idx = orderIndexByTicketId.get(entry.ticketId);
+    const legMiles = idx != null ? routeResult.legMiles[idx] : null;
     const { error } = await supabase
       .from("mileage_entries")
       .update({
         total_mileage: roundedMiles,
-        route_order: orderIndexByTicketId.get(entry.ticketId) ?? null,
+        leg_mileage: legMiles != null ? Math.round(legMiles * 10) / 10 : null,
+        route_order: idx ?? null,
         route_return_to: input.returnTo,
       })
       .eq("id", entry.id);
