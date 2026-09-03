@@ -766,17 +766,18 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // "ticket_time_dispute", submitted from the mobile tech app when an
   // on-site check-in failed to register. Moved here (from Attendance
   // Monitoring) alongside Ticket Attendance since both are about the same
-  // underlying On-Site Check-In data. Loaded lazily, only once this tab is
-  // opened.
+  // underlying On-Site Check-In data. Loaded on mount (not lazily on tab
+  // open) so the pending-count badge on the tab itself is accurate before
+  // the tab has ever been opened.
   const [ticketTimeDisputes, setTicketTimeDisputes] = useState<EmployeeRequestRow[]>([]);
   const [ticketTimeDisputesLoaded, setTicketTimeDisputesLoaded] = useState(false);
   const [ticketTimeDisputeNote, setTicketTimeDisputeNote] = useState<Record<string, string>>({});
   useEffect(() => {
-    if (activeTab !== "ticketTimeDisputes" || ticketTimeDisputesLoaded) return;
+    if (!isFullRequestsAdmin || ticketTimeDisputesLoaded) return;
     getCompanyEmployeeRequests()
       .then((rows) => { setTicketTimeDisputes(rows.filter((r) => r.requestType === "ticket_time_dispute")); setTicketTimeDisputesLoaded(true); })
       .catch((err) => console.error("Failed to load ticket time disputes:", err));
-  }, [activeTab, ticketTimeDisputesLoaded]);
+  }, [isFullRequestsAdmin, ticketTimeDisputesLoaded]);
   const [ticketTimeDisputeSubTab, setTicketTimeDisputeSubTab] = useState<"pending" | "history">("pending");
   const pendingTicketTimeDisputes = ticketTimeDisputes.filter((r) => r.status === "pending");
   const historyTicketTimeDisputes = ticketTimeDisputes
@@ -2974,19 +2975,27 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         <div className="h-px bg-white/10 mx-1" />
         {ACCOUNTING_DASHBOARD_TABS.map((tab) => {
           const Icon = tab.Icon;
+          const badgeCount = tab.id === "ticketTimeDisputes" ? pendingTicketTimeDisputes.length : 0;
           return (
             <button
               key={tab.id}
               type="button"
               onClick={() => setActiveTab(tab.id)}
               title={tab.label}
-              className={`flex items-center gap-2 rounded-lg px-2 py-2 text-sm whitespace-nowrap transition-colors ${
+              className={`relative flex items-center gap-2 rounded-lg px-2 py-2 text-sm whitespace-nowrap transition-colors ${
                 activeTab === tab.id
                   ? "bg-blue-500/20 text-blue-300"
                   : "text-slate-400 hover:bg-white/10 hover:text-slate-200"
               }`}
             >
-              <Icon className="h-4 w-4 shrink-0" />
+              <span className="relative shrink-0">
+                <Icon className="h-4 w-4" />
+                {badgeCount > 0 && (
+                  <span className="absolute -top-1.5 -right-1.5 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold leading-none text-white">
+                    {badgeCount > 99 ? "99+" : badgeCount}
+                  </span>
+                )}
+              </span>
               {sidebarExpanded && <span>{tab.label}</span>}
             </button>
           );
@@ -3029,6 +3038,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         <div className="flex gap-2 mb-8 border-b border-white/10 overflow-x-auto">
           {ACCOUNTING_DASHBOARD_TABS.map((tab) => {
             const Icon = tab.Icon;
+            const badgeCount = tab.id === "ticketTimeDisputes" ? pendingTicketTimeDisputes.length : 0;
             return (
               <button
                 key={tab.id}
@@ -3041,6 +3051,11 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
               >
                 <Icon className="h-4 w-4" />
                 {tab.label}
+                {badgeCount > 0 && (
+                  <span className="flex h-4 min-w-[16px] items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold leading-none text-white">
+                    {badgeCount > 99 ? "99+" : badgeCount}
+                  </span>
+                )}
               </button>
             );
           })}

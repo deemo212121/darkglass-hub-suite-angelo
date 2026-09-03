@@ -10,7 +10,8 @@ import { type UserManagementRecord } from "@/lib/user-management";
 import { useAuth } from "@/lib/auth";
 import { createCompanyUser, getCompanyUsers, updateCompanyUser, setMustChangePassword, type ProfileRow } from "@/lib/supabase/users";
 import { usePersistedTab } from "@/lib/usePersistedTab";
-import { ROLE_LABELS, ROLE_OPTIONS, normalizeRole } from "@/lib/roleLabels";
+import { ROLE_LABELS, normalizeRole } from "@/lib/roleLabels";
+import { useAllRoleOptions } from "@/lib/customRoles";
 import { auth as firebaseAuth } from "@/lib/firebase/config";
 import { ActivityLogPanel } from "@/components/ActivityLogPanel";
 import { logModuleActivity } from "@/lib/supabase/moduleActivityLog";
@@ -105,15 +106,6 @@ const LOCATIONS = [
   "Richmond", "Raleigh", "San Antonio", "St. Louis", "Savannah",
   "Tallahassee", "Wilmington", "Philippines",
 ];
-
-// User types shown in the "Add New User" dropdown. Sourced from
-// ROLE_OPTIONS (src/lib/roleLabels.ts) instead of a separate hardcoded list
-// — this used to be its own array and had already drifted out of sync with
-// roleLabels.ts (e.g. missing CLAIMS_TEAM_LEADER), so a role added in one
-// place silently didn't show up in the other. Users can tick multiple —
-// the first ticked value becomes the primary `role` (used by RLS / legacy
-// access checks); the rest go into `extra_roles`.
-const USER_TYPES = ROLE_OPTIONS;
 
 // Sentinel for the "All Locations" entry in Branch Access. Picking this clears
 // every individual selection — the user can see every branch. Stored as-is so
@@ -731,6 +723,13 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
   const navigate = useNavigate();
   const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
   const auth = useAuth();
+  // User types shown in the "Add New User" dropdown. Built-in roles plus
+  // any company-created custom roles (Accessibility Management's "Add
+  // Role" — see src/lib/customRoles.ts) so a role added there is
+  // immediately usable as a new user's primary role here too. Users can
+  // tick multiple — the first ticked value becomes the primary `role`
+  // (used by RLS / legacy access checks); the rest go into `extra_roles`.
+  const userTypes = useAllRoleOptions();
   const [viewMode, setViewMode] = usePersistedTab<ViewMode>("ahs:admin-user-management-view-mode", ["list", "hierarchy"], "list");
   const [search, setSearch] = useState("");
   // Per-column funnel filters: { fieldName: Set<allowed values> }
@@ -1634,7 +1633,7 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
                     <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">User Type *</span>
                     <RoleMultiSelect
                       values={newUserForm.userTypes}
-                      options={USER_TYPES}
+                      options={userTypes}
                       placeholder="Select user type(s)"
                       onChange={(next) => setNewUserForm((prev) => ({
                         ...prev,

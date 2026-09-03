@@ -3,7 +3,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
 import { ChevronLeft, Save, Download, Printer, Loader2, X } from "lucide-react";
 import type { ModuleDef } from "@/lib/modules";
-import { ROLE_OPTIONS } from "@/lib/roleLabels";
+import { useAllRoleOptions } from "@/lib/customRoles";
 import { getRepairStatuses, upsertRepairStatus, deleteRepairStatus, type RepairStatus } from "@/lib/supabase/repairStatuses";
 
 type DraftRow = Omit<RepairStatus, "id" | "sortOrder"> & { id?: string };
@@ -39,6 +39,7 @@ function ToggleCell({ checked, onToggle, label }: { checked: boolean; onToggle: 
 
 /** Compact "which roles can use this status" multi-select — a button showing a short summary that opens a checkbox popover, since a full multi-select control doesn't fit in a dense table cell. */
 function RoleMultiSelectCell({ values, onChange }: { values: string[]; onChange: (next: string[]) => void }) {
+  const roleOptions = useAllRoleOptions();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -51,15 +52,15 @@ function RoleMultiSelectCell({ values, onChange }: { values: string[]; onChange:
   const toggle = (val: string) => {
     onChange(values.includes(val) ? values.filter((v) => v !== val) : [...values, val]);
   };
-  const summary = values.length === 0 ? "— none —" : values.length === 1 ? (ROLE_OPTIONS.find((o) => o.value === values[0])?.label ?? values[0]) : `${values.length} roles`;
+  const summary = values.length === 0 ? "— none —" : values.length === 1 ? (roleOptions.find((o) => o.value === values[0])?.label ?? values[0]) : `${values.length} roles`;
   return (
     <div className="role-cell" ref={ref}>
-      <button type="button" className="role-cell-btn" onClick={() => setOpen((v) => !v)} title={values.map((v) => ROLE_OPTIONS.find((o) => o.value === v)?.label ?? v).join(", ") || "No roles selected"}>
+      <button type="button" className="role-cell-btn" onClick={() => setOpen((v) => !v)} title={values.map((v) => roleOptions.find((o) => o.value === v)?.label ?? v).join(", ") || "No roles selected"}>
         {summary}
       </button>
       {open && (
         <div className="role-cell-popover">
-          {ROLE_OPTIONS.map((opt) => (
+          {roleOptions.map((opt) => (
             <label key={opt.value} className="role-cell-option">
               <input type="checkbox" checked={values.includes(opt.value)} onChange={() => toggle(opt.value)} />
               {opt.label}

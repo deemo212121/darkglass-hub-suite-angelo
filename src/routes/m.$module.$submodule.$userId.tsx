@@ -10,7 +10,8 @@ import { LOCATIONS } from "@/lib/locations";
 import { WORK_PLAN_DAYS, SLOT_OPTIONS, accessibleLocations, type WorkPlan } from "@/lib/workPlan";
 import { getUserByUsername, getCompanyUsers, type UserAccount } from "@/lib/firebase/users";
 import { getProfileByUsername, getProfileEmployeeInfo, saveProfileEmployeeInfo } from "@/lib/supabase/users";
-import { normalizeRole, ROLE_OPTIONS } from "@/lib/roleLabels";
+import { normalizeRole } from "@/lib/roleLabels";
+import { useAllRoleOptions } from "@/lib/customRoles";
 import { useAuth } from "@/lib/auth";
 import { usePersistedTab } from "@/lib/usePersistedTab";
 import { auth as firebaseAuth } from "@/lib/firebase/config";
@@ -471,6 +472,9 @@ function UserDetailsPage() {
   const { module, submodule, userId } = Route.useLoaderData();
   const { ready, role: viewerRole, extraRoles: viewerExtraRoles, displayName: viewerDisplayName, email: viewerEmail } = useAuth();
   const navigate = useNavigate();
+  // Built-in roles plus any company-created custom roles (Accessibility
+  // Management's "Add Role" — see src/lib/customRoles.ts).
+  const roleOptions = useAllRoleOptions();
   const hasAccountAccess = canEditAccountDetails(viewerRole, viewerExtraRoles);
   // Only Admin/SuperAdmin may edit a user's email — it's the actual Firebase
   // Auth login credential (landing.tsx's username-login path resolves a
@@ -853,7 +857,7 @@ function UserDetailsPage() {
                         <span className={labelCls}>User Type <span className="normal-case text-[10px] text-slate-500">(tick all that apply — first ticked is primary)</span></span>
                         <RoleMultiSelect
                           values={form.roles}
-                          options={ROLE_OPTIONS}
+                          options={roleOptions}
                           onChange={(next) => {
                             // Keep `role` mirrored as the primary so anywhere
                             // we still read form.role gets the right value.

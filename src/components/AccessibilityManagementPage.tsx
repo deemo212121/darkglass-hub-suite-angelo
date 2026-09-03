@@ -1,16 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
-import { ChevronLeft, ChevronDown, RefreshCw, Loader2 } from "lucide-react";
+import { ChevronLeft, ChevronDown, Loader2, ArrowRight, ArrowLeft, LayoutGrid, Move, GripVertical, Inbox, CheckCircle2, Plus, X, Settings, Pencil, Trash2, Check } from "lucide-react";
+import { DndContext, useDraggable, useDroppable, type DragEndEvent } from "@dnd-kit/core";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { MODULES } from "@/lib/modules";
-import { getCompanyUsers, updateCompanyUser, type ProfileRow } from "@/lib/supabase/users";
-import { ROLE_OPTIONS, ROLE_LABELS, normalizeRole } from "@/lib/roleLabels";
+import { ROLE_LABELS, ROLE_OPTIONS } from "@/lib/roleLabels";
+import { useAllRoleOptions, useCustomRoles, createCustomRole, setRoleLabel, deleteCustomRole } from "@/lib/customRoles";
 import { DASHBOARD_ROLE_GATES } from "@/lib/dashboardAccess";
 import { hydrateModuleRoleGates } from "@/lib/moduleAccess";
 import { getModuleRoleGateOverrides, setModuleRoleGateOverride } from "@/lib/supabase/moduleRoleGates";
-import { NOTIFICATION_TRIGGERS, getNotificationRoleGateOverrides, setNotificationRoleGateOverride } from "@/lib/supabase/notificationRoleGates";
-import { getNotificationOptOuts, setUserNotificationOptOut } from "@/lib/supabase/notificationOptOuts";
 import { FloatingHorizontalScrollbar } from "@/components/FloatingHorizontalScrollbar";
 
 interface Props {
@@ -18,66 +17,441 @@ interface Props {
   sub: SubModuleDef;
 }
 
-// Fixed per-column pixel widths, shared by the header table and the body
-// table below (see the split-table comment further down for why there are
-// two <table> elements). table-layout: fixed + identical <colgroup> widths
-// is what keeps their columns pixel-aligned as the body scrolls sideways.
-const NAME_COL_W = 190;
-const ROLE_COL_W = 150;
+// Fixed per-column pixel widths for the Module Access by Role grid below
+// (see the split-table comment further down for why there are two <table>
+// elements). table-layout: fixed + identical <colgroup> widths is what
+// keeps their columns pixel-aligned as the body scrolls sideways. Role
+// count is dynamic (built-in roles plus any company-created custom roles —
+// see src/lib/customRoles.ts), so widths are computed from the live count
+// instead of a module-level constant.
 const CHECKBOX_COL_W = 92;
-const COL_WIDTHS = [NAME_COL_W, ROLE_COL_W, ...ROLE_OPTIONS.map(() => CHECKBOX_COL_W)];
-const TABLE_WIDTH = COL_WIDTHS.reduce((sum, w) => sum + w, 0);
-
-function ColGroup() {
-  return (
-    <colgroup>
-      {COL_WIDTHS.map((w, i) => (
-        <col key={i} style={{ width: w }} />
-      ))}
-    </colgroup>
-  );
-}
-
-// Second grid, further down the page: which roles may open each gated
-// Dashboard submodule. Only the submodule-title column differs in width
-// from the first grid's Name column; role columns reuse CHECKBOX_COL_W so
-// both grids line up visually.
 const GATE_NAME_COL_W = 260;
-const GATE_COL_WIDTHS = [GATE_NAME_COL_W, ...ROLE_OPTIONS.map(() => CHECKBOX_COL_W)];
-const GATE_TABLE_WIDTH = GATE_COL_WIDTHS.reduce((sum, w) => sum + w, 0);
 
-function GateColGroup() {
+function gateColWidths(roleCount: number): number[] {
+  return [GATE_NAME_COL_W, ...Array.from({ length: roleCount }, () => CHECKBOX_COL_W)];
+}
+
+function gateTableWidth(roleCount: number): number {
+  return gateColWidths(roleCount).reduce((sum, w) => sum + w, 0);
+}
+
+function GateColGroup({ roleCount }: { roleCount: number }) {
   return (
     <colgroup>
-      {GATE_COL_WIDTHS.map((w, i) => (
+      {gateColWidths(roleCount).map((w, i) => (
         <col key={i} style={{ width: w }} />
       ))}
     </colgroup>
   );
 }
 
-// Fourth grid, further down still: per-user notification opt-outs. One
-// column per NOTIFICATION_TRIGGERS entry — wider than a role-code column
-// since trigger labels are longer than role labels.
-const TRIGGER_COL_W = 170;
-const OPTOUT_COL_WIDTHS = [NAME_COL_W, ROLE_COL_W, ...NOTIFICATION_TRIGGERS.map(() => TRIGGER_COL_W)];
-const OPTOUT_TABLE_WIDTH = OPTOUT_COL_WIDTHS.reduce((sum, w) => sum + w, 0);
+// Admin-tier codes excluded from Manage Roles' "Built-in Roles" rename
+// list — never editable from the UI, even just the display label, since
+// they're the roles that grant the ability to reach this page at all.
+// SUPERADMIN/SUPERSUPERADMIN are already excluded from ROLE_OPTIONS
+// itself; ADMIN is listed defensively too since it IS in ROLE_OPTIONS.
+const NON_RENAMABLE_BUILTIN_CODES = new Set(["ADMIN", "SUPERADMIN", "SUPERSUPERADMIN"]);
 
-function OptOutColGroup() {
+// Drag & Drop alternate view for "Module Access by Role" (see the toggle
+// next to that heading) — one role at a time, two containers, each module
+// card living in exactly one of them so nothing repeats the way it would
+// showing every role as its own column. Reuses the same GateRow shape,
+// dashboardGates state, and handleGateToggle save path the Grid view
+// already has; this is purely a different way to trigger the same change.
+// Same card/container visual language as CsrTeamComposition.tsx's existing
+// drag-and-drop board (Team Composition, under CSR) — grip handle, same
+// rounded-lg/border-white/10/bg-white/5 idle style, same opacity-on-drag
+// feedback, same isOver container highlight — so this reads as the same
+// interaction pattern elsewhere in the app, just wired to @dnd-kit instead
+// of that page's native HTML5 drag events.
+// One accent color per top-level module (Dashboard/Tickets/Parts/Claims/
+// Report/Admin) — reusing MODULES' own ModuleDef.accent (already the app's
+// canonical per-module color, shown as each module's tile dot on the home
+// screen) rather than inventing a second palette, so a page's card color
+// here means the same thing it does everywhere else in the app.
+const moduleAccentBySlug = new Map(MODULES.map((m) => [m.slug, m.accent]));
+
+function DraggableModuleCard({ id, title, moduleLabel, moduleSlug, onMove, direction }: { id: string; title: string; moduleLabel: string; moduleSlug: string; onMove: () => void; direction: "grant" | "revoke" }) {
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id });
+  const accent = moduleAccentBySlug.get(moduleSlug) ?? "#94a3b8";
   return (
-    <colgroup>
-      {OPTOUT_COL_WIDTHS.map((w, i) => (
-        <col key={i} style={{ width: w }} />
-      ))}
-    </colgroup>
+    <div
+      ref={setNodeRef}
+      {...listeners}
+      {...attributes}
+      style={{
+        transform: transform ? `translate3d(${transform.x}px, ${transform.y}px, 0)` : undefined,
+        borderLeftColor: accent,
+        borderLeftWidth: "3px",
+      }}
+      className={`group flex items-center gap-2.5 rounded-lg border border-white/10 bg-white/5 px-3 py-2.5 cursor-grab active:cursor-grabbing touch-none ${isDragging ? "opacity-50" : ""}`}
+    >
+      <GripVertical className="h-4 w-4 text-muted-foreground shrink-0" />
+      <span className="h-2.5 w-2.5 rounded-full shrink-0" style={{ backgroundColor: accent }} />
+      <div className="min-w-0 flex-1">
+        <div className="text-sm font-medium truncate" title={title}>{title}</div>
+        <div className="text-xs truncate" style={{ color: accent }}>{moduleLabel}</div>
+      </div>
+      <button
+        type="button"
+        title={direction === "grant" ? "Grant access" : "Revoke access"}
+        onClick={(e) => { e.stopPropagation(); onMove(); }}
+        className="shrink-0 rounded-md p-1.5 text-muted-foreground opacity-0 group-hover:opacity-100 hover:text-foreground hover:bg-white/10 transition-colors"
+      >
+        {direction === "grant" ? <ArrowRight className="h-4 w-4" /> : <ArrowLeft className="h-4 w-4" />}
+      </button>
+    </div>
   );
 }
 
-// Every role code, for the display-only fallback of a (module, submodule)
-// that has neither an override nor (for Dashboard) a hardcoded default —
-// shown as "every role checked" so an unrestricted row visually reads as
-// "everyone currently has access," not as "nobody does."
-const ALL_ROLE_VALUES = ROLE_OPTIONS.map((r) => r.value);
+function DroppableContainer({ id, label, count, icon, tint, children }: { id: string; label: string; count: number; icon: React.ReactNode; tint: "neutral" | "granted"; children: React.ReactNode }) {
+  const { setNodeRef, isOver } = useDroppable({ id });
+  const idleBorder = tint === "granted" ? "border-emerald-500/30" : "border-white/10";
+  const idleBg = tint === "granted" ? "bg-emerald-500/[0.04]" : "bg-white/5";
+  return (
+    <div
+      ref={setNodeRef}
+      className={`flex-1 min-w-0 rounded-xl border-2 p-4 space-y-2 min-h-[24rem] max-h-[42rem] overflow-y-auto transition-colors ${
+        isOver ? "border-blue-500 bg-white/10" : `${idleBorder} ${idleBg}`
+      }`}
+    >
+      <div className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground mb-3 flex items-center gap-2 sticky top-0">
+        {icon} {label} · {count}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function ModuleAccessDragDrop({
+  gateRows,
+  dashboardGates,
+  selectedRole,
+  onSelectedRoleChange,
+  filter,
+  onFilterChange,
+  savingGateCell,
+  onToggle,
+}: {
+  gateRows: GateRow[];
+  dashboardGates: Record<string, string[]>;
+  selectedRole: string;
+  onSelectedRoleChange: (role: string) => void;
+  filter: string;
+  onFilterChange: (v: string) => void;
+  savingGateCell: string | null;
+  onToggle: (moduleSlug: string, submoduleSlug: string, roleCode: string, checked: boolean) => void;
+}) {
+  const roleOptions = useAllRoleOptions();
+  const customRoles = useCustomRoles();
+  const allRoleValues = useMemo(() => roleOptions.map((r) => r.value), [roleOptions]);
+  const [addRoleOpen, setAddRoleOpen] = useState(false);
+  const [newRoleName, setNewRoleName] = useState("");
+  const [addRoleError, setAddRoleError] = useState<string | null>(null);
+  const [creatingRole, setCreatingRole] = useState(false);
+
+  // Manage Roles modal — rename/delete for company-created custom roles
+  // only. Built-in roles (ROLE_LABELS, src/lib/roleLabels.ts) aren't listed
+  // here — they're referenced by dozens of hardcoded permission checks
+  // throughout the app, so renaming/deleting one is a code change, not a
+  // UI action.
+  const [manageRolesOpen, setManageRolesOpen] = useState(false);
+  const [editingCode, setEditingCode] = useState<string | null>(null);
+  const [editingLabel, setEditingLabel] = useState("");
+  const [confirmDeleteCode, setConfirmDeleteCode] = useState<string | null>(null);
+  const [roleActionBusy, setRoleActionBusy] = useState<string | null>(null);
+  const [roleActionError, setRoleActionError] = useState<string | null>(null);
+
+  const q = filter.trim().toLowerCase();
+  const filtered = q ? gateRows.filter((r) => r.title.toLowerCase().includes(q) || r.moduleLabel.toLowerCase().includes(q)) : gateRows;
+  const isGranted = (row: GateRow) => (dashboardGates[`${row.moduleSlug}:${row.slug}`] ?? allRoleValues).includes(selectedRole);
+  const granted = filtered.filter(isGranted);
+  const available = filtered.filter((r) => !isGranted(r));
+  const cellBusy = savingGateCell?.endsWith(`:${selectedRole}`);
+
+  const move = (row: GateRow, toGranted: boolean) => onToggle(row.moduleSlug, row.slug, selectedRole, toGranted);
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over) return;
+    const row = gateRows.find((r) => `${r.moduleSlug}:${r.slug}` === active.id);
+    if (!row) return;
+    if (over.id === "granted" && !isGranted(row)) move(row, true);
+    else if (over.id === "available" && isGranted(row)) move(row, false);
+  };
+
+  const handleCreateRole = async () => {
+    setCreatingRole(true);
+    setAddRoleError(null);
+    try {
+      const role = await createCustomRole(newRoleName);
+      onSelectedRoleChange(role.code);
+      setAddRoleOpen(false);
+      setNewRoleName("");
+    } catch (err) {
+      setAddRoleError(err instanceof Error ? err.message : "Failed to create role.");
+    } finally {
+      setCreatingRole(false);
+    }
+  };
+
+  const startEditingRole = (code: string, label: string) => {
+    setRoleActionError(null);
+    setConfirmDeleteCode(null);
+    setEditingCode(code);
+    setEditingLabel(label);
+  };
+
+  const handleRenameRole = async (code: string) => {
+    setRoleActionBusy(code);
+    setRoleActionError(null);
+    try {
+      await setRoleLabel(code, editingLabel);
+      setEditingCode(null);
+    } catch (err) {
+      setRoleActionError(err instanceof Error ? err.message : "Failed to rename role.");
+    } finally {
+      setRoleActionBusy(null);
+    }
+  };
+
+  const handleDeleteRole = async (code: string) => {
+    setRoleActionBusy(code);
+    setRoleActionError(null);
+    try {
+      await deleteCustomRole(code);
+      setConfirmDeleteCode(null);
+      // The deleted role can't stay selected — fall back to the first
+      // remaining option so the picker/select never points at a role that
+      // no longer exists.
+      if (selectedRole === code) onSelectedRoleChange(roleOptions.find((r) => r.value !== code)?.value ?? "");
+    } catch (err) {
+      setRoleActionError(err instanceof Error ? err.message : "Failed to delete role.");
+    } finally {
+      setRoleActionBusy(null);
+    }
+  };
+
+  // One row in the Manage Roles modal — shared between the Custom Roles
+  // section (canDelete=true) and the Built-in Roles section (canDelete=
+  // false, rename only, since a built-in's code can't actually be removed —
+  // it's a literal entry in roleLabels.ts, not a database row).
+  const renderManageRoleRow = (code: string, label: string, canDelete: boolean) => {
+    const busy = roleActionBusy === code;
+    const isEditing = editingCode === code;
+    const isConfirmingDelete = confirmDeleteCode === code;
+    return (
+      <div key={code} className="rounded-lg border border-white/10 bg-white/5 px-3 py-2">
+        {isEditing ? (
+          <div className="flex items-center gap-2">
+            <input
+              type="text"
+              autoFocus
+              value={editingLabel}
+              onChange={(e) => setEditingLabel(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter" && editingLabel.trim() && !busy) void handleRenameRole(code); }}
+              className="glass-input flex-1 text-sm py-1.5 px-2"
+            />
+            <button
+              type="button"
+              onClick={() => void handleRenameRole(code)}
+              disabled={busy || !editingLabel.trim()}
+              title="Save"
+              className="shrink-0 rounded-md p-1.5 text-emerald-400 hover:bg-white/10 disabled:opacity-40"
+            >
+              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+            </button>
+            <button type="button" onClick={() => setEditingCode(null)} disabled={busy} title="Cancel" className="shrink-0 rounded-md p-1.5 text-slate-400 hover:bg-white/10">
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        ) : isConfirmingDelete ? (
+          <div className="flex items-center gap-2">
+            <span className="flex-1 text-sm text-slate-200 truncate">Delete "{label}"?</span>
+            <button
+              type="button"
+              onClick={() => void handleDeleteRole(code)}
+              disabled={busy}
+              className="shrink-0 rounded-md px-2 py-1 text-xs font-semibold bg-red-500/20 text-red-300 hover:bg-red-500/30 disabled:opacity-40"
+            >
+              {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin inline" /> : "Delete"}
+            </button>
+            <button type="button" onClick={() => setConfirmDeleteCode(null)} disabled={busy} className="shrink-0 rounded-md px-2 py-1 text-xs text-slate-400 hover:bg-white/10">
+              Cancel
+            </button>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2">
+            <span className="flex-1 text-sm text-slate-200 truncate">{label}</span>
+            <button type="button" onClick={() => startEditingRole(code, label)} title="Rename" className="shrink-0 rounded-md p-1.5 text-slate-400 hover:text-white hover:bg-white/10">
+              <Pencil className="h-3.5 w-3.5" />
+            </button>
+            {canDelete && (
+              <button type="button" onClick={() => { setRoleActionError(null); setEditingCode(null); setConfirmDeleteCode(code); }} title="Delete" className="shrink-0 rounded-md p-1.5 text-slate-400 hover:text-red-400 hover:bg-white/10">
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <div className="panel p-6 mb-8">
+      <div className="flex flex-wrap items-center gap-3 mb-5">
+        <label className="text-sm font-medium text-muted-foreground uppercase tracking-wide">Role</label>
+        <select
+          value={selectedRole}
+          onChange={(e) => onSelectedRoleChange(e.target.value)}
+          className="glass-input text-base py-2 px-3 rounded-md"
+        >
+          {roleOptions.map((r) => (
+            <option key={r.value} value={r.value}>{r.label}</option>
+          ))}
+        </select>
+        <button
+          type="button"
+          onClick={() => { setAddRoleOpen(true); setAddRoleError(null); }}
+          className="btn text-sm py-2 px-3 inline-flex items-center gap-1.5"
+          title="Create a new role"
+        >
+          <Plus className="h-4 w-4" /> Add Role
+        </button>
+        <button
+          type="button"
+          onClick={() => { setManageRolesOpen(true); setRoleActionError(null); setEditingCode(null); setConfirmDeleteCode(null); }}
+          className="btn text-sm py-2 px-3 inline-flex items-center gap-1.5"
+          title="Rename or delete custom roles"
+        >
+          <Settings className="h-4 w-4" /> Manage Roles
+        </button>
+        <input
+          type="text"
+          value={filter}
+          onChange={(e) => onFilterChange(e.target.value)}
+          placeholder="Filter pages…"
+          className="glass-input text-base py-2 px-3 rounded-md ml-auto w-64"
+        />
+        {cellBusy && <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />}
+      </div>
+
+      {addRoleOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 px-4 py-6 backdrop-blur-sm">
+          <div className="w-full max-w-sm rounded-xl border border-white/15 bg-slate-950/95 shadow-2xl shadow-black/60 p-5">
+            <div className="flex items-center justify-between gap-3 mb-4">
+              <h3 className="text-lg font-semibold text-white">Add Role</h3>
+              <button type="button" onClick={() => setAddRoleOpen(false)} className="text-slate-400 hover:text-white">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <label className="block text-xs font-semibold uppercase tracking-[0.04em] text-slate-400 mb-1.5">Role name</label>
+            <input
+              type="text"
+              autoFocus
+              value={newRoleName}
+              onChange={(e) => setNewRoleName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter" && newRoleName.trim() && !creatingRole) void handleCreateRole(); }}
+              placeholder="e.g. Warehouse Lead"
+              className="glass-input w-full"
+            />
+            <p className="mt-1.5 text-[11px] text-muted-foreground">
+              Immediately usable as a primary or extra role in User Management, and grantable/gate-able here like any other role.
+            </p>
+            {addRoleError && <p className="mt-2 text-xs text-red-400">{addRoleError}</p>}
+            <div className="mt-4 flex justify-end gap-2">
+              <button type="button" onClick={() => setAddRoleOpen(false)} disabled={creatingRole} className="btn hover:bg-slate-800">
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleCreateRole()}
+                disabled={creatingRole || !newRoleName.trim()}
+                className="btn btn-primary disabled:opacity-50"
+              >
+                {creatingRole && <Loader2 className="h-4 w-4 animate-spin mr-1 inline" />}
+                {creatingRole ? "Creating…" : "Create"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {manageRolesOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 px-4 py-6 backdrop-blur-sm">
+          <div className="w-full max-w-md max-h-[80vh] overflow-y-auto rounded-xl border border-white/15 bg-slate-950/95 shadow-2xl shadow-black/60 p-5">
+            <div className="flex items-center justify-between gap-3 mb-1">
+              <h3 className="text-lg font-semibold text-white">Manage Roles</h3>
+              <button type="button" onClick={() => setManageRolesOpen(false)} className="text-slate-400 hover:text-white">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <p className="text-[11px] text-muted-foreground mb-4">
+              Custom roles can be renamed or deleted. Built-in roles can only have their display label renamed — their
+              code (what permissions actually check) never changes. Admin, Super Admin, and Super Super Admin aren't
+              editable at all.
+            </p>
+            {roleActionError && <p className="mb-3 text-xs text-red-400">{roleActionError}</p>}
+
+            <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground mb-1.5">Custom Roles</div>
+            {customRoles.length === 0 ? (
+              <p className="text-sm text-muted-foreground italic py-3 text-center mb-4">No custom roles yet — use Add Role to create one.</p>
+            ) : (
+              <div className="space-y-1.5 mb-4">
+                {customRoles.map((r) => renderManageRoleRow(r.code, r.label, true))}
+              </div>
+            )}
+
+            <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground mb-1.5">Built-in Roles</div>
+            <div className="space-y-1.5">
+              {ROLE_OPTIONS.filter((r) => !NON_RENAMABLE_BUILTIN_CODES.has(r.value)).map((r) =>
+                renderManageRoleRow(r.value, roleOptions.find((o) => o.value === r.value)?.label ?? r.label, false)
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      <DndContext onDragEnd={handleDragEnd}>
+        <div className="flex gap-4 flex-col md:flex-row">
+          <DroppableContainer id="available" label="Available" count={available.length} icon={<Inbox className="h-4 w-4" />} tint="neutral">
+            {available.map((row) => (
+              <DraggableModuleCard
+                key={`${row.moduleSlug}:${row.slug}`}
+                id={`${row.moduleSlug}:${row.slug}`}
+                title={row.title}
+                moduleLabel={row.moduleLabel}
+                moduleSlug={row.moduleSlug}
+                direction="grant"
+                onMove={() => move(row, true)}
+              />
+            ))}
+            {available.length === 0 && <div className="text-sm text-muted-foreground italic px-1 py-4 text-center">Nothing here.</div>}
+          </DroppableContainer>
+          <DroppableContainer id="granted" label={`Granted to ${ROLE_LABELS[selectedRole] ?? selectedRole}`} count={granted.length} icon={<CheckCircle2 className="h-4 w-4" />} tint="granted">
+            {granted.map((row) => (
+              <DraggableModuleCard
+                key={`${row.moduleSlug}:${row.slug}`}
+                id={`${row.moduleSlug}:${row.slug}`}
+                title={row.title}
+                moduleLabel={row.moduleLabel}
+                moduleSlug={row.moduleSlug}
+                direction="revoke"
+                onMove={() => move(row, false)}
+              />
+            ))}
+            {granted.length === 0 && <div className="text-sm text-muted-foreground italic px-1 py-4 text-center">Nothing here.</div>}
+          </DroppableContainer>
+        </div>
+      </DndContext>
+      <p className="mt-4 text-xs text-muted-foreground">
+        Drag a page into "Granted" to give {ROLE_LABELS[selectedRole] ?? selectedRole} access, or back to "Available" to
+        revoke it — or use the arrow button on a card. Each card's dot/label color matches its parent module. Changes save
+        automatically and are shared company-wide.
+      </p>
+    </div>
+  );
+}
 
 interface GateRow {
   moduleSlug: string;
@@ -88,8 +462,9 @@ interface GateRow {
 
 /**
  * Bulk secondary-role ("Accessibility") assignment grid — one row per
- * company user, one checkbox column per assignable role (ROLE_OPTIONS, the
- * same list the individual user edit page's "User Type" multi-select uses).
+ * company user, one checkbox column per assignable role (roleOptions below —
+ * built-in roles plus any custom ones, the same list the individual user
+ * edit page's "User Type" multi-select uses).
  * A checked box means that role is held in extra_roles; the primary role
  * (shown as its own read-only column) is NOT editable here — changing
  * someone's primary role stays a deliberate, one-at-a-time action on their
@@ -99,29 +474,27 @@ interface GateRow {
 export function AccessibilityManagementPage({ mod, sub }: Props) {
   const navigate = useNavigate();
   const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
-  const [users, setUsers] = useState<ProfileRow[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState("");
-  const tableScrollRef = useRef<HTMLDivElement>(null);
-  const headerScrollRef = useRef<HTMLDivElement>(null);
-  // `${profileId}:${roleCode}` of the one checkbox currently saving, so only
-  // that cell shows a spinner/disables instead of freezing the whole grid.
-  const [savingCell, setSavingCell] = useState<string | null>(null);
-  // Which Primary Role groups are expanded — every group starts collapsed
-  // (just its one header row) so browsing all 207+ users doesn't force a
-  // long scroll before you reach the group you actually came to edit.
-  // Only applies when not searching — a search always shows a flat matching
-  // list, so a collapsed group can never hide a result you typed for.
-  const [expandedRoleGroups, setExpandedRoleGroups] = useState<Set<string>>(new Set());
 
-  // Dashboard-submodule role-gate grid (second section, below).
+  // Built-in roles plus any company-created custom roles (see
+  // src/lib/customRoles.ts) — the live source for every role picker/column
+  // on this page. Every role code, for the display-only fallback of a
+  // (module, submodule) that has neither an override nor (for Dashboard) a
+  // hardcoded default — shown as "every role checked" so an unrestricted
+  // row visually reads as "everyone currently has access," not "nobody
+  // does" (including a role created after that row's fallback was baked in
+  // — see the loadDashboardGates effect's dependency on roleOptions.length
+  // below, which re-bakes it when a new role appears).
+  const roleOptions = useAllRoleOptions();
+  const allRoleValues = useMemo(() => roleOptions.map((r) => r.value), [roleOptions]);
+
+  // Dashboard-submodule role-gate grid.
   const [dashboardGates, setDashboardGates] = useState<Record<string, string[]>>({});
   const [gatesLoading, setGatesLoading] = useState(true);
   const [savingGateCell, setSavingGateCell] = useState<string | null>(null);
   const gateTableScrollRef = useRef<HTMLDivElement>(null);
   const gateHeaderScrollRef = useRef<HTMLDivElement>(null);
   // The TRUE override map (no "open to everyone" rows filled in) — kept
-  // separate from dashboardGates (which fills in ALL_ROLE_VALUES for
+  // separate from dashboardGates (which fills in allRoleValues for
   // display on untouched rows) so hydrateModuleRoleGates never mistakes a
   // merely-displayed default for a real override.
   const rawOverridesRef = useRef<Record<string, string[]>>({});
@@ -131,139 +504,6 @@ export function AccessibilityManagementPage({ mod, sub }: Props) {
   // you actually came to edit.
   const [expandedGateModules, setExpandedGateModules] = useState<Set<string>>(new Set());
 
-  // Notification role-gate grid (third section, below) — which role(s)
-  // get notified by each of the app's role-configurable notification
-  // triggers (see notificationRoleGates.ts for the full list and why
-  // only some notifications qualify — several go to named individuals
-  // or back to whoever requested something, not a configurable role).
-  const [notificationGates, setNotificationGates] = useState<Record<string, string[]>>({});
-  const [notificationGatesLoading, setNotificationGatesLoading] = useState(true);
-  const [savingNotificationCell, setSavingNotificationCell] = useState<string | null>(null);
-  const notificationTableScrollRef = useRef<HTMLDivElement>(null);
-  const notificationHeaderScrollRef = useRef<HTMLDivElement>(null);
-
-  const loadNotificationGates = async () => {
-    setNotificationGatesLoading(true);
-    try {
-      const overrides = await getNotificationRoleGateOverrides();
-      const effective: Record<string, string[]> = {};
-      for (const trigger of NOTIFICATION_TRIGGERS) {
-        effective[trigger.key] = overrides[trigger.key] ?? trigger.defaultRoles;
-      }
-      setNotificationGates(effective);
-    } finally {
-      setNotificationGatesLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    void loadNotificationGates();
-  }, []);
-
-  const handleNotificationGateToggle = async (triggerKey: string, roleCode: string, checked: boolean) => {
-    const prev = notificationGates[triggerKey] ?? [];
-    const next = checked ? Array.from(new Set([...prev, roleCode])) : prev.filter((r) => r !== roleCode);
-
-    setNotificationGates((p) => ({ ...p, [triggerKey]: next }));
-    const cellKey = `${triggerKey}:${roleCode}`;
-    setSavingNotificationCell(cellKey);
-    try {
-      await setNotificationRoleGateOverride(triggerKey, next);
-    } catch (err) {
-      setNotificationGates((p) => ({ ...p, [triggerKey]: prev }));
-      alert(`Failed to update notification access: ${err instanceof Error ? err.message : "Unknown error"}`);
-    } finally {
-      setSavingNotificationCell(null);
-    }
-  };
-
-  // Per-user notification opt-outs (fourth section, below) — layered on
-  // top of Notification Access by Role: a user's role can make them a
-  // candidate, but an admin can exclude a specific person here anyway.
-  // Reuses this page's own `users`/`roleGroups`/`filtered`/`search`/
-  // `expandedRoleGroups` state from the first grid above — same people,
-  // just different columns/checkboxes.
-  const [notificationOptOuts, setNotificationOptOuts] = useState<Record<string, Set<string>>>({});
-  const [optOutsLoading, setOptOutsLoading] = useState(true);
-  const [savingOptOutCell, setSavingOptOutCell] = useState<string | null>(null);
-  const optOutTableScrollRef = useRef<HTMLDivElement>(null);
-  const optOutHeaderScrollRef = useRef<HTMLDivElement>(null);
-
-  const loadNotificationOptOuts = async () => {
-    setOptOutsLoading(true);
-    try {
-      setNotificationOptOuts(await getNotificationOptOuts());
-    } finally {
-      setOptOutsLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    void loadNotificationOptOuts();
-  }, []);
-
-  // Checkbox reads "notify this user" (checked = will get it, matching
-  // this page's other grids' "checked = has it" convention) — internally
-  // that's the ABSENCE of an opt-out row, so a checked->unchecked toggle
-  // here is what actually creates one.
-  const handleOptOutToggle = async (user: ProfileRow, triggerKey: string, notifyChecked: boolean) => {
-    if (!user.firebase_uid) return;
-    const optedOut = !notifyChecked;
-    const prevSet = notificationOptOuts[triggerKey] ?? new Set<string>();
-    const nextSet = new Set(prevSet);
-    if (optedOut) nextSet.add(user.firebase_uid);
-    else nextSet.delete(user.firebase_uid);
-
-    setNotificationOptOuts((p) => ({ ...p, [triggerKey]: nextSet }));
-    const cellKey = `${user.id}:${triggerKey}`;
-    setSavingOptOutCell(cellKey);
-    try {
-      await setUserNotificationOptOut(user.firebase_uid, triggerKey, optedOut);
-    } catch (err) {
-      setNotificationOptOuts((p) => ({ ...p, [triggerKey]: prevSet }));
-      alert(`Failed to update notification opt-out: ${err instanceof Error ? err.message : "Unknown error"}`);
-    } finally {
-      setSavingOptOutCell(null);
-    }
-  };
-
-  const renderOptOutUserRow = (user: ProfileRow) => {
-    const primary = normalizeRole(user.role);
-    return (
-      <tr key={user.id} className="border-b border-white/5 hover:bg-white/5">
-        <td
-          className="px-3 py-2 truncate font-medium text-white sticky left-0 z-10 bg-slate-950"
-          title={user.display_name || user.email || undefined}
-        >
-          {user.display_name || user.email}
-        </td>
-        <td className="px-3 py-2 truncate text-slate-300" title={ROLE_LABELS[primary] || user.role || undefined}>
-          {ROLE_LABELS[primary] || user.role || "—"}
-        </td>
-        {NOTIFICATION_TRIGGERS.map((trigger) => {
-          const optedOut = notificationOptOuts[trigger.key]?.has(user.firebase_uid) ?? false;
-          const cellKey = `${user.id}:${trigger.key}`;
-          const cellSaving = savingOptOutCell === cellKey;
-          return (
-            <td key={trigger.key} className="px-2 py-2 text-center">
-              {cellSaving ? (
-                <Loader2 className="h-3.5 w-3.5 mx-auto animate-spin text-slate-400" />
-              ) : (
-                <input
-                  type="checkbox"
-                  checked={!optedOut}
-                  title={`${optedOut ? "Opted out of" : "Gets"} ${trigger.label}`}
-                  onChange={(e) => void handleOptOutToggle(user, trigger.key, e.target.checked)}
-                  className="h-4 w-4 accent-blue-500"
-                />
-              )}
-            </td>
-          );
-        })}
-      </tr>
-    );
-  };
-
   // Every submodule across every module — grouped by module for the grid
   // below. A row with no override (and, for Dashboard, no hardcoded
   // DASHBOARD_ROLE_GATES entry either) is open to every role today.
@@ -272,123 +512,12 @@ export function AccessibilityManagementPage({ mod, sub }: Props) {
     []
   );
 
-  const loadUsers = async () => {
-    setLoading(true);
-    try {
-      // Deactivated accounts (including cleanup artifacts like a deactivated
-      // duplicate profile) are hidden by default here, same as Login Security —
-      // they don't need a secondary-role assignment.
-      const rows = (await getCompanyUsers()).filter((u) => u.is_active !== false);
-      rows.sort((a, b) => (a.display_name || "").localeCompare(b.display_name || ""));
-      setUsers(rows);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    loadUsers();
-  }, []);
-
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return users;
-    return users.filter(
-      (u) =>
-        (u.display_name || "").toLowerCase().includes(q) ||
-        (u.username || "").toLowerCase().includes(q) ||
-        (u.email || "").toLowerCase().includes(q)
-    );
-  }, [users, search]);
-
-  // Users grouped by Primary Role for the collapsible view (search bypasses
-  // this entirely — see expandedRoleGroups). Built from the real data, not
-  // ROLE_OPTIONS, since a primary role like SUPERADMIN is deliberately
-  // excluded from ROLE_OPTIONS but still needs its own group here.
-  const roleGroups = useMemo(() => {
-    const map = new Map<string, ProfileRow[]>();
-    for (const u of users) {
-      const code = normalizeRole(u.role);
-      const list = map.get(code);
-      if (list) list.push(u);
-      else map.set(code, [u]);
-    }
-    return Array.from(map.entries())
-      .map(([code, list]) => ({ code, label: ROLE_LABELS[code] || code || "—", users: list }))
-      .sort((a, b) => a.label.localeCompare(b.label));
-  }, [users]);
-
-  const handleToggle = async (user: ProfileRow, roleCode: string, checked: boolean) => {
-    const primary = normalizeRole(user.role);
-    if (roleCode === primary) return; // primary role isn't editable from this grid
-
-    const prevExtra = user.extra_roles ?? [];
-    const nextExtra = checked
-      ? Array.from(new Set([...prevExtra, roleCode]))
-      : prevExtra.filter((r) => normalizeRole(r) !== roleCode);
-
-    setUsers((prev) => prev.map((u) => (u.id === user.id ? { ...u, extra_roles: nextExtra as any } : u)));
-    const cellKey = `${user.id}:${roleCode}`;
-    setSavingCell(cellKey);
-    try {
-      await updateCompanyUser(user.id, { extraRoles: nextExtra as any });
-    } catch (err) {
-      // Roll back this one cell — every other row/cell is unaffected.
-      setUsers((prev) => prev.map((u) => (u.id === user.id ? { ...u, extra_roles: prevExtra } : u)));
-      alert(`Failed to update role: ${err instanceof Error ? err.message : "Unknown error"}`);
-    } finally {
-      setSavingCell(null);
-    }
-  };
-
-  const renderUserRow = (user: ProfileRow) => {
-    const primary = normalizeRole(user.role);
-    const extraSet = new Set((user.extra_roles ?? []).map(normalizeRole));
-    return (
-      <tr key={user.id} className="border-b border-white/5 hover:bg-white/5">
-        <td
-          className="px-3 py-2 truncate font-medium text-white sticky left-0 z-10 bg-slate-950"
-          title={user.display_name || user.email || undefined}
-        >
-          {user.display_name || user.email}
-        </td>
-        <td className="px-3 py-2 truncate text-slate-300" title={ROLE_LABELS[primary] || user.role || undefined}>
-          {ROLE_LABELS[primary] || user.role || "—"}
-        </td>
-        {ROLE_OPTIONS.map((r) => {
-          const isPrimary = r.value === primary;
-          const checked = isPrimary || extraSet.has(r.value);
-          const cellKey = `${user.id}:${r.value}`;
-          const cellSaving = savingCell === cellKey;
-          return (
-            <td key={r.value} className="px-2 py-2 text-center">
-              {cellSaving ? (
-                <Loader2 className="h-3.5 w-3.5 mx-auto animate-spin text-slate-400" />
-              ) : (
-                <input
-                  type="checkbox"
-                  checked={checked}
-                  disabled={isPrimary}
-                  title={isPrimary ? "Primary role — change it from this user's profile page" : undefined}
-                  onChange={(e) => void handleToggle(user, r.value, e.target.checked)}
-                  className="h-4 w-4 accent-blue-500 disabled:opacity-40 disabled:cursor-not-allowed"
-                />
-              )}
-            </td>
-          );
-        })}
-      </tr>
-    );
-  };
-
-  const toggleRoleGroup = (code: string) => {
-    setExpandedRoleGroups((prev) => {
-      const next = new Set(prev);
-      if (next.has(code)) next.delete(code);
-      else next.add(code);
-      return next;
-    });
-  };
+  // Drag & Drop alternate view for "Module Access by Role" — same data and
+  // save path as the checkbox grid (handleGateToggle below), just a
+  // one-role-at-a-time, two-container editor instead of a ~86×28 matrix.
+  const [moduleAccessView, setModuleAccessView] = useState<"grid" | "dragdrop">("dragdrop");
+  const [dndSelectedRole, setDndSelectedRole] = useState(roleOptions[0]?.value ?? "");
+  const [dndFilter, setDndFilter] = useState("");
 
   const loadDashboardGates = async () => {
     setGatesLoading(true);
@@ -399,7 +528,7 @@ export function AccessibilityManagementPage({ mod, sub }: Props) {
       for (const row of gateRows) {
         const key = `${row.moduleSlug}:${row.slug}`;
         const hardcodedDefault = row.moduleSlug === "dashboard" ? DASHBOARD_ROLE_GATES[row.slug] : undefined;
-        effective[key] = overrides[key] ?? hardcodedDefault ?? ALL_ROLE_VALUES;
+        effective[key] = overrides[key] ?? hardcodedDefault ?? allRoleValues;
       }
       setDashboardGates(effective);
       // Every client (including this tab's own nav gating) reads overrides
@@ -412,9 +541,12 @@ export function AccessibilityManagementPage({ mod, sub }: Props) {
   };
 
   useEffect(() => {
+    // Re-runs when a custom role is added (roleOptions.length grows) so any
+    // row's "open to everyone" fallback gets re-baked to include the new
+    // role, not just whichever roles existed at the last load.
     void loadDashboardGates();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [roleOptions.length]);
 
   const handleGateToggle = async (moduleSlug: string, submoduleSlug: string, roleCode: string, checked: boolean) => {
     const key = `${moduleSlug}:${submoduleSlug}`;
@@ -454,156 +586,73 @@ export function AccessibilityManagementPage({ mod, sub }: Props) {
             <h1 className="text-2xl font-semibold leading-tight">{sub.title}</h1>
             <p className="text-sm text-muted-foreground">{sub.description}</p>
           </div>
-          <button
-            onClick={() => void loadUsers()}
-            disabled={loading}
-            className="ml-auto inline-flex items-center gap-2 btn hover:bg-white/15 disabled:opacity-60"
-            title="Re-read users from Supabase"
-          >
-            <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
-            {loading ? "Loading…" : "Refresh"}
-          </button>
         </div>
 
-        <div className="panel mb-4">
-          <p className="text-sm text-slate-300">
-            Users are grouped by Primary Role, collapsed by default — click a group to expand it. Search for a name,
-            login, or email to bypass grouping and show a flat matching list instead. Check a box to grant that role
-            as an <span className="font-semibold text-white">additional</span> (secondary) role — it stacks on top
-            of, and never replaces, the primary role shown in its own column. A user's primary role can only be
-            changed on their own profile page.
-          </p>
-        </div>
-
-        <div className="mb-4 max-w-md">
-          <label className="block text-xs font-semibold uppercase tracking-[0.04em] text-slate-400">Search</label>
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search by name, login, or email..."
-            className="glass-input mt-2 w-full"
-            disabled={loading}
-          />
-        </div>
-
-        <div className="text-sm text-slate-400 mb-2">
-          {loading ? "Fetching from database..." : `${filtered.length} of ${users.length} users`}
-        </div>
-
-        <FloatingHorizontalScrollbar targetRef={tableScrollRef} />
-        {/*
-          Two separate <table>s (header-only, body-only) instead of one —
-          a single table can't have a header that's sticky against the PAGE
-          while also living inside an overflow-x-auto wrapper: CSS forces
-          overflow-y to `auto` the moment overflow-x isn't `visible` (an
-          axis can't stay `visible` while the other isn't), which silently
-          traps `position: sticky` inside that wrapper instead of letting
-          it stick to the viewport, forcing a second inner scrollbar.
-          Splitting it in two keeps the header wrapper free of any
-          overflow-x-auto ancestor (so `sticky top-16` — same offset as the
-          ticket detail page's header — sticks to the real page), while the
-          body wrapper below it owns the one real (native) horizontal
-          scrollbar; a scroll listener mirrors the body's scrollLeft onto
-          the header so they move together. table-layout: fixed with an
-          identical <colgroup> in both keeps their columns pixel-aligned.
-        */}
-        <div
-          ref={headerScrollRef}
-          className="overflow-x-hidden rounded-t-lg border border-b-0 border-[var(--color-panel-border)] bg-[var(--color-panel)] backdrop-blur-md sticky top-16 z-20"
-        >
-          <table className="text-sm" style={{ tableLayout: "fixed", width: TABLE_WIDTH }}>
-            <ColGroup />
-            <thead>
-              <tr className="border-b border-white/10 text-left text-[10px] uppercase tracking-wide text-slate-500">
-                <th className="px-3 py-2 truncate sticky left-0 z-10 bg-slate-950">Name</th>
-                <th className="px-3 py-2 whitespace-nowrap truncate">Primary Role</th>
-                {ROLE_OPTIONS.map((r) => (
-                  <th key={r.value} className="px-2 py-2 text-center font-normal leading-tight">
-                    {r.label}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-          </table>
-        </div>
-        <div
-          ref={tableScrollRef}
-          onScroll={(e) => {
-            if (headerScrollRef.current) headerScrollRef.current.scrollLeft = e.currentTarget.scrollLeft;
-          }}
-          className="overflow-x-auto rounded-b-lg border border-[var(--color-panel-border)] bg-[var(--color-panel)] backdrop-blur-md"
-        >
-          <table className="text-sm" style={{ tableLayout: "fixed", width: TABLE_WIDTH }}>
-            <ColGroup />
-            <tbody>
-              {loading ? (
-                <tr>
-                  <td colSpan={2 + ROLE_OPTIONS.length} className="px-3 py-6 text-center text-slate-400">
-                    Loading…
-                  </td>
-                </tr>
-              ) : search.trim() ? (
-                // Searching always shows a flat matching list — a collapsed
-                // group could otherwise hide the very result you searched for.
-                filtered.length === 0 ? (
-                  <tr>
-                    <td colSpan={2 + ROLE_OPTIONS.length} className="px-3 py-6 text-center text-slate-400">
-                      No users found.
-                    </td>
-                  </tr>
-                ) : (
-                  filtered.map((user) => renderUserRow(user))
-                )
-              ) : (
-                roleGroups.flatMap((group) => {
-                  const isExpanded = expandedRoleGroups.has(group.code);
-                  const headerRow = (
-                    <tr key={`role-${group.code}`} className="border-b border-white/10 bg-white/5">
-                      <td colSpan={2 + ROLE_OPTIONS.length} className="p-0 sticky left-0 bg-slate-900">
-                        <button
-                          type="button"
-                          data-testid="user-role-group-row"
-                          data-role-code={group.code}
-                          onClick={() => toggleRoleGroup(group.code)}
-                          aria-expanded={isExpanded}
-                          className="w-full flex items-center gap-1.5 px-3 py-1.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-300 hover:bg-white/5 transition-colors"
-                        >
-                          <ChevronDown className={`h-3.5 w-3.5 shrink-0 transition-transform ${isExpanded ? "rotate-180" : ""}`} />
-                          {group.label} ({group.users.length})
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                  if (!isExpanded) return [headerRow];
-                  return [headerRow, ...group.users.map((user) => renderUserRow(user))];
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        <div className="mt-10 mb-4">
-          <h2 className="text-xl font-semibold text-white">Module Access by Role</h2>
+        <div className="mb-4">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <h2 className="text-xl font-semibold text-white">Module Access by Role</h2>
+            <div className="flex rounded-lg border border-[var(--color-panel-border)] overflow-hidden text-xs font-medium">
+              <button
+                type="button"
+                onClick={() => setModuleAccessView("grid")}
+                className={`flex items-center gap-1.5 px-3 py-1.5 transition-colors ${moduleAccessView === "grid" ? "bg-blue-600 text-white" : "bg-transparent text-slate-400 hover:text-slate-200"}`}
+              >
+                <LayoutGrid className="h-3.5 w-3.5" /> Grid
+              </button>
+              <button
+                type="button"
+                onClick={() => setModuleAccessView("dragdrop")}
+                className={`flex items-center gap-1.5 px-3 py-1.5 transition-colors ${moduleAccessView === "dragdrop" ? "bg-blue-600 text-white" : "bg-transparent text-slate-400 hover:text-slate-200"}`}
+              >
+                <Move className="h-3.5 w-3.5" /> Drag &amp; Drop
+              </button>
+            </div>
+          </div>
           <p className="text-sm text-slate-400 mt-1">
-            Click a module name to expand or collapse its submodules — every module starts collapsed. Check a box to
-            let that role open the submodule (from its tile grid, and directly by URL). A row you haven't edited yet
-            shows the built-in default — every role for most submodules, or the Dashboard's own built-in list for the
-            few that have one. Changing any box here replaces that submodule's whole list, company-wide, immediately.
-            Super Admin can always open every submodule regardless of this grid.
+            {moduleAccessView === "grid" ? (
+              <>
+                Click a module name to expand or collapse its submodules — every module starts collapsed. Check a box to
+                let that role open the submodule (from its tile grid, and directly by URL). A row you haven't edited yet
+                shows the built-in default — every role for most submodules, or the Dashboard's own built-in list for the
+                few that have one. Changing any box here replaces that submodule's whole list, company-wide, immediately.
+                Super Admin can always open every submodule regardless of this grid.
+              </>
+            ) : (
+              <>
+                Pick a role, then drag a page between the two lists (or use the arrow buttons) to grant or revoke its
+                access — same effect as checking a box in the Grid view, just one role at a time. Super Admin can always
+                open every submodule regardless of this.
+              </>
+            )}
           </p>
         </div>
 
+        {moduleAccessView === "dragdrop" && (
+          <ModuleAccessDragDrop
+            gateRows={gateRows}
+            dashboardGates={dashboardGates}
+            selectedRole={dndSelectedRole}
+            onSelectedRoleChange={setDndSelectedRole}
+            filter={dndFilter}
+            onFilterChange={setDndFilter}
+            savingGateCell={savingGateCell}
+            onToggle={handleGateToggle}
+          />
+        )}
+
+        {moduleAccessView === "grid" && (
+        <>
         <FloatingHorizontalScrollbar targetRef={gateTableScrollRef} />
         <div
           ref={gateHeaderScrollRef}
           className="overflow-x-hidden rounded-t-lg border border-b-0 border-[var(--color-panel-border)] bg-[var(--color-panel)] backdrop-blur-md sticky top-16 z-20"
         >
-          <table className="text-sm" style={{ tableLayout: "fixed", width: GATE_TABLE_WIDTH }}>
-            <GateColGroup />
+          <table className="text-sm" style={{ tableLayout: "fixed", width: gateTableWidth(roleOptions.length) }}>
+            <GateColGroup roleCount={roleOptions.length} />
             <thead>
               <tr className="border-b border-white/10 text-left text-[10px] uppercase tracking-wide text-slate-500">
                 <th className="px-3 py-2 truncate sticky left-0 z-10 bg-slate-950">Module / Submodule</th>
-                {ROLE_OPTIONS.map((r) => (
+                {roleOptions.map((r) => (
                   <th key={r.value} className="px-2 py-2 text-center font-normal leading-tight">
                     {r.label}
                   </th>
@@ -619,12 +668,12 @@ export function AccessibilityManagementPage({ mod, sub }: Props) {
           }}
           className="overflow-x-auto rounded-b-lg border border-[var(--color-panel-border)] bg-[var(--color-panel)] backdrop-blur-md"
         >
-          <table className="text-sm" style={{ tableLayout: "fixed", width: GATE_TABLE_WIDTH }}>
-            <GateColGroup />
+          <table className="text-sm" style={{ tableLayout: "fixed", width: gateTableWidth(roleOptions.length) }}>
+            <GateColGroup roleCount={roleOptions.length} />
             <tbody>
               {gatesLoading ? (
                 <tr>
-                  <td colSpan={1 + ROLE_OPTIONS.length} className="px-3 py-6 text-center text-slate-400">
+                  <td colSpan={1 + roleOptions.length} className="px-3 py-6 text-center text-slate-400">
                     Loading…
                   </td>
                 </tr>
@@ -633,7 +682,7 @@ export function AccessibilityManagementPage({ mod, sub }: Props) {
                   const isModuleExpanded = expandedGateModules.has(m.slug);
                   const headerRow = (
                     <tr key={`mod-${m.slug}`} className="border-b border-white/10 bg-white/5">
-                      <td colSpan={1 + ROLE_OPTIONS.length} className="p-0 sticky left-0 bg-slate-900">
+                      <td colSpan={1 + roleOptions.length} className="p-0 sticky left-0 bg-slate-900">
                         <button
                           type="button"
                           data-testid="gate-module-row"
@@ -669,7 +718,7 @@ export function AccessibilityManagementPage({ mod, sub }: Props) {
                           >
                             {s.title}
                           </td>
-                          {ROLE_OPTIONS.map((r) => {
+                          {roleOptions.map((r) => {
                             const checked = allowed.has(r.value);
                             const cellKey = `${key}:${r.value}`;
                             const cellSaving = savingGateCell === cellKey;
@@ -697,171 +746,9 @@ export function AccessibilityManagementPage({ mod, sub }: Props) {
             </tbody>
           </table>
         </div>
+        </>
+        )}
 
-        <div className="mt-10 mb-4">
-          <h2 className="text-xl font-semibold text-white">Notification Access by Role</h2>
-          <p className="text-sm text-slate-400 mt-1">
-            Check a box to have that role notified when the trigger on the left fires. A row you haven't edited yet
-            shows its built-in default (usually Parts Manager). This only covers notifications that are genuinely
-            "which role should hear about this" — a few notifications elsewhere in the app go to named individuals
-            or back to whoever originally requested something, and aren't configurable here.
-          </p>
-        </div>
-
-        <FloatingHorizontalScrollbar targetRef={notificationTableScrollRef} />
-        <div
-          ref={notificationHeaderScrollRef}
-          className="overflow-x-hidden rounded-t-lg border border-b-0 border-[var(--color-panel-border)] bg-[var(--color-panel)] backdrop-blur-md sticky top-16 z-20"
-        >
-          <table className="text-sm" style={{ tableLayout: "fixed", width: GATE_TABLE_WIDTH }}>
-            <GateColGroup />
-            <thead>
-              <tr className="border-b border-white/10 text-left text-[10px] uppercase tracking-wide text-slate-500">
-                <th className="px-3 py-2 truncate sticky left-0 z-10 bg-slate-950">Notification</th>
-                {ROLE_OPTIONS.map((r) => (
-                  <th key={r.value} className="px-2 py-2 text-center font-normal leading-tight">
-                    {r.label}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-          </table>
-        </div>
-        <div
-          ref={notificationTableScrollRef}
-          onScroll={(e) => {
-            if (notificationHeaderScrollRef.current) notificationHeaderScrollRef.current.scrollLeft = e.currentTarget.scrollLeft;
-          }}
-          className="overflow-x-auto rounded-b-lg border border-[var(--color-panel-border)] bg-[var(--color-panel)] backdrop-blur-md"
-        >
-          <table className="text-sm" style={{ tableLayout: "fixed", width: GATE_TABLE_WIDTH }}>
-            <GateColGroup />
-            <tbody>
-              {notificationGatesLoading ? (
-                <tr>
-                  <td colSpan={1 + ROLE_OPTIONS.length} className="px-3 py-6 text-center text-slate-400">
-                    Loading…
-                  </td>
-                </tr>
-              ) : (
-                NOTIFICATION_TRIGGERS.map((trigger) => {
-                  const allowed = new Set(notificationGates[trigger.key] ?? []);
-                  return (
-                    <tr key={trigger.key} className="border-b border-white/5 hover:bg-white/5">
-                      <td
-                        className="px-3 py-2 sticky left-0 z-10 bg-slate-950"
-                        title={trigger.description}
-                      >
-                        <div className="font-medium text-white truncate">{trigger.label}</div>
-                        <div className="text-xs text-slate-500 truncate">{trigger.description}</div>
-                      </td>
-                      {ROLE_OPTIONS.map((r) => {
-                        const checked = allowed.has(r.value);
-                        const cellKey = `${trigger.key}:${r.value}`;
-                        const cellSaving = savingNotificationCell === cellKey;
-                        return (
-                          <td key={r.value} className="px-2 py-2 text-center">
-                            {cellSaving ? (
-                              <Loader2 className="h-3.5 w-3.5 mx-auto animate-spin text-slate-400" />
-                            ) : (
-                              <input
-                                type="checkbox"
-                                checked={checked}
-                                onChange={(e) => void handleNotificationGateToggle(trigger.key, r.value, e.target.checked)}
-                                className="h-4 w-4 accent-blue-500"
-                              />
-                            )}
-                          </td>
-                        );
-                      })}
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        <div className="mt-10 mb-4">
-          <h2 className="text-xl font-semibold text-white">Notification Opt-Outs by User</h2>
-          <p className="text-sm text-slate-400 mt-1">
-            Layered on top of Notification Access by Role above — a role check makes someone a candidate, but you can
-            uncheck a specific person here to exclude them from that one trigger anyway. Checked means they'll get
-            it (the default); unchecked means they've been opted out. Same grouping/search as the first grid.
-          </p>
-        </div>
-
-        <FloatingHorizontalScrollbar targetRef={optOutTableScrollRef} />
-        <div
-          ref={optOutHeaderScrollRef}
-          className="overflow-x-hidden rounded-t-lg border border-b-0 border-[var(--color-panel-border)] bg-[var(--color-panel)] backdrop-blur-md sticky top-16 z-20"
-        >
-          <table className="text-sm" style={{ tableLayout: "fixed", width: OPTOUT_TABLE_WIDTH }}>
-            <OptOutColGroup />
-            <thead>
-              <tr className="border-b border-white/10 text-left text-[10px] uppercase tracking-wide text-slate-500">
-                <th className="px-3 py-2 truncate sticky left-0 z-10 bg-slate-950">Name</th>
-                <th className="px-3 py-2 whitespace-nowrap truncate">Primary Role</th>
-                {NOTIFICATION_TRIGGERS.map((trigger) => (
-                  <th key={trigger.key} className="px-2 py-2 text-center font-normal leading-tight" title={trigger.description}>
-                    {trigger.label}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-          </table>
-        </div>
-        <div
-          ref={optOutTableScrollRef}
-          onScroll={(e) => {
-            if (optOutHeaderScrollRef.current) optOutHeaderScrollRef.current.scrollLeft = e.currentTarget.scrollLeft;
-          }}
-          className="overflow-x-auto rounded-b-lg border border-[var(--color-panel-border)] bg-[var(--color-panel)] backdrop-blur-md"
-        >
-          <table className="text-sm" style={{ tableLayout: "fixed", width: OPTOUT_TABLE_WIDTH }}>
-            <OptOutColGroup />
-            <tbody>
-              {loading || optOutsLoading ? (
-                <tr>
-                  <td colSpan={2 + NOTIFICATION_TRIGGERS.length} className="px-3 py-6 text-center text-slate-400">
-                    Loading…
-                  </td>
-                </tr>
-              ) : search.trim() ? (
-                filtered.length === 0 ? (
-                  <tr>
-                    <td colSpan={2 + NOTIFICATION_TRIGGERS.length} className="px-3 py-6 text-center text-slate-400">
-                      No users found.
-                    </td>
-                  </tr>
-                ) : (
-                  filtered.map((user) => renderOptOutUserRow(user))
-                )
-              ) : (
-                roleGroups.flatMap((group) => {
-                  const isExpanded = expandedRoleGroups.has(group.code);
-                  const headerRow = (
-                    <tr key={`optout-role-${group.code}`} className="border-b border-white/10 bg-white/5">
-                      <td colSpan={2 + NOTIFICATION_TRIGGERS.length} className="p-0 sticky left-0 bg-slate-900">
-                        <button
-                          type="button"
-                          onClick={() => toggleRoleGroup(group.code)}
-                          aria-expanded={isExpanded}
-                          className="w-full flex items-center gap-1.5 px-3 py-1.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-300 hover:bg-white/5 transition-colors"
-                        >
-                          <ChevronDown className={`h-3.5 w-3.5 shrink-0 transition-transform ${isExpanded ? "rotate-180" : ""}`} />
-                          {group.label} ({group.users.length})
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                  if (!isExpanded) return [headerRow];
-                  return [headerRow, ...group.users.map((user) => renderOptOutUserRow(user))];
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
       </div>
     </main>
   );
