@@ -77,7 +77,7 @@ import { LocationManagementPage } from "@/components/LocationManagementPage";
 import { TechnicianWhereaboutsPage } from "@/components/TechnicianWhereaboutsPage";
 import { AddBranchPage } from "@/components/AddBranchPage";
 import { canAccessUserManagement, getUserManagementRecord, canAccessAdminModule } from "@/lib/user-management";
-import { isSubmoduleAllowed, isCompanySuperAdminRole, isCsrRestrictedRole } from "@/lib/roleLabels";
+import { isSubmoduleAllowed, isSubmoduleAllowedForTrainee, isCompanySuperAdminRole, isCsrRestrictedRole } from "@/lib/roleLabels";
 import { CompanySettingsPage } from "@/components/CompanySettingsPage";
 import { getDashboardRoleGate, hasDashboardAccess } from "@/lib/dashboardAccess";
 import { getModuleRoleGate } from "@/lib/moduleAccess";
@@ -158,7 +158,7 @@ export const Route = createFileRoute("/m/$module/$submodule")({
 });
 
 function SubModule() {
-  const { ready, email, companyId, role, uid } = useAuth();
+  const { ready, email, companyId, role, uid, isTrainee } = useAuth();
   // Route.useLoaderData()'s type resolves to `undefined` for this route in
   // the current @tanstack/react-router version — a known inference gap for
   // parent routes with children, not a real runtime issue (the loader
@@ -217,6 +217,36 @@ function SubModule() {
 
   if (!ready) return null;
   if (!email) return <Navigate to="/landing" replace />;
+
+  // Trainees only see Employee Self-Service — checked first, before any
+  // role-based gate below, since it doesn't depend on role or extra_roles
+  // at all. This is the actual enforcement stopping a trainee from
+  // bypassing a hidden tile by typing the URL directly; unlike the CSR
+  // check further down, it's NOT lifted by an explicit Module Access
+  // override — employment_type = "trainee" is meant as an absolute
+  // restriction while it's set, not something a leftover permission grant
+  // can quietly punch a hole in.
+  if (!isSubmoduleAllowedForTrainee(isTrainee, mod.slug, sub.slug)) {
+    return (
+      <>
+        <AppHeader />
+        <main className="flex-1 bg-slate-950 py-6">
+          <div className="max-w-4xl mx-auto px-6">
+            <div className="rounded-xl border border-white/15 bg-white/8 p-6 text-white backdrop-blur-md">
+              <h1 className="text-2xl font-bold">Access restricted</h1>
+              <p className="mt-2 text-sm text-slate-300">
+                You're currently marked as a Trainee — only the Employee Self-Service dashboard is available until this changes.
+              </p>
+              <p className="mt-2 text-sm text-slate-400">
+                Current sign-in: {email}
+              </p>
+            </div>
+          </div>
+        </main>
+        <Footer />
+      </>
+    );
+  }
 
   // Wait for the extra_roles fetch before deciding any gate that needs it
   // (dashboard/admin/user-management/CSR restriction) when the primary role

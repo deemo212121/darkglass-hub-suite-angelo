@@ -6,7 +6,7 @@ import { MODULES } from "@/lib/modules";
 import { ArrowRight } from "lucide-react";
 import { useEffect } from "react";
 import { shouldUseMobile } from "@/lib/device";
-import { isModuleAllowed } from "@/lib/roleLabels";
+import { isModuleAllowed, isModuleAllowedForTrainee } from "@/lib/roleLabels";
 import { canAccessSubmodule } from "@/lib/submoduleAccess";
 
 export const Route = createFileRoute("/home")({
@@ -16,7 +16,7 @@ export const Route = createFileRoute("/home")({
 });
 
 function Home() {
-  const { ready, email, role, extraRoles } = useAuth();
+  const { ready, email, role, extraRoles, isTrainee } = useAuth();
   const navigate = useNavigate();
   
   useEffect(() => {
@@ -55,8 +55,8 @@ function Home() {
           <p className="text-muted-foreground">Choose a module to get started.</p>
         </div>
         <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-3">
-          {MODULES.filter((m) => isModuleAllowed(role, m.slug, extraRoles)).map((m) => {
-            const visibleSubmodules = m.submodules.filter((s) => canAccessSubmodule(role, extraRoles, m.slug, s));
+          {MODULES.filter((m) => isModuleAllowed(role, m.slug, extraRoles) && isModuleAllowedForTrainee(isTrainee, m.slug)).map((m) => {
+            const visibleSubmodules = m.submodules.filter((s) => canAccessSubmodule(role, extraRoles, m.slug, s, isTrainee));
             return (
             <Link key={m.slug} to="/m/$module" params={{ module: m.slug }} className="module-card group">
               <div className="flex items-center gap-3 mb-3">

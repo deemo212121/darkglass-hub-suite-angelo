@@ -11,7 +11,7 @@
  * remain the actual enforcement; this is a read-only mirror of them, not a
  * replacement.
  */
-import { isSubmoduleAllowed, isCompanySuperAdminRole } from "./roleLabels";
+import { isSubmoduleAllowed, isSubmoduleAllowedForTrainee, isCompanySuperAdminRole } from "./roleLabels";
 import { getDashboardRoleGate, hasDashboardAccess } from "./dashboardAccess";
 import { getModuleRoleGate } from "./moduleAccess";
 
@@ -31,8 +31,11 @@ export function canAccessSubmodule(
   role: string | null | undefined,
   extraRoles: string[] | null | undefined,
   moduleSlug: string,
-  sub: { slug: string; custom?: string }
+  sub: { slug: string; custom?: string },
+  isTrainee?: boolean
 ): boolean {
+  if (isTrainee && !isSubmoduleAllowedForTrainee(isTrainee, moduleSlug, sub.slug)) return false;
+
   const explicitModuleOverride = getModuleRoleGate(moduleSlug, sub.slug);
   const moduleAllowedRoles = moduleSlug === "dashboard" ? getDashboardRoleGate(sub.slug) : explicitModuleOverride;
 

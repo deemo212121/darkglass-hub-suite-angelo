@@ -6,6 +6,7 @@ import { useLiveLocation } from "@/lib/liveLocationContext";
 import {
   ArrowLeft,
   Check,
+  ChevronDown,
   ChevronRight,
   Send,
   Ticket as TicketIcon,
@@ -2749,6 +2750,21 @@ function RepairTab({ ticket, authorName }: { ticket: Ticket; authorName: string 
   // mobile app — everything else stays read-only because it's owned
   // by dispatch / CSR on the desktop side.
   const [editVisitId, setEditVisitId] = useState<string | null>(null);
+  // Visit ids the tech has explicitly expanded — every visit is collapsed
+  // to just its head (V#, status, date, technician) by default EXCEPT the
+  // latest one, which stays expanded on load since that's almost always
+  // the one being worked. Older visits (V1, V2, ... below the latest) are
+  // a tap away instead of forcing a long scroll past full detail the tech
+  // usually doesn't need to re-read.
+  const [expandedVisitIds, setExpandedVisitIds] = useState<Set<string>>(new Set());
+  const toggleVisitExpanded = (id: string) => {
+    setExpandedVisitIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
   // `service` holds the raw textarea text as typed, not a parsed sections
   // object - it's only normalized (labels/blank-lines snapped back into
   // place, Parts Used hint refreshed) on blur and on save, never on every
@@ -2976,16 +2992,31 @@ function RepairTab({ ticket, authorName }: { ticket: Ticket; authorName: string 
           // in the database. Mirrors the same guard on desktop's Visit
           // History (ticket.$ticketNo.tsx's getNextVisitNumber/visitLabelById).
           const visitLabel = `V${visits.length - idx}`;
+          // Latest visit starts expanded; every older one starts collapsed
+          // to just its head — a tap expands/collapses any of them.
+          // Editing always forces a visit open so its form stays visible.
+          const isExpanded = isEditing || isLatestVisit || expandedVisitIds.has(v.id);
           return (
             <div key={v.id} className="mtech-visit">
-              <div className="mtech-visit-head">
+              <button
+                type="button"
+                className="mtech-visit-head"
+                style={{ width: "100%", background: "none", border: "none", cursor: isEditing ? "default" : "pointer", padding: 0 }}
+                onClick={() => { if (!isEditing) toggleVisitExpanded(v.id); }}
+                aria-expanded={isExpanded}
+              >
                 <span className="mtech-visit-no">{visitLabel}</span>
-                <span className="mtech-visit-status">{v.repairStatus || v.status || "—"}</span>
-              </div>
+                <span style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
+                  <span className="mtech-visit-status">{v.repairStatus || v.status || "—"}</span>
+                  <ChevronDown className={`h-4 w-4 shrink-0 transition-transform ${isExpanded ? "rotate-180" : ""}`} />
+                </span>
+              </button>
               <div className="mtech-visit-meta">
                 <span>📅 {fmtDate(v.scheduleDate)}{v.timeSlot ? ` · ${v.timeSlot}` : ""}</span>
                 <span>👤 {v.technician || "—"}</span>
               </div>
+              {isExpanded && (
+              <>
               {/* Tech-facing read order: what the customer complained about,
                   then what the tech found, then what the tech did about it
                   (Service Performed's composed text carries Parts Needed
@@ -3101,6 +3132,8 @@ function RepairTab({ ticket, authorName }: { ticket: Ticket; authorName: string 
                     Edit
                   </button>
                 </div>
+              )}
+              </>
               )}
             </div>
           );

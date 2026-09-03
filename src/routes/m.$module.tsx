@@ -7,7 +7,7 @@ import { useAuth } from "@/lib/auth";
 import { getModule, DASHBOARD_GRID_EXCLUDED_SLUGS, type ModuleDef, type SubModuleDef } from "@/lib/modules";
 import { hasDashboardAccess } from "@/lib/dashboardAccess";
 import { getModuleRoleGate } from "@/lib/moduleAccess";
-import { isModuleAllowed } from "@/lib/roleLabels";
+import { isModuleAllowed, isModuleAllowedForTrainee } from "@/lib/roleLabels";
 import { canAccessSubmodule } from "@/lib/submoduleAccess";
 import { getMyRoles, getCompanyUsers } from "@/lib/supabase/users";
 import {
@@ -75,7 +75,7 @@ export const Route = createFileRoute("/m/$module")({
 });
 
 function ModuleIndex() {
-  const { ready, email, role, uid, companyId, displayName } = useAuth();
+  const { ready, email, role, uid, companyId, displayName, isTrainee } = useAuth();
   // Route.useLoaderData()'s type resolves to `undefined` for this route in
   // the current @tanstack/react-router version — a known inference gap for
   // parent routes with children, not a real runtime issue (the loader
@@ -403,6 +403,27 @@ function ModuleIndex() {
     );
   }
 
+  // Trainees only see Employee Self-Service — checked independently of the
+  // role gate above (it doesn't depend on role, and isn't lifted by a
+  // Module Access override, unlike the CSR block above). Dashboard itself
+  // still renders here so the per-submodule filter further down can show
+  // just that one tile; every other module is blocked outright.
+  if (!isModuleAllowedForTrainee(isTrainee, m.slug)) {
+    return (
+      <>
+        <AppHeader />
+        <main className="max-w-[1400px] mx-auto px-6 py-8 page-fade-in">
+          <div className="panel text-center max-w-md mx-auto">
+            <h1 className="text-xl font-semibold">Access restricted</h1>
+            <p className="text-sm text-muted-foreground mt-2">You're currently marked as a Trainee — only the Employee Self-Service dashboard is available until this changes.</p>
+            <Link to="/home" className="btn btn-primary mt-4 inline-flex">Back home</Link>
+          </div>
+        </main>
+        <Footer />
+      </>
+    );
+  }
+
   const partsLandingOrder = [
     "part-pickup",
     "part-collection",
@@ -609,7 +630,7 @@ function ModuleIndex() {
               // submodule route itself enforces, so a restricted tile is
               // never shown here only to land on "Access restricted" once
               // clicked.
-              .filter((s: SubModuleDef) => canAccessSubmodule(role, extraRoles, m.slug, s))
+              .filter((s: SubModuleDef) => canAccessSubmodule(role, extraRoles, m.slug, s, isTrainee))
               // Alphabetical, same as every other module's grid below.
               .sort((a: SubModuleDef, b: SubModuleDef) => submoduleSortKey(a.title).localeCompare(submoduleSortKey(b.title)))
               .map((s: SubModuleDef) => (
@@ -632,7 +653,7 @@ function ModuleIndex() {
             {submodules
               // Full gate (see submoduleAccess.ts) — the same check the
               // submodule route itself enforces.
-              .filter((s: SubModuleDef) => canAccessSubmodule(role, extraRoles, m.slug, s))
+              .filter((s: SubModuleDef) => canAccessSubmodule(role, extraRoles, m.slug, s, isTrainee))
               .sort((a: SubModuleDef, b: SubModuleDef) => submoduleSortKey(a.title).localeCompare(submoduleSortKey(b.title)))
               .map((s: SubModuleDef) => (
               <Link

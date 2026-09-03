@@ -358,6 +358,14 @@ const CANONICAL_DEPARTMENT_GROUPS: { name: string; match: RegExp }[] = [
 /** Master List's Department column dropdown — the 6 real destinations plus Unlisted (to explicitly park someone there), used to move a person between departments straight from the table. */
 const MASTER_LIST_DEPARTMENT_OPTIONS = [...CANONICAL_DEPARTMENT_GROUPS.map((g) => g.name), MASTER_LIST_UNLISTED];
 
+/**
+ * Sentinel for the Master List "Trainee" tab — cross-cutting (a trainee can
+ * be in any department), so it's rendered as its own button after the
+ * department tabs rather than folded into masterListDepartments/
+ * matchesMasterListTab, which are department-only.
+ */
+const MASTER_LIST_TRAINEE_TAB = "__trainee__";
+
 function canonicalDepartmentGroup(raw: string): string {
   const trimmed = raw.trim();
   if (!trimmed) return trimmed;
@@ -10208,7 +10216,9 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
   const masterListFiltered = useMemo(() => {
     let result = employees;
-    if (masterListDept !== "__all__") {
+    if (masterListDept === MASTER_LIST_TRAINEE_TAB) {
+      result = result.filter((e) => e.employmentType === "trainee");
+    } else if (masterListDept !== "__all__") {
       result = result.filter((e) => matchesMasterListTab(e, masterListDept));
     }
     const q = masterListSearch.trim().toLowerCase();
@@ -11366,6 +11376,17 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               </button>
             );
           })}
+          <button
+            onClick={() => setMasterListDept(MASTER_LIST_TRAINEE_TAB)}
+            title="Everyone currently marked Trainee, regardless of department"
+            className={`px-3 py-1.5 text-xs font-semibold rounded-t-md border-b-2 whitespace-nowrap transition ${
+              masterListDept === MASTER_LIST_TRAINEE_TAB
+                ? "border-blue-500 text-blue-300 bg-white/5"
+                : "border-transparent text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            Trainee ({employees.filter((e) => e.employmentType === "trainee").length})
+          </button>
         </div>
 
         <div className="px-4 py-2 border-b border-white/10 bg-white/5 text-xs text-muted-foreground">

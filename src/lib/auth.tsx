@@ -83,6 +83,11 @@ type AuthState = {
    *  — pass both to the roleLabels.ts/pto.ts/timecardCorrections.ts helpers
    *  that accept an extraRoles argument. */
   extraRoles: string[];
+  /** Trainee vs Regular (Master List's Employment Status column, migration
+   *  0152) — true means this account only sees Employee Self-Service
+   *  (roleLabels.ts's isSubmoduleAllowedForTrainee), regardless of role.
+   *  False for the Firestore-fallback login path. */
+  isTrainee: boolean;
   uid: string | null;
   displayName: string | null;
   isActive: boolean;
@@ -237,6 +242,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [companyLoginAlias, setCompanyLoginAlias] = useState<string | null>(null);
   const [role, setRole] = useState<string | null>(null);
   const [extraRoles, setExtraRoles] = useState<string[]>([]);
+  // Trainee vs Regular (Master List's Employment Status column, migration
+  // 0152) — false for the Firestore-fallback login path (no equivalent
+  // concept there), same fail-open convention as extraRoles above.
+  const [isTrainee, setIsTrainee] = useState<boolean>(false);
   const [uid, setUid] = useState<string | null>(null);
   const [displayName, setDisplayName] = useState<string | null>(null);
   const [isActive, setIsActive] = useState<boolean>(false);
@@ -430,6 +439,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                   setCompanyLoginAlias(sbProfile.companyLoginAlias);
                   setRole(sbProfile.role);
                   setExtraRoles(sbProfile.extraRoles);
+                  setIsTrainee(sbProfile.isTrainee);
                   setDisplayName(sbProfile.displayName);
                   setIsActive(sbProfile.isActive);
                   setMustChangePasswordState(sbProfile.mustChangePassword);
@@ -508,6 +518,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                   setCompanyLoginAlias(loginAlias);
                   setRole(userProfile.role);
                   setExtraRoles([]); // Firestore-fallback profiles have no extra_roles concept
+                  setIsTrainee(false); // Firestore-fallback profiles have no employment_type concept
                   setDisplayName(userProfile.displayName);
                   setIsActive(userProfile.isActive);
                 } else {
@@ -720,6 +731,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       companyLoginAlias,
       role,
       extraRoles,
+      isTrainee,
       uid,
       displayName,
       isActive,

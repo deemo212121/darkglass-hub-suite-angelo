@@ -123,10 +123,12 @@ export async function getProfileForLogin(firebaseUid: string): Promise<{
   workPlan: Record<string, any> | null;
   branchAccess: string | null;
   mustChangePassword: boolean;
+  /** Trainee vs Regular (Master List's Employment Status column, migration 0152) — drives the "trainee sees only Employee Self-Service" restriction, see roleLabels.ts's isSubmoduleAllowedForTrainee. */
+  isTrainee: boolean;
 } | null> {
   const { data, error } = await supabase
     .from("profiles")
-    .select("email, role, extra_roles, display_name, is_active, work_plan, branch_access, must_change_password, companies:company_id (legacy_code, login_alias, is_active)")
+    .select("email, role, extra_roles, display_name, is_active, work_plan, branch_access, must_change_password, employment_type, companies:company_id (legacy_code, login_alias, is_active)")
     .eq("firebase_uid", firebaseUid)
     .maybeSingle();
 
@@ -151,6 +153,7 @@ export async function getProfileForLogin(firebaseUid: string): Promise<{
     workPlan: (data as any).work_plan ?? null,
     branchAccess: (data as any).branch_access ?? null,
     mustChangePassword: (data as any).must_change_password ?? false,
+    isTrainee: (data as any).employment_type === "trainee",
   };
 }
 

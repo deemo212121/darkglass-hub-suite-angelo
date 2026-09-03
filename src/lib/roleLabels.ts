@@ -228,6 +228,33 @@ export function isSubmoduleAllowed(role: string | null | undefined, moduleSlug: 
 }
 
 /**
+ * A trainee (profiles.employment_type = "trainee" — Master List's
+ * Employment Status column, migration 0152) sees only their own Employee
+ * Self-Service dashboard, regardless of their actual role. This is a pure
+ * access restriction layered on top of whatever role/permissions they
+ * already hold — role and extra_roles are never touched, so the moment HR
+ * flips employment_type back to "regular" full access resumes on its own,
+ * nothing to manually restore. Independent of (and combines via AND with)
+ * the CSR restriction above — same "restrict-to-allowlist" shape, just a
+ * narrower allow-list (one submodule, not a whole department's toolset).
+ */
+const TRAINEE_ALLOWED_MODULES = new Set(["dashboard"]);
+const TRAINEE_ALLOWED_DASHBOARD_SUBMODULES = new Set(["employee-self-service"]);
+
+/** Whether a trainee may open this module at all. Non-trainees always pass. */
+export function isModuleAllowedForTrainee(isTrainee: boolean, moduleSlug: string): boolean {
+  if (!isTrainee) return true;
+  return TRAINEE_ALLOWED_MODULES.has(moduleSlug);
+}
+
+/** Whether a trainee may open this submodule. Non-trainees always pass. */
+export function isSubmoduleAllowedForTrainee(isTrainee: boolean, moduleSlug: string, submoduleSlug: string): boolean {
+  if (!isTrainee) return true;
+  if (!isModuleAllowedForTrainee(isTrainee, moduleSlug)) return false;
+  return TRAINEE_ALLOWED_DASHBOARD_SUBMODULES.has(submoduleSlug);
+}
+
+/**
  * Roles allowed to flag a ticket as misdiagnosed (ticket.$ticketNo.tsx) and
  * to see the "Show Misdiagnosed" filter (TicketList.tsx) — manager-tier
  * reviewers only. "Managers" maps to the plain MANAGER role plus branch
