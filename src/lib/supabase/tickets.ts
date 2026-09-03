@@ -1093,6 +1093,41 @@ export async function getLatestVisitTriageNoteByTicketIds(
 }
 
 /**
+ * Bulk-fetch the latest Cause of Failure ("Cause of Failure (Tech)" in the
+ * mobile app) for a set of tickets — same shape/rationale as
+ * getLatestVisitTriageNoteByTicketIds right above, just a different visits
+ * column. Used by Accounting Dashboard's Ticket Attendance tab for its
+ * Diagnosis column. Returns a `Map<ticket_id, diagnosis>` for tickets that
+ * have at least one visit with a non-empty cause_of_failure.
+ */
+export async function getVisitDiagnosisByTicketIds(
+  ticketIds: string[],
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const uniq = Array.from(new Set(ticketIds.filter(Boolean)));
+  if (uniq.length === 0) return out;
+  await runBatched(uniq, async (batch) => {
+    const { data, error } = await supabase
+      .from("visits")
+      .select("ticket_id, cause_of_failure, created_at")
+      .in("ticket_id", batch)
+      .not("cause_of_failure", "is", null)
+      .order("created_at", { ascending: false });
+    if (error) {
+      console.error("getVisitDiagnosisByTicketIds error:", error.message);
+      return;
+    }
+    for (const row of data ?? []) {
+      const tid = (row as any).ticket_id as string | null;
+      const diagnosis = String((row as any).cause_of_failure ?? "").trim();
+      if (!tid || !diagnosis) continue;
+      if (!out.has(tid)) out.set(tid, diagnosis);
+    }
+  });
+  return out;
+}
+
+/**
  * Bulk-fetch full visit rows (not a derived summary) for a set of tickets,
  * keyed by ticket_id. Used by exports/reports that need the complete
  * Visit Log detail for many tickets at once — a single `.in()` query

@@ -12,7 +12,7 @@
 
 import { supabase } from "./client";
 import { getCompanyMapProvider } from "./companySettings";
-import { computeDailyRouteMiles, type MileageTicketInput, type DailyRouteMilesResult } from "@/lib/mapEngine";
+import { computeDailyRouteMiles, getOfficeCoordinates, type MileageTicketInput, type DailyRouteMilesResult } from "@/lib/mapEngine";
 
 export interface MileageEntry {
   id: string;
@@ -106,6 +106,10 @@ export interface MileageEntry {
    *  Computed in syncMileageFromTickets/recalculateMileageDayRoute via
    *  computeDailyRouteMiles's legMiles (mapEngine.ts). */
   legMileage: number | null;
+  /** Free-text, admin-editable, no formula/source feeds it — Ticket
+   *  Attendance's "Estimate Time" column (migration 0211). Not derived
+   *  from anything else in the app; set via setMileageEstimateTime. */
+  estimateTime: string | null;
 }
 
 /**
@@ -156,11 +160,12 @@ function mapRow(r: any): MileageEntry {
     deletedByName: r.deleted_by_name ?? null,
     deleteReason: r.delete_reason ?? null,
     legMileage: r.leg_mileage != null ? Number(r.leg_mileage) : null,
+    estimateTime: r.estimate_time ?? null,
   };
 }
 
 const ENTRY_COLUMNS =
-  "id, profile_id, technician_name, branch, work_date, address, contact_number, email, total_mileage, google_map_link, created_by_name, created_at, ticket_id, ticket_no, ticket_status, source, payroll_excluded, payroll_excluded_at, payroll_excluded_by_name, payroll_hold_reason, route_order, route_return_to, mileage_override, mileage_adjustment, adjustment_note, adjusted_by_name, adjusted_at, payroll_released_at, deleted_at, deleted_by_name, delete_reason, leg_mileage";
+  "id, profile_id, technician_name, branch, work_date, address, contact_number, email, total_mileage, google_map_link, created_by_name, created_at, ticket_id, ticket_no, ticket_status, source, payroll_excluded, payroll_excluded_at, payroll_excluded_by_name, payroll_hold_reason, route_order, route_return_to, mileage_override, mileage_adjustment, adjustment_note, adjusted_by_name, adjusted_at, payroll_released_at, deleted_at, deleted_by_name, delete_reason, leg_mileage, estimate_time";
 
 // Supabase caps an unbounded select at 1000 rows — mileage_entries is
 // queried all-time, no date range. Page through in chunks of 1000 instead.
@@ -290,6 +295,15 @@ export async function restoreMileageEntry(id: string): Promise<void> {
   if (error) throw new Error(error.message);
 }
 
+/** Sets (or clears, on an empty string) a mileage entry's Estimate Time — see MileageEntry.estimateTime. Plain free text, no validation. */
+export async function setMileageEstimateTime(id: string, value: string): Promise<void> {
+  const { error } = await supabase
+    .from("mileage_entries")
+    .update({ estimate_time: value.trim() || null })
+    .eq("id", id);
+  if (error) throw new Error(error.message);
+}
+
 /**
  * Coarse visit-order heuristic, shared by syncMileageFromTickets (below)
  * and the Day Route view: a time_slot's own leading number as its start
@@ -381,9 +395,10 @@ export interface MileageSyncResult {
    *  looking identical to any other synced entry. */
   unmatchedTechnicians: { name: string; count: number }[];
   /** How many technician-days actually got (re)processed this run — new
-   *  tickets, moved tickets, AND days recalculated purely to backfill
-   *  leg_mileage (see the hasMissingLegMileage check above). A run that
-   *  only backfills existing days has `created === 0` but this is still
+   *  tickets, moved tickets, and days recalculated purely to backfill
+   *  leg_mileage or fix a stale (no-origin) Map Link (see the
+   *  hasMissingLegMileage/hasStaleMapLink checks above). A run that only
+   *  backfills existing days has `created === 0` but this is still
    *  > 0 — callers should refetch/refresh on this, not just on `created`. */
   recalculatedDays: number;
   /** True if `signal` was aborted before every day finished — everything
@@ -431,6 +446,26 @@ export interface MileageSyncResult {
  * way a matched technician's are — just keyed by their raw ticket text
  * instead of a profileId.
  */
+
+/**
+ * Directions link for one ticket's Map Link — customer's job-site address
+ * as the destination, the technician's BRANCH as the origin (via the same
+ * getOfficeCoordinates lookup the actual mileage math uses), so opening it
+ * always starts from the real dispatch point. Without an explicit origin,
+ * Google Maps falls back to "Your location" (the viewer's own device/
+ * browser position) — wrong for anyone checking a route from their desk
+ * instead of standing at the branch.
+ */
+function buildGoogleMapLink(branch: string, ticket: { customer?: { address?: string | null; address2?: string | null; city?: string | null; state?: string | null; zip?: string | null } | null }): string {
+  const customer = ticket.customer ?? {};
+  const fullAddress = [customer.address, customer.address2, [customer.city, customer.state].filter(Boolean).join(", "), customer.zip]
+    .filter((part: unknown) => typeof part === "string" && part.trim())
+    .join(", ");
+  if (!fullAddress) return "";
+  const originPt = getOfficeCoordinates(branch);
+  const originParam = originPt ? `&origin=${originPt.lat},${originPt.lng}` : "";
+  return `https://www.google.com/maps/dir/?api=1${originParam}&destination=${encodeURIComponent(fullAddress)}`;
+}
 export async function syncMileageFromTickets(input: {
   technicians: { profileId: string; fullName: string; branch: string; phone?: string; email?: string; homeAddress?: string }[];
   /** Called after each technician-day finishes recomputing (route lookups
@@ -471,7 +506,7 @@ export async function syncMileageFromTickets(input: {
     })(),
     supabase
       .from("mileage_entries")
-      .select("id, ticket_id, total_mileage, leg_mileage, work_date, profile_id, technician_name")
+      .select("id, ticket_id, total_mileage, leg_mileage, google_map_link, work_date, profile_id, technician_name")
       .eq("source", "auto")
       .not("ticket_id", "is", null),
     getCompanyMapProvider(),
@@ -501,6 +536,14 @@ export async function syncMileageFromTickets(input: {
         id: r.id as string,
         totalMileage: Number(r.total_mileage) || 0,
         hasLegMileage: r.leg_mileage != null,
+        // A map link generated before the branch-origin fix has no
+        // "origin=" param at all — Google Maps then falls back to "Your
+        // location." Re-processing once fixes it, same as the leg_mileage
+        // backfill below. A null/empty link (no customer address on file)
+        // isn't a stale-format problem to fix, so it's treated as fine —
+        // only an actual old-format link (present, no origin=) is flagged,
+        // or reprocessing would spin forever on an addressless ticket.
+        hasOriginInMapLink: !r.google_map_link || String(r.google_map_link).includes("origin="),
         workDate: r.work_date as string,
         identity: r.profile_id ? `id:${r.profile_id}` : `name:${String(r.technician_name || "").trim().toLowerCase()}`,
       },
@@ -573,7 +616,8 @@ export async function syncMileageFromTickets(input: {
       // stuck showing "—" in the Mileage tab's This Stop column forever,
       // since nothing about the day's tickets ever actually changes.
       const hasMissingLegMileage = tickets.some((t) => !existingByTicketId.get(t.id)?.hasLegMileage);
-      return hasNewOrMovedInTicket || keysThatLostATicket.has(key) || hasMissingLegMileage;
+      const hasStaleMapLink = tickets.some((t) => !existingByTicketId.get(t.id)?.hasOriginInMapLink);
+      return hasNewOrMovedInTicket || keysThatLostATicket.has(key) || hasMissingLegMileage || hasStaleMapLink;
     })
     .map(([, tickets]) => tickets);
   const untouchedTicketCount = allAssignedTickets.length - groupsToProcess.reduce((s, g) => s + g.length, 0);
@@ -651,6 +695,7 @@ export async function syncMileageFromTickets(input: {
             profile_id: technician?.profileId ?? null,
             technician_name: technician ? null : rawName,
             branch,
+            google_map_link: buildGoogleMapLink(branch, t) || null,
           })
           .eq("id", existing.id);
         if (updateErr) result.errors.push(`Ticket ${t.ticket_no}: failed to refresh mileage — ${updateErr.message}`);
@@ -659,13 +704,7 @@ export async function syncMileageFromTickets(input: {
 
     const newTickets = orderedTickets.filter((t) => !existingByTicketId.has(t.id));
     for (const ticket of newTickets) {
-      const customer = ticket.customer ?? {};
-      const fullAddress = [customer.address, customer.address2, [customer.city, customer.state].filter(Boolean).join(", "), customer.zip]
-        .filter((part: unknown) => typeof part === "string" && part.trim())
-        .join(", ");
-      const googleMapLink = fullAddress
-        ? `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(fullAddress)}`
-        : "";
+      const googleMapLink = buildGoogleMapLink(branch, ticket);
 
       const { error: insertErr } = await supabase.from("mileage_entries").insert({
         profile_id: technician?.profileId ?? null,

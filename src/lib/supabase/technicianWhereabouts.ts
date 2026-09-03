@@ -197,6 +197,9 @@ export async function getTechnicianTodayRoute(technicianName: string): Promise<T
 }
 
 export interface TicketAttendanceRow {
+  /** Ticket UUID (tickets.id) — the join key into visits.ticket_id (see
+   *  getVisitDiagnosisByTicketIds, tickets.ts), distinct from ticketNo. */
+  ticketId: string;
   ticketNo: string;
   technician: string;
   scheduleDate: string;
@@ -220,7 +223,7 @@ export interface TicketAttendanceRow {
 export async function getCompanyTicketAttendance(dateFrom: string, dateTo: string): Promise<TicketAttendanceRow[]> {
   const { data, error } = await supabase
     .from("tickets")
-    .select("ticket_no, technician, schedule_date, status, time_slot, onsite_arrived_at, onsite_done_at, customer:customers ( address, address2, city, state, zip )")
+    .select("id, ticket_no, technician, schedule_date, status, time_slot, onsite_arrived_at, onsite_done_at, customer:customers ( address, address2, city, state, zip )")
     .gte("schedule_date", dateFrom)
     .lte("schedule_date", dateTo);
   if (error) {
@@ -230,6 +233,7 @@ export async function getCompanyTicketAttendance(dateFrom: string, dateTo: strin
   return (data ?? [])
     .filter((row: any) => String(row.technician || "").trim())
     .map((row: any) => ({
+      ticketId: row.id as string,
       ticketNo: row.ticket_no as string,
       technician: String(row.technician).trim(),
       scheduleDate: row.schedule_date as string,

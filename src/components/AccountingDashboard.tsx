@@ -32,6 +32,9 @@ import {
   Users,
   Paperclip,
   RotateCcw,
+  Pencil,
+  Check,
+  ExternalLink,
 } from "lucide-react";
 import {
   BarChart,
@@ -49,7 +52,7 @@ import { EmployeePayrollDetailModal } from "@/components/EmployeePayrollDetailMo
 import { getRepairStatuses, type RepairStatus } from "@/lib/supabase/repairStatuses";
 import { TicketColumnFilter } from "@/components/TicketColumnFilter";
 import { getRoleDepartmentBreakdown, normalizeRole, TECHNICIAN_PAY_ROLES } from "@/lib/roleLabels";
-import { calcWorkedHours, getMyProfileSchedule, resolveScheduledNetHours, getAttendanceForRange } from "@/lib/supabase/timecards";
+import { calcWorkedHours, getMyProfileSchedule, resolveScheduledNetHours, getAttendanceForRange, getCompanyTimecardEntries, type CompanyTimecardEntry } from "@/lib/supabase/timecards";
 import { payGraceMinutesFor, applyGraceToCheckIn, roundCheckOutToSchedule } from "@/lib/attendanceGrace";
 import { updatePayrollLineItemExtra, updatePayrollLineItemPaid } from "@/lib/supabase/payslips";
 import { getEmployeeInfoByProfileIds, getCompanyUsers, getTechnicianContactInfoByIds, type EmployeeInfo } from "@/lib/supabase/users";
@@ -81,12 +84,12 @@ import {
   type TechCategoryOverride,
 } from "@/lib/supabase/techPayroll";
 import { TechActivityReportModal } from "@/components/TechActivityReportModal";
-import { getMileageEntries, softDeleteMileageEntry, restoreMileageEntry, syncMileageFromTickets, setMileageEntryPayrollExcluded, reconcileMileageNoPhotoHolds, mileageEffectiveTotal, type MileageEntry } from "@/lib/supabase/mileage";
+import { getMileageEntries, softDeleteMileageEntry, restoreMileageEntry, setMileageEstimateTime, syncMileageFromTickets, setMileageEntryPayrollExcluded, reconcileMileageNoPhotoHolds, mileageEffectiveTotal, type MileageEntry } from "@/lib/supabase/mileage";
 import { MileageDayRouteModal } from "@/components/MileageDayRouteModal";
 import { FlashTechCalendarPage } from "@/components/FlashTechCalendarPage";
 import { ExpenseTrackingPage } from "@/components/ExpenseTrackingPage";
 import { getCompanyEmployeeRequests, updateEmployeeRequestStatus, linkPayrollDisputeCustomPayItem, type EmployeeRequestRow } from "@/lib/supabase/employeeRequests";
-import { setTicketOnsiteCheckIn } from "@/lib/supabase/tickets";
+import { setTicketOnsiteCheckIn, getVisitDiagnosisByTicketIds } from "@/lib/supabase/tickets";
 import { getCompanyTicketAttendance, slotSortKey, type TicketAttendanceRow } from "@/lib/supabase/technicianWhereabouts";
 import { TIME_ZONES, type ScheduleTimezone } from "@/lib/serverTime";
 import { perCutoffSalary } from "@/lib/supabase/salary";
@@ -824,13 +827,47 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   const [ticketAttendanceLoading, setTicketAttendanceLoading] = useState(false);
   const [ticketAttendanceLoaded, setTicketAttendanceLoaded] = useState(false);
   const [expandedTicketAttendanceTech, setExpandedTicketAttendanceTech] = useState<string | null>(null);
+  // Excel-style daily detail — general attendance (Check In/Meal/Check Out,
+  // company-wide bulk fetch, same as AttendanceMonitoringPage) and each
+  // ticket's latest diagnosis write-up (bulk, by ticket id, once ticket
+  // rows are known). Both loaded alongside the ticket rows themselves.
+  const [ticketAttendanceTimecards, setTicketAttendanceTimecards] = useState<CompanyTimecardEntry[]>([]);
+  const [ticketAttendanceDiagnoses, setTicketAttendanceDiagnoses] = useState<Map<string, string>>(new Map());
   const loadTicketAttendance = () => {
     setTicketAttendanceLoading(true);
-    getCompanyTicketAttendance(ticketAttendanceDateFrom, ticketAttendanceDateTo)
-      .then((rows) => { setTicketAttendanceRows(rows); setTicketAttendanceLoaded(true); })
+    Promise.all([
+      getCompanyTicketAttendance(ticketAttendanceDateFrom, ticketAttendanceDateTo),
+      getCompanyTimecardEntries(ticketAttendanceDateFrom, ticketAttendanceDateTo).catch((err) => {
+        console.error("Failed to load timecard entries for Ticket Attendance:", err);
+        return [] as CompanyTimecardEntry[];
+      }),
+    ])
+      .then(([rows, timecards]) => {
+        setTicketAttendanceRows(rows);
+        setTicketAttendanceTimecards(timecards);
+        setTicketAttendanceLoaded(true);
+        // Diagnosis text isn't needed to render the tab at all — fetched
+        // separately so a slow/failed lookup never blocks the rows/times
+        // that ARE already back.
+        getVisitDiagnosisByTicketIds(rows.map((r) => r.ticketId))
+          .then(setTicketAttendanceDiagnoses)
+          .catch((err) => console.error("Failed to load ticket diagnoses:", err));
+      })
       .catch((err) => console.error("Failed to load ticket attendance:", err))
       .finally(() => setTicketAttendanceLoading(false));
   };
+  // Technician (raw ticket-assignment name) -> profile, for joining the
+  // timecard map below and reading a technician's assigned branch — same
+  // normalized-name matching syncMileageFromTickets already uses.
+  const employeeByNormalizedName = useMemo(
+    () => new Map(employees.map((e) => [(e.full_name || "").trim().toLowerCase(), e])),
+    [employees]
+  );
+  const timecardByProfileDate = useMemo(() => {
+    const map = new Map<string, CompanyTimecardEntry>();
+    for (const tc of ticketAttendanceTimecards) map.set(`${tc.profileId}|${tc.workDate}`, tc);
+    return map;
+  }, [ticketAttendanceTimecards]);
   useEffect(() => {
     if (activeTab !== "ticketAttendance" || ticketAttendanceLoaded) return;
     loadTicketAttendance();
@@ -850,19 +887,36 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       if (!byTech.has(row.technician)) byTech.set(row.technician, []);
       byTech.get(row.technician)!.push(row);
     }
+    // Time In/Out only means one specific pair of times when the selected
+    // range is a single day — across multiple days there's no one "Time
+    // In" to show at the summary level (that's what the per-date rows in
+    // the expanded panel below are for).
+    const isSingleDay = ticketAttendanceDateFrom === ticketAttendanceDateTo;
     return Array.from(byTech.entries())
       .map(([technician, rows]) => {
         const scheduled = rows.length;
         const checkedIn = rows.filter((r) => r.arrivedAt).length;
         const missingCheckIn = rows.filter((r) => !r.arrivedAt && r.statusGroup !== "cancelled" && !disputedTicketNosApproved.has(r.ticketNo)).length;
         const missingCheckOut = rows.filter((r) => r.arrivedAt && !r.doneAt && r.statusGroup !== "cancelled" && !disputedTicketNosApproved.has(r.ticketNo)).length;
+        const employee = employeeByNormalizedName.get(technician.trim().toLowerCase());
+        const timecard = isSingleDay && employee ? timecardByProfileDate.get(`${employee.id}|${ticketAttendanceDateFrom}`) : undefined;
         // Date then route order (slotSortKey) — same helper Technician
         // Whereabouts' numbered Stops list sorts by, so a technician's stop
         // #3 there lines up with row #3 here.
-        return { technician, rows: rows.sort((a, b) => a.scheduleDate.localeCompare(b.scheduleDate) || slotSortKey(a.timeSlot).localeCompare(slotSortKey(b.timeSlot))), scheduled, checkedIn, missingCheckIn, missingCheckOut };
+        return {
+          technician,
+          rows: rows.sort((a, b) => a.scheduleDate.localeCompare(b.scheduleDate) || slotSortKey(a.timeSlot).localeCompare(slotSortKey(b.timeSlot))),
+          scheduled,
+          checkedIn,
+          missingCheckIn,
+          missingCheckOut,
+          branch: employee?.assigned_branch || null,
+          timeIn: timecard?.checkIn || null,
+          timeOut: timecard?.checkOut || null,
+        };
       })
       .sort((a, b) => a.technician.localeCompare(b.technician));
-  }, [ticketAttendanceRows, ticketAttendanceSearch, disputedTicketNosApproved]);
+  }, [ticketAttendanceRows, ticketAttendanceSearch, disputedTicketNosApproved, employeeByNormalizedName, timecardByProfileDate, ticketAttendanceDateFrom, ticketAttendanceDateTo]);
 
   const [salaryEntries, setSalaryEntries] = useState<SalaryEntry[]>([]);
   const [timecardEntries, setTimecardEntries] = useState<TimecardEntry[]>([]);
@@ -895,6 +949,92 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     }
     return map;
   }, [mileageEntries]);
+  // Ticket Attendance's Estimate Time column — inline pencil-icon edit, one
+  // free-text field, no formula/source (see migration 0211). Which mileage
+  // entry id is currently being edited, plus the in-progress text.
+  const [editingEstimateTimeId, setEditingEstimateTimeId] = useState<string | null>(null);
+  const [estimateTimeDraft, setEstimateTimeDraft] = useState("");
+  const [savingEstimateTimeId, setSavingEstimateTimeId] = useState<string | null>(null);
+  const handleSaveEstimateTime = async (entry: MileageEntry) => {
+    const value = estimateTimeDraft;
+    setSavingEstimateTimeId(entry.id);
+    try {
+      await setMileageEstimateTime(entry.id, value);
+      setMileageEntries((prev) => prev.map((e) => (e.id === entry.id ? { ...e, estimateTime: value.trim() || null } : e)));
+      setEditingEstimateTimeId(null);
+    } catch (err) {
+      alert(`Failed to save Estimate Time: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setSavingEstimateTimeId(null);
+    }
+  };
+  // Ticket Attendance's CSV export — mirrors the on-screen layout exactly
+  // (one sectioned block per technician: a summary header line, then that
+  // technician's ticket table, then a Total Mileage line), not a single
+  // flat table — so opening it in Excel reads the same as the page does.
+  // Same download-link pattern AttendanceMonitoringPage's own CSV export
+  // already uses (data: URI on a throwaway <a>, no server round trip).
+  const handleExportTicketAttendanceCsv = () => {
+    const csvCell = (v: string | number) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const csvRow = (cells: (string | number)[]) => cells.map(csvCell).join(",");
+    const ticketCols = ["#", "Ticket", "Status", "Address", "Estimate Time", "Arrived", "Done", "Mileage (mi)", "Map Link", "Diagnosis"];
+    const lines: string[] = [];
+    for (const t of ticketAttendanceByTechnician) {
+      lines.push(csvRow(["Technician", "Location", "Time In", "Time Out", "Scheduled", "Checked In", "Missing Check-In", "Missing Check-Out"]));
+      lines.push(csvRow([t.technician, t.branch || "", t.timeIn || "", t.timeOut || "", t.scheduled, t.checkedIn, t.missingCheckIn, t.missingCheckOut]));
+      lines.push("");
+      lines.push(csvRow(ticketCols));
+      let totalMileage = 0;
+      t.rows.forEach((r, i) => {
+        const mEntry = mileageByTicketNo.get(r.ticketNo);
+        if (mEntry?.legMileage != null) totalMileage += mEntry.legMileage;
+        const diagnosis = ticketAttendanceDiagnoses.get(r.ticketId) || "";
+        const dayHasPassed = r.scheduleDate < todayISOForTicketAttendance;
+        const didNotGo = !diagnosis && !r.arrivedAt && dayHasPassed && r.statusGroup !== "cancelled";
+        const noDiagnosisFound = !diagnosis && !!r.arrivedAt;
+        const diagnosisText = diagnosis || (didNotGo ? "DID NOT GO" : noDiagnosisFound ? "NO DIAGNOSIS FOUND" : "");
+        const arrivedText = r.arrivedAt
+          ? new Date(r.arrivedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+          : disputedTicketNosApproved.has(r.ticketNo)
+          ? "Fixed via dispute"
+          : r.statusGroup === "cancelled"
+          ? ""
+          : "Missing";
+        const doneText = r.doneAt
+          ? new Date(r.doneAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+          : disputedTicketNosApproved.has(r.ticketNo)
+          ? "Fixed via dispute"
+          : !r.arrivedAt || r.statusGroup === "cancelled"
+          ? ""
+          : "Missing";
+        lines.push(
+          csvRow([
+            i + 1,
+            r.ticketNo,
+            r.timeSlot ? `${r.timeSlot} · ${r.status}` : r.status,
+            r.address || "",
+            mEntry?.estimateTime || "",
+            arrivedText,
+            doneText,
+            mEntry?.legMileage != null ? mEntry.legMileage.toFixed(1) : "",
+            mEntry?.googleMapLink || "",
+            diagnosisText,
+          ])
+        );
+      });
+      lines.push(csvRow(["", "", "", "", "", "", "Total Mileage", totalMileage.toFixed(1), "", ""]));
+      lines.push("");
+      lines.push("");
+    }
+    const csvContent = lines.join("\n");
+    const element = document.createElement("a");
+    element.setAttribute("href", "data:text/csv;charset=utf-8," + encodeURIComponent(csvContent));
+    element.setAttribute("download", `ticket-attendance-${ticketAttendanceDateFrom}_to_${ticketAttendanceDateTo}.csv`);
+    element.style.display = "none";
+    document.body.appendChild(element);
+    element.click();
+    document.body.removeChild(element);
+  };
 
   // UI state
   const [loading, setLoading] = useState(true);
@@ -4495,7 +4635,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
             </p>
 
             <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
-              <div className="grid gap-3 md:grid-cols-4 items-end">
+              <div className="grid gap-3 md:grid-cols-5 items-end">
                 <div>
                   <label className="block text-xs text-slate-400 uppercase mb-2">Date From</label>
                   <input
@@ -4526,14 +4666,25 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                     className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm placeholder-slate-500 focus:border-blue-500 focus:outline-none"
                   />
                 </div>
-                <button
-                  type="button"
-                  onClick={() => { setTicketAttendanceLoaded(false); loadTicketAttendance(); }}
-                  disabled={ticketAttendanceLoading}
-                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg text-sm font-semibold transition"
-                >
-                  {ticketAttendanceLoading ? "Loading…" : "Refresh"}
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => { setTicketAttendanceLoaded(false); loadTicketAttendance(); }}
+                    disabled={ticketAttendanceLoading}
+                    className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg text-sm font-semibold transition"
+                  >
+                    {ticketAttendanceLoading ? "Loading…" : "Refresh"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleExportTicketAttendanceCsv}
+                    disabled={ticketAttendanceLoading || ticketAttendanceByTechnician.length === 0}
+                    title="Download this range as CSV"
+                    className="px-3 py-2 border border-white/15 text-slate-300 hover:bg-white/5 disabled:opacity-40 rounded-lg text-sm font-semibold transition flex items-center gap-1.5"
+                  >
+                    <Download className="h-4 w-4" /> CSV
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -4542,6 +4693,9 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                 <thead>
                   <tr className="border-b border-white/10">
                     <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Technician</th>
+                    <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Location</th>
+                    <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase" title="Only shown when Date From = Date To — a range covers multiple days, see each date's own row below">Time In</th>
+                    <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase" title="Only shown when Date From = Date To — a range covers multiple days, see each date's own row below">Time Out</th>
                     <th className="px-3 py-3 text-right text-xs font-semibold text-slate-400 uppercase">Scheduled</th>
                     <th className="px-3 py-3 text-right text-xs font-semibold text-slate-400 uppercase">Checked In</th>
                     <th className="px-3 py-3 text-right text-xs font-semibold text-slate-400 uppercase">Missing Check-In</th>
@@ -4550,9 +4704,9 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                 </thead>
                 <tbody>
                   {ticketAttendanceLoading ? (
-                    <tr><td colSpan={5} className="px-3 py-8 text-center text-slate-400">Loading ticket attendance…</td></tr>
+                    <tr><td colSpan={8} className="px-3 py-8 text-center text-slate-400">Loading ticket attendance…</td></tr>
                   ) : ticketAttendanceByTechnician.length === 0 ? (
-                    <tr><td colSpan={5} className="px-3 py-8 text-center text-slate-400">No tickets scheduled in this range.</td></tr>
+                    <tr><td colSpan={8} className="px-3 py-8 text-center text-slate-400">No tickets scheduled in this range.</td></tr>
                   ) : ticketAttendanceByTechnician.map((t) => (
                     <Fragment key={t.technician}>
                       <tr
@@ -4560,6 +4714,9 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                         onClick={() => setExpandedTicketAttendanceTech((cur) => (cur === t.technician ? null : t.technician))}
                       >
                         <td className="px-3 py-3 text-white font-medium">{t.technician}</td>
+                        <td className="px-3 py-3 text-slate-300">{t.branch || <span className="text-slate-600">—</span>}</td>
+                        <td className="px-3 py-3">{t.timeIn ? <span className="text-emerald-300">{t.timeIn}</span> : <span className="text-slate-600">—</span>}</td>
+                        <td className="px-3 py-3">{t.timeOut ? <span className="text-red-300">{t.timeOut}</span> : <span className="text-slate-600">—</span>}</td>
                         <td className="px-3 py-3 text-right text-slate-300">{t.scheduled}</td>
                         <td className="px-3 py-3 text-right text-emerald-300">{t.checkedIn}</td>
                         <td className={`px-3 py-3 text-right font-semibold ${t.missingCheckIn > 0 ? "text-red-300" : "text-slate-500"}`}>{t.missingCheckIn}</td>
@@ -4567,73 +4724,164 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                       </tr>
                       {expandedTicketAttendanceTech === t.technician && (
                         <tr>
-                          <td colSpan={5} className="px-3 py-3 bg-white/[0.02]">
+                          <td colSpan={8} className="px-3 py-3 bg-white/[0.02]">
                             <table className="w-full text-xs">
                               <thead>
                                 <tr className="text-slate-500">
                                   <th className="px-2 py-1 text-left">#</th>
                                   <th className="px-2 py-1 text-left">Ticket</th>
-                                  <th className="px-2 py-1 text-left">Date</th>
                                   <th className="px-2 py-1 text-left">Status</th>
                                   <th className="px-2 py-1 text-left">Address</th>
+                                  <th className="px-2 py-1 text-left">Estimate Time</th>
                                   <th className="px-2 py-1 text-left">Arrived</th>
                                   <th className="px-2 py-1 text-left">Done</th>
                                   <th className="px-2 py-1 text-right">Mileage</th>
+                                  <th className="px-2 py-1 text-left">Map Link</th>
+                                  <th className="px-2 py-1 text-left">Diagnosis</th>
                                 </tr>
                               </thead>
                               <tbody>
-                                {/* Numbered in the same date-then-timeSlot route order Technician
-                                    Whereabouts' "Stops" list uses, so a technician's stop #3 there
-                                    is also row #3 here — timeSlot shown next to Status the same way
-                                    that list shows "8-12 · OP-Ready for Service". */}
-                                {t.rows.map((r, i) => (
-                                  <tr key={r.ticketNo} className="border-t border-white/5">
-                                    <td className="px-2 py-1.5 text-slate-500 font-semibold text-center">{i + 1}</td>
-                                    <td className="px-2 py-1.5">
-                                      <a href={`/ticket/${r.ticketNo}`} target="_blank" rel="noopener noreferrer" className="text-blue-300 hover:text-blue-200 hover:underline">
-                                        {r.ticketNo}
-                                      </a>
-                                    </td>
-                                    <td className="px-2 py-1.5 text-slate-300">{r.scheduleDate}</td>
-                                    <td className="px-2 py-1.5 text-slate-300">
-                                      {r.timeSlot && <span className="text-slate-500">{r.timeSlot} · </span>}
-                                      {r.status}
-                                    </td>
-                                    <td className="px-2 py-1.5 text-slate-400">{r.address || "—"}</td>
-                                    <td className="px-2 py-1.5">
-                                      {r.arrivedAt ? (
-                                        <span className="text-emerald-300">{new Date(r.arrivedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>
-                                      ) : disputedTicketNosApproved.has(r.ticketNo) ? (
-                                        <span className="text-blue-300">Fixed via dispute</span>
-                                      ) : r.statusGroup === "cancelled" ? (
-                                        <span className="text-slate-500">—</span>
-                                      ) : (
-                                        <span className="text-red-300">Missing</span>
-                                      )}
-                                    </td>
-                                    <td className="px-2 py-1.5">
-                                      {r.doneAt ? (
-                                        <span className="text-emerald-300">{new Date(r.doneAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>
-                                      ) : disputedTicketNosApproved.has(r.ticketNo) ? (
-                                        <span className="text-blue-300">Fixed via dispute</span>
-                                      ) : !r.arrivedAt || r.statusGroup === "cancelled" ? (
-                                        <span className="text-slate-500">—</span>
-                                      ) : (
-                                        <span className="text-yellow-300">Missing</span>
-                                      )}
-                                    </td>
-                                    <td className="px-2 py-1.5 text-right text-slate-300">
-                                      {mileageByTicketNo.get(r.ticketNo)?.legMileage != null
-                                        ? `${mileageByTicketNo.get(r.ticketNo)!.legMileage!.toFixed(1)} mi`
-                                        : <span className="text-slate-600">—</span>}
-                                    </td>
-                                  </tr>
-                                ))}
+                                {/* Grouped by date (usually just one — the date filters default to
+                                    today only) purely to reset stop numbering per day, matching
+                                    Technician Whereabouts' "Stops" list (so a technician's stop #3
+                                    there is also row #3 in that day's block here). Check In/Meal/
+                                    Check Out/Location for the day live in the summary row above,
+                                    not repeated here. */}
+                                {(() => {
+                                  const dateGroups = new Map<string, TicketAttendanceRow[]>();
+                                  for (const r of t.rows) {
+                                    if (!dateGroups.has(r.scheduleDate)) dateGroups.set(r.scheduleDate, []);
+                                    dateGroups.get(r.scheduleDate)!.push(r);
+                                  }
+                                  return Array.from(dateGroups.entries()).map(([date, rows]) => {
+                                    return (
+                                      <Fragment key={date}>
+                                        {rows.map((r, i) => {
+                                          const mEntry = mileageByTicketNo.get(r.ticketNo);
+                                          const diagnosis = ticketAttendanceDiagnoses.get(r.ticketId);
+                                          // No Cause of Failure recorded (mobile app's required "CAUSE OF
+                                          // FAILURE (TECH)" field, per visit). Two distinct empty-diagnosis
+                                          // cases: never arrived at all (once the scheduled day has fully
+                                          // passed — flagged, not just "pending") vs. arrived (and usually
+                                          // done) but simply never wrote up a diagnosis.
+                                          const dayHasPassed = r.scheduleDate < todayISOForTicketAttendance;
+                                          const didNotGo = !diagnosis && !r.arrivedAt && dayHasPassed && r.statusGroup !== "cancelled";
+                                          const noDiagnosisFound = !diagnosis && !!r.arrivedAt;
+                                          const isEditingEstimate = mEntry && editingEstimateTimeId === mEntry.id;
+                                          return (
+                                            <tr key={r.ticketNo} className="border-t border-white/5">
+                                              <td className="px-2 py-1.5 text-slate-500 font-semibold text-center">{i + 1}</td>
+                                              <td className="px-2 py-1.5">
+                                                <a href={`/ticket/${r.ticketNo}`} target="_blank" rel="noopener noreferrer" className="text-blue-300 hover:text-blue-200 hover:underline">
+                                                  {r.ticketNo}
+                                                </a>
+                                              </td>
+                                              <td className="px-2 py-1.5 text-slate-300">
+                                                {r.timeSlot && <span className="text-slate-500">{r.timeSlot} · </span>}
+                                                {r.status}
+                                              </td>
+                                              <td className="px-2 py-1.5 text-slate-400">{r.address || "—"}</td>
+                                              <td className="px-2 py-1.5">
+                                                {isEditingEstimate ? (
+                                                  <div className="flex items-center gap-1">
+                                                    <input
+                                                      type="text"
+                                                      autoFocus
+                                                      value={estimateTimeDraft}
+                                                      onChange={(e) => setEstimateTimeDraft(e.target.value)}
+                                                      onKeyDown={(e) => { if (e.key === "Enter") void handleSaveEstimateTime(mEntry!); if (e.key === "Escape") setEditingEstimateTimeId(null); }}
+                                                      className="w-20 rounded border border-white/15 bg-slate-800 px-1 py-0.5 text-[11px] text-white"
+                                                    />
+                                                    <button
+                                                      onClick={() => void handleSaveEstimateTime(mEntry!)}
+                                                      disabled={savingEstimateTimeId === mEntry!.id}
+                                                      className="text-emerald-400 hover:text-emerald-300 disabled:opacity-40"
+                                                    >
+                                                      {savingEstimateTimeId === mEntry!.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+                                                    </button>
+                                                  </div>
+                                                ) : (
+                                                  <button
+                                                    onClick={() => {
+                                                      if (!mEntry) return;
+                                                      setEditingEstimateTimeId(mEntry.id);
+                                                      setEstimateTimeDraft(mEntry.estimateTime ?? "");
+                                                    }}
+                                                    disabled={!mEntry}
+                                                    title={mEntry ? "Click to edit" : "Sync mileage first"}
+                                                    className="flex items-center gap-1 text-slate-300 hover:text-white disabled:text-slate-600 disabled:cursor-not-allowed"
+                                                  >
+                                                    {mEntry?.estimateTime || <span className="text-slate-600">—</span>}
+                                                    {mEntry && <Pencil className="h-2.5 w-2.5 text-slate-500 shrink-0" />}
+                                                  </button>
+                                                )}
+                                              </td>
+                                              <td className="px-2 py-1.5">
+                                                {r.arrivedAt ? (
+                                                  <span className="text-emerald-300">{new Date(r.arrivedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>
+                                                ) : disputedTicketNosApproved.has(r.ticketNo) ? (
+                                                  <span className="text-blue-300">Fixed via dispute</span>
+                                                ) : r.statusGroup === "cancelled" ? (
+                                                  <span className="text-slate-500">—</span>
+                                                ) : (
+                                                  <span className="text-red-300">Missing</span>
+                                                )}
+                                              </td>
+                                              <td className="px-2 py-1.5">
+                                                {r.doneAt ? (
+                                                  <span className="text-emerald-300">{new Date(r.doneAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>
+                                                ) : disputedTicketNosApproved.has(r.ticketNo) ? (
+                                                  <span className="text-blue-300">Fixed via dispute</span>
+                                                ) : !r.arrivedAt || r.statusGroup === "cancelled" ? (
+                                                  <span className="text-slate-500">—</span>
+                                                ) : (
+                                                  <span className="text-yellow-300">Missing</span>
+                                                )}
+                                              </td>
+                                              <td className="px-2 py-1.5 text-right text-slate-300">
+                                                {mEntry?.legMileage != null
+                                                  ? `${mEntry.legMileage.toFixed(1)} mi`
+                                                  : <span className="text-slate-600">—</span>}
+                                              </td>
+                                              <td className="px-2 py-1.5">
+                                                {mEntry?.googleMapLink ? (
+                                                  <a href={mEntry.googleMapLink} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-blue-300 hover:text-blue-200 hover:underline">
+                                                    Open <ExternalLink className="h-3 w-3" />
+                                                  </a>
+                                                ) : (
+                                                  <span className="text-slate-600">—</span>
+                                                )}
+                                              </td>
+                                              <td className="px-2 py-1.5 max-w-[220px]">
+                                                {diagnosis ? (
+                                                  <div className="relative group inline-block max-w-full align-top">
+                                                    <span className="block truncate text-slate-400 cursor-default">{diagnosis}</span>
+                                                    <div className="pointer-events-none absolute left-0 bottom-full z-50 mb-1.5 w-72 max-w-[min(24rem,80vw)] rounded-lg border border-white/15 bg-slate-950 px-3 py-2 text-[11px] leading-relaxed text-slate-200 shadow-2xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-opacity whitespace-normal">
+                                                      <p className="text-[9px] font-semibold uppercase tracking-wide text-slate-500 mb-1">Diagnosis — {r.ticketNo}</p>
+                                                      {diagnosis}
+                                                    </div>
+                                                  </div>
+                                                ) : didNotGo ? (
+                                                  <span className="text-red-300 font-semibold">DID NOT GO</span>
+                                                ) : noDiagnosisFound ? (
+                                                  <span className="text-amber-300 font-semibold">NO DIAGNOSIS FOUND</span>
+                                                ) : (
+                                                  <span className="text-slate-600">—</span>
+                                                )}
+                                              </td>
+                                            </tr>
+                                          );
+                                        })}
+                                      </Fragment>
+                                    );
+                                  });
+                                })()}
                                 <tr className="border-t border-white/10">
-                                  <td colSpan={7} className="px-2 py-1.5 text-right text-slate-400 font-semibold uppercase tracking-wide text-[10px]">Total Mileage</td>
+                                  <td colSpan={6} className="px-2 py-1.5 text-right text-slate-400 font-semibold uppercase tracking-wide text-[10px]">Total Mileage</td>
                                   <td className="px-2 py-1.5 text-right text-white font-semibold">
                                     {t.rows.reduce((sum, r) => sum + (mileageByTicketNo.get(r.ticketNo)?.legMileage ?? 0), 0).toFixed(1)} mi
                                   </td>
+                                  <td colSpan={3}></td>
                                 </tr>
                               </tbody>
                             </table>
