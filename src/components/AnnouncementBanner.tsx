@@ -36,7 +36,26 @@ function formatTimestamp(value: string) {
   }).format(date);
 }
 
-export function AnnouncementBanner() {
+interface AnnouncementBannerProps {
+  /**
+   * Called instead of the default router navigate() to "/announcements" —
+   * the mobile shell (MobileTechApp.tsx) passes `() => setView("announcements")`
+   * since it's an isolated surface with its own in-memory view-switching
+   * state, not real routes (same adaptation AnnouncementsMenu.tsx's
+   * onViewAll and NotificationsMenu.tsx's onViewAll already use). Desktop
+   * usage (no prop) keeps the original router navigation unchanged.
+   */
+  onOpen?: () => void;
+  /**
+   * CSS `top` value the banner anchors to — defaults to the desktop
+   * AppHeader's fixed height (5rem). Mobile passes a value derived from
+   * --mt-header-h (its own, shorter, dynamic-height header) so the banner
+   * sits just below the mobile header instead of overlapping it.
+   */
+  top?: string;
+}
+
+export function AnnouncementBanner({ onOpen, top = "5rem" }: AnnouncementBannerProps = {}) {
   const { ready, uid, role, extraRoles } = useAuth();
   const navigate = useNavigate();
   const [profileId, setProfileId] = useState<string | null>(null);
@@ -200,11 +219,12 @@ export function AnnouncementBanner() {
         window.dispatchEvent(new CustomEvent("ahs:unread-changed"));
       } catch { /* ignore */ }
     }
-    navigate({ to: "/announcements" });
+    if (onOpen) onOpen();
+    else navigate({ to: "/announcements" });
   };
 
   return (
-    <div className="fixed left-1/2 top-20 z-50 w-[min(92vw,52rem)] -translate-x-1/2 px-4">
+    <div className="fixed left-1/2 z-50 w-[min(92vw,52rem)] -translate-x-1/2 px-4" style={{ top }}>
       <div className="rounded-2xl border border-amber-400/30 bg-slate-950/95 text-white shadow-[0_20px_60px_rgba(0,0,0,0.45)] backdrop-blur-xl">
         <div className="flex items-start gap-4 p-4 sm:p-5">
           <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl border border-amber-400/20 bg-amber-400/10 text-amber-200">

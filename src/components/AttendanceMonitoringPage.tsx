@@ -192,8 +192,8 @@ function computeAlerts(
     // scheduled lunch reads as "Under Time" by about the length of their
     // lunch even after working their entire required shift.
     const requiredHours = workingHours != null ? workingHours : requiredCheckIn && requiredCheckOut ? hoursDiff(requiredCheckIn, requiredCheckOut) : 8;
-    if (worked - requiredHours > 0.25) alerts.push(`Over Time (${fmtHoursMinutes(worked)})`);
-    else if (requiredHours - worked > 0.25) alerts.push(`Under Time (${fmtHoursMinutes(worked)})`);
+    if (worked - requiredHours > 0.25) alerts.push(`Over Time (${fmtHoursMinutes(worked - requiredHours)})`);
+    else if (requiredHours - worked > 0.25) alerts.push(`Under Time (${fmtHoursMinutes(requiredHours - worked)})`);
   }
   return alerts;
 }
@@ -1481,6 +1481,16 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                 onChange={(e) => e.target.value && setDailyDate(e.target.value)}
                 className="bg-slate-800/50 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-white focus:border-blue-500 focus:outline-none"
               />
+              {activeTab === "daily-attendance" && (
+                <button
+                  onClick={handleDownloadSummary}
+                  title="Download summary"
+                  className="group flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-br from-blue-600 to-blue-700 hover:from-blue-500 hover:to-blue-600 text-white rounded-lg transition shadow-lg hover:shadow-blue-500/50 text-sm font-semibold"
+                >
+                  <Download className="h-4 w-4 group-hover:scale-110 transition transform" />
+                  Download
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -1551,70 +1561,64 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
           {/* Tab Content */}
           {activeTab === "daily-attendance" && (
             <>
-              <div className="flex items-center justify-between gap-3">
-                <div className="flex-1 bg-slate-900/50 border border-white/10 rounded-lg p-4 backdrop-blur">
-                  <h2 className="text-sm font-bold text-white mb-2 flex items-center gap-2">
-                    <AlertCircle className="h-4 w-4 text-orange-400" />
-                    Attendance Alerts
-                  </h2>
-                  <div className="grid gap-2 sm:grid-cols-3">
-                    <button
-                      onClick={() => { setSelectedAlertType("missing-clockin"); setAlertDeptFilter("all"); setAlertLocationFilter("all"); setAlertModalOpen(true); }}
-                      className="bg-gradient-to-br from-red-500/15 to-red-600/5 border border-red-500/40 rounded p-2 hover:border-red-500/60 hover:bg-red-500/20 transition cursor-pointer"
-                    >
-                      <div className="flex items-center gap-2">
-                        <div className="p-1.5 bg-red-500/20 rounded">
-                          <AlertCircle className="h-3 w-3 text-red-400" />
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-xs font-semibold text-red-300 truncate">Missing Clock In</p>
-                          <div className="flex items-center gap-1">
-                            <span className="inline-block w-1.5 h-1.5 rounded-full bg-red-500"></span>
-                            <span className="text-xs font-bold text-red-300">{dailyRecords.filter(r => r.checkIn === "—" && !r.isOffDay).length}</span>
-                          </div>
+              <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4 backdrop-blur">
+                <h2 className="text-sm font-bold text-white mb-2 flex items-center gap-2">
+                  <AlertCircle className="h-4 w-4 text-orange-400" />
+                  Attendance Alerts
+                </h2>
+                <div className="grid gap-2 sm:grid-cols-3">
+                  <button
+                    onClick={() => { setSelectedAlertType("missing-clockin"); setAlertDeptFilter("all"); setAlertLocationFilter("all"); setAlertModalOpen(true); }}
+                    className="bg-gradient-to-br from-red-500/15 to-red-600/5 border border-red-500/40 rounded p-2 hover:border-red-500/60 hover:bg-red-500/20 transition cursor-pointer"
+                  >
+                    <div className="flex items-center gap-2">
+                      <div className="p-1.5 bg-red-500/20 rounded">
+                        <AlertCircle className="h-3 w-3 text-red-400" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-semibold text-red-300 truncate">Missing Clock In</p>
+                        <div className="flex items-center gap-1">
+                          <span className="inline-block w-1.5 h-1.5 rounded-full bg-red-500"></span>
+                          <span className="text-xs font-bold text-red-300">{dailyRecords.filter(r => r.checkIn === "—" && !r.isOffDay).length}</span>
                         </div>
                       </div>
-                    </button>
-                    <button
-                      onClick={() => { setSelectedAlertType("missing-clockout"); setAlertDeptFilter("all"); setAlertLocationFilter("all"); setAlertModalOpen(true); }}
-                      className="bg-gradient-to-br from-yellow-500/15 to-yellow-600/5 border border-yellow-500/40 rounded p-2 hover:border-yellow-500/60 hover:bg-yellow-500/20 transition cursor-pointer"
-                    >
-                      <div className="flex items-center gap-2">
-                        <div className="p-1.5 bg-yellow-500/20 rounded">
-                          <AlertCircle className="h-3 w-3 text-yellow-400" />
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-xs font-semibold text-yellow-300 truncate">Missing Clock Out</p>
-                          <div className="flex items-center gap-1">
-                            <span className="inline-block w-1.5 h-1.5 rounded-full bg-yellow-500"></span>
-                            <span className="text-xs font-bold text-yellow-300">{dailyRecords.filter(r => r.checkOut === "—" && r.checkIn !== "—").length}</span>
-                          </div>
+                    </div>
+                  </button>
+                  <button
+                    onClick={() => { setSelectedAlertType("missing-clockout"); setAlertDeptFilter("all"); setAlertLocationFilter("all"); setAlertModalOpen(true); }}
+                    className="bg-gradient-to-br from-yellow-500/15 to-yellow-600/5 border border-yellow-500/40 rounded p-2 hover:border-yellow-500/60 hover:bg-yellow-500/20 transition cursor-pointer"
+                  >
+                    <div className="flex items-center gap-2">
+                      <div className="p-1.5 bg-yellow-500/20 rounded">
+                        <AlertCircle className="h-3 w-3 text-yellow-400" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-semibold text-yellow-300 truncate">Missing Clock Out</p>
+                        <div className="flex items-center gap-1">
+                          <span className="inline-block w-1.5 h-1.5 rounded-full bg-yellow-500"></span>
+                          <span className="text-xs font-bold text-yellow-300">{dailyRecords.filter(r => r.checkOut === "—" && r.checkIn !== "—").length}</span>
                         </div>
                       </div>
-                    </button>
-                    <button
-                      onClick={() => { setSelectedAlertType("late-arrival"); setAlertDeptFilter("all"); setAlertLocationFilter("all"); setAlertModalOpen(true); }}
-                      className="bg-gradient-to-br from-orange-500/15 to-orange-600/5 border border-orange-500/40 rounded p-2 hover:border-orange-500/60 hover:bg-orange-500/20 transition cursor-pointer"
-                    >
-                      <div className="flex items-center gap-2">
-                        <div className="p-1.5 bg-orange-500/20 rounded">
-                          <AlertCircle className="h-3 w-3 text-orange-400" />
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-xs font-semibold text-orange-300 truncate">Late Arrival</p>
-                          <div className="flex items-center gap-1">
-                            <span className="inline-block w-1.5 h-1.5 rounded-full bg-orange-500"></span>
-                            <span className="text-xs font-bold text-orange-300">{dailyRecords.filter(r => r.alerts.some(isPenalizedLateAlert)).length}</span>
-                          </div>
+                    </div>
+                  </button>
+                  <button
+                    onClick={() => { setSelectedAlertType("late-arrival"); setAlertDeptFilter("all"); setAlertLocationFilter("all"); setAlertModalOpen(true); }}
+                    className="bg-gradient-to-br from-orange-500/15 to-orange-600/5 border border-orange-500/40 rounded p-2 hover:border-orange-500/60 hover:bg-orange-500/20 transition cursor-pointer"
+                  >
+                    <div className="flex items-center gap-2">
+                      <div className="p-1.5 bg-orange-500/20 rounded">
+                        <AlertCircle className="h-3 w-3 text-orange-400" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-semibold text-orange-300 truncate">Late Arrival</p>
+                        <div className="flex items-center gap-1">
+                          <span className="inline-block w-1.5 h-1.5 rounded-full bg-orange-500"></span>
+                          <span className="text-xs font-bold text-orange-300">{dailyRecords.filter(r => r.alerts.some(isPenalizedLateAlert)).length}</span>
                         </div>
                       </div>
-                    </button>
-                  </div>
+                    </div>
+                  </button>
                 </div>
-                <button onClick={handleDownloadSummary} className="group relative px-4 py-3 bg-gradient-to-br from-blue-600 to-blue-700 hover:from-blue-500 hover:to-blue-600 text-white rounded-lg transition shadow-lg hover:shadow-blue-500/50 flex flex-col items-center justify-center gap-1 h-fit min-w-fit">
-                  <Download className="h-5 w-5 group-hover:scale-110 transition transform" />
-                  <div className="text-xs font-semibold">Download</div>
-                </button>
               </div>
 
               <ActivityLogPanel module="attendance-monitoring" title="Attendance Activity Log" />

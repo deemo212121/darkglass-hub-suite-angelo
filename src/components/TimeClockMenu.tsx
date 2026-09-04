@@ -30,8 +30,9 @@
  * mobile ticket page's tab strip, which both assume that).
  */
 import { useEffect, useRef, useState } from "react";
+import { X } from "lucide-react";
 import { useAuth } from "@/lib/auth";
-import { getMyProfileSchedule, getEntryForDate, saveEntry, resolveScheduledShiftHours, type UITimeEntry } from "@/lib/supabase/timecards";
+import { getMyProfileSchedule, getEntryForDate, saveEntry, clearPunch as sbClearPunch, canEditPunch, resolveScheduledShiftHours, type UITimeEntry, type PunchField } from "@/lib/supabase/timecards";
 import { getCompanyPtoRequests } from "@/lib/supabase/pto";
 import { getServerNow, zonedDateKey, zonedTimeString, type ScheduleTimezone } from "@/lib/serverTime";
 
@@ -84,6 +85,13 @@ export function TimeClockButtons() {
     }, 2000);
   };
   const [onApprovedPtoToday, setOnApprovedPtoToday] = useState(false);
+  // Which punch (if any) a clear/remove request is currently in flight for —
+  // disables just its own X, not the other three slots'.
+  const [clearingField, setClearingField] = useState<PunchField | null>(null);
+  // Which punch's pill is currently showing its inline "Remove? Yes/No"
+  // prompt — armed by the X, cleared by Yes/No. That Yes tap IS the
+  // confirmation; no separate native confirm() on top of it.
+  const [confirmClearField, setConfirmClearField] = useState<PunchField | null>(null);
 
   useEffect(() => {
     if (!ready || !uid) return;
@@ -113,6 +121,7 @@ export function TimeClockButtons() {
   const loadToday = (pid: string) => {
     const dateKey = todayKey();
     loadedDateKeyRef.current = dateKey;
+    setConfirmClearField(null);
     getEntryForDate(pid, dateKey)
       .then((e) => setEntry(e ?? EMPTY_ENTRY))
       .catch((err) => console.error("Failed to load today's timecard entry:", err));
@@ -197,6 +206,32 @@ export function TimeClockButtons() {
     }
   };
 
+  const PUNCH_LABEL: Record<PunchField, string> = { checkIn: "Time In", checkOut: "Time Out", mealStart: "Meal In", mealEnd: "Meal Out" };
+
+  // Self-correct an accidental punch — only reachable when canEditPunch says
+  // this is the most-recently-made one (see its doc comment for the chain
+  // rule). Always operates on today's own row (loadedDateKeyRef), same as
+  // every punch this widget makes — there's no past-day path here to guard
+  // against. Only reachable via the pill's own inline "Remove? Yes/No"
+  // prompt (confirmClearField above), which is itself the confirmation —
+  // no separate native confirm() on top of that.
+  const handleClearPunch = (field: PunchField) => {
+    if (!profileId || saving || clearingField) return;
+    setConfirmClearField(null);
+    setClearingField(field);
+    (async () => {
+      try {
+        await sbClearPunch(profileId, loadedDateKeyRef.current, field);
+        setEntry((prev) => ({ ...prev, [field]: "" }));
+      } catch (err) {
+        console.error("Failed to clear punch:", err);
+        alert(`Failed to remove: ${err instanceof Error ? err.message : "Unknown error"}`);
+      } finally {
+        setClearingField(null);
+      }
+    })();
+  };
+
   // An approved PTO day is greyed out entirely — no punch of any kind is
   // meaningful for it, not just Time In (an employee who already clocked in
   // before the request was approved shouldn't then be able to Meal/Time Out
@@ -266,48 +301,113 @@ export function TimeClockButtons() {
   // fading like an unavailable button.
   const blockedDim = "disabled:opacity-30";
 
+  // Once a step is punched, its slot becomes a plain (non-button) pill with
+  // the recorded time — plus a small X to self-correct a stray tap, shown
+  // only while canEditPunch(entry, field) says it's still the most-recently
+  // -made punch (see that function's doc comment for the chain rule). Not a
+  // <button> itself since a real button can't nest the X's own button.
+  // Tapping the X doesn't remove it immediately — it swaps the pill to an
+  // inline "Remove? Yes/No" prompt; that Yes tap is the real confirmation.
+  const renderPunchedPill = (field: PunchField, time: string, colorClass: string, title: string) => {
+    if (confirmClearField === field) {
+      return (
+        <span className={`${btnClass} ${colorClass} inline-flex items-center gap-1`}>
+          Remove?
+          <button
+            type="button"
+            onClick={() => handleClearPunch(field)}
+            disabled={clearingField !== null}
+            className="rounded-full bg-black/25 px-1.5 py-0.5 text-[11px] font-bold hover:bg-black/35 disabled:opacity-50"
+          >
+            {clearingField === field ? "…" : "Yes"}
+          </button>
+          <button
+            type="button"
+            onClick={() => setConfirmClearField(null)}
+            className="rounded-full px-1.5 py-0.5 text-[11px] font-bold opacity-70 hover:bg-black/20 hover:opacity-100"
+          >
+            No
+          </button>
+        </span>
+      );
+    }
+    return (
+      <span className={`${btnClass} ${colorClass} inline-flex items-center gap-1`} title={title}>
+        {fmtTime(time)}
+        {canEditPunch(entry, field) && (
+          <button
+            type="button"
+            onClick={() => setConfirmClearField(field)}
+            disabled={clearingField !== null}
+            title={`Remove ${PUNCH_LABEL[field]}`}
+            aria-label={`Remove ${PUNCH_LABEL[field]}`}
+            className="grid h-3.5 w-3.5 shrink-0 place-items-center rounded-full opacity-60 transition-opacity hover:bg-black/20 hover:opacity-100 disabled:opacity-30"
+          >
+            <X className="h-2.5 w-2.5" />
+          </button>
+        )}
+      </span>
+    );
+  };
+
   return (
     <div className="flex h-9 items-center gap-1 rounded-full border border-[var(--color-panel-border)] bg-[var(--color-panel)] px-1">
-      <button
-        type="button"
-        onClick={handleTimeIn}
-        disabled={saving || locked || !!entry.checkIn || onApprovedPtoToday}
-        title={entry.checkIn ? `Timed in at ${fmtTime(entry.checkIn)}` : onApprovedPtoToday ? "You have an approved PTO for today" : "Time In"}
-        className={`${btnClass} text-green-300 ${entry.checkIn ? "" : `hover:bg-green-500/15 ${blockedDim}`}`}
-      >
-        {entry.checkIn ? fmtTime(entry.checkIn) : !entry.checkIn && onApprovedPtoToday ? "On PTO" : "Time In"}
-      </button>
-      {mealEligible && (
+      {entry.checkIn ? (
+        renderPunchedPill("checkIn", entry.checkIn, "text-green-300", `Timed in at ${fmtTime(entry.checkIn)}`)
+      ) : (
         <button
           type="button"
-          onClick={handleMealIn}
-          disabled={saving || locked || !entry.checkIn || !!entry.checkOut || !!entry.mealStart || onApprovedPtoToday}
-          title={entry.mealStart ? `Meal started at ${fmtTime(entry.mealStart)}` : onApprovedPtoToday ? "You have an approved PTO for today" : "Meal In"}
-          className={`${btnClass} text-orange-300 ${entry.mealStart ? "" : `hover:bg-orange-500/15 ${blockedDim}`}`}
+          onClick={handleTimeIn}
+          disabled={saving || locked || onApprovedPtoToday}
+          title={onApprovedPtoToday ? "You have an approved PTO for today" : "Time In"}
+          className={`${btnClass} text-green-300 hover:bg-green-500/15 ${blockedDim}`}
         >
-          {entry.mealStart ? fmtTime(entry.mealStart) : "Meal In"}
+          {onApprovedPtoToday ? "On PTO" : "Time In"}
         </button>
       )}
       {mealEligible && (
+        entry.mealStart ? (
+          renderPunchedPill("mealStart", entry.mealStart, "text-orange-300", `Meal started at ${fmtTime(entry.mealStart)}`)
+        ) : (
+          <button
+            type="button"
+            onClick={handleMealIn}
+            disabled={saving || locked || !entry.checkIn || !!entry.checkOut || onApprovedPtoToday}
+            title={onApprovedPtoToday ? "You have an approved PTO for today" : "Meal In"}
+            className={`${btnClass} text-orange-300 hover:bg-orange-500/15 ${blockedDim}`}
+          >
+            Meal In
+          </button>
+        )
+      )}
+      {mealEligible && (
+        entry.mealEnd ? (
+          renderPunchedPill("mealEnd", entry.mealEnd, "text-orange-300", `Meal ended at ${fmtTime(entry.mealEnd)}`)
+        ) : (
+          <button
+            type="button"
+            onClick={handleMealOut}
+            disabled={saving || locked || !!entry.checkOut || !entry.mealStart || onApprovedPtoToday}
+            title={onApprovedPtoToday ? "You have an approved PTO for today" : "Meal Out"}
+            className={`${btnClass} text-orange-300 hover:bg-orange-500/15 ${blockedDim}`}
+          >
+            Meal Out
+          </button>
+        )
+      )}
+      {entry.checkOut ? (
+        renderPunchedPill("checkOut", entry.checkOut, "text-red-300", `Timed out at ${fmtTime(entry.checkOut)}`)
+      ) : (
         <button
           type="button"
-          onClick={handleMealOut}
-          disabled={saving || locked || !!entry.checkOut || !entry.mealStart || !!entry.mealEnd || onApprovedPtoToday}
-          title={entry.mealEnd ? `Meal ended at ${fmtTime(entry.mealEnd)}` : onApprovedPtoToday ? "You have an approved PTO for today" : "Meal Out"}
-          className={`${btnClass} text-orange-300 ${entry.mealEnd ? "" : `hover:bg-orange-500/15 ${blockedDim}`}`}
+          onClick={handleTimeOut}
+          disabled={saving || locked || !entry.checkIn || onApprovedPtoToday}
+          title={onApprovedPtoToday ? "You have an approved PTO for today" : "Time Out"}
+          className={`${btnClass} text-red-300 hover:bg-red-500/15 ${blockedDim}`}
         >
-          {entry.mealEnd ? fmtTime(entry.mealEnd) : "Meal Out"}
+          Time Out
         </button>
       )}
-      <button
-        type="button"
-        onClick={handleTimeOut}
-        disabled={saving || locked || !entry.checkIn || !!entry.checkOut || onApprovedPtoToday}
-        title={entry.checkOut ? `Timed out at ${fmtTime(entry.checkOut)}` : onApprovedPtoToday ? "You have an approved PTO for today" : "Time Out"}
-        className={`${btnClass} text-red-300 ${entry.checkOut ? "" : `hover:bg-red-500/15 ${blockedDim}`}`}
-      >
-        {entry.checkOut ? fmtTime(entry.checkOut) : "Time Out"}
-      </button>
     </div>
   );
 }

@@ -55,7 +55,7 @@ import {
 } from "@/lib/supabase/messaging";
 import { getTicketBilling, saveTicketBilling, type TicketBilling } from "@/lib/supabase/billing";
 import { getMyPayslips, payslipStatusLabel, type MyPayslipRow } from "@/lib/supabase/payslips";
-import { getMyProfileSchedule, getMonthEntries, getCompanyTimecardEntries, saveEntry as saveTimecardEntry, savePunch, resolveScheduledShiftHours, type UITimeEntry, type CompanyTimecardEntry } from "@/lib/supabase/timecards";
+import { getMyProfileSchedule, getMonthEntries, getCompanyTimecardEntries, saveEntry as saveTimecardEntry, savePunch, clearPunch, canEditPunch, resolveScheduledShiftHours, type UITimeEntry, type CompanyTimecardEntry, type PunchField } from "@/lib/supabase/timecards";
 import { visibleAttendanceProfileIds } from "@/lib/notifyRouting";
 import { getCsrTeamComposition, type CsrTeamComposition } from "@/lib/supabase/csrTeams";
 import { isAttendanceFullAccessRole, isAttendanceManagerTierRole, normalizeRole, ROLE_LABELS, TECHNICIAN_PAY_ROLES } from "@/lib/roleLabels";
@@ -85,6 +85,9 @@ import { getMileageEntries, type MileageEntry } from "@/lib/supabase/mileage";
 import { resolveTeamLeadOrManager } from "@/lib/notifyRouting";
 import { NotificationsMenu } from "@/components/NotificationsMenu";
 import { NotificationCenterPanel } from "@/components/NotificationCenterPage";
+import { AnnouncementsMenu } from "@/components/AnnouncementsMenu";
+import { AnnouncementBanner } from "@/components/AnnouncementBanner";
+import { AnnouncementsPage } from "@/components/AnnouncementsPage";
 import {
   parseServicePerformed,
   composeServicePerformed,
@@ -110,7 +113,8 @@ type View =
   | "timeoff"
   | "tickettimedispute"
   | "correction"
-  | "notifications";
+  | "notifications"
+  | "announcements";
 type DetailTab = "general" | "tracking" | "parts" | "billing";
 
 // Zero-padded "HH:MM"/"HH:MM:SS" strings sort chronologically as plain
@@ -1063,7 +1067,8 @@ export function MobileTechApp() {
         view === "timeoff" ||
         view === "tickettimedispute" ||
         view === "correction" ||
-        view === "notifications"
+        view === "notifications" ||
+        view === "announcements"
       ? "home" // Home's own quick-action tiles reach all of these sub-pages
       : "tickets"; // tickets, roster, detail, parts all highlight Tickets
 
@@ -1108,11 +1113,25 @@ export function MobileTechApp() {
         onOpenClockInTeam={() => setView("clockinteam")}
         onNotificationLink={handleNotificationLink}
         onOpenNotifications={() => setView("notifications")}
+        onOpenAnnouncements={() => setView("announcements")}
         onSwitchToDesktop={() => {
           setDesktopOverride(true);
           navigate({ to: "/home", replace: true });
         }}
         onLogout={logout}
+      />
+
+      {/* Live "new announcement" popup — same component/logic desktop's
+          AppHeader uses (__root.tsx), just repositioned below the mobile
+          header (via --mt-header-h, set by AppHeaderMobile above, instead
+          of the desktop header's fixed height) and redirected into this
+          shell's own in-memory "announcements" view instead of navigating
+          to the desktop-only /announcements route. __root.tsx suppresses
+          its own copy entirely on /mobile (hideChrome), so this is the
+          only instance that ever renders here. */}
+      <AnnouncementBanner
+        onOpen={() => setView("announcements")}
+        top="calc(var(--mt-header-h, 52px) + 0.75rem)"
       />
 
       {/* ── Scrollable content area ────────────────────────────────── */}
@@ -1267,6 +1286,12 @@ export function MobileTechApp() {
           </div>
         )}
 
+        {view === "announcements" && (
+          <div className="mtech-scroll">
+            <AnnouncementsPage />
+          </div>
+        )}
+
         {/* parts sub-view still reachable but not in bottom nav — redirect to tickets */}
         {view === "home" && (
           <MobileHomeView
@@ -1402,6 +1427,7 @@ function AppHeaderMobile({
   onOpenClockInTeam,
   onNotificationLink,
   onOpenNotifications,
+  onOpenAnnouncements,
   onSwitchToDesktop,
   onLogout,
 }: {
@@ -1415,6 +1441,7 @@ function AppHeaderMobile({
   onOpenClockInTeam: () => void;
   onNotificationLink: (linkTo: string) => void;
   onOpenNotifications: () => void;
+  onOpenAnnouncements: () => void;
   onSwitchToDesktop: () => void;
   onLogout: () => void;
 }) {
@@ -1544,6 +1571,7 @@ function AppHeaderMobile({
       {/* Right: reference clock + notification bell + profile bubble → logout dropdown */}
       <div className="mtech-app-header-right">
         <MobileHeaderClock uid={uid} />
+        <AnnouncementsMenu onViewAll={onOpenAnnouncements} />
         <NotificationsMenu onLinkClick={onNotificationLink} onViewAll={onOpenNotifications} />
         <button
           type="button"
@@ -4557,10 +4585,15 @@ function HomeTicketStatsCard({
   );
 }
 
-// One Time In/Out/Meal In/Out card on the Home landing page. Two states:
-// a plain tappable card showing the recorded value (or "—"), or — once
-// armed by a first tap — an inline "Yes / No" confirm in the same slot,
-// so committing a clock event never needs a native browser popup.
+// One Time In/Out/Meal In/Out card on the Home landing page. Several
+// states: a plain tappable card showing "—" (nothing punched yet), or —
+// once armed by a first tap — an inline "Yes / No" confirm in the same
+// slot to actually punch (so committing a clock event never needs a native
+// browser popup); once punched, a plain (non-tappable) card with the
+// recorded value and — while still the most-recently-made punch, see
+// canEditPunch — a small X to self-correct a stray tap, which itself arms
+// a second "Remove? Yes / No" confirm in the same slot before anything is
+// actually cleared.
 function ClockCard({
   label,
   value,
@@ -4570,6 +4603,12 @@ function ClockCard({
   confirmLabel,
   onTap,
   onCancel,
+  removable,
+  removeArmed,
+  removing,
+  onRequestRemove,
+  onConfirmRemove,
+  onCancelRemove,
 }: {
   label: string;
   value: string;
@@ -4579,6 +4618,12 @@ function ClockCard({
   confirmLabel: string;
   onTap: () => void;
   onCancel: () => void;
+  removable: boolean;
+  removeArmed: boolean;
+  removing: boolean;
+  onRequestRemove: () => void;
+  onConfirmRemove: () => void;
+  onCancelRemove: () => void;
 }) {
   if (armed) {
     return (
@@ -4591,10 +4636,46 @@ function ClockCard({
       </div>
     );
   }
+  if (removeArmed) {
+    return (
+      <div className="mtech-timecard-card mtech-timecard-card-confirm">
+        <div className="mtech-timecard-card-confirm-label">Remove {label}?</div>
+        <div className="mtech-timecard-card-confirm-actions">
+          <button type="button" className="mtech-timecard-confirm-btn mtech-timecard-confirm-yes" disabled={removing} onClick={onConfirmRemove}>
+            {removing ? "…" : "Yes"}
+          </button>
+          <button type="button" className="mtech-timecard-confirm-btn mtech-timecard-confirm-no" onClick={onCancelRemove}>No</button>
+        </div>
+      </div>
+    );
+  }
+  if (value) {
+    // Already punched — a plain label, not a button (nothing left to arm
+    // here), so the X can safely nest a real interactive button inside it.
+    return (
+      <div className="mtech-timecard-card mtech-timecard-card-static">
+        <div className="mtech-timecard-card-label">{label}</div>
+        <div className={`mtech-timecard-card-value ${valueClass}`}>
+          {value}
+          {removable && (
+            <button
+              type="button"
+              className="mtech-timecard-card-clear"
+              onClick={onRequestRemove}
+              aria-label={`Remove ${label}`}
+              title={`Remove ${label}`}
+            >
+              <X className="h-3 w-3" />
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
   return (
     <button type="button" className="mtech-timecard-card mtech-timecard-card-btn" disabled={!canAct} onClick={onTap}>
       <div className="mtech-timecard-card-label">{label}</div>
-      <div className={`mtech-timecard-card-value ${valueClass}`}>{value || "—"}</div>
+      <div className={`mtech-timecard-card-value ${valueClass}`}>—</div>
     </button>
   );
 }
@@ -5433,6 +5514,43 @@ function MobileHomeView({
   };
   useEffect(() => () => { if (armTimerRef.current) window.clearTimeout(armTimerRef.current); }, []);
 
+  // Self-correct an accidental punch, right from the Home card — separate
+  // arm/confirm state from armedCard above (that one arms a NEW punch;
+  // this one arms REMOVING an existing one), so the two prompts can never
+  // collide in the same slot. See canEditPunch's doc comment for which
+  // punch is actually removable at any moment (only the most-recently-made
+  // one in the Check In -> Meal In -> Meal Out -> Check Out chain).
+  type RemoveConfirmCard = "checkIn" | "checkOut" | "mealStart" | "mealEnd" | null;
+  const [confirmRemoveCard, setConfirmRemoveCard] = useState<RemoveConfirmCard>(null);
+  const [clearingField, setClearingField] = useState<PunchField | null>(null);
+  const removeArmTimerRef = useRef<number | null>(null);
+  const armRemove = (card: RemoveConfirmCard) => {
+    if (removeArmTimerRef.current) window.clearTimeout(removeArmTimerRef.current);
+    setConfirmRemoveCard(card);
+    removeArmTimerRef.current = window.setTimeout(() => setConfirmRemoveCard(null), 4000);
+  };
+  const cancelRemove = () => {
+    if (removeArmTimerRef.current) window.clearTimeout(removeArmTimerRef.current);
+    setConfirmRemoveCard(null);
+  };
+  useEffect(() => () => { if (removeArmTimerRef.current) window.clearTimeout(removeArmTimerRef.current); }, []);
+
+  const handleClearPunch = async (field: PunchField) => {
+    if (!scheduleProfileId || saving || clearingField) return;
+    cancelRemove();
+    setClearingField(field);
+    try {
+      await clearPunch(scheduleProfileId, todayKey, field);
+      setEntry((prev) => ({ ...prev, [field]: "" }));
+      disarm();
+    } catch (e) {
+      console.error("MobileHomeView: clear punch failed", e);
+      alert(`Failed to remove: ${e instanceof Error ? e.message : "Unknown error"}`);
+    } finally {
+      setClearingField(null);
+    }
+  };
+
   const handleTimeIn = () => {
     if (!canTimeIn) return;
     if (armedCard !== "checkIn") { arm("checkIn"); return; }
@@ -5536,21 +5654,33 @@ function MobileHomeView({
           label="Time In" value={entry.checkIn ? entry.checkIn.slice(0, 5) : ""} valueClass="in"
           armed={armedCard === "checkIn"} canAct={canTimeIn} confirmLabel="Time In now?"
           onTap={handleTimeIn} onCancel={disarm}
+          removable={!!entry.checkIn && canEditPunch(entry, "checkIn")}
+          removeArmed={confirmRemoveCard === "checkIn"} removing={clearingField === "checkIn"}
+          onRequestRemove={() => armRemove("checkIn")} onConfirmRemove={() => void handleClearPunch("checkIn")} onCancelRemove={cancelRemove}
         />
         <ClockCard
           label="Meal In" value={entry.mealStart ? entry.mealStart.slice(0, 5) : ""} valueClass="meal"
           armed={armedCard === "mealStart"} canAct={canMealIn} confirmLabel="Meal In now?"
           onTap={handleMealIn} onCancel={disarm}
+          removable={!!entry.mealStart && canEditPunch(entry, "mealStart")}
+          removeArmed={confirmRemoveCard === "mealStart"} removing={clearingField === "mealStart"}
+          onRequestRemove={() => armRemove("mealStart")} onConfirmRemove={() => void handleClearPunch("mealStart")} onCancelRemove={cancelRemove}
         />
         <ClockCard
           label="Meal Out" value={entry.mealEnd ? entry.mealEnd.slice(0, 5) : ""} valueClass="meal"
           armed={armedCard === "mealEnd"} canAct={canMealOut} confirmLabel="Meal Out now?"
           onTap={handleMealOut} onCancel={disarm}
+          removable={!!entry.mealEnd && canEditPunch(entry, "mealEnd")}
+          removeArmed={confirmRemoveCard === "mealEnd"} removing={clearingField === "mealEnd"}
+          onRequestRemove={() => armRemove("mealEnd")} onConfirmRemove={() => void handleClearPunch("mealEnd")} onCancelRemove={cancelRemove}
         />
         <ClockCard
           label="Time Out" value={entry.checkOut ? entry.checkOut.slice(0, 5) : ""} valueClass="out"
           armed={armedCard === "checkOut"} canAct={canTimeOut} confirmLabel="Time Out now?"
           onTap={handleTimeOut} onCancel={disarm}
+          removable={!!entry.checkOut && canEditPunch(entry, "checkOut")}
+          removeArmed={confirmRemoveCard === "checkOut"} removing={clearingField === "checkOut"}
+          onRequestRemove={() => armRemove("checkOut")} onConfirmRemove={() => void handleClearPunch("checkOut")} onCancelRemove={cancelRemove}
         />
       </div>
       )}
@@ -5852,6 +5982,26 @@ function MobileTimecardView({
   const [loadError, setLoadError] = useState(false);
   const [reloadNonce, setReloadNonce] = useState(0);
   const [saving, setSaving] = useState(false);
+  // Which punch (if any) a clear/remove request is currently in flight for —
+  // disables its X button so a slow connection can't double-fire the same
+  // removal, without blocking the other three columns' buttons.
+  const [clearingField, setClearingField] = useState<PunchField | null>(null);
+  // Tapping a punch's X doesn't remove it immediately — it arms an inline
+  // "Remove? Yes/No" prompt in its place (mirrors the punch buttons' own
+  // arm/disarm tap-again pattern below), which auto-cancels after a few
+  // seconds if left untouched. Only one field's prompt can be armed at once.
+  const [confirmClearField, setConfirmClearField] = useState<PunchField | null>(null);
+  const clearConfirmTimerRef = useRef<number | null>(null);
+  const armClearConfirm = (field: PunchField) => {
+    if (clearConfirmTimerRef.current) window.clearTimeout(clearConfirmTimerRef.current);
+    setConfirmClearField(field);
+    clearConfirmTimerRef.current = window.setTimeout(() => setConfirmClearField(null), 4000);
+  };
+  const cancelClearConfirm = () => {
+    if (clearConfirmTimerRef.current) window.clearTimeout(clearConfirmTimerRef.current);
+    setConfirmClearField(null);
+  };
+  useEffect(() => () => { if (clearConfirmTimerRef.current) window.clearTimeout(clearConfirmTimerRef.current); }, []);
 
   // One tap arms, a second tap within a few seconds actually punches — so a
   // stray tap on "Time Out" can't silently end the shift (which then locks
@@ -5968,6 +6118,30 @@ function MobileTimecardView({
     }
   };
 
+  const PUNCH_LABEL: Record<PunchField, string> = { checkIn: "Time In", checkOut: "Time Out", mealStart: "Meal Start", mealEnd: "Meal End" };
+
+  // Self-correct an accidental punch — only reachable when canEditPunch says
+  // this is the most-recent one made (see its doc comment for the chain
+  // rule), so this can never leave e.g. a Meal Out with no Meal In behind.
+  // Only reachable via the two-tap X -> Yes prompt (armClearConfirm/
+  // confirmClearField above), which is itself the confirmation — no
+  // separate native confirm() on top of that.
+  const handleClearPunch = async (field: PunchField) => {
+    if (!profileId || saving || clearingField) return;
+    cancelClearConfirm();
+    setClearingField(field);
+    try {
+      await clearPunch(profileId, todayKey, field);
+      setEntry((prev) => ({ ...prev, [field]: "" }));
+      disarmPunch();
+    } catch (e) {
+      console.error("MobileTimecardView: clear punch failed", e);
+      alert(`Failed to remove: ${e instanceof Error ? e.message : "Unknown error"}`);
+    } finally {
+      setClearingField(null);
+    }
+  };
+
   const handleTimeToggle = () => {
     if (entry.checkOut || saving) return;
     if (armedPunch !== "time") { armPunch("time"); return; }
@@ -6030,22 +6204,52 @@ function MobileTimecardView({
       ) : (
         <>
           <div className="mtech-timecard-summary">
-            <div className="mtech-timecard-card">
-              <div className="mtech-timecard-card-label">Check In</div>
-              <div className="mtech-timecard-card-value in">{entry.checkIn ? entry.checkIn.slice(0, 5) : "—"}</div>
-            </div>
-            <div className="mtech-timecard-card">
-              <div className="mtech-timecard-card-label">Check Out</div>
-              <div className="mtech-timecard-card-value out">{entry.checkOut ? entry.checkOut.slice(0, 5) : "—"}</div>
-            </div>
-            <div className="mtech-timecard-card">
-              <div className="mtech-timecard-card-label">Meal Start</div>
-              <div className="mtech-timecard-card-value meal">{entry.mealStart ? entry.mealStart.slice(0, 5) : "—"}</div>
-            </div>
-            <div className="mtech-timecard-card">
-              <div className="mtech-timecard-card-label">Meal End</div>
-              <div className="mtech-timecard-card-value meal">{entry.mealEnd ? entry.mealEnd.slice(0, 5) : "—"}</div>
-            </div>
+            {([
+              ["checkIn", "Check In", "in"],
+              ["checkOut", "Check Out", "out"],
+              ["mealStart", "Meal Start", "meal"],
+              ["mealEnd", "Meal End", "meal"],
+            ] as [PunchField, string, string][]).map(([field, label, valueClass]) => {
+              const value = entry[field];
+              const confirming = confirmClearField === field;
+              return (
+                <div className="mtech-timecard-card" key={field}>
+                  <div className="mtech-timecard-card-label">{label}</div>
+                  {confirming ? (
+                    <div className="mtech-timecard-card-clear-confirm">
+                      <span className="mtech-timecard-card-clear-confirm-label">Remove?</span>
+                      <button
+                        type="button"
+                        className="mtech-timecard-card-clear-yes"
+                        disabled={clearingField !== null}
+                        onClick={() => void handleClearPunch(field)}
+                      >
+                        {clearingField === field ? "…" : "Yes"}
+                      </button>
+                      <button type="button" className="mtech-timecard-card-clear-no" onClick={cancelClearConfirm}>
+                        No
+                      </button>
+                    </div>
+                  ) : (
+                    <div className={`mtech-timecard-card-value ${valueClass}`}>
+                      {value ? value.slice(0, 5) : "—"}
+                      {value && canEditPunch(entry, field) && (
+                        <button
+                          type="button"
+                          className="mtech-timecard-card-clear"
+                          disabled={saving || clearingField !== null}
+                          onClick={() => armClearConfirm(field)}
+                          aria-label={`Remove ${PUNCH_LABEL[field]}`}
+                          title={`Remove ${PUNCH_LABEL[field]}`}
+                        >
+                          <X className="h-3 w-3" />
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
 
           {hoursToday !== null && <div className="mtech-timecard-hours">{hoursToday.toFixed(1)}h worked today</div>}

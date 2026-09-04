@@ -5611,10 +5611,61 @@ a.mtech-phone-link:active { opacity: 0.7; }
   font-size: 1.3rem;
   font-weight: 800;
   color: rgba(255, 255, 255, 0.92);
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.4rem;
 }
 .mtech-timecard-card-value.in { color: #4ade80; }
 .mtech-timecard-card-value.out { color: #f87171; }
 .mtech-timecard-card-value.meal { color: #fbbf24; }
+.mtech-timecard-card-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.6);
+  flex-shrink: 0;
+}
+.mtech-timecard-card-clear:hover { background: rgba(248, 113, 113, 0.18); color: #f87171; }
+.mtech-timecard-card-clear:disabled { opacity: 0.4; }
+/* Inline "Remove?" prompt an X tap arms in place of the plain value —
+   swaps in for .mtech-timecard-card-value entirely rather than sitting
+   alongside it, so there's no ambiguity about which control is live. */
+.mtech-timecard-card-clear-confirm {
+  margin-top: 0.25rem;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+.mtech-timecard-card-clear-confirm-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.75);
+}
+.mtech-timecard-card-clear-yes,
+.mtech-timecard-card-clear-no {
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 800;
+  border: 1px solid transparent;
+}
+.mtech-timecard-card-clear-yes {
+  background: rgba(248, 113, 113, 0.18);
+  border-color: rgba(248, 113, 113, 0.4);
+  color: #f87171;
+}
+.mtech-timecard-card-clear-yes:disabled { opacity: 0.5; }
+.mtech-timecard-card-clear-no {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.18);
+  color: rgba(255, 255, 255, 0.8);
+}
 /* Home's clock-status row — one shared card holding all 4 slots instead of
    2x2, scoped so the standalone Timecard page's own 2x2 layout is untouched. */
 .mtech-home-clockrow {
@@ -5673,6 +5724,9 @@ a.mtech-phone-link:active { opacity: 0.7; }
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
 }
 .mtech-timecard-card-btn:disabled {
+  cursor: default;
+}
+.mtech-timecard-card-static {
   cursor: default;
 }
 .mtech-timecard-card-confirm {
@@ -11772,10 +11826,61 @@ a.mtech-phone-link:active { opacity: 0.7; }
   font-size: 1.3rem;
   font-weight: 800;
   color: rgba(255, 255, 255, 0.92);
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.4rem;
 }
 .mtech-timecard-card-value.in { color: #4ade80; }
 .mtech-timecard-card-value.out { color: #f87171; }
 .mtech-timecard-card-value.meal { color: #fbbf24; }
+.mtech-timecard-card-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.6);
+  flex-shrink: 0;
+}
+.mtech-timecard-card-clear:hover { background: rgba(248, 113, 113, 0.18); color: #f87171; }
+.mtech-timecard-card-clear:disabled { opacity: 0.4; }
+/* Inline "Remove?" prompt an X tap arms in place of the plain value —
+   swaps in for .mtech-timecard-card-value entirely rather than sitting
+   alongside it, so there's no ambiguity about which control is live. */
+.mtech-timecard-card-clear-confirm {
+  margin-top: 0.25rem;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+.mtech-timecard-card-clear-confirm-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.75);
+}
+.mtech-timecard-card-clear-yes,
+.mtech-timecard-card-clear-no {
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 800;
+  border: 1px solid transparent;
+}
+.mtech-timecard-card-clear-yes {
+  background: rgba(248, 113, 113, 0.18);
+  border-color: rgba(248, 113, 113, 0.4);
+  color: #f87171;
+}
+.mtech-timecard-card-clear-yes:disabled { opacity: 0.5; }
+.mtech-timecard-card-clear-no {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.18);
+  color: rgba(255, 255, 255, 0.8);
+}
 /* Home's clock-status row — one shared card holding all 4 slots instead of
    2x2, scoped so the standalone Timecard page's own 2x2 layout is untouched. */
 .mtech-home-clockrow {
@@ -11834,6 +11939,9 @@ a.mtech-phone-link:active { opacity: 0.7; }
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
 }
 .mtech-timecard-card-btn:disabled {
+  cursor: default;
+}
+.mtech-timecard-card-static {
   cursor: default;
 }
 .mtech-timecard-card-confirm {

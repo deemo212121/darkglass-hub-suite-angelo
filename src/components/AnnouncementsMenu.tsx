@@ -54,9 +54,22 @@ function formatTimestamp(value: string) {
   }).format(date);
 }
 
-export function AnnouncementsMenu() {
+interface AnnouncementsMenuProps {
+  /**
+   * Called instead of the default router navigate() to "/announcements" —
+   * the mobile shell (MobileTechApp.tsx) passes `() => setView("announcements")`
+   * since it's an isolated surface with its own in-memory view-switching
+   * state, not real routes (same adaptation NotificationsMenu.tsx's
+   * onViewAll already uses). Desktop usage (no prop) keeps the original
+   * router navigation unchanged.
+   */
+  onViewAll?: () => void;
+}
+
+export function AnnouncementsMenu({ onViewAll }: AnnouncementsMenuProps = {}) {
   const { email, ready, uid, role, extraRoles } = useAuth();
   const navigate = useNavigate();
+  const goToAnnouncements = () => (onViewAll ? onViewAll() : navigate({ to: "/announcements" }));
   const [profileId, setProfileId] = useState<string | null>(null);
   const [channel, setChannel] = useState<ChannelRow | null>(null);
   const [messages, setMessages] = useState<MessageRow[]>([]);
@@ -189,7 +202,7 @@ export function AnnouncementsMenu() {
               key={m.id}
               onSelect={async () => {
                 await markOneRead();
-                navigate({ to: "/announcements" });
+                goToAnnouncements();
               }}
               className="group flex cursor-pointer items-start gap-3 rounded-lg px-3 py-3"
             >
@@ -210,7 +223,7 @@ export function AnnouncementsMenu() {
         )}
         <DropdownMenuSeparator className="bg-[var(--color-panel-border)]" />
         <DropdownMenuItem
-          onSelect={() => navigate({ to: "/announcements" })}
+          onSelect={goToAnnouncements}
           className="gap-2 rounded-lg px-3 py-2 cursor-pointer text-foreground"
         >
           <Megaphone className="h-4 w-4 text-amber-200" /> Open announcements center

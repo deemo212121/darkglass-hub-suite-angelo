@@ -298,12 +298,35 @@ export async function saveEntry(
   });
 }
 
-const PUNCH_COLUMN: Record<"checkIn" | "checkOut" | "mealStart" | "mealEnd", string> = {
+export type PunchField = "checkIn" | "checkOut" | "mealStart" | "mealEnd";
+
+const PUNCH_COLUMN: Record<PunchField, string> = {
   checkIn: "check_in",
   checkOut: "check_out",
   mealStart: "meal_start",
   mealEnd: "meal_end",
 };
+
+/**
+ * Whether `field` is currently safe to remove/re-punch. Punches form a
+ * strict chain — Check In -> Meal In -> Meal Out -> Check Out — and only
+ * the most recently-made one is touchable at any moment: correcting an
+ * earlier punch (e.g. an accidental Check In) requires first removing
+ * everything that came after it, in reverse order, one step at a time.
+ * This is what lets a stray double-tap be self-corrected without an admin
+ * Time Correction request, while still keeping the chain internally
+ * consistent (never a Meal Out with no Meal In, etc). Assumes the field
+ * itself is already punched — only meaningful for deciding whether to show
+ * a remove control on a punch that exists.
+ */
+export function canEditPunch(entry: Pick<UITimeEntry, "checkOut" | "mealStart" | "mealEnd">, field: PunchField): boolean {
+  switch (field) {
+    case "checkIn": return !entry.mealStart;
+    case "mealStart": return !entry.mealEnd;
+    case "mealEnd": return !entry.checkOut;
+    case "checkOut": return true; // last in the chain — nothing after it to conflict with
+  }
+}
 
 /**
  * Stamp ONE punch column for a day, leaving the others exactly as they are in
@@ -318,7 +341,7 @@ const PUNCH_COLUMN: Record<"checkIn" | "checkOut" | "mealStart" | "mealEnd", str
 export async function savePunch(
   profileId: string,
   workDate: string,
-  field: "checkIn" | "checkOut" | "mealStart" | "mealEnd",
+  field: PunchField,
   time: string
 ): Promise<void> {
   const column = PUNCH_COLUMN[field];
@@ -331,6 +354,36 @@ export async function savePunch(
       );
     if (error) {
       console.error("savePunch error:", error.message);
+      throw new Error(error.message);
+    }
+  });
+}
+
+/**
+ * Self-service undo for one punch column — the flip side of savePunch,
+ * clearing it back to null instead of stamping a time. Callers must check
+ * canEditPunch first: this function itself doesn't enforce the chain rule
+ * (Check In only removable while Meal In is empty, etc), since the current
+ * value of every OTHER column has to be known to decide that, and this is a
+ * single-column write by design (same stale-local-copy safety as savePunch
+ * — never touches the other three columns regardless of what the caller's
+ * in-memory entry looks like).
+ */
+export async function clearPunch(
+  profileId: string,
+  workDate: string,
+  field: PunchField
+): Promise<void> {
+  const column = PUNCH_COLUMN[field];
+  await withNetworkRetry(async () => {
+    const { error } = await supabase
+      .from("timecard_entries")
+      .upsert(
+        { profile_id: profileId, work_date: workDate, [column]: null },
+        { onConflict: "profile_id,work_date" }
+      );
+    if (error) {
+      console.error("clearPunch error:", error.message);
       throw new Error(error.message);
     }
   });

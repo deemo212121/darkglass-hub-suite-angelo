@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { ChevronLeft, ChevronRight, FileText, Download } from "lucide-react";
+import { ChevronLeft, ChevronRight, FileText, Download, X } from "lucide-react";
 import { useMemo, useState, useEffect } from "react";
 import { AppHeader } from "@/components/Header";
 import { Footer } from "@/components/Footer";
@@ -11,6 +11,9 @@ import {
   deleteEntry as sbDeleteEntry,
   getMyProfileSchedule,
   resolveScheduledShiftHours,
+  clearPunch as sbClearPunch,
+  canEditPunch,
+  type PunchField,
 } from "@/lib/supabase/timecards";
 import { getMyProfileId } from "@/lib/supabase/users";
 import { getServerNow, zonedDateKey, zonedTimeString, type ScheduleTimezone } from "@/lib/serverTime";
@@ -95,6 +98,14 @@ function FullTimecardPage({ uid, ready }: { uid: string | null; ready: boolean }
   // server-time fetch resolving, distinct from modalActionTaken (which
   // stays true for the rest of the modal session once a punch lands).
   const [modalPunching, setModalPunching] = useState(false);
+  // Which punch (if any) a clear/remove request is currently in flight for —
+  // disables just its own X button, not the other three columns'.
+  const [clearingField, setClearingField] = useState<PunchField | null>(null);
+  // Which punch's X is currently showing its inline "Remove? Yes/No" prompt
+  // — armed by the X, cleared by Yes/No/closing or reopening the modal (see
+  // openEntryModal/closeEntryModal). That Yes tap IS the confirmation; no
+  // separate native confirm() on top of it.
+  const [confirmClearField, setConfirmClearField] = useState<PunchField | null>(null);
   const navigate = useNavigate();
 
   // Resolve the caller's profile id + scheduled shift once auth is ready.
@@ -244,6 +255,7 @@ function FullTimecardPage({ uid, ready }: { uid: string | null; ready: boolean }
     setModalActionTaken(false);
     setModalServerToday(null);
     setModalTimeError(null);
+    setConfirmClearField(null);
     getServerNow()
       .then((d) => setModalServerToday(zonedDateKey(d, scheduleTimezone)))
       .catch(() => setModalTimeError("Couldn't verify the current time with the server. Close and reopen this day to try again."));
@@ -256,6 +268,7 @@ function FullTimecardPage({ uid, ready }: { uid: string | null; ready: boolean }
     setModalActionTaken(false);
     setModalServerToday(null);
     setModalTimeError(null);
+    setConfirmClearField(null);
   };
 
   const saveEntry = async () => {
@@ -366,6 +379,38 @@ function FullTimecardPage({ uid, ready }: { uid: string | null; ready: boolean }
       alert(`Couldn't verify the current time: ${err instanceof Error ? err.message : "Unknown error"}`);
     } finally {
       setModalPunching(false);
+    }
+  };
+
+  const PUNCH_LABEL: Record<PunchField, string> = { checkIn: "Check In", checkOut: "Check Out", mealStart: "Meal Start", mealEnd: "Meal End" };
+
+  // Self-correct an accidental punch — only reachable when canEditPunch says
+  // this is the most-recently-made one (see its doc comment for the chain
+  // rule) AND today's date is still open for editing (same isToday gate the
+  // punch buttons themselves use, further down) — this is a same-day undo,
+  // not a general historical edit; fixing a past day still goes through the
+  // Time Correction request workflow. Only reachable via the X's own inline
+  // "Remove? Yes/No" prompt (confirmClearField above), which is itself the
+  // confirmation — no separate native confirm() on top of that.
+  const handleClearPunch = async (field: PunchField) => {
+    if (!modalEntry || !editingDate || !profileId || modalPunching || clearingField) return;
+    setConfirmClearField(null);
+    setClearingField(field);
+    try {
+      await sbClearPunch(profileId, editingDate, field);
+      const cleared = { ...modalEntry, [field]: "" };
+      setModalEntry(cleared);
+      setEntries((prev) => ({ ...prev, [editingDate]: cleared }));
+      // Clearing a punch undoes whatever "one action per session" lock an
+      // earlier punch in this same modal-open may have set — the whole
+      // point of this control is to let a stray tap be corrected and
+      // re-punched without closing and reopening the day.
+      setModalActionTaken(false);
+    } catch (err) {
+      console.error("Failed to clear punch:", err);
+      alert(`Failed to remove: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setClearingField(null);
     }
   };
 
@@ -619,41 +664,101 @@ function FullTimecardPage({ uid, ready }: { uid: string | null; ready: boolean }
 
                 {/* Content */}
                 <div className="p-6 space-y-4">
-                  {/* Time Section */}
-                  <div>
-                    <h4 className="text-sm font-semibold text-slate-300 mb-3 flex items-center gap-2">
-                      <span className="w-2 h-2 bg-green-500 rounded-full"></span>
-                      Work Time
-                    </h4>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="bg-green-500/10 border border-green-500/30 rounded-lg p-3">
-                        <p className="text-xs text-slate-400 mb-1">Check In</p>
-                        <p className="text-lg font-semibold text-green-300">{modalEntry.checkIn || "—"}</p>
-                      </div>
-                      <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3">
-                        <p className="text-xs text-slate-400 mb-1">Check Out</p>
-                        <p className="text-lg font-semibold text-red-300">{modalEntry.checkOut || "—"}</p>
-                      </div>
-                    </div>
-                  </div>
+                  {/* Same-day-only gate for the X buttons below — a past day's
+                      punches are locked from self-correction here just like
+                      they're locked from self-punching further down; fixing
+                      one goes through the Time Correction request workflow
+                      instead. */}
+                  {(() => {
+                    const modalIsToday = !!modalServerToday && editingDate === modalServerToday;
+                    // Right-hand side of one value tile: the plain value +
+                    // its X (unarmed), or — once that X has been tapped —
+                    // an inline "Remove? Yes/No" prompt in its place. The
+                    // Yes tap IS the confirmation; no native confirm() on
+                    // top of it. Swaps in for the value entirely rather
+                    // than sitting alongside it, so it's never ambiguous
+                    // which control is live.
+                    const valueSlot = (field: PunchField, valueText: string, colorClass: string) => {
+                      if (confirmClearField === field) {
+                        return (
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-xs font-semibold text-slate-300">Remove?</span>
+                            <button
+                              type="button"
+                              onClick={() => void handleClearPunch(field)}
+                              disabled={clearingField !== null}
+                              className="rounded-full border border-red-400/40 bg-red-500/15 px-2.5 py-0.5 text-xs font-bold text-red-300 transition hover:bg-red-500/25 disabled:opacity-50"
+                            >
+                              {clearingField === field ? "…" : "Yes"}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setConfirmClearField(null)}
+                              className="rounded-full border border-white/15 bg-white/5 px-2.5 py-0.5 text-xs font-bold text-slate-300 transition hover:bg-white/10"
+                            >
+                              No
+                            </button>
+                          </div>
+                        );
+                      }
+                      return (
+                        <div className="flex items-center justify-between gap-2">
+                          <p className={`text-lg font-semibold ${colorClass}`}>{valueText || "—"}</p>
+                          {modalIsToday && valueText && canEditPunch(modalEntry, field) && (
+                            <button
+                              type="button"
+                              onClick={() => setConfirmClearField(field)}
+                              disabled={modalPunching || clearingField !== null}
+                              title={`Remove ${PUNCH_LABEL[field]}`}
+                              aria-label={`Remove ${PUNCH_LABEL[field]}`}
+                              className="grid h-5 w-5 shrink-0 place-items-center rounded-full border border-white/15 bg-white/5 text-slate-400 transition hover:border-red-400/40 hover:bg-red-500/15 hover:text-red-300 disabled:opacity-40"
+                            >
+                              <X className="h-3 w-3" />
+                            </button>
+                          )}
+                        </div>
+                      );
+                    };
+                    return (
+                      <>
+                        {/* Time Section */}
+                        <div>
+                          <h4 className="text-sm font-semibold text-slate-300 mb-3 flex items-center gap-2">
+                            <span className="w-2 h-2 bg-green-500 rounded-full"></span>
+                            Work Time
+                          </h4>
+                          <div className="grid grid-cols-2 gap-3">
+                            <div className="bg-green-500/10 border border-green-500/30 rounded-lg p-3">
+                              <p className="text-xs text-slate-400 mb-1">Check In</p>
+                              {valueSlot("checkIn", modalEntry.checkIn, "text-green-300")}
+                            </div>
+                            <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3">
+                              <p className="text-xs text-slate-400 mb-1">Check Out</p>
+                              {valueSlot("checkOut", modalEntry.checkOut, "text-red-300")}
+                            </div>
+                          </div>
+                        </div>
 
-                  {/* Meal Section */}
-                  <div>
-                    <h4 className="text-sm font-semibold text-slate-300 mb-3 flex items-center gap-2">
-                      <span className="w-2 h-2 bg-orange-500 rounded-full"></span>
-                      Meal Break
-                    </h4>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="bg-orange-500/10 border border-orange-500/30 rounded-lg p-3">
-                        <p className="text-xs text-slate-400 mb-1">Start</p>
-                        <p className="text-lg font-semibold text-orange-300">{modalEntry.mealStart || "—"}</p>
-                      </div>
-                      <div className="bg-orange-500/10 border border-orange-500/30 rounded-lg p-3">
-                        <p className="text-xs text-slate-400 mb-1">End</p>
-                        <p className="text-lg font-semibold text-orange-300">{modalEntry.mealEnd || "—"}</p>
-                      </div>
-                    </div>
-                  </div>
+                        {/* Meal Section */}
+                        <div>
+                          <h4 className="text-sm font-semibold text-slate-300 mb-3 flex items-center gap-2">
+                            <span className="w-2 h-2 bg-orange-500 rounded-full"></span>
+                            Meal Break
+                          </h4>
+                          <div className="grid grid-cols-2 gap-3">
+                            <div className="bg-orange-500/10 border border-orange-500/30 rounded-lg p-3">
+                              <p className="text-xs text-slate-400 mb-1">Start</p>
+                              {valueSlot("mealStart", modalEntry.mealStart, "text-orange-300")}
+                            </div>
+                            <div className="bg-orange-500/10 border border-orange-500/30 rounded-lg p-3">
+                              <p className="text-xs text-slate-400 mb-1">End</p>
+                              {valueSlot("mealEnd", modalEntry.mealEnd, "text-orange-300")}
+                            </div>
+                          </div>
+                        </div>
+                      </>
+                    );
+                  })()}
 
                   {/* Actions */}
                   {(() => {
