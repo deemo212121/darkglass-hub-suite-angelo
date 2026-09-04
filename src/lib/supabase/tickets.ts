@@ -159,6 +159,7 @@ function rowToTicket(row: any): Ticket {
     statusChangedAt: row.status_changed_at ?? undefined,
     statusChangedBy: row.status_changed_by ?? undefined,
     account: row.account ?? "",
+    accountNo: row.account_no ?? "",
     type: row.type ?? "",
     delay: row.delay ?? 0,
     // customer details
@@ -477,6 +478,7 @@ export async function createTicket(input: Partial<Ticket>): Promise<Ticket> {
       warranty: input.warranty ?? null,
       manufacturer: input.manufacturer ?? null,
       account: input.account ?? null,
+      account_no: input.accountNo ?? null,
       claim_company: input.claimCompany ?? null,
       model: input.model ?? null,
       model_version: input.modelVersion ?? null,
@@ -1729,6 +1731,14 @@ async function upsertTicketFromServicePowerImpl(
     warranty: input.warranty ?? null,
     manufacturer: input.manufacturer ?? null,
     account: input.account ?? null,
+    // ServicePower's servicer/account number (e.g. "GSL00002") — NOT the
+    // warranty company name above. Required as claimSubmission's
+    // serviceCenterNumber; a blank value here gets ServicePower's claim
+    // API to reject the claim outright with "Invalid manufacturerName/
+    // serviceCenterNumber" (migration 0212 — this column didn't exist
+    // before, so every sync silently dropped the value convertCallToTicket
+    // had already computed).
+    account_no: input.accountNo ?? null,
     claim_company: input.claimCompany ?? null,
     location: sanitizeLocation(String(input.location ?? "")) || null,
     model: input.model ?? null,

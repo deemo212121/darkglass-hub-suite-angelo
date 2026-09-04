@@ -115,6 +115,13 @@ export function TechnicianDayRouteModal({ technicianName, branch, profileId, liv
   const googleOverlaysRef = useRef<any[]>([]);
   const [mapBuilding, setMapBuilding] = useState(false);
   const [routeMiles, setRouteMiles] = useState<number | null>(null);
+  // Indexes into `stops` whose geocode only found a coarse anchor (street/
+  // city/ZIP centroid, not the exact address) — e.g. an abbreviated street
+  // name the geocoder can't expand ("Gln Brk Dr" instead of "Glenbrook Dr")
+  // silently falls back to the whole city's centroid, which can be miles
+  // from where the technician actually is. Flagged in the stop list below
+  // rather than left indistinguishable from a real address-precise pin.
+  const [approximateStops, setApproximateStops] = useState<Set<number>>(new Set());
 
   useEffect(() => {
     if (mapProvider !== "leaflet" || L) return;
@@ -173,12 +180,18 @@ export function TechnicianDayRouteModal({ technicianName, branch, profileId, liv
       }
 
       const stopPts: LatLng[] = [];
-      for (const s of stops) {
+      const approxIdx = new Set<number>();
+      for (let i = 0; i < stops.length; i++) {
+        const s = stops[i];
         const pt = s.address ? await geocode(s.address) : null;
         if (cancelled) return;
-        if (pt) stopPts.push(pt);
+        if (pt) {
+          stopPts.push(pt);
+          if (pt.approximate) approxIdx.add(i);
+        }
       }
       if (cancelled) return;
+      setApproximateStops(approxIdx);
 
       const points = [originPt, ...stopPts];
 
@@ -438,6 +451,12 @@ export function TechnicianDayRouteModal({ technicianName, branch, profileId, liv
                             {stop.timeSlot && <span className="text-slate-500"> · {stop.timeSlot}</span>}
                             <span className="text-slate-500"> · {stop.status}</span>
                             <p className="text-slate-400 truncate">{stop.address || "No address on file"}</p>
+                            {approximateStops.has(i) && (
+                              <p className="text-amber-400 flex items-center gap-1 mt-0.5">
+                                <AlertCircle className="h-3 w-3 shrink-0" />
+                                Approximate location — the exact address didn't resolve, pin may be off
+                              </p>
+                            )}
                             {stop.arrivedAt && (
                               <p className="text-slate-500 mt-0.5">
                                 Timestamp (Start - End): {formatStopTime(stop.arrivedAt)} - {stop.doneAt ? formatStopTime(stop.doneAt) : "in progress"}

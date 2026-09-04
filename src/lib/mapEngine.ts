@@ -396,13 +396,22 @@ export async function geocodeAddress(
 
 /**
  * Resolve an address string to coordinates. Back-compat wrapper over
- * geocodeAddress that drops the precision flag — every existing map/route
+ * geocodeAddress that carries the precision flag as an extra `approximate`
+ * property rather than dropping it — every existing map/route
  * caller keeps its `LatLng | null` contract while transparently gaining the
  * abbreviation-expansion + street/city/ZIP fallback chain (a pin at a ZIP
  * centroid still beats no pin on a route map). The `cache` param is kept for
  * call-site compatibility and written through as the LatLng view.
+ *
+ * `approximate` (true for a street/city/ZIP-centroid fallback, not an
+ * exact-address match) rides along as an extra property on the returned
+ * object — a plain `{lat,lng}` destructure or a `LatLng`-typed variable
+ * assignment still works untouched for every existing caller; only a caller
+ * that explicitly reads `.approximate` (e.g. to warn "this pin might not be
+ * exactly right" — see TechnicianDayRouteModal.tsx) needs to know it's there.
  */
-const sessionGeocodeCache = new Map<string, LatLng | null>();
+export type GeocodedLatLng = LatLng & { approximate?: boolean };
+const sessionGeocodeCache = new Map<string, GeocodedLatLng | null>();
 
 // Callers throw a `Promise.all` over every visible ticket's address at once
 // (Work Map, Work Planner) -- fine for a handful of tickets, but a location/
@@ -430,14 +439,14 @@ function releaseGeocodeSlot(): void {
   if (next) next();
 }
 
-export function makeGeocoder(provider: "google" | "leaflet", cache: Map<string, LatLng | null> = sessionGeocodeCache) {
-  return async function geocode(query: string): Promise<LatLng | null> {
+export function makeGeocoder(provider: "google" | "leaflet", cache: Map<string, GeocodedLatLng | null> = sessionGeocodeCache) {
+  return async function geocode(query: string): Promise<GeocodedLatLng | null> {
     if (!query) return null;
     if (cache.has(query)) return cache.get(query)!;
     await acquireGeocodeSlot();
     try {
       const detailed = await geocodeAddress(provider, query);
-      const result: LatLng | null = detailed ? { lat: detailed.lat, lng: detailed.lng } : null;
+      const result: GeocodedLatLng | null = detailed ? { lat: detailed.lat, lng: detailed.lng, approximate: detailed.approximate } : null;
       cache.set(query, result);
       return result;
     } finally {

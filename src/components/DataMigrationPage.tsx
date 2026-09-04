@@ -3,7 +3,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
 import { ChevronLeft } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
-import { syncServicePowerToSupabase } from "@/lib/servicePowerSync";
+import { syncServicePowerToSupabase, syncServicePowerTicketsByCallNo } from "@/lib/servicePowerSync";
 import { syncNsaToSupabase } from "@/lib/nsaSync";
 
 interface SyncResult {
@@ -136,6 +136,97 @@ function ServicePowerMigrationCard() {
   );
 }
 
+interface TicketPullResult {
+  success: boolean;
+  added: number;
+  updated: number;
+  notFound: string[];
+  errors: string[];
+}
+
+/**
+ * Re-pull specific ticket(s) by their exact ticket/call number, straight
+ * from ServicePower — for a ticket whose local data looks wrong or
+ * incomplete (a mangled address, a stale status) rather than a whole day's
+ * worth of new calls. Goes through the exact same conversion/merge pipeline
+ * as the date-range card above (syncServicePowerTicketsByCallNo), so a
+ * locally-edited field isn't clobbered here either.
+ */
+function ServicePowerTicketPullCard() {
+  const [ticketNosText, setTicketNosText] = useState("");
+  const [running, setRunning] = useState(false);
+  const [result, setResult] = useState<TicketPullResult | null>(null);
+
+  const parsedTicketNos = ticketNosText
+    .split(/[\n,]+/)
+    .map((t) => t.trim())
+    .filter(Boolean);
+
+  const handleSubmit = async () => {
+    if (parsedTicketNos.length === 0) return;
+    if (!window.confirm(`Re-pull ${parsedTicketNos.length} ticket${parsedTicketNos.length === 1 ? "" : "s"} from ServicePower?\n\n${parsedTicketNos.join(", ")}`)) return;
+    setRunning(true);
+    setResult(null);
+    try {
+      const r = await syncServicePowerTicketsByCallNo(parsedTicketNos);
+      setResult(r);
+    } catch (err) {
+      setResult({ success: false, added: 0, updated: 0, notFound: [], errors: [err instanceof Error ? err.message : "Unknown error"] });
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  return (
+    <div className="panel">
+      <h2 className="text-lg font-semibold text-white mb-1">(Ticket) Pull Specific Tickets</h2>
+      <p className="text-xs text-slate-400 mb-3">
+        Re-fetches specific ticket number(s) straight from ServicePower — for a ticket whose local data looks wrong (e.g. a bad address), not a whole day's sync. One per line, or comma-separated.
+      </p>
+      <textarea
+        value={ticketNosText}
+        onChange={(e) => setTicketNosText(e.target.value)}
+        placeholder={"1007891642-11\n1008230266-10\nSA-4620943"}
+        rows={5}
+        className="glass-input w-full font-mono text-xs"
+      />
+      <button
+        type="button"
+        onClick={() => void handleSubmit()}
+        disabled={running || parsedTicketNos.length === 0}
+        className="btn btn-primary mt-4 disabled:opacity-50 disabled:cursor-not-allowed"
+      >
+        {running ? "Pulling…" : `Pull ${parsedTicketNos.length || ""} Ticket${parsedTicketNos.length === 1 ? "" : "s"}`}
+      </button>
+
+      {result && (
+        <div
+          className={`mt-4 rounded-lg border px-3 py-2 text-sm ${
+            result.success ? "border-emerald-400/40 bg-emerald-500/10 text-emerald-200" : "border-red-400/40 bg-red-500/10 text-red-200"
+          }`}
+        >
+          <div className="font-semibold">{result.success ? "✓ Pulled successfully" : "⚠ Completed with issues"}</div>
+          <div className="mt-1 text-xs text-slate-300">
+            Added: {result.added} · Updated: {result.updated}
+          </div>
+          {result.notFound.length > 0 && (
+            <div className="mt-2 text-xs">
+              <span className="font-semibold">Not found in ServicePower:</span> {result.notFound.join(", ")}
+            </div>
+          )}
+          {result.errors.length > 0 && (
+            <ul className="mt-2 list-disc list-inside text-xs space-y-0.5">
+              {result.errors.map((e, i) => (
+                <li key={i}>{e}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function NsaMigrationCard() {
   // One date, defaulting to today but freely changeable - pick an earlier
   // day to catch up on tickets that were missed that day (startDate and
@@ -205,6 +296,7 @@ export function DataMigrationPage({ mod, sub }: { mod: ModuleDef; sub: SubModule
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <ServicePowerMigrationCard />
           <NsaMigrationCard />
+          <ServicePowerTicketPullCard />
         </div>
       </div>
     </main>

@@ -793,6 +793,63 @@ export async function syncServicePowerToSupabase(
 }
 
 /**
+ * Re-pull one or more specific tickets straight from ServicePower by call
+ * number, instead of syncServicePowerToSupabase's date-window sweep — for
+ * when a specific ticket's local data looks wrong/incomplete (e.g. a
+ * mangled address) and the fix is to re-fetch it fresh from the source of
+ * truth rather than hand-editing the local copy. Reuses the exact same
+ * fetchServicePowerCalls -> convertCallToTicket -> upsertTicketFromServicePower
+ * pipeline the date-range sync uses, so the same "never overwrite a CSR-
+ * edited schedule date, never clobber a locally-set status" merge rules
+ * apply here too — this is not a separate, simpler path.
+ */
+export async function syncServicePowerTicketsByCallNo(
+  callNos: string[]
+): Promise<{
+  success: boolean;
+  added: number;
+  updated: number;
+  notFound: string[];
+  errors: string[];
+}> {
+  const { upsertTicketFromServicePower } = await import("./supabase/tickets");
+  const notFound: string[] = [];
+  const errors: string[] = [];
+  let added = 0;
+  let updated = 0;
+
+  for (const rawCallNo of callNos) {
+    const callNo = rawCallNo.trim();
+    if (!callNo) continue;
+    try {
+      const result = await fetchServicePowerCalls({ callNo });
+      if (!result.success) {
+        const msg = typeof result.error === "string" ? result.error : result.error?.description || result.error?.message || "Failed to fetch";
+        errors.push(`${callNo}: ${msg}`);
+        continue;
+      }
+      const call = (result.calls ?? []).find((c) => String(c?.callNumber ?? "").trim() === callNo) ?? result.calls?.[0];
+      if (!call) {
+        notFound.push(callNo);
+        continue;
+      }
+      if (!isSyncableCall(call)) {
+        errors.push(`${callNo}: ServicePower shows this call as "${call?.callStatus ?? "unknown"}" — not Accepted/Completed/Cancelled, skipped.`);
+        continue;
+      }
+      const ticket = convertCallToTicket(call);
+      const outcome = await upsertTicketFromServicePower(ticket);
+      if (outcome === "added") added++;
+      else updated++;
+    } catch (err) {
+      errors.push(`${callNo}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  return { success: errors.length === 0 && notFound.length === 0, added, updated, notFound, errors };
+}
+
+/**
  * Get date range for last N days in ServicePower format (YYYYMMDD)
  */
 export function getDateRange(days: number): { fromDate: string; toDate: string } {

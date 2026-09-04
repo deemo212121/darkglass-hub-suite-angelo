@@ -9,6 +9,7 @@ import {
 } from "@/lib/supabase/claimDetails";
 import { TicketPhotos } from "@/components/TicketPhotos";
 import { useAuth } from "@/lib/auth";
+import { getMyProfileId } from "@/lib/supabase/users";
 import { buildServicePowerClaimPayload } from "@/lib/servicePowerClaimPayload";
 
 interface Props {
@@ -76,7 +77,18 @@ const emptyForm = (): FormState => ({
  * are newly persisted vs. read from the ticket/parts data that already existed.
  */
 export function PreClaimModal({ ticket, ticketNumbers, onSaved, onNavigate, onClose }: Props) {
-  const { displayName, email } = useAuth();
+  const { uid, displayName, email } = useAuth();
+  // ticket_claim_details.updated_by is a uuid FK into profiles(id) — NOT
+  // the caller's email/display name (those are plain text and Postgres
+  // rejects them with "invalid input syntax for type uuid" on save, which
+  // is exactly what was happening here before this fix).
+  const [myProfileId, setMyProfileId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!uid) return;
+    let cancelled = false;
+    getMyProfileId(uid).then((id) => { if (!cancelled) setMyProfileId(id); });
+    return () => { cancelled = true; };
+  }, [uid]);
   const [form, setForm] = useState<FormState>(emptyForm());
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -142,7 +154,7 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onNavigate, onCl
   const handleSubmit = async () => {
     setSaving(true);
     try {
-      const saved = await upsertTicketClaimDetails(ticket.ticketNo, form, email || displayName || null);
+      const saved = await upsertTicketClaimDetails(ticket.ticketNo, form, myProfileId);
       onSaved(ticket.ticketNo, saved);
       onClose();
     } catch (err) {
@@ -162,7 +174,7 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onNavigate, onCl
     setSubmittingToSP(true);
     setSpMessage(null);
     try {
-      const saved = await upsertTicketClaimDetails(ticket.ticketNo, form, email || displayName || null);
+      const saved = await upsertTicketClaimDetails(ticket.ticketNo, form, myProfileId);
       setForm((prev) => ({ ...prev, ...saved }));
       onSaved(ticket.ticketNo, saved);
 
@@ -193,7 +205,7 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onNavigate, onCl
         spClaimStatusDescription: result.claimStatusDescription || "",
         spSubmittedAt: new Date().toISOString(),
         spLastResponse: response,
-      }, email || displayName || null);
+      }, myProfileId);
       setForm((prev) => ({ ...prev, ...updated }));
       onSaved(ticket.ticketNo, updated);
 

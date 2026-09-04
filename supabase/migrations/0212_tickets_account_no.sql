@@ -1,0 +1,31 @@
+-- =====================================================================
+-- 0212 — Persist ServicePower's servicer account number on tickets
+--
+-- ServicePower's Claim Submission API requires serviceCenterNumber (their
+-- servicer/account number, e.g. "GSL00002" — NOT the warranty company,
+-- that's tickets.account, a different field entirely per the header comment
+-- in servicePowerSync.ts's convertCallToTicket). syncServicePowerToSupabase
+-- has always computed this correctly at sync time (as `accountNo` on the
+-- in-memory Ticket object) but never had a column to persist it into, so
+-- upsertTicketFromServicePower silently dropped it before it ever reached
+-- Supabase. Every "Submit to ServicePower" claim was therefore sent with a
+-- blank serviceCenterNumber, which ServicePower correctly rejects with
+-- "Invalid manufacturerName/serviceCenterNumber" (claimResponseCode "ER") —
+-- confirmed live against a real rejected claim on ticket 1007891642-11.
+--
+-- ticket.$ticketNo.tsx's own "Call Service Information" section already
+-- shows this correctly, but only because that page does a separate LIVE
+-- ServicePower re-fetch on every view (same pattern noted for case_number
+-- in tickets.ts) — every other view (Need Claim List / Pre-Claim modal,
+-- Work Map, reports) only ever reads the plain stored tickets row, which
+-- never had this column at all.
+--
+-- Existing tickets backfill on their next ServicePower sync/re-pull (the
+-- Data Migration page's date-range sync, or the per-ticket "Pull Specific
+-- Tickets" tool) — nothing retroactive here, this migration only adds the
+-- column so a sync going forward has somewhere to put the value.
+--
+-- Run once in the Supabase SQL Editor, after 0211.
+-- =====================================================================
+
+alter table tickets add column if not exists account_no text;
