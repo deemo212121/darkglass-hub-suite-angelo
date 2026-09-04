@@ -133,6 +133,7 @@ const MILEAGE_COLUMNS = [
   { key: "legMileage", label: "This Stop (mi)" },
   { key: "totalMileage", label: "Total Mileage" },
   { key: "payroll", label: "Payroll" },
+  { key: "reason", label: "Reason" },
   { key: "actions", label: "Actions" },
 ] as const;
 type MileageColumnKey = (typeof MILEAGE_COLUMNS)[number]["key"];
@@ -4053,6 +4054,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                           {isMileageColVisible("legMileage") && <th className="px-3 py-3 text-xs font-semibold text-slate-200 text-left" title="This ticket's own leg of the day's route — distance from the previous stop to this one">This Stop (mi)</th>}
                           {isMileageColVisible("totalMileage") && <th className="px-3 py-3 text-xs font-semibold text-slate-200 text-left">Total Mileage</th>}
                           {isMileageColVisible("payroll") && <th className="px-3 py-3 text-xs font-semibold text-slate-200 text-left">Payroll</th>}
+                          {isMileageColVisible("reason") && <th className="px-3 py-3 text-xs font-semibold text-slate-200 text-left" title="Why a technician rescheduled this ticket, if they did">Reason</th>}
                           {isMileageColVisible("actions") && <th className="px-3 py-3 text-xs font-semibold text-slate-200 text-left">Actions</th>}
                         </tr>
                       </thead>
@@ -4200,6 +4202,21 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                                   </span>
                                 );
                               })()}
+                            </td>
+                            )}
+                            {isMileageColVisible("reason") && (
+                            <td className="px-3 py-2.5 text-slate-300 max-w-[220px]">
+                              {/* Same value shown truncated under the Payroll column's "Deleted"
+                                  badge above — a dedicated column so it's visible without having
+                                  to already know an entry was removed. Covers both a technician's
+                                  own Reschedule (see mileage.ts's syncMileageFromTickets, which
+                                  soft-deletes a rescheduled ticket's stale entry with its reason
+                                  here) and a manual delete from the Actions column below. */}
+                              {entry.deleteReason ? (
+                                <span className="italic">"{entry.deleteReason}"</span>
+                              ) : (
+                                <span className="text-slate-600">—</span>
+                              )}
                             </td>
                             )}
                             {isMileageColVisible("actions") && (

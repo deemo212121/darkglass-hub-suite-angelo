@@ -552,7 +552,7 @@ async function syncMileageFromTicketsInner(
   );
   if (techByNormalizedName.size === 0) return result;
 
-  const [{ data: ticketRows, error: ticketsErr }, { data: existingRows, error: existingErr }, mapProvider] = await Promise.all([
+  const [{ data: ticketRows, error: ticketsErr }, { data: existingRows, error: existingErr }, { data: rescheduleRows, error: rescheduleErr }, mapProvider] = await Promise.all([
     // Always all-time, no date range — every ticket this company has ever
     // logged. Page through in chunks of 1000 instead of one unbounded select.
     (async () => {
@@ -581,9 +581,27 @@ async function syncMileageFromTicketsInner(
       for (let from = 0; ; from += PAGE_SIZE) {
         const { data, error } = await supabase
           .from("mileage_entries")
-          .select("id, ticket_id, total_mileage, leg_mileage, google_map_link, work_date, profile_id, technician_name")
+          .select("id, ticket_id, total_mileage, leg_mileage, google_map_link, work_date, profile_id, technician_name, deleted_at")
           .eq("source", "auto")
           .not("ticket_id", "is", null)
+          .range(from, from + PAGE_SIZE - 1);
+        if (error) return { data: null, error };
+        all.push(...(data ?? []));
+        if (!data || data.length < PAGE_SIZE) break;
+      }
+      return { data: all, error: null };
+    })(),
+    // Every ticket_reschedules row (see migration 0215) — a technician's
+    // own "Reschedule" flag from the mobile On-Site Check-In card. Used
+    // below to exclude a rescheduled ticket from its day's route entirely
+    // (not just hide its own row), so the remaining stops' mileage
+    // recalculates as if the drive never happened.
+    (async () => {
+      const all: any[] = [];
+      for (let from = 0; ; from += PAGE_SIZE) {
+        const { data, error } = await supabase
+          .from("ticket_reschedules")
+          .select("ticket_id, work_date, reason, profile_id, created_by_name")
           .range(from, from + PAGE_SIZE - 1);
         if (error) return { data: null, error };
         all.push(...(data ?? []));
@@ -598,6 +616,7 @@ async function syncMileageFromTicketsInner(
     return result;
   }
   if (existingErr) console.error("syncMileageFromTickets (existing sync check) error:", existingErr.message);
+  if (rescheduleErr) console.error("syncMileageFromTickets (reschedule check) error:", rescheduleErr.message);
 
   // Identity for a technician name: the real profile id when it resolves to
   // a known technician, else the raw ticket text itself (lowercased) — kept
@@ -628,15 +647,48 @@ async function syncMileageFromTicketsInner(
         hasOriginInMapLink: !r.google_map_link || String(r.google_map_link).includes("origin="),
         workDate: r.work_date as string,
         identity: r.profile_id ? `id:${r.profile_id}` : `name:${String(r.technician_name || "").trim().toLowerCase()}`,
+        deletedAt: r.deleted_at as string | null,
       },
     ])
   );
 
+  // ticket_id + work_date pairs a technician has marked "Reschedule" —
+  // excluded from route-building below entirely, not just hidden from
+  // display, so the day's route recalculates as if the drive never
+  // happened. Keyed on the CURRENT schedule_date, matching how the rest of
+  // this function always groups by a ticket's current day.
+  const rescheduledByKey = new Map<string, { reason: string; profileId: string; createdByName: string | null }>();
+  for (const r of (rescheduleRows ?? []) as any[]) {
+    rescheduledByKey.set(`${r.ticket_id}|${r.work_date}`, {
+      reason: r.reason,
+      profileId: r.profile_id,
+      createdByName: r.created_by_name ?? null,
+    });
+  }
+
+  // A ticket just rescheduled that already had a real (non-deleted)
+  // mileage_entries row from before the reschedule — that row is now
+  // stale (it still shows the real drive distance) and would keep
+  // counting toward payroll/display even though the trip never happened.
+  // Soft-delete it the same way a human would from the Mileage tab
+  // (softDeleteMileageEntry), attributing it to whichever technician
+  // actually rescheduled the ticket rather than whoever triggered this
+  // sync. Only ever touches THIS ticket's own row — never the route math
+  // for the rest of that day's stops, which is handled entirely by
+  // allAssignedTickets excluding it below.
+  for (const [key, reschedule] of rescheduledByKey) {
+    const [ticketId] = key.split("|");
+    const existing = existingByTicketId.get(ticketId);
+    if (!existing || existing.deletedAt) continue;
+    await softDeleteMileageEntry(existing.id, reschedule.reason, reschedule.profileId, reschedule.createdByName);
+  }
+
   // Every ticket with a technician assigned and an actual date to log the
   // drive under — status doesn't matter, an open/cancelled ticket still
-  // involved a real drive.
+  // involved a real drive. Rescheduled tickets are dropped here, before any
+  // grouping/route math, so they never become a route waypoint.
   const allAssignedTickets = (ticketRows ?? []).filter(
-    (t: any) => String(t.technician || "").trim() && t.schedule_date
+    (t: any) => String(t.technician || "").trim() && t.schedule_date && !rescheduledByKey.has(`${t.id}|${t.schedule_date}`)
   );
 
   // Anyone whose tickets carry a technician name that isn't a known

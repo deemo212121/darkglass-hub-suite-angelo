@@ -86,6 +86,7 @@ import { resolveTeamLeadOrManager } from "@/lib/notifyRouting";
 import { NotificationsMenu } from "@/components/NotificationsMenu";
 import { NotificationCenterPanel } from "@/components/NotificationCenterPage";
 import { AnnouncementsMenu } from "@/components/AnnouncementsMenu";
+import { createOrUpdateTicketReschedule, getTicketReschedulesForTicketNos, type TicketRescheduleRow } from "@/lib/supabase/ticketReschedules";
 import { AnnouncementBanner } from "@/components/AnnouncementBanner";
 import { AnnouncementsPage } from "@/components/AnnouncementsPage";
 import {
@@ -1163,7 +1164,13 @@ export function MobileTechApp() {
             disputedTimeByTicketNo={disputedTimeByTicketNo}
             missingTimestampTicketNos={missingTimestampTicketNos}
             arrivedAt={arrivedAt}
+            setArrivedAt={setArrivedAt}
             doneAt={doneAt}
+            setDoneAt={setDoneAt}
+            role={role}
+            profileId={profileId}
+            userName={headerName}
+            checkinsLoaded={checkinsLoaded}
             onDispute={(ticketNo) => { setTicketTimeDisputePrefillTicketNo(ticketNo); setView("tickettimedispute"); }}
             isSelfRole={isSelfRole}
             roster={roster}
@@ -1750,7 +1757,13 @@ function TicketsView({
   disputedTimeByTicketNo,
   missingTimestampTicketNos,
   arrivedAt,
+  setArrivedAt,
   doneAt,
+  setDoneAt,
+  role,
+  profileId,
+  userName,
+  checkinsLoaded,
   onDispute,
   isSelfRole,
   roster,
@@ -1770,9 +1783,17 @@ function TicketsView({
   disputedTimeByTicketNo: Map<string, { time: string; status: "pending" | "approved" }>;
   /** Ticket numbers marked "CL-Ready to Complete" with neither Work Start nor Work Done ever stamped — flagged red/amber in the list below. */
   missingTimestampTicketNos: Set<string>;
-  /** Same live On-Site Check-In state HomeOnSiteCard tracks — shown per-ticket below so a Work Start/Done tap on Home is visible here too. */
+  /** Same live On-Site Check-In state HomeOnSiteCard tracks — shown per-ticket below so a Work Start/Done tap on Home is visible here too, and on the
+   *  "Today" tab a real Work Start/manual-override/Reschedule row is offered right on the card (see useOnSiteCheckIn/CheckInActionRow) so a technician
+   *  never has to leave this list to check in. */
   arrivedAt: Record<string, string>;
+  setArrivedAt: Dispatch<SetStateAction<Record<string, string>>>;
   doneAt: Record<string, string>;
+  setDoneAt: Dispatch<SetStateAction<Record<string, string>>>;
+  role: string | null;
+  profileId: string | null;
+  userName: string;
+  checkinsLoaded: boolean;
   /** Opens Ticket Time Dispute pre-selected to this ticket — offered on a missing-timestamp card so filing one doesn't need a trip through the dropdown. */
   onDispute: (ticketNo: string) => void;
   /** Techs only ever see their own tickets — no picker for them, same plain label as before. */
@@ -1792,6 +1813,15 @@ function TicketsView({
 }) {
   const today = new Date().toLocaleDateString("en-US");
   const isLead = isSelfRole && roster.length > 0;
+  // Work Start/manual-override/Reschedule row on each "Today" card (see
+  // CheckInActionRow below) — only meaningful for that one tab, but hooks
+  // can't be called conditionally, so an empty ticket list on every other
+  // tab makes this a no-op (no geocoding/GPS work) without violating the
+  // Rules of Hooks.
+  const checkIn = useOnSiteCheckIn(
+    tab === "today" ? tickets : [],
+    userName, role, profileId, arrivedAt, setArrivedAt, doneAt, setDoneAt, checkinsLoaded,
+  );
   return (
     <>
       <div className="mtech-subbar">
@@ -1882,9 +1912,13 @@ function TicketsView({
         {!loading &&
           tickets.map((t, i) => {
             const isMissingTimestamp = missingTimestampTicketNos.has(t.ticketNo);
+            // Only meaningful on the Today tab — checkIn is a no-op (empty
+            // ticket list) on every other tab, see the useOnSiteCheckIn call
+            // above, so this is always undefined there too.
+            const reschedule = tab === "today" ? checkIn.reschedulesByTicketNo.get(`${t.ticketNo}|${t.schedule}`) : undefined;
             return (
+            <div key={t.ticketNo} className="mtech-ticket-card-group">
             <button
-              key={t.ticketNo}
               className="mtech-ticket-card"
               onClick={() => onOpen(t)}
               type="button"
@@ -1914,6 +1948,22 @@ function TicketsView({
                   <div className="mtech-ticket-sched">
                     {t.schedule}
                     {t.model ? ` · ${t.model}` : ""}
+                  </div>
+                )}
+                {reschedule && (
+                  <div
+                    style={{
+                      marginTop: "0.35rem",
+                      padding: "0.35rem 0.5rem",
+                      borderRadius: "6px",
+                      background: "rgba(56,189,248,0.12)",
+                      border: "1px solid rgba(56,189,248,0.35)",
+                    }}
+                  >
+                    <span style={{ fontSize: "0.66rem", fontWeight: 700, color: "#38bdf8", textTransform: "uppercase", letterSpacing: "0.03em" }}>
+                      Rescheduled
+                    </span>
+                    <div style={{ fontSize: "0.72rem", color: "#e2e8f0", marginTop: "0.1rem" }}>{reschedule.reason}</div>
                   </div>
                 )}
                 {isMissingTimestamp && (
@@ -2006,6 +2056,12 @@ function TicketsView({
                 <ChevronRight className="h-4 w-4" />
               </span>
             </button>
+            {tab === "today" && (
+              <div className="mtech-ticket-card-checkin">
+                <CheckInActionRow t={t} checkIn={checkIn} uniform />
+              </div>
+            )}
+            </div>
             );
           })}
       </div>
@@ -4680,47 +4736,26 @@ function ClockCard({
   );
 }
 
-// "Location / Ticket#" list of today's assigned tickets with a geofenced
-// I'm Here / I'm Done action per ticket. Both buttons only log a timestamped
-// ticket comment (no status change) — this is a lightweight arrival/
-// completion record for monitoring, not a replacement for the real
-// completion flow (photos/parts/signature) technicians still do from the
-// ticket's own detail screen. A ticket stays in the list after being marked
-// done — both timestamps just show underneath it instead of the buttons —
-// so the record stays visible for the rest of the shift rather than
-// disappearing the moment it's logged.
-function HomeOnSiteCard({
-  tickets,
-  userName,
-  role,
-  arrivedAt,
-  setArrivedAt,
-  doneAt,
-  setDoneAt,
-  checkinsLoaded,
-  checkinsLoadError,
-  onRetryCheckins,
-}: {
-  tickets: Ticket[];
-  userName: string;
-  role: string | null;
-  /** Lifted to MobileTechApp (the top-level component) so the Tickets tab
-   * can show the same live Work Start/Work Done times this card records —
-   * see missingTimestampTicketNos and the ticket-card timestamp row in
-   * TicketsView. */
-  arrivedAt: Record<string, string>;
-  setArrivedAt: Dispatch<SetStateAction<Record<string, string>>>;
-  doneAt: Record<string, string>;
-  setDoneAt: Dispatch<SetStateAction<Record<string, string>>>;
-  /** False until onsite_arrived_at/onsite_done_at have been read back once.
-   * Gates the "Work Start" button so a not-yet-loaded ticket can't be
-   * re-checked-in over its real arrival time. */
-  checkinsLoaded: boolean;
-  /** First load never succeeded (after retries) — show a retry affordance
-   * instead of silently defaulting every ticket to "Work Start". */
-  checkinsLoadError: boolean;
-  onRetryCheckins: () => void;
-}) {
+// Shared by HomeOnSiteCard (Home's single-ticket On-Site Check-In card) and
+// TicketsView's "Today" tab (a Work Start/manual-override/Reschedule row on
+// every ticket card, not just whichever one Home is currently showing) —
+// the geofencing/GPS/geocoding/reschedule machinery only needs to run once
+// per mounted consumer, not duplicated per call site. Both consumers are
+// mutually exclusive (only one `view` is ever mounted at a time in
+// MobileTechApp), so calling this once each is not wasted concurrent work;
+// the offline geocode cache (getCachedTicketGeocode) also means a remount
+// re-resolves instantly from cache rather than re-hitting the geocoder.
+function useOnSiteCheckIn(
+  tickets: Ticket[],
+  userName: string,
+  role: string | null,
+  profileId: string | null,
+  arrivedAt: Record<string, string>,
+  setArrivedAt: Dispatch<SetStateAction<Record<string, string>>>,
+  doneAt: Record<string, string>,
+  setDoneAt: Dispatch<SetStateAction<Record<string, string>>>,
+  checkinsLoaded: boolean,
+) {
   const [mapProvider, setMapProvider] = useState<MapProvider | null>(null);
   const [ticketPos, setTicketPos] = useState<Record<string, { lat: number; lng: number; approximate: boolean } | null>>({});
   const [busy, setBusy] = useState<string | null>(null);
@@ -4735,7 +4770,7 @@ function HomeOnSiteCard({
   // uploads to technician_location_pings) — no second navigator.geolocation
   // watch here. That component only turns tracking on when the technician
   // has confirmed Location Consent AND is clocked in; consentConfirmed/
-  // clockedIn are exposed here so this card can explain which of those is
+  // clockedIn are exposed here so a consumer can explain which of those is
   // missing instead of a generic error.
   const { position: coarsePos, accuracy: coarseAccuracyM, watching, consentConfirmed, clockedIn, permissionDenied } = useLiveLocation();
 
@@ -4745,7 +4780,7 @@ function HomeOnSiteCard({
   // geofence. Whenever there's a ticket to check into that isn't done yet,
   // take periodic one-shot high-accuracy (real GPS) fixes and use those for
   // the distance test. `at` is used to ignore a fix that's gone stale (e.g.
-  // one taken while still driving). See the effect below focusTickets.
+  // one taken while still driving).
   const [preciseFix, setPreciseFix] = useState<
     { pos: { lat: number; lng: number }; accuracyM: number; at: number } | null
   >(null);
@@ -4779,8 +4814,8 @@ function HomeOnSiteCard({
   // Sharing is only actually "on" once TechnicianLocationTracker.tsx has a
   // live reading flowing (watching) — separate from consentConfirmed, which
   // just means the agreement is on file. Two independent status rows below
-  // instead of one message, so a technician can see at a glance which of
-  // the two prerequisites is actually missing.
+  // instead of one message, so a consumer can show at a glance which of the
+  // two prerequisites is actually missing.
   const sharingActive = watching || devSimulate;
   const sharingReason = !consentConfirmed
     ? null // already explained by the Consent row above — no need to repeat it
@@ -4791,8 +4826,6 @@ function HomeOnSiteCard({
     : !sharingActive
     ? "Waiting for a location fix…"
     : null;
-
-  const visibleTickets = tickets;
 
   // Geocode each visible ticket's address once we know the map provider.
   // geocodeAddress (vs the plain geocode() the route maps use) also returns
@@ -4809,7 +4842,7 @@ function HomeOnSiteCard({
     if (!mapProvider) return;
     let cancelled = false;
     (async () => {
-      for (const t of visibleTickets) {
+      for (const t of tickets) {
         if (ticketPos[t.ticketNo] !== undefined) continue;
         const cached = await getCachedTicketGeocode(t.ticketNo).catch(() => undefined);
         if (cancelled) return;
@@ -4829,7 +4862,7 @@ function HomeOnSiteCard({
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mapProvider, visibleTickets]);
+  }, [mapProvider, tickets]);
 
   const distanceFor = (t: Ticket): number | null => {
     const pos = ticketPos[t.ticketNo];
@@ -4837,69 +4870,56 @@ function HomeOnSiteCard({
     return haversineMiles(myPos, pos);
   };
 
-  // Which tickets the card offers a check-in for right now, in priority:
-  //   1. every ticket already checked in ("Work Start" tapped) but not yet
-  //      marked done — pinned regardless of distance so stepping away
-  //      mid-visit (a supply run) doesn't drop an open check-in;
-  //   2. every just-finished ticket ("Work Done" tapped) the tech is still
-  //      physically at — kept visible instead of instantly swapping to the
-  //      next ticket the moment Done is tapped, so packing up/writing notes
-  //      on-site doesn't feel like the app rushing them along. Drops off
-  //      once they've actually left the geofence, same radius as check-in;
-  //   3. plus every not-yet-started ticket currently inside the geofence.
-  //      More than one when two customers' zones overlap or several
-  //      appliances share one address — the tech picks the right ticket
-  //      instead of the app snapping to whichever centroid reads nearest;
-  //   4. if that yields nothing, the single nearest ticket overall, shown
-  //      dimmed with its distance for context on where they're headed.
-  // Sorted nearest-first, capped so a stack of same-address tickets can't
-  // bury the card. Empty only while distances are unresolved (map provider /
-  // geocoding not ready) or there's nothing to check into.
-  const MAX_ONSITE_ROWS = 5;
-  const focusTickets = useMemo(() => {
-    const notDone = visibleTickets.filter((t) => !doneAt[t.ticketNo]);
-    const withD = (t: Ticket) => ({ t, d: distanceFor(t) });
-    const byDist = (a: { d: number | null }, b: { d: number | null }) =>
-      (a.d ?? Infinity) - (b.d ?? Infinity);
+  // Reschedule (migration 0215) — a same-day, mileage-side-effect-only flag.
+  // Fetched for every ticket this hook was given at once, so a freshly-
+  // rendered card already knows its status without a per-card round trip.
+  const [reschedulesByTicketNo, setReschedulesByTicketNo] = useState<Map<string, TicketRescheduleRow>>(new Map());
+  const ticketNosKey = tickets.map((t) => t.ticketNo).sort().join(",");
+  useEffect(() => {
+    if (!ticketNosKey) { setReschedulesByTicketNo(new Map()); return; }
+    let cancelled = false;
+    getTicketReschedulesForTicketNos(ticketNosKey.split(","))
+      .then((map) => { if (!cancelled) setReschedulesByTicketNo(map); })
+      .catch((err) => console.error("Failed to load ticket reschedules:", err));
+    return () => { cancelled = true; };
+  }, [ticketNosKey]);
 
-    const inProgress = notDone.filter((t) => arrivedAt[t.ticketNo]);
-    const justDoneStillHere = visibleTickets.filter((t) => {
-      if (!doneAt[t.ticketNo]) return false;
-      const d = distanceFor(t);
-      return devSimulate || (d !== null && d <= checkinRadiusMiles);
-    });
-    const inRadius = notDone
-      .filter((t) => !arrivedAt[t.ticketNo])
-      .map(withD)
-      .filter(
-        (x) =>
-          x.d !== null &&
-          (devSimulate ||
-            (ticketPos[x.t.ticketNo]?.approximate !== true && x.d <= checkinRadiusMiles)),
-      )
-      .map((x) => x.t);
-
-    const active = [...inProgress, ...justDoneStillHere, ...inRadius];
-    if (active.length > 0) {
-      return active.map(withD).sort(byDist).slice(0, MAX_ONSITE_ROWS).map((x) => x.t);
+  // Which ticket (if any) currently has the inline "Reschedule" reason
+  // prompt expanded — at most one across BOTH consumers sharing this hook
+  // instance, which is fine since each consumer only ever calls this hook
+  // for what it's currently showing.
+  const [reschedulingTicketNo, setReschedulingTicketNo] = useState<string | null>(null);
+  const [rescheduleReason, setRescheduleReason] = useState("");
+  const [reschedulingSubmitting, setReschedulingSubmitting] = useState(false);
+  const submitReschedule = async (t: Ticket) => {
+    const reason = rescheduleReason.trim();
+    if (!reason || !profileId) return;
+    setReschedulingSubmitting(true);
+    try {
+      // The TICKET's own schedule_date (Ticket.schedule already IS that
+      // column's raw value — see rowToTicket in tickets.ts), not the
+      // technician's local device date: this key has to match exactly
+      // what syncMileageFromTickets excludes on (mileage.ts groups/filters
+      // by t.schedule_date), and a device's local "today" can disagree
+      // with it.
+      const workDate = t.schedule;
+      const row = await createOrUpdateTicketReschedule({
+        ticketNo: t.ticketNo,
+        workDate,
+        reason,
+        profileId,
+        createdByName: userName,
+      });
+      setReschedulesByTicketNo((prev) => new Map(prev).set(`${t.ticketNo}|${workDate}`, row));
+      setReschedulingTicketNo(null);
+      setRescheduleReason("");
+    } catch (e) {
+      console.error("Failed to reschedule ticket:", e);
+      alert(`Failed to reschedule: ${e instanceof Error ? e.message : "Unknown error"}`);
+    } finally {
+      setReschedulingSubmitting(false);
     }
-
-    const ranked = notDone.map(withD).filter((x) => x.d !== null).sort(byDist);
-    if (ranked.length > 0) return [ranked[0].t];
-
-    // No measurable distance for anything. If that's because the addresses
-    // genuinely won't geocode (ticketPos resolved to null, not just "not
-    // fetched yet"), still surface the un-started ones so the manual "I'm
-    // here anyway" path stays reachable — the row shows "Address not on the
-    // map". A pending geocode or a missing GPS fix just leaves this empty.
-    const ungeocodable = notDone.filter(
-      (t) => !arrivedAt[t.ticketNo] && ticketPos[t.ticketNo] === null,
-    );
-    if (ungeocodable.length > 0) return ungeocodable.slice(0, MAX_ONSITE_ROWS);
-
-    return devSimulate && notDone.length > 0 ? [notDone[0]] : [];
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visibleTickets, ticketPos, myPos, arrivedAt, doneAt, devSimulate, checkinRadiusMiles]);
+  };
 
   // Take real-GPS fixes while there's a ticket the technician still needs to
   // check into. One-shot getCurrentPosition (cheap, unlike a second
@@ -4908,23 +4928,9 @@ function HomeOnSiteCard({
   // already proven) or the ticket is done; only runs for a clocked-in tech
   // who's confirmed location sharing (same prerequisites as the shared
   // watcher) and never in the dev simulate mode.
-  // Comma-joined ticket numbers across ALL of today's tickets (not just
-  // focusTickets) still awaiting check-in that have a precise point to
-  // measure against — non-empty means "there's still somewhere to verify
-  // arrival", so keep refining. Deliberately NOT scoped to focusTickets: once
-  // one ticket is checked in but not yet marked done, it alone occupies
-  // focusTickets (see the "active" branch above), so a focusTickets-scoped
-  // key would go empty and this effect would stop refining GPS — the next
-  // ticket would then be stuck testing distance against a stale fix from the
-  // first address forever, since it can only ever enter focusTickets once
-  // it's already within the (unrefined) radius. Reported by a tech: after
-  // finishing one job and driving to the next, Work Start never unlocked —
-  // exactly this deadlock. Rows that only have an approximate anchor (or
-  // none) don't count: a sharper device fix can't make an approximate
-  // geofence pass, so those go straight to the manual override.
   const arrivingKey = useMemo(
     () =>
-      visibleTickets
+      tickets
         .filter(
           (t) =>
             !arrivedAt[t.ticketNo] &&
@@ -4935,7 +4941,7 @@ function HomeOnSiteCard({
         .map((t) => t.ticketNo)
         .sort()
         .join(","),
-    [visibleTickets, arrivedAt, doneAt, ticketPos],
+    [tickets, arrivedAt, doneAt, ticketPos],
   );
   useEffect(() => {
     if (typeof navigator === "undefined" || !navigator.geolocation) return;
@@ -4965,18 +4971,12 @@ function HomeOnSiteCard({
     return () => { cancelled = true; window.clearInterval(id); setRefiningFix(false); };
   }, [arrivingKey, permissionDenied, devSimulate, clockedIn, consentConfirmed]);
 
-  // arrivingKey is stable while the tech waits (it's keyed on the tickets, not
-  // on the moving GPS fix), so this isn't constantly reset — it measures a
-  // genuine sustained failure to auto-verify. Cleared the moment there's
-  // nothing left awaiting check-in (all arrived / done / in radius).
-  //
   // Wall-clock elapsed via a polling interval, NOT a single setTimeout: a
   // backgrounded PWA on iOS suspends JS timers, so a 90s setTimeout could
   // take minutes of real time to fire after the tech locks their phone and
   // walks to the door. Checking Date.now() on each 5s tick means the
   // override appears ~on schedule regardless of how long the tab was
-  // suspended. 30s (was 90s) — a tech standing at a wrong-geocoded address
-  // shouldn't have to wait a minute and a half for a way through.
+  // suspended.
   const STUCK_AFTER_MS = 30_000;
   const arrivingSinceRef = useRef<number | null>(null);
   useEffect(() => {
@@ -5120,13 +5120,297 @@ function HomeOnSiteCard({
     }
   };
 
+  return {
+    ticketPos, distanceFor, checkinRadiusMiles, fixAccuracyM,
+    consentConfirmed, clockedIn, permissionDenied, sharingActive, sharingReason,
+    refiningFix, preciseFresh, stuckMode, devSimulate, setDevSimulate,
+    busy, checkinsLoaded, arrivedAt, doneAt,
+    handleImHere, handleManualCheckIn, handleForceCheckIn, handleImDone,
+    reschedulesByTicketNo, reschedulingTicketNo, setReschedulingTicketNo,
+    rescheduleReason, setRescheduleReason, reschedulingSubmitting, submitReschedule,
+  };
+}
+type OnSiteCheckInApi = ReturnType<typeof useOnSiteCheckIn>;
+
+// The Work Start/manual-override/Reschedule button row (or the Work Done
+// button, or the inline reschedule reason form, or nothing once already
+// rescheduled/finished) for ONE ticket — shared between HomeOnSiteCard's
+// single-ticket card and TicketsView's "Today" tab, so both surfaces offer
+// the exact same check-in behavior instead of two copies that could drift.
+// Deliberately renders ONLY the actions, not the address/ticket#/status
+// info line — each consumer already has its own layout for that.
+// The Work Start/manual-override/Reschedule button row (or the Work Done
+// button, or the inline reschedule reason form, or nothing once already
+// rescheduled/finished) for ONE ticket — shared between HomeOnSiteCard's
+// single-ticket card and TicketsView's "Today" tab, so both surfaces offer
+// the exact same check-in behavior instead of two copies that could drift.
+// Deliberately renders ONLY the actions, not the address/ticket#/status
+// info line — each consumer already has its own layout for that (and its
+// own "Resched" badge/reason display, since this returns nothing once
+// rescheduled).
+//
+// `uniform`: TicketsView's per-card row wants Work Start / the manual-
+// override variant / Reschedule to all be the same size (see
+// mtech-home-onsite-btn--uniform) since up to 3 sit side by side on a
+// narrow card; Home's single big card keeps its original varied sizing
+// (primary action bigger than the secondary overrides) when this is unset.
+function CheckInActionRow({ t, checkIn, uniform }: { t: Ticket; checkIn: OnSiteCheckInApi; uniform?: boolean }) {
+  const dist = checkIn.distanceFor(t);
+  const pos = checkIn.ticketPos[t.ticketNo];
+  const geocoded = pos != null;
+  // An approximate anchor (street / city / ZIP centroid, or a fuzzy
+  // provider match) can be a mile+ from the real building, so it never
+  // hard-passes the geofence — those go through the manual override, same
+  // as an address that wouldn't geocode at all.
+  const approx = pos?.approximate === true;
+  const inRadius = checkIn.devSimulate || (dist !== null && !approx && dist <= checkIn.checkinRadiusMiles);
+  const hereAt = checkIn.arrivedAt[t.ticketNo];
+  const finishedAt = checkIn.doneAt[t.ticketNo];
+  const isBusy = checkIn.busy === t.ticketNo;
+  // Real onsite_arrived_at/onsite_done_at not read back yet this session —
+  // hereAt/finishedAt being blank here means "unknown", not "never checked
+  // in", so no check-in action can be offered.
+  const stateUnknown = !checkIn.checkinsLoaded;
+  const pending = !stateUnknown && !inRadius && !hereAt && !finishedAt;
+  const fixIsCoarse = checkIn.fixAccuracyM != null && checkIn.fixAccuracyM > 1000;
+  const gpsGivenUp = checkIn.stuckMode || fixIsCoarse;
+  const locating = pending && checkIn.refiningFix && !checkIn.preciseFresh && geocoded && !approx && !gpsGivenUp;
+  // Manual "I'm here anyway" — offered while the automatic check is
+  // failing but the tech is plausibly on site: no usable geocode, an
+  // approximate-only anchor, or a precise point within the cap.
+  const canManual =
+    pending && !locating &&
+    (!geocoded || approx || (dist !== null && dist <= ON_SITE_CHECKIN_MANUAL_OVERRIDE_MAX_MILES));
+  // Beyond the 3-mi override window the address DID geocode — offer the
+  // heavier-friction check-in once there's a settled precise fix to report.
+  const canForceCheckIn = pending && !locating && !canManual && geocoded && !approx;
+  const reschedule = checkIn.reschedulesByTicketNo.get(`${t.ticketNo}|${t.schedule}`);
+  const isReschedulingThis = checkIn.reschedulingTicketNo === t.ticketNo;
+
+  // Rescheduled or fully done — nothing left to do with this ticket; each
+  // consumer's own info line already shows the relevant read-only state
+  // (the Resched badge/reason, or the Here/Done timestamps).
+  if (reschedule || finishedAt) return null;
+
+  const btnClass = uniform ? "mtech-home-onsite-btn mtech-home-onsite-btn--uniform" : "mtech-home-onsite-btn";
+  const manualClass = uniform
+    ? "mtech-home-onsite-btn mtech-home-onsite-btn--manual mtech-home-onsite-btn--uniform"
+    : "mtech-home-onsite-btn mtech-home-onsite-btn--manual";
+  const rescheduleClass = uniform
+    ? "mtech-home-onsite-btn mtech-home-onsite-btn--reschedule mtech-home-onsite-btn--uniform"
+    : "mtech-home-onsite-btn mtech-home-onsite-btn--reschedule";
+  const actionsClass = uniform ? "mtech-home-onsite-actions mtech-home-onsite-actions--uniform" : "mtech-home-onsite-actions";
+
+  if (isReschedulingThis) {
+    return (
+      <div className="mtech-home-onsite-actions mtech-home-onsite-resched-form">
+        <textarea
+          className="mtech-home-onsite-resched-input"
+          placeholder="Why are you rescheduling this ticket?"
+          value={checkIn.rescheduleReason}
+          onChange={(e) => checkIn.setRescheduleReason(e.target.value)}
+          rows={2}
+          autoFocus
+        />
+        <div className="mtech-home-onsite-resched-form-actions">
+          <button
+            type="button"
+            className="mtech-home-onsite-btn"
+            disabled={!checkIn.rescheduleReason.trim() || checkIn.reschedulingSubmitting}
+            onClick={() => void checkIn.submitReschedule(t)}
+          >
+            {checkIn.reschedulingSubmitting ? "…" : "Submit"}
+          </button>
+          <button
+            type="button"
+            className="mtech-home-onsite-btn mtech-home-onsite-btn--manual"
+            disabled={checkIn.reschedulingSubmitting}
+            onClick={() => { checkIn.setReschedulingTicketNo(null); checkIn.setRescheduleReason(""); }}
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (!hereAt) {
+    return (
+      <div className={actionsClass}>
+        <button
+          type="button"
+          className={btnClass}
+          disabled={stateUnknown || !inRadius || isBusy || locating}
+          onClick={() => checkIn.handleImHere(t)}
+        >
+          {stateUnknown ? "Checking status…" : isBusy ? "…" : locating ? "Locating…" : "Work Start"}
+        </button>
+        {canManual && (
+          <button type="button" className={manualClass} disabled={isBusy} onClick={() => checkIn.handleManualCheckIn(t, dist, approx)}>
+            I'm here anyway
+          </button>
+        )}
+        {canForceCheckIn && (
+          <button type="button" className={manualClass} disabled={isBusy} onClick={() => checkIn.handleForceCheckIn(t, dist)}>
+            Work Start anyway
+          </button>
+        )}
+        <button
+          type="button"
+          className={rescheduleClass}
+          disabled={isBusy}
+          onClick={() => { checkIn.setReschedulingTicketNo(t.ticketNo); checkIn.setRescheduleReason(""); }}
+        >
+          Reschedule
+        </button>
+      </div>
+    );
+  }
+
+  // No radius gate here, unlike "I'm Here" — the meaningful proof-of-
+  // presence already happened at check-in; requiring it again to close out
+  // just adds friction (GPS drift, stepping to the truck for a part)
+  // without verifying anything new.
+  return (
+    <div className={actionsClass}>
+      <button type="button" className={`${btnClass} mtech-home-onsite-btn-done`} disabled={isBusy} onClick={() => checkIn.handleImDone(t)}>
+        {isBusy ? "…" : "Work Done"}
+      </button>
+    </div>
+  );
+}
+
+// "Location / Ticket#" single-ticket On-Site Check-In card with Prev/Next
+// paging — auto-follows whichever ticket the technician is currently
+// closest to (see focusTickets/selectedTicketNo below), while Prev/Next
+// let them browse every one of today's tickets manually. Both buttons only
+// log a timestamped ticket comment (no status change) — this is a
+// lightweight arrival/completion record for monitoring, not a replacement
+// for the real completion flow (photos/parts/signature) technicians still
+// do from the ticket's own detail screen. Work Start/Work Done/Reschedule
+// themselves are shared with TicketsView's "Today" tab via
+// useOnSiteCheckIn/CheckInActionRow, so behavior can't drift between the
+// two surfaces.
+function HomeOnSiteCard({
+  tickets,
+  userName,
+  role,
+  profileId,
+  arrivedAt,
+  setArrivedAt,
+  doneAt,
+  setDoneAt,
+  checkinsLoaded,
+  checkinsLoadError,
+  onRetryCheckins,
+}: {
+  tickets: Ticket[];
+  userName: string;
+  role: string | null;
+  /** For attributing a Reschedule to the technician who made it (see
+   *  createOrUpdateTicketReschedule) — not needed by any of the existing
+   *  check-in writes, which key off userName/role instead. */
+  profileId: string | null;
+  /** Lifted to MobileTechApp (the top-level component) so the Tickets tab
+   * can show the same live Work Start/Work Done times this card records —
+   * see missingTimestampTicketNos and the ticket-card timestamp row in
+   * TicketsView. */
+  arrivedAt: Record<string, string>;
+  setArrivedAt: Dispatch<SetStateAction<Record<string, string>>>;
+  doneAt: Record<string, string>;
+  setDoneAt: Dispatch<SetStateAction<Record<string, string>>>;
+  /** False until onsite_arrived_at/onsite_done_at have been read back once.
+   * Gates the "Work Start" button so a not-yet-loaded ticket can't be
+   * re-checked-in over its real arrival time. */
+  checkinsLoaded: boolean;
+  /** First load never succeeded (after retries) — show a retry affordance
+   * instead of silently defaulting every ticket to "Work Start". */
+  checkinsLoadError: boolean;
+  onRetryCheckins: () => void;
+}) {
+  const visibleTickets = tickets;
+  const checkIn = useOnSiteCheckIn(visibleTickets, userName, role, profileId, arrivedAt, setArrivedAt, doneAt, setDoneAt, checkinsLoaded);
+
+  // Every ticket the technician can page through today, in priority order:
+  //   1. every ticket already checked in ("Work Start" tapped) but not yet
+  //      marked done — pinned regardless of distance so stepping away
+  //      mid-visit (a supply run) doesn't drop an open check-in;
+  //   2. every just-finished ticket ("Work Done" tapped) the tech is still
+  //      physically at — kept in place instead of instantly swapping to the
+  //      next ticket the moment Done is tapped, so packing up/writing notes
+  //      on-site doesn't feel like the app rushing them along. Drops off
+  //      once they've actually left the geofence, same radius as check-in;
+  //   3. everything else (not yet started), nearest-first — including a
+  //      ticket whose address won't geocode or whose distance can't be
+  //      measured yet (sorts last via Infinity), so it's still reachable
+  //      via Next rather than only ever the single closest one.
+  // The auto-follow effect below (selectedTicketNo) is what actually picks
+  // index 0 as the default/auto-jump target — this list itself never
+  // trims or hides anything, so Prev/Next can reach every one of today's
+  // tickets, not just whichever handful happened to be in range.
+  const focusTickets = useMemo(() => {
+    const notDone = visibleTickets.filter((t) => !doneAt[t.ticketNo]);
+    const withD = (t: Ticket) => ({ t, d: checkIn.distanceFor(t) });
+    const byDist = (a: { d: number | null }, b: { d: number | null }) =>
+      (a.d ?? Infinity) - (b.d ?? Infinity);
+
+    const inProgress = notDone.filter((t) => arrivedAt[t.ticketNo]);
+    const justDoneStillHere = visibleTickets.filter((t) => {
+      if (!doneAt[t.ticketNo]) return false;
+      const d = checkIn.distanceFor(t);
+      return checkIn.devSimulate || (d !== null && d <= checkIn.checkinRadiusMiles);
+    });
+    const notYetStarted = notDone
+      .filter((t) => !arrivedAt[t.ticketNo])
+      .map(withD)
+      .sort(byDist)
+      .map((x) => x.t);
+
+    const ordered = [...inProgress, ...justDoneStillHere, ...notYetStarted];
+    // A ticket could transiently satisfy more than one bucket above (e.g.
+    // right at the instant Done is tapped) — de-dupe while keeping this
+    // priority order, rather than showing the same ticket's page twice.
+    const seen = new Set<string>();
+    return ordered.filter((t) => (seen.has(t.ticketNo) ? false : (seen.add(t.ticketNo), true)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visibleTickets, checkIn.ticketPos, arrivedAt, doneAt, checkIn.devSimulate, checkIn.checkinRadiusMiles]);
+
+  // Which ticket's page is currently shown. Auto-follows focusTickets[0]
+  // (the nearest/most relevant, per the ranking above) — but not fighting
+  // a technician who just used Prev/Next to deliberately browse elsewhere;
+  // a 30s grace window after a manual nav lets the auto-follow catch up
+  // again once they've had a chance to look around.
+  const [selectedTicketNo, setSelectedTicketNo] = useState<string | null>(null);
+  const lastManualNavRef = useRef<number>(0);
+  useEffect(() => {
+    if (focusTickets.length === 0) { setSelectedTicketNo(null); return; }
+    const top = focusTickets[0].ticketNo;
+    setSelectedTicketNo((prev) => {
+      const prevStillValid = prev != null && focusTickets.some((t) => t.ticketNo === prev);
+      if (!prevStillValid) return top; // selection fell out of the list (done/removed) — re-anchor
+      const recentlyManual = Date.now() - lastManualNavRef.current < 30_000;
+      return recentlyManual || prev === top ? prev! : top;
+    });
+  }, [focusTickets]);
+  const selectedIndex = focusTickets.findIndex((t) => t.ticketNo === selectedTicketNo);
+  const currentTicket = selectedIndex >= 0 ? focusTickets[selectedIndex] : focusTickets[0] ?? null;
+  const goPrevTicket = () => {
+    if (selectedIndex <= 0) return;
+    lastManualNavRef.current = Date.now();
+    setSelectedTicketNo(focusTickets[selectedIndex - 1].ticketNo);
+  };
+  const goNextTicket = () => {
+    if (selectedIndex < 0 || selectedIndex >= focusTickets.length - 1) return;
+    lastManualNavRef.current = Date.now();
+    setSelectedTicketNo(focusTickets[selectedIndex + 1].ticketNo);
+  };
+
   // Offline-readiness progress — how many of today's tickets have a cached
-  // geocode yet (see the effect above, and cacheTicketGeocode/offlineQueue.ts).
-  // Once every visible ticket has one, the On-Site Check-In radius gate can
-  // run with zero network for all of them, not just whichever happened to
-  // resolve first — this is the one piece of "getting ready for offline"
-  // that genuinely progresses incrementally, so it's what the bar tracks.
-  const geocodeReadyCount = visibleTickets.filter((t) => ticketPos[t.ticketNo] !== undefined).length;
+  // geocode yet (see useOnSiteCheckIn's geocoding effect, and
+  // cacheTicketGeocode/offlineQueue.ts). Once every visible ticket has one,
+  // the On-Site Check-In radius gate can run with zero network for all of
+  // them, not just whichever happened to resolve first.
+  const geocodeReadyCount = visibleTickets.filter((t) => checkIn.ticketPos[t.ticketNo] !== undefined).length;
   const geocodeTotal = visibleTickets.length;
   const offlineReady = geocodeTotal > 0 && geocodeReadyCount === geocodeTotal;
 
@@ -5158,69 +5442,48 @@ function HomeOnSiteCard({
           </div>
         </div>
       )}
-      {focusTickets.length === 0 ? (
+      {focusTickets.length === 0 || !currentTicket ? (
         <div className="mtech-home-onsite-empty">
           {visibleTickets.length === 0 ? "No active tickets to check into right now." : "Locating nearby tickets…"}
         </div>
-      ) : (
-      <div className="mtech-home-onsite-list">
-        {focusTickets.length > 1 && (
-          <div className="mtech-home-onsite-hint">More than one address is within range — pick the ticket you're actually at.</div>
-        )}
-        {focusTickets.map((t) => {
-          const dist = distanceFor(t);
-          const pos = ticketPos[t.ticketNo];
-          const geocoded = pos != null;
-          // An approximate anchor (street / city / ZIP centroid, or a fuzzy
-          // provider match) can be a mile+ from the real building, so it
-          // never hard-passes the geofence — those go through the manual
-          // override, same as an address that wouldn't geocode at all.
-          const approx = pos?.approximate === true;
-          const inRadius =
-            devSimulate || (dist !== null && !approx && dist <= checkinRadiusMiles);
-          const hereAt = arrivedAt[t.ticketNo];
-          const finishedAt = doneAt[t.ticketNo];
-          const isBusy = busy === t.ticketNo;
-          // Real onsite_arrived_at/onsite_done_at not read back yet this
-          // session — hereAt/finishedAt being blank here means "unknown",
-          // not "never checked in", so no check-in action can be offered.
-          const stateUnknown = !checkinsLoaded;
-          const pending = !stateUnknown && !inRadius && !hereAt && !finishedAt;
-          // Refining the fix (real-GPS one-shot in flight) and still only
-          // holding a coarse position — "1.2 mi away" from a cell-tower fix
-          // is noise, so say we're still locating rather than show it. Not
-          // for approximate anchors: a sharper fix can't help there.
-          // Once we've been stuck a while, or the fix is plainly cell-tower-
-          // grade (accuracy worse than ~1 km), a sharper GPS fix isn't coming
-          // — stop cycling "Getting precise location…" and let the fallback
-          // buttons sit still.
-          const fixIsCoarse = fixAccuracyM != null && fixAccuracyM > 1000;
-          const gpsGivenUp = stuckMode || fixIsCoarse;
-          const locating =
-            pending && refiningFix && !preciseFresh && geocoded && !approx && !gpsGivenUp;
-          // Manual "I'm here anyway" — offered while the automatic check is
-          // failing but the tech is plausibly on site: no usable geocode, an
-          // approximate-only anchor, or a precise point within the cap.
-          const canManual =
-            pending && !locating &&
-            (!geocoded || approx || (dist !== null && dist <= ON_SITE_CHECKIN_MANUAL_OVERRIDE_MAX_MILES));
-          // Beyond the 3-mi override window the address DID geocode, so the
-          // distance is real — but a real 5-mi gap with a "precise" fix is
-          // almost always the address pin being wrong, not the tech being
-          // 5 miles away. Offer the heavier-friction check-in as soon as
-          // there's a settled precise fix to report (i.e. not still
-          // `locating`) — no separate "GPS gave up" wait. Its own two
-          // confirmations + "NOT GPS-verified" ticket flag are the guard.
-          // Reported: a tech physically on site at a mis-geocoded address
-          // with a dead greyed "Work Start" and no override in sight.
-          const canForceCheckIn =
-            pending && !locating && !canManual && geocoded && !approx;
-          return (
+      ) : (() => {
+        const t = currentTicket;
+        const dist = checkIn.distanceFor(t);
+        const pos = checkIn.ticketPos[t.ticketNo];
+        const geocoded = pos != null;
+        const approx = pos?.approximate === true;
+        const hereAt = arrivedAt[t.ticketNo];
+        const finishedAt = doneAt[t.ticketNo];
+        const stateUnknown = !checkinsLoaded;
+        const inRadius = checkIn.devSimulate || (dist !== null && !approx && dist <= checkIn.checkinRadiusMiles);
+        const pending = !stateUnknown && !inRadius && !hereAt && !finishedAt;
+        const fixIsCoarse = checkIn.fixAccuracyM != null && checkIn.fixAccuracyM > 1000;
+        const gpsGivenUp = checkIn.stuckMode || fixIsCoarse;
+        const locating = pending && checkIn.refiningFix && !checkIn.preciseFresh && geocoded && !approx && !gpsGivenUp;
+        const reschedule = checkIn.reschedulesByTicketNo.get(`${t.ticketNo}|${t.schedule}`);
+        return (
+          <div className="mtech-home-onsite-list">
+            {focusTickets.length > 1 && (
+              <div className="mtech-home-onsite-pager">
+                <button type="button" className="mtech-home-onsite-pager-btn" disabled={selectedIndex <= 0} onClick={goPrevTicket} aria-label="Previous ticket">
+                  ‹
+                </button>
+                <span className="mtech-home-onsite-pager-count">{selectedIndex + 1} of {focusTickets.length}</span>
+                <button type="button" className="mtech-home-onsite-pager-btn" disabled={selectedIndex >= focusTickets.length - 1} onClick={goNextTicket} aria-label="Next ticket">
+                  ›
+                </button>
+              </div>
+            )}
             <div key={t.ticketNo} className={`mtech-home-onsite-row${pending ? " mtech-home-onsite-row--pending" : ""}`}>
               <div className="mtech-home-onsite-info">
                 <span className="mtech-home-onsite-location">{resolveLocation(t)}</span>
-                <span className="mtech-home-onsite-ticket">{t.ticketNo}</span>
-                {hereAt || finishedAt ? (
+                <span className="mtech-home-onsite-ticket">
+                  {t.ticketNo}
+                  {reschedule && <span className="mtech-home-onsite-resched-badge">Resched</span>}
+                </span>
+                {reschedule ? (
+                  <span className="mtech-home-onsite-resched-reason">{reschedule.reason}</span>
+                ) : hereAt || finishedAt ? (
                   <span className="mtech-home-onsite-times">
                     {hereAt && `Here ${hereAt}`}
                     {hereAt && finishedAt && "  ·  "}
@@ -5244,76 +5507,28 @@ function HomeOnSiteCard({
                   )
                 )}
               </div>
-              {!finishedAt && (
-                !hereAt ? (
-                  <div className="mtech-home-onsite-actions">
-                    <button
-                      type="button"
-                      className="mtech-home-onsite-btn"
-                      disabled={stateUnknown || !inRadius || isBusy || locating}
-                      onClick={() => handleImHere(t)}
-                    >
-                      {stateUnknown ? "Checking status…" : isBusy ? "…" : locating ? "Locating…" : "Work Start"}
-                    </button>
-                    {canManual && (
-                      <button
-                        type="button"
-                        className="mtech-home-onsite-btn mtech-home-onsite-btn--manual"
-                        disabled={isBusy}
-                        onClick={() => handleManualCheckIn(t, dist, approx)}
-                      >
-                        I'm here anyway
-                      </button>
-                    )}
-                    {canForceCheckIn && (
-                      <button
-                        type="button"
-                        className="mtech-home-onsite-btn mtech-home-onsite-btn--manual"
-                        disabled={isBusy}
-                        onClick={() => handleForceCheckIn(t, dist)}
-                      >
-                        Work Start anyway
-                      </button>
-                    )}
-                  </div>
-                ) : (
-                  // No radius gate here, unlike "I'm Here" — the meaningful
-                  // proof-of-presence already happened at check-in; requiring
-                  // it again to close out just adds friction (GPS drift,
-                  // stepping to the truck for a part) without verifying
-                  // anything new.
-                  <button
-                    type="button"
-                    className="mtech-home-onsite-btn mtech-home-onsite-btn-done"
-                    disabled={isBusy}
-                    onClick={() => handleImDone(t)}
-                  >
-                    {isBusy ? "…" : "Work Done"}
-                  </button>
-                )
-              )}
+              <CheckInActionRow t={t} checkIn={checkIn} />
             </div>
-          );
-        })}
-      </div>
-      )}
+          </div>
+        );
+      })()}
       <div className="mtech-home-onsite-hint">Work Start unlocks once your phone's GPS puts you at the customer's address (roughly within a few hundred metres, allowing for GPS and map accuracy).</div>
       <div className="mtech-home-onsite-status-row">
-        <span className={`mtech-home-onsite-status ${consentConfirmed ? "is-ok" : "is-bad"}`}>
-          {consentConfirmed ? <Check className="h-3 w-3" /> : <X className="h-3 w-3" />} Consent
+        <span className={`mtech-home-onsite-status ${checkIn.consentConfirmed ? "is-ok" : "is-bad"}`}>
+          {checkIn.consentConfirmed ? <Check className="h-3 w-3" /> : <X className="h-3 w-3" />} Consent
         </span>
-        <span className={`mtech-home-onsite-status ${sharingActive ? "is-ok" : "is-bad"}`}>
-          {sharingActive ? <Check className="h-3 w-3" /> : <X className="h-3 w-3" />} Sharing Location
+        <span className={`mtech-home-onsite-status ${checkIn.sharingActive ? "is-ok" : "is-bad"}`}>
+          {checkIn.sharingActive ? <Check className="h-3 w-3" /> : <X className="h-3 w-3" />} Sharing Location
         </span>
       </div>
-      {sharingReason && <div className="mtech-home-onsite-hint">{sharingReason}</div>}
+      {checkIn.sharingReason && <div className="mtech-home-onsite-hint">{checkIn.sharingReason}</div>}
       {import.meta.env.DEV && (
         <button
           type="button"
           className="mtech-home-onsite-devbtn"
-          onClick={() => setDevSimulate((v) => !v)}
+          onClick={() => checkIn.setDevSimulate((v) => !v)}
         >
-          {devSimulate ? "✓ " : ""}Dev: simulate in-radius (local only)
+          {checkIn.devSimulate ? "✓ " : ""}Dev: simulate in-radius (local only)
         </button>
       )}
     </div>
@@ -5690,6 +5905,7 @@ function MobileHomeView({
           tickets={activeTickets}
           userName={userName}
           role={role}
+          profileId={profileId}
           arrivedAt={arrivedAt}
           setArrivedAt={setArrivedAt}
           doneAt={doneAt}

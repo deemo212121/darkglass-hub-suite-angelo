@@ -20,6 +20,7 @@ import { getVisitDiagnosisByTicketIds } from "@/lib/supabase/tickets";
 import { getMileageEntries, setMileageEstimateTime, type MileageEntry } from "@/lib/supabase/mileage";
 import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
 import { getCompanyEmployeeRequests } from "@/lib/supabase/employeeRequests";
+import { getCompanyTicketReschedules, type TicketRescheduleRow } from "@/lib/supabase/ticketReschedules";
 import { ATTENDANCE_GRACE_MINUTES, toSeconds } from "@/lib/attendanceGrace";
 
 /**
@@ -39,6 +40,24 @@ function timeOutStatus(timeOut: string | null, requiredCheckOut: string | null):
   if (deltaSeconds < -graceSeconds) return "undertime";
   return "ok";
 }
+/** How far past/before the scheduled check-out Time Out landed — the raw
+ *  magnitude timeOutStatus's own overtime/undertime split is based on,
+ *  surfaced separately so the Overtime/Undertime label can show "how much"
+ *  (see formatDeltaHM) alongside "which direction". */
+function timeOutDeltaSeconds(timeOut: string | null, requiredCheckOut: string | null): number | null {
+  if (!timeOut || !requiredCheckOut) return null;
+  return toSeconds(timeOut) - toSeconds(requiredCheckOut);
+}
+/** "5:00" — hours:minutes, zero-padded, always non-negative (callers pass
+ *  an already-signed delta and only render this for overtime/undertime,
+ *  where the direction is already conveyed by the Overtime/Undertime label
+ *  itself, not by a +/- sign here). */
+function formatDeltaHM(seconds: number): string {
+  const totalMinutes = Math.max(0, Math.round(Math.abs(seconds) / 60));
+  const h = Math.floor(totalMinutes / 60);
+  const m = totalMinutes % 60;
+  return `${h}:${String(m).padStart(2, "0")}`;
+}
 const TIME_OUT_STATUS_LABEL: Record<TimeOutStatus, string> = { ok: "OK", overtime: "Overtime", undertime: "Undertime" };
 const TIME_OUT_STATUS_CLASS: Record<TimeOutStatus, string> = {
   ok: "border-emerald-400/30 bg-emerald-400/10 text-emerald-300",
@@ -56,6 +75,10 @@ export function TicketAttendanceTab() {
   const [expandedTech, setExpandedTech] = useState<string | null>(null);
   const [timecards, setTimecards] = useState<CompanyTimecardEntry[]>([]);
   const [diagnoses, setDiagnoses] = useState<Map<string, string>>(new Map());
+  // Keyed by `${ticketId}|${workDate}` — a technician's own "Reschedule"
+  // flag (migration 0215) takes priority over the diagnosis waterfall
+  // below, since it directly explains why there's no diagnosis.
+  const [reschedules, setReschedules] = useState<Map<string, TicketRescheduleRow>>(new Map());
   const [employees, setEmployees] = useState<ProfileRow[]>([]);
   const [disputedTicketNosApproved, setDisputedTicketNosApproved] = useState<Set<string>>(new Set());
   const [mileageEntries, setMileageEntries] = useState<MileageEntry[]>([]);
@@ -74,10 +97,13 @@ export function TicketAttendanceTab() {
         setTimecards(tc);
         // Diagnosis text isn't needed to render the tab at all — fetched
         // separately so a slow/failed lookup never blocks the rows/times
-        // that ARE already back.
+        // that ARE already back. Same for reschedule reasons.
         getVisitDiagnosisByTicketIds(ticketRows.map((r) => r.ticketId))
           .then(setDiagnoses)
           .catch((err) => console.error("Failed to load ticket diagnoses:", err));
+        getCompanyTicketReschedules(dateFrom, dateTo)
+          .then((rescheduleRows) => setReschedules(new Map(rescheduleRows.map((r) => [`${r.ticketId}|${r.workDate}`, r]))))
+          .catch((err) => console.error("Failed to load ticket reschedules:", err));
       })
       .catch((err) => console.error("Failed to load ticket attendance:", err))
       .finally(() => setLoading(false));
@@ -256,6 +282,7 @@ export function TicketAttendanceTab() {
     const AMBER = "#b45309";
     const BLUE = "#2563eb";
     const GRAY = "#64748b";
+    const SKY = "#0369a1";
 
     const summaryHeaders = ["Technician", "Location", "Time In", "Time Out", "Alert", "Scheduled", "Checked In", "Missing Check-In", "Missing Check-Out"];
     const ticketHeaders = ["#", "Ticket", "Status", "Address", "Estimate Time", "Arrived", "Done", "Mileage (mi)", "Map Link", "Diagnosis"];
@@ -267,12 +294,16 @@ export function TicketAttendanceTab() {
     const perTech = byTechnician.map((t) => {
       const outStatus = timeOutStatus(t.timeOut, t.requiredCheckOut);
       const outStatusColor = outStatus === "overtime" ? AMBER : outStatus === "undertime" ? RED : outStatus === "ok" ? GREEN : GRAY;
+      const outDeltaSeconds = timeOutDeltaSeconds(t.timeOut, t.requiredCheckOut);
+      const outStatusText = outStatus
+        ? `${TIME_OUT_STATUS_LABEL[outStatus]}${outStatus !== "ok" && outDeltaSeconds != null ? ` ${formatDeltaHM(outDeltaSeconds)} hours` : ""}`
+        : "—";
       const summary: CellDesc[] = [
         cell(t.technician, { bold: true }),
         cell(t.branch || "—", { color: t.branch ? undefined : GRAY }),
         cell(t.timeIn || "—", { color: t.timeIn ? GREEN : GRAY }),
         cell(t.timeOut || "—", { color: t.timeOut ? RED : GRAY }),
-        cell(outStatus ? TIME_OUT_STATUS_LABEL[outStatus] : "—", { color: outStatusColor, bold: !!outStatus && outStatus !== "ok" }),
+        cell(outStatusText, { color: outStatusColor, bold: !!outStatus && outStatus !== "ok" }),
         cell(t.scheduled, { align: "right" }),
         cell(t.checkedIn, { color: GREEN, align: "right" }),
         cell(t.missingCheckIn, { color: t.missingCheckIn > 0 ? RED : GRAY, bold: t.missingCheckIn > 0, align: "right" }),
@@ -285,11 +316,14 @@ export function TicketAttendanceTab() {
         const mEntry = mileageByTicketNo.get(r.ticketNo);
         if (mEntry?.legMileage != null) totalMileage += mEntry.legMileage;
         const diagnosis = diagnoses.get(r.ticketId) || "";
+        const reschedule = reschedules.get(`${r.ticketId}|${r.scheduleDate}`);
         const dayHasPassed = r.scheduleDate < todayISO;
         const didNotGo = !diagnosis && !r.arrivedAt && dayHasPassed && r.statusGroup !== "cancelled";
         const noDiagnosisFound = !diagnosis && !!r.arrivedAt;
-        const diagnosisText = diagnosis || (didNotGo ? "DID NOT GO" : noDiagnosisFound ? "NO DIAGNOSIS FOUND" : "—");
-        const diagnosisColor = diagnosis ? undefined : didNotGo ? RED : noDiagnosisFound ? AMBER : GRAY;
+        const diagnosisText = reschedule
+          ? `RESCHEDULED: ${reschedule.reason}`
+          : diagnosis || (didNotGo ? "DID NOT GO" : noDiagnosisFound ? "NO DIAGNOSIS FOUND" : "—");
+        const diagnosisColor = reschedule ? SKY : diagnosis ? undefined : didNotGo ? RED : noDiagnosisFound ? AMBER : GRAY;
         const isDisputed = disputedTicketNosApproved.has(r.ticketNo);
         const arrivedText = r.arrivedAt
           ? new Date(r.arrivedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
@@ -317,7 +351,7 @@ export function TicketAttendanceTab() {
           cell(doneText, { color: doneColor }),
           cell(mEntry?.legMileage != null ? mEntry.legMileage.toFixed(1) : "—", { align: "right" }),
           cell(mEntry?.googleMapLink || "—", { color: mEntry?.googleMapLink ? BLUE : GRAY }),
-          cell(diagnosisText, { color: diagnosisColor, bold: !diagnosis && (didNotGo || noDiagnosisFound) }),
+          cell(diagnosisText, { color: diagnosisColor, bold: !!reschedule || (!diagnosis && (didNotGo || noDiagnosisFound)) }),
         ];
         row.forEach((c, ci) => track(ticketWidths, ci, c.text));
         return row;
@@ -448,6 +482,7 @@ export function TicketAttendanceTab() {
                         {(() => {
                           const status = timeOutStatus(t.timeOut, t.requiredCheckOut);
                           if (!status) return null;
+                          const deltaSeconds = timeOutDeltaSeconds(t.timeOut, t.requiredCheckOut);
                           return (
                             <span
                               className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${TIME_OUT_STATUS_CLASS[status]}`}
@@ -460,6 +495,7 @@ export function TicketAttendanceTab() {
                               }
                             >
                               {TIME_OUT_STATUS_LABEL[status]}
+                              {status !== "ok" && deltaSeconds != null && ` ${formatDeltaHM(deltaSeconds)} hours`}
                             </span>
                           );
                         })()}
@@ -510,6 +546,7 @@ export function TicketAttendanceTab() {
                                   {dateRows.map((r, i) => {
                                     const mEntry = mileageByTicketNo.get(r.ticketNo);
                                     const diagnosis = diagnoses.get(r.ticketId);
+                                    const reschedule = reschedules.get(`${r.ticketId}|${r.scheduleDate}`);
                                     // No Cause of Failure recorded (mobile app's required "CAUSE OF
                                     // FAILURE (TECH)" field, per visit). Two distinct empty-diagnosis
                                     // cases: never arrived at all (once the scheduled day has fully
@@ -604,7 +641,15 @@ export function TicketAttendanceTab() {
                                           )}
                                         </td>
                                         <td className="px-2 py-1.5 max-w-[220px]">
-                                          {diagnosis ? (
+                                          {reschedule ? (
+                                            <div className="relative group inline-block max-w-full align-top">
+                                              <span className="block truncate text-sky-300 font-semibold cursor-default">RESCHEDULED: {reschedule.reason}</span>
+                                              <div className="pointer-events-none absolute left-0 bottom-full z-50 mb-1.5 w-72 max-w-[min(24rem,80vw)] rounded-lg border border-white/15 bg-slate-950 px-3 py-2 text-[11px] leading-relaxed text-slate-200 shadow-2xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-opacity whitespace-normal">
+                                                <p className="text-[9px] font-semibold uppercase tracking-wide text-sky-400 mb-1">Rescheduled by {reschedule.createdByName || "technician"} — {r.ticketNo}</p>
+                                                {reschedule.reason}
+                                              </div>
+                                            </div>
+                                          ) : diagnosis ? (
                                             <div className="relative group inline-block max-w-full align-top">
                                               <span className="block truncate text-slate-400 cursor-default">{diagnosis}</span>
                                               <div className="pointer-events-none absolute left-0 bottom-full z-50 mb-1.5 w-72 max-w-[min(24rem,80vw)] rounded-lg border border-white/15 bg-slate-950 px-3 py-2 text-[11px] leading-relaxed text-slate-200 shadow-2xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-opacity whitespace-normal">

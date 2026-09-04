@@ -5362,6 +5362,129 @@ a.mtech-phone-link:active { opacity: 0.7; }
   color: #94a3b8;
   border-color: rgba(148, 163, 184, 0.4);
 }
+.mtech-home-onsite-pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  padding: 0.4rem 0.9rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+.mtech-home-onsite-pager-btn {
+  appearance: none;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #fff;
+  width: 28px;
+  height: 28px;
+  font-size: 1rem;
+  font-weight: 700;
+  cursor: pointer;
+  line-height: 1;
+}
+.mtech-home-onsite-pager-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+.mtech-home-onsite-pager-count {
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.75);
+  min-width: 4.5rem;
+  text-align: center;
+}
+.mtech-home-onsite-resched-badge {
+  display: inline-block;
+  margin-left: 0.4rem;
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  font-size: 0.6rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: rgba(56, 189, 248, 0.18);
+  color: #38bdf8;
+  border: 1px solid rgba(56, 189, 248, 0.4);
+  vertical-align: middle;
+}
+.mtech-home-onsite-resched-reason {
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: #7dd3fc;
+  margin-top: 0.2rem;
+}
+.mtech-home-onsite-btn--reschedule {
+  padding: 0.3rem 0.7rem;
+  font-size: 0.66rem;
+  font-weight: 600;
+  background: transparent;
+  color: #38bdf8;
+  border: 1px solid rgba(56, 189, 248, 0.45);
+}
+.mtech-home-onsite-btn--reschedule:disabled {
+  background: transparent;
+  color: #94a3b8;
+  border-color: rgba(148, 163, 184, 0.4);
+}
+.mtech-home-onsite-resched-form {
+  align-items: stretch;
+  width: 100%;
+  max-width: 220px;
+}
+.mtech-home-onsite-resched-input {
+  width: 100%;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.06);
+  color: #fff;
+  font-size: 0.72rem;
+  font-family: inherit;
+  padding: 0.4rem 0.5rem;
+  resize: none;
+}
+.mtech-home-onsite-resched-form-actions {
+  display: flex;
+  gap: 0.4rem;
+}
+/* Uniform variant — TicketsView's "Today" tab passes uniform to
+   CheckInActionRow so up to 3 buttons (Work Start / a manual-override
+   variant / Reschedule) sit in one row, all the same width and height,
+   instead of Home's single-card column stack with a bigger primary
+   button. Declared after the base/--manual/--reschedule rules above so
+   its padding/font-size/min-height win regardless of which other classes
+   a given button also carries. */
+.mtech-home-onsite-actions--uniform {
+  flex-direction: row;
+  align-items: stretch;
+  flex-wrap: wrap;
+  width: 100%;
+}
+.mtech-home-onsite-btn--uniform {
+  flex: 1 1 0;
+  min-width: 4.2rem;
+  min-height: 2.6rem;
+  padding: 0.4rem 0.4rem;
+  font-size: 0.66rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  white-space: normal;
+  line-height: 1.15;
+}
+.mtech-ticket-card-group {
+  display: flex;
+  flex-direction: column;
+}
+.mtech-ticket-card-checkin {
+  margin-top: -0.4rem;
+  padding: 0.6rem;
+  border-radius: 0 0 14px 14px;
+  background: var(--mt-surface-inset);
+  border: 1px solid var(--mt-surface-border);
+  border-top: none;
+}
 .mtech-home-divider {
   height: 1px;
   background: #e2e8f0;
@@ -11576,6 +11699,129 @@ a.mtech-phone-link:active { opacity: 0.7; }
   background: transparent;
   color: #94a3b8;
   border-color: rgba(148, 163, 184, 0.4);
+}
+.mtech-home-onsite-pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  padding: 0.4rem 0.9rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+.mtech-home-onsite-pager-btn {
+  appearance: none;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #fff;
+  width: 28px;
+  height: 28px;
+  font-size: 1rem;
+  font-weight: 700;
+  cursor: pointer;
+  line-height: 1;
+}
+.mtech-home-onsite-pager-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+.mtech-home-onsite-pager-count {
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.75);
+  min-width: 4.5rem;
+  text-align: center;
+}
+.mtech-home-onsite-resched-badge {
+  display: inline-block;
+  margin-left: 0.4rem;
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  font-size: 0.6rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: rgba(56, 189, 248, 0.18);
+  color: #38bdf8;
+  border: 1px solid rgba(56, 189, 248, 0.4);
+  vertical-align: middle;
+}
+.mtech-home-onsite-resched-reason {
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: #7dd3fc;
+  margin-top: 0.2rem;
+}
+.mtech-home-onsite-btn--reschedule {
+  padding: 0.3rem 0.7rem;
+  font-size: 0.66rem;
+  font-weight: 600;
+  background: transparent;
+  color: #38bdf8;
+  border: 1px solid rgba(56, 189, 248, 0.45);
+}
+.mtech-home-onsite-btn--reschedule:disabled {
+  background: transparent;
+  color: #94a3b8;
+  border-color: rgba(148, 163, 184, 0.4);
+}
+.mtech-home-onsite-resched-form {
+  align-items: stretch;
+  width: 100%;
+  max-width: 220px;
+}
+.mtech-home-onsite-resched-input {
+  width: 100%;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.06);
+  color: #fff;
+  font-size: 0.72rem;
+  font-family: inherit;
+  padding: 0.4rem 0.5rem;
+  resize: none;
+}
+.mtech-home-onsite-resched-form-actions {
+  display: flex;
+  gap: 0.4rem;
+}
+/* Uniform variant — TicketsView's "Today" tab passes uniform to
+   CheckInActionRow so up to 3 buttons (Work Start / a manual-override
+   variant / Reschedule) sit in one row, all the same width and height,
+   instead of Home's single-card column stack with a bigger primary
+   button. Declared after the base/--manual/--reschedule rules above so
+   its padding/font-size/min-height win regardless of which other classes
+   a given button also carries. */
+.mtech-home-onsite-actions--uniform {
+  flex-direction: row;
+  align-items: stretch;
+  flex-wrap: wrap;
+  width: 100%;
+}
+.mtech-home-onsite-btn--uniform {
+  flex: 1 1 0;
+  min-width: 4.2rem;
+  min-height: 2.6rem;
+  padding: 0.4rem 0.4rem;
+  font-size: 0.66rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  white-space: normal;
+  line-height: 1.15;
+}
+.mtech-ticket-card-group {
+  display: flex;
+  flex-direction: column;
+}
+.mtech-ticket-card-checkin {
+  margin-top: -0.4rem;
+  padding: 0.6rem;
+  border-radius: 0 0 14px 14px;
+  background: var(--mt-surface-inset);
+  border: 1px solid var(--mt-surface-border);
+  border-top: none;
 }
 .mtech-home-divider {
   height: 1px;
