@@ -58,7 +58,7 @@ import { getMyPayslips, payslipStatusLabel, type MyPayslipRow } from "@/lib/supa
 import { getMyProfileSchedule, getMonthEntries, getCompanyTimecardEntries, saveEntry as saveTimecardEntry, savePunch, resolveScheduledShiftHours, type UITimeEntry, type CompanyTimecardEntry } from "@/lib/supabase/timecards";
 import { visibleAttendanceProfileIds } from "@/lib/notifyRouting";
 import { getCsrTeamComposition, type CsrTeamComposition } from "@/lib/supabase/csrTeams";
-import { isAttendanceManagerTierRole, normalizeRole, ROLE_LABELS, TECHNICIAN_PAY_ROLES } from "@/lib/roleLabels";
+import { isAttendanceFullAccessRole, isAttendanceManagerTierRole, normalizeRole, ROLE_LABELS, TECHNICIAN_PAY_ROLES } from "@/lib/roleLabels";
 import { LOCATIONS } from "@/lib/locations";
 import { timezoneForBranch, nowInTimezone } from "@/lib/attendanceGrace";
 import { getServerNow, zonedDateKey, zonedTimeString, zonedWallClockToUtcIso, TIME_ZONES, type ScheduleTimezone } from "@/lib/serverTime";
@@ -659,22 +659,23 @@ export function MobileTechApp() {
     return () => { cancelled = true; };
   }, [profileId]);
 
-  // Load real company users (for the manager technician roster) plus CSR
-  // team composition, needed by visibleAttendanceProfileIds below to scope
-  // a CSR team leader's roster to their own team. Techs don't need any of
-  // this, so only fetch for non-self roles.
+  // Load real company users — the manager technician roster needs it, and a
+  // plain self-role Technician can still be a working lead (techs pointing
+  // at them via profiles.manager_name), so we fetch it for them too to
+  // decide whether to offer the "my team" drill-in. CSR team composition
+  // (for visibleAttendanceProfileIds' CSR-team scoping) is only relevant to
+  // manager-tier roles, so that half stays gated.
   useEffect(() => {
-    if (isSelfRole) return;
     let cancelled = false;
     (async () => {
       try {
-        const [rows, composition] = await Promise.all([
-          getCompanyUsers(),
-          getCsrTeamComposition().catch(() => null),
-        ]);
+        const rows = await getCompanyUsers();
         if (cancelled) return;
         setUsers(rows);
-        setCsrComposition(composition);
+        if (!isSelfRole) {
+          const composition = await getCsrTeamComposition().catch(() => null);
+          if (!cancelled) setCsrComposition(composition);
+        }
       } catch (e) {
         console.error("Mobile: failed to load users", e);
         if (!cancelled) setUsers([]);
@@ -685,8 +686,63 @@ export function MobileTechApp() {
     };
   }, [isSelfRole]);
 
-  // The technician name we're scoping to: self for techs, selected for managers.
-  const scopeTech = isSelfRole ? displayName || email || "" : selectedTech;
+  const ownName = displayName || email || "";
+  const normName = (s: string | null | undefined) =>
+    String(s ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+
+  // Technicians shown in the "my team" drill-in, most-permissive first:
+  //  1. Admin / SuperAdmin / HR / Finance — every active technician
+  //     company-wide (visibleAttendanceProfileIds returns null for them).
+  //     Checked first so it wins even if the account also holds a
+  //     Technician extra-role.
+  //  2. A plain self-role Technician who's a working LEAD but not a manager
+  //     tier — the technicians whose profiles.manager_name points at them,
+  //     so a lead can track a report's day without being promoted.
+  //  3. Manager-tier roles (Branch/Senior Branch Manager, Parts, Technician
+  //     Manager, CSR Manager/Team Leader, ...) — the same attendance-scoped
+  //     set Attendance Monitoring uses (own direct reports + Parts-branch
+  //     techs). Fails closed if role resolution is unclear.
+  const roster = useMemo(() => {
+    if (users.length === 0) return [] as Array<{ name: string; branch: string }>;
+    const toRow = (u: ProfileRow) => ({ name: u.display_name || u.username || u.email, branch: u.assigned_branch || "" });
+    const isTech = (u: ProfileRow) => u.is_active && TECHNICIAN_PAY_ROLES.has(normalizeRole(u.role));
+    const sortByName = (a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name);
+
+    if (isAttendanceFullAccessRole(role, extraRoles)) {
+      return users.filter(isTech).map(toRow).sort(sortByName);
+    }
+
+    if (isSelfRole && !isAttendanceManagerTierRole(role, extraRoles)) {
+      const me = users.find((u) => u.id === profileId);
+      const myDisplay = normName(me?.display_name || ownName);
+      if (!myDisplay) return [];
+      return users
+        .filter((u) => isTech(u) && u.id !== profileId && normName(u.manager_name) === myDisplay)
+        .map(toRow)
+        .sort(sortByName);
+    }
+
+    const myProfile = users.find((u) => u.id === profileId) ?? null;
+    const scoped = myProfile ? visibleAttendanceProfileIds(myProfile, users, csrComposition) : new Set<string>();
+    return users
+      .filter((u) => isTech(u) && (scoped === null || scoped.has(u.id)))
+      .map(toRow)
+      .sort(sortByName);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [users, profileId, csrComposition, isSelfRole, role, extraRoles, ownName]);
+
+  // A self-role Technician who's also a working lead can drill into one of
+  // their direct reports (see the `roster` memo below) to track that
+  // person's tickets/route for the day. `viewingReport` is true only while
+  // that report is one of their CURRENT reports — a stale persisted
+  // selectedTech (report reassigned, or roster not loaded yet) falls back
+  // to their own day rather than mis-scoping.
+  const viewingReport =
+    isSelfRole && !!selectedTech && roster.some((r) => normName(r.name) === normName(selectedTech));
+
+  // The technician name we're scoping to: self for techs (or the report a
+  // lead drilled into), the selected technician for managers.
+  const scopeTech = isSelfRole ? (viewingReport ? selectedTech! : ownName) : selectedTech;
 
   const myTickets = useMemo(() => {
     if (!scopeTech) return [];
@@ -873,31 +929,6 @@ export function MobileTechApp() {
   // that matches today exactly, which would otherwise leave this feature
   // with nothing to show even when there's real work to check into.
   const activeTickets = useMemo(() => myTickets.filter((t) => !isDone(t.status)), [myTickets]);
-
-  // Technician roster for managers — real technician-tier users from
-  // Supabase (any TECHNICIAN_PAY_ROLES tier, not just plain "Technician",
-  // so Technical Director/Assistant Director show up too), scoped with the
-  // same rule Attendance Monitoring uses: Admin/SuperAdmin/HR/Finance see
-  // every technician company-wide (visibleAttendanceProfileIds returns null
-  // for them); a Branch Manager and every other manager-tier role (Senior
-  // Branch Manager, Parts, Technician Manager, CSR Manager/Team Leader,
-  // ...) see only their own direct reports (by manager_name) plus, for
-  // Parts specifically, every technician at their own branch. Anyone else
-  // sees only themselves — fails closed, not open, if role resolution is
-  // ever unclear.
-  const roster = useMemo(() => {
-    const myProfile = users.find((u) => u.id === profileId) ?? null;
-    const scoped = myProfile ? visibleAttendanceProfileIds(myProfile, users, csrComposition) : new Set<string>();
-    const inScope = users.filter(
-      (u) => u.is_active && (scoped === null || scoped.has(u.id)) && TECHNICIAN_PAY_ROLES.has(normalizeRole(u.role))
-    );
-    return inScope
-      .map((u) => ({
-        name: u.display_name || u.username || u.email,
-        branch: u.assigned_branch || "",
-      }))
-      .sort((a, b) => a.name.localeCompare(b.name));
-  }, [users, profileId, csrComposition]);
 
   const visibleTickets = useMemo(() => {
     let list = tab === "today" ? todaysTickets : myTickets;
@@ -1089,8 +1120,11 @@ export function MobileTechApp() {
         {view === "roster" && (
           <RosterView
             roster={roster}
+            // A self-role lead gets a "back to my own day" row at the top;
+            // picking it (or their own name) clears the report scope.
+            ownName={isSelfRole ? ownName : undefined}
             onSelect={(tech) => {
-              setSelectedTech(tech);
+              setSelectedTech(isSelfRole && normName(tech) === normName(ownName) ? null : tech);
               setTab("today");
               setView("tickets");
             }}
@@ -1115,6 +1149,9 @@ export function MobileTechApp() {
             isSelfRole={isSelfRole}
             roster={roster}
             onSelectTech={setSelectedTech}
+            viewingReport={viewingReport}
+            onOpenTeam={() => setView("roster")}
+            onBackToOwn={() => { setSelectedTech(null); setTab("today"); }}
           />
         )}
 
@@ -1256,6 +1293,8 @@ export function MobileTechApp() {
             checkinsLoaded={checkinsLoaded}
             checkinsLoadError={checkinsLoadError && !checkinsLoaded}
             onRetryCheckins={() => { setCheckinsLoadError(false); setCheckinsReloadNonce((n) => n + 1); }}
+            viewingReportName={viewingReport ? scopeTech : null}
+            onExitReport={() => { setSelectedTech(null); setTab("today"); }}
           />
         )}
 
@@ -1624,13 +1663,35 @@ function BottomNav({
 function RosterView({
   roster,
   onSelect,
+  ownName,
 }: {
   roster: Array<{ name: string; branch: string }>;
   onSelect: (tech: string) => void;
+  /** Set for a self-role lead: renders a "back to my own day" row and
+   * labels the list as their team; picking it calls onSelect(ownName). */
+  ownName?: string;
 }) {
   return (
     <div className="mtech-scroll">
-      {roster.length === 0 && <div className="mtech-empty">No technicians in your locations.</div>}
+      {ownName && (
+        <>
+          <button
+            className="mtech-roster-card mtech-roster-card--self"
+            onClick={() => onSelect(ownName)}
+            type="button"
+          >
+            <div className="mtech-roster-info">
+              <span className="mtech-roster-role">Back to</span>
+              <span className="mtech-roster-name">My own day</span>
+            </div>
+            <span className="mtech-roster-chev">‹</span>
+          </button>
+          <div className="mtech-roster-heading">My team</div>
+        </>
+      )}
+      {roster.length === 0 && (
+        <div className="mtech-empty">{ownName ? "No technicians report to you." : "No technicians in your locations."}</div>
+      )}
       {roster.map((tech) => (
         <button
           key={tech.name}
@@ -1666,6 +1727,9 @@ function TicketsView({
   isSelfRole,
   roster,
   onSelectTech,
+  viewingReport,
+  onOpenTeam,
+  onBackToOwn,
 }: {
   loading: boolean;
   tickets: Ticket[];
@@ -1691,13 +1755,32 @@ function TicketsView({
    *  that screen always offer the identical set. */
   roster: Array<{ name: string; branch: string }>;
   onSelectTech: (name: string) => void;
+  /** Self-role lead currently drilled into one of their reports. */
+  viewingReport: boolean;
+  /** Self-role lead with ≥1 direct report: open the "my team" roster. */
+  onOpenTeam: () => void;
+  /** Clear the report scope, back to the lead's own tickets. */
+  onBackToOwn: () => void;
 }) {
   const today = new Date().toLocaleDateString("en-US");
+  const isLead = isSelfRole && roster.length > 0;
   return (
     <>
       <div className="mtech-subbar">
         {isSelfRole ? (
-          <span className="mtech-date">{techLabel ? techLabel : today}</span>
+          !isLead ? (
+            <span className="mtech-date">{techLabel ? techLabel : today}</span>
+          ) : viewingReport ? (
+            <button type="button" className="mtech-date mtech-date-btn" onClick={onBackToOwn}>
+              {techLabel}
+              <span className="mtech-date-tag">‹ my day</span>
+            </button>
+          ) : (
+            <button type="button" className="mtech-date mtech-date-btn" onClick={onOpenTeam}>
+              {techLabel || today}
+              <span className="mtech-date-tag">my team ({roster.length}) ▾</span>
+            </button>
+          )
         ) : (
           <select
             className="mtech-date"
@@ -4802,15 +4885,28 @@ function HomeOnSiteCard({
   }, [arrivingKey, permissionDenied, devSimulate, clockedIn, consentConfirmed]);
 
   // arrivingKey is stable while the tech waits (it's keyed on the tickets, not
-  // on the moving GPS fix), so this 90-second timer isn't constantly reset —
-  // it measures a genuine sustained failure to auto-verify. Cleared the moment
-  // there's nothing left awaiting check-in (all arrived / done / in radius).
-  const STUCK_AFTER_MS = 90_000;
+  // on the moving GPS fix), so this isn't constantly reset — it measures a
+  // genuine sustained failure to auto-verify. Cleared the moment there's
+  // nothing left awaiting check-in (all arrived / done / in radius).
+  //
+  // Wall-clock elapsed via a polling interval, NOT a single setTimeout: a
+  // backgrounded PWA on iOS suspends JS timers, so a 90s setTimeout could
+  // take minutes of real time to fire after the tech locks their phone and
+  // walks to the door. Checking Date.now() on each 5s tick means the
+  // override appears ~on schedule regardless of how long the tab was
+  // suspended. 30s (was 90s) — a tech standing at a wrong-geocoded address
+  // shouldn't have to wait a minute and a half for a way through.
+  const STUCK_AFTER_MS = 30_000;
+  const arrivingSinceRef = useRef<number | null>(null);
   useEffect(() => {
-    if (!arrivingKey || devSimulate) { setStuckMode(false); return; }
+    if (!arrivingKey || devSimulate) { arrivingSinceRef.current = null; setStuckMode(false); return; }
+    arrivingSinceRef.current = Date.now();
     setStuckMode(false);
-    const id = window.setTimeout(() => setStuckMode(true), STUCK_AFTER_MS);
-    return () => window.clearTimeout(id);
+    const check = () => {
+      if (arrivingSinceRef.current && Date.now() - arrivingSinceRef.current >= STUCK_AFTER_MS) setStuckMode(true);
+    };
+    const id = window.setInterval(check, 5_000);
+    return () => window.clearInterval(id);
   }, [arrivingKey, devSimulate]);
 
   const formatNow = () => new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -5028,11 +5124,16 @@ function HomeOnSiteCard({
             pending && !locating &&
             (!geocoded || approx || (dist !== null && dist <= ON_SITE_CHECKIN_MANUAL_OVERRIDE_MAX_MILES));
           // Beyond the 3-mi override window the address DID geocode, so the
-          // distance is real — but if it's this far off and GPS has given up,
-          // the pin or the signal is unusable here. Heavier-friction check-in
-          // (two confirmations, flagged NOT GPS-verified on the ticket).
+          // distance is real — but a real 5-mi gap with a "precise" fix is
+          // almost always the address pin being wrong, not the tech being
+          // 5 miles away. Offer the heavier-friction check-in as soon as
+          // there's a settled precise fix to report (i.e. not still
+          // `locating`) — no separate "GPS gave up" wait. Its own two
+          // confirmations + "NOT GPS-verified" ticket flag are the guard.
+          // Reported: a tech physically on site at a mis-geocoded address
+          // with a dead greyed "Work Start" and no override in sight.
           const canForceCheckIn =
-            pending && !locating && !canManual && geocoded && !approx && gpsGivenUp;
+            pending && !locating && !canManual && geocoded && !approx;
           return (
             <div key={t.ticketNo} className={`mtech-home-onsite-row${pending ? " mtech-home-onsite-row--pending" : ""}`}>
               <div className="mtech-home-onsite-info">
@@ -5164,6 +5265,8 @@ function MobileHomeView({
   checkinsLoaded,
   checkinsLoadError,
   onRetryCheckins,
+  viewingReportName,
+  onExitReport,
 }: {
   userName: string;
   role: string | null;
@@ -5188,6 +5291,11 @@ function MobileHomeView({
   checkinsLoaded: boolean;
   checkinsLoadError: boolean;
   onRetryCheckins: () => void;
+  /** Set when a self-role lead has drilled into a report — the ticket
+   * stats below then reflect that report's day, and the on-site check-in
+   * card (a write surface for whoever is physically on site) is hidden. */
+  viewingReportName?: string | null;
+  onExitReport?: () => void;
 }) {
   const hourNow = new Date().getHours();
   const greeting =
@@ -5400,9 +5508,15 @@ function MobileHomeView({
 
   return (
     <div className="mtech-scroll mtech-home">
+      {viewingReportName ? (
+        <button type="button" className="mtech-home-reportbanner" onClick={onExitReport}>
+          <span>Viewing <strong>{viewingReportName}</strong>'s day</span>
+          <span className="mtech-home-reportbanner-back">‹ Back to my day</span>
+        </button>
+      ) : null}
       <div className="mtech-home-greeting">
-        <div className="mtech-home-hi">{greeting},</div>
-        <div className="mtech-home-name">{userName}</div>
+        <div className="mtech-home-hi">{viewingReportName ? "Tracking" : `${greeting},`}</div>
+        <div className="mtech-home-name">{viewingReportName || userName}</div>
         <HomeTicketStatsCard
           todaysCount={todaysTickets.length}
           onHoldCount={onHoldTickets.length}
@@ -5411,7 +5525,7 @@ function MobileHomeView({
         />
       </div>
 
-      {loadError ? (
+      {viewingReportName ? null : loadError ? (
         <div className="mtech-home-clockerror">
           <span>Couldn't load your timecard — your punches are safe, this is just the display.</span>
           <button type="button" onClick={() => { setLoadError(false); setReloadNonce((n) => n + 1); }}>Retry</button>
@@ -5441,18 +5555,20 @@ function MobileHomeView({
       </div>
       )}
 
-      <HomeOnSiteCard
-        tickets={activeTickets}
-        userName={userName}
-        role={role}
-        arrivedAt={arrivedAt}
-        setArrivedAt={setArrivedAt}
-        doneAt={doneAt}
-        setDoneAt={setDoneAt}
-        checkinsLoaded={checkinsLoaded}
-        checkinsLoadError={checkinsLoadError}
-        onRetryCheckins={onRetryCheckins}
-      />
+      {!viewingReportName && (
+        <HomeOnSiteCard
+          tickets={activeTickets}
+          userName={userName}
+          role={role}
+          arrivedAt={arrivedAt}
+          setArrivedAt={setArrivedAt}
+          doneAt={doneAt}
+          setDoneAt={setDoneAt}
+          checkinsLoaded={checkinsLoaded}
+          checkinsLoadError={checkinsLoadError}
+          onRetryCheckins={onRetryCheckins}
+        />
+      )}
 
       <div className="mtech-home-divider" />
 

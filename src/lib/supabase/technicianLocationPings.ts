@@ -63,8 +63,27 @@ export async function getCompanyLocationPings(): Promise<TechnicianLocationPing[
   }));
 }
 
-/** True once this employee's Location Consent document has been signed by both sides (status "confirmed" — see ReportHRDaily.tsx's handleSaveLocationConsentEmployerSignature). Gates whether TechnicianLocationTracker ever prompts them at all. */
+/**
+ * True once this employee's Location Consent document has been signed by
+ * both sides (status "confirmed" — see ReportHRDaily.tsx's
+ * handleSaveLocationConsentEmployerSignature). Gates whether
+ * TechnicianLocationTracker ever prompts them at all.
+ *
+ * Identity match is on `recipient_id` — the real column HR sets when the
+ * document is addressed to an in-app teammate — with `form_data.employeeId`
+ * kept only as a fallback for older rows. The JSON copy alone was
+ * unreliable: the "Completed" document could carry a blank/edited
+ * employeeId (e.g. sent via the external-link flow, which hardcodes
+ * `employeeId: ""`) while recipient_id was correct all along, so a
+ * genuinely signed-and-confirmed consent still read as missing on the
+ * technician's phone. This matches how getTechnicianIdsMissingRouteDocuments
+ * keys the same document type.
+ */
 export async function hasConfirmedLocationConsent(profileId: string): Promise<boolean> {
   const docs = await getSignableDocuments("location_consent");
-  return docs.some((d) => d.status === "confirmed" && (d.formData as { employeeId?: string })?.employeeId === profileId);
+  return docs.some(
+    (d) =>
+      d.status === "confirmed" &&
+      (d.recipientId === profileId || (d.formData as { employeeId?: string })?.employeeId === profileId)
+  );
 }

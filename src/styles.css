@@ -12750,3 +12750,54 @@ a.mtech-phone-link:active { opacity: 0.7; }
 :root[data-theme="light"] .recharts-tooltip-item-value,
 :root[data-theme="light"] .recharts-tooltip-item-separator { color: var(--color-foreground) !important; }
 
+/* ── Mobile tech "my team" drill-in (a self-role Technician who is also a
+      working lead can tap their own name to track a direct report's day) ── */
+.mtech-roster-card--self {
+  background: rgba(91, 126, 255, 0.12);
+  border-color: rgba(91, 126, 255, 0.45);
+}
+.mtech-roster-heading {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.55);
+  margin: 0.4rem 0.2rem -0.1rem;
+}
+.mtech-date-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  cursor: pointer;
+}
+.mtech-date-tag {
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.62);
+  background: rgba(255, 255, 255, 0.09);
+  border-radius: 999px;
+  padding: 0.1rem 0.45rem;
+}
+.mtech-home-reportbanner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  gap: 0.6rem;
+  background: rgba(91, 126, 255, 0.14);
+  border: 1px solid rgba(91, 126, 255, 0.4);
+  border-radius: 12px;
+  padding: 0.6rem 0.9rem;
+  margin-bottom: 0.8rem;
+  color: rgba(255, 255, 255, 0.92);
+  font-size: 0.85rem;
+  cursor: pointer;
+  text-align: left;
+}
+.mtech-home-reportbanner-back {
+  flex: 0 0 auto;
+  font-weight: 700;
+  color: var(--mt-blue);
+}
+
