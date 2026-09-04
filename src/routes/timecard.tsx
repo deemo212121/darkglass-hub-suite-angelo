@@ -15,7 +15,16 @@ import {
   canEditPunch,
   type PunchField,
 } from "@/lib/supabase/timecards";
-import { getMyProfileId } from "@/lib/supabase/users";
+import {
+  getTraineeEntryForDate,
+  saveTraineeEntry,
+  deleteTraineeEntry,
+  clearTraineePunch,
+  SELF_CHECKED_OUT_EVENT,
+  type TraineeTimecardStatus,
+} from "@/lib/supabase/traineeTimecards";
+import { getMyProfileId, getCompanyUsers } from "@/lib/supabase/users";
+import { resolveTeamLeadOrManager } from "@/lib/notifyRouting";
 import { getServerNow, zonedDateKey, zonedTimeString, type ScheduleTimezone } from "@/lib/serverTime";
 import { getMyPayslips, payslipStatusLabel, type MyPayslipRow } from "@/lib/supabase/payslips";
 import { getCompanyPtoRequests, type PtoRequestRow } from "@/lib/supabase/pto";
@@ -106,6 +115,16 @@ function FullTimecardPage({ uid, ready }: { uid: string | null; ready: boolean }
   // openEntryModal/closeEntryModal). That Yes tap IS the confirmation; no
   // separate native confirm() on top of it.
   const [confirmClearField, setConfirmClearField] = useState<PunchField | null>(null);
+  // "trainee" (profiles.employment_type — migration 0152) punches on this
+  // exact same calendar, but TODAY's own cell/modal is redirected to
+  // trainee_timecard_entries instead of the real timecard_entries, until
+  // their direct manager approves the day from Attendance Monitoring's
+  // "Trainee Attendance" tab. Past days keep reading the real table as-is
+  // (correctly showing only what's already been approved) — only today's
+  // live, possibly-still-pending punches are sourced from the trainee table.
+  const [employmentType, setEmploymentType] = useState<"trainee" | "regular">("regular");
+  const [directManagerId, setDirectManagerId] = useState<string | null>(null);
+  const [modalTraineeStatus, setModalTraineeStatus] = useState<TraineeTimecardStatus | null>(null);
   const navigate = useNavigate();
 
   // Resolve the caller's profile id + scheduled shift once auth is ready.
@@ -121,10 +140,28 @@ function FullTimecardPage({ uid, ready }: { uid: string | null; ready: boolean }
         setWorkingHours(s.workingHours);
         setMealMinutes(s.mealMinutes);
         setScheduleTimezone(s.scheduleTimezone);
+        setEmploymentType(s.employmentType);
       })
       .catch((err) => console.error("Failed to resolve profile:", err));
     return () => { cancelled = true; };
   }, [ready, uid]);
+
+  // Resolve the trainee's own direct manager once — only ever needed for a
+  // trainee (a regular employee's punches never touch manager_id at all),
+  // so this extra company-wide roster fetch is skipped entirely otherwise.
+  useEffect(() => {
+    if (employmentType !== "trainee" || !profileId) return;
+    let cancelled = false;
+    getCompanyUsers()
+      .then((all) => {
+        if (cancelled) return;
+        const me = all.find((p) => p.id === profileId);
+        if (!me) return;
+        return resolveTeamLeadOrManager(me, all).then((mgr) => { if (!cancelled) setDirectManagerId(mgr?.id ?? null); });
+      })
+      .catch((err) => console.error("Failed to resolve direct manager:", err));
+    return () => { cancelled = true; };
+  }, [employmentType, profileId]);
 
   // Approved (Manager + HR) PTO requests for this profile — once loaded, any
   // date falling inside one replaces that cell's check-in/out punches with a
@@ -256,8 +293,25 @@ function FullTimecardPage({ uid, ready }: { uid: string | null; ready: boolean }
     setModalServerToday(null);
     setModalTimeError(null);
     setConfirmClearField(null);
+    setModalTraineeStatus(null);
     getServerNow()
-      .then((d) => setModalServerToday(zonedDateKey(d, scheduleTimezone)))
+      .then((d) => {
+        const serverToday = zonedDateKey(d, scheduleTimezone);
+        setModalServerToday(serverToday);
+        // Real timecard_entries has nothing for a trainee's TODAY until
+        // their manager approves it — entries[dateKey] above would show
+        // blank even though they've actually already punched. Overwrite
+        // with their live pending row instead, only for today (a past
+        // day's already-approved data in `entries` is exactly right as-is).
+        if (employmentType === "trainee" && profileId && dateKey === serverToday) {
+          getTraineeEntryForDate(profileId, dateKey)
+            .then((e) => {
+              setModalTraineeStatus(e?.status ?? null);
+              if (e) setModalEntry({ checkIn: e.checkIn, checkOut: e.checkOut, mealStart: e.mealStart, mealEnd: e.mealEnd, notes: "" });
+            })
+            .catch((err) => console.error("Failed to load today's trainee timecard entry:", err));
+        }
+      })
       .catch(() => setModalTimeError("Couldn't verify the current time with the server. Close and reopen this day to try again."));
   };
 
@@ -269,6 +323,7 @@ function FullTimecardPage({ uid, ready }: { uid: string | null; ready: boolean }
     setModalServerToday(null);
     setModalTimeError(null);
     setConfirmClearField(null);
+    setModalTraineeStatus(null);
   };
 
   const saveEntry = async () => {
@@ -281,7 +336,17 @@ function FullTimecardPage({ uid, ready }: { uid: string | null; ready: boolean }
       return;
     }
     try {
-      await sbSaveEntry(profileId, editingDate, modalEntry);
+      if (employmentType === "trainee" && editingDate === modalServerToday) {
+        await saveTraineeEntry(profileId, editingDate, modalEntry, directManagerId);
+        setModalTraineeStatus((prev) => (prev === "rejected" ? "pending" : prev ?? "pending"));
+      } else {
+        await sbSaveEntry(profileId, editingDate, modalEntry);
+      }
+      // Tied specifically to TODAY's own Check Out actually saving — not a
+      // past day being edited retroactively. See TraineeAttendanceReviewModal.tsx.
+      if (editingDate === modalServerToday && modalEntry.checkOut) {
+        window.dispatchEvent(new CustomEvent(SELF_CHECKED_OUT_EVENT));
+      }
     } catch (err) {
       console.error("Failed to save entry:", err);
       alert(`Failed to save: ${err instanceof Error ? err.message : "Unknown error"}`);
@@ -397,7 +462,11 @@ function FullTimecardPage({ uid, ready }: { uid: string | null; ready: boolean }
     setConfirmClearField(null);
     setClearingField(field);
     try {
-      await sbClearPunch(profileId, editingDate, field);
+      if (employmentType === "trainee" && editingDate === modalServerToday) {
+        await clearTraineePunch(profileId, editingDate, field);
+      } else {
+        await sbClearPunch(profileId, editingDate, field);
+      }
       const cleared = { ...modalEntry, [field]: "" };
       setModalEntry(cleared);
       setEntries((prev) => ({ ...prev, [editingDate]: cleared }));
@@ -415,14 +484,16 @@ function FullTimecardPage({ uid, ready }: { uid: string | null; ready: boolean }
   };
 
   const deleteEntry = async () => {
-    if (!editingDate || !entries[editingDate]) return;
+    const isTraineeToday = employmentType === "trainee" && editingDate === modalServerToday;
+    if (!editingDate || (!entries[editingDate] && !(isTraineeToday && modalTraineeStatus))) return;
     if (!confirm("Delete time entry for this day?")) return;
     const newEntries = { ...entries };
     delete newEntries[editingDate];
     setEntries(newEntries);
     if (profileId) {
       try {
-        await sbDeleteEntry(profileId, editingDate);
+        if (isTraineeToday) await deleteTraineeEntry(profileId, editingDate);
+        else await sbDeleteEntry(profileId, editingDate);
       } catch (err) {
         console.error("Failed to delete entry:", err);
       }
@@ -664,6 +735,19 @@ function FullTimecardPage({ uid, ready }: { uid: string | null; ready: boolean }
 
                 {/* Content */}
                 <div className="p-6 space-y-4">
+                  {employmentType === "trainee" && modalTraineeStatus && modalTraineeStatus !== "approved" && (
+                    <div
+                      className={`rounded-lg border px-3 py-2 text-xs ${
+                        modalTraineeStatus === "rejected"
+                          ? "border-red-400/30 bg-red-500/10 text-red-200"
+                          : "border-sky-400/30 bg-sky-500/10 text-sky-200"
+                      }`}
+                    >
+                      {modalTraineeStatus === "rejected"
+                        ? "Your manager sent this day back — punch again to resubmit for approval."
+                        : "Pending your manager's approval — this won't appear on your official timecard until then."}
+                    </div>
+                  )}
                   {/* Same-day-only gate for the X buttons below — a past day's
                       punches are locked from self-correction here just like
                       they're locked from self-punching further down; fixing

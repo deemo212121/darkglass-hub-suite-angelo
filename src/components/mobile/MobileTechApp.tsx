@@ -57,6 +57,8 @@ import {
 import { getTicketBilling, saveTicketBilling, type TicketBilling } from "@/lib/supabase/billing";
 import { getMyPayslips, payslipStatusLabel, type MyPayslipRow } from "@/lib/supabase/payslips";
 import { getMyProfileSchedule, getMonthEntries, getCompanyTimecardEntries, saveEntry as saveTimecardEntry, savePunch, clearPunch, canEditPunch, resolveScheduledShiftHours, type UITimeEntry, type CompanyTimecardEntry, type PunchField } from "@/lib/supabase/timecards";
+import { getTraineeEntryForDate, saveTraineePunch, clearTraineePunch, type TraineeTimecardStatus } from "@/lib/supabase/traineeTimecards";
+import { resolveTeamLeadOrManager } from "@/lib/notifyRouting";
 import { visibleAttendanceProfileIds } from "@/lib/notifyRouting";
 import { getCsrTeamComposition, type CsrTeamComposition } from "@/lib/supabase/csrTeams";
 import { isAttendanceFullAccessRole, isAttendanceManagerTierRole, normalizeRole, ROLE_LABELS, TECHNICIAN_PAY_ROLES } from "@/lib/roleLabels";
@@ -83,12 +85,12 @@ import { createPtoRequest, getCompanyPtoRequests, weekdayCount, type PtoType, ty
 import { createTimecardCorrection, getCompanyTimecardCorrections, type TimecardCorrectionRow } from "@/lib/supabase/timecardCorrections";
 import { createNotification } from "@/lib/supabase/notifications";
 import { getMileageEntries, type MileageEntry } from "@/lib/supabase/mileage";
-import { resolveTeamLeadOrManager } from "@/lib/notifyRouting";
 import { NotificationsMenu } from "@/components/NotificationsMenu";
 import { NotificationCenterPanel } from "@/components/NotificationCenterPage";
 import { AnnouncementsMenu } from "@/components/AnnouncementsMenu";
 import { createOrUpdateTicketReschedule, getTicketReschedulesForTicketNos, type TicketRescheduleRow } from "@/lib/supabase/ticketReschedules";
 import { AnnouncementBanner } from "@/components/AnnouncementBanner";
+import { TraineeAttendanceMobileModal } from "@/components/mobile/TraineeAttendanceMobileModal";
 import { AnnouncementsPage } from "@/components/AnnouncementsPage";
 import {
   parseServicePerformed,
@@ -333,6 +335,10 @@ export function MobileTechApp() {
   // which technician is looking at a ticket, for the mobile alert-popup
   // dismiss tracking (ticket_alert_dismissals is keyed per profile).
   const [profileId, setProfileId] = useState<string | null>(null);
+  // Bumped by MobileHomeView's onSelfCheckedOut every time this viewer's own
+  // Check Out just went through — see TraineeAttendanceMobileModal's mount
+  // below for why this (not on-mount/realtime) is the review's only trigger.
+  const [traineeReviewTrigger, setTraineeReviewTrigger] = useState(0);
   useEffect(() => {
     if (!uid) return;
     let cancelled = false;
@@ -932,13 +938,6 @@ export function MobileTechApp() {
     [myTickets]
   );
 
-  // On-Site Check-In's ticket list — the technician's whole active queue
-  // (same set the To Do tab shows), not narrowed to today's schedule date
-  // like todaysTickets above. Many real tickets don't have a schedule date
-  // that matches today exactly, which would otherwise leave this feature
-  // with nothing to show even when there's real work to check into.
-  const activeTickets = useMemo(() => myTickets.filter((t) => !isDone(t.status)), [myTickets]);
-
   const visibleTickets = useMemo(() => {
     let list = tab === "today" ? todaysTickets : myTickets;
     if (tab === "todo") list = list.filter((t) => !isDone(t.status));
@@ -1139,6 +1138,26 @@ export function MobileTechApp() {
         top="calc(var(--mt-header-h, 52px) + 0.75rem)"
       />
 
+      {/* Mobile-native Trainee Attendance review — appears ONLY right after
+          this viewer's own Check Out (see MobileHomeView's onSelfCheckedOut,
+          which bumps traineeReviewTrigger), so a manager with a trainee
+          reviews the whole day (Time In AND Time Out, usually both already
+          in by their own end-of-shift) in one pass instead of being
+          interrupted mid-day. Exclusive to the trainee's own resolved
+          direct manager (isDirectTraineeManager) — a fallback reviewer
+          (Admin/HR/SuperAdmin/Finance/Senior Branch Manager) can still act
+          from the Trainee Attendance tab, but is never forced into this
+          unclosable popup for someone else's trainee; a manager with no
+          trainees under them never sees it at all. Can only be dismissed
+          by Approving/Rejecting each pending day (no X/close), but never
+          blocks or fails the manager's own checkout, which has already
+          completed by the time this fires. */}
+      <TraineeAttendanceMobileModal
+        myProfileId={profileId}
+        users={users}
+        trigger={traineeReviewTrigger}
+      />
+
       {/* ── Scrollable content area ────────────────────────────────── */}
       <div className="mtech-content">
         {view === "roster" && (
@@ -1316,7 +1335,6 @@ export function MobileTechApp() {
             uid={uid}
             profileId={profileId}
             todaysTickets={todaysTickets}
-            activeTickets={activeTickets}
             onHoldTickets={onHoldTickets}
             onOpenTicketsTab={() => setView("tickets")}
             onOpenOnHoldTab={() => setView("onhold")}
@@ -1337,6 +1355,7 @@ export function MobileTechApp() {
             onRetryCheckins={() => { setCheckinsLoadError(false); setCheckinsReloadNonce((n) => n + 1); }}
             viewingReportName={viewingReport ? scopeTech : null}
             onExitReport={() => { setSelectedTech(null); setTab("today"); }}
+            onSelfCheckedOut={() => setTraineeReviewTrigger((n) => n + 1)}
           />
         )}
 
@@ -5553,7 +5572,6 @@ function MobileHomeView({
   uid,
   profileId,
   todaysTickets,
-  activeTickets,
   onHoldTickets,
   onOpenTicketsTab,
   onOpenOnHoldTab,
@@ -5574,13 +5592,13 @@ function MobileHomeView({
   onRetryCheckins,
   viewingReportName,
   onExitReport,
+  onSelfCheckedOut,
 }: {
   userName: string;
   role: string | null;
   uid: string | null;
   profileId: string | null;
   todaysTickets: Ticket[];
-  activeTickets: Ticket[];
   onHoldTickets: Ticket[];
   onOpenTicketsTab: () => void;
   onOpenOnHoldTab: () => void;
@@ -5604,6 +5622,8 @@ function MobileHomeView({
    * card (a write surface for whoever is physically on site) is hidden. */
   viewingReportName?: string | null;
   onExitReport?: () => void;
+  /** Fired once this viewer's OWN Check Out just saved (or queued) successfully — see persistPunch. Used to surface the Trainee Attendance review right at end-of-shift instead of interrupting mid-day (see TraineeAttendanceMobileModal). */
+  onSelfCheckedOut?: () => void;
 }) {
   const hourNow = new Date().getHours();
   const greeting =
@@ -5627,6 +5647,14 @@ function MobileHomeView({
   // savePunch) overwrite the real check-in. Show a retry instead.
   const [loadError, setLoadError] = useState(false);
   const [reloadNonce, setReloadNonce] = useState(0);
+  // "trainee" (profiles.employment_type — migration 0152) punches on this
+  // exact same ClockCard, but every read/write below is redirected to
+  // trainee_timecard_entries instead of the real timecard_entries, until
+  // their direct manager approves the day from Attendance Monitoring's
+  // "Trainee Attendance" tab.
+  const [employmentType, setEmploymentType] = useState<"trainee" | "regular">("regular");
+  const [directManagerId, setDirectManagerId] = useState<string | null>(null);
+  const [traineeStatus, setTraineeStatus] = useState<TraineeTimecardStatus | null>(null);
 
   const now = new Date();
   // The employee's SCHEDULED work-day, not the phone's own local calendar
@@ -5651,7 +5679,16 @@ function MobileHomeView({
         setMealMinutes(schedule.mealMinutes);
         setScheduleTimezone(schedule.scheduleTimezone);
         setScheduleProfileId(schedule.profileId || null);
+        setEmploymentType(schedule.employmentType);
         if (!schedule.profileId) { setLoadError(true); return; }
+        if (schedule.employmentType === "trainee") {
+          const e = await getTraineeEntryForDate(schedule.profileId, todayKey);
+          if (cancelled) return;
+          setEntry(e ? { checkIn: e.checkIn, checkOut: e.checkOut, mealStart: e.mealStart, mealEnd: e.mealEnd, notes: "" } : { checkIn: "", checkOut: "", mealStart: "", mealEnd: "", notes: "" });
+          setTraineeStatus(e?.status ?? null);
+          setLoadError(false);
+          return;
+        }
         // Year/month from todayKey (already zoned), not the phone's own
         // now.getFullYear()/getMonth() — see MobileTimecardView's identical
         // fix for why those can disagree right around a month boundary.
@@ -5668,6 +5705,23 @@ function MobileHomeView({
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [uid, reloadNonce]);
+
+  // Resolve the trainee's own direct manager once — only ever needed for a
+  // trainee (a regular technician's punches never touch manager_id at all),
+  // so this extra company-wide roster fetch is skipped entirely otherwise.
+  useEffect(() => {
+    if (employmentType !== "trainee" || !scheduleProfileId) return;
+    let cancelled = false;
+    getCompanyUsers()
+      .then((all) => {
+        if (cancelled) return;
+        const me = all.find((p) => p.id === scheduleProfileId);
+        if (!me) return;
+        return resolveTeamLeadOrManager(me, all).then((mgr) => { if (!cancelled) setDirectManagerId(mgr?.id ?? null); });
+      })
+      .catch((err) => console.error("Failed to resolve direct manager:", err));
+    return () => { cancelled = true; };
+  }, [employmentType, scheduleProfileId]);
 
   // Stamps `field` with the server's own current instant (never the phone's
   // clock — see src/lib/serverTime.ts), converted into this technician's
@@ -5690,6 +5744,11 @@ function MobileHomeView({
       return;
     }
     setSaving(true);
+    // Only true once the punch has genuinely landed somewhere (saved, or
+    // queued for later sync) — a total failure (both the save AND the
+    // offline queue itself failing) must not trigger the trainee review
+    // below, since nothing about this checkout actually went through.
+    let persisted = false;
     try {
       if (isManualOfflineModeActive()) throw new Error("Offline mode simulator is on — skipping real write");
       const serverNow = await getServerNow();
@@ -5701,14 +5760,32 @@ function MobileHomeView({
       }
       // Single-column upsert — never re-writes the sibling punches from this
       // (possibly stale) local copy. See savePunch's doc comment.
-      await savePunch(scheduleProfileId, workDate, field, time);
+      if (employmentType === "trainee") {
+        await saveTraineePunch(scheduleProfileId, workDate, field, time, directManagerId);
+        setTraineeStatus((prev) => (prev === "rejected" ? "pending" : prev ?? "pending"));
+      } else {
+        await savePunch(scheduleProfileId, workDate, field, time);
+      }
       setEntry((prev) => ({ ...prev, [field]: time }));
+      persisted = true;
     } catch (e) {
       console.warn("MobileHomeView: save failed, queuing for later sync", e);
       const next = { ...entry, [field]: getNowTime() };
       setEntry(next);
       try {
-        await enqueueTimecardPunch({ scheduleProfileId, dateKey: todayKey, entry: next });
+        // Queued for later sync — offlineQueue.ts's replay() reads
+        // employmentType/managerId back off this payload so a trainee's
+        // punch still lands in trainee_timecard_entries (not the real
+        // timecard_entries) once connectivity returns, same as the online
+        // path above.
+        await enqueueTimecardPunch({
+          scheduleProfileId,
+          dateKey: todayKey,
+          entry: next,
+          employmentType,
+          managerId: directManagerId,
+        });
+        persisted = true;
       } catch (qErr) {
         console.error("MobileHomeView: failed to queue punch", qErr);
         alert(`Failed to save: ${e instanceof Error ? e.message : "Unknown error"}`);
@@ -5716,6 +5793,15 @@ function MobileHomeView({
     } finally {
       setSaving(false);
     }
+    // Tied specifically to THIS viewer's own Check Out (not Time In/Meal),
+    // and only once it actually went through — see the user's ask: reviewing
+    // a trainee's pending day should happen once at the manager's own
+    // end-of-shift (when both the trainee's Time In AND Time Out are
+    // usually already in), not interrupt them mid-day, and it must never
+    // block or fail their own checkout if they don't act on it. A manager
+    // with no trainees just gets a no-op fetch that finds nothing pending —
+    // see TraineeAttendanceMobileModal's own trigger effect.
+    if (persisted && field === "checkOut") onSelfCheckedOut?.();
   };
 
   const canTimeIn = !loadError && !entry.checkIn && !saving;
@@ -5767,7 +5853,11 @@ function MobileHomeView({
     cancelRemove();
     setClearingField(field);
     try {
-      await clearPunch(scheduleProfileId, todayKey, field);
+      if (employmentType === "trainee") {
+        await clearTraineePunch(scheduleProfileId, todayKey, field);
+      } else {
+        await clearPunch(scheduleProfileId, todayKey, field);
+      }
       setEntry((prev) => ({ ...prev, [field]: "" }));
       disarm();
     } catch (e) {
@@ -5917,9 +6007,19 @@ function MobileHomeView({
       </div>
       )}
 
+      {employmentType === "trainee" && traineeStatus && traineeStatus !== "approved" && (
+        <div className="mtech-home-clockerror">
+          <span>
+            {traineeStatus === "rejected"
+              ? "Your manager sent this day back — punch again to resubmit for approval."
+              : "Pending your manager's approval — this won't appear on your official timecard until then."}
+          </span>
+        </div>
+      )}
+
       {!viewingReportName && (
         <HomeOnSiteCard
-          tickets={activeTickets}
+          tickets={todaysTickets}
           userName={userName}
           role={role}
           profileId={profileId}

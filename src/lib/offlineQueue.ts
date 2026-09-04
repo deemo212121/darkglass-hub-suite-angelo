@@ -34,6 +34,7 @@ import { setTicketOnsiteCheckIn, updateTicketVisit } from "@/lib/supabase/ticket
 import type { UIVisit } from "@/lib/supabase/tickets";
 import { uploadTicketPhoto } from "@/lib/firebase/storage";
 import { saveEntry as saveTimecardEntry, type UITimeEntry } from "@/lib/supabase/timecards";
+import { saveTraineeEntry } from "@/lib/supabase/traineeTimecards";
 import { isManualOfflineModeActive } from "@/lib/isOnline";
 
 export type QueuedActionType =
@@ -87,6 +88,18 @@ export interface TimecardPunchPayload {
   scheduleProfileId: string;
   dateKey: string;
   entry: UITimeEntry;
+  /**
+   * Which table this punch belongs in once it replays — a trainee
+   * (profiles.employment_type = 'trainee') must land in
+   * trainee_timecard_entries, not the real timecard_entries, same as their
+   * online punch already does (see MobileTechApp.tsx's persistPunch).
+   * Missing on a row queued before this field existed — treated as
+   * "regular" (matches the offline behavior every punch had before this
+   * fix, so an already-queued row keeps replaying exactly as it did then).
+   */
+  employmentType?: "trainee" | "regular";
+  /** The trainee's resolved direct manager, stamped alongside the punch — see saveTraineeEntry. Ignored when employmentType isn't "trainee". */
+  managerId?: string | null;
 }
 
 export interface QueuedAction {
@@ -251,7 +264,11 @@ async function replay(action: QueuedAction): Promise<void> {
     await addTicketComment(p.ticketNo, p.body, p.authorName, p.authorRole);
   } else {
     const p = action.payload as TimecardPunchPayload;
-    await saveTimecardEntry(p.scheduleProfileId, p.dateKey, p.entry);
+    if (p.employmentType === "trainee") {
+      await saveTraineeEntry(p.scheduleProfileId, p.dateKey, p.entry, p.managerId ?? null);
+    } else {
+      await saveTimecardEntry(p.scheduleProfileId, p.dateKey, p.entry);
+    }
   }
 }
 

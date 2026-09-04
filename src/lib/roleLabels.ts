@@ -121,6 +121,20 @@ export const TECHNICIAN_PAY_ROLES = new Set(
     .map(([code]) => code)
 );
 
+/**
+ * The trainee pending-approval timecard workflow (trainee_timecard_entries,
+ * migration 0216 — see traineeTimecards.ts) is scoped to the Technician
+ * department only, per the user's explicit call: a CSR/Parts/other-
+ * department employee marked Trainee on Masterlist (profiles.employment_type)
+ * still gets the separate "limited module access" trainee restriction
+ * (isSubmoduleAllowedForTrainee below), but their punches go straight onto
+ * the real timecard like a regular employee — only a Technician-tier
+ * trainee's punches redirect here for manager approval.
+ */
+export function isTraineeApprovalEligible(role: string | null | undefined, extraRoles?: string[] | null): boolean {
+  return anyHeldRoleIn(TECHNICIAN_PAY_ROLES, role, extraRoles);
+}
+
 /** Falls back to the flat ROLE_LABELS value for both fields if the role isn't in the breakdown map above. */
 export function getRoleDepartmentBreakdown(role: string | null | undefined): { department: string; roleLabel: string } {
   const code = normalizeRole(role);
@@ -419,6 +433,21 @@ const ATTENDANCE_FULL_ACCESS_ROLES = new Set(["ADMIN", "SUPERADMIN", "HR", "FINA
 
 export function isAttendanceFullAccessRole(role: string | null | undefined, extraRoles?: string[] | null): boolean {
   return anyHeldRoleIn(ATTENDANCE_FULL_ACCESS_ROLES, role, extraRoles);
+}
+
+/**
+ * The one manager-tier role (not otherwise in ATTENDANCE_FULL_ACCESS_ROLES)
+ * the user explicitly named as a company-wide trainee-attendance fallback
+ * reviewer, alongside Admin/HR/SuperAdmin/Finance, for when a trainee's own
+ * resolved direct manager is absent — see canApproveTraineeDay
+ * (traineeTimecards.ts). Deliberately narrower than the general
+ * ATTENDANCE_MANAGER_TIER_ROLES set (which is branch/report-scoped by
+ * design): this fallback is company-wide, same as the full-access roles.
+ */
+const TRAINEE_FALLBACK_REVIEWER_ROLES = new Set(["SENIOR_BRANCH_MANAGER"]);
+
+export function isTraineeFallbackReviewerRole(role: string | null | undefined, extraRoles?: string[] | null): boolean {
+  return anyHeldRoleIn(TRAINEE_FALLBACK_REVIEWER_ROLES, role, extraRoles);
 }
 
 /** Array form for spreading into a DASHBOARD_ROLE_GATES entry. */

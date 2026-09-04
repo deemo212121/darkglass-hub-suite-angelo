@@ -13,6 +13,7 @@ import {
 import { AuthProvider, useAuth } from "@/lib/auth";
 import { ThemeProvider } from "@/lib/theme";
 import { AnnouncementBanner } from "@/components/AnnouncementBanner";
+import { TraineeAttendanceReviewModal } from "@/components/TraineeAttendanceReviewModal";
 import { PasswordChangeReminder } from "@/components/PasswordChangeReminder";
 import { TicketSearchFab } from "@/components/TicketSearchFab";
 import { ModuleNavigator } from "@/components/ModuleNavigator";
@@ -162,6 +163,7 @@ function RootComponent() {
             <SessionKickedOutBanner />
             <MustChangePasswordGate hideChrome={hideChrome} />
             {!hideChrome && <AnnouncementBanner />}
+            {!hideChrome && <TraineeAttendanceReviewModal />}
             {!hideChrome && <PasswordChangeReminder />}
             <Outlet />
             {!hideChrome && <TicketSearchFab />}

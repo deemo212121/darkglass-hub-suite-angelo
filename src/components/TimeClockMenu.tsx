@@ -30,9 +30,12 @@
  * mobile ticket page's tab strip, which both assume that).
  */
 import { useEffect, useRef, useState } from "react";
-import { X } from "lucide-react";
+import { X, Clock3 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { getMyProfileSchedule, getEntryForDate, saveEntry, clearPunch as sbClearPunch, canEditPunch, resolveScheduledShiftHours, type UITimeEntry, type PunchField } from "@/lib/supabase/timecards";
+import { getTraineeEntryForDate, saveTraineePunch, clearTraineePunch, SELF_CHECKED_OUT_EVENT, type TraineeTimecardStatus } from "@/lib/supabase/traineeTimecards";
+import { getCompanyUsers } from "@/lib/supabase/users";
+import { resolveTeamLeadOrManager } from "@/lib/notifyRouting";
 import { getCompanyPtoRequests } from "@/lib/supabase/pto";
 import { getServerNow, zonedDateKey, zonedTimeString, type ScheduleTimezone } from "@/lib/serverTime";
 
@@ -85,6 +88,16 @@ export function TimeClockButtons() {
     }, 2000);
   };
   const [onApprovedPtoToday, setOnApprovedPtoToday] = useState(false);
+  // "trainee" (profiles.employment_type — migration 0152) punches on this
+  // exact same widget, but every read/write below is redirected to
+  // trainee_timecard_entries instead of the real timecard_entries, until
+  // their direct manager approves the day from Attendance Monitoring's
+  // "Trainee Attendance" tab. directManagerId is resolved once (via
+  // resolveTeamLeadOrManager, the same helper every other approval flow in
+  // this app uses) and stamped onto the day's row at first punch.
+  const [employmentType, setEmploymentType] = useState<"trainee" | "regular">("regular");
+  const [directManagerId, setDirectManagerId] = useState<string | null>(null);
+  const [traineeStatus, setTraineeStatus] = useState<TraineeTimecardStatus | null>(null);
   // Which punch (if any) a clear/remove request is currently in flight for —
   // disables just its own X, not the other three slots'.
   const [clearingField, setClearingField] = useState<PunchField | null>(null);
@@ -104,9 +117,28 @@ export function TimeClockButtons() {
       setWorkingHours(s.workingHours);
       setMealMinutes(s.mealMinutes);
       setScheduleTimezone(s.scheduleTimezone);
+      setEmploymentType(s.employmentType);
     });
     return () => { cancelled = true; };
   }, [ready, uid]);
+
+  // Resolve the trainee's own direct manager once — only ever needed for a
+  // trainee (a regular employee's punches never touch manager_id at all),
+  // so this extra company-wide roster fetch is skipped entirely for the
+  // common case.
+  useEffect(() => {
+    if (employmentType !== "trainee" || !profileId) return;
+    let cancelled = false;
+    getCompanyUsers()
+      .then((all) => {
+        if (cancelled) return;
+        const me = all.find((p) => p.id === profileId);
+        if (!me) return;
+        return resolveTeamLeadOrManager(me, all).then((mgr) => { if (!cancelled) setDirectManagerId(mgr?.id ?? null); });
+      })
+      .catch((err) => console.error("Failed to resolve direct manager:", err));
+    return () => { cancelled = true; };
+  }, [employmentType, profileId]);
 
   // Which calendar day `entry` was loaded for — tracked separately from
   // `entry` itself so a stale in-memory entry can never get persisted under
@@ -122,6 +154,15 @@ export function TimeClockButtons() {
     const dateKey = todayKey();
     loadedDateKeyRef.current = dateKey;
     setConfirmClearField(null);
+    if (employmentType === "trainee") {
+      getTraineeEntryForDate(pid, dateKey)
+        .then((e) => {
+          setEntry(e ? { checkIn: e.checkIn, checkOut: e.checkOut, mealStart: e.mealStart, mealEnd: e.mealEnd, notes: "" } : EMPTY_ENTRY);
+          setTraineeStatus(e?.status ?? null);
+        })
+        .catch((err) => console.error("Failed to load today's trainee timecard entry:", err));
+      return;
+    }
     getEntryForDate(pid, dateKey)
       .then((e) => setEntry(e ?? EMPTY_ENTRY))
       .catch((err) => console.error("Failed to load today's timecard entry:", err));
@@ -130,7 +171,8 @@ export function TimeClockButtons() {
   useEffect(() => {
     if (!profileId) return;
     loadToday(profileId);
-  }, [profileId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profileId, employmentType]);
 
   // Re-sync whenever the tab regains attention or on a slow poll, so a tab
   // left open overnight reflects the new day's (empty) state on its own,
@@ -197,7 +239,16 @@ export function TimeClockButtons() {
       }
       const next = { ...entry, [field]: time };
       setEntry(next);
-      await saveEntry(profileId, workDate, next);
+      if (employmentType === "trainee") {
+        await saveTraineePunch(profileId, workDate, field, time, directManagerId);
+        setTraineeStatus((prev) => (prev === "rejected" ? "pending" : prev ?? "pending"));
+      } else {
+        await saveEntry(profileId, workDate, next);
+      }
+      // Tied specifically to THIS viewer's own Time Out, once it actually
+      // saved — see TraineeAttendanceReviewModal.tsx, which listens for this
+      // to surface any pending trainee day this viewer can approve.
+      if (field === "checkOut") window.dispatchEvent(new CustomEvent(SELF_CHECKED_OUT_EVENT));
     } catch (err) {
       console.error("Failed to save time punch:", err);
       alert(`Failed to save: ${err instanceof Error ? err.message : "Unknown error"}`);
@@ -221,7 +272,11 @@ export function TimeClockButtons() {
     setClearingField(field);
     (async () => {
       try {
-        await sbClearPunch(profileId, loadedDateKeyRef.current, field);
+        if (employmentType === "trainee") {
+          await clearTraineePunch(profileId, loadedDateKeyRef.current, field);
+        } else {
+          await sbClearPunch(profileId, loadedDateKeyRef.current, field);
+        }
         setEntry((prev) => ({ ...prev, [field]: "" }));
       } catch (err) {
         console.error("Failed to clear punch:", err);
@@ -407,6 +462,20 @@ export function TimeClockButtons() {
         >
           Time Out
         </button>
+      )}
+      {employmentType === "trainee" && traineeStatus && traineeStatus !== "approved" && (
+        <span
+          className={`grid h-6 w-6 shrink-0 place-items-center rounded-full ${
+            traineeStatus === "rejected" ? "bg-red-500/20 text-red-300" : "bg-sky-500/20 text-sky-300"
+          }`}
+          title={
+            traineeStatus === "rejected"
+              ? "Your manager sent this day back — check the reason on Attendance Monitoring and punch again to resubmit."
+              : "Trainee timecard — pending your manager's approval before it counts as your actual timecard."
+          }
+        >
+          <Clock3 className="h-3.5 w-3.5" />
+        </span>
       )}
     </div>
   );

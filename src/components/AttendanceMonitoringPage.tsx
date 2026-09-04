@@ -11,6 +11,7 @@ import { getRoleDepartmentBreakdown, canSubmitConductNote, normalizeRole, isAtte
 import { getPendingCheckoutProposals, approveCheckoutProposal, type CheckoutProposal } from "@/lib/supabase/technicianCheckoutProposals";
 import { addAgentNote, getAllAgentNotes, type CsrAgentNote } from "@/lib/supabase/csrAgentNotes";
 import { TicketAttendanceTab } from "@/components/TicketAttendanceTab";
+import { TraineeAttendanceTab } from "@/components/TraineeAttendanceTab";
 import {
   getCompanyTimecardEntries,
   getProfileIdByFirebaseUid,
@@ -241,7 +242,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   const [correctionHistory, setCorrectionHistory] = useState<TimecardCorrectionHistoryRow[]>([]);
   const [employeeRequests, setEmployeeRequests] = useState<EmployeeRequestRow[]>([]);
   const [employeeRequestNote, setEmployeeRequestNote] = useState<Record<string, string>>({});
-  const ATTENDANCE_TABS = ["daily-attendance", "pto-management", "corrections", "disputes-inquiries", "ticket-attendance", "warnings"] as const;
+  const ATTENDANCE_TABS = ["daily-attendance", "pto-management", "corrections", "disputes-inquiries", "ticket-attendance", "trainee-attendance", "warnings"] as const;
   const [activeTab, setActiveTab] = usePersistedTab<typeof ATTENDANCE_TABS[number]>(
     "ahs:attendance-monitoring-active-tab",
     ATTENDANCE_TABS,
@@ -1407,6 +1408,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     ...(isFullRequestsAdmin ? [{ id: "disputes-inquiries", label: "Disputes & Inquiries", Icon: MessageSquare }] : []),
     { id: "pto-management", label: "PTO Management", Icon: Calendar },
     { id: "ticket-attendance", label: "Ticket Attendance", Icon: FileText },
+    { id: "trainee-attendance", label: "Trainee Attendance", Icon: Clock },
     { id: "warnings", label: "Warnings", Icon: AlertTriangle },
   ];
 
@@ -2562,6 +2564,16 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
           )}
 
           {activeTab === "ticket-attendance" && <TicketAttendanceTab />}
+
+          {activeTab === "trainee-attendance" && (
+            <TraineeAttendanceTab
+              profiles={profiles}
+              teamScopedIds={teamScopedIds}
+              myProfileId={myProfileId}
+              role={role}
+              extraRoles={extraRoles}
+            />
+          )}
 
           {activeTab === "warnings" && (
             <div className="space-y-6">

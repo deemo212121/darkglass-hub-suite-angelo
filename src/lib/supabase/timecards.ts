@@ -5,6 +5,7 @@
 
 import { supabase } from "./client";
 import { applyGraceToCheckIn, roundCheckOutToSchedule } from "@/lib/attendanceGrace";
+import { isTraineeApprovalEligible } from "@/lib/roleLabels";
 
 // The flat UI time-entry shape used by the timecard page.
 export interface UITimeEntry {
@@ -91,6 +92,14 @@ export async function getMyProfileSchedule(firebaseUid: string): Promise<{
   offDays: number[];
   /** profiles.schedule_timezone — which real-world clock this employee's punches should be stamped in (see src/lib/serverTime.ts). Defaults to "CST", same convention as AppHeader's clock and getMyFullProfile. */
   scheduleTimezone: "CST" | "EST";
+  /** profiles.employment_type (migration 0152) — a "trainee" punches on
+   *  these exact same screens, but every write/read here is redirected to
+   *  trainee_timecard_entries (traineeTimecards.ts) instead of the real
+   *  timecard_entries, until their manager approves the day. Defaults to
+   *  "regular" the same best-effort way working_hours/meal_minutes do below
+   *  — an un-applied migration or a transient error here must never make an
+   *  ordinary employee's punch silently vanish into the trainee table. */
+  employmentType: "trainee" | "regular";
 }> {
   // Network failures are retried and then surfaced as a thrown error — a
   // transient blip here used to return profileId:null, which downstream reads
@@ -109,7 +118,7 @@ export async function getMyProfileSchedule(firebaseUid: string): Promise<{
   });
   if (error) {
     console.error("getMyProfileSchedule error:", error.message);
-    return { profileId: null, requiredCheckIn: "", requiredCheckOut: "", workingHours: null, mealMinutes: null, offDays: [], scheduleTimezone: "CST" };
+    return { profileId: null, requiredCheckIn: "", requiredCheckOut: "", workingHours: null, mealMinutes: null, offDays: [], scheduleTimezone: "CST", employmentType: "regular" };
   }
 
   let workingHours: number | null = null;
@@ -128,6 +137,27 @@ export async function getMyProfileSchedule(firebaseUid: string): Promise<{
     }
   }
 
+  // The pending-approval trainee workflow is scoped to the Technician
+  // department only (the user's explicit call) — a CSR/Parts/other-
+  // department employee marked Trainee on Masterlist still gets the
+  // separate "limited module access" trainee restriction elsewhere
+  // (roleLabels.ts's isSubmoduleAllowedForTrainee), but their punches go
+  // straight onto the real timecard like a regular employee; only a
+  // Technician-tier trainee's punches redirect to trainee_timecard_entries.
+  let employmentType: "trainee" | "regular" = "regular";
+  if (data?.id) {
+    const { data: typeRow, error: typeError } = await supabase
+      .from("profiles")
+      .select("employment_type, role, extra_roles")
+      .eq("id", data.id)
+      .maybeSingle();
+    if (typeError) {
+      console.error("getMyProfileSchedule (employment_type) error:", typeError.message);
+    } else if (typeRow?.employment_type === "trainee" && isTraineeApprovalEligible(typeRow.role, (typeRow as any).extra_roles)) {
+      employmentType = "trainee";
+    }
+  }
+
   return {
     profileId: data?.id ?? null,
     requiredCheckIn: data?.required_check_in ?? "",
@@ -136,6 +166,7 @@ export async function getMyProfileSchedule(firebaseUid: string): Promise<{
     mealMinutes,
     offDays: ((data as any)?.off_days as number[] | null) ?? [],
     scheduleTimezone: ((data as any)?.schedule_timezone as "CST" | "EST" | null) ?? "CST",
+    employmentType,
   };
 }
 
