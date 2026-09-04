@@ -5729,6 +5729,92 @@ a.mtech-phone-link:active { opacity: 0.7; }
   padding: 0 0.5rem;
 }
 
+/* ── Timecard calendar (My Timecard month grid, read-only) ────────────── */
+.mtech-cal-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.7rem 0.9rem;
+  background: var(--mt-surface);
+  border: 1px solid var(--mt-surface-border);
+  border-radius: 14px;
+}
+.mtech-cal-nav-btn {
+  appearance: none;
+  border: none;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.92);
+  width: 2rem;
+  height: 2rem;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.mtech-cal-nav-btn:hover { background: rgba(255, 255, 255, 0.16); }
+.mtech-cal-nav-icon { width: 1.1rem; height: 1.1rem; }
+.mtech-cal-month-label {
+  font-size: 0.95rem;
+  font-weight: 800;
+  color: rgba(255, 255, 255, 0.92);
+}
+.mtech-cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 0.15rem;
+  padding: 0.7rem 0.5rem;
+  background: var(--mt-surface);
+  border: 1px solid var(--mt-surface-border);
+  border-radius: 14px;
+}
+.mtech-cal-weekday {
+  text-align: center;
+  font-size: 0.6rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.55);
+  padding-bottom: 0.3rem;
+}
+.mtech-cal-day {
+  appearance: none;
+  border: 1px solid transparent;
+  background: transparent;
+  border-radius: 10px;
+  padding: 0.3rem 0 0.35rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.2rem;
+  cursor: pointer;
+  font-family: inherit;
+  color: rgba(255, 255, 255, 0.92);
+}
+.mtech-cal-day-num { font-size: 0.76rem; font-weight: 700; }
+.mtech-cal-day.other-month { visibility: hidden; cursor: default; }
+.mtech-cal-day.today { border-color: var(--mt-blue); background: rgba(91, 126, 255, 0.12); }
+.mtech-cal-day.selected { background: rgba(91, 126, 255, 0.3); border-color: var(--mt-blue); }
+.mtech-cal-day-dots { display: flex; gap: 2px; height: 5px; }
+.mtech-cal-dot { width: 5px; height: 5px; border-radius: 999px; }
+.mtech-cal-dot.in { background: #4ade80; }
+.mtech-cal-dot.out { background: #f87171; }
+.mtech-cal-dot.pto { background: #c084fc; }
+.mtech-cal-detail-date {
+  font-size: 0.82rem;
+  font-weight: 800;
+  color: rgba(255, 255, 255, 0.92);
+  margin-bottom: 0.6rem;
+}
+.mtech-cal-detail-pto {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: #c084fc;
+}
+.mtech-cal-detail-empty {
+  font-size: 0.8rem;
+  color: rgba(255, 255, 255, 0.6);
+}
+
 /* ── Clock In Team (manager proxy clock-in) ───────────────────────────── */
 .mtech-clockin {
   padding: 1rem;
@@ -11829,6 +11915,92 @@ a.mtech-phone-link:active { opacity: 0.7; }
   color: rgba(255, 255, 255, 0.85);
   text-align: center;
   padding: 0 0.5rem;
+}
+
+/* ── Timecard calendar (My Timecard month grid, read-only) ────────────── */
+.mtech-cal-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.7rem 0.9rem;
+  background: var(--mt-surface);
+  border: 1px solid var(--mt-surface-border);
+  border-radius: 14px;
+}
+.mtech-cal-nav-btn {
+  appearance: none;
+  border: none;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.92);
+  width: 2rem;
+  height: 2rem;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.mtech-cal-nav-btn:hover { background: rgba(255, 255, 255, 0.16); }
+.mtech-cal-nav-icon { width: 1.1rem; height: 1.1rem; }
+.mtech-cal-month-label {
+  font-size: 0.95rem;
+  font-weight: 800;
+  color: rgba(255, 255, 255, 0.92);
+}
+.mtech-cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 0.15rem;
+  padding: 0.7rem 0.5rem;
+  background: var(--mt-surface);
+  border: 1px solid var(--mt-surface-border);
+  border-radius: 14px;
+}
+.mtech-cal-weekday {
+  text-align: center;
+  font-size: 0.6rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.55);
+  padding-bottom: 0.3rem;
+}
+.mtech-cal-day {
+  appearance: none;
+  border: 1px solid transparent;
+  background: transparent;
+  border-radius: 10px;
+  padding: 0.3rem 0 0.35rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.2rem;
+  cursor: pointer;
+  font-family: inherit;
+  color: rgba(255, 255, 255, 0.92);
+}
+.mtech-cal-day-num { font-size: 0.76rem; font-weight: 700; }
+.mtech-cal-day.other-month { visibility: hidden; cursor: default; }
+.mtech-cal-day.today { border-color: var(--mt-blue); background: rgba(91, 126, 255, 0.12); }
+.mtech-cal-day.selected { background: rgba(91, 126, 255, 0.3); border-color: var(--mt-blue); }
+.mtech-cal-day-dots { display: flex; gap: 2px; height: 5px; }
+.mtech-cal-dot { width: 5px; height: 5px; border-radius: 999px; }
+.mtech-cal-dot.in { background: #4ade80; }
+.mtech-cal-dot.out { background: #f87171; }
+.mtech-cal-dot.pto { background: #c084fc; }
+.mtech-cal-detail-date {
+  font-size: 0.82rem;
+  font-weight: 800;
+  color: rgba(255, 255, 255, 0.92);
+  margin-bottom: 0.6rem;
+}
+.mtech-cal-detail-pto {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: #c084fc;
+}
+.mtech-cal-detail-empty {
+  font-size: 0.8rem;
+  color: rgba(255, 255, 255, 0.6);
 }
 
 /* ── Clock In Team (manager proxy clock-in) ───────────────────────────── */

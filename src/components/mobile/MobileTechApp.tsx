@@ -7,6 +7,7 @@ import {
   ArrowLeft,
   Check,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   Send,
   Ticket as TicketIcon,
@@ -668,6 +669,9 @@ export function MobileTechApp() {
   // Ticket Time Dispute with that ticket pre-selected instead of making the
   // tech find it again in the dropdown.
   const [ticketTimeDisputePrefillTicketNo, setTicketTimeDisputePrefillTicketNo] = useState<string | null>(null);
+  // Same idea for My Timecard's calendar — its "Dispute" button on a
+  // selected day jumps to Time Correction with that date pre-filled.
+  const [correctionPrefillDate, setCorrectionPrefillDate] = useState<string | null>(null);
   useEffect(() => {
     if (!profileId) return;
     let cancelled = false;
@@ -993,7 +997,7 @@ export function MobileTechApp() {
     const lower = linkTo.toLowerCase();
     if (lower.includes("it-tickets") || lower.includes("itsupport")) { setView("itsupport"); return; }
     if (lower.includes("pto-management")) { setView("timeoff"); return; }
-    if (lower.includes("corrections")) { setView("correction"); return; }
+    if (lower.includes("corrections")) { setCorrectionPrefillDate(null); setView("correction"); return; }
     if (lower.includes("tickettimedisputes") || lower.includes("ticket-time-disputes")) { setView("tickettimedispute"); return; }
     if (lower.includes("payrolldisputes") || lower.includes("accounting-dashboard")) { setPayrollDisputePrefill(null); setView("payrolldispute"); return; }
     if (lower.includes("ticket-list") || lower.includes("/ticket/")) { setView(isSelfRole ? "tickets" : "roster"); return; }
@@ -1112,7 +1116,12 @@ export function MobileTechApp() {
         )}
 
         {view === "timecard" && (
-          <MobileTimecardView uid={uid} profileId={profileId} userName={headerName} />
+          <MobileTimecardView
+            uid={uid}
+            profileId={profileId}
+            userName={headerName}
+            onDispute={(dateKey) => { setCorrectionPrefillDate(dateKey); setView("correction"); }}
+          />
         )}
 
         {view === "clockinteam" && (
@@ -1149,7 +1158,7 @@ export function MobileTechApp() {
         )}
 
         {view === "correction" && (
-          <MobileTimeCorrectionView userName={headerName} profileId={profileId} />
+          <MobileTimeCorrectionView userName={headerName} profileId={profileId} prefillDate={correctionPrefillDate} />
         )}
 
         {view === "notifications" && (
@@ -1180,7 +1189,8 @@ export function MobileTechApp() {
             onOpenPayrollDispute={() => { setPayrollDisputePrefill(null); setView("payrolldispute"); }}
             onOpenTimeOff={() => setView("timeoff")}
             onOpenTicketTimeDispute={() => setView("tickettimedispute")}
-            onOpenCorrection={() => setView("correction")}
+            onOpenCorrection={() => { setCorrectionPrefillDate(null); setView("correction"); }}
+            onOpenTimecard={() => setView("timecard")}
             arrivedAt={arrivedAt}
             setArrivedAt={setArrivedAt}
             doneAt={doneAt}
@@ -4890,6 +4900,7 @@ function MobileHomeView({
   onOpenTimeOff,
   onOpenTicketTimeDispute,
   onOpenCorrection,
+  onOpenTimecard,
   arrivedAt,
   setArrivedAt,
   doneAt,
@@ -4911,6 +4922,7 @@ function MobileHomeView({
   onOpenTimeOff: () => void;
   onOpenTicketTimeDispute: () => void;
   onOpenCorrection: () => void;
+  onOpenTimecard: () => void;
   arrivedAt: Record<string, string>;
   setArrivedAt: Dispatch<SetStateAction<Record<string, string>>>;
   doneAt: Record<string, string>;
@@ -5057,7 +5069,7 @@ function MobileHomeView({
       onClick: onOpenCorrection, show: true,
     },
     {
-      key: "timeoff", label: "Time Off Request",
+      key: "timeoff", label: "File PTO or Leave",
       description: "Request PTO, sick leave, or unpaid time off",
       onClick: onOpenTimeOff, show: true,
     },
@@ -5080,6 +5092,11 @@ function MobileHomeView({
       key: "clockinteam", label: "Clock In Team",
       description: "Your team's technicians, today",
       onClick: onOpenClockInTeam, show: showClockInTeam,
+    },
+    {
+      key: "timecard", label: "Monitor My Attendance",
+      description: "See your monthly check-in/out calendar",
+      onClick: onOpenTimecard, show: true,
     },
   ].filter((t) => t.show);
 
@@ -5385,67 +5402,66 @@ function TechPayrollBreakdownPanel({
   );
 }
 
-// Timecard tab: real punch clock (Time In/Out, Meal In/Out), reached from
-// the profile menu. Unlike desktop's FullTimecardPage this only ever shows
-// TODAY — no calendar to browse, since desktop already locks editing to
-// today's date anyway (timecard.tsx) — so there's no "locked past day" state
-// to handle here at all. Business rules (meal break requires an 8+ hour
-// scheduled shift, checked-in first) are copied verbatim from
-// FullTimecardPage's handleMealToggle so mobile and desktop never disagree.
+// Timecard tab: a calendar of this technician's own past timecards,
+// reached from the profile menu — punching in/out itself lives on the Home
+// landing page's own clock card (ClockCard, above), so this is purely a
+// read-only history view, not a second punch clock. Month navigation +
+// PTO overlay mirror desktop's FullTimecardPage (routes/timecard.tsx), just
+// without the edit modal — nothing here can be changed.
 function MobileTimecardView({
-  uid,
+  uid: _uid,
   profileId,
-  userName,
+  userName: _userName,
+  onDispute,
 }: {
   uid: string | null;
   profileId: string | null;
   userName: string;
+  onDispute: (dateKey: string) => void;
 }) {
-  const [requiredCheckIn, setRequiredCheckIn] = useState("");
-  const [requiredCheckOut, setRequiredCheckOut] = useState("");
-  const [workingHours, setWorkingHours] = useState<number | null>(null);
-  const [mealMinutes, setMealMinutes] = useState<number | null>(null);
-  const [scheduleTimezone, setScheduleTimezone] = useState<ScheduleTimezone>("CST");
-  const [entry, setEntry] = useState<UITimeEntry>({ checkIn: "", checkOut: "", mealStart: "", mealEnd: "", notes: "" });
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
+  const toKey = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const today = new Date();
+  const todayKey = toKey(today);
 
-  const now = new Date();
-  const todayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-  const todayLabel = now.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+  const [currentYear, setCurrentYear] = useState(today.getFullYear());
+  const [currentMonth, setCurrentMonth] = useState(today.getMonth());
+  const [entries, setEntries] = useState<Record<string, UITimeEntry>>({});
+  const [myApprovedPto, setMyApprovedPto] = useState<PtoRequestRow[]>([]);
+  const [selectedDate, setSelectedDate] = useState(todayKey);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!uid) {
+    if (!profileId) return;
+    getCompanyPtoRequests()
+      .then((all) => setMyApprovedPto(all.filter((r) => r.profileId === profileId && r.status === "approved")))
+      .catch((e) => console.error("MobileTimecardView: load PTO failed", e));
+  }, [profileId]);
+
+  useEffect(() => {
+    if (!profileId) {
       setLoading(false);
       return;
     }
     let cancelled = false;
-    (async () => {
-      setLoading(true);
-      try {
-        const schedule = await getMyProfileSchedule(uid);
-        if (cancelled) return;
-        setRequiredCheckIn(schedule.requiredCheckIn);
-        setRequiredCheckOut(schedule.requiredCheckOut);
-        setWorkingHours(schedule.workingHours);
-        setMealMinutes(schedule.mealMinutes);
-        setScheduleTimezone(schedule.scheduleTimezone);
-        if (!schedule.profileId) {
-          setEntry({ checkIn: "", checkOut: "", mealStart: "", mealEnd: "", notes: "" });
-          return;
-        }
-        const monthEntries = await getMonthEntries(schedule.profileId, now.getFullYear(), now.getMonth());
-        if (cancelled) return;
-        setEntry(monthEntries[todayKey] || { checkIn: "", checkOut: "", mealStart: "", mealEnd: "", notes: "" });
-      } catch (e) {
-        console.error("MobileTimecardView: load failed", e);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
+    setLoading(true);
+    getMonthEntries(profileId, currentYear, currentMonth)
+      .then((map) => { if (!cancelled) setEntries(map); })
+      .catch((e) => {
+        console.error("MobileTimecardView: load month failed", e);
+        if (!cancelled) setEntries({});
+      })
+      .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [uid]);
+  }, [profileId, currentYear, currentMonth]);
+
+  const changeMonth = (dir: number) => {
+    let m = currentMonth + dir;
+    let y = currentYear;
+    if (m > 11) { m = 0; y++; }
+    if (m < 0) { m = 11; y--; }
+    setCurrentMonth(m);
+    setCurrentYear(y);
+  };
 
   const timeDiff = (t1: string, t2: string): number => {
     if (!t1 || !t2) return 0;
@@ -5454,123 +5470,134 @@ function MobileTimecardView({
     return (h2 * 3600 + m2 * 60 + s2 - (h1 * 3600 + m1 * 60 + s1)) / 3600;
   };
 
-  // Stamps `field` with the server's own current instant (never the
-  // phone's own clock — see src/lib/serverTime.ts), converted into this
-  // technician's own scheduled timezone, so setting your phone's date/time
-  // can't fake a punch. If getServerNow() fails, the punch is NOT saved
-  // with a fallback local time — that would just reopen the hole this
-  // exists to close.
-  const persistPunch = async (field: keyof Pick<UITimeEntry, "checkIn" | "checkOut" | "mealStart" | "mealEnd">) => {
-    if (!profileId) {
-      alert("Could not resolve your profile. Please re-login.");
-      return;
-    }
-    setSaving(true);
-    try {
-      const serverNow = await getServerNow();
-      const workDate = zonedDateKey(serverNow, scheduleTimezone);
-      const time = zonedTimeString(serverNow, scheduleTimezone);
-      if (workDate !== todayKey) {
-        alert("It's now a new day — please reopen your timecard and try again.");
-        return;
-      }
-      const next = { ...entry, [field]: time };
-      setEntry(next);
-      await saveTimecardEntry(profileId, workDate, next);
-    } catch (e) {
-      console.error("MobileTimecardView: save failed", e);
-      alert(`Failed to save: ${e instanceof Error ? e.message : "Unknown error"}`);
-    } finally {
-      setSaving(false);
-    }
-  };
+  const ptoForDate = (dateKey: string) => myApprovedPto.find((r) => dateKey >= r.startDate && dateKey <= r.endDate);
 
-  const handleTimeToggle = () => {
-    if (!entry.checkIn) void persistPunch("checkIn");
-    else if (!entry.checkOut) void persistPunch("checkOut");
-  };
+  const monthLabel = new Date(currentYear, currentMonth, 1).toLocaleDateString("en-US", { month: "long", year: "numeric" });
+  const selectedLabel = new Date(`${selectedDate}T00:00:00`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
 
-  const handleMealToggle = () => {
-    if (!entry.checkIn) {
-      alert("Please log time in first.");
-      return;
-    }
-    if (entry.checkOut) {
-      alert("You've already timed out for the day.");
-      return;
-    }
-    if ((!requiredCheckIn || !requiredCheckOut) && !workingHours) {
-      alert("No scheduled shift is set for your account. Contact your admin to set your required schedule.");
-      return;
-    }
-    // Same rule as TimeClockMenu.tsx / routes/timecard.tsx: shifts of 6 hours
-    // or less have no meal break, and an explicit Working Hours override
-    // (migration 0109) takes priority over the Time In/Out subtraction.
-    const scheduledShift = resolveScheduledShiftHours(requiredCheckIn, requiredCheckOut, workingHours, mealMinutes);
-    if (scheduledShift <= 6) {
-      alert(`Meal break is only available for scheduled shifts of more than 6 hours. Your scheduled shift is ${scheduledShift.toFixed(1)} hours.`);
-      return;
-    }
-    if (!entry.mealStart) void persistPunch("mealStart");
-    else if (!entry.mealEnd) void persistPunch("mealEnd");
-  };
+  // Sunday-first 6-week grid, same construction FullTimecardPage uses.
+  const firstDay = new Date(currentYear, currentMonth, 1);
+  const lastDay = new Date(currentYear, currentMonth + 1, 0);
+  const cursor = new Date(firstDay);
+  cursor.setDate(cursor.getDate() - cursor.getDay());
+  const end = new Date(lastDay);
+  end.setDate(end.getDate() + (6 - end.getDay()));
+  const calendarDays: Date[] = [];
+  for (const d = new Date(cursor); d <= end; d.setDate(d.getDate() + 1)) calendarDays.push(new Date(d));
 
-  const hoursToday = entry.checkIn && entry.checkOut
-    ? Math.max(0, timeDiff(entry.checkIn, entry.checkOut) - (entry.mealStart && entry.mealEnd ? timeDiff(entry.mealStart, entry.mealEnd) : 0))
+  const selectedEntry = entries[selectedDate];
+  const selectedPto = ptoForDate(selectedDate);
+  const selectedHours = selectedEntry?.checkIn && selectedEntry?.checkOut
+    ? Math.max(0, timeDiff(selectedEntry.checkIn, selectedEntry.checkOut) - (selectedEntry.mealStart && selectedEntry.mealEnd ? timeDiff(selectedEntry.mealStart, selectedEntry.mealEnd) : 0))
     : null;
 
   return (
     <div className="mtech-scroll mtech-timecard">
-      <div className="mtech-timecard-heading">
-        <div className="mtech-timecard-name">{userName}</div>
-        <div className="mtech-timecard-sub">{todayLabel}</div>
+      <div className="mtech-cal-nav">
+        <button type="button" className="mtech-cal-nav-btn" onClick={() => changeMonth(-1)} aria-label="Previous month">
+          <ChevronLeft className="mtech-cal-nav-icon" />
+        </button>
+        <div className="mtech-cal-month-label">{monthLabel}</div>
+        <button type="button" className="mtech-cal-nav-btn" onClick={() => changeMonth(1)} aria-label="Next month">
+          <ChevronRight className="mtech-cal-nav-icon" />
+        </button>
       </div>
 
       {loading ? (
         <div className="mtech-muted">Loading timecard…</div>
       ) : (
         <>
-          <div className="mtech-timecard-summary">
-            <div className="mtech-timecard-card">
-              <div className="mtech-timecard-card-label">Check In</div>
-              <div className="mtech-timecard-card-value in">{entry.checkIn ? entry.checkIn.slice(0, 5) : "—"}</div>
-            </div>
-            <div className="mtech-timecard-card">
-              <div className="mtech-timecard-card-label">Check Out</div>
-              <div className="mtech-timecard-card-value out">{entry.checkOut ? entry.checkOut.slice(0, 5) : "—"}</div>
-            </div>
-            <div className="mtech-timecard-card">
-              <div className="mtech-timecard-card-label">Meal Start</div>
-              <div className="mtech-timecard-card-value meal">{entry.mealStart ? entry.mealStart.slice(0, 5) : "—"}</div>
-            </div>
-            <div className="mtech-timecard-card">
-              <div className="mtech-timecard-card-label">Meal End</div>
-              <div className="mtech-timecard-card-value meal">{entry.mealEnd ? entry.mealEnd.slice(0, 5) : "—"}</div>
-            </div>
+          <div className="mtech-cal-grid">
+            {["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"].map((d) => (
+              <div key={d} className="mtech-cal-weekday">{d}</div>
+            ))}
+            {calendarDays.map((day) => {
+              const dateKey = toKey(day);
+              const isOtherMonth = day.getMonth() !== currentMonth;
+              const entry = entries[dateKey];
+              const pto = ptoForDate(dateKey);
+              const classes = [
+                "mtech-cal-day",
+                isOtherMonth && "other-month",
+                dateKey === todayKey && "today",
+                dateKey === selectedDate && "selected",
+              ].filter(Boolean).join(" ");
+              return (
+                <button
+                  key={dateKey}
+                  type="button"
+                  className={classes}
+                  disabled={isOtherMonth}
+                  onClick={() => setSelectedDate(dateKey)}
+                >
+                  <span className="mtech-cal-day-num">{day.getDate()}</span>
+                  <span className="mtech-cal-day-dots">
+                    {pto ? (
+                      <span className="mtech-cal-dot pto" />
+                    ) : (
+                      <>
+                        {entry?.checkIn && <span className="mtech-cal-dot in" />}
+                        {entry?.checkOut && <span className="mtech-cal-dot out" />}
+                      </>
+                    )}
+                  </span>
+                </button>
+              );
+            })}
           </div>
 
-          {hoursToday !== null && <div className="mtech-timecard-hours">{hoursToday.toFixed(1)}h worked today</div>}
+          <div className="mtech-timecard-heading">
+            <div className="mtech-cal-detail-date">{selectedLabel}</div>
+            {selectedPto ? (
+              <div className="mtech-cal-detail-pto">PTO Approved — {PTO_TYPE_LABELS[selectedPto.ptoType]}</div>
+            ) : selectedEntry?.checkIn || selectedEntry?.checkOut ? (
+              <>
+                <div className="mtech-timecard-summary">
+                  <div className="mtech-timecard-card">
+                    <div className="mtech-timecard-card-label">Check In</div>
+                    <div className="mtech-timecard-card-value in">{selectedEntry.checkIn ? selectedEntry.checkIn.slice(0, 5) : "—"}</div>
+                  </div>
+                  <div className="mtech-timecard-card">
+                    <div className="mtech-timecard-card-label">Check Out</div>
+                    <div className="mtech-timecard-card-value out">{selectedEntry.checkOut ? selectedEntry.checkOut.slice(0, 5) : "—"}</div>
+                  </div>
+                  <div className="mtech-timecard-card">
+                    <div className="mtech-timecard-card-label">Meal Start</div>
+                    <div className="mtech-timecard-card-value meal">{selectedEntry.mealStart ? selectedEntry.mealStart.slice(0, 5) : "—"}</div>
+                  </div>
+                  <div className="mtech-timecard-card">
+                    <div className="mtech-timecard-card-label">Meal End</div>
+                    <div className="mtech-timecard-card-value meal">{selectedEntry.mealEnd ? selectedEntry.mealEnd.slice(0, 5) : "—"}</div>
+                  </div>
+                </div>
+                {selectedHours !== null && <div className="mtech-timecard-hours">{selectedHours.toFixed(1)}h worked</div>}
+              </>
+            ) : (
+              <div className="mtech-cal-detail-empty">No punches recorded for this day.</div>
+            )}
 
-          <button
-            type="button"
-            className="mtech-timecard-btn mtech-timecard-btn-time"
-            disabled={!!entry.checkOut || saving}
-            onClick={handleTimeToggle}
-          >
-            {!entry.checkIn ? "🕐 Time In" : !entry.checkOut ? "🛑 Time Out" : "✓ Shift Complete"}
-          </button>
-          <button
-            type="button"
-            className="mtech-timecard-btn mtech-timecard-btn-meal"
-            disabled={!!entry.mealEnd || saving}
-            onClick={handleMealToggle}
-          >
-            {!entry.mealStart ? "🍽 Meal In" : !entry.mealEnd ? "✓ Meal Out" : "Meal Done"}
-          </button>
-
-          {requiredCheckIn && requiredCheckOut && (
-            <p className="mtech-timecard-note">Scheduled shift: {requiredCheckIn}–{requiredCheckOut}</p>
-          )}
+            {!selectedPto && selectedDate <= todayKey && (
+              <button
+                type="button"
+                onClick={() => onDispute(selectedDate)}
+                style={{
+                  marginTop: "0.7rem",
+                  width: "100%",
+                  padding: "0.5rem 0.9rem",
+                  borderRadius: "10px",
+                  border: "1px solid rgba(96,165,250,0.5)",
+                  background: "rgba(59,130,246,0.15)",
+                  color: "#93c5fd",
+                  fontWeight: 700,
+                  fontSize: "0.8rem",
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                }}
+              >
+                Dispute This Time Card
+              </button>
+            )}
+          </div>
         </>
       )}
     </div>
@@ -6681,11 +6708,19 @@ function MobileTicketTimeDisputeView({ userName, profileId, companyId, technicia
 // today's entry) so the review queue can show what's being corrected FROM,
 // not just what it's being corrected TO. Same two-stage manager-then-(HR OR
 // Accounting) approval as Time Off, via timecardCorrections.ts.
-function MobileTimeCorrectionView({ userName, profileId }: { userName: string; profileId: string | null }) {
+function MobileTimeCorrectionView({ userName, profileId, prefillDate }: { userName: string; profileId: string | null; prefillDate?: string | null }) {
   const [requests, setRequests] = useState<TimecardCorrectionRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [companyProfiles, setCompanyProfiles] = useState<ProfileRow[]>([]);
   const [correctionDate, setCorrectionDate] = useState("");
+
+  // Arriving via My Timecard's "Dispute This Time Card" button (a specific
+  // day already selected there) — same idea as Payroll/Ticket Time
+  // Dispute's own prefill props, jumps straight to that date instead of
+  // making the tech pick it again.
+  useEffect(() => {
+    if (prefillDate) setCorrectionDate(prefillDate);
+  }, [prefillDate]);
   const [correctedCheckIn, setCorrectedCheckIn] = useState("");
   const [correctedCheckOut, setCorrectedCheckOut] = useState("");
   const [correctedMealStart, setCorrectedMealStart] = useState("");
