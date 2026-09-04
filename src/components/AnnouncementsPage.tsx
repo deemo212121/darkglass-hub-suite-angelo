@@ -62,6 +62,7 @@ export function AnnouncementsPage(_: Props) {
   const [messages, setMessages] = useState<MessageRow[]>([]);
   const [lastReadAt, setLastReadAt] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
+  const [sendAsInternal, setSendAsInternal] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -126,9 +127,11 @@ export function AnnouncementsPage(_: Props) {
         senderName: currentUserName,
         body,
         isAnnouncement: true,
+        isInternal: sendAsInternal,
       });
       setMessages((prev) => (prev.some((m) => m.id === row.id) ? prev : [...prev, row]));
       setDraft("");
+      setSendAsInternal(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -203,7 +206,14 @@ export function AnnouncementsPage(_: Props) {
                   >
                     <div className="flex items-center justify-between gap-4">
                       <div className="min-w-0">
-                        <div className="text-sm font-semibold text-white">{m.sender_name || "Unknown"}</div>
+                        <div className="flex items-center gap-2">
+                          <div className="text-sm font-semibold text-white">{m.sender_name || "Unknown"}</div>
+                          {m.is_internal && (
+                            <span className="rounded-full border border-sky-300/30 bg-sky-300/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.1em] text-sky-200">
+                              Internal
+                            </span>
+                          )}
+                        </div>
                         <div className="text-[11px] uppercase tracking-[0.12em] text-slate-400">{formatTimestamp(m.created_at)}</div>
                       </div>
                       {isUnread && (
@@ -231,6 +241,16 @@ export function AnnouncementsPage(_: Props) {
               placeholder="Type a company announcement..."
               className="glass-input mt-4 min-h-36 w-full rounded-xl bg-slate-900 text-white placeholder:text-slate-500 disabled:cursor-not-allowed disabled:opacity-60"
             />
+            <label className="mt-3 flex items-center gap-2 text-sm text-slate-300">
+              <input
+                type="checkbox"
+                checked={sendAsInternal}
+                onChange={(e) => setSendAsInternal(e.target.checked)}
+                disabled={!canPost}
+                className="h-4 w-4 accent-amber-400 disabled:cursor-not-allowed"
+              />
+              Send as Internal Announcement
+            </label>
             <button
               type="button"
               onClick={post}

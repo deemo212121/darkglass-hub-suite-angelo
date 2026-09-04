@@ -674,7 +674,7 @@ const ELECTROLUX_HUNTSVILLE_MILEAGE_ORIGIN: Record<string, string> = {
   AL: "631 Beacon Pkwy W #106, Birmingham, AL 35209, USA",
   TN: "163 N Mt Juliet Rd, Mt. Juliet, TN 37122, USA",
 };
-function getElectroluxHuntsvilleMileageOrigin(ticket: MileageTicketInput): string | null {
+export function getElectroluxHuntsvilleMileageOrigin(ticket: MileageTicketInput): string | null {
   const account = String(ticket.account || "").trim().toLowerCase();
   const location = String(ticket.location || "").trim().toLowerCase();
   const state = String(ticket.state || "").trim().toUpperCase();

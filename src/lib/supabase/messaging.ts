@@ -54,6 +54,11 @@ export interface MessageRow {
   body: string;
   kind: "system" | "user";
   is_announcement: boolean;
+  /** "Send as Internal Announcement" checkbox on Company Announcements
+   *  (migration 0212) — a plain per-message tag shown as a badge on the
+   *  feed, distinct from is_announcement (which marks a message as an
+   *  announcement at all). */
+  is_internal: boolean;
   created_at: string;
   edited_at: string | null;
   deleted_at: string | null;
@@ -250,7 +255,7 @@ export async function getChannelMessages(channelId: string, limit = 200): Promis
   const { data, error } = await supabase
     .from("messages")
     .select(
-      "id, channel_id, dm_thread_id, sender_id, sender_name, body, kind, is_announcement, created_at, edited_at, deleted_at"
+      "id, channel_id, dm_thread_id, sender_id, sender_name, body, kind, is_announcement, is_internal, created_at, edited_at, deleted_at"
     )
     .eq("channel_id", channelId)
     .is("deleted_at", null)
@@ -265,7 +270,7 @@ export async function getDmMessages(dmThreadId: string, limit = 200): Promise<Me
   const { data, error } = await supabase
     .from("messages")
     .select(
-      "id, channel_id, dm_thread_id, sender_id, sender_name, body, kind, is_announcement, created_at, edited_at, deleted_at"
+      "id, channel_id, dm_thread_id, sender_id, sender_name, body, kind, is_announcement, is_internal, created_at, edited_at, deleted_at"
     )
     .eq("dm_thread_id", dmThreadId)
     .is("deleted_at", null)
@@ -299,6 +304,8 @@ export async function sendMessage(params: {
   senderName: string;
   body: string;
   isAnnouncement?: boolean;
+  /** "Send as Internal Announcement" checkbox — see MessageRow.is_internal. */
+  isInternal?: boolean;
   /** "system" marks an app-generated notification (e.g. attendance note alerts) rather than a typed chat line. Defaults to "user". */
   kind?: "system" | "user";
 }): Promise<MessageRow> {
@@ -315,12 +322,13 @@ export async function sendMessage(params: {
     body,
     kind: params.kind ?? ("user" as const),
     is_announcement: Boolean(params.isAnnouncement),
+    is_internal: Boolean(params.isInternal),
   };
   const { data, error } = await supabase
     .from("messages")
     .insert(payload)
     .select(
-      "id, channel_id, dm_thread_id, sender_id, sender_name, body, kind, is_announcement, created_at, edited_at, deleted_at"
+      "id, channel_id, dm_thread_id, sender_id, sender_name, body, kind, is_announcement, is_internal, created_at, edited_at, deleted_at"
     )
     .single();
   if (error) throw new Error(error.message);

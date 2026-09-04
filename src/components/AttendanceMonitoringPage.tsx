@@ -9,6 +9,7 @@ import { getCompanyUsers, getProfileEmployeeInfo, type ProfileRow } from "@/lib/
 import { resolvePresenceStatus, PRESENCE_DOT_CLASS, PRESENCE_LABEL } from "@/lib/presence";
 import { getRoleDepartmentBreakdown, canSubmitConductNote, normalizeRole, isAttendanceManagerTierRole, TECHNICIAN_PAY_ROLES } from "@/lib/roleLabels";
 import { addAgentNote, getAllAgentNotes, type CsrAgentNote } from "@/lib/supabase/csrAgentNotes";
+import { TicketAttendanceTab } from "@/components/TicketAttendanceTab";
 import {
   getCompanyTimecardEntries,
   getProfileIdByFirebaseUid,
@@ -228,7 +229,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   const [correctionHistory, setCorrectionHistory] = useState<TimecardCorrectionHistoryRow[]>([]);
   const [employeeRequests, setEmployeeRequests] = useState<EmployeeRequestRow[]>([]);
   const [employeeRequestNote, setEmployeeRequestNote] = useState<Record<string, string>>({});
-  const ATTENDANCE_TABS = ["daily-attendance", "pto-management", "corrections", "disputes-inquiries", "warnings"] as const;
+  const ATTENDANCE_TABS = ["daily-attendance", "pto-management", "corrections", "disputes-inquiries", "ticket-attendance", "warnings"] as const;
   const [activeTab, setActiveTab] = usePersistedTab<typeof ATTENDANCE_TABS[number]>(
     "ahs:attendance-monitoring-active-tab",
     ATTENDANCE_TABS,
@@ -1212,6 +1213,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     { id: "daily-attendance", label: "Daily Attendance", Icon: Clock },
     ...(isFullRequestsAdmin ? [{ id: "disputes-inquiries", label: "Disputes & Inquiries", Icon: MessageSquare }] : []),
     { id: "pto-management", label: "PTO Management", Icon: Calendar },
+    { id: "ticket-attendance", label: "Ticket Attendance", Icon: FileText },
     { id: "warnings", label: "Warnings", Icon: AlertTriangle },
   ];
 
@@ -2290,6 +2292,8 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
               </div>
             </div>
           )}
+
+          {activeTab === "ticket-attendance" && <TicketAttendanceTab />}
 
           {activeTab === "warnings" && (
             <div className="space-y-6">

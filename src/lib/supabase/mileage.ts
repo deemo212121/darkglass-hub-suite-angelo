@@ -12,7 +12,7 @@
 
 import { supabase } from "./client";
 import { getCompanyMapProvider } from "./companySettings";
-import { computeDailyRouteMiles, getOfficeCoordinates, type MileageTicketInput, type DailyRouteMilesResult } from "@/lib/mapEngine";
+import { computeDailyRouteMiles, getOfficeCoordinates, getElectroluxHuntsvilleMileageOrigin, type MileageTicketInput, type DailyRouteMilesResult } from "@/lib/mapEngine";
 
 export interface MileageEntry {
   id: string;
@@ -456,14 +456,31 @@ export interface MileageSyncResult {
  * browser position) — wrong for anyone checking a route from their desk
  * instead of standing at the branch.
  */
-function buildGoogleMapLink(branch: string, ticket: { customer?: { address?: string | null; address2?: string | null; city?: string | null; state?: string | null; zip?: string | null } | null }): string {
+function buildGoogleMapLink(
+  branch: string,
+  ticket: {
+    location?: string | null;
+    account?: string | null;
+    customer?: { address?: string | null; address2?: string | null; city?: string | null; state?: string | null; zip?: string | null } | null;
+  }
+): string {
   const customer = ticket.customer ?? {};
   const fullAddress = [customer.address, customer.address2, [customer.city, customer.state].filter(Boolean).join(", "), customer.zip]
     .filter((part: unknown) => typeof part === "string" && part.trim())
     .join(", ");
   if (!fullAddress) return "";
-  const originPt = getOfficeCoordinates(branch);
-  const originParam = originPt ? `&origin=${originPt.lat},${originPt.lng}` : "";
+  // Same override the actual mileage math uses (computeDailyRouteMiles) —
+  // an Electrolux/Huntsville ticket dispatches from a different real office
+  // depending on the customer's state, not the generic Huntsville branch
+  // pin, so the link has to check the same override or it'll point at the
+  // wrong start.
+  const overrideOrigin = getElectroluxHuntsvilleMileageOrigin({ location: ticket.location ?? undefined, account: ticket.account ?? undefined, state: customer.state ?? undefined });
+  const originPt = overrideOrigin ? null : getOfficeCoordinates(branch);
+  const originParam = overrideOrigin
+    ? `&origin=${encodeURIComponent(overrideOrigin)}`
+    : originPt
+    ? `&origin=${originPt.lat},${originPt.lng}`
+    : "";
   return `https://www.google.com/maps/dir/?api=1${originParam}&destination=${encodeURIComponent(fullAddress)}`;
 }
 export async function syncMileageFromTickets(input: {
