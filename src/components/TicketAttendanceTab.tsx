@@ -83,10 +83,17 @@ export function TicketAttendanceTab() {
       .finally(() => setLoading(false));
   };
 
-  // Loaded once on mount — employees/mileage/disputes don't depend on the
-  // date range, only the ticket-attendance rows/timecards above do.
+  // Re-fetches whenever the date changes (also fires once on mount, since
+  // dateFrom/dateTo already have their initial value then) — no separate
+  // click needed after picking a new date.
   useEffect(() => {
     load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dateFrom, dateTo]);
+
+  // Loaded once on mount — employees/mileage/disputes don't depend on the
+  // date range.
+  useEffect(() => {
     getCompanyUsers()
       .then(setEmployees)
       .catch((err) => console.error("Failed to load employees for Ticket Attendance:", err));
@@ -361,24 +368,16 @@ export function TicketAttendanceTab() {
       </p>
 
       <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
-        <div className="grid gap-3 md:grid-cols-5 items-end">
+        <div className="grid gap-3 md:grid-cols-4 items-end">
           <div>
-            <label className="block text-xs text-slate-400 uppercase mb-2">Date From</label>
+            <label className="block text-xs text-slate-400 uppercase mb-2">Date</label>
             <input
               type="date"
               value={dateFrom}
-              max={dateTo}
-              onChange={(e) => setDateFrom(e.target.value)}
-              className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none"
-            />
-          </div>
-          <div>
-            <label className="block text-xs text-slate-400 uppercase mb-2">Date To</label>
-            <input
-              type="date"
-              value={dateTo}
-              min={dateFrom}
-              onChange={(e) => setDateTo(e.target.value)}
+              onChange={(e) => {
+                setDateFrom(e.target.value);
+                setDateTo(e.target.value);
+              }}
               className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none"
             />
           </div>
@@ -420,8 +419,8 @@ export function TicketAttendanceTab() {
             <tr className="border-b border-white/10">
               <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Technician</th>
               <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Location</th>
-              <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase" title="Only shown when Date From = Date To — a range covers multiple days, see each date's own row below">Time In</th>
-              <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase" title="Only shown when Date From = Date To — a range covers multiple days, see each date's own row below">Time Out</th>
+              <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Time In</th>
+              <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Time Out</th>
               <th className="px-3 py-3 text-right text-xs font-semibold text-slate-400 uppercase">Scheduled</th>
               <th className="px-3 py-3 text-right text-xs font-semibold text-slate-400 uppercase">Checked In</th>
               <th className="px-3 py-3 text-right text-xs font-semibold text-slate-400 uppercase">Missing Check-In</th>
