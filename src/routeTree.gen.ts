@@ -48,6 +48,8 @@ import { Route as FillW4rDocIdRouteImport } from './routes/fill-w4r.$docId'
 import { Route as FillW4rExternalDocIdRouteImport } from './routes/fill-w4r-external.$docId'
 import { Route as FillW4DocIdRouteImport } from './routes/fill-w4.$docId'
 import { Route as FillW4ExternalDocIdRouteImport } from './routes/fill-w4-external.$docId'
+import { Route as FillVehicleUseAgreementDocIdRouteImport } from './routes/fill-vehicle-use-agreement.$docId'
+import { Route as FillVehicleUseAgreementExternalDocIdRouteImport } from './routes/fill-vehicle-use-agreement-external.$docId'
 import { Route as FillVehicleAgreementDocIdRouteImport } from './routes/fill-vehicle-agreement.$docId'
 import { Route as FillVehicleAgreementExternalDocIdRouteImport } from './routes/fill-vehicle-agreement-external.$docId'
 import { Route as FillSubstanceScreeningDocIdRouteImport } from './routes/fill-substance-screening.$docId'
@@ -74,6 +76,8 @@ import { Route as FillDirectDepositExternalDocIdRouteImport } from './routes/fil
 import { Route as FillDamageDocIdRouteImport } from './routes/fill-damage.$docId'
 import { Route as FillDamageExternalDocIdRouteImport } from './routes/fill-damage-external.$docId'
 import { Route as FillContractorDataDocIdRouteImport } from './routes/fill-contractor-data.$docId'
+import { Route as FillContractorDataUsDocIdRouteImport } from './routes/fill-contractor-data-us.$docId'
+import { Route as FillContractorDataUsExternalDocIdRouteImport } from './routes/fill-contractor-data-us-external.$docId'
 import { Route as FillContractorDataExternalDocIdRouteImport } from './routes/fill-contractor-data-external.$docId'
 import { Route as FillCarIqAgreementDocIdRouteImport } from './routes/fill-car-iq-agreement.$docId'
 import { Route as FillCarIqAgreementExternalDocIdRouteImport } from './routes/fill-car-iq-agreement-external.$docId'
@@ -285,6 +289,18 @@ const FillW4ExternalDocIdRoute = FillW4ExternalDocIdRouteImport.update({
   path: '/fill-w4-external/$docId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const FillVehicleUseAgreementDocIdRoute =
+  FillVehicleUseAgreementDocIdRouteImport.update({
+    id: '/fill-vehicle-use-agreement/$docId',
+    path: '/fill-vehicle-use-agreement/$docId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const FillVehicleUseAgreementExternalDocIdRoute =
+  FillVehicleUseAgreementExternalDocIdRouteImport.update({
+    id: '/fill-vehicle-use-agreement-external/$docId',
+    path: '/fill-vehicle-use-agreement-external/$docId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const FillVehicleAgreementDocIdRoute =
   FillVehicleAgreementDocIdRouteImport.update({
     id: '/fill-vehicle-agreement/$docId',
@@ -430,6 +446,18 @@ const FillContractorDataDocIdRoute = FillContractorDataDocIdRouteImport.update({
   path: '/fill-contractor-data/$docId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const FillContractorDataUsDocIdRoute =
+  FillContractorDataUsDocIdRouteImport.update({
+    id: '/fill-contractor-data-us/$docId',
+    path: '/fill-contractor-data-us/$docId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const FillContractorDataUsExternalDocIdRoute =
+  FillContractorDataUsExternalDocIdRouteImport.update({
+    id: '/fill-contractor-data-us-external/$docId',
+    path: '/fill-contractor-data-us-external/$docId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const FillContractorDataExternalDocIdRoute =
   FillContractorDataExternalDocIdRouteImport.update({
     id: '/fill-contractor-data-external/$docId',
@@ -510,6 +538,8 @@ export interface FileRoutesByFullPath {
   '/fill-car-iq-agreement-external/$docId': typeof FillCarIqAgreementExternalDocIdRoute
   '/fill-car-iq-agreement/$docId': typeof FillCarIqAgreementDocIdRoute
   '/fill-contractor-data-external/$docId': typeof FillContractorDataExternalDocIdRoute
+  '/fill-contractor-data-us-external/$docId': typeof FillContractorDataUsExternalDocIdRoute
+  '/fill-contractor-data-us/$docId': typeof FillContractorDataUsDocIdRoute
   '/fill-contractor-data/$docId': typeof FillContractorDataDocIdRoute
   '/fill-damage-external/$docId': typeof FillDamageExternalDocIdRoute
   '/fill-damage/$docId': typeof FillDamageDocIdRoute
@@ -536,6 +566,8 @@ export interface FileRoutesByFullPath {
   '/fill-substance-screening/$docId': typeof FillSubstanceScreeningDocIdRoute
   '/fill-vehicle-agreement-external/$docId': typeof FillVehicleAgreementExternalDocIdRoute
   '/fill-vehicle-agreement/$docId': typeof FillVehicleAgreementDocIdRoute
+  '/fill-vehicle-use-agreement-external/$docId': typeof FillVehicleUseAgreementExternalDocIdRoute
+  '/fill-vehicle-use-agreement/$docId': typeof FillVehicleUseAgreementDocIdRoute
   '/fill-w4-external/$docId': typeof FillW4ExternalDocIdRoute
   '/fill-w4/$docId': typeof FillW4DocIdRoute
   '/fill-w4r-external/$docId': typeof FillW4rExternalDocIdRoute
@@ -587,6 +619,8 @@ export interface FileRoutesByTo {
   '/fill-car-iq-agreement-external/$docId': typeof FillCarIqAgreementExternalDocIdRoute
   '/fill-car-iq-agreement/$docId': typeof FillCarIqAgreementDocIdRoute
   '/fill-contractor-data-external/$docId': typeof FillContractorDataExternalDocIdRoute
+  '/fill-contractor-data-us-external/$docId': typeof FillContractorDataUsExternalDocIdRoute
+  '/fill-contractor-data-us/$docId': typeof FillContractorDataUsDocIdRoute
   '/fill-contractor-data/$docId': typeof FillContractorDataDocIdRoute
   '/fill-damage-external/$docId': typeof FillDamageExternalDocIdRoute
   '/fill-damage/$docId': typeof FillDamageDocIdRoute
@@ -613,6 +647,8 @@ export interface FileRoutesByTo {
   '/fill-substance-screening/$docId': typeof FillSubstanceScreeningDocIdRoute
   '/fill-vehicle-agreement-external/$docId': typeof FillVehicleAgreementExternalDocIdRoute
   '/fill-vehicle-agreement/$docId': typeof FillVehicleAgreementDocIdRoute
+  '/fill-vehicle-use-agreement-external/$docId': typeof FillVehicleUseAgreementExternalDocIdRoute
+  '/fill-vehicle-use-agreement/$docId': typeof FillVehicleUseAgreementDocIdRoute
   '/fill-w4-external/$docId': typeof FillW4ExternalDocIdRoute
   '/fill-w4/$docId': typeof FillW4DocIdRoute
   '/fill-w4r-external/$docId': typeof FillW4rExternalDocIdRoute
@@ -665,6 +701,8 @@ export interface FileRoutesById {
   '/fill-car-iq-agreement-external/$docId': typeof FillCarIqAgreementExternalDocIdRoute
   '/fill-car-iq-agreement/$docId': typeof FillCarIqAgreementDocIdRoute
   '/fill-contractor-data-external/$docId': typeof FillContractorDataExternalDocIdRoute
+  '/fill-contractor-data-us-external/$docId': typeof FillContractorDataUsExternalDocIdRoute
+  '/fill-contractor-data-us/$docId': typeof FillContractorDataUsDocIdRoute
   '/fill-contractor-data/$docId': typeof FillContractorDataDocIdRoute
   '/fill-damage-external/$docId': typeof FillDamageExternalDocIdRoute
   '/fill-damage/$docId': typeof FillDamageDocIdRoute
@@ -691,6 +729,8 @@ export interface FileRoutesById {
   '/fill-substance-screening/$docId': typeof FillSubstanceScreeningDocIdRoute
   '/fill-vehicle-agreement-external/$docId': typeof FillVehicleAgreementExternalDocIdRoute
   '/fill-vehicle-agreement/$docId': typeof FillVehicleAgreementDocIdRoute
+  '/fill-vehicle-use-agreement-external/$docId': typeof FillVehicleUseAgreementExternalDocIdRoute
+  '/fill-vehicle-use-agreement/$docId': typeof FillVehicleUseAgreementDocIdRoute
   '/fill-w4-external/$docId': typeof FillW4ExternalDocIdRoute
   '/fill-w4/$docId': typeof FillW4DocIdRoute
   '/fill-w4r-external/$docId': typeof FillW4rExternalDocIdRoute
@@ -744,6 +784,8 @@ export interface FileRouteTypes {
     | '/fill-car-iq-agreement-external/$docId'
     | '/fill-car-iq-agreement/$docId'
     | '/fill-contractor-data-external/$docId'
+    | '/fill-contractor-data-us-external/$docId'
+    | '/fill-contractor-data-us/$docId'
     | '/fill-contractor-data/$docId'
     | '/fill-damage-external/$docId'
     | '/fill-damage/$docId'
@@ -770,6 +812,8 @@ export interface FileRouteTypes {
     | '/fill-substance-screening/$docId'
     | '/fill-vehicle-agreement-external/$docId'
     | '/fill-vehicle-agreement/$docId'
+    | '/fill-vehicle-use-agreement-external/$docId'
+    | '/fill-vehicle-use-agreement/$docId'
     | '/fill-w4-external/$docId'
     | '/fill-w4/$docId'
     | '/fill-w4r-external/$docId'
@@ -821,6 +865,8 @@ export interface FileRouteTypes {
     | '/fill-car-iq-agreement-external/$docId'
     | '/fill-car-iq-agreement/$docId'
     | '/fill-contractor-data-external/$docId'
+    | '/fill-contractor-data-us-external/$docId'
+    | '/fill-contractor-data-us/$docId'
     | '/fill-contractor-data/$docId'
     | '/fill-damage-external/$docId'
     | '/fill-damage/$docId'
@@ -847,6 +893,8 @@ export interface FileRouteTypes {
     | '/fill-substance-screening/$docId'
     | '/fill-vehicle-agreement-external/$docId'
     | '/fill-vehicle-agreement/$docId'
+    | '/fill-vehicle-use-agreement-external/$docId'
+    | '/fill-vehicle-use-agreement/$docId'
     | '/fill-w4-external/$docId'
     | '/fill-w4/$docId'
     | '/fill-w4r-external/$docId'
@@ -898,6 +946,8 @@ export interface FileRouteTypes {
     | '/fill-car-iq-agreement-external/$docId'
     | '/fill-car-iq-agreement/$docId'
     | '/fill-contractor-data-external/$docId'
+    | '/fill-contractor-data-us-external/$docId'
+    | '/fill-contractor-data-us/$docId'
     | '/fill-contractor-data/$docId'
     | '/fill-damage-external/$docId'
     | '/fill-damage/$docId'
@@ -924,6 +974,8 @@ export interface FileRouteTypes {
     | '/fill-substance-screening/$docId'
     | '/fill-vehicle-agreement-external/$docId'
     | '/fill-vehicle-agreement/$docId'
+    | '/fill-vehicle-use-agreement-external/$docId'
+    | '/fill-vehicle-use-agreement/$docId'
     | '/fill-w4-external/$docId'
     | '/fill-w4/$docId'
     | '/fill-w4r-external/$docId'
@@ -976,6 +1028,8 @@ export interface RootRouteChildren {
   FillCarIqAgreementExternalDocIdRoute: typeof FillCarIqAgreementExternalDocIdRoute
   FillCarIqAgreementDocIdRoute: typeof FillCarIqAgreementDocIdRoute
   FillContractorDataExternalDocIdRoute: typeof FillContractorDataExternalDocIdRoute
+  FillContractorDataUsExternalDocIdRoute: typeof FillContractorDataUsExternalDocIdRoute
+  FillContractorDataUsDocIdRoute: typeof FillContractorDataUsDocIdRoute
   FillContractorDataDocIdRoute: typeof FillContractorDataDocIdRoute
   FillDamageExternalDocIdRoute: typeof FillDamageExternalDocIdRoute
   FillDamageDocIdRoute: typeof FillDamageDocIdRoute
@@ -1002,6 +1056,8 @@ export interface RootRouteChildren {
   FillSubstanceScreeningDocIdRoute: typeof FillSubstanceScreeningDocIdRoute
   FillVehicleAgreementExternalDocIdRoute: typeof FillVehicleAgreementExternalDocIdRoute
   FillVehicleAgreementDocIdRoute: typeof FillVehicleAgreementDocIdRoute
+  FillVehicleUseAgreementExternalDocIdRoute: typeof FillVehicleUseAgreementExternalDocIdRoute
+  FillVehicleUseAgreementDocIdRoute: typeof FillVehicleUseAgreementDocIdRoute
   FillW4ExternalDocIdRoute: typeof FillW4ExternalDocIdRoute
   FillW4DocIdRoute: typeof FillW4DocIdRoute
   FillW4rExternalDocIdRoute: typeof FillW4rExternalDocIdRoute
@@ -1300,6 +1356,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof FillW4ExternalDocIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/fill-vehicle-use-agreement/$docId': {
+      id: '/fill-vehicle-use-agreement/$docId'
+      path: '/fill-vehicle-use-agreement/$docId'
+      fullPath: '/fill-vehicle-use-agreement/$docId'
+      preLoaderRoute: typeof FillVehicleUseAgreementDocIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/fill-vehicle-use-agreement-external/$docId': {
+      id: '/fill-vehicle-use-agreement-external/$docId'
+      path: '/fill-vehicle-use-agreement-external/$docId'
+      fullPath: '/fill-vehicle-use-agreement-external/$docId'
+      preLoaderRoute: typeof FillVehicleUseAgreementExternalDocIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/fill-vehicle-agreement/$docId': {
       id: '/fill-vehicle-agreement/$docId'
       path: '/fill-vehicle-agreement/$docId'
@@ -1482,6 +1552,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof FillContractorDataDocIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/fill-contractor-data-us/$docId': {
+      id: '/fill-contractor-data-us/$docId'
+      path: '/fill-contractor-data-us/$docId'
+      fullPath: '/fill-contractor-data-us/$docId'
+      preLoaderRoute: typeof FillContractorDataUsDocIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/fill-contractor-data-us-external/$docId': {
+      id: '/fill-contractor-data-us-external/$docId'
+      path: '/fill-contractor-data-us-external/$docId'
+      fullPath: '/fill-contractor-data-us-external/$docId'
+      preLoaderRoute: typeof FillContractorDataUsExternalDocIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/fill-contractor-data-external/$docId': {
       id: '/fill-contractor-data-external/$docId'
       path: '/fill-contractor-data-external/$docId'
@@ -1615,6 +1699,9 @@ const rootRouteChildren: RootRouteChildren = {
   FillCarIqAgreementExternalDocIdRoute: FillCarIqAgreementExternalDocIdRoute,
   FillCarIqAgreementDocIdRoute: FillCarIqAgreementDocIdRoute,
   FillContractorDataExternalDocIdRoute: FillContractorDataExternalDocIdRoute,
+  FillContractorDataUsExternalDocIdRoute:
+    FillContractorDataUsExternalDocIdRoute,
+  FillContractorDataUsDocIdRoute: FillContractorDataUsDocIdRoute,
   FillContractorDataDocIdRoute: FillContractorDataDocIdRoute,
   FillDamageExternalDocIdRoute: FillDamageExternalDocIdRoute,
   FillDamageDocIdRoute: FillDamageDocIdRoute,
@@ -1646,6 +1733,9 @@ const rootRouteChildren: RootRouteChildren = {
   FillVehicleAgreementExternalDocIdRoute:
     FillVehicleAgreementExternalDocIdRoute,
   FillVehicleAgreementDocIdRoute: FillVehicleAgreementDocIdRoute,
+  FillVehicleUseAgreementExternalDocIdRoute:
+    FillVehicleUseAgreementExternalDocIdRoute,
+  FillVehicleUseAgreementDocIdRoute: FillVehicleUseAgreementDocIdRoute,
   FillW4ExternalDocIdRoute: FillW4ExternalDocIdRoute,
   FillW4DocIdRoute: FillW4DocIdRoute,
   FillW4rExternalDocIdRoute: FillW4rExternalDocIdRoute,

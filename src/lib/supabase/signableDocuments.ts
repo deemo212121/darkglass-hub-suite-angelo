@@ -1,7 +1,7 @@
 import { supabase } from "./client";
 import { deleteAgentNote } from "./csrAgentNotes";
 
-export type SignableDocumentType = "warning_form" | "w8ben" | "w4" | "w9" | "w4r" | "i9" | "wage_ack" | "car_iq_agreement" | "vehicle_agreement" | "employee_confidentiality" | "meal_rest_break" | "pto_ack" | "parts_responsibility" | "mileage_fuel" | "location_consent" | "damage" | "contractor_data" | "direct_deposit" | "promotion_form" | "action_plan_form" | "termination_form" | "substance_screening" | "flash_technician_travel";
+export type SignableDocumentType = "warning_form" | "w8ben" | "w4" | "w9" | "w4r" | "i9" | "wage_ack" | "car_iq_agreement" | "vehicle_agreement" | "employee_confidentiality" | "meal_rest_break" | "pto_ack" | "parts_responsibility" | "mileage_fuel" | "location_consent" | "damage" | "contractor_data" | "contractor_data_us" | "direct_deposit" | "promotion_form" | "action_plan_form" | "termination_form" | "substance_screening" | "flash_technician_travel" | "vehicle_use_agreement";
 /** "executive" only applies to promotion_form documents (see migration 0166) — every other document type just never uses that slot. */
 export type SignatureSlot = "employee" | "manager" | "senior_manager" | "hr_staff" | "executive";
 export type SignableDocumentStatus = "pending_signature" | "signed" | "confirmed" | "cancelled";
@@ -160,6 +160,25 @@ export async function getSignableDocuments(documentType: SignableDocumentType = 
       .from("hr_signable_documents")
       .select(SELECT)
       .eq("document_type", documentType)
+      .order("created_at", { ascending: false })
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) throw new Error(error.message);
+    all.push(...(data ?? []).map(mapRow));
+    if (!data || data.length < PAGE_SIZE) break;
+  }
+  return all;
+}
+
+/** Every signable document company-wide, ANY type, most recent first —
+ *  unlike getSignableDocuments (one type at a time, for a specific tracking
+ *  table) this is for feeds that need to see every document type at once,
+ *  e.g. the Universal Activity Log's HR tab. */
+export async function getAllSignableDocuments(): Promise<SignableDocument[]> {
+  const all: SignableDocument[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from("hr_signable_documents")
+      .select(SELECT)
       .order("created_at", { ascending: false })
       .range(from, from + PAGE_SIZE - 1);
     if (error) throw new Error(error.message);

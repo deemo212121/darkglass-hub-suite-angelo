@@ -40,7 +40,7 @@
 
 import { verifyFirebaseToken, strToB64url, b64urlToString } from "./supabaseTokenBridge";
 
-interface EnvBag {
+export interface EnvBag {
   supabaseUrl: string;
   supabaseServiceKey: string;
   firebaseProjectId: string;
@@ -48,7 +48,7 @@ interface EnvBag {
   googleClientSecret: string;
 }
 
-function readEnv(env?: Record<string, string | undefined>): EnvBag | { error: string } {
+export function readEnv(env?: Record<string, string | undefined>): EnvBag | { error: string } {
   const getEnv = (k: string): string | undefined => env?.[k] ?? (typeof process !== "undefined" ? process.env?.[k] : undefined);
   const g = globalThis as any;
   const supabaseUrl = (g.__SUPABASE_URL__ && g.__SUPABASE_URL__ !== "" ? g.__SUPABASE_URL__ : undefined) ?? getEnv("VITE_SUPABASE_URL");
@@ -69,9 +69,12 @@ function readEnv(env?: Record<string, string | undefined>): EnvBag | { error: st
 // Transaction "Send" (drop-ship request) connection slot, added later
 // (migration 0168) so it's independently connectable instead of forced to
 // reuse whichever Payroll US/PH mailbox happens to be connected. Same
-// table/RPCs/connect-flow, just a third allowed value.
-type Region = "US" | "PH" | "PARTS" | "IT_1" | "IT_2" | "IT_3";
-const VALID_REGIONS = new Set<Region>(["US", "PH", "PARTS", "IT_1", "IT_2", "IT_3"]);
+// table/RPCs/connect-flow, just a third allowed value. "ATTENDANCE"
+// (migration 0217) is the grace-period warning emails slot — see
+// attendanceAlerts.ts, which sends through it directly (not via an
+// action= branch in this file, since that job already runs server-side).
+export type Region = "US" | "PH" | "PARTS" | "IT_1" | "IT_2" | "IT_3" | "ATTENDANCE";
+const VALID_REGIONS = new Set<Region>(["US", "PH", "PARTS", "IT_1", "IT_2", "IT_3", "ATTENDANCE"]);
 function parseRegion(value: string | null | undefined): Region | null {
   const upper = String(value ?? "").toUpperCase();
   return VALID_REGIONS.has(upper as Region) ? (upper as Region) : null;
@@ -119,16 +122,16 @@ function b64urlEncode(input: string): string {
 async function fetchProfileByFirebaseUid(
   env: EnvBag,
   firebaseUid: string
-): Promise<{ id: string; companyId: string; role: string | null; name: string } | null> {
+): Promise<{ id: string; companyId: string; role: string | null; extraRoles: string[]; name: string } | null> {
   const url =
-    `${env.supabaseUrl}/rest/v1/profiles?select=id,company_id,role,display_name,username,email` +
+    `${env.supabaseUrl}/rest/v1/profiles?select=id,company_id,role,extra_roles,display_name,username,email` +
     `&firebase_uid=eq.${encodeURIComponent(firebaseUid)}&limit=1`;
   const res = await fetch(url, { headers: { apikey: env.supabaseServiceKey, Authorization: `Bearer ${env.supabaseServiceKey}` } });
   if (!res.ok) throw new Error(`Supabase profile lookup failed (${res.status}): ${await res.text()}`);
-  const rows = (await res.json()) as Array<{ id: string; company_id: string; role: string | null; display_name: string | null; username: string | null; email: string }>;
+  const rows = (await res.json()) as Array<{ id: string; company_id: string; role: string | null; extra_roles: string[] | null; display_name: string | null; username: string | null; email: string }>;
   const r = rows[0];
   if (!r) return null;
-  return { id: r.id, companyId: r.company_id, role: r.role, name: r.display_name || r.username || r.email };
+  return { id: r.id, companyId: r.company_id, role: r.role, extraRoles: r.extra_roles ?? [], name: r.display_name || r.username || r.email };
 }
 
 async function fetchProfileById(
@@ -144,7 +147,7 @@ async function fetchProfileById(
   return { id: r.id, companyId: r.company_id, name: r.display_name || r.username || r.email, email: r.email, assignedBranch: r.assigned_branch };
 }
 
-async function fetchGmailConnection(env: EnvBag, companyId: string, region: Region): Promise<{ refreshToken: string; connectedEmail: string | null } | null> {
+export async function fetchGmailConnection(env: EnvBag, companyId: string, region: Region): Promise<{ refreshToken: string; connectedEmail: string | null } | null> {
   const url = `${env.supabaseUrl}/rest/v1/hr_gmail_connections?select=refresh_token,connected_email&company_id=eq.${encodeURIComponent(companyId)}&region=eq.${region}&limit=1`;
   const res = await fetch(url, { headers: { apikey: env.supabaseServiceKey, Authorization: `Bearer ${env.supabaseServiceKey}` } });
   if (!res.ok) throw new Error(`Supabase Gmail connection lookup failed (${res.status}): ${await res.text()}`);
@@ -199,7 +202,7 @@ async function exchangeCodeForTokens(env: EnvBag, code: string, redirectUri: str
   return { refreshToken: data.refresh_token };
 }
 
-async function refreshAccessToken(env: EnvBag, refreshToken: string): Promise<string> {
+export async function refreshAccessToken(env: EnvBag, refreshToken: string): Promise<string> {
   const res = await fetch(TOKEN_ENDPOINT, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -246,7 +249,7 @@ function encodeHeaderValue(value: string): string {
   return `=?UTF-8?B?${btoa(unescape(encodeURIComponent(value)))}?=`;
 }
 
-async function sendGmailMessage(accessToken: string, fromEmail: string, toEmail: string, subject: string, body: string, ccEmail?: string): Promise<void> {
+export async function sendGmailMessage(accessToken: string, fromEmail: string, toEmail: string, subject: string, body: string, ccEmail?: string): Promise<void> {
   const message = [
     `From: ${fromEmail}`,
     `To: ${toEmail}`,
@@ -319,6 +322,22 @@ export async function handleGmailRequest(request: Request, env?: Record<string, 
 
   // Google's own redirect back to us — registered as this OAuth client's
   // (additional) redirect_uri.
+  // Every region's connect button lives on Accounting Dashboard except
+  // ATTENDANCE, whose Settings tab lives on Attendance Monitoring instead —
+  // this is the only thing that decides where the OAuth round-trip lands
+  // the user back.
+  // Builds the redirect via URL/URLSearchParams (not string concatenation)
+  // since ATTENDANCE's return page already carries its own ?tab=settings
+  // query string — naively appending "?gmailConnected=..." after it would
+  // produce an invalid double-"?" URL.
+  const returnUrlFor = (origin: string, region: Region, extraParams: Record<string, string>) => {
+    const path = region === "ATTENDANCE" ? "/m/dashboard/attendance-monitoring" : "/m/dashboard/accounting-dashboard";
+    const u = new URL(path, origin);
+    if (region === "ATTENDANCE") u.searchParams.set("tab", "settings");
+    for (const [k, v] of Object.entries(extraParams)) u.searchParams.set(k, v);
+    return u.toString();
+  };
+
   const code = url.searchParams.get("code");
   const state = url.searchParams.get("state");
   if (code && state) {
@@ -332,15 +351,23 @@ export async function handleGmailRequest(request: Request, env?: Record<string, 
       const accessToken = await refreshAccessToken(envBag, refreshToken);
       const { email: connectedEmail, name: connectedAccountName } = await fetchConnectedProfile(accessToken);
       await upsertGmailConnection(envBag, decoded.companyId, region, decoded.profileId, decoded.connectedByName, connectedAccountName, connectedEmail, refreshToken);
-      return Response.redirect(`${appOrigin}/m/dashboard/accounting-dashboard?gmailConnected=1&gmailRegion=${region}`, 302);
+      return Response.redirect(returnUrlFor(appOrigin, region, { gmailConnected: "1", gmailRegion: region }), 302);
     } catch (err) {
       console.error("[gmail] callback error:", err);
-      return Response.redirect(`${appOrigin}/m/dashboard/accounting-dashboard?gmailConnected=0&gmailRegion=${region}`, 302);
+      return Response.redirect(returnUrlFor(appOrigin, region, { gmailConnected: "0", gmailRegion: region }), 302);
     }
   }
   if (url.searchParams.get("error")) {
-    // The user hit "Cancel" on Google's consent screen.
-    return Response.redirect(`${url.origin}/m/dashboard/accounting-dashboard?gmailConnected=0`, 302);
+    // The user hit "Cancel" on Google's consent screen. state is still
+    // echoed back by Google even on a denied/cancelled consent, so this
+    // can still route back to the right page instead of always assuming
+    // Accounting Dashboard.
+    let region: Region = "US";
+    try {
+      const decoded = JSON.parse(b64urlToString(state || "")) as { region?: string };
+      region = parseRegion(decoded.region) ?? "US";
+    } catch { /* no usable state — fall back to the default page below */ }
+    return Response.redirect(returnUrlFor(url.origin, region, { gmailConnected: "0" }), 302);
   }
 
   if (url.searchParams.get("action") === "connect") {
@@ -607,6 +634,70 @@ export async function handleGmailRequest(request: Request, env?: Record<string, 
       return json({ ok: true, sentTo: to, sentFrom: fromEmail });
     } catch (err) {
       console.error("[gmail] send-it-ticket-email error:", err);
+      return json({ error: err instanceof Error ? err.message : "Send failed" }, 500);
+    }
+  }
+
+  // Fires the moment a manager's checkbox is checked on Attendance
+  // Monitoring's Settings tab (migration 0217) — a one-off confirmation so
+  // they know they're now enrolled, distinct from the actual grace-warning
+  // emails attendanceAlerts.ts sends later. Same ATTENDANCE connection slot.
+  if (url.searchParams.get("action") === "send-attendance-enrollment-email") {
+    if (request.method !== "POST") return json({ error: "Method not allowed" }, 405);
+    try {
+      const payload = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+      const idToken = typeof payload.idToken === "string" ? payload.idToken : "";
+      const managerProfileId = typeof payload.managerProfileId === "string" ? payload.managerProfileId : "";
+      if (!idToken) return json({ error: "Missing idToken" }, 400);
+      if (!managerProfileId) return json({ error: "Missing managerProfileId" }, 400);
+
+      const claims = await verifyFirebaseToken(idToken, envBag.firebaseProjectId);
+      const caller = await fetchProfileByFirebaseUid(envBag, claims.sub);
+      if (!caller) return json({ error: "Profile not found" }, 403);
+      // Checks extra_roles too, not just the primary role — matches
+      // AttendanceMonitoringPage.tsx's own isSuperAdmin gate (which also
+      // admits SUPERADMIN held as an extra role), so someone who can see
+      // and use the Settings tab in the first place is never rejected here.
+      const isCallerSuperAdmin = [caller.role, ...caller.extraRoles].some((r) => (r || "").toUpperCase() === "SUPERADMIN");
+      if (!isCallerSuperAdmin) {
+        return json({ error: "Only a SuperAdmin can enroll managers" }, 403);
+      }
+
+      const manager = await fetchProfileById(envBag, managerProfileId);
+      if (!manager || manager.companyId !== caller.companyId) return json({ error: "Manager not found" }, 404);
+      if (!manager.email) return json({ error: `${manager.name} has no email on file — can't notify them.` }, 400);
+
+      const connection = await fetchGmailConnection(envBag, caller.companyId, "ATTENDANCE");
+      if (!connection) return json({ error: `Gmail is not connected for Attendance warnings yet. Connect it above first.` }, 409);
+
+      let accessToken: string;
+      try {
+        accessToken = await refreshAccessToken(envBag, connection.refreshToken);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes("invalid_grant")) {
+          return json({
+            error: `The Attendance Gmail connection has expired or was revoked. Click "Connect Gmail" above to reconnect, then try again.`,
+            reauthRequired: true,
+            region: "ATTENDANCE",
+          }, 409);
+        }
+        throw err;
+      }
+      const fromEmail = connection.connectedEmail || "me";
+      const subject = "You're Now Getting Attendance Alerts";
+      const body = [
+        `Hi ${manager.name},`,
+        "",
+        "You'll now get a quick heads-up email whenever one of your team members hasn't clocked in or out yet — sent while there's still time before it counts as missed, so you can check in with them if needed.",
+        "",
+        "No action is needed right now. If you weren't expecting this, please reply to this email or contact IT.",
+      ].join("\n");
+      await sendGmailMessage(accessToken, fromEmail, manager.email, subject, body);
+
+      return json({ ok: true, sentTo: manager.email });
+    } catch (err) {
+      console.error("[gmail] send-attendance-enrollment-email error:", err);
       return json({ error: err instanceof Error ? err.message : "Send failed" }, 500);
     }
   }

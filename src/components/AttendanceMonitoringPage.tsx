@@ -1,4 +1,4 @@
-import { AlertCircle, AlertTriangle, Clock, Users, UserCheck, UserX, Bell, MessageSquare, ChevronLeft, ChevronRight, Download, Calendar, FileText, CheckCircle, XCircle, Loader2 } from "lucide-react";
+import { AlertCircle, AlertTriangle, Clock, Users, UserCheck, UserX, Bell, MessageSquare, ChevronLeft, ChevronRight, Download, Calendar, FileText, CheckCircle, XCircle, Loader2, Settings } from "lucide-react";
 import { useState, useEffect, useMemo, useCallback, Fragment } from "react";
 import { useSearch, useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
@@ -12,6 +12,7 @@ import { getPendingCheckoutProposals, approveCheckoutProposal, type CheckoutProp
 import { addAgentNote, getAllAgentNotes, type CsrAgentNote } from "@/lib/supabase/csrAgentNotes";
 import { TicketAttendanceTab } from "@/components/TicketAttendanceTab";
 import { TraineeAttendanceTab } from "@/components/TraineeAttendanceTab";
+import { AttendanceWarningSettingsTab } from "@/components/AttendanceWarningSettingsTab";
 import {
   getCompanyTimecardEntries,
   getProfileIdByFirebaseUid,
@@ -228,6 +229,11 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   // unlike CsrAgentDetailPage it never fast-tracks to approved: every
   // submission from this tab always waits on HR review.
   const canWarn = ready && canSubmitConductNote(role, extraRoles);
+  // Settings tab (grace-warning emails) — company-scoped SUPERADMIN only,
+  // same role migration 0217's RLS restricts attendance_warning_subscriptions
+  // to. Not is_superadmin() (that means the platform-level SUPERSUPERADMIN,
+  // a different and much narrower role — see that migration's own comment).
+  const isSuperAdmin = [role, ...extraRoles].some((r) => normalizeRole(r) === "SUPERADMIN");
 
   const [loading, setLoading] = useState(true);
   const [myProfileId, setMyProfileId] = useState<string | null>(null);
@@ -242,7 +248,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   const [correctionHistory, setCorrectionHistory] = useState<TimecardCorrectionHistoryRow[]>([]);
   const [employeeRequests, setEmployeeRequests] = useState<EmployeeRequestRow[]>([]);
   const [employeeRequestNote, setEmployeeRequestNote] = useState<Record<string, string>>({});
-  const ATTENDANCE_TABS = ["daily-attendance", "pto-management", "corrections", "disputes-inquiries", "ticket-attendance", "trainee-attendance", "warnings"] as const;
+  const ATTENDANCE_TABS = ["daily-attendance", "pto-management", "corrections", "disputes-inquiries", "ticket-attendance", "trainee-attendance", "warnings", "settings"] as const;
   const [activeTab, setActiveTab] = usePersistedTab<typeof ATTENDANCE_TABS[number]>(
     "ahs:attendance-monitoring-active-tab",
     ATTENDANCE_TABS,
@@ -1410,6 +1416,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     { id: "ticket-attendance", label: "Ticket Attendance", Icon: FileText },
     { id: "trainee-attendance", label: "Trainee Attendance", Icon: Clock },
     { id: "warnings", label: "Warnings", Icon: AlertTriangle },
+    ...(isSuperAdmin ? [{ id: "settings", label: "Settings", Icon: Settings }] : []),
   ];
 
   return (
@@ -2693,6 +2700,10 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                 )}
               </div>
             </div>
+          )}
+
+          {activeTab === "settings" && isSuperAdmin && (
+            <AttendanceWarningSettingsTab myProfileId={myProfileId} myDisplayName={displayName} />
           )}
 
         </div>

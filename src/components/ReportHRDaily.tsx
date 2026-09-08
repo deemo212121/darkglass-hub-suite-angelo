@@ -106,6 +106,8 @@ import { fillLocationConsentPdf } from "@/lib/locationConsentPdfFill";
 import type { DamageFormData } from "@/lib/damageFormTemplate";
 import { fillDamagePdf } from "@/lib/damagePdfFill";
 import { buildContractorDataBodyMarkup, contractorDataStyles, BLANK_EMERGENCY_CONTACT, type ContractorDataFormData } from "@/lib/contractorDataFormTemplate";
+import { buildContractorDataUsBodyMarkup, contractorDataUsStyles, BLANK_EMERGENCY_CONTACT_US, type ContractorDataUsFormData } from "@/lib/contractorDataUsFormTemplate";
+import { buildVehicleUseAgreementBodyMarkup, vehicleUseAgreementStyles, type VehicleUseAgreementFormData } from "@/lib/vehicleUseAgreementFormTemplate";
 import { buildDirectDepositBodyMarkup, directDepositStyles, type DirectDepositFormData } from "@/lib/directDepositFormTemplate";
 import type { I9FormData } from "@/lib/i9FormTemplate";
 import { fillI9Pdf } from "@/lib/i9PdfFill";
@@ -698,7 +700,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // Reviews, the Approved log, the department trend chart, and the full
   // Employee Directory all on top of each other, forcing a long scroll to
   // reach anything below Hiring.
-  const [activeTab, setActiveTab] = useState<"hiring" | "warnings" | "masterList" | "leaders" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "promotionForm" | "actionPlanForm" | "terminationForm" | "employeeRequestManager" | "w8ben" | "i9" | "wageAck" | "carIqAgreement" | "vehicleAgreement" | "employeeConfidentiality" | "mealRestBreak" | "ptoAck" | "partsResponsibility" | "mileageFuel" | "locationConsent" | "damage" | "contractorData" | "directDeposit" | "substanceScreening" | "flashTechnicianTravel" | "combineForms" | "employerQueue">("hiring");
+  const [activeTab, setActiveTab] = useState<"hiring" | "warnings" | "masterList" | "leaders" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "promotionForm" | "actionPlanForm" | "terminationForm" | "employeeRequestManager" | "w8ben" | "i9" | "wageAck" | "carIqAgreement" | "vehicleAgreement" | "vehicleUseAgreement" | "employeeConfidentiality" | "mealRestBreak" | "ptoAck" | "partsResponsibility" | "mileageFuel" | "locationConsent" | "damage" | "contractorData" | "contractorDataUs" | "directDeposit" | "substanceScreening" | "flashTechnicianTravel" | "combineForms" | "employerQueue">("hiring");
   const [openCategory, setOpenCategory] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   // Which floating-sidebar section headers (Automated Forms/Generate
@@ -722,7 +724,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const navigate = useNavigate();
   const hrSearchParams = (useSearch({ strict: false }) as { tab?: string; submissionId?: string; profileId?: string }) ?? {};
   const initialHrSearchRef = useRef(hrSearchParams);
-  const VALID_HR_TABS = ["hiring", "warnings", "masterList", "leaders", "jotform", "jotformDocuments", "customForms", "onboarding", "hiringReports", "report", "coe", "warningForm", "promotionForm", "actionPlanForm", "terminationForm", "employeeRequestManager", "w8ben", "i9", "wageAck", "carIqAgreement", "vehicleAgreement", "employeeConfidentiality", "mealRestBreak", "ptoAck", "partsResponsibility", "mileageFuel", "locationConsent", "damage", "contractorData", "directDeposit", "substanceScreening", "flashTechnicianTravel", "combineForms", "employerQueue"] as const;
+  const VALID_HR_TABS = ["hiring", "warnings", "masterList", "leaders", "jotform", "jotformDocuments", "customForms", "onboarding", "hiringReports", "report", "coe", "warningForm", "promotionForm", "actionPlanForm", "terminationForm", "employeeRequestManager", "w8ben", "i9", "wageAck", "carIqAgreement", "vehicleAgreement", "vehicleUseAgreement", "employeeConfidentiality", "mealRestBreak", "ptoAck", "partsResponsibility", "mileageFuel", "locationConsent", "damage", "contractorData", "contractorDataUs", "directDeposit", "substanceScreening", "flashTechnicianTravel", "combineForms", "employerQueue"] as const;
   useEffect(() => {
     const tab = initialHrSearchRef.current.tab;
     if (tab && (VALID_HR_TABS as readonly string[]).includes(tab)) setActiveTab(tab as typeof activeTab);
@@ -6493,6 +6495,410 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
 
+  // ── Contractor Data (US) — a second, independent copy of the Contractor
+  // Data flow above, same fields/behavior, requested as its own distinct
+  // document type. Like Contractor Data, there's no real source PDF (see
+  // contractorDataUsFormTemplate.ts's header comment):
+  // the final document is a from-scratch HTML template captured to PDF,
+  // same technique as the Warning Form/Promotion Form. Single-party, same
+  // shape as Car IQ/Parts Responsibility — one recipient fills in
+  // everything (including two ID-photo uploads, this form's first use of
+  // file uploads in this family) and signs, no employer/HR co-signature
+  // step. ──
+  const [sentContractorDataUsForms, setSentContractorDataUsForms] = useState<SignableDocument[]>([]);
+  const loadSentContractorDataUsForms = async () => {
+    try {
+      setSentContractorDataUsForms(await getSignableDocuments("contractor_data_us"));
+    } catch (err) {
+      console.error("Failed to load sent Contractor Data (US) forms:", err);
+    }
+  };
+  useEffect(() => {
+    if (activeTab === "contractorDataUs" || activeTab === "jotformDocuments" || activeTab === "combineForms") void loadSentContractorDataUsForms();
+  }, [activeTab]);
+
+  const [contractorDataUsRecipientId, setContractorDataUsRecipientId] = useState("");
+  const [contractorDataUsRecipientSearch, setContractorDataUsRecipientSearch] = useState("");
+  const [contractorDataUsRecipientDropdownOpen, setContractorDataUsRecipientDropdownOpen] = useState(false);
+  const [contractorDataUsSending, setContractorDataUsSending] = useState(false);
+  const [contractorDataUsSendError, setContractorDataUsSendError] = useState<string | null>(null);
+  const [contractorDataUsActionBusyId, setContractorDataUsActionBusyId] = useState<string | null>(null);
+  const [contractorDataUsActionError, setContractorDataUsActionError] = useState<string | null>(null);
+  const [contractorDataUsDocPreview, setContractorDataUsDocPreview] = useState<SignableDocument | null>(null);
+  const [contractorDataUsPreviewExpanded, setContractorDataUsPreviewExpanded] = useState(false);
+  const [contractorDataUsPreviewPdfUrl, setContractorDataUsPreviewPdfUrl] = useState<string | null>(null);
+  const [contractorDataUsPreviewLoading, setContractorDataUsPreviewLoading] = useState(false);
+  const [contractorDataUsLogoDataUrl, setContractorDataUsLogoDataUrl] = useState("");
+  const [contractorDataUsExternalName, setContractorDataUsExternalName] = useState("");
+  const [contractorDataUsSentLink, setContractorDataUsSentLink] = useState<{ link: string; recipientName: string } | null>(null);
+  const [contractorDataUsSentLinkCopied, setContractorDataUsSentLinkCopied] = useState(false);
+  const filteredContractorDataUsRecipients = useMemo(
+    () => employees.filter((e) => e.status === "active" && e.name.toLowerCase().includes(contractorDataUsRecipientSearch.toLowerCase())),
+    [employees, contractorDataUsRecipientSearch]
+  );
+
+  const buildContractorDataUsPreviewData = (employeeName: string): ContractorDataUsFormData => ({
+    employeeId: "",
+    employeeName,
+    firstName: employeeName,
+    middleName: "",
+    lastName: "",
+    branch: "",
+    streetAddress: "",
+    city: "",
+    state: "",
+    zipCode: "",
+    country: "",
+    phoneNumber: "",
+    otherPhoneNumber: "",
+    startDate: "",
+    birthDate: "",
+    ssn: "",
+    ssnCardUrls: [],
+    driversLicenseNumber: "",
+    driversLicenseState: "",
+    driversLicenseUrls: [],
+    email: "",
+    maritalStatus: "",
+    spouseName: "",
+    spouseEmployer: "",
+    livedInNewYork: "",
+    emergencyContacts: [{ ...BLANK_EMERGENCY_CONTACT_US }, { ...BLANK_EMERGENCY_CONTACT_US }, { ...BLANK_EMERGENCY_CONTACT_US }],
+    dateSigned: "",
+    signatureDataUrl: "",
+  });
+
+  /** Toggles the inline collapsible preview panel — collapsing just hides it (and revokes the blob URL); expanding (re)builds a fresh blank-filled sample from the currently-selected recipient's name via the HTML template (no source PDF here — see contractorDataUsFormTemplate.ts's header comment), same captureHtmlToPdfBlob technique the Warning Form's own preview uses. */
+  const toggleContractorDataUsPreview = async () => {
+    if (contractorDataUsPreviewExpanded) {
+      setContractorDataUsPreviewExpanded(false);
+      if (contractorDataUsPreviewPdfUrl) URL.revokeObjectURL(contractorDataUsPreviewPdfUrl);
+      setContractorDataUsPreviewPdfUrl(null);
+      return;
+    }
+    setContractorDataUsSendError(null);
+    setContractorDataUsPreviewExpanded(true);
+    setContractorDataUsPreviewLoading(true);
+    try {
+      const logoDataUrl = contractorDataUsLogoDataUrl || (await loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png")));
+      if (!contractorDataUsLogoDataUrl) setContractorDataUsLogoDataUrl(logoDataUrl);
+      const recipientName = employees.find((e) => e.id === contractorDataUsRecipientId)?.name || "";
+      const pdfBlob = await captureHtmlToPdfBlob(buildContractorDataUsBodyMarkup(buildContractorDataUsPreviewData(recipientName), logoDataUrl, undefined), contractorDataUsStyles);
+      const url = URL.createObjectURL(pdfBlob);
+      setContractorDataUsPreviewPdfUrl(url);
+    } catch (err) {
+      setContractorDataUsSendError(err instanceof Error ? err.message : "Failed to build preview.");
+    } finally {
+      setContractorDataUsPreviewLoading(false);
+    }
+  };
+
+  const handleSendContractorDataUs = async () => {
+    if (!contractorDataUsRecipientId || !uid) return;
+    setContractorDataUsSending(true);
+    setContractorDataUsSendError(null);
+    try {
+      const recipient = employees.find((e) => e.id === contractorDataUsRecipientId);
+      if (!recipient) throw new Error("Select a recipient first.");
+
+      const doc = await createSignableDocument({
+        documentType: "contractor_data_us",
+        formData: { employeeId: recipient.id, employeeName: recipient.name } as unknown as Record<string, any>,
+        recipientId: contractorDataUsRecipientId,
+        recipientSlot: "employee",
+        pdfUrl: "",
+      });
+
+      const myProfileId = await getMyProfileId(uid);
+      if (!myProfileId) throw new Error("Could not resolve your profile.");
+      const thread = await getOrCreateDmThread(myProfileId, contractorDataUsRecipientId);
+      const fillLink = `${getAppUrl()}/fill-contractor-data-us/${doc.id}`;
+      await sendMessage({
+        dmThreadId: thread.id,
+        senderId: myProfileId,
+        senderName: displayName || "HR",
+        body: `📋 Please complete the Contractor Data (US) form: ${fillLink}`,
+      });
+
+      void logActivity({ action: "contractor_data_us_sent", targetType: "employee", targetId: recipient.id, targetLabel: recipient.name });
+
+      setContractorDataUsRecipientId("");
+      setContractorDataUsRecipientSearch("");
+      await loadSentContractorDataUsForms();
+    } catch (err) {
+      setContractorDataUsSendError(err instanceof Error ? err.message : "Failed to send request.");
+    } finally {
+      setContractorDataUsSending(false);
+    }
+  };
+
+  /** No AHS profile to tie this to, so no DM — the link itself (shown in the same panel, right below "Generate Link") is the only way the recipient finds out, same as the Warning Form's "External Link" mode. */
+  const handleGenerateExternalContractorDataUs = async () => {
+    setContractorDataUsSending(true);
+    setContractorDataUsSendError(null);
+    try {
+      const name = contractorDataUsExternalName.trim() || "External Recipient";
+      const doc = await createSignableDocument({
+        documentType: "contractor_data_us",
+        formData: { employeeId: "", employeeName: name } as unknown as Record<string, any>,
+        recipientName: name,
+        recipientSlot: "employee",
+        pdfUrl: "",
+      });
+
+      void logActivity({ action: "contractor_data_us_sent", targetType: "employee", targetLabel: name, details: { external: true } });
+
+      setContractorDataUsSentLink({ link: `${getAppUrl()}/fill-contractor-data-us-external/${doc.id}`, recipientName: name });
+      setContractorDataUsExternalName("");
+      await loadSentContractorDataUsForms();
+    } catch (err) {
+      setContractorDataUsSendError(err instanceof Error ? err.message : "Failed to generate link.");
+    } finally {
+      setContractorDataUsSending(false);
+    }
+  };
+
+  const handleCopyContractorDataUsSentLink = async () => {
+    if (!contractorDataUsSentLink) return;
+    try {
+      await navigator.clipboard.writeText(contractorDataUsSentLink.link);
+      setContractorDataUsSentLinkCopied(true);
+      setTimeout(() => setContractorDataUsSentLinkCopied(false), 1500);
+    } catch (err) {
+      console.error("Failed to copy link:", err);
+    }
+  };
+
+  const handleCopyContractorDataUsLink = async (doc: SignableDocument) => {
+    try {
+      const path = doc.recipientId ? "fill-contractor-data-us" : "fill-contractor-data-us-external";
+      await navigator.clipboard.writeText(`${getAppUrl()}/${path}/${doc.id}`);
+    } catch (err) {
+      console.error("Failed to copy link:", err);
+    }
+  };
+
+  const handleDownloadContractorDataUsPdf = async (doc: SignableDocument) => {
+    if (!doc.pdfUrl) return;
+    const name = (doc.formData as Partial<ContractorDataUsFormData>).employeeName || doc.recipientName || "contractor-data-us";
+    try {
+      const res = await fetch(doc.pdfUrl);
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = `Contractor Data (US) - ${name}.pdf`;
+      a.click();
+      URL.revokeObjectURL(blobUrl);
+    } catch {
+      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
+    }
+  };
+
+  const handleDeleteContractorDataUs = async (doc: SignableDocument) => {
+    if (!window.confirm("Permanently delete this Contractor Data (US) request?")) return;
+    setContractorDataUsActionBusyId(doc.id);
+    setContractorDataUsActionError(null);
+    try {
+      await deleteSignableDocument(doc.id);
+      await loadSentContractorDataUsForms();
+    } catch (err) {
+      setContractorDataUsActionError(err instanceof Error ? err.message : "Failed to delete.");
+    } finally {
+      setContractorDataUsActionBusyId(null);
+    }
+  };
+
+  // ── Vehicle Use Agreement — a brand-new document type (distinct from the
+  // existing Company Vehicle Use Agreement, which draws onto its own real
+  // source PDF via pdf-lib). No source PDF here — same from-scratch HTML
+  // template technique as Contractor Data (see
+  // vehicleUseAgreementFormTemplate.ts's header comment). Single-party, no
+  // employer/HR co-signature step, no file uploads. ──
+  const [sentVehicleUseAgreementForms, setSentVehicleUseAgreementForms] = useState<SignableDocument[]>([]);
+  const loadSentVehicleUseAgreementForms = async () => {
+    try {
+      setSentVehicleUseAgreementForms(await getSignableDocuments("vehicle_use_agreement"));
+    } catch (err) {
+      console.error("Failed to load sent Vehicle Use Agreement forms:", err);
+    }
+  };
+  useEffect(() => {
+    if (activeTab === "vehicleUseAgreement" || activeTab === "jotformDocuments" || activeTab === "combineForms") void loadSentVehicleUseAgreementForms();
+  }, [activeTab]);
+
+  const [vehicleUseAgreementRecipientId, setVehicleUseAgreementRecipientId] = useState("");
+  const [vehicleUseAgreementRecipientSearch, setVehicleUseAgreementRecipientSearch] = useState("");
+  const [vehicleUseAgreementRecipientDropdownOpen, setVehicleUseAgreementRecipientDropdownOpen] = useState(false);
+  const [vehicleUseAgreementSending, setVehicleUseAgreementSending] = useState(false);
+  const [vehicleUseAgreementSendError, setVehicleUseAgreementSendError] = useState<string | null>(null);
+  const [vehicleUseAgreementActionBusyId, setVehicleUseAgreementActionBusyId] = useState<string | null>(null);
+  const [vehicleUseAgreementActionError, setVehicleUseAgreementActionError] = useState<string | null>(null);
+  const [vehicleUseAgreementDocPreview, setVehicleUseAgreementDocPreview] = useState<SignableDocument | null>(null);
+  const [vehicleUseAgreementPreviewExpanded, setVehicleUseAgreementPreviewExpanded] = useState(false);
+  const [vehicleUseAgreementPreviewPdfUrl, setVehicleUseAgreementPreviewPdfUrl] = useState<string | null>(null);
+  const [vehicleUseAgreementPreviewLoading, setVehicleUseAgreementPreviewLoading] = useState(false);
+  const [vehicleUseAgreementLogoDataUrl, setVehicleUseAgreementLogoDataUrl] = useState("");
+  const [vehicleUseAgreementExternalName, setVehicleUseAgreementExternalName] = useState("");
+  const [vehicleUseAgreementSentLink, setVehicleUseAgreementSentLink] = useState<{ link: string; recipientName: string } | null>(null);
+  const [vehicleUseAgreementSentLinkCopied, setVehicleUseAgreementSentLinkCopied] = useState(false);
+  const filteredVehicleUseAgreementRecipients = useMemo(
+    () => employees.filter((e) => e.status === "active" && e.name.toLowerCase().includes(vehicleUseAgreementRecipientSearch.toLowerCase())),
+    [employees, vehicleUseAgreementRecipientSearch]
+  );
+
+  const buildVehicleUseAgreementPreviewData = (employeeName: string): VehicleUseAgreementFormData => ({
+    employeeId: "",
+    employeeName,
+    firstName: employeeName,
+    lastName: "",
+    branch: "",
+    date: "",
+    dateSigned: "",
+    signatureDataUrl: "",
+  });
+
+  /** Toggles the inline collapsible preview panel — collapsing just hides it (and revokes the blob URL); expanding (re)builds a fresh blank-filled sample from the currently-selected recipient's name via the HTML template, same captureHtmlToPdfBlob technique the Warning Form's own preview uses. */
+  const toggleVehicleUseAgreementPreview = async () => {
+    if (vehicleUseAgreementPreviewExpanded) {
+      setVehicleUseAgreementPreviewExpanded(false);
+      if (vehicleUseAgreementPreviewPdfUrl) URL.revokeObjectURL(vehicleUseAgreementPreviewPdfUrl);
+      setVehicleUseAgreementPreviewPdfUrl(null);
+      return;
+    }
+    setVehicleUseAgreementSendError(null);
+    setVehicleUseAgreementPreviewExpanded(true);
+    setVehicleUseAgreementPreviewLoading(true);
+    try {
+      const logoDataUrl = vehicleUseAgreementLogoDataUrl || (await loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png")));
+      if (!vehicleUseAgreementLogoDataUrl) setVehicleUseAgreementLogoDataUrl(logoDataUrl);
+      const recipientName = employees.find((e) => e.id === vehicleUseAgreementRecipientId)?.name || "";
+      const pdfBlob = await captureHtmlToPdfBlob(buildVehicleUseAgreementBodyMarkup(buildVehicleUseAgreementPreviewData(recipientName), logoDataUrl, undefined), vehicleUseAgreementStyles);
+      const url = URL.createObjectURL(pdfBlob);
+      setVehicleUseAgreementPreviewPdfUrl(url);
+    } catch (err) {
+      setVehicleUseAgreementSendError(err instanceof Error ? err.message : "Failed to build preview.");
+    } finally {
+      setVehicleUseAgreementPreviewLoading(false);
+    }
+  };
+
+  const handleSendVehicleUseAgreement = async () => {
+    if (!vehicleUseAgreementRecipientId || !uid) return;
+    setVehicleUseAgreementSending(true);
+    setVehicleUseAgreementSendError(null);
+    try {
+      const recipient = employees.find((e) => e.id === vehicleUseAgreementRecipientId);
+      if (!recipient) throw new Error("Select a recipient first.");
+
+      const doc = await createSignableDocument({
+        documentType: "vehicle_use_agreement",
+        formData: { employeeId: recipient.id, employeeName: recipient.name } as unknown as Record<string, any>,
+        recipientId: vehicleUseAgreementRecipientId,
+        recipientSlot: "employee",
+        pdfUrl: "",
+      });
+
+      const myProfileId = await getMyProfileId(uid);
+      if (!myProfileId) throw new Error("Could not resolve your profile.");
+      const thread = await getOrCreateDmThread(myProfileId, vehicleUseAgreementRecipientId);
+      const fillLink = `${getAppUrl()}/fill-vehicle-use-agreement/${doc.id}`;
+      await sendMessage({
+        dmThreadId: thread.id,
+        senderId: myProfileId,
+        senderName: displayName || "HR",
+        body: `📋 Please complete the Vehicle Use Agreement form: ${fillLink}`,
+      });
+
+      void logActivity({ action: "vehicle_use_agreement_sent", targetType: "employee", targetId: recipient.id, targetLabel: recipient.name });
+
+      setVehicleUseAgreementRecipientId("");
+      setVehicleUseAgreementRecipientSearch("");
+      await loadSentVehicleUseAgreementForms();
+    } catch (err) {
+      setVehicleUseAgreementSendError(err instanceof Error ? err.message : "Failed to send request.");
+    } finally {
+      setVehicleUseAgreementSending(false);
+    }
+  };
+
+  /** No AHS profile to tie this to, so no DM — the link itself (shown in the same panel, right below "Generate Link") is the only way the recipient finds out, same as the Warning Form's "External Link" mode. */
+  const handleGenerateExternalVehicleUseAgreement = async () => {
+    setVehicleUseAgreementSending(true);
+    setVehicleUseAgreementSendError(null);
+    try {
+      const name = vehicleUseAgreementExternalName.trim() || "External Recipient";
+      const doc = await createSignableDocument({
+        documentType: "vehicle_use_agreement",
+        formData: { employeeId: "", employeeName: name } as unknown as Record<string, any>,
+        recipientName: name,
+        recipientSlot: "employee",
+        pdfUrl: "",
+      });
+
+      void logActivity({ action: "vehicle_use_agreement_sent", targetType: "employee", targetLabel: name, details: { external: true } });
+
+      setVehicleUseAgreementSentLink({ link: `${getAppUrl()}/fill-vehicle-use-agreement-external/${doc.id}`, recipientName: name });
+      setVehicleUseAgreementExternalName("");
+      await loadSentVehicleUseAgreementForms();
+    } catch (err) {
+      setVehicleUseAgreementSendError(err instanceof Error ? err.message : "Failed to generate link.");
+    } finally {
+      setVehicleUseAgreementSending(false);
+    }
+  };
+
+  const handleCopyVehicleUseAgreementSentLink = async () => {
+    if (!vehicleUseAgreementSentLink) return;
+    try {
+      await navigator.clipboard.writeText(vehicleUseAgreementSentLink.link);
+      setVehicleUseAgreementSentLinkCopied(true);
+      setTimeout(() => setVehicleUseAgreementSentLinkCopied(false), 1500);
+    } catch (err) {
+      console.error("Failed to copy link:", err);
+    }
+  };
+
+  const handleCopyVehicleUseAgreementLink = async (doc: SignableDocument) => {
+    try {
+      const path = doc.recipientId ? "fill-vehicle-use-agreement" : "fill-vehicle-use-agreement-external";
+      await navigator.clipboard.writeText(`${getAppUrl()}/${path}/${doc.id}`);
+    } catch (err) {
+      console.error("Failed to copy link:", err);
+    }
+  };
+
+  const handleDownloadVehicleUseAgreementPdf = async (doc: SignableDocument) => {
+    if (!doc.pdfUrl) return;
+    const name = (doc.formData as Partial<VehicleUseAgreementFormData>).employeeName || doc.recipientName || "vehicle-use-agreement";
+    try {
+      const res = await fetch(doc.pdfUrl);
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = `Vehicle Use Agreement - ${name}.pdf`;
+      a.click();
+      URL.revokeObjectURL(blobUrl);
+    } catch {
+      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
+    }
+  };
+
+  const handleDeleteVehicleUseAgreement = async (doc: SignableDocument) => {
+    if (!window.confirm("Permanently delete this Vehicle Use Agreement request?")) return;
+    setVehicleUseAgreementActionBusyId(doc.id);
+    setVehicleUseAgreementActionError(null);
+    try {
+      await deleteSignableDocument(doc.id);
+      await loadSentVehicleUseAgreementForms();
+    } catch (err) {
+      setVehicleUseAgreementActionError(err instanceof Error ? err.message : "Failed to delete.");
+    } finally {
+      setVehicleUseAgreementActionBusyId(null);
+    }
+  };
+
   // ── Direct Deposit Authorization — same architecture as Contractor Data:
   // no real source PDF (see directDepositFormTemplate.ts's header comment),
   // final document is a from-scratch HTML template captured to PDF.
@@ -6824,11 +7230,13 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       ...sentLocationConsentForms.map((doc) => ({ doc, formLabel: "Location Sharing Consent Agreement" })),
       ...sentDamageForms.map((doc) => ({ doc, formLabel: "Damage Agreement" })),
       ...sentContractorDataForms.map((doc) => ({ doc, formLabel: "Employee Data" })),
+      ...sentContractorDataUsForms.map((doc) => ({ doc, formLabel: "Contractor Data (US)" })),
       ...sentDirectDepositForms.map((doc) => ({ doc, formLabel: "Direct Deposit Authorization" })),
       ...sentSubstanceScreeningForms.map((doc) => ({ doc, formLabel: "Substance Screening & Conduct Agreement" })),
+      ...sentVehicleUseAgreementForms.map((doc) => ({ doc, formLabel: "Vehicle Use Agreement" })),
     ];
     return rows.sort((a, b) => new Date(b.doc.createdAt).getTime() - new Date(a.doc.createdAt).getTime());
-  }, [sentW8benForms, sentW4Forms, sentW9Forms, sentW4RForms, sentI9Forms, sentWageAckForms, sentCarIqAgreementForms, sentVehicleAgreementForms, sentEmployeeConfidentialityForms, sentMealRestBreakForms, sentPtoAckForms, sentPartsResponsibilityForms, sentMileageFuelForms, sentLocationConsentForms, sentDamageForms, sentContractorDataForms, sentDirectDepositForms, sentSubstanceScreeningForms]);
+  }, [sentW8benForms, sentW4Forms, sentW9Forms, sentW4RForms, sentI9Forms, sentWageAckForms, sentCarIqAgreementForms, sentVehicleAgreementForms, sentEmployeeConfidentialityForms, sentMealRestBreakForms, sentPtoAckForms, sentPartsResponsibilityForms, sentMileageFuelForms, sentLocationConsentForms, sentDamageForms, sentContractorDataForms, sentContractorDataUsForms, sentDirectDepositForms, sentSubstanceScreeningForms, sentVehicleUseAgreementForms]);
 
   const [signedFormsSearch, setSignedFormsSearch] = useState("");
   const [signedFormsTypeFilter, setSignedFormsTypeFilter] = useState("");
@@ -6905,6 +7313,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     { type: "car_iq_agreement", label: "Car IQ Technician Agreement" },
     { type: "vehicle_agreement", label: "Company Vehicle Use Agreement" },
     { type: "contractor_data", label: "Employee Data" },
+    { type: "contractor_data_us", label: "Contractor Data (US)" },
     { type: "damage", label: "Damage Agreement" },
     { type: "direct_deposit", label: "Direct Deposit Authorization" },
     { type: "employee_confidentiality", label: "Employee Confidentiality Agreement" },
@@ -6915,6 +7324,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     { type: "parts_responsibility", label: "Parts Responsibility Form" },
     { type: "pto_ack", label: "PTO & Sick Leave Policy" },
     { type: "substance_screening", label: "Substance Screening & Conduct Agreement" },
+    { type: "vehicle_use_agreement", label: "Vehicle Use Agreement" },
   ];
 
   const [combineFormsRecipientId, setCombineFormsRecipientId] = useState("");
@@ -10522,6 +10932,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     { key: "wageAck", label: "Acknowledgment of Wage", count: sentWageAckAwaitingEmployerCount, icon: FileCheck },
     { key: "carIqAgreement", label: "Car IQ Technician Agreement", count: 0, icon: FileCheck },
     { key: "vehicleAgreement", label: "Company Vehicle Use Agreement", count: 0, icon: FileCheck },
+    { key: "contractorDataUs", label: "Contractor Data (US)", count: 0, icon: FileCheck },
     { key: "damage", label: "Damage Agreement", count: sentDamageAwaitingEmployerCount, icon: FileCheck },
     { key: "directDeposit", label: "Direct Deposit Authorization", count: 0, icon: FileCheck },
     { key: "employeeConfidentiality", label: "Employee Confidentiality Agreement", count: 0, icon: FileCheck },
@@ -10533,6 +10944,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     { key: "partsResponsibility", label: "Parts Responsibility and Technician Floor Protection Acknowledgment Form", count: sentPartsResponsibilityAwaitingManagerCount, icon: FileCheck },
     { key: "ptoAck", label: "PTO & Sick Leave Policy", count: 0, icon: FileCheck },
     { key: "substanceScreening", label: "Substance Screening & Conduct Agreement", count: 0, icon: FileCheck },
+    { key: "vehicleUseAgreement", label: "Vehicle Use Agreement", count: 0, icon: FileCheck },
   ] as const;
 
   // ── Tab groups — single source shared by the dropdown header nav and the
@@ -18474,6 +18886,414 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       </>
       )}
 
+      {activeTab === "contractorDataUs" && (
+      <>
+      <div className="panel p-0 overflow-visible mt-4 relative z-20">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">Send Contractor Data (US) Request</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Pick a teammate — they'll get a link to fill in their contact/address/identity info, upload photos of their SSN card and driver's license, and sign. It comes back to you here automatically once submitted.</p>
+        </div>
+        <div className="p-4 flex flex-col md:flex-row gap-6">
+          <div className="flex flex-col gap-3 w-full md:max-w-sm md:shrink-0">
+            <div className="flex flex-col gap-1.5 pb-3 border-b border-white/10">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">External Link (no login needed)</label>
+              {contractorDataUsSentLink ? (
+                <div className="flex flex-col gap-2">
+                  <div className="rounded-md border border-green-500/30 bg-green-500/10 px-3 py-2.5">
+                    <p className="text-xs font-semibold text-green-300">Link generated for {contractorDataUsSentLink.recipientName}</p>
+                  </div>
+                  <div className="flex gap-2">
+                    <input type="text" readOnly value={contractorDataUsSentLink.link} onFocus={(e) => e.target.select()} className="glass-input text-xs py-1.5 px-3 rounded-md flex-1" />
+                    <button onClick={handleCopyContractorDataUsSentLink} className="btn text-xs px-3 py-1.5 shrink-0">{contractorDataUsSentLinkCopied ? "Copied!" : "Copy"}</button>
+                  </div>
+                  <button onClick={() => setContractorDataUsSentLink(null)} className="btn text-xs px-3 py-1.5 w-fit">Done</button>
+                </div>
+              ) : (
+                <>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={contractorDataUsExternalName}
+                      onChange={(e) => setContractorDataUsExternalName(e.target.value)}
+                      placeholder="Type their name (optional)…"
+                      className="glass-input text-sm py-1.5 px-3 rounded-md flex-1"
+                    />
+                    <button
+                      onClick={handleGenerateExternalContractorDataUs}
+                      disabled={contractorDataUsSending}
+                      className="btn text-sm px-3 py-1.5 disabled:opacity-50 shrink-0"
+                    >
+                      {contractorDataUsSending ? "Generating…" : "Generate Link"}
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground">No AHS account needed — they can open the link and fill it in without logging in.</p>
+                </>
+              )}
+            </div>
+
+            <div className="flex flex-col gap-1 relative">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient (AHS teammate)</label>
+              <input
+                type="text"
+                value={contractorDataUsRecipientSearch}
+                onChange={(e) => { setContractorDataUsRecipientSearch(e.target.value); setContractorDataUsRecipientId(""); setContractorDataUsRecipientDropdownOpen(true); }}
+                onFocus={() => setContractorDataUsRecipientDropdownOpen(true)}
+                onBlur={() => setTimeout(() => setContractorDataUsRecipientDropdownOpen(false), 150)}
+                placeholder="Search a teammate…"
+                className="glass-input text-sm py-1.5 px-3 rounded-md"
+              />
+              {contractorDataUsRecipientDropdownOpen && (
+                <div className="absolute z-50 top-full mt-1 w-full max-h-96 overflow-y-auto rounded-md border border-white/15 bg-slate-900 shadow-2xl">
+                  {filteredContractorDataUsRecipients.length === 0 ? (
+                    <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+                  ) : (
+                    filteredContractorDataUsRecipients.map((e) => (
+                      <button
+                        key={e.id}
+                        type="button"
+                        onMouseDown={(ev) => ev.preventDefault()}
+                        onClick={() => {
+                          setContractorDataUsRecipientId(e.id);
+                          setContractorDataUsRecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`);
+                          setContractorDataUsRecipientDropdownOpen(false);
+                        }}
+                        className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${contractorDataUsRecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                      >
+                        {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+
+            {contractorDataUsSendError && (
+              <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{contractorDataUsSendError}</p>
+            )}
+            <div className="flex items-center gap-2">
+              <button
+                onClick={toggleContractorDataUsPreview}
+                className="btn text-sm px-4 py-2 flex items-center gap-1.5"
+              >
+                Preview <ChevronDown className={`h-3.5 w-3.5 transition-transform ${contractorDataUsPreviewExpanded ? "rotate-180" : ""}`} />
+              </button>
+              <button
+                onClick={handleSendContractorDataUs}
+                disabled={!contractorDataUsRecipientId || contractorDataUsSending}
+                className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+              >
+                {contractorDataUsSending ? "Sending…" : "Send Request"}
+              </button>
+            </div>
+          </div>
+
+          <div className="flex-1 min-w-0">
+            {contractorDataUsPreviewExpanded ? (
+              <div className="border border-white/10 rounded-md overflow-hidden bg-white/5 h-full" style={{ minHeight: 560 }}>
+                {contractorDataUsPreviewLoading || !contractorDataUsPreviewPdfUrl ? (
+                  <div className="h-full flex items-center justify-center text-sm text-muted-foreground" style={{ minHeight: 560 }}>Loading preview…</div>
+                ) : (
+                  <iframe src={contractorDataUsPreviewPdfUrl} title="Contractor Data (US) Preview" className="w-full border-0" style={{ height: 560 }} />
+                )}
+              </div>
+            ) : (
+              <div className="border border-dashed border-white/15 rounded-md flex items-center justify-center text-sm text-muted-foreground" style={{ minHeight: 560 }}>
+                Click "Preview" to see the document here.
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="panel p-0 overflow-hidden mt-4">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">Sent Contractor Data (US) Forms</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status.</p>
+        </div>
+        {contractorDataUsActionError && (
+          <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{contractorDataUsActionError}</p>
+        )}
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-white/10 bg-white/5">
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Employee</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Branch</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent By</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Status</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sentContractorDataUsForms.length === 0 ? (
+                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">No requests sent yet.</td></tr>
+              ) : (
+                sentContractorDataUsForms.map((doc) => {
+                  const data = doc.formData as Partial<ContractorDataUsFormData>;
+                  const recipient = employees.find((e) => e.id === doc.recipientId);
+                  const busy = contractorDataUsActionBusyId === doc.id;
+                  return (
+                    <tr key={doc.id} className="border-b border-white/5 hover:bg-white/5">
+                      <td className="px-4 py-3 font-medium">
+                        {doc.pdfUrl ? (
+                          <button type="button" onClick={() => setContractorDataUsDocPreview(doc)} className="text-blue-300 hover:text-blue-200 hover:underline text-left">
+                            {data.employeeName || recipient?.name || doc.recipientName || "—"}
+                          </button>
+                        ) : (
+                          data.employeeName || recipient?.name || doc.recipientName || "—"
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-muted-foreground">{data.branch || "—"}</td>
+                      <td className="px-4 py-3 text-muted-foreground">{doc.createdByName ?? "—"}</td>
+                      <td className="px-4 py-3">
+                        <span className={`px-2 py-1 rounded text-xs font-semibold ${
+                          doc.status === "signed" ? "bg-green-500/20 text-green-300"
+                          : doc.status === "cancelled" ? "bg-slate-500/20 text-slate-400"
+                          : "bg-yellow-500/20 text-yellow-300"
+                        }`}>
+                          {doc.status === "signed" ? "Submitted" : doc.status === "cancelled" ? "Cancelled" : "Awaiting Completion"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{new Date(doc.createdAt).toLocaleDateString()}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {doc.status === "pending_signature" && (
+                            <button type="button" onClick={() => handleCopyContractorDataUsLink(doc)} className="btn text-[10px] px-2 py-1">
+                              Copy Link
+                            </button>
+                          )}
+                          {doc.pdfUrl && (
+                            <button type="button" onClick={() => handleDownloadContractorDataUsPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
+                              Download PDF
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => handleDeleteContractorDataUs(doc)}
+                            title="Permanently delete this request"
+                            className="text-muted-foreground hover:text-red-300 disabled:opacity-50"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      </>
+      )}
+
+      {activeTab === "vehicleUseAgreement" && (
+      <>
+      <div className="panel p-0 overflow-visible mt-4 relative z-20">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">Send Vehicle Use Agreement Request</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Pick a teammate — they'll get a link to fill in their name, date, and branch, and sign. It comes back to you here automatically once submitted.</p>
+        </div>
+        <div className="p-4 flex flex-col md:flex-row gap-6">
+          <div className="flex flex-col gap-3 w-full md:max-w-sm md:shrink-0">
+            <div className="flex flex-col gap-1.5 pb-3 border-b border-white/10">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">External Link (no login needed)</label>
+              {vehicleUseAgreementSentLink ? (
+                <div className="flex flex-col gap-2">
+                  <div className="rounded-md border border-green-500/30 bg-green-500/10 px-3 py-2.5">
+                    <p className="text-xs font-semibold text-green-300">Link generated for {vehicleUseAgreementSentLink.recipientName}</p>
+                  </div>
+                  <div className="flex gap-2">
+                    <input type="text" readOnly value={vehicleUseAgreementSentLink.link} onFocus={(e) => e.target.select()} className="glass-input text-xs py-1.5 px-3 rounded-md flex-1" />
+                    <button onClick={handleCopyVehicleUseAgreementSentLink} className="btn text-xs px-3 py-1.5 shrink-0">{vehicleUseAgreementSentLinkCopied ? "Copied!" : "Copy"}</button>
+                  </div>
+                  <button onClick={() => setVehicleUseAgreementSentLink(null)} className="btn text-xs px-3 py-1.5 w-fit">Done</button>
+                </div>
+              ) : (
+                <>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={vehicleUseAgreementExternalName}
+                      onChange={(e) => setVehicleUseAgreementExternalName(e.target.value)}
+                      placeholder="Type their name (optional)…"
+                      className="glass-input text-sm py-1.5 px-3 rounded-md flex-1"
+                    />
+                    <button
+                      onClick={handleGenerateExternalVehicleUseAgreement}
+                      disabled={vehicleUseAgreementSending}
+                      className="btn text-sm px-3 py-1.5 disabled:opacity-50 shrink-0"
+                    >
+                      {vehicleUseAgreementSending ? "Generating…" : "Generate Link"}
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground">No AHS account needed — they can open the link and fill it in without logging in.</p>
+                </>
+              )}
+            </div>
+
+            <div className="flex flex-col gap-1 relative">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient (AHS teammate)</label>
+              <input
+                type="text"
+                value={vehicleUseAgreementRecipientSearch}
+                onChange={(e) => { setVehicleUseAgreementRecipientSearch(e.target.value); setVehicleUseAgreementRecipientId(""); setVehicleUseAgreementRecipientDropdownOpen(true); }}
+                onFocus={() => setVehicleUseAgreementRecipientDropdownOpen(true)}
+                onBlur={() => setTimeout(() => setVehicleUseAgreementRecipientDropdownOpen(false), 150)}
+                placeholder="Search a teammate…"
+                className="glass-input text-sm py-1.5 px-3 rounded-md"
+              />
+              {vehicleUseAgreementRecipientDropdownOpen && (
+                <div className="absolute z-50 top-full mt-1 w-full max-h-96 overflow-y-auto rounded-md border border-white/15 bg-slate-900 shadow-2xl">
+                  {filteredVehicleUseAgreementRecipients.length === 0 ? (
+                    <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+                  ) : (
+                    filteredVehicleUseAgreementRecipients.map((e) => (
+                      <button
+                        key={e.id}
+                        type="button"
+                        onMouseDown={(ev) => ev.preventDefault()}
+                        onClick={() => {
+                          setVehicleUseAgreementRecipientId(e.id);
+                          setVehicleUseAgreementRecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`);
+                          setVehicleUseAgreementRecipientDropdownOpen(false);
+                        }}
+                        className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${vehicleUseAgreementRecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                      >
+                        {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+
+            {vehicleUseAgreementSendError && (
+              <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{vehicleUseAgreementSendError}</p>
+            )}
+            <div className="flex items-center gap-2">
+              <button
+                onClick={toggleVehicleUseAgreementPreview}
+                className="btn text-sm px-4 py-2 flex items-center gap-1.5"
+              >
+                Preview <ChevronDown className={`h-3.5 w-3.5 transition-transform ${vehicleUseAgreementPreviewExpanded ? "rotate-180" : ""}`} />
+              </button>
+              <button
+                onClick={handleSendVehicleUseAgreement}
+                disabled={!vehicleUseAgreementRecipientId || vehicleUseAgreementSending}
+                className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+              >
+                {vehicleUseAgreementSending ? "Sending…" : "Send Request"}
+              </button>
+            </div>
+          </div>
+
+          <div className="flex-1 min-w-0">
+            {vehicleUseAgreementPreviewExpanded ? (
+              <div className="border border-white/10 rounded-md overflow-hidden bg-white/5 h-full" style={{ minHeight: 560 }}>
+                {vehicleUseAgreementPreviewLoading || !vehicleUseAgreementPreviewPdfUrl ? (
+                  <div className="h-full flex items-center justify-center text-sm text-muted-foreground" style={{ minHeight: 560 }}>Loading preview…</div>
+                ) : (
+                  <iframe src={vehicleUseAgreementPreviewPdfUrl} title="Vehicle Use Agreement Preview" className="w-full border-0" style={{ height: 560 }} />
+                )}
+              </div>
+            ) : (
+              <div className="border border-dashed border-white/15 rounded-md flex items-center justify-center text-sm text-muted-foreground" style={{ minHeight: 560 }}>
+                Click "Preview" to see the document here.
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="panel p-0 overflow-hidden mt-4">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">Sent Vehicle Use Agreement Forms</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status.</p>
+        </div>
+        {vehicleUseAgreementActionError && (
+          <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{vehicleUseAgreementActionError}</p>
+        )}
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-white/10 bg-white/5">
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Employee</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Branch</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent By</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Status</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sentVehicleUseAgreementForms.length === 0 ? (
+                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">No requests sent yet.</td></tr>
+              ) : (
+                sentVehicleUseAgreementForms.map((doc) => {
+                  const data = doc.formData as Partial<VehicleUseAgreementFormData>;
+                  const recipient = employees.find((e) => e.id === doc.recipientId);
+                  const busy = vehicleUseAgreementActionBusyId === doc.id;
+                  return (
+                    <tr key={doc.id} className="border-b border-white/5 hover:bg-white/5">
+                      <td className="px-4 py-3 font-medium">
+                        {doc.pdfUrl ? (
+                          <button type="button" onClick={() => setVehicleUseAgreementDocPreview(doc)} className="text-blue-300 hover:text-blue-200 hover:underline text-left">
+                            {data.employeeName || recipient?.name || doc.recipientName || "—"}
+                          </button>
+                        ) : (
+                          data.employeeName || recipient?.name || doc.recipientName || "—"
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-muted-foreground">{data.branch || "—"}</td>
+                      <td className="px-4 py-3 text-muted-foreground">{doc.createdByName ?? "—"}</td>
+                      <td className="px-4 py-3">
+                        <span className={`px-2 py-1 rounded text-xs font-semibold ${
+                          doc.status === "signed" ? "bg-green-500/20 text-green-300"
+                          : doc.status === "cancelled" ? "bg-slate-500/20 text-slate-400"
+                          : "bg-yellow-500/20 text-yellow-300"
+                        }`}>
+                          {doc.status === "signed" ? "Submitted" : doc.status === "cancelled" ? "Cancelled" : "Awaiting Completion"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{new Date(doc.createdAt).toLocaleDateString()}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {doc.status === "pending_signature" && (
+                            <button type="button" onClick={() => handleCopyVehicleUseAgreementLink(doc)} className="btn text-[10px] px-2 py-1">
+                              Copy Link
+                            </button>
+                          )}
+                          {doc.pdfUrl && (
+                            <button type="button" onClick={() => handleDownloadVehicleUseAgreementPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
+                              Download PDF
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => handleDeleteVehicleUseAgreement(doc)}
+                            title="Permanently delete this request"
+                            className="text-muted-foreground hover:text-red-300 disabled:opacity-50"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      </>
+      )}
+
       {activeTab === "directDeposit" && (
       <>
       <div className="panel p-0 overflow-visible mt-4 relative z-20">
@@ -19324,6 +20144,52 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             </div>
             <div className="flex-1 overflow-hidden bg-slate-950">
               {contractorDataDocPreview.pdfUrl && <iframe src={contractorDataDocPreview.pdfUrl} title="Employee Data" className="w-full h-full min-h-[70vh] border-0" />}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Contractor Data (US) Sent History PDF preview — same inline-frame pattern used for the other Sent History tables */}
+      {contractorDataUsDocPreview && (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => setContractorDataUsDocPreview(null)}>
+          <div className="bg-slate-900 border border-white/10 rounded-lg shadow-2xl w-full max-w-6xl h-[92vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold">{(contractorDataUsDocPreview.formData as Partial<ContractorDataUsFormData>).employeeName || "—"}</p>
+                <p className="text-[10px] text-muted-foreground">Submitted {new Date(contractorDataUsDocPreview.signedAt ?? contractorDataUsDocPreview.createdAt).toLocaleString()}</p>
+              </div>
+              <div className="flex items-center gap-2">
+                {contractorDataUsDocPreview.pdfUrl && (
+                  <a href={contractorDataUsDocPreview.pdfUrl} target="_blank" rel="noopener noreferrer" className="btn text-xs px-2.5 py-1.5 flex items-center gap-1"><Download className="h-3 w-3" /> Download</a>
+                )}
+                <button type="button" onClick={() => setContractorDataUsDocPreview(null)} className="btn text-xs px-2.5 py-1.5">Close</button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-hidden bg-slate-950">
+              {contractorDataUsDocPreview.pdfUrl && <iframe src={contractorDataUsDocPreview.pdfUrl} title="Contractor Data (US)" className="w-full h-full min-h-[70vh] border-0" />}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Vehicle Use Agreement Sent History PDF preview — same inline-frame pattern used for the other Sent History tables */}
+      {vehicleUseAgreementDocPreview && (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => setVehicleUseAgreementDocPreview(null)}>
+          <div className="bg-slate-900 border border-white/10 rounded-lg shadow-2xl w-full max-w-6xl h-[92vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold">{(vehicleUseAgreementDocPreview.formData as Partial<VehicleUseAgreementFormData>).employeeName || "—"}</p>
+                <p className="text-[10px] text-muted-foreground">Submitted {new Date(vehicleUseAgreementDocPreview.signedAt ?? vehicleUseAgreementDocPreview.createdAt).toLocaleString()}</p>
+              </div>
+              <div className="flex items-center gap-2">
+                {vehicleUseAgreementDocPreview.pdfUrl && (
+                  <a href={vehicleUseAgreementDocPreview.pdfUrl} target="_blank" rel="noopener noreferrer" className="btn text-xs px-2.5 py-1.5 flex items-center gap-1"><Download className="h-3 w-3" /> Download</a>
+                )}
+                <button type="button" onClick={() => setVehicleUseAgreementDocPreview(null)} className="btn text-xs px-2.5 py-1.5">Close</button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-hidden bg-slate-950">
+              {vehicleUseAgreementDocPreview.pdfUrl && <iframe src={vehicleUseAgreementDocPreview.pdfUrl} title="Vehicle Use Agreement" className="w-full h-full min-h-[70vh] border-0" />}
             </div>
           </div>
         </div>
