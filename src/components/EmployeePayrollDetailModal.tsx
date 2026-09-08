@@ -5,7 +5,7 @@ import { getAttendanceForRange, saveEntry, getProfileIdByFirebaseUid, type Atten
 import { getTicketAttendanceForTechnician, type TicketAttendanceRow } from "@/lib/supabase/technicianWhereabouts";
 import { getCompanyEmployeeRequests } from "@/lib/supabase/employeeRequests";
 import { getVisitDiagnosisByTicketIds } from "@/lib/supabase/tickets";
-import { getMileageEntries, setMileageEstimateTime, type MileageEntry } from "@/lib/supabase/mileage";
+import { getMileageEntries, setMileageEstimateTime, setMileageLegMileage, type MileageEntry } from "@/lib/supabase/mileage";
 import {
   getSalaryHistory,
   addSalaryEntry,
@@ -42,6 +42,8 @@ interface Props {
   onClose: () => void;
   /** Called after a rate change is saved, so the caller can refresh its own aggregate payroll view. */
   onRateChanged?: () => void;
+  /** When set (Office Payroll's per-technician review wizard), a "Next →" button appears in the footer — advances to the Tech Activity Report. Omitted for office employees and other callers. */
+  onNext?: () => void;
 }
 
 function currentMonthBounds(): { start: string; end: string } {
@@ -100,6 +102,7 @@ export function EmployeePayrollDetailModal({
   initialEnd,
   onClose,
   onRateChanged,
+  onNext,
 }: Props) {
   const { uid, displayName, email } = useAuth();
   const actorName = displayName || email || "Unknown";
@@ -198,27 +201,39 @@ export function EmployeePayrollDetailModal({
   }, [profileId, rangeStart, rangeEnd]);
 
   const totalHours = useMemo(() => attendance.reduce((s, r) => s + r.hoursWorked, 0), [attendance]);
-  // Per-day ticket On-Site Check-In stats — same Scheduled/Checked In/
-  // Missing Check-In/Missing Check-Out definitions Ticket Attendance uses
-  // (technicianWhereabouts.ts), just grouped by day instead of summed over
-  // the whole range, so each row here lines up with that day's tickets.
+  // One non-deleted mileage entry per ticket # — same convention Ticket
+  // Attendance uses (mileage.ts).
+  const mileageByTicketNo = useMemo(() => {
+    const map = new Map<string, MileageEntry>();
+    for (const e of mileageEntries) {
+      if (e.deletedAt || !e.ticketNo || map.has(e.ticketNo)) continue;
+      map.set(e.ticketNo, e);
+    }
+    return map;
+  }, [mileageEntries]);
+  // Per-day ticket stats: how many of that day's scheduled tickets were
+  // actually completed (both an Arrived and a Done on-site stamp), and the
+  // mileage rolled up from just those completed tickets — DID NOT GO / never-
+  // arrived tickets contribute no mileage. Total Mileage here is always a
+  // pure sum of the per-ticket leg mileage in the expanded breakdown, never
+  // its own editable field.
   const ticketStatsByDate = useMemo(() => {
     const byDate = new Map<string, TicketAttendanceRow[]>();
     for (const r of ticketRows) {
       if (!byDate.has(r.scheduleDate)) byDate.set(r.scheduleDate, []);
       byDate.get(r.scheduleDate)!.push(r);
     }
-    const map = new Map<string, { scheduled: number; checkedIn: number; missingCheckIn: number; missingCheckOut: number }>();
+    const map = new Map<string, { scheduled: number; completed: number; totalMileage: number }>();
     for (const [date, dayRows] of byDate) {
+      const completedRows = dayRows.filter((r) => r.arrivedAt && r.doneAt);
       map.set(date, {
         scheduled: dayRows.length,
-        checkedIn: dayRows.filter((r) => r.arrivedAt).length,
-        missingCheckIn: dayRows.filter((r) => !r.arrivedAt && r.statusGroup !== "cancelled" && !disputedTicketNosApproved.has(r.ticketNo)).length,
-        missingCheckOut: dayRows.filter((r) => r.arrivedAt && !r.doneAt && r.statusGroup !== "cancelled" && !disputedTicketNosApproved.has(r.ticketNo)).length,
+        completed: completedRows.length,
+        totalMileage: completedRows.reduce((s, r) => s + (mileageByTicketNo.get(r.ticketNo)?.legMileage ?? 0), 0),
       });
     }
     return map;
-  }, [ticketRows, disputedTicketNosApproved]);
+  }, [ticketRows, mileageByTicketNo]);
   // Full ticket rows per date, for the expanded per-day ticket table —
   // same grouping as ticketStatsByDate above, just keeping the rows instead
   // of collapsing them to counts.
@@ -230,16 +245,6 @@ export function EmployeePayrollDetailModal({
     }
     return map;
   }, [ticketRows]);
-  // One non-deleted mileage entry per ticket # — same convention Ticket
-  // Attendance uses (mileage.ts).
-  const mileageByTicketNo = useMemo(() => {
-    const map = new Map<string, MileageEntry>();
-    for (const e of mileageEntries) {
-      if (e.deletedAt || !e.ticketNo || map.has(e.ticketNo)) continue;
-      map.set(e.ticketNo, e);
-    }
-    return map;
-  }, [mileageEntries]);
 
   // Estimate Time column — inline pencil-icon edit, same pattern Ticket
   // Attendance itself uses (one free-text field on mileage_entries, no
@@ -258,6 +263,31 @@ export function EmployeePayrollDetailModal({
       alert(`Failed to save Estimate Time: ${err instanceof Error ? err.message : "Unknown error"}`);
     } finally {
       setSavingEstimateTimeId(null);
+    }
+  };
+
+  // Per-ticket Mileage — same inline pencil-edit pattern. Overrides that
+  // ticket's leg_mileage; the day's "Total Mileage" column re-sums live.
+  const [editingLegMileageId, setEditingLegMileageId] = useState<string | null>(null);
+  const [legMileageDraft, setLegMileageDraft] = useState("");
+  const [savingLegMileageId, setSavingLegMileageId] = useState<string | null>(null);
+  const handleSaveLegMileage = async (entry: MileageEntry) => {
+    const trimmed = legMileageDraft.trim();
+    const value = trimmed === "" ? null : Number(trimmed);
+    if (value != null && !Number.isFinite(value)) {
+      alert("Enter a number, or leave blank to reset.");
+      return;
+    }
+    setSavingLegMileageId(entry.id);
+    try {
+      await setMileageLegMileage(entry.id, value);
+      const rounded = value == null ? null : Math.round(value * 10) / 10;
+      setMileageEntries((prev) => prev.map((e) => (e.id === entry.id ? { ...e, legMileage: rounded } : e)));
+      setEditingLegMileageId(null);
+    } catch (err) {
+      alert(`Failed to save Mileage: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setSavingLegMileageId(null);
     }
   };
   const warnings = useMemo(() => attendance.filter((r) => r.status !== "present" && r.status !== "day-off"), [attendance]);
@@ -690,9 +720,8 @@ export function EmployeePayrollDetailModal({
                       <th className="text-right py-1.5">Status</th>
                       <th className="text-right py-1.5">Payment</th>
                       <th className="text-center py-1.5">Scheduled</th>
-                      <th className="text-center py-1.5">Checked In</th>
-                      <th className="text-center py-1.5" title="Missing Check-In">Missing In</th>
-                      <th className="text-center py-1.5" title="Missing Check-Out">Missing Out</th>
+                      <th className="text-center py-1.5" title="Tickets with both an Arrived and a Done on-site stamp">Completed</th>
+                      <th className="text-right py-1.5 pr-4" title="Sum of the completed tickets' leg mileage — excludes DID NOT GO and any ticket missing an arrived/done stamp. Not editable; it rolls up the per-ticket mileage in the breakdown below.">Total Mileage</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -797,17 +826,14 @@ export function EmployeePayrollDetailModal({
                           )}
                         </td>
                         <td className="py-1.5 text-center text-slate-300">{ticketStats ? ticketStats.scheduled : "—"}</td>
-                        <td className="py-1.5 text-center text-emerald-300">{ticketStats ? ticketStats.checkedIn : "—"}</td>
-                        <td className={`py-1.5 text-center ${ticketStats && ticketStats.missingCheckIn > 0 ? "text-red-300 font-semibold" : "text-slate-500"}`}>
-                          {ticketStats ? ticketStats.missingCheckIn : "—"}
-                        </td>
-                        <td className={`py-1.5 text-center ${ticketStats && ticketStats.missingCheckOut > 0 ? "text-yellow-300 font-semibold" : "text-slate-500"}`}>
-                          {ticketStats ? ticketStats.missingCheckOut : "—"}
+                        <td className="py-1.5 text-center text-emerald-300">{ticketStats ? ticketStats.completed : "—"}</td>
+                        <td className="py-1.5 pr-4 text-right text-slate-300 whitespace-nowrap">
+                          {ticketStats && ticketStats.completed > 0 ? `${ticketStats.totalMileage.toFixed(1)} mi` : <span className="text-slate-500">—</span>}
                         </td>
                       </tr>
                       {isExpanded && (
                         <tr>
-                          <td colSpan={14} className="px-2 py-3 bg-white/[0.02] border-b border-white/5">
+                          <td colSpan={13} className="px-2 py-3 bg-white/[0.02] border-b border-white/5">
                             {dayTicketRows.length === 0 ? (
                               <p className="text-[11px] text-slate-500 text-center py-2">No tickets scheduled this day.</p>
                             ) : (
@@ -906,7 +932,42 @@ export function EmployeePayrollDetailModal({
                                           )}
                                         </td>
                                         <td className="px-2 py-1.5 text-right text-slate-300">
-                                          {mEntry?.legMileage != null ? `${mEntry.legMileage.toFixed(1)} mi` : <span className="text-slate-600">—</span>}
+                                          {mEntry && editingLegMileageId === mEntry.id ? (
+                                            <div className="flex items-center justify-end gap-1">
+                                              <input
+                                                type="number"
+                                                step="0.1"
+                                                min="0"
+                                                autoFocus
+                                                value={legMileageDraft}
+                                                onChange={(e) => setLegMileageDraft(e.target.value)}
+                                                onKeyDown={(e) => { if (e.key === "Enter") void handleSaveLegMileage(mEntry); if (e.key === "Escape") setEditingLegMileageId(null); }}
+                                                placeholder="—"
+                                                className="w-16 rounded border border-white/15 bg-slate-800 px-1 py-0.5 text-[11px] text-right text-white"
+                                              />
+                                              <button
+                                                onClick={() => void handleSaveLegMileage(mEntry)}
+                                                disabled={savingLegMileageId === mEntry.id}
+                                                className="text-emerald-400 hover:text-emerald-300 disabled:opacity-40"
+                                              >
+                                                {savingLegMileageId === mEntry.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+                                              </button>
+                                            </div>
+                                          ) : (
+                                            <button
+                                              onClick={() => {
+                                                if (!mEntry) return;
+                                                setEditingLegMileageId(mEntry.id);
+                                                setLegMileageDraft(mEntry.legMileage != null ? String(mEntry.legMileage) : "");
+                                              }}
+                                              disabled={!mEntry}
+                                              title={mEntry ? "Click to edit this ticket's mileage" : "Sync mileage first"}
+                                              className="inline-flex items-center gap-1 text-slate-300 hover:text-white disabled:text-slate-600 disabled:cursor-not-allowed"
+                                            >
+                                              {mEntry?.legMileage != null ? `${mEntry.legMileage.toFixed(1)} mi` : <span className="text-slate-600">—</span>}
+                                              {mEntry && <Pencil className="h-2.5 w-2.5 text-slate-500 shrink-0" />}
+                                            </button>
+                                          )}
                                         </td>
                                         <td className="px-2 py-1.5">
                                           {mEntry?.googleMapLink ? (
@@ -952,6 +1013,19 @@ export function EmployeePayrollDetailModal({
             )}
           </div>
         </div>
+
+        {onNext && (
+          <div className="flex items-center justify-between gap-3 px-5 py-3 border-t border-white/10 bg-slate-950 rounded-b-xl">
+            <p className="text-xs text-slate-500">Review the clock-in/out and ticket detail above, then continue to the Tech Activity Report.</p>
+            <button
+              type="button"
+              onClick={onNext}
+              className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold transition shrink-0"
+            >
+              Next →
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -19,10 +19,8 @@ import {
   Download,
   Mail,
   Send,
-  Wrench,
   MapPin,
   Trash2,
-  Activity,
   Clock,
   X,
   Ban,
@@ -93,6 +91,7 @@ import { getCompanyEmployeeRequests, updateEmployeeRequestStatus, linkPayrollDis
 import { setTicketOnsiteCheckIn } from "@/lib/supabase/tickets";
 import { TIME_ZONES, type ScheduleTimezone } from "@/lib/serverTime";
 import { perCutoffSalary } from "@/lib/supabase/salary";
+import { getPayrollReviewMarks, markPayrollReviewed, clearPayrollReviewMark, type PayrollReviewMark } from "@/lib/supabase/payrollReviewMarks";
 import { useAuth } from "@/lib/auth";
 import { getGmailConnectionStatus, disconnectGmail, sendPayslipEmail, type GmailConnectionStatus, type GmailRegion } from "@/lib/supabase/gmailConnection";
 import { auth as firebaseAuth } from "@/lib/firebase/config";
@@ -589,7 +588,7 @@ function parseGmailRegionParam(value: string | null): GmailRegion {
   return value === "PH" ? "PH" : "US";
 }
 
-type AccountingDashboardTabId = "overview" | "payroll" | "techPayroll" | "mileage" | "payrollDisputes" | "reports" | "flashTech" | "ticketAttendance" | "ticketTimeDisputes";
+type AccountingDashboardTabId = "overview" | "payroll" | "mileage" | "payrollDisputes" | "reports" | "flashTech" | "ticketAttendance" | "ticketTimeDisputes";
 // Shared by the top tab row and the floating left quick-nav so the two
 // never drift out of sync.
 const ACCOUNTING_DASHBOARD_TABS: { id: AccountingDashboardTabId; label: string; Icon: typeof PieChartIcon }[] = [
@@ -599,7 +598,6 @@ const ACCOUNTING_DASHBOARD_TABS: { id: AccountingDashboardTabId; label: string; 
   { id: "overview", label: "Overview", Icon: PieChartIcon },
   { id: "payrollDisputes", label: "Payroll Disputes", Icon: AlertCircle },
   { id: "reports", label: "Reports", Icon: FileText },
-  { id: "techPayroll", label: "Tech Payroll", Icon: Wrench },
   { id: "ticketAttendance", label: "Ticket Attendance", Icon: FileText },
   { id: "ticketTimeDisputes", label: "Ticket Time Disputes", Icon: Clock },
 ];
@@ -635,7 +633,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   };
   const [activeTab, setActiveTab] = usePersistedTab<AccountingDashboardTabId>(
     "ahs:accounting-dashboard-active-tab",
-    ["overview", "payroll", "techPayroll", "mileage", "payrollDisputes", "flashTech", "reports", "ticketAttendance", "ticketTimeDisputes"],
+    ["overview", "payroll", "mileage", "payrollDisputes", "flashTech", "reports", "ticketAttendance", "ticketTimeDisputes"],
     "overview",
   );
   // Deep link from a bell-icon notification straight into the Payroll
@@ -721,16 +719,13 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // be pointed at any previously generated payroll run instead.
   const [selectedRunId, setSelectedRunId] = useState<string>("current");
   const [selectedCurrency, setSelectedCurrency] = useState<"USD" | "PHP">("USD");
-  // Under US Payroll only — technicians are paid per completed repair ticket
-  // (Tech Payroll) instead of hourly (Office Payroll). Driven by which tab is
-  // active rather than its own toggle, now that Tech Payroll is a full tab.
-  const payrollView: "office" | "tech" = activeTab === "techPayroll" ? "tech" : "office";
-  // Tech Payroll only exists under US, regardless of whatever the Payroll
-  // tab's own US/PH toggle was last left on — every currency-scoped
-  // computation below reads this instead of selectedCurrency directly, so
-  // switching to Tech Payroll doesn't require (or wait on) mutating that
-  // toggle's state, and switching back to Payroll leaves it untouched.
-  const effectiveCurrency: "USD" | "PHP" = activeTab === "techPayroll" ? "USD" : selectedCurrency;
+  // Technicians (piece-rate per completed repair ticket) and office
+  // employees (hourly) now share the one Office Payroll tab — a primary
+  // technician's row shows their piece-rate gross, and Finance drills into
+  // the Tech Activity Report via the per-technician review wizard (the
+  // "Next" button on the detail modal). `effectiveCurrency` kept as an
+  // alias so the many currency-scoped reads below don't all have to change.
+  const effectiveCurrency: "USD" | "PHP" = selectedCurrency;
   // Funnel-style column filters (Ticket List convention) — empty set = no filter.
   const [departmentFilter, setDepartmentFilter] = useState<Set<string>>(new Set());
   const [roleFilter, setRoleFilter] = useState<Set<string>>(new Set());
@@ -846,8 +841,13 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   const [error, setError] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
   const [showAuditLog, setShowAuditLog] = useState(false);
+  // Office Payroll per-technician review wizard: click a row -> detail modal
+  // (step "detail") -> Next -> Tech Activity Report (step "activity") -> Done
+  // (stamps a payroll_review_marks row, closes to the table).
   const [detailEmployee, setDetailEmployee] = useState<SupabaseEmployee | null>(null);
-  const [activityEmployeeId, setActivityEmployeeId] = useState<string | null>(null);
+  const [wizardStep, setWizardStep] = useState<"detail" | "activity">("detail");
+  const [reviewMarks, setReviewMarks] = useState<Map<string, PayrollReviewMark>>(new Map());
+  const [reviewBusy, setReviewBusy] = useState(false);
   // One connection per region (US/PH each send payslips from their own
   // connected Gmail account) — keyed the same way as the currency toggle.
   // Deliberately narrower than GmailRegion itself (which also allows
@@ -1474,6 +1474,22 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     return () => { cancelled = true; };
   }, [genStart, genEnd]);
 
+  // Per-technician "Reviewed" marks for the picked pay period (see the
+  // Office Payroll review wizard + payroll_review_marks, migration 0218).
+  // Period-scoped, so switching genStart/genEnd naturally re-queries.
+  const loadReviewMarks = useCallback(async () => {
+    if (!genStart || !genEnd || genStart > genEnd) {
+      setReviewMarks(new Map());
+      return;
+    }
+    try {
+      setReviewMarks(await getPayrollReviewMarks(genStart, genEnd));
+    } catch (err) {
+      console.error("Failed to load payroll review marks:", err);
+    }
+  }, [genStart, genEnd]);
+  useEffect(() => { void loadReviewMarks(); }, [loadReviewMarks]);
+
   // ── Derived data ─────────────────────────────────────────────────────────────
   // Latest salary entry per employee. salaryEntries is ordered by
   // effective_date desc then created_at desc, but re-compared explicitly
@@ -1799,7 +1815,6 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // once (payroll generation reads the underlying deduped row, not these
   // view-only lists).
   const usOfficeRows = usRows.filter((r) => !r.isTechPortion || isTechRole(r.employee));
-  const usTechRows = usRows.filter((r) => r.isTechPortion);
 
   // Employees who never draw a salary through this system (e.g. the owner)
   // — kept out of generation, the missing-clock-out gate, and the export,
@@ -1820,10 +1835,9 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // grossPayUSD is already plain USD (see payrollRows above) — no conversion here.
   const totalUSPayroll = usRows.reduce((s, r) => s + r.grossPayUSD, 0);
   const totalPHPayroll = phRows.reduce((s, r) => s + r.grossPayUSD, 0);
-  // Scoped versions for the Payroll/Tech Payroll tabs' own summary cards —
+  // Scoped version for the Office Payroll tab's own summary card —
   // totalUSPayroll above stays the combined US figure for the Overview tab.
   const totalUSOfficePayroll = usOfficeRows.reduce((s, r) => s + r.grossPayUSD, 0);
-  const totalUSTechPayroll = usTechRows.reduce((s, r) => s + r.grossPayUSD, 0);
   const totalPayrollUSD = totalUSPayroll + totalPHPayroll;
   const avgPayPerEmployee =
     payrollRows.length > 0 ? totalPayrollUSD / payrollRows.length : 0;
@@ -2470,11 +2484,10 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // ── Render helpers ───────────────────────────────────────────────────────────
   // effectiveCurrency is really a "which team" filter (US vs PH employees) —
   // every amount is always shown in USD regardless of which team is active.
-  const displayRows = effectiveCurrency === "USD" ? (payrollView === "tech" ? usTechRows : usOfficeRows) : phRows;
-  const isTechView = effectiveCurrency === "USD" && payrollView === "tech";
-  // Office/PH table only (the Tech table below is a fully separate layout
-  // with its own hardcoded colSpans): checkbox, Name, Department, Role,
-  // Gross Pay, Payslip (6) + Branch (US only) + Reg/Duty/OT/Meal + Rate (5).
+  const displayRows = effectiveCurrency === "USD" ? usOfficeRows : phRows;
+  // checkbox, Name, Department, Role, Gross Pay, Payslip (6) + Branch (US
+  // only) + Reg/Duty/OT/Meal + Rate (5). The per-technician "Reviewed" mark
+  // renders as an inline badge in the Name cell, not its own column.
   const payrollColCount = 6 + (effectiveCurrency === "USD" ? 1 : 0) + 5;
 
   // Excel-autofilter convention (matches TicketColumnFilter/TicketList): a
@@ -3181,7 +3194,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         )}
 
         {/* ── Payroll Tab ──────────────────────────────────────────────────── */}
-        {(activeTab === "payroll" || activeTab === "techPayroll") && (
+        {activeTab === "payroll" && (
           <div className="space-y-6">
             {/* Actions bar */}
             <div className="flex flex-wrap gap-3 items-center">
@@ -3306,11 +3319,10 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
               })}
             </div>
 
-            {/* Summary cards — scoped to whichever tab/view is showing
-                (Office, Tech, or PH), not the combined US total. */}
+            {/* Summary cards — scoped to the active nation (US or PH), not
+                the combined US total. */}
             {(() => {
-              const displayTotal =
-                effectiveCurrency === "USD" ? (payrollView === "tech" ? totalUSTechPayroll : totalUSOfficePayroll) : totalPHPayroll;
+              const displayTotal = effectiveCurrency === "USD" ? totalUSOfficePayroll : totalPHPayroll;
               return (
                 <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
                   <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
@@ -3323,11 +3335,9 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                     <p className="text-xs text-slate-500 mt-1">Active in {effectiveCurrency === "USD" ? "US" : "PH"}</p>
                   </div>
                   <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
-                    <p className="text-xs text-slate-400 mb-1">{isTechView ? "Tickets Completed" : "Overtime Pay"}</p>
+                    <p className="text-xs text-slate-400 mb-1">Overtime Pay</p>
                     <p className="text-2xl font-bold text-orange-300">
-                      {isTechView
-                        ? displayRows.reduce((s, r) => s + r.ticketsCompleted, 0)
-                        : fmt(displayRows.reduce((s, r) => s + r.overtimeHours * r.hourlyRateUSD * 1.5, 0))}
+                      {fmt(displayRows.reduce((s, r) => s + r.overtimeHours * r.hourlyRateUSD * 1.5, 0))}
                     </p>
                   </div>
                   <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
@@ -3384,7 +3394,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
             <div className="bg-slate-900/50 border border-white/10 rounded-lg overflow-x-auto">
               <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between">
                 <span className="text-sm font-semibold">
-                  {effectiveCurrency === "USD" ? (payrollView === "tech" ? "Tech" : "Office") : "PH"} Employee Payroll — Current Period
+                  {effectiveCurrency === "USD" ? "Office" : "PH"} Employee Payroll — Current Period
                 </span>
                 <span className="text-xs text-slate-400">{visibleRows.length} employees</span>
               </div>
@@ -3398,205 +3408,6 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                   className="w-full max-w-sm bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none"
                 />
               </div>
-              {isTechView ? (
-                <table className="w-full text-sm min-w-[1500px]">
-                  <thead>
-                    <tr className="border-b border-white/10 bg-white/5">
-                      <th className="px-4 py-3 text-center text-xs text-slate-400 uppercase w-10">
-                        <input
-                          type="checkbox"
-                          title="Include/exclude all visible technicians from payroll generation"
-                          checked={visibleRows.length > 0 && visibleRows.every((r) => !r.employee.payrollExcluded)}
-                          onChange={() => {
-                            const nextIncluded = !(visibleRows.length > 0 && visibleRows.every((r) => !r.employee.payrollExcluded));
-                            visibleRows.forEach((r) => {
-                              if (r.employee.payrollExcluded === nextIncluded) {
-                                handleTogglePayrollExcluded(r.employee.id, !nextIncluded);
-                              }
-                            });
-                          }}
-                          className="h-4 w-4 accent-blue-600 cursor-pointer"
-                        />
-                      </th>
-                      <th className="px-4 py-3 text-left text-xs text-slate-400 uppercase">
-                        <button
-                          type="button"
-                          onClick={toggleNameSort}
-                          title="Sort by name"
-                          className="flex items-center gap-1 hover:text-white transition"
-                        >
-                          Technician
-                          <span className="text-[10px]">{nameSort === "asc" ? "▲" : nameSort === "desc" ? "▼" : "⇅"}</span>
-                        </button>
-                      </th>
-                      <th className="px-4 py-3 text-left text-xs text-slate-400 uppercase">Branch</th>
-                      <th className="px-4 py-3 text-center text-xs text-slate-400 uppercase">Assigned</th>
-                      <th className="px-4 py-3 text-center text-xs text-slate-400 uppercase">Completed</th>
-                      <th className="px-4 py-3 text-center text-xs text-slate-400 uppercase" title="Completed ÷ Assigned">Ratio</th>
-                      <th className="px-4 py-3 text-center text-xs text-slate-400 uppercase" title="Completed ÷ days in the selected period">Avg. Comp.</th>
-                      <th className="px-4 py-3 text-right text-xs text-slate-400 uppercase" title="Long Distance Tickets — entered manually, rate set in Tech Payroll Setup">LDT</th>
-                      <th className="px-4 py-3 text-right text-xs text-slate-400 uppercase" title="Entered manually, $/mile rate set in Tech Payroll Setup">Mileage</th>
-                      <th className="px-4 py-3 text-right text-xs text-slate-400 uppercase">TRN Paid</th>
-                      <th className="px-4 py-3 text-right text-xs text-slate-400 uppercase">2 Man Job</th>
-                      <th className="px-4 py-3 text-right text-xs text-slate-400 uppercase">Back Tub</th>
-                      <th className="px-4 py-3 text-right text-xs text-slate-400 uppercase">Sealed System</th>
-                      <th className="px-4 py-3 text-right text-xs text-slate-400 uppercase">Sealed System (R600)</th>
-                      <th className="px-4 py-3 text-right text-xs text-slate-400 uppercase">Total Net</th>
-                      <th className="px-4 py-3 text-center text-xs text-slate-400 uppercase">Action</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {visibleRows.length === 0 ? (
-                      <tr>
-                        <td colSpan={16} className="px-4 py-8 text-center text-slate-500 text-sm">
-                          No Tech employees found.
-                        </td>
-                      </tr>
-                    ) : (
-                      visibleRows.map((row) => {
-                        const ratioPct = row.ticketsAssigned > 0 ? (row.ticketsCompleted / row.ticketsAssigned) * 100 : 0;
-                        // Completed ÷ actual days worked (not raw calendar days) — matches
-                        // the legacy Tech Activity Report's "Avg. Daily Completion" figure.
-                        const avgComp = row.ticketsCompleted / Math.max(1, row.workingDays);
-                        const savingLdt = savingManualKey === `${row.employee.id}:ldtCount`;
-                        const savingMileage = savingManualKey === `${row.employee.id}:mileage`;
-                        const savingTraining = savingManualKey === `${row.employee.id}:trainingValue`;
-                        return (
-                          <tr
-                            key={row.employee.id}
-                            className={`border-b border-white/5 hover:bg-white/5 ${row.employee.payrollExcluded ? "opacity-50" : ""}`}
-                          >
-                            <td className="px-4 py-3 text-center">
-                              <input
-                                type="checkbox"
-                                title="Include in payroll generation"
-                                checked={!row.employee.payrollExcluded}
-                                onChange={(e) => handleTogglePayrollExcluded(row.employee.id, !e.target.checked)}
-                                className="h-4 w-4 accent-blue-600 cursor-pointer"
-                              />
-                            </td>
-                            <td className="px-4 py-3 font-medium">
-                              <button
-                                type="button"
-                                onClick={() => setActivityEmployeeId(row.employee.id)}
-                                title={`assigned_branch: ${row.employee.assigned_branch || "(blank)"} · profile id: ${row.employee.id}`}
-                                className="text-blue-400 hover:text-blue-300 hover:underline"
-                              >
-                                {row.employee.full_name}
-                              </button>
-                            </td>
-                            <td className="px-4 py-3 text-slate-300">{row.employee.assigned_branch || "—"}</td>
-                            <td className="px-4 py-3 text-center text-slate-300">{row.ticketsAssigned}</td>
-                            <td className="px-4 py-3 text-center text-slate-300">{row.ticketsCompleted}</td>
-                            <td className="px-4 py-3 text-center text-slate-300">{row.ticketsAssigned > 0 ? `${ratioPct.toFixed(0)}%` : "—"}</td>
-                            <td className="px-4 py-3 text-center text-slate-300">{avgComp.toFixed(1)}</td>
-                            <td className="px-4 py-3 text-right">
-                              <input
-                                type="number"
-                                min={0}
-                                defaultValue={row.techManual.ldtCount || ""}
-                                disabled={savingLdt}
-                                onBlur={(e) => handleManualPayBlur(row, "ldtCount", e.target.value)}
-                                placeholder="0"
-                                className="w-16 bg-slate-800/50 border border-white/10 rounded px-1.5 py-1 text-right text-xs text-white disabled:opacity-50 focus:border-blue-500 focus:outline-none"
-                              />
-                              <div className="text-[10px] text-slate-500 mt-0.5">{savingLdt ? "Saving…" : fmt(row.techManual.ldtPay)}</div>
-                            </td>
-                            <td className="px-4 py-3 text-right">
-                              <input
-                                type="number"
-                                min={0}
-                                defaultValue={row.techManual.mileage || ""}
-                                disabled={savingMileage}
-                                onBlur={(e) => handleManualPayBlur(row, "mileage", e.target.value)}
-                                placeholder="0"
-                                className="w-16 bg-slate-800/50 border border-white/10 rounded px-1.5 py-1 text-right text-xs text-white disabled:opacity-50 focus:border-blue-500 focus:outline-none"
-                              />
-                              <div className="text-[10px] text-slate-500 mt-0.5">{savingMileage ? "Saving…" : fmt(row.techManual.mileagePay)}</div>
-                            </td>
-                            <td className="px-4 py-3 text-right">
-                              <input
-                                type="number"
-                                min={0}
-                                defaultValue={row.techManual.trainingValue || ""}
-                                disabled={savingTraining}
-                                onBlur={(e) => handleManualPayBlur(row, "trainingValue", e.target.value)}
-                                placeholder="0"
-                                className="w-16 bg-slate-800/50 border border-white/10 rounded px-1.5 py-1 text-right text-xs text-white disabled:opacity-50 focus:border-blue-500 focus:outline-none"
-                              />
-                              <div className="text-[10px] text-slate-500 mt-0.5">{savingTraining ? "Saving…" : fmt(row.techManual.trainingPay)}</div>
-                            </td>
-                            <td className="px-4 py-3 text-right text-slate-300">{fmt(row.techCategoryPay.twoManJob)}</td>
-                            <td className="px-4 py-3 text-right text-slate-300">{fmt(row.techCategoryPay.backTub)}</td>
-                            <td className="px-4 py-3 text-right text-slate-300">{fmt(row.techCategoryPay.sealedSystem)}</td>
-                            <td className="px-4 py-3 text-right text-slate-300">{fmt(row.techCategoryPay.sealedSystemR600)}</td>
-                            <td className="px-4 py-3 text-right font-semibold text-green-300">{fmt(row.grossPayUSD)}</td>
-                            <td className="px-4 py-3">
-                              <div className="flex items-center justify-center gap-2">
-                                <button
-                                  type="button"
-                                  onClick={() => setActivityEmployeeId(row.employee.id)}
-                                  title="Check activity"
-                                  className="p-1.5 rounded text-blue-400 hover:text-blue-300 hover:bg-white/10 transition"
-                                >
-                                  <Activity className="h-3.5 w-3.5" />
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => setDetailEmployee(row.employee)}
-                                  title="Set hourly rate / view attendance — same detail view as Office Payroll"
-                                  className="p-1.5 rounded text-purple-400 hover:text-purple-300 hover:bg-white/10 transition"
-                                >
-                                  <Clock className="h-3.5 w-3.5" />
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => handleSendPayslip(row)}
-                                  disabled={sendingPayslipId === row.employee.id || !gmailStatus?.connected}
-                                  title={gmailStatus?.connected ? "Send a test payslip email to this technician" : "Connect Gmail above first"}
-                                  className="p-1.5 rounded text-emerald-400 hover:text-emerald-300 hover:bg-white/10 disabled:opacity-40 transition"
-                                >
-                                  {sendingPayslipId === row.employee.id ? (
-                                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                  ) : (
-                                    <Send className="h-3.5 w-3.5" />
-                                  )}
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => handleDeleteManualPay(row)}
-                                  disabled={deletingManualId === row.employee.id}
-                                  title="Clear LDT/Mileage/Training entries for this period"
-                                  className="p-1.5 rounded text-red-400 hover:text-red-300 hover:bg-white/10 disabled:opacity-40 transition"
-                                >
-                                  {deletingManualId === row.employee.id ? (
-                                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                  ) : (
-                                    <Trash2 className="h-3.5 w-3.5" />
-                                  )}
-                                </button>
-                              </div>
-                            </td>
-                          </tr>
-                        );
-                      })
-                    )}
-                  </tbody>
-                  {visibleRows.length > 0 && (
-                    <tfoot>
-                      <tr className="border-t border-white/20 bg-white/5">
-                        <td colSpan={14} className="px-4 py-3 text-sm font-semibold text-slate-300">
-                          Total
-                        </td>
-                        <td className="px-4 py-3 text-right font-bold text-green-300">
-                          {fmt(visibleTotalUSD)}
-                        </td>
-                        <td />
-                      </tr>
-                    </tfoot>
-                  )}
-                </table>
-              ) : (
                 <table className="w-full text-sm min-w-[700px]">
                   <thead>
                     <tr className="border-b border-white/10 bg-white/5">
@@ -3713,12 +3524,33 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                               <td className="px-4 py-3 font-medium">
                                 <button
                                   type="button"
-                                  onClick={() => setDetailEmployee(row.employee)}
+                                  onClick={() => { setDetailEmployee(row.employee); setWizardStep("detail"); }}
                                   title={`assigned_branch: ${row.employee.assigned_branch || "(blank)"} · profile id: ${row.employee.id}`}
                                   className="text-blue-400 hover:text-blue-300 hover:underline"
                                 >
                                   {row.employee.full_name}
                                 </button>
+                                {isTechRole(row.employee) && (() => {
+                                  const mark = reviewMarks.get(row.employee.id);
+                                  return mark ? (
+                                    <span className="mt-0.5 flex items-center gap-1 text-[10px] text-green-400" title={`Reviewed by ${mark.reviewedByName || "—"} on ${new Date(mark.reviewedAt).toLocaleString()}`}>
+                                      ✓ Reviewed {new Date(mark.reviewedAt).toLocaleDateString()}
+                                      <button
+                                        type="button"
+                                        onClick={async () => {
+                                          try { await clearPayrollReviewMark(row.employee.id, genStart, genEnd); await loadReviewMarks(); }
+                                          catch (err) { setError(err instanceof Error ? err.message : "Failed to clear the review mark."); }
+                                        }}
+                                        title="Clear reviewed mark"
+                                        className="text-slate-500 hover:text-red-300 leading-none"
+                                      >
+                                        ×
+                                      </button>
+                                    </span>
+                                  ) : (
+                                    <span className="mt-0.5 block text-[10px] text-slate-500">Not reviewed</span>
+                                  );
+                                })()}
                               </td>
                               {effectiveCurrency === "USD" && (
                                 <td className="px-4 py-3 text-slate-300">
@@ -3785,7 +3617,6 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                     </tfoot>
                   )}
                 </table>
-              )}
             </div>
           </div>
         )}
@@ -4923,7 +4754,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         </div>
       )}
 
-      {detailEmployee && (
+      {detailEmployee && wizardStep === "detail" && (
         <EmployeePayrollDetailModal
           profileId={detailEmployee.id}
           employeeName={detailEmployee.full_name}
@@ -4936,13 +4767,14 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
           graceMinutes={payGraceMinutesFor(detailEmployee.country)}
           initialStart={genStart || undefined}
           initialEnd={genEnd || undefined}
-          onClose={() => setDetailEmployee(null)}
+          onClose={() => { setDetailEmployee(null); setWizardStep("detail"); }}
           onRateChanged={() => { fetchData(); reloadTimecardEntries(); }}
+          onNext={isTechRole(detailEmployee) ? () => setWizardStep("activity") : undefined}
         />
       )}
 
-      {activityEmployeeId && (() => {
-        const activityRow = visibleRows.find((r) => r.employee.id === activityEmployeeId);
+      {detailEmployee && wizardStep === "activity" && (() => {
+        const activityRow = payrollRows.find((r) => r.employee.id === detailEmployee.id && r.isTechPortion);
         if (!activityRow) return null;
         return (
           <TechActivityReportModal
@@ -4957,7 +4789,22 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
             savingManualKey={savingManualKey}
             onCategoryOverrideBlur={handleCategoryOverrideBlur}
             savingCategoryOverrideKey={savingCategoryOverrideKey}
-            onClose={() => setActivityEmployeeId(null)}
+            onClose={() => { setDetailEmployee(null); setWizardStep("detail"); }}
+            onPrev={() => setWizardStep("detail")}
+            doneBusy={reviewBusy}
+            onDone={async () => {
+              setReviewBusy(true);
+              try {
+                await markPayrollReviewed(detailEmployee.id, genStart, genEnd, myProfileId, displayName || email || null);
+                await loadReviewMarks();
+                setDetailEmployee(null);
+                setWizardStep("detail");
+              } catch (err) {
+                setError(err instanceof Error ? err.message : "Failed to save the review mark.");
+              } finally {
+                setReviewBusy(false);
+              }
+            }}
           />
         );
       })()}

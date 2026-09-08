@@ -317,6 +317,22 @@ export async function setMileageEstimateTime(id: string, value: string): Promise
 }
 
 /**
+ * Overrides one ticket's own leg mileage (the per-stop breakdown figure —
+ * see MileageEntry.legMileage), used by the Office Payroll review modal's
+ * per-ticket mileage cell. `null` on an empty string restores the
+ * auto-computed value on the next sync. Purely the display breakdown: the
+ * day route total (total_mileage / mileageEffectiveTotal) that tech
+ * mileage-pay reads is untouched.
+ */
+export async function setMileageLegMileage(id: string, value: number | null): Promise<void> {
+  const { error } = await supabase
+    .from("mileage_entries")
+    .update({ leg_mileage: value == null || Number.isNaN(value) ? null : Math.round(value * 10) / 10 })
+    .eq("id", id);
+  if (error) throw new Error(error.message);
+}
+
+/**
  * Coarse visit-order heuristic, shared by syncMileageFromTickets (below)
  * and the Day Route view: a time_slot's own leading number as its start
  * hour (e.g. "8-12" -> 8, "1-5" -> 1) — AM/PM isn't recorded, but this is
