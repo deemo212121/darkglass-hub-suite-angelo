@@ -576,7 +576,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   // In/Out and Late Arrival alert modals — reuses the exact same notesData/
   // Notes Modal state the Daily Attendance Tracker table's own note button
   // already writes to, so a note added from either place shows up in both.
-  const renderAlertTileNote = (record: { profileId: string }) => {
+  const renderAlertTileNote = (record: { profileId: string }, prompt: string = "Why are they absent? Add a note.") => {
     if (!canManageNotes) return null;
     const note = notesData[record.profileId];
     return (
@@ -590,7 +590,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
               )}
             </>
           ) : (
-            <p className="text-xs text-slate-500 italic">Why are they absent? Add a note.</p>
+            <p className="text-xs text-slate-500 italic">{prompt}</p>
           )}
         </div>
         <button
@@ -3148,7 +3148,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                           </span>
                         </div>
                       </div>
-                      {renderAlertTileNote(record)}
+                      {renderAlertTileNote(record, "Why haven't they clocked out? Add a note.")}
                     </div>
                   ))}
 
@@ -3167,7 +3167,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                           </span>
                         </div>
                       </div>
-                      {renderAlertTileNote(record)}
+                      {renderAlertTileNote(record, "Why are they late? Add a note.")}
                     </div>
                   ))}
                 </div>

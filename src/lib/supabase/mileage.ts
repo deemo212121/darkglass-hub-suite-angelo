@@ -183,15 +183,24 @@ const PAGE_SIZE = 1000;
  * — and therefore the paging — deterministic. Same fix already applied to
  * getCompanyTickets() in tickets.ts for the identical reason.
  */
-export async function getMileageEntries(): Promise<MileageEntry[]> {
+/**
+ * @param branch When given, filters server-side to just that branch (an
+ *  `.eq("branch", branch)` on the query below) — used by AccountingDashboard's
+ *  Mileage tab so opening it doesn't have to pull every branch's entries just
+ *  to display one. Omit for the full company (still used by the background
+ *  no-photos payroll-hold reconciliation and the mileage report/CSV export,
+ *  which both need every branch regardless of what's on screen).
+ */
+export async function getMileageEntries(branch?: string): Promise<MileageEntry[]> {
   const all: MileageEntry[] = [];
   for (let from = 0; ; from += PAGE_SIZE) {
-    const { data, error } = await supabase
+    let query = supabase
       .from("mileage_entries")
       .select(ENTRY_COLUMNS)
       .order("work_date", { ascending: false })
-      .order("id", { ascending: true })
-      .range(from, from + PAGE_SIZE - 1);
+      .order("id", { ascending: true });
+    if (branch) query = query.eq("branch", branch);
+    const { data, error } = await query.range(from, from + PAGE_SIZE - 1);
     if (error) {
       console.error("getMileageEntries error:", error.message);
       return all;

@@ -538,6 +538,17 @@ export async function uploadEmployeeConfidentialityForm(companyId: string, emplo
   return getDownloadURL(snapshot.ref);
 }
 
+export async function uploadNdaForm(companyId: string, employeeName: string, pdfBlob: Blob): Promise<string> {
+  if (!isFirebaseReady() || !storage) {
+    throw new Error("Firebase Storage not configured");
+  }
+  const folder = `companies/${companyId}/nda-forms`;
+  const objectName = `${Date.now()}-${sanitizeFileName(employeeName || "nda-form")}.pdf`;
+  const objectRef = ref(storage, `${folder}/${objectName}`);
+  const snapshot = await uploadBytes(objectRef, pdfBlob, { contentType: "application/pdf" });
+  return getDownloadURL(snapshot.ref);
+}
+
 export async function uploadSubstanceScreeningForm(companyId: string, employeeName: string, pdfBlob: Blob): Promise<string> {
   if (!isFirebaseReady() || !storage) {
     throw new Error("Firebase Storage not configured");

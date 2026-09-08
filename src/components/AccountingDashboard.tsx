@@ -839,7 +839,19 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   const [techManualPayItems, setTechManualPayItems] = useState<TechManualPayItem[]>([]);
   const [techCustomPayItemsAll, setTechCustomPayItemsAll] = useState<TechCustomPayItem[]>([]);
   const [techCategoryOverrides, setTechCategoryOverrides] = useState<TechCategoryOverride[]>([]);
+  // Full company mileage log — still loaded for the background no-photos
+  // payroll-hold reconciliation, the "Notify On-Hold" button, and report/
+  // CSV generation, all of which need every branch regardless of what's
+  // currently on screen. The Mileage TABLE itself no longer reads from
+  // this — see mileageTableEntries below — so it stays fast to open even
+  // though this full load still happens in the background.
   const [mileageEntries, setMileageEntries] = useState<MileageEntry[]>([]);
+  // What the Mileage tab's table actually renders — empty (and no fetch at
+  // all) until a branch is picked, then a fresh, branch-scoped
+  // getMileageEntries(branch) call, per the user's explicit request to stop
+  // loading every branch's entries just to open this tab.
+  const [mileageTableEntries, setMileageTableEntries] = useState<MileageEntry[]>([]);
+  const [mileageTableLoading, setMileageTableLoading] = useState(false);
 
   // UI state
   const [loading, setLoading] = useState(true);
@@ -2567,7 +2579,11 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   const mileageNameOptions = Array.from(new Set(mileageEntries.map((e) => mileageRowName(e)).filter((n) => n && n !== "—"))).sort((a, b) =>
     a.localeCompare(b)
   );
-  const mileageBranchOptions = Array.from(new Set(mileageEntries.map((e) => e.branch))).sort((a, b) => a.localeCompare(b));
+  // Sourced from employees (already loaded, independent of any mileage
+  // fetch) instead of mileageEntries — the whole point of branch-scoping
+  // the Mileage table is that it shouldn't need ANY mileage data loaded
+  // just to populate this dropdown.
+  const mileageBranchOptions = Array.from(new Set(employees.map((e) => e.assigned_branch).filter((b): b is string => !!b))).sort((a, b) => a.localeCompare(b));
   const mileageStatusOptions = Array.from(new Set(mileageEntries.map((e) => e.ticketStatus || "").filter(Boolean))).sort((a, b) => a.localeCompare(b));
   const MILEAGE_PAYROLL_OPTIONS = ["Included", "On Hold"];
   // A day's mileage entries share one route total, so a missing photo on
@@ -2603,34 +2619,27 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     }
     return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
   })();
-  const mileageEntriesByBranch = (() => {
+  // Sub-filters (name/ticket/date/status/payroll) applied on top of the
+  // already branch-scoped mileageTableEntries — branch itself is applied
+  // server-side by the fetch effect below, not here (see mileageTableEntries'
+  // own doc comment for why the table no longer reads from mileageEntries).
+  const mileageFilteredEntries = (() => {
     const nameFilter = mileageNameFilter.trim().toLowerCase();
     const ticketFilter = mileageTicketFilter.trim().toLowerCase();
-    const filtered = mileageEntries.filter((entry) => {
-      if (mileageBranchFilter && entry.branch !== mileageBranchFilter) return false;
-      if (nameFilter && !mileageRowName(entry).toLowerCase().includes(nameFilter)) return false;
-      if (ticketFilter && !(entry.ticketNo || "").toLowerCase().includes(ticketFilter)) return false;
-      if (mileageDateFromFilter && entry.workDate < mileageDateFromFilter) return false;
-      if (mileageDateToFilter && entry.workDate > mileageDateToFilter) return false;
-      if (mileageStatusFilter.size > 0 && !mileageStatusFilter.has(entry.ticketStatus || "")) return false;
-      if (mileagePayrollFilter.size > 0) {
-        const status = mileageEntryIsOnHold(entry) ? "On Hold" : "Included";
-        if (!mileagePayrollFilter.has(status)) return false;
-      }
-      return true;
-    });
-    const byBranch = new Map<string, MileageEntry[]>();
-    for (const entry of filtered) {
-      const list = byBranch.get(entry.branch) ?? [];
-      list.push(entry);
-      byBranch.set(entry.branch, list);
-    }
-    return Array.from(byBranch.entries())
-      .sort((a, b) => a[0].localeCompare(b[0]))
-      .map(([branch, entries]) => ({
-        branch,
-        entries: [...entries].sort((a, b) => (a.workDate < b.workDate ? 1 : a.workDate > b.workDate ? -1 : 0)),
-      }));
+    return mileageTableEntries
+      .filter((entry) => {
+        if (nameFilter && !mileageRowName(entry).toLowerCase().includes(nameFilter)) return false;
+        if (ticketFilter && !(entry.ticketNo || "").toLowerCase().includes(ticketFilter)) return false;
+        if (mileageDateFromFilter && entry.workDate < mileageDateFromFilter) return false;
+        if (mileageDateToFilter && entry.workDate > mileageDateToFilter) return false;
+        if (mileageStatusFilter.size > 0 && !mileageStatusFilter.has(entry.ticketStatus || "")) return false;
+        if (mileagePayrollFilter.size > 0) {
+          const status = mileageEntryIsOnHold(entry) ? "On Hold" : "Included";
+          if (!mileagePayrollFilter.has(status)) return false;
+        }
+        return true;
+      })
+      .sort((a, b) => (a.workDate < b.workDate ? 1 : a.workDate > b.workDate ? -1 : 0));
   })();
 
   // Empty mileageSyncProfileId means "All Technicians". Always all-time —
@@ -2639,9 +2648,15 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // company tickets a single time and matches them by normalized name,
   // rather than a separate ticket query per technician) — already-synced
   // tickets are skipped via mileage_entries.ticket_id either way.
-  const handleSyncMileage = async () => {
+  const handleSyncMileage = async (branchOverride?: string) => {
+    // branchOverride is only ever passed by the per-branch auto-sync effect
+    // below — the manual Sync/Sync All button always calls this with no
+    // argument, so it keeps respecting the Technician dropdown exactly as
+    // before regardless of the Branch filter.
     const targets = mileageSyncProfileId
       ? mileageTechnicians.filter((t) => t.id === mileageSyncProfileId)
+      : branchOverride
+      ? mileageTechnicians.filter((t) => (t.assigned_branch || "Unassigned") === branchOverride)
       : mileageTechnicians;
     if (targets.length === 0) return;
     setSyncingMileage(true);
@@ -2679,7 +2694,10 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       // miss those, leaving the table showing stale/blank values until a
       // manual refresh. Everything up to a Stop click already committed, so
       // this still applies even when result.stopped is true.
-      if (result.created > 0 || result.recalculatedDays > 0) setMileageEntries(await getMileageEntries());
+      if (result.created > 0 || result.recalculatedDays > 0) {
+        setMileageEntries(await getMileageEntries());
+        if (mileageBranchFilter) setMileageTableEntries(await getMileageEntries(mileageBranchFilter));
+      }
     } catch (err) {
       setMileageSyncMessage(`Sync failed: ${err instanceof Error ? err.message : "Unknown error"}`);
     } finally {
@@ -2693,19 +2711,39 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     mileageSyncAbortRef.current?.abort();
   };
 
-  // Auto-runs the sync (all technicians, all-time — no date bound by
-  // default) the first time the Mileage tab is actually opened — so every
-  // assigned ticket's mileage just shows up without anyone having to press
-  // Sync. Only fires once per page load (via the ref) and waits for
-  // mileageTechnicians to actually be populated, rather than running on
-  // every tab switch or racing the initial fetch.
-  const autoSyncedMileageRef = useRef(false);
+  // The Mileage tab's own table fetch — the actual load-time win: nothing
+  // loads until a branch is picked, and then only that branch's rows come
+  // down (see getMileageEntries(branch) in mileage.ts). mileageEntries
+  // (full company) keeps loading separately in the background for the
+  // no-photos reconciliation/Notify On-Hold/report export, unaffected.
   useEffect(() => {
-    if (activeTab !== "mileage" || autoSyncedMileageRef.current || mileageTechnicians.length === 0) return;
-    autoSyncedMileageRef.current = true;
-    void handleSyncMileage();
+    if (!mileageBranchFilter) { setMileageTableEntries([]); return; }
+    let cancelled = false;
+    setMileageTableLoading(true);
+    getMileageEntries(mileageBranchFilter)
+      .then((rows) => { if (!cancelled) setMileageTableEntries(rows); })
+      .catch((err) => {
+        console.error("Failed to load mileage entries for branch:", err);
+        if (!cancelled) setMileageTableEntries([]);
+      })
+      .finally(() => { if (!cancelled) setMileageTableLoading(false); });
+    return () => { cancelled = true; };
+  }, [mileageBranchFilter]);
+
+  // Auto-runs the sync (all-time, no date bound) once per branch, the first
+  // time each branch is selected on this tab — scoped to that branch's own
+  // technicians, not the whole company, so picking a branch stays fast. No
+  // longer fires just from opening the tab (there's no branch to scope it
+  // to yet); the "Sync All" button below remains available for a
+  // deliberate company-wide re-sync regardless of the branch filter.
+  const autoSyncedBranchesRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (activeTab !== "mileage" || !mileageBranchFilter || mileageTechnicians.length === 0) return;
+    if (autoSyncedBranchesRef.current.has(mileageBranchFilter)) return;
+    autoSyncedBranchesRef.current.add(mileageBranchFilter);
+    void handleSyncMileage(mileageBranchFilter);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab, mileageTechnicians.length]);
+  }, [activeTab, mileageBranchFilter, mileageTechnicians.length]);
 
   // Photos modal — fetches on demand, only for the one ticket just clicked,
   // not for every row up front (the Mileage table has no pagination and can
@@ -3799,7 +3837,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
             <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
               <p className="text-sm font-semibold text-white mb-1">Sync from Tickets</p>
               <p className="text-xs text-slate-400 mb-3">
-                Runs automatically for all technicians (including anyone with Technician as a 2nd or 3rd role), pulling every ticket ever assigned to them for this company — any status, not just completed, no date range, always all-time — as soon as you open this tab. One mileage entry per ticket, using the same office-to-customer distance calculator as the ticket map. Already-synced tickets are always skipped, so it's safe to re-run.
+                Runs automatically for the selected branch's technicians (including anyone with Technician as a 2nd or 3rd role) the first time you pick that branch below, pulling every ticket ever assigned to them — any status, not just completed, no date range, always all-time. One mileage entry per ticket, using the same office-to-customer distance calculator as the ticket map. Already-synced tickets are always skipped, so it's safe to re-run. Use the Technician dropdown (or "Sync All" with no branch selected) for a manual company-wide sync instead.
               </p>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-end">
                 <label className="space-y-1.5 text-sm text-slate-200">
@@ -3817,7 +3855,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                 </label>
                 <div className="flex items-center gap-2">
                   <button
-                    onClick={handleSyncMileage}
+                    onClick={() => void handleSyncMileage()}
                     disabled={syncingMileage || mileageTechnicians.length === 0}
                     className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white rounded-lg text-sm font-semibold transition flex items-center justify-center gap-2"
                   >
@@ -4027,17 +4065,24 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
             </div>
 
             {/* Per-branch tables */}
-            {mileageEntriesByBranch.length === 0 ? (
+            {!mileageBranchFilter ? (
               <div className="bg-slate-900/50 border border-white/10 rounded-lg p-8 text-center text-slate-400 text-sm">
-                {mileageEntries.length === 0 ? "No mileage entries logged yet." : "No entries match the current filters."}
+                Select a branch above to load its mileage entries.
+              </div>
+            ) : mileageTableLoading ? (
+              <div className="bg-slate-900/50 border border-white/10 rounded-lg p-8 text-center text-slate-400 text-sm">
+                Loading {mileageBranchFilter}…
+              </div>
+            ) : mileageFilteredEntries.length === 0 ? (
+              <div className="bg-slate-900/50 border border-white/10 rounded-lg p-8 text-center text-slate-400 text-sm">
+                {mileageTableEntries.length === 0 ? "No mileage entries logged yet for this branch." : "No entries match the current filters."}
               </div>
             ) : (
-              mileageEntriesByBranch.map(({ branch, entries }) => (
-                <div key={branch} className="bg-slate-900/50 border border-white/10 rounded-lg overflow-hidden">
+                <div className="bg-slate-900/50 border border-white/10 rounded-lg overflow-hidden">
                   <div className="px-4 py-3 border-b border-white/10 flex items-center gap-2">
                     <MapPin className="h-4 w-4 text-blue-400" />
-                    <h3 className="text-sm font-semibold text-white">{branch}</h3>
-                    <span className="text-xs text-slate-400">({entries.length} {entries.length === 1 ? "entry" : "entries"})</span>
+                    <h3 className="text-sm font-semibold text-white">{mileageBranchFilter}</h3>
+                    <span className="text-xs text-slate-400">({mileageFilteredEntries.length} {mileageFilteredEntries.length === 1 ? "entry" : "entries"})</span>
                   </div>
                   <div className="overflow-x-auto">
                     <table className="w-full text-sm">
@@ -4059,7 +4104,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                         </tr>
                       </thead>
                       <tbody>
-                        {entries.map((entry) => (
+                        {mileageFilteredEntries.map((entry) => (
                           <tr key={entry.id} className="border-b border-white/5 hover:bg-white/5">
                             {isMileageColVisible("date") && (
                             <td className="px-3 py-2.5 text-slate-300">
@@ -4278,7 +4323,6 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                     </table>
                   </div>
                 </div>
-              ))
             )}
           </div>
         )}

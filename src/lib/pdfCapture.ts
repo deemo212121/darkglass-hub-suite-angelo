@@ -76,6 +76,57 @@ export async function captureHtmlToPdfBlob(
   }
 }
 
+/**
+ * Same rendering pipeline as captureHtmlToPdfBlob, but for a document made
+ * of several separate pages (e.g. a 4-page agreement) instead of one tall
+ * scrolling page — each entry in `bodyHtmlPages` becomes its own real PDF
+ * page (`pdf.addPage()`), not one overlong page. Used by
+ * ndaFormTemplate.ts's multi-page Non-Disclosure Agreement; every
+ * single-page form keeps using captureHtmlToPdfBlob unchanged.
+ */
+export async function captureHtmlPagesToPdfBlob(
+  bodyHtmlPages: string[],
+  styles: string,
+  opts?: { width?: number; height?: number }
+): Promise<Blob> {
+  const width = opts?.width ?? 816;
+  const height = opts?.height ?? 1056;
+  const [{ default: html2canvas }, { jsPDF }] = await Promise.all([import("html2canvas"), import("jspdf")]);
+  const PX_TO_PT = 0.75;
+  const pageWidthPt = width * PX_TO_PT;
+  let pdf: InstanceType<typeof jsPDF> | null = null;
+  for (const bodyHtml of bodyHtmlPages) {
+    const iframe = document.createElement("iframe");
+    iframe.style.position = "fixed";
+    iframe.style.left = "-99999px";
+    iframe.style.top = "0";
+    iframe.style.width = `${width}px`;
+    iframe.style.height = `${height}px`;
+    document.body.appendChild(iframe);
+    try {
+      await new Promise<void>((resolve) => {
+        iframe.onload = () => resolve();
+        iframe.srcdoc = `<!DOCTYPE html><html><head><style>body{margin:0;}${styles}</style></head><body>${bodyHtml}</body></html>`;
+      });
+      const body = iframe.contentDocument?.body;
+      if (!body) throw new Error("Could not prepare document for capture.");
+      const canvas = await html2canvas(body, { scale: 2, backgroundColor: "#ffffff", useCORS: true });
+      const imgData = canvas.toDataURL("image/png");
+      const pageHeightPt = (canvas.height / canvas.width) * pageWidthPt;
+      if (!pdf) {
+        pdf = new jsPDF({ unit: "pt", format: [pageWidthPt, pageHeightPt] });
+      } else {
+        pdf.addPage([pageWidthPt, pageHeightPt]);
+      }
+      pdf.addImage(imgData, "PNG", 0, 0, pageWidthPt, pageHeightPt);
+    } finally {
+      document.body.removeChild(iframe);
+    }
+  }
+  if (!pdf) throw new Error("No pages to render.");
+  return pdf.output("blob");
+}
+
 /** Raw base64 (no "data:...;base64," prefix) — for handing a captured PDF to a JSON API that attaches/uploads it server-side (e.g. gmailBridge.ts's send-payslip). */
 export async function blobToBase64(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {

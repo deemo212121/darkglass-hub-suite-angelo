@@ -33,6 +33,8 @@ import { Route as SignTerminationFormDocIdRouteImport } from './routes/sign-term
 import { Route as SignTerminationExternalDocIdRouteImport } from './routes/sign-termination-external.$docId'
 import { Route as SignPromotionFormDocIdRouteImport } from './routes/sign-promotion-form.$docId'
 import { Route as SignPromotionExternalDocIdRouteImport } from './routes/sign-promotion-external.$docId'
+import { Route as SignNdaFormDocIdRouteImport } from './routes/sign-nda-form.$docId'
+import { Route as SignNdaExternalDocIdRouteImport } from './routes/sign-nda-external.$docId'
 import { Route as SignExternalDocIdRouteImport } from './routes/sign-external.$docId'
 import { Route as SignDocumentDocIdRouteImport } from './routes/sign-document.$docId'
 import { Route as SignActionPlanFormDocIdRouteImport } from './routes/sign-action-plan-form.$docId'
@@ -208,6 +210,16 @@ const SignPromotionExternalDocIdRoute =
     path: '/sign-promotion-external/$docId',
     getParentRoute: () => rootRouteImport,
   } as any)
+const SignNdaFormDocIdRoute = SignNdaFormDocIdRouteImport.update({
+  id: '/sign-nda-form/$docId',
+  path: '/sign-nda-form/$docId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SignNdaExternalDocIdRoute = SignNdaExternalDocIdRouteImport.update({
+  id: '/sign-nda-external/$docId',
+  path: '/sign-nda-external/$docId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SignExternalDocIdRoute = SignExternalDocIdRouteImport.update({
   id: '/sign-external/$docId',
   path: '/sign-external/$docId',
@@ -551,6 +563,8 @@ export interface FileRoutesByFullPath {
   '/sign-action-plan-form/$docId': typeof SignActionPlanFormDocIdRoute
   '/sign-document/$docId': typeof SignDocumentDocIdRoute
   '/sign-external/$docId': typeof SignExternalDocIdRoute
+  '/sign-nda-external/$docId': typeof SignNdaExternalDocIdRoute
+  '/sign-nda-form/$docId': typeof SignNdaFormDocIdRoute
   '/sign-promotion-external/$docId': typeof SignPromotionExternalDocIdRoute
   '/sign-promotion-form/$docId': typeof SignPromotionFormDocIdRoute
   '/sign-termination-external/$docId': typeof SignTerminationExternalDocIdRoute
@@ -628,6 +642,8 @@ export interface FileRoutesByTo {
   '/sign-action-plan-form/$docId': typeof SignActionPlanFormDocIdRoute
   '/sign-document/$docId': typeof SignDocumentDocIdRoute
   '/sign-external/$docId': typeof SignExternalDocIdRoute
+  '/sign-nda-external/$docId': typeof SignNdaExternalDocIdRoute
+  '/sign-nda-form/$docId': typeof SignNdaFormDocIdRoute
   '/sign-promotion-external/$docId': typeof SignPromotionExternalDocIdRoute
   '/sign-promotion-form/$docId': typeof SignPromotionFormDocIdRoute
   '/sign-termination-external/$docId': typeof SignTerminationExternalDocIdRoute
@@ -706,6 +722,8 @@ export interface FileRoutesById {
   '/sign-action-plan-form/$docId': typeof SignActionPlanFormDocIdRoute
   '/sign-document/$docId': typeof SignDocumentDocIdRoute
   '/sign-external/$docId': typeof SignExternalDocIdRoute
+  '/sign-nda-external/$docId': typeof SignNdaExternalDocIdRoute
+  '/sign-nda-form/$docId': typeof SignNdaFormDocIdRoute
   '/sign-promotion-external/$docId': typeof SignPromotionExternalDocIdRoute
   '/sign-promotion-form/$docId': typeof SignPromotionFormDocIdRoute
   '/sign-termination-external/$docId': typeof SignTerminationExternalDocIdRoute
@@ -785,6 +803,8 @@ export interface FileRouteTypes {
     | '/sign-action-plan-form/$docId'
     | '/sign-document/$docId'
     | '/sign-external/$docId'
+    | '/sign-nda-external/$docId'
+    | '/sign-nda-form/$docId'
     | '/sign-promotion-external/$docId'
     | '/sign-promotion-form/$docId'
     | '/sign-termination-external/$docId'
@@ -862,6 +882,8 @@ export interface FileRouteTypes {
     | '/sign-action-plan-form/$docId'
     | '/sign-document/$docId'
     | '/sign-external/$docId'
+    | '/sign-nda-external/$docId'
+    | '/sign-nda-form/$docId'
     | '/sign-promotion-external/$docId'
     | '/sign-promotion-form/$docId'
     | '/sign-termination-external/$docId'
@@ -939,6 +961,8 @@ export interface FileRouteTypes {
     | '/sign-action-plan-form/$docId'
     | '/sign-document/$docId'
     | '/sign-external/$docId'
+    | '/sign-nda-external/$docId'
+    | '/sign-nda-form/$docId'
     | '/sign-promotion-external/$docId'
     | '/sign-promotion-form/$docId'
     | '/sign-termination-external/$docId'
@@ -1017,6 +1041,8 @@ export interface RootRouteChildren {
   SignActionPlanFormDocIdRoute: typeof SignActionPlanFormDocIdRoute
   SignDocumentDocIdRoute: typeof SignDocumentDocIdRoute
   SignExternalDocIdRoute: typeof SignExternalDocIdRoute
+  SignNdaExternalDocIdRoute: typeof SignNdaExternalDocIdRoute
+  SignNdaFormDocIdRoute: typeof SignNdaFormDocIdRoute
   SignPromotionExternalDocIdRoute: typeof SignPromotionExternalDocIdRoute
   SignPromotionFormDocIdRoute: typeof SignPromotionFormDocIdRoute
   SignTerminationExternalDocIdRoute: typeof SignTerminationExternalDocIdRoute
@@ -1193,6 +1219,20 @@ declare module '@tanstack/react-router' {
       path: '/sign-promotion-external/$docId'
       fullPath: '/sign-promotion-external/$docId'
       preLoaderRoute: typeof SignPromotionExternalDocIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/sign-nda-form/$docId': {
+      id: '/sign-nda-form/$docId'
+      path: '/sign-nda-form/$docId'
+      fullPath: '/sign-nda-form/$docId'
+      preLoaderRoute: typeof SignNdaFormDocIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/sign-nda-external/$docId': {
+      id: '/sign-nda-external/$docId'
+      path: '/sign-nda-external/$docId'
+      fullPath: '/sign-nda-external/$docId'
+      preLoaderRoute: typeof SignNdaExternalDocIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/sign-external/$docId': {
@@ -1661,6 +1701,8 @@ const rootRouteChildren: RootRouteChildren = {
   SignActionPlanFormDocIdRoute: SignActionPlanFormDocIdRoute,
   SignDocumentDocIdRoute: SignDocumentDocIdRoute,
   SignExternalDocIdRoute: SignExternalDocIdRoute,
+  SignNdaExternalDocIdRoute: SignNdaExternalDocIdRoute,
+  SignNdaFormDocIdRoute: SignNdaFormDocIdRoute,
   SignPromotionExternalDocIdRoute: SignPromotionExternalDocIdRoute,
   SignPromotionFormDocIdRoute: SignPromotionFormDocIdRoute,
   SignTerminationExternalDocIdRoute: SignTerminationExternalDocIdRoute,

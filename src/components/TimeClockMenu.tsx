@@ -33,7 +33,7 @@ import { useEffect, useRef, useState } from "react";
 import { X, Clock3 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { getMyProfileSchedule, getEntryForDate, saveEntry, clearPunch as sbClearPunch, canEditPunch, resolveScheduledShiftHours, type UITimeEntry, type PunchField } from "@/lib/supabase/timecards";
-import { getTraineeEntryForDate, saveTraineePunch, clearTraineePunch, SELF_CHECKED_OUT_EVENT, type TraineeTimecardStatus } from "@/lib/supabase/traineeTimecards";
+import { getTraineeEntryForDate, saveTraineePunch, clearTraineePunch, getPendingTraineeReviewCount, SELF_CHECKED_OUT_EVENT, type TraineeTimecardStatus } from "@/lib/supabase/traineeTimecards";
 import { getCompanyUsers } from "@/lib/supabase/users";
 import { resolveTeamLeadOrManager } from "@/lib/notifyRouting";
 import { getCompanyPtoRequests } from "@/lib/supabase/pto";
@@ -224,6 +224,25 @@ export function TimeClockButtons() {
   // hole this exists to close — the employee sees an error and can retry.
   const persistPunch = async (field: keyof Pick<UITimeEntry, "checkIn" | "checkOut" | "mealStart" | "mealEnd">) => {
     if (!profileId) return;
+    // Reviewing a trainee now takes priority over this viewer's own sign-
+    // out completing — if they still have a trainee day pending, Time Out
+    // itself is held (not saved) until every one of those is Approved or
+    // Rejected. Dispatching the event here pops TraineeAttendanceReviewModal
+    // right away to make that actionable.
+    if (field === "checkOut") {
+      try {
+        const pendingCount = await getPendingTraineeReviewCount(profileId);
+        if (pendingCount > 0) {
+          window.dispatchEvent(new CustomEvent(SELF_CHECKED_OUT_EVENT));
+          alert(`You have ${pendingCount} trainee day${pendingCount === 1 ? "" : "s"} awaiting your review — resolve ${pendingCount === 1 ? "it" : "them"} before you can time out.`);
+          return;
+        }
+      } catch (err) {
+        // Fail OPEN — a network hiccup checking for pending trainees must
+        // never itself block a legitimate checkout.
+        console.error("Failed to check pending trainee review before checkout:", err);
+      }
+    }
     setSaving(true);
     try {
       const serverNow = await getServerNow();
