@@ -51,7 +51,7 @@ import {
   type OnboardingDocumentColumn,
   type OnboardingGroupKey,
 } from "@/lib/supabase/onboardingDocumentColumns";
-import { uploadCoeCertificate, uploadWarningForm, uploadPromotionForm, uploadActionPlanForm, uploadTerminationForm, uploadW8benForm, uploadW4Form, uploadW4RForm, uploadI9Form, uploadWageAckForm, uploadCarIqAgreementForm, uploadVehicleAgreementForm, uploadEmployeeConfidentialityForm, uploadMealRestBreakForm, uploadPtoAckForm, uploadPartsResponsibilityForm, uploadMileageFuelForm, uploadLocationConsentForm, uploadDamageForm, uploadContractorDataForm, uploadDirectDepositForm, uploadSubstanceScreeningForm, uploadFlashTechnicianTravelForm, uploadSignableDocumentSignature, refreshStorageAuthToken } from "@/lib/firebase/storage";
+import { uploadCoeCertificate, uploadWarningForm, uploadPromotionForm, uploadActionPlanForm, uploadTerminationForm, uploadW8benForm, uploadW4Form, uploadW4RForm, uploadI9Form, uploadWageAckForm, uploadCarIqAgreementForm, uploadVehicleAgreementForm, uploadEmployeeConfidentialityForm, uploadMealRestBreakForm, uploadPtoAckForm, uploadPartsResponsibilityForm, uploadMileageFuelForm, uploadLocationConsentForm, uploadDamageForm, uploadContractorDataForm, uploadDirectDepositForm, uploadSubstanceScreeningForm, uploadFlashTechnicianTravelForm, uploadContractorAddendumForm, uploadSignableDocumentSignature, refreshStorageAuthToken } from "@/lib/firebase/storage";
 import { captureHtmlToPdfBlob, loadAssetDataUrl as loadImageDataUrl } from "@/lib/pdfCapture";
 import {
   createSignableDocument,
@@ -66,6 +66,7 @@ import {
   ROUTE_REQUIRED_DOCUMENT_TYPES,
   type SignableDocument,
   type SignableDocumentType,
+  type SignatureSlot as DocSignatureSlot,
 } from "@/lib/supabase/signableDocuments";
 import { buildWarningFormBodyMarkup, buildWarnNoteText, warningFormStyles, type WarningFormData, type SignatureSlot } from "@/lib/warningFormTemplate";
 import { buildWarningFormDocxBlob } from "@/lib/warningFormDocx";
@@ -75,6 +76,8 @@ import { buildActionPlanFormBodyMarkup, actionPlanFormStyles, type ActionPlanFor
 import { buildActionPlanFormDocxBlob } from "@/lib/actionPlanFormDocx";
 import { buildTerminationFormBodyMarkup, terminationFormStyles, type TerminationFormData, type TerminationSignatureSlot } from "@/lib/terminationFormTemplate";
 import { buildTerminationFormDocxBlob } from "@/lib/terminationFormDocx";
+import { buildContractorAddendumPdf } from "@/lib/contractorAddendumPdf";
+import { CONTRACTOR_ADDENDUM_SLOT_ORDER, CONTRACTOR_ADDENDUM_SLOT_LABEL, CONTRACTOR_ADDENDUM_DEFAULT_SIGNER_NAMES, blankContractorAddendumData, type ContractorAddendumFormData } from "@/lib/contractorAddendumFormTemplate";
 import type { W8benFormData, W8benAddress } from "@/lib/w8benFormTemplate";
 import { fillW8benPdf } from "@/lib/w8benPdfFill";
 import type { W4FormData } from "@/lib/w4FormTemplate";
@@ -698,7 +701,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // Reviews, the Approved log, the department trend chart, and the full
   // Employee Directory all on top of each other, forcing a long scroll to
   // reach anything below Hiring.
-  const [activeTab, setActiveTab] = useState<"hiring" | "warnings" | "masterList" | "leaders" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "promotionForm" | "actionPlanForm" | "terminationForm" | "employeeRequestManager" | "w8ben" | "i9" | "wageAck" | "carIqAgreement" | "vehicleAgreement" | "employeeConfidentiality" | "mealRestBreak" | "ptoAck" | "partsResponsibility" | "mileageFuel" | "locationConsent" | "damage" | "contractorData" | "directDeposit" | "substanceScreening" | "flashTechnicianTravel" | "combineForms" | "employerQueue">("hiring");
+  const [activeTab, setActiveTab] = useState<"hiring" | "warnings" | "masterList" | "leaders" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "promotionForm" | "actionPlanForm" | "terminationForm" | "employeeRequestManager" | "w8ben" | "i9" | "wageAck" | "carIqAgreement" | "vehicleAgreement" | "employeeConfidentiality" | "mealRestBreak" | "ptoAck" | "partsResponsibility" | "mileageFuel" | "locationConsent" | "damage" | "contractorData" | "directDeposit" | "substanceScreening" | "flashTechnicianTravel" | "contractorAddendum" | "combineForms" | "employerQueue">("hiring");
   const [openCategory, setOpenCategory] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   // Which floating-sidebar section headers (Automated Forms/Generate
@@ -5693,6 +5696,260 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
 
+  // ── Master Independent Contractor Subcontractor Agreement Addendum —
+  // five-party chain (Contractor → Company HR Rep → Technical COO →
+  // Technical Director → CEO). The Contractor fills Position Level /
+  // Guaranteed Minimum Baseline Payout / their name and signs
+  // (FillContractorAddendumPage.tsx); HR then routes it to each remaining
+  // signer with "Send to next signer" (reassignSignableDocument), who signs
+  // via SignContractorAddendumPage.tsx. The PDF is generated from scratch
+  // (contractorAddendumPdf.ts) — no source asset. ──
+  const [sentContractorAddendumForms, setSentContractorAddendumForms] = useState<SignableDocument[]>([]);
+  const loadSentContractorAddendumForms = async () => {
+    try {
+      setSentContractorAddendumForms(await getSignableDocuments("contractor_addendum"));
+    } catch (err) {
+      console.error("Failed to load sent Contractor Addendum forms:", err);
+    }
+  };
+  useEffect(() => {
+    if (activeTab === "contractorAddendum") void loadSentContractorAddendumForms();
+  }, [activeTab]);
+
+  const [contractorAddendumRecipientId, setContractorAddendumRecipientId] = useState("");
+  const [contractorAddendumRecipientSearch, setContractorAddendumRecipientSearch] = useState("");
+  const [contractorAddendumRecipientDropdownOpen, setContractorAddendumRecipientDropdownOpen] = useState(false);
+  const [contractorAddendumSending, setContractorAddendumSending] = useState(false);
+  const [contractorAddendumSendError, setContractorAddendumSendError] = useState<string | null>(null);
+  const [contractorAddendumActionBusyId, setContractorAddendumActionBusyId] = useState<string | null>(null);
+  const [contractorAddendumActionError, setContractorAddendumActionError] = useState<string | null>(null);
+  const [contractorAddendumExternalName, setContractorAddendumExternalName] = useState("");
+  const [contractorAddendumSentLink, setContractorAddendumSentLink] = useState<{ link: string; recipientName: string } | null>(null);
+  const [contractorAddendumSentLinkCopied, setContractorAddendumSentLinkCopied] = useState(false);
+  const [contractorAddendumPreviewExpanded, setContractorAddendumPreviewExpanded] = useState(false);
+  const [contractorAddendumPreviewPdfUrl, setContractorAddendumPreviewPdfUrl] = useState<string | null>(null);
+  const [contractorAddendumPreviewLoading, setContractorAddendumPreviewLoading] = useState(false);
+  // "Send to next signer" dialog
+  const [contractorAddendumRouteDialog, setContractorAddendumRouteDialog] = useState<SignableDocument | null>(null);
+  const [contractorAddendumRouteSlot, setContractorAddendumRouteSlot] = useState<DocSignatureSlot>("hr_staff");
+  const [contractorAddendumRouteMode, setContractorAddendumRouteMode] = useState<"teammate" | "external">("teammate");
+  const [contractorAddendumRouteRecipientId, setContractorAddendumRouteRecipientId] = useState("");
+  const [contractorAddendumRouteRecipientSearch, setContractorAddendumRouteRecipientSearch] = useState("");
+  const [contractorAddendumRouteRecipientDropdownOpen, setContractorAddendumRouteRecipientDropdownOpen] = useState(false);
+  const [contractorAddendumRouteExternalName, setContractorAddendumRouteExternalName] = useState("");
+  const [contractorAddendumRouteSentLink, setContractorAddendumRouteSentLink] = useState<string | null>(null);
+
+  const filteredContractorAddendumRecipients = useMemo(
+    () => employees.filter((e) => e.status === "active" && e.name.toLowerCase().includes(contractorAddendumRecipientSearch.toLowerCase())),
+    [employees, contractorAddendumRecipientSearch]
+  );
+  const filteredContractorAddendumRouteRecipients = useMemo(
+    () => employees.filter((e) => e.status === "active" && e.name.toLowerCase().includes(contractorAddendumRouteRecipientSearch.toLowerCase())),
+    [employees, contractorAddendumRouteRecipientSearch]
+  );
+
+  const contractorAddendumNextSlot = (doc: SignableDocument): DocSignatureSlot | null =>
+    CONTRACTOR_ADDENDUM_SLOT_ORDER.find((s) => !doc.signatures[s]) ?? null;
+
+  const toggleContractorAddendumPreview = async () => {
+    if (contractorAddendumPreviewExpanded) {
+      setContractorAddendumPreviewExpanded(false);
+      if (contractorAddendumPreviewPdfUrl) URL.revokeObjectURL(contractorAddendumPreviewPdfUrl);
+      setContractorAddendumPreviewPdfUrl(null);
+      return;
+    }
+    setContractorAddendumSendError(null);
+    setContractorAddendumPreviewExpanded(true);
+    setContractorAddendumPreviewLoading(true);
+    try {
+      const { bytes } = await buildContractorAddendumPdf(blankContractorAddendumData());
+      const url = URL.createObjectURL(new Blob([bytes as unknown as BlobPart], { type: "application/pdf" }));
+      setContractorAddendumPreviewPdfUrl(url);
+    } catch (err) {
+      setContractorAddendumSendError(err instanceof Error ? err.message : "Failed to build preview.");
+      setContractorAddendumPreviewExpanded(false);
+    } finally {
+      setContractorAddendumPreviewLoading(false);
+    }
+  };
+
+  const handleSendContractorAddendum = async () => {
+    if (!contractorAddendumRecipientId || !uid) return;
+    setContractorAddendumSending(true);
+    setContractorAddendumSendError(null);
+    try {
+      const recipient = employees.find((e) => e.id === contractorAddendumRecipientId);
+      if (!recipient) throw new Error("Select a recipient first.");
+      const doc = await createSignableDocument({
+        documentType: "contractor_addendum",
+        formData: { ...blankContractorAddendumData(), employeeId: recipient.id, signerNames: { ...CONTRACTOR_ADDENDUM_DEFAULT_SIGNER_NAMES, employee: recipient.name } } as unknown as Record<string, any>,
+        recipientId: contractorAddendumRecipientId,
+        recipientSlot: "employee",
+        pdfUrl: "",
+      });
+      const myProfileId = await getMyProfileId(uid);
+      if (!myProfileId) throw new Error("Could not resolve your profile.");
+      const thread = await getOrCreateDmThread(myProfileId, contractorAddendumRecipientId);
+      const fillOrigin = import.meta.env.DEV ? window.location.origin : getAppUrl();
+      await sendMessage({
+        dmThreadId: thread.id,
+        senderId: myProfileId,
+        senderName: displayName || "HR",
+        body: `📋 Please complete the Master Independent Contractor Subcontractor Agreement Addendum: ${fillOrigin}/fill-contractor-addendum/${doc.id}`,
+      });
+      void logActivity({ action: "contractor_addendum_sent", targetType: "employee", targetId: recipient.id, targetLabel: recipient.name });
+      setContractorAddendumRecipientId("");
+      setContractorAddendumRecipientSearch("");
+      await loadSentContractorAddendumForms();
+    } catch (err) {
+      setContractorAddendumSendError(err instanceof Error ? err.message : "Failed to send request.");
+    } finally {
+      setContractorAddendumSending(false);
+    }
+  };
+
+  const handleGenerateExternalContractorAddendum = async () => {
+    setContractorAddendumSending(true);
+    setContractorAddendumSendError(null);
+    try {
+      const name = contractorAddendumExternalName.trim() || "External Recipient";
+      const doc = await createSignableDocument({
+        documentType: "contractor_addendum",
+        formData: { ...blankContractorAddendumData(), signerNames: { ...CONTRACTOR_ADDENDUM_DEFAULT_SIGNER_NAMES, employee: name } } as unknown as Record<string, any>,
+        recipientName: name,
+        recipientSlot: "employee",
+        pdfUrl: "",
+      });
+      void logActivity({ action: "contractor_addendum_sent", targetType: "employee", targetLabel: name, details: { external: true } });
+      const externalOrigin = import.meta.env.DEV ? window.location.origin : getAppUrl();
+      setContractorAddendumSentLink({ link: `${externalOrigin}/fill-contractor-addendum-external/${doc.id}`, recipientName: name });
+      setContractorAddendumExternalName("");
+      await loadSentContractorAddendumForms();
+    } catch (err) {
+      setContractorAddendumSendError(err instanceof Error ? err.message : "Failed to generate link.");
+    } finally {
+      setContractorAddendumSending(false);
+    }
+  };
+
+  const handleCopyContractorAddendumSentLink = async () => {
+    if (!contractorAddendumSentLink) return;
+    try {
+      await navigator.clipboard.writeText(contractorAddendumSentLink.link);
+      setContractorAddendumSentLinkCopied(true);
+      setTimeout(() => setContractorAddendumSentLinkCopied(false), 1500);
+    } catch (err) {
+      console.error("Failed to copy link:", err);
+    }
+  };
+
+  const handleCopyContractorAddendumLink = async (doc: SignableDocument) => {
+    try {
+      const done = !!doc.signatures.employee;
+      const base = done ? "sign-contractor-addendum" : "fill-contractor-addendum";
+      const path = doc.recipientId ? base : `${base}-external`;
+      const origin = import.meta.env.DEV ? window.location.origin : getAppUrl();
+      await navigator.clipboard.writeText(`${origin}/${path}/${doc.id}`);
+    } catch (err) {
+      console.error("Failed to copy link:", err);
+    }
+  };
+
+  const handleDownloadContractorAddendumPdf = async (doc: SignableDocument) => {
+    if (!doc.pdfUrl) return;
+    const name = (doc.formData as ContractorAddendumFormData).signerNames?.employee || doc.recipientName || "contractor-addendum";
+    try {
+      const res = await fetch(doc.pdfUrl);
+      const blobUrl = URL.createObjectURL(await res.blob());
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = `Master Independent Contractor Subcontractor Agreement Addendum - ${name}.pdf`;
+      a.click();
+      URL.revokeObjectURL(blobUrl);
+    } catch {
+      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
+    }
+  };
+
+  const handleDeleteContractorAddendum = async (doc: SignableDocument) => {
+    if (!window.confirm("Permanently delete this Master Independent Contractor Subcontractor Agreement Addendum request?")) return;
+    setContractorAddendumActionBusyId(doc.id);
+    setContractorAddendumActionError(null);
+    try {
+      await deleteSignableDocument(doc.id);
+      await loadSentContractorAddendumForms();
+    } catch (err) {
+      setContractorAddendumActionError(err instanceof Error ? err.message : "Failed to delete.");
+    } finally {
+      setContractorAddendumActionBusyId(null);
+    }
+  };
+
+  const handleFinalizeContractorAddendum = async (doc: SignableDocument) => {
+    setContractorAddendumActionBusyId(doc.id);
+    setContractorAddendumActionError(null);
+    try {
+      await confirmSignableDocument(doc.id, null);
+      void logActivity({ action: "contractor_addendum_finalized", targetType: "employee", targetLabel: (doc.formData as ContractorAddendumFormData).signerNames?.employee || "" });
+      await loadSentContractorAddendumForms();
+    } catch (err) {
+      setContractorAddendumActionError(err instanceof Error ? err.message : "Failed to finalize.");
+    } finally {
+      setContractorAddendumActionBusyId(null);
+    }
+  };
+
+  const handleOpenContractorAddendumRouteDialog = (doc: SignableDocument) => {
+    setContractorAddendumRouteDialog(doc);
+    setContractorAddendumRouteSlot(contractorAddendumNextSlot(doc) ?? "hr_staff");
+    setContractorAddendumRouteMode("teammate");
+    setContractorAddendumRouteRecipientId("");
+    setContractorAddendumRouteRecipientSearch("");
+    setContractorAddendumRouteExternalName("");
+    setContractorAddendumRouteSentLink(null);
+    setContractorAddendumActionError(null);
+  };
+
+  const handleSendContractorAddendumToNextSigner = async () => {
+    if (!contractorAddendumRouteDialog || !uid) return;
+    const doc = contractorAddendumRouteDialog;
+    const contractorName = (doc.formData as ContractorAddendumFormData).signerNames?.employee || doc.recipientName || "the Contractor";
+    setContractorAddendumActionBusyId(doc.id);
+    setContractorAddendumActionError(null);
+    try {
+      if (contractorAddendumRouteMode === "external") {
+        const name = contractorAddendumRouteExternalName.trim();
+        if (!name) throw new Error("Type the recipient's name.");
+        await reassignSignableDocument(doc.id, { recipientName: name }, contractorAddendumRouteSlot);
+        void logActivity({ action: "contractor_addendum_sent", targetType: "employee", targetLabel: contractorName, details: { slot: contractorAddendumRouteSlot, to: name, external: true } });
+        const origin = import.meta.env.DEV ? window.location.origin : getAppUrl();
+        setContractorAddendumRouteSentLink(`${origin}/sign-contractor-addendum-external/${doc.id}`);
+        await loadSentContractorAddendumForms();
+        return;
+      }
+      const recipient = employees.find((e) => e.id === contractorAddendumRouteRecipientId);
+      if (!recipient) throw new Error("Select a recipient first.");
+      await reassignSignableDocument(doc.id, { recipientId: recipient.id, recipientName: recipient.name }, contractorAddendumRouteSlot);
+      const myProfileId = await getMyProfileId(uid);
+      if (!myProfileId) throw new Error("Could not resolve your profile.");
+      const thread = await getOrCreateDmThread(myProfileId, recipient.id);
+      const origin = import.meta.env.DEV ? window.location.origin : getAppUrl();
+      await sendMessage({
+        dmThreadId: thread.id,
+        senderId: myProfileId,
+        senderName: displayName || "HR",
+        body: `📋 Please sign the Master Independent Contractor Subcontractor Agreement Addendum for ${contractorName} as ${CONTRACTOR_ADDENDUM_SLOT_LABEL[contractorAddendumRouteSlot]}: ${origin}/sign-contractor-addendum/${doc.id}`,
+      });
+      void logActivity({ action: "contractor_addendum_sent", targetType: "employee", targetLabel: contractorName, details: { slot: contractorAddendumRouteSlot, to: recipient.name } });
+      setContractorAddendumRouteDialog(null);
+      await loadSentContractorAddendumForms();
+    } catch (err) {
+      setContractorAddendumActionError(err instanceof Error ? err.message : "Failed to send to next signer.");
+    } finally {
+      setContractorAddendumActionBusyId(null);
+    }
+  };
+
   // ── Employee Mobile App Location Sharing Consent Agreement — genuine
   // two-party flow like Acknowledgment of Wage/Mileage & Fuel: the source
   // PDF has no AcroForm fields at all (see
@@ -10513,6 +10770,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     { key: "promotionForm", label: "Employee Promotion / Role Change", count: 0, icon: FileText },
     { key: "warningForm", label: "Employee Warning Form", count: 0, icon: FileText },
     { key: "i9", label: "Form I-9 (Employment Eligibility)", count: sentI9AwaitingSection2Count, icon: FileCheck },
+    { key: "contractorAddendum", label: "Master Independent Contractor Subcontractor Agreement Addendum", count: 0, icon: FileText },
     { key: "actionPlanForm", label: "Manager's Action Plan Form", count: 0, icon: FileText },
     { key: "terminationForm", label: "Termination Notice Form", count: 0, icon: FileText },
     { key: "w8ben", label: "W-8 / W-9 / W-4 / W-4R Forms", count: 0, icon: Landmark },
@@ -17783,6 +18041,310 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           </table>
         </div>
       </div>
+      </>
+      )}
+
+      {activeTab === "contractorAddendum" && (
+      <>
+      <div className="panel p-0 overflow-visible mt-4 relative z-20">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">Send Master Independent Contractor Subcontractor Agreement Addendum</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">The Contractor gets a link to fill in the Position Level, Guaranteed Minimum Baseline Payout, and their name, then sign. After they submit, use "Send to next signer" on the row below to route it to the Company HR Representative and the three managerial witnesses (Technical COO, Technical Director, CEO).</p>
+        </div>
+        <div className="p-4 flex flex-col md:flex-row gap-6">
+          <div className="flex flex-col gap-3 w-full md:max-w-sm md:shrink-0">
+            <div className="flex flex-col gap-1.5 pb-3 border-b border-white/10">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">External Link (no login needed)</label>
+              {contractorAddendumSentLink ? (
+                <div className="flex flex-col gap-2">
+                  <div className="rounded-md border border-green-500/30 bg-green-500/10 px-3 py-2.5">
+                    <p className="text-xs font-semibold text-green-300">Link generated for {contractorAddendumSentLink.recipientName}</p>
+                  </div>
+                  <div className="flex gap-2">
+                    <input type="text" readOnly value={contractorAddendumSentLink.link} onFocus={(e) => e.target.select()} className="glass-input text-xs py-1.5 px-3 rounded-md flex-1" />
+                    <button onClick={handleCopyContractorAddendumSentLink} className="btn text-xs px-3 py-1.5 shrink-0">{contractorAddendumSentLinkCopied ? "Copied!" : "Copy"}</button>
+                  </div>
+                  <button onClick={() => setContractorAddendumSentLink(null)} className="btn text-xs px-3 py-1.5 w-fit">Done</button>
+                </div>
+              ) : (
+                <>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={contractorAddendumExternalName}
+                      onChange={(e) => setContractorAddendumExternalName(e.target.value)}
+                      placeholder="Type their name (optional)…"
+                      className="glass-input text-sm py-1.5 px-3 rounded-md flex-1"
+                    />
+                    <button onClick={handleGenerateExternalContractorAddendum} disabled={contractorAddendumSending} className="btn text-sm px-3 py-1.5 disabled:opacity-50 shrink-0">
+                      {contractorAddendumSending ? "Generating…" : "Generate Link"}
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground">No AHS account needed — they can open the link and fill it in without logging in.</p>
+                </>
+              )}
+            </div>
+
+            <div className="flex flex-col gap-1 relative">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Contractor (AHS teammate)</label>
+              <input
+                type="text"
+                value={contractorAddendumRecipientSearch}
+                onChange={(e) => { setContractorAddendumRecipientSearch(e.target.value); setContractorAddendumRecipientId(""); setContractorAddendumRecipientDropdownOpen(true); }}
+                onFocus={() => setContractorAddendumRecipientDropdownOpen(true)}
+                onBlur={() => setTimeout(() => setContractorAddendumRecipientDropdownOpen(false), 150)}
+                placeholder="Search a teammate…"
+                className="glass-input text-sm py-1.5 px-3 rounded-md"
+              />
+              {contractorAddendumRecipientDropdownOpen && (
+                <div className="absolute z-50 top-full mt-1 w-full max-h-96 overflow-y-auto rounded-md border border-white/15 bg-slate-900 shadow-2xl">
+                  {filteredContractorAddendumRecipients.length === 0 ? (
+                    <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+                  ) : (
+                    filteredContractorAddendumRecipients.map((e) => (
+                      <button
+                        key={e.id}
+                        type="button"
+                        onMouseDown={(ev) => ev.preventDefault()}
+                        onClick={() => {
+                          setContractorAddendumRecipientId(e.id);
+                          setContractorAddendumRecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`);
+                          setContractorAddendumRecipientDropdownOpen(false);
+                        }}
+                        className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${contractorAddendumRecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                      >
+                        {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+
+            {contractorAddendumSendError && (
+              <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{contractorAddendumSendError}</p>
+            )}
+            <div className="flex items-center gap-2">
+              <button onClick={toggleContractorAddendumPreview} className="btn text-sm px-4 py-2 flex items-center gap-1.5">
+                Preview <ChevronDown className={`h-3.5 w-3.5 transition-transform ${contractorAddendumPreviewExpanded ? "rotate-180" : ""}`} />
+              </button>
+              <button
+                onClick={handleSendContractorAddendum}
+                disabled={!contractorAddendumRecipientId || contractorAddendumSending}
+                className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+              >
+                {contractorAddendumSending ? "Sending…" : "Send Request"}
+              </button>
+            </div>
+          </div>
+
+          <div className="flex-1 min-w-0">
+            {contractorAddendumPreviewExpanded ? (
+              <div className="border border-white/10 rounded-md overflow-hidden bg-white/5 h-full" style={{ minHeight: 560 }}>
+                {contractorAddendumPreviewLoading || !contractorAddendumPreviewPdfUrl ? (
+                  <div className="h-full flex items-center justify-center text-sm text-muted-foreground" style={{ minHeight: 560 }}>Loading preview…</div>
+                ) : (
+                  <iframe src={contractorAddendumPreviewPdfUrl} title="Contractor Addendum Preview" className="w-full border-0" style={{ height: 560 }} />
+                )}
+              </div>
+            ) : (
+              <div className="border border-dashed border-white/15 rounded-md flex items-center justify-center text-sm text-muted-foreground" style={{ minHeight: 560 }}>
+                Click "Preview" to see the document here.
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="panel p-0 overflow-hidden mt-4">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">Sent Addendum Forms</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">The status shows which signer the document is waiting on. Use "Send to next signer" to route it along the chain: Contractor → Company HR Representative → Technical COO → Technical Director → CEO.</p>
+        </div>
+        {contractorAddendumActionError && (
+          <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{contractorAddendumActionError}</p>
+        )}
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-white/10 bg-white/5">
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Contractor</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent By</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Status</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sentContractorAddendumForms.length === 0 ? (
+                <tr><td colSpan={5} className="px-4 py-8 text-center text-muted-foreground text-sm">No requests sent yet.</td></tr>
+              ) : (
+                sentContractorAddendumForms.map((doc) => {
+                  const fd = doc.formData as ContractorAddendumFormData;
+                  const recipient = employees.find((e) => e.id === doc.recipientId);
+                  const busy = contractorAddendumActionBusyId === doc.id;
+                  const contractorSigned = !!doc.signatures.employee;
+                  const next = contractorAddendumNextSlot(doc);
+                  const allSigned = !next;
+                  const statusLabel =
+                    doc.status === "confirmed" ? "Completed"
+                    : doc.status === "cancelled" ? "Cancelled"
+                    : !contractorSigned ? "Awaiting Contractor"
+                    : allSigned ? "Ready to Finalize"
+                    : `Awaiting ${CONTRACTOR_ADDENDUM_SLOT_LABEL[next]}`;
+                  const statusCls =
+                    doc.status === "confirmed" ? "bg-green-500/20 text-green-300"
+                    : doc.status === "cancelled" ? "bg-slate-500/20 text-slate-400"
+                    : !contractorSigned ? "bg-yellow-500/20 text-yellow-300"
+                    : allSigned ? "bg-green-500/20 text-green-300"
+                    : "bg-orange-500/20 text-orange-300";
+                  return (
+                    <tr key={doc.id} className="border-b border-white/5 hover:bg-white/5">
+                      <td className="px-4 py-3 font-medium">
+                        {doc.pdfUrl ? (
+                          <a href={doc.pdfUrl} target="_blank" rel="noreferrer noopener" className="text-blue-300 hover:text-blue-200 hover:underline">
+                            {fd?.signerNames?.employee || recipient?.name || doc.recipientName || "—"}
+                          </a>
+                        ) : (
+                          fd?.signerNames?.employee || recipient?.name || doc.recipientName || "—"
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-muted-foreground">{doc.createdByName ?? "—"}</td>
+                      <td className="px-4 py-3">
+                        <span className={`px-2 py-1 rounded text-xs font-semibold ${statusCls}`}>{statusLabel}</span>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{new Date(doc.createdAt).toLocaleDateString()}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {doc.status !== "confirmed" && doc.status !== "cancelled" && !contractorSigned && (
+                            <button type="button" onClick={() => handleCopyContractorAddendumLink(doc)} className="btn text-[10px] px-2 py-1">Copy Link</button>
+                          )}
+                          {doc.status !== "confirmed" && doc.status !== "cancelled" && contractorSigned && !allSigned && (
+                            <button type="button" onClick={() => handleOpenContractorAddendumRouteDialog(doc)} className="btn text-[10px] px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white">
+                              Send to next signer →
+                            </button>
+                          )}
+                          {doc.status !== "confirmed" && allSigned && (
+                            <button type="button" disabled={busy} onClick={() => handleFinalizeContractorAddendum(doc)} className="btn text-[10px] px-2 py-1 bg-green-600 hover:bg-green-700 text-white disabled:opacity-50">
+                              Finalize
+                            </button>
+                          )}
+                          {doc.pdfUrl && (
+                            <button type="button" onClick={() => handleDownloadContractorAddendumPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">Download PDF</button>
+                          )}
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => handleDeleteContractorAddendum(doc)}
+                            title="Permanently delete this request"
+                            className="text-muted-foreground hover:text-red-300 disabled:opacity-50"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {contractorAddendumRouteDialog && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4" onClick={() => setContractorAddendumRouteDialog(null)}>
+          <div className="panel p-5 w-full max-w-md" onClick={(e) => e.stopPropagation()}>
+            {contractorAddendumRouteSentLink ? (
+              <>
+                <h3 className="text-lg font-bold mb-2">Link generated</h3>
+                <p className="text-sm text-muted-foreground mb-3">Send this link to the {CONTRACTOR_ADDENDUM_SLOT_LABEL[contractorAddendumRouteSlot]}.</p>
+                <input type="text" readOnly value={contractorAddendumRouteSentLink} onFocus={(e) => e.target.select()} className="glass-input text-xs py-1.5 px-3 rounded-md w-full mb-3" />
+                <div className="flex justify-end gap-2">
+                  <button onClick={() => navigator.clipboard.writeText(contractorAddendumRouteSentLink).catch(() => {})} className="btn text-sm px-4 py-2">Copy</button>
+                  <button onClick={() => setContractorAddendumRouteDialog(null)} className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white">Done</button>
+                </div>
+              </>
+            ) : (
+              <>
+                <h3 className="text-lg font-bold mb-3">Send to next signer</h3>
+
+                <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Signing as</label>
+                <select value={contractorAddendumRouteSlot} onChange={(e) => setContractorAddendumRouteSlot(e.target.value as DocSignatureSlot)} className="glass-input text-sm py-1.5 px-3 rounded-md w-full mt-1 mb-3">
+                  <option value="hr_staff">{CONTRACTOR_ADDENDUM_SLOT_LABEL.hr_staff}</option>
+                  <option value="manager">{CONTRACTOR_ADDENDUM_SLOT_LABEL.manager}</option>
+                  <option value="senior_manager">{CONTRACTOR_ADDENDUM_SLOT_LABEL.senior_manager}</option>
+                  <option value="executive">{CONTRACTOR_ADDENDUM_SLOT_LABEL.executive}</option>
+                </select>
+
+                <div className="flex rounded-md overflow-hidden border border-white/15 w-fit mb-3">
+                  <button type="button" onClick={() => setContractorAddendumRouteMode("teammate")} className={`px-3 py-1 text-xs font-medium ${contractorAddendumRouteMode === "teammate" ? "bg-blue-600 text-white" : "text-muted-foreground hover:bg-white/5"}`}>AHS Teammate</button>
+                  <button type="button" onClick={() => setContractorAddendumRouteMode("external")} className={`px-3 py-1 text-xs font-medium border-l border-white/15 ${contractorAddendumRouteMode === "external" ? "bg-blue-600 text-white" : "text-muted-foreground hover:bg-white/5"}`}>External Link</button>
+                </div>
+
+                {contractorAddendumRouteMode === "teammate" ? (
+                  <div className="relative mb-3">
+                    <input
+                      type="text"
+                      value={contractorAddendumRouteRecipientSearch}
+                      onChange={(e) => { setContractorAddendumRouteRecipientSearch(e.target.value); setContractorAddendumRouteRecipientId(""); setContractorAddendumRouteRecipientDropdownOpen(true); }}
+                      onFocus={() => setContractorAddendumRouteRecipientDropdownOpen(true)}
+                      onBlur={() => setTimeout(() => setContractorAddendumRouteRecipientDropdownOpen(false), 150)}
+                      placeholder="Search a teammate…"
+                      className="glass-input text-sm py-1.5 px-3 rounded-md w-full"
+                    />
+                    {contractorAddendumRouteRecipientDropdownOpen && (
+                      <div className="absolute z-10 mt-1 w-full max-h-48 overflow-y-auto rounded-md border border-white/15 bg-slate-800 shadow-lg">
+                        {filteredContractorAddendumRouteRecipients.length === 0 ? (
+                          <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+                        ) : (
+                          filteredContractorAddendumRouteRecipients.map((e) => (
+                            <button
+                              key={e.id}
+                              type="button"
+                              onMouseDown={(ev) => ev.preventDefault()}
+                              onClick={() => {
+                                setContractorAddendumRouteRecipientId(e.id);
+                                setContractorAddendumRouteRecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`);
+                                setContractorAddendumRouteRecipientDropdownOpen(false);
+                              }}
+                              className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${contractorAddendumRouteRecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                            >
+                              {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <input
+                    type="text"
+                    value={contractorAddendumRouteExternalName}
+                    onChange={(e) => setContractorAddendumRouteExternalName(e.target.value)}
+                    placeholder="Type their name…"
+                    className="glass-input text-sm py-1.5 px-3 rounded-md w-full mb-3"
+                  />
+                )}
+
+                {contractorAddendumActionError && (
+                  <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2 mb-3">{contractorAddendumActionError}</p>
+                )}
+                <div className="flex gap-2 justify-end">
+                  <button onClick={() => setContractorAddendumRouteDialog(null)} className="btn text-sm px-4 py-2">Cancel</button>
+                  <button
+                    onClick={handleSendContractorAddendumToNextSigner}
+                    disabled={(contractorAddendumRouteMode === "teammate" ? !contractorAddendumRouteRecipientId : !contractorAddendumRouteExternalName.trim()) || contractorAddendumActionBusyId === contractorAddendumRouteDialog.id}
+                    className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+                  >
+                    {contractorAddendumActionBusyId === contractorAddendumRouteDialog.id ? "Sending…" : contractorAddendumRouteMode === "teammate" ? "Send" : "Generate Link"}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
       </>
       )}
 

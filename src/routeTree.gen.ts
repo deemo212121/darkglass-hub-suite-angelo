@@ -35,6 +35,8 @@ import { Route as SignPromotionFormDocIdRouteImport } from './routes/sign-promot
 import { Route as SignPromotionExternalDocIdRouteImport } from './routes/sign-promotion-external.$docId'
 import { Route as SignExternalDocIdRouteImport } from './routes/sign-external.$docId'
 import { Route as SignDocumentDocIdRouteImport } from './routes/sign-document.$docId'
+import { Route as SignContractorAddendumDocIdRouteImport } from './routes/sign-contractor-addendum.$docId'
+import { Route as SignContractorAddendumExternalDocIdRouteImport } from './routes/sign-contractor-addendum-external.$docId'
 import { Route as SignActionPlanFormDocIdRouteImport } from './routes/sign-action-plan-form.$docId'
 import { Route as SignActionPlanExternalDocIdRouteImport } from './routes/sign-action-plan-external.$docId'
 import { Route as MModuleRouteImport } from './routes/m.$module'
@@ -75,6 +77,8 @@ import { Route as FillDamageDocIdRouteImport } from './routes/fill-damage.$docId
 import { Route as FillDamageExternalDocIdRouteImport } from './routes/fill-damage-external.$docId'
 import { Route as FillContractorDataDocIdRouteImport } from './routes/fill-contractor-data.$docId'
 import { Route as FillContractorDataExternalDocIdRouteImport } from './routes/fill-contractor-data-external.$docId'
+import { Route as FillContractorAddendumDocIdRouteImport } from './routes/fill-contractor-addendum.$docId'
+import { Route as FillContractorAddendumExternalDocIdRouteImport } from './routes/fill-contractor-addendum-external.$docId'
 import { Route as FillCarIqAgreementDocIdRouteImport } from './routes/fill-car-iq-agreement.$docId'
 import { Route as FillCarIqAgreementExternalDocIdRouteImport } from './routes/fill-car-iq-agreement-external.$docId'
 import { Route as EmployeeEmployeeIdRouteImport } from './routes/employee.$employeeId'
@@ -218,6 +222,18 @@ const SignDocumentDocIdRoute = SignDocumentDocIdRouteImport.update({
   path: '/sign-document/$docId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SignContractorAddendumDocIdRoute =
+  SignContractorAddendumDocIdRouteImport.update({
+    id: '/sign-contractor-addendum/$docId',
+    path: '/sign-contractor-addendum/$docId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const SignContractorAddendumExternalDocIdRoute =
+  SignContractorAddendumExternalDocIdRouteImport.update({
+    id: '/sign-contractor-addendum-external/$docId',
+    path: '/sign-contractor-addendum-external/$docId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const SignActionPlanFormDocIdRoute = SignActionPlanFormDocIdRouteImport.update({
   id: '/sign-action-plan-form/$docId',
   path: '/sign-action-plan-form/$docId',
@@ -436,6 +452,18 @@ const FillContractorDataExternalDocIdRoute =
     path: '/fill-contractor-data-external/$docId',
     getParentRoute: () => rootRouteImport,
   } as any)
+const FillContractorAddendumDocIdRoute =
+  FillContractorAddendumDocIdRouteImport.update({
+    id: '/fill-contractor-addendum/$docId',
+    path: '/fill-contractor-addendum/$docId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const FillContractorAddendumExternalDocIdRoute =
+  FillContractorAddendumExternalDocIdRouteImport.update({
+    id: '/fill-contractor-addendum-external/$docId',
+    path: '/fill-contractor-addendum-external/$docId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const FillCarIqAgreementDocIdRoute = FillCarIqAgreementDocIdRouteImport.update({
   id: '/fill-car-iq-agreement/$docId',
   path: '/fill-car-iq-agreement/$docId',
@@ -509,6 +537,8 @@ export interface FileRoutesByFullPath {
   '/employee/$employeeId': typeof EmployeeEmployeeIdRoute
   '/fill-car-iq-agreement-external/$docId': typeof FillCarIqAgreementExternalDocIdRoute
   '/fill-car-iq-agreement/$docId': typeof FillCarIqAgreementDocIdRoute
+  '/fill-contractor-addendum-external/$docId': typeof FillContractorAddendumExternalDocIdRoute
+  '/fill-contractor-addendum/$docId': typeof FillContractorAddendumDocIdRoute
   '/fill-contractor-data-external/$docId': typeof FillContractorDataExternalDocIdRoute
   '/fill-contractor-data/$docId': typeof FillContractorDataDocIdRoute
   '/fill-damage-external/$docId': typeof FillDamageExternalDocIdRoute
@@ -549,6 +579,8 @@ export interface FileRoutesByFullPath {
   '/m/$module': typeof MModuleRouteWithChildren
   '/sign-action-plan-external/$docId': typeof SignActionPlanExternalDocIdRoute
   '/sign-action-plan-form/$docId': typeof SignActionPlanFormDocIdRoute
+  '/sign-contractor-addendum-external/$docId': typeof SignContractorAddendumExternalDocIdRoute
+  '/sign-contractor-addendum/$docId': typeof SignContractorAddendumDocIdRoute
   '/sign-document/$docId': typeof SignDocumentDocIdRoute
   '/sign-external/$docId': typeof SignExternalDocIdRoute
   '/sign-promotion-external/$docId': typeof SignPromotionExternalDocIdRoute
@@ -586,6 +618,8 @@ export interface FileRoutesByTo {
   '/employee/$employeeId': typeof EmployeeEmployeeIdRoute
   '/fill-car-iq-agreement-external/$docId': typeof FillCarIqAgreementExternalDocIdRoute
   '/fill-car-iq-agreement/$docId': typeof FillCarIqAgreementDocIdRoute
+  '/fill-contractor-addendum-external/$docId': typeof FillContractorAddendumExternalDocIdRoute
+  '/fill-contractor-addendum/$docId': typeof FillContractorAddendumDocIdRoute
   '/fill-contractor-data-external/$docId': typeof FillContractorDataExternalDocIdRoute
   '/fill-contractor-data/$docId': typeof FillContractorDataDocIdRoute
   '/fill-damage-external/$docId': typeof FillDamageExternalDocIdRoute
@@ -626,6 +660,8 @@ export interface FileRoutesByTo {
   '/m/$module': typeof MModuleRouteWithChildren
   '/sign-action-plan-external/$docId': typeof SignActionPlanExternalDocIdRoute
   '/sign-action-plan-form/$docId': typeof SignActionPlanFormDocIdRoute
+  '/sign-contractor-addendum-external/$docId': typeof SignContractorAddendumExternalDocIdRoute
+  '/sign-contractor-addendum/$docId': typeof SignContractorAddendumDocIdRoute
   '/sign-document/$docId': typeof SignDocumentDocIdRoute
   '/sign-external/$docId': typeof SignExternalDocIdRoute
   '/sign-promotion-external/$docId': typeof SignPromotionExternalDocIdRoute
@@ -664,6 +700,8 @@ export interface FileRoutesById {
   '/employee/$employeeId': typeof EmployeeEmployeeIdRoute
   '/fill-car-iq-agreement-external/$docId': typeof FillCarIqAgreementExternalDocIdRoute
   '/fill-car-iq-agreement/$docId': typeof FillCarIqAgreementDocIdRoute
+  '/fill-contractor-addendum-external/$docId': typeof FillContractorAddendumExternalDocIdRoute
+  '/fill-contractor-addendum/$docId': typeof FillContractorAddendumDocIdRoute
   '/fill-contractor-data-external/$docId': typeof FillContractorDataExternalDocIdRoute
   '/fill-contractor-data/$docId': typeof FillContractorDataDocIdRoute
   '/fill-damage-external/$docId': typeof FillDamageExternalDocIdRoute
@@ -704,6 +742,8 @@ export interface FileRoutesById {
   '/m/$module': typeof MModuleRouteWithChildren
   '/sign-action-plan-external/$docId': typeof SignActionPlanExternalDocIdRoute
   '/sign-action-plan-form/$docId': typeof SignActionPlanFormDocIdRoute
+  '/sign-contractor-addendum-external/$docId': typeof SignContractorAddendumExternalDocIdRoute
+  '/sign-contractor-addendum/$docId': typeof SignContractorAddendumDocIdRoute
   '/sign-document/$docId': typeof SignDocumentDocIdRoute
   '/sign-external/$docId': typeof SignExternalDocIdRoute
   '/sign-promotion-external/$docId': typeof SignPromotionExternalDocIdRoute
@@ -743,6 +783,8 @@ export interface FileRouteTypes {
     | '/employee/$employeeId'
     | '/fill-car-iq-agreement-external/$docId'
     | '/fill-car-iq-agreement/$docId'
+    | '/fill-contractor-addendum-external/$docId'
+    | '/fill-contractor-addendum/$docId'
     | '/fill-contractor-data-external/$docId'
     | '/fill-contractor-data/$docId'
     | '/fill-damage-external/$docId'
@@ -783,6 +825,8 @@ export interface FileRouteTypes {
     | '/m/$module'
     | '/sign-action-plan-external/$docId'
     | '/sign-action-plan-form/$docId'
+    | '/sign-contractor-addendum-external/$docId'
+    | '/sign-contractor-addendum/$docId'
     | '/sign-document/$docId'
     | '/sign-external/$docId'
     | '/sign-promotion-external/$docId'
@@ -820,6 +864,8 @@ export interface FileRouteTypes {
     | '/employee/$employeeId'
     | '/fill-car-iq-agreement-external/$docId'
     | '/fill-car-iq-agreement/$docId'
+    | '/fill-contractor-addendum-external/$docId'
+    | '/fill-contractor-addendum/$docId'
     | '/fill-contractor-data-external/$docId'
     | '/fill-contractor-data/$docId'
     | '/fill-damage-external/$docId'
@@ -860,6 +906,8 @@ export interface FileRouteTypes {
     | '/m/$module'
     | '/sign-action-plan-external/$docId'
     | '/sign-action-plan-form/$docId'
+    | '/sign-contractor-addendum-external/$docId'
+    | '/sign-contractor-addendum/$docId'
     | '/sign-document/$docId'
     | '/sign-external/$docId'
     | '/sign-promotion-external/$docId'
@@ -897,6 +945,8 @@ export interface FileRouteTypes {
     | '/employee/$employeeId'
     | '/fill-car-iq-agreement-external/$docId'
     | '/fill-car-iq-agreement/$docId'
+    | '/fill-contractor-addendum-external/$docId'
+    | '/fill-contractor-addendum/$docId'
     | '/fill-contractor-data-external/$docId'
     | '/fill-contractor-data/$docId'
     | '/fill-damage-external/$docId'
@@ -937,6 +987,8 @@ export interface FileRouteTypes {
     | '/m/$module'
     | '/sign-action-plan-external/$docId'
     | '/sign-action-plan-form/$docId'
+    | '/sign-contractor-addendum-external/$docId'
+    | '/sign-contractor-addendum/$docId'
     | '/sign-document/$docId'
     | '/sign-external/$docId'
     | '/sign-promotion-external/$docId'
@@ -975,6 +1027,8 @@ export interface RootRouteChildren {
   EmployeeEmployeeIdRoute: typeof EmployeeEmployeeIdRoute
   FillCarIqAgreementExternalDocIdRoute: typeof FillCarIqAgreementExternalDocIdRoute
   FillCarIqAgreementDocIdRoute: typeof FillCarIqAgreementDocIdRoute
+  FillContractorAddendumExternalDocIdRoute: typeof FillContractorAddendumExternalDocIdRoute
+  FillContractorAddendumDocIdRoute: typeof FillContractorAddendumDocIdRoute
   FillContractorDataExternalDocIdRoute: typeof FillContractorDataExternalDocIdRoute
   FillContractorDataDocIdRoute: typeof FillContractorDataDocIdRoute
   FillDamageExternalDocIdRoute: typeof FillDamageExternalDocIdRoute
@@ -1015,6 +1069,8 @@ export interface RootRouteChildren {
   MModuleRoute: typeof MModuleRouteWithChildren
   SignActionPlanExternalDocIdRoute: typeof SignActionPlanExternalDocIdRoute
   SignActionPlanFormDocIdRoute: typeof SignActionPlanFormDocIdRoute
+  SignContractorAddendumExternalDocIdRoute: typeof SignContractorAddendumExternalDocIdRoute
+  SignContractorAddendumDocIdRoute: typeof SignContractorAddendumDocIdRoute
   SignDocumentDocIdRoute: typeof SignDocumentDocIdRoute
   SignExternalDocIdRoute: typeof SignExternalDocIdRoute
   SignPromotionExternalDocIdRoute: typeof SignPromotionExternalDocIdRoute
@@ -1207,6 +1263,20 @@ declare module '@tanstack/react-router' {
       path: '/sign-document/$docId'
       fullPath: '/sign-document/$docId'
       preLoaderRoute: typeof SignDocumentDocIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/sign-contractor-addendum/$docId': {
+      id: '/sign-contractor-addendum/$docId'
+      path: '/sign-contractor-addendum/$docId'
+      fullPath: '/sign-contractor-addendum/$docId'
+      preLoaderRoute: typeof SignContractorAddendumDocIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/sign-contractor-addendum-external/$docId': {
+      id: '/sign-contractor-addendum-external/$docId'
+      path: '/sign-contractor-addendum-external/$docId'
+      fullPath: '/sign-contractor-addendum-external/$docId'
+      preLoaderRoute: typeof SignContractorAddendumExternalDocIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/sign-action-plan-form/$docId': {
@@ -1489,6 +1559,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof FillContractorDataExternalDocIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/fill-contractor-addendum/$docId': {
+      id: '/fill-contractor-addendum/$docId'
+      path: '/fill-contractor-addendum/$docId'
+      fullPath: '/fill-contractor-addendum/$docId'
+      preLoaderRoute: typeof FillContractorAddendumDocIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/fill-contractor-addendum-external/$docId': {
+      id: '/fill-contractor-addendum-external/$docId'
+      path: '/fill-contractor-addendum-external/$docId'
+      fullPath: '/fill-contractor-addendum-external/$docId'
+      preLoaderRoute: typeof FillContractorAddendumExternalDocIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/fill-car-iq-agreement/$docId': {
       id: '/fill-car-iq-agreement/$docId'
       path: '/fill-car-iq-agreement/$docId'
@@ -1614,6 +1698,9 @@ const rootRouteChildren: RootRouteChildren = {
   EmployeeEmployeeIdRoute: EmployeeEmployeeIdRoute,
   FillCarIqAgreementExternalDocIdRoute: FillCarIqAgreementExternalDocIdRoute,
   FillCarIqAgreementDocIdRoute: FillCarIqAgreementDocIdRoute,
+  FillContractorAddendumExternalDocIdRoute:
+    FillContractorAddendumExternalDocIdRoute,
+  FillContractorAddendumDocIdRoute: FillContractorAddendumDocIdRoute,
   FillContractorDataExternalDocIdRoute: FillContractorDataExternalDocIdRoute,
   FillContractorDataDocIdRoute: FillContractorDataDocIdRoute,
   FillDamageExternalDocIdRoute: FillDamageExternalDocIdRoute,
@@ -1659,6 +1746,9 @@ const rootRouteChildren: RootRouteChildren = {
   MModuleRoute: MModuleRouteWithChildren,
   SignActionPlanExternalDocIdRoute: SignActionPlanExternalDocIdRoute,
   SignActionPlanFormDocIdRoute: SignActionPlanFormDocIdRoute,
+  SignContractorAddendumExternalDocIdRoute:
+    SignContractorAddendumExternalDocIdRoute,
+  SignContractorAddendumDocIdRoute: SignContractorAddendumDocIdRoute,
   SignDocumentDocIdRoute: SignDocumentDocIdRoute,
   SignExternalDocIdRoute: SignExternalDocIdRoute,
   SignPromotionExternalDocIdRoute: SignPromotionExternalDocIdRoute,

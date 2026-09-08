@@ -615,6 +615,17 @@ export async function uploadLocationConsentForm(companyId: string, employeeName:
   return getDownloadURL(snapshot.ref);
 }
 
+export async function uploadContractorAddendumForm(companyId: string, name: string, pdfBlob: Blob): Promise<string> {
+  if (!isFirebaseReady() || !storage) {
+    throw new Error("Firebase Storage not configured");
+  }
+  const folder = `companies/${companyId}/contractor-addendum-forms`;
+  const objectName = `${Date.now()}-${sanitizeFileName(name || "contractor-addendum")}.pdf`;
+  const objectRef = ref(storage, `${folder}/${objectName}`);
+  const snapshot = await uploadBytes(objectRef, pdfBlob, { contentType: "application/pdf" });
+  return getDownloadURL(snapshot.ref);
+}
+
 export async function uploadDamageForm(companyId: string, employeeName: string, pdfBlob: Blob): Promise<string> {
   if (!isFirebaseReady() || !storage) {
     throw new Error("Firebase Storage not configured");
