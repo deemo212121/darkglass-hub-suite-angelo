@@ -9,19 +9,21 @@
  * the same name both mount this directly.
  */
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { Download, Loader2, Check, Pencil, ExternalLink } from "lucide-react";
+import { Download, Loader2, Check, Pencil, ExternalLink, Columns3 } from "lucide-react";
 import {
   getCompanyTicketAttendance,
   slotSortKey,
   type TicketAttendanceRow,
 } from "@/lib/supabase/technicianWhereabouts";
-import { getCompanyTimecardEntries, type CompanyTimecardEntry } from "@/lib/supabase/timecards";
+import { getCompanyTimecardEntries, getProfileIdByFirebaseUid, type CompanyTimecardEntry } from "@/lib/supabase/timecards";
 import { getVisitDiagnosisByTicketIds } from "@/lib/supabase/tickets";
 import { getMileageEntries, setMileageEstimateTime, type MileageEntry } from "@/lib/supabase/mileage";
 import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
 import { getCompanyEmployeeRequests } from "@/lib/supabase/employeeRequests";
 import { getCompanyTicketReschedules, type TicketRescheduleRow } from "@/lib/supabase/ticketReschedules";
+import { getAttendanceNotes, upsertAttendanceNote, type AttendanceNoteRow } from "@/lib/supabase/attendanceNotes";
 import { ATTENDANCE_GRACE_MINUTES, toSeconds } from "@/lib/attendanceGrace";
+import { useAuth } from "@/lib/auth";
 
 /**
  * Time Out vs the employee's own scheduled check-out (profiles.
@@ -69,7 +71,39 @@ export function TicketAttendanceTab() {
   const todayISO = useMemo(() => new Date().toISOString().slice(0, 10), []);
   const [dateFrom, setDateFrom] = useState(todayISO);
   const [dateTo, setDateTo] = useState(todayISO);
+  // Matches technician name OR location/branch — a location like "Columbus"
+  // typed here filters down to that branch just as typing a name does.
   const [search, setSearch] = useState("");
+  // Based on the general clock Time In/Time Out columns (not the ticket-level
+  // Scheduled/Checked In counts) — "present" has both, "presentNoTimeOut" has
+  // clocked in but not out yet, "absent" has neither. Same isSingleDay
+  // caveat those columns themselves already have: only meaningful when
+  // dateFrom === dateTo, since Time In/Out has no single value across a
+  // multi-day range.
+  const [statusFilter, setStatusFilter] = useState<"all" | "present" | "presentNoTimeOut" | "absent">("all");
+  type ColumnKey = "location" | "timeIn" | "timeOut" | "scheduled" | "checkedIn" | "missingCheckIn" | "missingCheckOut" | "notes";
+  const COLUMN_LABELS: Record<ColumnKey, string> = {
+    location: "Location",
+    timeIn: "Time In",
+    timeOut: "Time Out",
+    scheduled: "Scheduled",
+    checkedIn: "Checked In",
+    missingCheckIn: "Missing Check-In",
+    missingCheckOut: "Missing Check-Out",
+    notes: "Notes",
+  };
+  const [visibleColumns, setVisibleColumns] = useState<Record<ColumnKey, boolean>>({
+    location: true,
+    timeIn: true,
+    timeOut: true,
+    scheduled: true,
+    checkedIn: true,
+    missingCheckIn: true,
+    missingCheckOut: true,
+    notes: true,
+  });
+  const [columnMenuOpen, setColumnMenuOpen] = useState(false);
+  const visibleColumnCount = 1 + Object.values(visibleColumns).filter(Boolean).length; // +1 for Technician, always shown
   const [rows, setRows] = useState<TicketAttendanceRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [expandedTech, setExpandedTech] = useState<string | null>(null);
@@ -82,6 +116,18 @@ export function TicketAttendanceTab() {
   const [employees, setEmployees] = useState<ProfileRow[]>([]);
   const [disputedTicketNosApproved, setDisputedTicketNosApproved] = useState<Set<string>>(new Set());
   const [mileageEntries, setMileageEntries] = useState<MileageEntry[]>([]);
+  // "Why they're absent" notes — same (profile, day) note the Attendance
+  // Monitoring tab already writes to (attendanceNotes.ts), so a note added
+  // from either tab shows up in both. Only meaningful/editable for a single
+  // selected day (see isSingleDay below), same limitation Time In/Out here
+  // already has.
+  const [notes, setNotes] = useState<AttendanceNoteRow[]>([]);
+  const { uid } = useAuth();
+  const [myProfileId, setMyProfileId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!uid) return;
+    getProfileIdByFirebaseUid(uid).then(setMyProfileId).catch(() => {});
+  }, [uid]);
 
   const load = () => {
     setLoading(true);
@@ -91,10 +137,15 @@ export function TicketAttendanceTab() {
         console.error("Failed to load timecard entries for Ticket Attendance:", err);
         return [] as CompanyTimecardEntry[];
       }),
+      getAttendanceNotes(dateFrom, dateTo).catch((err) => {
+        console.error("Failed to load attendance notes for Ticket Attendance:", err);
+        return [] as AttendanceNoteRow[];
+      }),
     ])
-      .then(([ticketRows, tc]) => {
+      .then(([ticketRows, tc, noteRows]) => {
         setRows(ticketRows);
         setTimecards(tc);
+        setNotes(noteRows);
         // Diagnosis text isn't needed to render the tab at all — fetched
         // separately so a slow/failed lookup never blocks the rows/times
         // that ARE already back. Same for reschedule reasons.
@@ -152,6 +203,11 @@ export function TicketAttendanceTab() {
     for (const tc of timecards) map.set(`${tc.profileId}|${tc.workDate}`, tc);
     return map;
   }, [timecards]);
+  const noteByProfileDate = useMemo(() => {
+    const map = new Map<string, AttendanceNoteRow>();
+    for (const n of notes) map.set(`${n.profileId}|${n.noteDate}`, n);
+    return map;
+  }, [notes]);
   // One non-deleted mileage entry per ticket # (auto-synced entries are
   // already one row per ticket). legMileage (this ticket's own leg of its
   // day's route) is what's shown; a ticket not yet mileage-synced, or
@@ -165,19 +221,18 @@ export function TicketAttendanceTab() {
     return map;
   }, [mileageEntries]);
 
+  // Time In/Out (and Notes, below) only mean one specific value when the
+  // selected range is a single day — across multiple days there's no one
+  // "Time In" to show at the summary level (that's what the per-date rows
+  // in the expanded panel below are for).
+  const isSingleDay = dateFrom === dateTo;
   const byTechnician = useMemo(() => {
     const q = search.trim().toLowerCase();
     const byTech = new Map<string, TicketAttendanceRow[]>();
     for (const row of rows) {
-      if (q && !row.technician.toLowerCase().includes(q)) continue;
       if (!byTech.has(row.technician)) byTech.set(row.technician, []);
       byTech.get(row.technician)!.push(row);
     }
-    // Time In/Out only means one specific pair of times when the selected
-    // range is a single day — across multiple days there's no one "Time
-    // In" to show at the summary level (that's what the per-date rows in
-    // the expanded panel below are for).
-    const isSingleDay = dateFrom === dateTo;
     return Array.from(byTech.entries())
       .map(([technician, techRows]) => {
         const scheduled = techRows.length;
@@ -186,6 +241,7 @@ export function TicketAttendanceTab() {
         const missingCheckOut = techRows.filter((r) => r.arrivedAt && !r.doneAt && r.statusGroup !== "cancelled" && !disputedTicketNosApproved.has(r.ticketNo)).length;
         const employee = employeeByNormalizedName.get(technician.trim().toLowerCase());
         const timecard = isSingleDay && employee ? timecardByProfileDate.get(`${employee.id}|${dateFrom}`) : undefined;
+        const note = isSingleDay && employee ? noteByProfileDate.get(`${employee.id}|${dateFrom}`) : undefined;
         // Date then route order (slotSortKey) — same helper Technician
         // Whereabouts' numbered Stops list sorts by, so a technician's stop
         // #3 there lines up with row #3 here.
@@ -200,10 +256,18 @@ export function TicketAttendanceTab() {
           timeIn: timecard?.checkIn || null,
           timeOut: timecard?.checkOut || null,
           requiredCheckOut: employee?.required_check_out || null,
+          profileId: employee?.id || null,
+          note: note?.content || "",
         };
       })
+      .filter((t) => {
+        if (q && !t.technician.toLowerCase().includes(q) && !(t.branch || "").toLowerCase().includes(q)) return false;
+        if (statusFilter === "all") return true;
+        const bucket = t.timeIn && t.timeOut ? "present" : t.timeIn ? "presentNoTimeOut" : "absent";
+        return bucket === statusFilter;
+      })
       .sort((a, b) => a.technician.localeCompare(b.technician));
-  }, [rows, search, disputedTicketNosApproved, employeeByNormalizedName, timecardByProfileDate, dateFrom, dateTo]);
+  }, [rows, search, statusFilter, disputedTicketNosApproved, employeeByNormalizedName, timecardByProfileDate, noteByProfileDate, dateFrom, dateTo, isSingleDay]);
 
   // Estimate Time column — inline pencil-icon edit, one free-text field, no
   // formula/source. Which mileage entry id is currently being edited, plus
@@ -222,6 +286,40 @@ export function TicketAttendanceTab() {
       alert(`Failed to save Estimate Time: ${err instanceof Error ? err.message : "Unknown error"}`);
     } finally {
       setSavingEstimateTimeId(null);
+    }
+  };
+
+  // Notes column — same (profile, day) note Attendance Monitoring's own
+  // note/notify flow writes to (attendanceNotes.ts), used here as a plain
+  // "why are they absent" free-text field. Deliberately doesn't touch
+  // notify_individual/notify_team_lead (left false) — those trigger actual
+  // notification sends over on that other tab, out of scope for a quick
+  // note here.
+  const [editingNoteProfileId, setEditingNoteProfileId] = useState<string | null>(null);
+  const [noteDraft, setNoteDraft] = useState("");
+  const [savingNoteProfileId, setSavingNoteProfileId] = useState<string | null>(null);
+  const handleSaveNote = async (profileId: string) => {
+    const content = noteDraft;
+    setSavingNoteProfileId(profileId);
+    try {
+      await upsertAttendanceNote({
+        profileId,
+        noteDate: dateFrom,
+        content,
+        notifyIndividual: false,
+        notifyTeamLead: false,
+        createdBy: myProfileId,
+      });
+      setNotes((prev) => {
+        const next = prev.filter((n) => !(n.profileId === profileId && n.noteDate === dateFrom));
+        next.push({ profileId, noteDate: dateFrom, content, notifyIndividual: false, notifyTeamLead: false, createdBy: myProfileId });
+        return next;
+      });
+      setEditingNoteProfileId(null);
+    } catch (err) {
+      alert(`Failed to save note: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setSavingNoteProfileId(null);
     }
   };
 
@@ -402,28 +500,49 @@ export function TicketAttendanceTab() {
       </p>
 
       <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
-        <div className="grid gap-3 md:grid-cols-4 items-end">
+        <div className="grid gap-3 md:grid-cols-6 items-end">
           <div>
-            <label className="block text-xs text-slate-400 uppercase mb-2">Date</label>
+            <label className="block text-xs text-slate-400 uppercase mb-2">Date From</label>
             <input
               type="date"
               value={dateFrom}
-              onChange={(e) => {
-                setDateFrom(e.target.value);
-                setDateTo(e.target.value);
-              }}
+              max={dateTo}
+              onChange={(e) => setDateFrom(e.target.value)}
               className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none"
             />
           </div>
           <div>
-            <label className="block text-xs text-slate-400 uppercase mb-2">Search Technician</label>
+            <label className="block text-xs text-slate-400 uppercase mb-2">Date To</label>
+            <input
+              type="date"
+              value={dateTo}
+              min={dateFrom}
+              onChange={(e) => setDateTo(e.target.value)}
+              className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-slate-400 uppercase mb-2">Search</label>
             <input
               type="text"
-              placeholder="Enter technician name..."
+              placeholder="Technician or location..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm placeholder-slate-500 focus:border-blue-500 focus:outline-none"
             />
+          </div>
+          <div>
+            <label className="block text-xs text-slate-400 uppercase mb-2">Status</label>
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}
+              className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none"
+            >
+              <option value="all">All</option>
+              <option value="present">Present (Time In &amp; Time Out)</option>
+              <option value="presentNoTimeOut">Present, No Time Out</option>
+              <option value="absent">Absent (No Time In)</option>
+            </select>
           </div>
           <div className="flex items-center gap-2">
             <button
@@ -444,6 +563,33 @@ export function TicketAttendanceTab() {
               <Download className="h-4 w-4" /> Export
             </button>
           </div>
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setColumnMenuOpen((v) => !v)}
+              className="w-full px-3 py-2 border border-white/15 text-slate-300 hover:bg-white/5 rounded-lg text-sm font-semibold transition flex items-center justify-center gap-1.5"
+            >
+              <Columns3 className="h-4 w-4" /> Columns
+            </button>
+            {columnMenuOpen && (
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setColumnMenuOpen(false)} />
+                <div className="absolute right-0 mt-2 w-56 bg-slate-900 border border-white/15 rounded-lg shadow-2xl z-50 p-2">
+                  {(Object.keys(COLUMN_LABELS) as ColumnKey[]).map((key) => (
+                    <label key={key} className="flex items-center gap-2 px-2 py-1.5 text-sm text-slate-200 hover:bg-white/5 rounded cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={visibleColumns[key]}
+                        onChange={() => setVisibleColumns((prev) => ({ ...prev, [key]: !prev[key] }))}
+                        className="h-3.5 w-3.5 accent-blue-500"
+                      />
+                      {COLUMN_LABELS[key]}
+                    </label>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
         </div>
       </div>
 
@@ -452,20 +598,21 @@ export function TicketAttendanceTab() {
           <thead>
             <tr className="border-b border-white/10">
               <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Technician</th>
-              <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Location</th>
-              <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Time In</th>
-              <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Time Out</th>
-              <th className="px-3 py-3 text-right text-xs font-semibold text-slate-400 uppercase">Scheduled</th>
-              <th className="px-3 py-3 text-right text-xs font-semibold text-slate-400 uppercase">Checked In</th>
-              <th className="px-3 py-3 text-right text-xs font-semibold text-slate-400 uppercase">Missing Check-In</th>
-              <th className="px-3 py-3 text-right text-xs font-semibold text-slate-400 uppercase">Missing Check-Out</th>
+              {visibleColumns.location && <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Location</th>}
+              {visibleColumns.timeIn && <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Time In</th>}
+              {visibleColumns.timeOut && <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Time Out</th>}
+              {visibleColumns.scheduled && <th className="px-3 py-3 text-right text-xs font-semibold text-slate-400 uppercase">Scheduled</th>}
+              {visibleColumns.checkedIn && <th className="px-3 py-3 text-right text-xs font-semibold text-slate-400 uppercase">Checked In</th>}
+              {visibleColumns.missingCheckIn && <th className="px-3 py-3 text-right text-xs font-semibold text-slate-400 uppercase">Missing Check-In</th>}
+              {visibleColumns.missingCheckOut && <th className="px-3 py-3 text-right text-xs font-semibold text-slate-400 uppercase">Missing Check-Out</th>}
+              {visibleColumns.notes && <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Notes</th>}
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={8} className="px-3 py-8 text-center text-slate-400">Loading ticket attendance…</td></tr>
+              <tr><td colSpan={visibleColumnCount} className="px-3 py-8 text-center text-slate-400">Loading ticket attendance…</td></tr>
             ) : byTechnician.length === 0 ? (
-              <tr><td colSpan={8} className="px-3 py-8 text-center text-slate-400">No tickets scheduled in this range.</td></tr>
+              <tr><td colSpan={visibleColumnCount} className="px-3 py-8 text-center text-slate-400">No tickets scheduled in this range.</td></tr>
             ) : byTechnician.map((t) => (
               <Fragment key={t.technician}>
                 <tr
@@ -473,45 +620,98 @@ export function TicketAttendanceTab() {
                   onClick={() => setExpandedTech((cur) => (cur === t.technician ? null : t.technician))}
                 >
                   <td className="px-3 py-3 text-white font-medium">{t.technician}</td>
-                  <td className="px-3 py-3 text-slate-300">{t.branch || <span className="text-slate-600">—</span>}</td>
-                  <td className="px-3 py-3">{t.timeIn ? <span className="text-emerald-300">{t.timeIn}</span> : <span className="text-slate-600">—</span>}</td>
-                  <td className="px-3 py-3">
-                    {t.timeOut ? (
-                      <span className="inline-flex items-center gap-2">
-                        <span className="text-red-300">{t.timeOut}</span>
-                        {(() => {
-                          const status = timeOutStatus(t.timeOut, t.requiredCheckOut);
-                          if (!status) return null;
-                          const deltaSeconds = timeOutDeltaSeconds(t.timeOut, t.requiredCheckOut);
-                          return (
-                            <span
-                              className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${TIME_OUT_STATUS_CLASS[status]}`}
-                              title={
-                                status === "ok"
-                                  ? `Within ${ATTENDANCE_GRACE_MINUTES} min of scheduled check-out (${t.requiredCheckOut})`
-                                  : status === "overtime"
-                                  ? `More than ${ATTENDANCE_GRACE_MINUTES} min after scheduled check-out (${t.requiredCheckOut})`
-                                  : `More than ${ATTENDANCE_GRACE_MINUTES} min before scheduled check-out (${t.requiredCheckOut})`
-                              }
-                            >
-                              {TIME_OUT_STATUS_LABEL[status]}
-                              {status !== "ok" && deltaSeconds != null && ` ${formatDeltaHM(deltaSeconds)} hours`}
-                            </span>
-                          );
-                        })()}
-                      </span>
-                    ) : (
-                      <span className="text-slate-600">—</span>
-                    )}
-                  </td>
-                  <td className="px-3 py-3 text-right text-slate-300">{t.scheduled}</td>
-                  <td className="px-3 py-3 text-right text-emerald-300">{t.checkedIn}</td>
-                  <td className={`px-3 py-3 text-right font-semibold ${t.missingCheckIn > 0 ? "text-red-300" : "text-slate-500"}`}>{t.missingCheckIn}</td>
-                  <td className={`px-3 py-3 text-right font-semibold ${t.missingCheckOut > 0 ? "text-yellow-300" : "text-slate-500"}`}>{t.missingCheckOut}</td>
+                  {visibleColumns.location && (
+                    <td className="px-3 py-3 text-slate-300">{t.branch || <span className="text-slate-600">—</span>}</td>
+                  )}
+                  {visibleColumns.timeIn && (
+                    <td className="px-3 py-3">{t.timeIn ? <span className="text-emerald-300">{t.timeIn}</span> : <span className="text-slate-600">—</span>}</td>
+                  )}
+                  {visibleColumns.timeOut && (
+                    <td className="px-3 py-3">
+                      {t.timeOut ? (
+                        <span className="inline-flex items-center gap-2">
+                          <span className="text-red-300">{t.timeOut}</span>
+                          {(() => {
+                            const status = timeOutStatus(t.timeOut, t.requiredCheckOut);
+                            if (!status) return null;
+                            const deltaSeconds = timeOutDeltaSeconds(t.timeOut, t.requiredCheckOut);
+                            return (
+                              <span
+                                className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${TIME_OUT_STATUS_CLASS[status]}`}
+                                title={
+                                  status === "ok"
+                                    ? `Within ${ATTENDANCE_GRACE_MINUTES} min of scheduled check-out (${t.requiredCheckOut})`
+                                    : status === "overtime"
+                                    ? `More than ${ATTENDANCE_GRACE_MINUTES} min after scheduled check-out (${t.requiredCheckOut})`
+                                    : `More than ${ATTENDANCE_GRACE_MINUTES} min before scheduled check-out (${t.requiredCheckOut})`
+                                }
+                              >
+                                {TIME_OUT_STATUS_LABEL[status]}
+                                {status !== "ok" && deltaSeconds != null && ` ${formatDeltaHM(deltaSeconds)} hours`}
+                              </span>
+                            );
+                          })()}
+                        </span>
+                      ) : (
+                        <span className="text-slate-600">—</span>
+                      )}
+                    </td>
+                  )}
+                  {visibleColumns.scheduled && <td className="px-3 py-3 text-right text-slate-300">{t.scheduled}</td>}
+                  {visibleColumns.checkedIn && <td className="px-3 py-3 text-right text-emerald-300">{t.checkedIn}</td>}
+                  {visibleColumns.missingCheckIn && (
+                    <td className={`px-3 py-3 text-right font-semibold ${t.missingCheckIn > 0 ? "text-red-300" : "text-slate-500"}`}>{t.missingCheckIn}</td>
+                  )}
+                  {visibleColumns.missingCheckOut && (
+                    <td className={`px-3 py-3 text-right font-semibold ${t.missingCheckOut > 0 ? "text-yellow-300" : "text-slate-500"}`}>{t.missingCheckOut}</td>
+                  )}
+                  {visibleColumns.notes && (
+                    <td className="px-3 py-3 max-w-[220px]" onClick={(e) => e.stopPropagation()}>
+                      {!isSingleDay ? (
+                        <span className="text-slate-600" title="Switch Date From/Date To to the same day to add a note">—</span>
+                      ) : !t.profileId ? (
+                        <span className="text-slate-600" title="No matching profile for this technician — can't attach a note">—</span>
+                      ) : editingNoteProfileId === t.profileId ? (
+                        <div className="flex items-start gap-1">
+                          <textarea
+                            autoFocus
+                            rows={2}
+                            value={noteDraft}
+                            onChange={(e) => setNoteDraft(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Escape") setEditingNoteProfileId(null);
+                            }}
+                            placeholder="Why are they absent?"
+                            className="w-48 rounded border border-white/15 bg-slate-800 px-1.5 py-1 text-xs text-white placeholder-slate-500 resize-none"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => void handleSaveNote(t.profileId!)}
+                            disabled={savingNoteProfileId === t.profileId}
+                            className="text-emerald-400 hover:text-emerald-300 disabled:opacity-40 mt-1"
+                          >
+                            {savingNoteProfileId === t.profileId ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditingNoteProfileId(t.profileId);
+                            setNoteDraft(t.note);
+                          }}
+                          className="flex items-start gap-1 text-left text-slate-300 hover:text-white"
+                        >
+                          {t.note ? <span className="truncate block max-w-[190px]">{t.note}</span> : <span className="text-slate-600">Add note</span>}
+                          <Pencil className="h-2.5 w-2.5 text-slate-500 shrink-0 mt-0.5" />
+                        </button>
+                      )}
+                    </td>
+                  )}
                 </tr>
                 {expandedTech === t.technician && (
                   <tr>
-                    <td colSpan={8} className="px-3 py-3 bg-white/[0.02]">
+                    <td colSpan={visibleColumnCount} className="px-3 py-3 bg-white/[0.02]">
                       <table className="w-full text-xs">
                         <thead>
                           <tr className="text-slate-500">

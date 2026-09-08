@@ -91,6 +91,7 @@ import { AnnouncementsMenu } from "@/components/AnnouncementsMenu";
 import { createOrUpdateTicketReschedule, getTicketReschedulesForTicketNos, type TicketRescheduleRow } from "@/lib/supabase/ticketReschedules";
 import { AnnouncementBanner } from "@/components/AnnouncementBanner";
 import { TraineeAttendanceMobileModal } from "@/components/mobile/TraineeAttendanceMobileModal";
+import { MobileTicketAttendanceView } from "@/components/mobile/MobileTicketAttendanceView";
 import { AnnouncementsPage } from "@/components/AnnouncementsPage";
 import {
   parseServicePerformed,
@@ -110,6 +111,7 @@ type View =
   | "payroll"
   | "timecard"
   | "clockinteam"
+  | "ticketattendance"
   | "parts"
   | "onhold"
   | "itsupport"
@@ -430,6 +432,7 @@ export function MobileTechApp() {
       "payroll",
       "timecard",
       "clockinteam",
+      "ticketattendance",
       "parts",
       "onhold",
       "itsupport",
@@ -1066,6 +1069,7 @@ export function MobileTechApp() {
       : view === "home" ||
         view === "timecard" ||
         view === "clockinteam" ||
+        view === "ticketattendance" ||
         view === "itsupport" ||
         view === "payrolldispute" ||
         view === "timeoff" ||
@@ -1278,6 +1282,10 @@ export function MobileTechApp() {
           <MobileClockInTeamView profileId={profileId} />
         )}
 
+        {view === "ticketattendance" && (
+          <MobileTicketAttendanceView profileId={profileId} />
+        )}
+
         {view === "itsupport" && (
           <MobileItSupportView userName={headerName} />
         )}
@@ -1346,6 +1354,7 @@ export function MobileTechApp() {
             onOpenTicketTimeDispute={() => setView("tickettimedispute")}
             onOpenCorrection={() => { setCorrectionPrefillDate(null); setView("correction"); }}
             onOpenTimecard={() => setView("timecard")}
+            onOpenTicketAttendance={() => setView("ticketattendance")}
             arrivedAt={arrivedAt}
             setArrivedAt={setArrivedAt}
             doneAt={doneAt}
@@ -5587,6 +5596,7 @@ function MobileHomeView({
   onOpenTicketTimeDispute,
   onOpenCorrection,
   onOpenTimecard,
+  onOpenTicketAttendance,
   arrivedAt,
   setArrivedAt,
   doneAt,
@@ -5614,6 +5624,7 @@ function MobileHomeView({
   onOpenTicketTimeDispute: () => void;
   onOpenCorrection: () => void;
   onOpenTimecard: () => void;
+  onOpenTicketAttendance: () => void;
   arrivedAt: Record<string, string>;
   setArrivedAt: Dispatch<SetStateAction<Record<string, string>>>;
   doneAt: Record<string, string>;
@@ -5947,6 +5958,11 @@ function MobileHomeView({
       key: "timecard", label: "Monitor My Attendance",
       description: "See your monthly check-in/out calendar",
       onClick: onOpenTimecard, show: true,
+    },
+    {
+      key: "ticketattendance", label: "Ticket Attendance",
+      description: "Who checked into their scheduled tickets today",
+      onClick: onOpenTicketAttendance, show: true,
     },
   ].filter((t) => t.show);
 
