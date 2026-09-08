@@ -70,18 +70,49 @@ async function sbGet(path) {
   return r.json();
 }
 
+/**
+ * PostgREST caps every response at ~1000 rows regardless of ?limit= — page
+ * through with the Range header until a short page comes back. Without this
+ * the script only ever sees the first 1000 customers AND the first 1000
+ * cache entries, so its "skip already cached" check is wrong and re-runs
+ * 409 on the unique (company_id, address_hash) constraint.
+ */
+const PAGE = 1000;
+async function sbGetAll(path) {
+  const sep = path.includes("?") ? "&" : "?";
+  const out = [];
+  for (let offset = 0; ; offset += PAGE) {
+    const r = await fetch(`${SUPABASE_URL}/rest/v1/${path}${sep}limit=${PAGE}&offset=${offset}`, {
+      headers: {
+        apikey: SUPABASE_SERVICE_KEY,
+        Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`,
+        "Content-Type": "application/json",
+      },
+    });
+    if (!r.ok) throw new Error(`Supabase GET ${path} → ${r.status} ${await r.text()}`);
+    const page = await r.json();
+    out.push(...page);
+    if (page.length < PAGE) break;
+  }
+  return out;
+}
+
 async function sbPost(path, body) {
-  const r = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
+  // on_conflict makes this a real upsert — Prefer: merge-duplicates alone is
+  // ignored by PostgREST without it, so a re-run or a race 409s instead of
+  // silently no-op'ing.
+  const sep = path.includes("?") ? "&" : "?";
+  const r = await fetch(`${SUPABASE_URL}/rest/v1/${path}${sep}on_conflict=company_id,address_hash`, {
     method: "POST",
     headers: {
       apikey: SUPABASE_SERVICE_KEY,
       Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`,
       "Content-Type": "application/json",
-      Prefer: "resolution=merge-duplicates,return=minimal",  // upsert — skip dupes silently
+      Prefer: "resolution=merge-duplicates,return=minimal",
     },
     body: JSON.stringify(body),
   });
-  if (!r.ok) throw new Error(`Supabase POST ${path} → ${r.status} ${await r.text()}`);
+  if (!r.ok && r.status !== 409) throw new Error(`Supabase POST ${path} → ${r.status} ${await r.text()}`);
 }
 
 async function geocode(address) {
@@ -116,8 +147,8 @@ async function main() {
   console.log("📋 Fetching customer addresses from Supabase…");
 
   // Addresses live in the `customers` table: address, city, state, zip
-  const customers = await sbGet(
-    "customers?select=address,city,state,zip&not.address.is.null&limit=10000"
+  const customers = await sbGetAll(
+    "customers?select=address,city,state,zip&not.address.is.null"
   );
   console.log(`   Found ${customers.length} customer rows`);
 
@@ -132,7 +163,7 @@ async function main() {
 
   // Fetch already-cached hashes so we can skip them
   console.log("🔍 Loading existing cache entries…");
-  const cached = await sbGet("geocode_cache?select=address_hash&limit=50000");
+  const cached = await sbGetAll(`geocode_cache?select=address_hash&company_id=eq.${COMPANY_ID}`);
   const cachedSet = new Set(cached.map(r => r.address_hash));
   console.log(`   ${cachedSet.size} already cached`);
 

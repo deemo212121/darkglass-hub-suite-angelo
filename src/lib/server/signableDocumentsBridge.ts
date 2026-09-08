@@ -316,6 +316,7 @@ export async function handleSignableDocumentsRequest(request: Request, env?: Rec
         substance_screening: { name: "Substance Screening & Conduct Agreement", tab: "substanceScreening" },
         nda_form: { name: "Non-Disclosure Agreement", tab: "ndaForm" },
         vehicle_use_agreement: { name: "Vehicle Use Agreement", tab: "vehicleUseAgreement" },
+        contractor_addendum: { name: "Master Independent Contractor Subcontractor Agreement Addendum", tab: "contractorAddendum" },
       };
       const docLabel = DOC_TYPE_LABELS[doc.document_type] ?? DOC_TYPE_LABELS.warning_form;
       const notifyFields = {

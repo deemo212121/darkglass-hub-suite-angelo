@@ -483,33 +483,44 @@ export interface MileageSyncResult {
 // instead of starting a competing pass.
 let syncInFlight = false;
 
+type MapLinkTicket = {
+  location?: string | null;
+  account?: string | null;
+  customer?: { address?: string | null; address2?: string | null; city?: string | null; state?: string | null; zip?: string | null } | null;
+};
+
+/** Full "street, city, state zip" string for a ticket's customer job site; "" when nothing usable is on file. */
+function ticketSiteAddress(ticket: MapLinkTicket): string {
+  const customer = ticket.customer ?? {};
+  return [customer.address, customer.address2, [customer.city, customer.state].filter(Boolean).join(", "), customer.zip]
+    .filter((part: unknown) => typeof part === "string" && (part as string).trim())
+    .join(", ");
+}
+
 /**
- * Directions link for one ticket's Map Link — customer's job-site address
- * as the destination, the technician's BRANCH as the origin (via the same
- * getOfficeCoordinates lookup the actual mileage math uses), so opening it
- * always starts from the real dispatch point. Without an explicit origin,
- * Google Maps falls back to "Your location" (the viewer's own device/
- * browser position) — wrong for anyone checking a route from their desk
- * instead of standing at the branch.
+ * Directions link for one ticket's Map Link. The route is stop-to-stop,
+ * matching how the day's leg mileage is actually computed: every stop after
+ * the first routes FROM the previous stop's job-site address (passed in as
+ * prevStopAddress). Only the first stop of the day starts from the branch/
+ * dispatch point — via getOfficeCoordinates, or the Electrolux/Huntsville
+ * state-based override that computeDailyRouteMiles also uses (an Electrolux
+ * ticket dispatches from a different real office depending on the customer's
+ * state, not the generic Huntsville pin). Without an explicit origin Google
+ * Maps falls back to "Your location" — the viewer's own desk, never the
+ * technician's route.
  */
 function buildGoogleMapLink(
   branch: string,
-  ticket: {
-    location?: string | null;
-    account?: string | null;
-    customer?: { address?: string | null; address2?: string | null; city?: string | null; state?: string | null; zip?: string | null } | null;
-  }
+  ticket: MapLinkTicket,
+  prevStopAddress?: string | null
 ): string {
-  const customer = ticket.customer ?? {};
-  const fullAddress = [customer.address, customer.address2, [customer.city, customer.state].filter(Boolean).join(", "), customer.zip]
-    .filter((part: unknown) => typeof part === "string" && part.trim())
-    .join(", ");
+  const fullAddress = ticketSiteAddress(ticket);
   if (!fullAddress) return "";
-  // Same override the actual mileage math uses (computeDailyRouteMiles) —
-  // an Electrolux/Huntsville ticket dispatches from a different real office
-  // depending on the customer's state, not the generic Huntsville branch
-  // pin, so the link has to check the same override or it'll point at the
-  // wrong start.
+  const dest = encodeURIComponent(fullAddress);
+  if (prevStopAddress && prevStopAddress.trim()) {
+    return `https://www.google.com/maps/dir/?api=1&travelmode=driving&origin=${encodeURIComponent(prevStopAddress.trim())}&destination=${dest}`;
+  }
+  const customer = ticket.customer ?? {};
   const overrideOrigin = getElectroluxHuntsvilleMileageOrigin({ location: ticket.location ?? undefined, account: ticket.account ?? undefined, state: customer.state ?? undefined });
   const originPt = overrideOrigin ? null : getOfficeCoordinates(branch);
   const originParam = overrideOrigin
@@ -517,7 +528,7 @@ function buildGoogleMapLink(
     : originPt
     ? `&origin=${originPt.lat},${originPt.lng}`
     : "";
-  return `https://www.google.com/maps/dir/?api=1${originParam}&destination=${encodeURIComponent(fullAddress)}`;
+  return `https://www.google.com/maps/dir/?api=1&travelmode=driving${originParam}&destination=${dest}`;
 }
 
 export async function syncMileageFromTickets(input: {
@@ -653,6 +664,8 @@ async function syncMileageFromTicketsInner(
         // isn't a stale-format problem to fix, so it's treated as fine —
         // only an actual old-format link (present, no origin=) is flagged,
         // or reprocessing would spin forever on an addressless ticket.
+        // (Stop-to-stop origins on top of this are computed live in
+        // TicketAttendanceTab's Map Link column — no re-sync needed.)
         hasOriginInMapLink: !r.google_map_link || String(r.google_map_link).includes("origin="),
         workDate: r.work_date as string,
         identity: r.profile_id ? `id:${r.profile_id}` : `name:${String(r.technician_name || "").trim().toLowerCase()}`,
@@ -827,6 +840,7 @@ async function syncMileageFromTicketsInner(
       const t = orderedTickets[idx];
       const existing = existingByTicketId.get(t.id);
       if (existing) {
+        const prevStopAddress = idx > 0 ? ticketSiteAddress(orderedTickets[idx - 1]) : null;
         const { error: updateErr } = await supabase
           .from("mileage_entries")
           .update({
@@ -838,7 +852,7 @@ async function syncMileageFromTicketsInner(
             profile_id: technician?.profileId ?? null,
             technician_name: technician ? null : rawName,
             branch,
-            google_map_link: buildGoogleMapLink(branch, t) || null,
+            google_map_link: buildGoogleMapLink(branch, t, prevStopAddress) || null,
           })
           .eq("id", existing.id);
         if (updateErr) result.errors.push(`Ticket ${t.ticket_no}: failed to refresh mileage — ${updateErr.message}`);
@@ -847,7 +861,9 @@ async function syncMileageFromTicketsInner(
 
     const newTickets = orderedTickets.filter((t) => !existingByTicketId.has(t.id));
     for (const ticket of newTickets) {
-      const googleMapLink = buildGoogleMapLink(branch, ticket);
+      const stopIdx = orderedTickets.indexOf(ticket);
+      const prevStopAddress = stopIdx > 0 ? ticketSiteAddress(orderedTickets[stopIdx - 1]) : null;
+      const googleMapLink = buildGoogleMapLink(branch, ticket, prevStopAddress);
 
       const { error: insertErr } = await supabase.from("mileage_entries").insert({
         profile_id: technician?.profileId ?? null,

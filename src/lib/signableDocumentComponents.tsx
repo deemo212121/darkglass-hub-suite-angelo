@@ -38,6 +38,7 @@ export const INTERNAL_SIGNABLE_DOCUMENT_COMPONENTS: Record<SignableDocumentType,
   flash_technician_travel: lazy(() => import("@/components/FillFlashTechnicianTravelPage").then((m) => ({ default: m.FillFlashTechnicianTravelPage }))),
   nda_form: lazy(() => import("@/components/SignNdaFormPage").then((m) => ({ default: m.SignNdaFormPage }))),
   vehicle_use_agreement: lazy(() => import("@/components/FillVehicleUseAgreementPage").then((m) => ({ default: m.FillVehicleUseAgreementPage }))),
+  contractor_addendum: lazy(() => import("@/components/FillContractorAddendumPage").then((m) => ({ default: m.FillContractorAddendumPage }))),
 };
 
 export const EXTERNAL_SIGNABLE_DOCUMENT_COMPONENTS: Record<SignableDocumentType, ReturnType<typeof lazy>> = {
@@ -67,4 +68,5 @@ export const EXTERNAL_SIGNABLE_DOCUMENT_COMPONENTS: Record<SignableDocumentType,
   flash_technician_travel: lazy(() => import("@/components/ExternalFillFlashTechnicianTravelPage").then((m) => ({ default: m.ExternalFillFlashTechnicianTravelPage }))),
   nda_form: lazy(() => import("@/components/ExternalSignNdaFormPage").then((m) => ({ default: m.ExternalSignNdaFormPage }))),
   vehicle_use_agreement: lazy(() => import("@/components/ExternalFillVehicleUseAgreementPage").then((m) => ({ default: m.ExternalFillVehicleUseAgreementPage }))),
+  contractor_addendum: lazy(() => import("@/components/ExternalFillContractorAddendumPage").then((m) => ({ default: m.ExternalFillContractorAddendumPage }))),
 };

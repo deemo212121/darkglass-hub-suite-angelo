@@ -23,6 +23,19 @@ function normalise(addr: string): string {
 }
 
 /**
+ * Cache keys to try for one address, in preference order. Callers are
+ * inconsistent about appending a trailing ", USA" (the mileage route path
+ * does; the backfill script — scripts/backfill-geocode-cache.mjs — does not),
+ * so an address stored one way must still be found when looked up the other.
+ * The country-stripped form is a fallback only — an exact stored key wins.
+ */
+function normalisedKeys(addr: string): string[] {
+  const base = normalise(addr);
+  const stripped = base.replace(/\s+(usa|united states|u s a|us)$/, "").trim();
+  return stripped && stripped !== base ? [base, stripped] : [base];
+}
+
+/**
  * Cheap browser-side hash — not cryptographic, but collision-resistant enough
  * for an address-key lookup.  Uses the Web Crypto API (SubtleCrypto) so it
  * works in Cloudflare Workers, modern browsers, and Node 18+.
@@ -67,18 +80,20 @@ export async function lookupGeocode(address: string): Promise<GeoPoint | null> {
   if (!address?.trim()) return null;
   if (!hasSubtleCrypto()) return null;
   try {
-    const hash = await sha256hex(normalise(address));
+    const keys = normalisedKeys(address);
+    const hashes = await Promise.all(keys.map(sha256hex));
     const { data, error } = await supabase
       .from("geocode_cache")
-      .select("lat, lng")
-      .eq("address_hash", hash)
-      .maybeSingle();
+      .select("address_hash, lat, lng")
+      .in("address_hash", hashes);
     if (error) {
       console.warn("geocodeCache lookup error:", error.message);
       return null;
     }
-    if (!data) return null;
-    return { lat: Number(data.lat), lng: Number(data.lng) };
+    if (!data || data.length === 0) return null;
+    // Prefer the exact-form key over the country-stripped fallback.
+    const row = hashes.map((h) => data.find((d) => (d as { address_hash: string }).address_hash === h)).find(Boolean) ?? data[0];
+    return { lat: Number((row as { lat: number }).lat), lng: Number((row as { lng: number }).lng) };
   } catch (err) {
     console.warn("geocodeCache lookup failed:", err);
     return null;
@@ -111,10 +126,12 @@ export async function bulkLookupGeocode(addresses: string[]): Promise<Map<string
   const hashToAddresses = new Map<string, string[]>();
   await Promise.all(
     uniqueAddresses.map(async (addr) => {
-      const hash = await sha256hex(normalise(addr));
-      const list = hashToAddresses.get(hash) ?? [];
-      list.push(addr);
-      hashToAddresses.set(hash, list);
+      for (const key of normalisedKeys(addr)) {
+        const hash = await sha256hex(key);
+        const list = hashToAddresses.get(hash) ?? [];
+        list.push(addr);
+        hashToAddresses.set(hash, list);
+      }
     })
   );
 
