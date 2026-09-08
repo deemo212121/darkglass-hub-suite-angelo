@@ -41,6 +41,16 @@ function todayISO(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
+/** "BRANCH_MANAGER" -> "Branch Manager" — same free-text role field every
+ *  other roster table in this app already stores, just made readable here. */
+function formatRoleLabel(role: string | null | undefined): string {
+  if (!role) return "—";
+  return role
+    .split("_")
+    .map((w) => (w ? w[0].toUpperCase() + w.slice(1).toLowerCase() : w))
+    .join(" ");
+}
+
 /** "present" once checked in. Before that, three different things all used
  *  to get flattened into one misleading "Absent" — split apart here so a
  *  shift that simply hasn't started yet doesn't read the same as a real
@@ -545,6 +555,7 @@ export function AttendanceWarningSettingsTab({ myProfileId, myDisplayName }: { m
               <tr className="border-b border-white/10">
                 <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase w-10"></th>
                 <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Manager</th>
+                <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Role</th>
                 <th className="px-3 py-3 text-right text-xs font-semibold text-slate-400 uppercase">Technicians — Present / Still Absent</th>
                 <th className="px-3 py-3 text-right text-xs font-semibold text-slate-400 uppercase">Office — Present / Still Absent</th>
               </tr>
@@ -600,6 +611,7 @@ export function AttendanceWarningSettingsTab({ myProfileId, myDisplayName }: { m
                           })()}
                         </span>
                       </td>
+                      <td className="px-3 py-3 text-slate-400">{formatRoleLabel(row.profile.role)}</td>
                       <td className="px-3 py-3 text-right text-slate-300">
                         {row.technicians.present + row.technicians.absent === 0 ? (
                           <span className="text-slate-600">—</span>
@@ -624,7 +636,7 @@ export function AttendanceWarningSettingsTab({ myProfileId, myDisplayName }: { m
                       if (row.reports.length === 0 && testRowsForThisManager.length === 0) {
                         return (
                           <tr className="bg-white/[0.02]">
-                            <td colSpan={4} className="px-3 py-3">
+                            <td colSpan={5} className="px-3 py-3">
                               <div className="text-xs text-slate-500 pl-6">No reports.</div>
                             </td>
                           </tr>
@@ -632,7 +644,7 @@ export function AttendanceWarningSettingsTab({ myProfileId, myDisplayName }: { m
                       }
                       return (
                         <tr className="bg-white/[0.02]">
-                          <td colSpan={4} className="px-3 py-3">
+                          <td colSpan={5} className="px-3 py-3">
                             <div className="grid gap-1.5 sm:grid-cols-2 lg:grid-cols-3 pl-6">
                               {row.reports.map((r) => {
                                 const scheduled = r.checkIn ? r.profile.required_check_out : r.profile.required_check_in;
