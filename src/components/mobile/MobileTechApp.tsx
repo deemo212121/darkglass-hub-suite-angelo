@@ -38,7 +38,7 @@ import {
 import { getMyProfileId, getMyFullProfile } from "@/lib/supabase/users";
 import { getTechPayrollBreakdown, type TechPayrollBreakdown } from "@/lib/supabase/techPayroll";
 import { getCompanyMapProvider, type MapProvider } from "@/lib/supabase/companySettings";
-import { loadGoogleMapsScript, getLeaflet, makeGeocoder, geocodeAddress, haversineMiles, routeGeoapify, metersToMiles, formatDuration, attachLeafletResizeFix, createBadgeDivIcon, OSM_TILE_URL, OSM_ATTRIBUTION, ON_SITE_CHECKIN_RADIUS_MILES, ON_SITE_CHECKIN_ACCURACY_SLACK_CAP_MILES, ON_SITE_CHECKIN_MANUAL_OVERRIDE_MAX_MILES, getOfficeCoordinates } from "@/lib/mapEngine";
+import { loadGoogleMapsScript, getLeaflet, makeGeocoder, geocodeAddress, haversineMiles, routeGeoapify, metersToMiles, formatDuration, attachLeafletResizeFix, createBadgeDivIcon, OSM_TILE_URL, OSM_ATTRIBUTION, ON_SITE_CHECKIN_RADIUS_MILES, ON_SITE_CHECKIN_ACCURACY_SLACK_CAP_MILES, ON_SITE_CHECKIN_MANUAL_OVERRIDE_MAX_MILES, ON_SITE_CHECKIN_GEOFENCE_ENABLED, getOfficeCoordinates } from "@/lib/mapEngine";
 import { getCompanyFlashTechTrips, type FlashTechTrip } from "@/lib/supabase/flashTechTrips";
 import type * as Leaflet from "leaflet";
 import {
@@ -5192,7 +5192,7 @@ function CheckInActionRow({ t, checkIn, uniform }: { t: Ticket; checkIn: OnSiteC
   // hard-passes the geofence — those go through the manual override, same
   // as an address that wouldn't geocode at all.
   const approx = pos?.approximate === true;
-  const inRadius = checkIn.devSimulate || (dist !== null && !approx && dist <= checkIn.checkinRadiusMiles);
+  const inRadius = !ON_SITE_CHECKIN_GEOFENCE_ENABLED || checkIn.devSimulate || (dist !== null && !approx && dist <= checkIn.checkinRadiusMiles);
   const hereAt = checkIn.arrivedAt[t.ticketNo];
   const finishedAt = checkIn.doneAt[t.ticketNo];
   const isBusy = checkIn.busy === t.ticketNo;
@@ -5387,7 +5387,7 @@ function HomeOnSiteCard({
     const justDoneStillHere = visibleTickets.filter((t) => {
       if (!doneAt[t.ticketNo]) return false;
       const d = checkIn.distanceFor(t);
-      return checkIn.devSimulate || (d !== null && d <= checkIn.checkinRadiusMiles);
+      return !ON_SITE_CHECKIN_GEOFENCE_ENABLED || checkIn.devSimulate || (d !== null && d <= checkIn.checkinRadiusMiles);
     });
     const notYetStarted = notDone
       .filter((t) => !arrivedAt[t.ticketNo])
@@ -5484,7 +5484,7 @@ function HomeOnSiteCard({
         const hereAt = arrivedAt[t.ticketNo];
         const finishedAt = doneAt[t.ticketNo];
         const stateUnknown = !checkinsLoaded;
-        const inRadius = checkIn.devSimulate || (dist !== null && !approx && dist <= checkIn.checkinRadiusMiles);
+        const inRadius = !ON_SITE_CHECKIN_GEOFENCE_ENABLED || checkIn.devSimulate || (dist !== null && !approx && dist <= checkIn.checkinRadiusMiles);
         const pending = !stateUnknown && !inRadius && !hereAt && !finishedAt;
         const fixIsCoarse = checkIn.fixAccuracyM != null && checkIn.fixAccuracyM > 1000;
         const gpsGivenUp = checkIn.stuckMode || fixIsCoarse;
@@ -5541,7 +5541,11 @@ function HomeOnSiteCard({
           </div>
         );
       })()}
-      <div className="mtech-home-onsite-hint">Work Start unlocks once your phone's GPS puts you at the customer's address (roughly within a few hundred metres, allowing for GPS and map accuracy).</div>
+      <div className="mtech-home-onsite-hint">
+        {ON_SITE_CHECKIN_GEOFENCE_ENABLED
+          ? "Work Start unlocks once your phone's GPS puts you at the customer's address (roughly within a few hundred metres, allowing for GPS and map accuracy)."
+          : "Work Start is available for any ticket — you don't need to be at the address to check in."}
+      </div>
       <div className="mtech-home-onsite-status-row">
         <span className={`mtech-home-onsite-status ${checkIn.consentConfirmed ? "is-ok" : "is-bad"}`}>
           {checkIn.consentConfirmed ? <Check className="h-3 w-3" /> : <X className="h-3 w-3" />} Consent
@@ -5551,7 +5555,7 @@ function HomeOnSiteCard({
         </span>
       </div>
       {checkIn.sharingReason && <div className="mtech-home-onsite-hint">{checkIn.sharingReason}</div>}
-      {import.meta.env.DEV && (
+      {import.meta.env.DEV && ON_SITE_CHECKIN_GEOFENCE_ENABLED && (
         <button
           type="button"
           className="mtech-home-onsite-devbtn"

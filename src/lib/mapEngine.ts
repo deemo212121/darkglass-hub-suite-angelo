@@ -498,6 +498,19 @@ export const metersToMiles = (m: number): number => m / 1609.344;
 export const milesToMeters = (mi: number): number => mi * 1609.344;
 
 /**
+ * Master on/off switch for the On-Site Check-In geofence gate — set to
+ * `false` at the user's explicit request (GPS accuracy was blocking too
+ * many legitimate on-site technicians) so "Work Start"/"Work Done" are
+ * always tappable regardless of distance, while distance itself is still
+ * computed and shown for context, and TechnicianDayRouteModal's admin map
+ * still draws the reference radius circle. Flip back to `true` to restore
+ * the hard distance requirement — everything below (radius size, accuracy
+ * slack, manual-override distance) is untouched and takes effect again
+ * immediately.
+ */
+export const ON_SITE_CHECKIN_GEOFENCE_ENABLED = false;
+
+/**
  * On-Site Check-In geofence radius — how close a technician must be to a
  * ticket's address before "I'm Here"/"I'm Done" become tappable in
  * MobileTechApp.tsx's On-Site Check-In card, and the radius drawn around
