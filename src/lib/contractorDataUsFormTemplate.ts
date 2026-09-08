@@ -1,42 +1,23 @@
 /**
- * Contractor Data — shared data types + HTML/CSS document template. Unlike
- * every other automated form built this session, there's no real source
- * PDF to overlay-fill: this is a from-scratch intake form (contact/address/
- * identity info + two ID-photo uploads), so the final PDF is generated the
- * same way the Warning Form/Promotion Form/Action Plan Form/Termination
- * Notice are — a hand-built HTML template captured to PDF via
- * captureHtmlToPdfBlob (see pdfCapture.ts), not pdf-lib drawing onto a
- * blank asset. See contractorDataPdfFill.ts for the actual capture step.
- *
- * Single-party, same shape as Car IQ/Parts Responsibility: one recipient
- * fills in everything and signs — no employer/HR co-signature step. The
- * closing certification ("I certify the information above is true and
- * accurate") + signature line was added on top of the field list actually
- * requested, since every other document in this family finalizes with a
- * real signature and hr_signable_documents.signDocument requires one — the
- * fields above it are exactly what was asked for, verbatim.
- *
- * The two ID-photo fields (Social Security Card, Driver's License — each
- * "front and back", so effectively 2 files per field) are this app's first
- * use of file uploads inside the signable-documents family. Storage/upload
- * plumbing lives in firebase/storage.ts's uploadSignableDocumentAttachment
- * (logged-in path) and signableDocumentsBridge.ts's generic `attachment_*`
- * FormData handling (external no-login path) — both new, see those files'
- * comments.
- *
- * Emergency Contacts is a fixed array of 3 (ContractorDataEmergencyContact)
- * — only #1 is required, #2/#3 are entirely optional, matching the source
- * content's own "(Optional)" labeling.
+ * Contractor Data (US) — a second, independent copy of
+ * contractorDataFormTemplate.ts ("Employee Data"), same fields/layout,
+ * requested as its own distinct document type rather than a relabeled
+ * instance of the existing one (so the two can diverge later without
+ * touching each other, matching how every other document family in this
+ * app is one dedicated file set per type, not a shared parametrized
+ * component). See that file's own header comment for the underlying
+ * rationale (from-scratch HTML template captured to PDF, single-party,
+ * two ID-photo upload fields, 3-slot emergency contacts).
  */
 
-export const CONTRACTOR_DATA_BRANCHES = [
+export const CONTRACTOR_DATA_US_BRANCHES = [
   "Asheville", "Atlanta", "Birmingham", "Cape Girardeau", "Chattanooga", "Columbus", "Destin", "Huntsville",
   "Jackson MS", "Jackson TN", "Jacksonville", "Jonesboro", "Knoxville", "Little Rock", "Memphis", "Mobile",
   "Montgomery", "Nashville", "New Orleans", "Norfolk", "Raleigh", "Richmond", "San Antonio", "St. Louis",
   "Savannah", "Tallahassee", "Wilmington",
 ] as const;
 
-export const CONTRACTOR_DATA_STATES = [
+export const CONTRACTOR_DATA_US_STATES = [
   "Alabama", "Alaska", "Arizona", "Arkansas", "California", "Colorado", "Connecticut", "Delaware",
   "District of Columbia", "Florida", "Georgia", "Hawaii", "Idaho", "Illinois", "Indiana", "Iowa",
   "Kansas", "Kentucky", "Louisiana", "Maine", "Maryland", "Massachusetts", "Michigan", "Minnesota",
@@ -46,11 +27,11 @@ export const CONTRACTOR_DATA_STATES = [
   "Utah", "Vermont", "Virginia", "Washington", "West Virginia", "Wisconsin", "Wyoming",
 ] as const;
 
-export const CONTRACTOR_DATA_COUNTRIES = ["United States", "Philippines", "Other"] as const;
-export const CONTRACTOR_DATA_MARITAL_STATUSES = ["Single", "Married", "Divorced", "Widowed", "Separated"] as const;
+export const CONTRACTOR_DATA_US_COUNTRIES = ["United States", "Philippines", "Other"] as const;
+export const CONTRACTOR_DATA_US_MARITAL_STATUSES = ["Single", "Married", "Divorced", "Widowed", "Separated"] as const;
 
-/** Only contact #1 is required — #2 and #3 are entirely optional, matching the source content's own "(Optional)" labeling. */
-export interface ContractorDataEmergencyContact {
+/** Only contact #1 is required — #2 and #3 are entirely optional. */
+export interface ContractorDataUsEmergencyContact {
   firstName: string;
   middleName: string;
   lastName: string;
@@ -59,7 +40,7 @@ export interface ContractorDataEmergencyContact {
   secondaryContactNumber: string;
 }
 
-export const BLANK_EMERGENCY_CONTACT: ContractorDataEmergencyContact = {
+export const BLANK_EMERGENCY_CONTACT_US: ContractorDataUsEmergencyContact = {
   firstName: "",
   middleName: "",
   lastName: "",
@@ -68,7 +49,7 @@ export const BLANK_EMERGENCY_CONTACT: ContractorDataEmergencyContact = {
   secondaryContactNumber: "",
 };
 
-export interface ContractorDataFormData {
+export interface ContractorDataUsFormData {
   /** The employee's actual profile id — not shown on the document itself, just carried alongside for lookups. */
   employeeId: string;
   /** Derived display name — [firstName, middleName, lastName].filter(Boolean).join(" "). */
@@ -85,10 +66,10 @@ export interface ContractorDataFormData {
   phoneNumber: string;
   otherPhoneNumber: string;
   startDate: string;
-  /** YYYY-MM-DD — built in the fill UI from three separate Month/Day/Year dropdowns (not a native date picker), matching the source content's own field breakdown. */
+  /** YYYY-MM-DD — built in the fill UI from three separate Month/Day/Year dropdowns (not a native date picker). */
   birthDate: string;
   ssn: string;
-  /** Firebase Storage URLs — front + back as separate uploads under the same logical field, see this file's header comment. */
+  /** Firebase Storage URLs — front + back as separate uploads under the same logical field. */
   ssnCardUrls: string[];
   driversLicenseNumber: string;
   driversLicenseState: string;
@@ -98,14 +79,14 @@ export interface ContractorDataFormData {
   spouseName: string;
   spouseEmployer: string;
   livedInNewYork: "" | "Yes" | "No";
-  /** Always exactly 3 entries (#1 required, #2/#3 optional) — see ContractorDataEmergencyContact's header comment. */
-  emergencyContacts: ContractorDataEmergencyContact[];
+  /** Always exactly 3 entries (#1 required, #2/#3 optional). */
+  emergencyContacts: ContractorDataUsEmergencyContact[];
   dateSigned: string;
-  /** Raw canvas PNG as a data: URL — see w4FormTemplate.ts's header comment for why this is stored alongside the durable Firebase Storage signature URL. */
+  /** Raw canvas PNG as a data: URL, alongside the durable Firebase Storage signature URL. */
   signatureDataUrl: string;
 }
 
-export interface ContractorDataSignature {
+export interface ContractorDataUsSignature {
   name: string;
   url: string;
   signedAt: string;
@@ -122,7 +103,7 @@ const fmtDate = (v: string) => {
   return isNaN(d.getTime()) ? v : d.toLocaleDateString();
 };
 
-export const contractorDataStyles = `
+export const contractorDataUsStyles = `
   .cdata-container * { margin: 0; padding: 0; box-sizing: border-box; }
   .cdata-container { width: 816px; min-height: 1056px; background: #fff; padding: 72px; position: relative; font-family: Arial, Helvetica, sans-serif; color: #111827; font-size: 12px; line-height: 1.5; }
   .cdata-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 18px; }
@@ -147,13 +128,13 @@ function field(label: string, value: string) {
   return `<div class="cdata-row"><span class="cdata-label">${escapeHtml(label)}</span><span class="cdata-value">${blank(value)}</span></div>`;
 }
 
-export function buildContractorDataBodyMarkup(data: ContractorDataFormData, logoDataUrl: string, signature: ContractorDataSignature | undefined): string {
+export function buildContractorDataUsBodyMarkup(data: ContractorDataUsFormData, logoDataUrl: string, signature: ContractorDataUsSignature | undefined): string {
   const photoImgs = (urls: string[]) => urls.map((u) => `<img src="${u}" alt="" />`).join("");
 
   return `
     <div class="cdata-container">
       <div class="cdata-header">
-        <h1>EMPLOYEE DATA</h1>
+        <h1>CONTRACTOR DATA (US)</h1>
         ${logoDataUrl ? `<img src="${logoDataUrl}" alt="US In Home Services" />` : ""}
       </div>
 

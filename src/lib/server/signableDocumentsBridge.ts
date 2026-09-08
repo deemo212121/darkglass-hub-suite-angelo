@@ -311,9 +311,11 @@ export async function handleSignableDocumentsRequest(request: Request, env?: Rec
         location_consent: { name: "Employee Mobile App Location Sharing Consent Agreement", tab: "locationConsent" },
         damage: { name: "Damage, Part Loss, and Tool Penalty Commission Deduction Agreement", tab: "damage" },
         contractor_data: { name: "Employee Data", tab: "contractorData" },
+        contractor_data_us: { name: "Contractor Data (US)", tab: "contractorDataUs" },
         direct_deposit: { name: "Direct Deposit Authorization", tab: "directDeposit" },
         substance_screening: { name: "Substance Screening & Conduct Agreement", tab: "substanceScreening" },
         nda_form: { name: "Non-Disclosure Agreement", tab: "ndaForm" },
+        vehicle_use_agreement: { name: "Vehicle Use Agreement", tab: "vehicleUseAgreement" },
       };
       const docLabel = DOC_TYPE_LABELS[doc.document_type] ?? DOC_TYPE_LABELS.warning_form;
       const notifyFields = {

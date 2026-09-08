@@ -63,6 +63,7 @@ import {
   payGraceMinutesFor,
 } from "../attendanceGrace";
 import { TECHNICIAN_PAY_ROLES } from "../roleLabels";
+import { readEnv, fetchGmailConnection, refreshAccessToken, sendGmailMessage } from "./gmailBridge";
 
 type AlertType = "missing_clock_in" | "missing_clock_out";
 type NotificationKind = AlertType | "pattern_missing_clock_in" | "pattern_missing_clock_out";
@@ -75,6 +76,8 @@ interface AlertSummary {
   missingClockOutFired: number;
   streaksFired: number;
   notificationsSent: number;
+  graceWarningsFired: number;
+  graceWarningEmailsSent: number;
   errors: string[];
   /** Only populated when dryRun is true — the batches that would have been sent. */
   dryRunPreview?: Array<{ kind: NotificationKind; recipientId: string; employeeNames: string[] }>;
@@ -131,6 +134,7 @@ interface ServerProfile {
   id: string;
   company_id: string;
   display_name: string | null;
+  email: string | null;
   role: string | null;
   extra_roles: string[] | null;
   manager_name: string | null;
@@ -138,6 +142,15 @@ interface ServerProfile {
   required_check_in: string | null;
   required_check_out: string | null;
   off_days: number[] | null;
+}
+
+type GraceWarningType = "grace_warning_clock_in" | "grace_warning_clock_out";
+
+interface FiredGraceWarning {
+  companyId: string;
+  managerId: string;
+  employeeName: string;
+  kind: GraceWarningType;
 }
 
 // Admin/SuperAdmin deliberately excluded — routine attendance misses are
@@ -177,6 +190,8 @@ export async function runAttendanceAlertCheck(
     missingClockOutFired: 0,
     streaksFired: 0,
     notificationsSent: 0,
+    graceWarningsFired: 0,
+    graceWarningEmailsSent: 0,
     errors: [],
     ...(opts.dryRun ? { dryRunPreview: [] } : {}),
   };
@@ -207,9 +222,9 @@ export async function runAttendanceAlertCheck(
     return d.toISOString().slice(0, 10);
   })();
 
-  const [profilesRes, entriesRes, alertsRes, historyRes, membersRes, branchRolesRes] = await Promise.all([
+  const [profilesRes, entriesRes, alertsRes, historyRes, membersRes, branchRolesRes, warningSubsRes] = await Promise.all([
     fetch(
-      `${supabaseUrl}/rest/v1/profiles?select=id,company_id,display_name,role,extra_roles,manager_name,assigned_branch,required_check_in,required_check_out,off_days&is_active=eq.true`,
+      `${supabaseUrl}/rest/v1/profiles?select=id,company_id,display_name,email,role,extra_roles,manager_name,assigned_branch,required_check_in,required_check_out,off_days&is_active=eq.true`,
       { headers: sbHeaders }
     ),
     fetch(`${supabaseUrl}/rest/v1/timecard_entries?select=profile_id,check_in,check_out&work_date=eq.${dateISO}`, {
@@ -226,6 +241,9 @@ export async function runAttendanceAlertCheck(
     fetch(`${supabaseUrl}/rest/v1/general_info_branch_roles?select=branch,branch_manager,parts_manager`, {
       headers: sbHeaders,
     }),
+    // Grace-warning email enrollment (Attendance Monitoring's SuperAdmin-only
+    // Settings tab, migration 0217) — which managers opted in.
+    fetch(`${supabaseUrl}/rest/v1/attendance_warning_subscriptions?select=manager_profile_id`, { headers: sbHeaders }),
   ]);
   if (!profilesRes.ok) {
     summary.errors.push(`Failed to list profiles: HTTP ${profilesRes.status}`);
@@ -253,6 +271,8 @@ export async function runAttendanceAlertCheck(
   const branchRoles: Array<{ branch: string; branch_manager: string | null; parts_manager: string | null }> =
     branchRolesRes.ok ? await branchRolesRes.json() : [];
   const branchRolesByBranch = new Map(branchRoles.map((r) => [r.branch.trim().toLowerCase(), r]));
+  const warningSubs: Array<{ manager_profile_id: string }> = warningSubsRes.ok ? await warningSubsRes.json() : [];
+  const subscribedManagerIds = new Set(warningSubs.map((r) => r.manager_profile_id));
 
   const entryByProfile = new Map(entries.map((e) => [e.profile_id, e]));
   const dedupSet = new Set(alreadyNotified.map((a) => `${a.profile_id}|${a.alert_type}`));
@@ -299,6 +319,20 @@ export async function runAttendanceAlertCheck(
     return match?.id ?? null;
   }
 
+  // Deliberately the plain manager_name lookup only (no CSR-team-leader
+  // special case, unlike resolveManagerId above) — this is exactly the
+  // candidate set Attendance Monitoring's Settings tab offers as
+  // enrollable checkboxes, so a grace-warning email only ever targets
+  // someone who could actually have been enrolled for it.
+  function resolveManagerIdSimple(p: ServerProfile): string | null {
+    const managerName = (p.manager_name || "").trim().toLowerCase();
+    if (!managerName) return null;
+    const match = profiles.find(
+      (o) => o.company_id === p.company_id && (o.display_name || "").trim().toLowerCase() === managerName
+    );
+    return match?.id ?? null;
+  }
+
   // Only for missing_clock_out, only for technicians (see this file's own
   // header comment) — the branch's Branch Manager and Parts Manager from
   // General Information's directory, resolved by name the same tolerant
@@ -324,6 +358,7 @@ export async function runAttendanceAlertCheck(
   }
 
   const firedAlerts: FiredAlert[] = [];
+  const graceWarningsFired: FiredGraceWarning[] = [];
 
   for (const p of profiles) {
     if (!p.required_check_in && !p.required_check_out) continue;
@@ -392,8 +427,52 @@ export async function runAttendanceAlertCheck(
         summary.errors.push(`${employeeName} (${alertType}): ${e instanceof Error ? e.message : String(e)}`);
       }
     }
+
+    // ── Grace-warning email (Settings tab, migration 0217) — fires the
+    // moment the scheduled time passes, while still WITHIN the grace
+    // window (missing_clock_in/out above only fire once grace has fully
+    // expired) — only for an employee whose resolved manager has actually
+    // opted in. Silently does nothing for anyone else, same as
+    // resolveManagerId returning null does for the alerts above. ──
+    const graceWarningFlags: GraceWarningType[] = [];
+    if (!checkIn && p.required_check_in && nowHHMM > p.required_check_in && (!graceIn || nowHHMM <= graceIn)) {
+      graceWarningFlags.push("grace_warning_clock_in");
+    }
+    if (checkIn && !checkOut && p.required_check_out && nowHHMM > p.required_check_out && (!graceOut || nowHHMM <= graceOut)) {
+      graceWarningFlags.push("grace_warning_clock_out");
+    }
+    for (const alertType of graceWarningFlags) {
+      const dedupKey = `${p.id}|${alertType}`;
+      if (dedupSet.has(dedupKey)) continue;
+      const managerId = resolveManagerIdSimple(p);
+      if (!managerId || !subscribedManagerIds.has(managerId)) continue;
+
+      const employeeName = p.display_name || "This employee";
+      const recordFired = () => graceWarningsFired.push({ companyId: p.company_id, managerId, employeeName, kind: alertType });
+
+      if (opts.dryRun) {
+        recordFired();
+        continue;
+      }
+      try {
+        const insertRes = await fetch(
+          `${supabaseUrl}/rest/v1/attendance_alerts?on_conflict=profile_id,work_date,alert_type`,
+          {
+            method: "POST",
+            headers: { ...sbHeaders, Prefer: "return=representation,resolution=ignore-duplicates" },
+            body: JSON.stringify({ company_id: p.company_id, profile_id: p.id, work_date: dateISO, alert_type: alertType }),
+          }
+        );
+        const inserted: unknown[] = insertRes.ok ? await insertRes.json() : [];
+        if (!insertRes.ok || inserted.length === 0) continue; // already claimed by a concurrent/earlier run
+        recordFired();
+      } catch (e) {
+        summary.errors.push(`${employeeName} (${alertType}): ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
   }
 
+  summary.graceWarningsFired = graceWarningsFired.length;
   summary.missingClockInFired = firedAlerts.filter((a) => a.kind === "missing_clock_in").length;
   summary.missingClockOutFired = firedAlerts.filter((a) => a.kind === "missing_clock_out").length;
 
@@ -427,6 +506,56 @@ export async function runAttendanceAlertCheck(
       else summary.errors.push(`Notify ${g.recipientId} (${g.kind} batch of ${g.employeeNames.length}) failed: HTTP ${notifyRes.status}`);
     } catch (e) {
       summary.errors.push(`Notify ${g.recipientId} (${g.kind} batch): ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  // ── Grace-warning emails — one per enrolled manager per run, listing
+  // every employee of theirs currently inside (not yet past) their grace
+  // window. Silently skipped for a company with no ATTENDANCE Gmail
+  // connected, or a manager with no email on file — same "nothing to send
+  // to" tolerance the rest of this job already has for a null recipient. ──
+  const warningsByManager = new Map<string, { companyId: string; employeeKinds: Array<{ name: string; kind: GraceWarningType }> }>();
+  for (const w of graceWarningsFired) {
+    if (!warningsByManager.has(w.managerId)) warningsByManager.set(w.managerId, { companyId: w.companyId, employeeKinds: [] });
+    warningsByManager.get(w.managerId)!.employeeKinds.push({ name: w.employeeName, kind: w.kind });
+  }
+
+  if (warningsByManager.size > 0) {
+    const profileById = new Map(profiles.map((p) => [p.id, p]));
+    const gmailEnvResult = readEnv(env);
+    if ("error" in gmailEnvResult) {
+      summary.errors.push(`Grace-warning emails skipped: ${gmailEnvResult.error}`);
+    } else {
+      const gmailEnv = gmailEnvResult;
+      // One ATTENDANCE connection lookup per distinct company involved, not per manager.
+      const connectionByCompany = new Map<string, { refreshToken: string; connectedEmail: string | null } | null>();
+      for (const info of warningsByManager.values()) {
+        if (!connectionByCompany.has(info.companyId)) {
+          connectionByCompany.set(info.companyId, await fetchGmailConnection(gmailEnv, info.companyId, "ATTENDANCE"));
+        }
+      }
+      for (const [managerId, info] of warningsByManager) {
+        const manager = profileById.get(managerId);
+        if (!manager?.email) continue;
+        const connection = connectionByCompany.get(info.companyId);
+        if (!connection) continue; // ATTENDANCE Gmail not connected for this company
+        try {
+          const accessToken = await refreshAccessToken(gmailEnv, connection.refreshToken);
+          const fromEmail = connection.connectedEmail || "me";
+          const inNames = info.employeeKinds.filter((e) => e.kind === "grace_warning_clock_in").map((e) => e.name);
+          const outNames = info.employeeKinds.filter((e) => e.kind === "grace_warning_clock_out").map((e) => e.name);
+          const lines: string[] = [`Hi ${manager.display_name || "there"},`, ""];
+          if (inNames.length) lines.push(`Not yet clocked in (still within grace): ${inNames.join(", ")}.`);
+          if (outNames.length) lines.push(`Not yet clocked out (still within grace): ${outNames.join(", ")}.`);
+          lines.push("", "This is an early heads-up before their grace period runs out — no action needed if they're already on their way.");
+          const subject = `Attendance grace warning — ${dateISO}`;
+          await sendGmailMessage(accessToken, fromEmail, manager.email, subject, lines.join("\n"));
+          summary.graceWarningEmailsSent++;
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          summary.errors.push(`Grace-warning email to ${manager.display_name || managerId}: ${msg}`);
+        }
+      }
     }
   }
 

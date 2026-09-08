@@ -8,17 +8,19 @@
  * "IT_1"/"IT_2"/"IT_3" (IT Tickets' "Send" — see migration 0173; unlike
  * every other slot, IT Tickets lets the caller pick WHICH of up to 3
  * connected accounts to send from per email, rather than always
- * resolving to one fixed slot). Status/disconnect go through Supabase
- * RPCs (see migration 0113_hr_gmail_connections.sql), same pattern as
- * customForms.ts's Google Drive connection wrappers. The actual connect
- * flow and sends both go through src/lib/server/gmailBridge.ts instead
- * (a real OAuth redirect, and a privileged send action — neither fits a
- * plain Supabase RPC).
+ * resolving to one fixed slot), and "ATTENDANCE" (grace-period warning
+ * emails — see migration 0217, src/lib/server/attendanceAlerts.ts; sent
+ * only by the server-side cron job, not from any client action here).
+ * Status/disconnect go through Supabase RPCs (see migration
+ * 0113_hr_gmail_connections.sql), same pattern as customForms.ts's Google
+ * Drive connection wrappers. The actual connect flow and sends both go
+ * through src/lib/server/gmailBridge.ts instead (a real OAuth redirect,
+ * and a privileged send action — neither fits a plain Supabase RPC).
  */
 import { supabase } from "./client";
 import { auth as firebaseAuth } from "@/lib/firebase/config";
 
-export type GmailRegion = "US" | "PH" | "PARTS" | "IT_1" | "IT_2" | "IT_3";
+export type GmailRegion = "US" | "PH" | "PARTS" | "IT_1" | "IT_2" | "IT_3" | "ATTENDANCE";
 export const IT_TICKET_GMAIL_REGIONS: GmailRegion[] = ["IT_1", "IT_2", "IT_3"];
 
 export interface GmailConnectionStatus {
