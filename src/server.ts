@@ -17,6 +17,7 @@ import { handleLiveChatRequest } from "./lib/server/liveChatBridge";
 import { handleAdminUpdateEmailRequest } from "./lib/server/adminUpdateEmailBridge";
 import { handleLiveChatStaffRequest } from "./lib/server/liveChatStaffBridge";
 import { handleGmailRequest } from "./lib/server/gmailBridge";
+import { handleRunAttendanceAlertsRequest } from "./lib/server/attendanceAlerts";
 import { handleAdminPasswordRequest } from "./lib/server/adminPasswordBridge";
 import { handleLoginLockoutRequest } from "./lib/server/loginLockoutBridge";
 import { handlePasswordResetRequest } from "./lib/server/passwordResetRequestBridge";
@@ -173,6 +174,10 @@ export default {
     if (url.pathname === "/api/signable-documents") {
       const merged = await resolveServerEnv(env);
       return await handleSignableDocumentsRequest(request, merged);
+    }
+    if (url.pathname === "/api/run-attendance-alerts") {
+      const merged = await resolveServerEnv(env);
+      return await handleRunAttendanceAlertsRequest(request, merged);
     }
     if (url.pathname === "/api/live-chat") {
       const merged = await resolveServerEnv(env);
