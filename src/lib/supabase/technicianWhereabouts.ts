@@ -220,32 +220,72 @@ export interface TicketAttendanceRow {
  * this technician actually check into their scheduled tickets," separate
  * from the general clock In/Out attendance the rest of this page tracks.
  */
+const TICKET_ATTENDANCE_SELECT =
+  "id, ticket_no, technician, schedule_date, status, time_slot, onsite_arrived_at, onsite_done_at, customer:customers ( address, address2, city, state, zip )";
+
+function mapTicketAttendanceRow(row: any): TicketAttendanceRow {
+  return {
+    ticketId: row.id as string,
+    ticketNo: row.ticket_no as string,
+    technician: String(row.technician).trim(),
+    scheduleDate: row.schedule_date as string,
+    status: row.status as string,
+    statusGroup: statusGroupOf(row.status),
+    timeSlot: row.time_slot as string | null,
+    address: formatAddress(row.customer ?? {}),
+    arrivedAt: row.onsite_arrived_at as string | null,
+    doneAt: row.onsite_done_at as string | null,
+  };
+}
+
+// Date then time-slot order — same route order Technician Whereabouts'
+// numbered Stops list uses, so a technician's stop #3 there is also row #3
+// here.
+function sortTicketAttendanceRows(rows: TicketAttendanceRow[]): TicketAttendanceRow[] {
+  return rows.sort((a, b) => a.scheduleDate.localeCompare(b.scheduleDate) || slotSortKey(a.timeSlot).localeCompare(slotSortKey(b.timeSlot)));
+}
+
 export async function getCompanyTicketAttendance(dateFrom: string, dateTo: string): Promise<TicketAttendanceRow[]> {
   const { data, error } = await supabase
     .from("tickets")
-    .select("id, ticket_no, technician, schedule_date, status, time_slot, onsite_arrived_at, onsite_done_at, customer:customers ( address, address2, city, state, zip )")
+    .select(TICKET_ATTENDANCE_SELECT)
     .gte("schedule_date", dateFrom)
     .lte("schedule_date", dateTo);
   if (error) {
     console.error("getCompanyTicketAttendance error:", error.message);
     throw new Error(error.message);
   }
-  return (data ?? [])
-    .filter((row: any) => String(row.technician || "").trim())
-    .map((row: any) => ({
-      ticketId: row.id as string,
-      ticketNo: row.ticket_no as string,
-      technician: String(row.technician).trim(),
-      scheduleDate: row.schedule_date as string,
-      status: row.status as string,
-      statusGroup: statusGroupOf(row.status),
-      timeSlot: row.time_slot as string | null,
-      address: formatAddress(row.customer ?? {}),
-      arrivedAt: row.onsite_arrived_at as string | null,
-      doneAt: row.onsite_done_at as string | null,
-    }))
-    // Date then time-slot order — same route order Technician Whereabouts'
-    // numbered Stops list uses, so a technician's stop #3 there is also
-    // row #3 here.
-    .sort((a, b) => a.scheduleDate.localeCompare(b.scheduleDate) || slotSortKey(a.timeSlot).localeCompare(slotSortKey(b.timeSlot)));
+  return sortTicketAttendanceRows(
+    (data ?? []).filter((row: any) => String(row.technician || "").trim()).map(mapTicketAttendanceRow)
+  );
+}
+
+/**
+ * Same data as getCompanyTicketAttendance, scoped to one technician at the
+ * database level instead of fetching every technician's tickets and
+ * filtering client-side. Needed anywhere that queries a whole payroll
+ * period (weeks) rather than Ticket Attendance's own single-day default —
+ * a company-wide query over that wide a range can quietly exceed
+ * PostgREST's default 1000-row response cap, silently dropping some of
+ * this technician's own tickets (the ones sorted past the cutoff) even
+ * though they're really scheduled. Scoping the query itself avoids ever
+ * approaching that cap, since one technician's tickets over a month stay
+ * far below it. `technician` matches case-insensitively (ilike with no
+ * wildcards = exact match ignoring case), same tolerance the client-side
+ * normalized-name comparisons elsewhere already give this free-text field.
+ */
+export async function getTicketAttendanceForTechnician(technician: string, dateFrom: string, dateTo: string): Promise<TicketAttendanceRow[]> {
+  const name = technician.trim();
+  if (!name) return [];
+  const { data, error } = await supabase
+    .from("tickets")
+    .select(TICKET_ATTENDANCE_SELECT)
+    .ilike("technician", name)
+    .gte("schedule_date", dateFrom)
+    .lte("schedule_date", dateTo);
+  if (error) {
+    console.error("getTicketAttendanceForTechnician error:", error.message);
+    throw new Error(error.message);
+  }
+  return sortTicketAttendanceRows((data ?? []).map(mapTicketAttendanceRow));
 }
