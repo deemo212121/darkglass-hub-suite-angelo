@@ -138,11 +138,9 @@ export const contractorDataStyles = `
   .cdata-photos img { width: 140px; height: 88px; object-fit: cover; border: 1px solid #d1d5db; border-radius: 4px; }
   .cdata-contact-label { font-weight: 700; font-size: 11px; margin: 12px 0 4px; }
   .cdata-cert { margin-top: 20px; font-style: italic; }
-  .cdata-sign-row { display: flex; gap: 24px; align-items: flex-end; border-bottom: 1px solid #9ca3af; padding: 10px 2px; margin-top: 10px; }
-  .cdata-sign-name { flex: 2; }
-  .cdata-sign-sig { flex: 1; display: flex; align-items: flex-end; }
-  .cdata-sign-date { flex: 1; }
-  .cdata-sig-img { max-height: 36px; max-width: 140px; object-fit: contain; }
+  .cdata-sig-line { border-bottom: 1px solid #9ca3af; min-height: 44px; padding: 4px 2px; display: flex; align-items: flex-end; margin-top: 16px; }
+  .cdata-sign-row { display: flex; justify-content: space-between; gap: 16px; padding: 6px 2px 0; }
+  .cdata-sig-img { max-height: 36px; max-width: 220px; object-fit: contain; }
 `;
 
 function field(label: string, value: string) {
@@ -225,10 +223,10 @@ export function buildContractorDataBodyMarkup(data: ContractorDataFormData, logo
 
       <p class="cdata-cert">By signing below, I certify that the information provided above is true, accurate, and complete to the best of my knowledge.</p>
 
+      <div class="cdata-sig-line">${signature ? `<img class="cdata-sig-img" src="${signature.url}" alt="Signature" />` : ""}</div>
       <div class="cdata-sign-row">
-        <div class="cdata-sign-name">Signature: <strong>${blank(data.employeeName)}</strong></div>
-        <div class="cdata-sign-sig">${signature ? `<img class="cdata-sig-img" src="${signature.url}" alt="Signature" />` : ""}</div>
-        <div class="cdata-sign-date">Date: ${signature ? escapeHtml(fmtDate(signature.signedAt)) : ""}</div>
+        <div>${signature ? `Signature: <strong>${blank(data.employeeName)}</strong>` : "Signature:"}</div>
+        <div>${signature ? `Date: ${escapeHtml(fmtDate(signature.signedAt))}` : ""}</div>
       </div>
     </div>
   `;

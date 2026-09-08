@@ -88,11 +88,9 @@ export const vehicleUseAgreementStyles = `
   .vua-row { border-bottom: 1px solid #d1d5db; padding: 5px 2px; }
   .vua-label { color: #374151; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.2px; display: block; }
   .vua-value { font-weight: 700; }
-  .vua-sign-row { display: flex; gap: 24px; align-items: flex-end; border-bottom: 1px solid #9ca3af; padding: 10px 2px; margin-top: 10px; }
-  .vua-sign-name { flex: 2; }
-  .vua-sign-sig { flex: 1; display: flex; align-items: flex-end; }
-  .vua-sign-date { flex: 1; }
-  .vua-sig-img { max-height: 36px; max-width: 140px; object-fit: contain; }
+  .vua-sig-line { border-bottom: 1px solid #9ca3af; min-height: 44px; padding: 4px 2px; display: flex; align-items: flex-end; margin-top: 16px; }
+  .vua-sign-row { display: flex; justify-content: space-between; gap: 16px; padding: 6px 2px 0; }
+  .vua-sig-img { max-height: 36px; max-width: 220px; object-fit: contain; }
 `;
 
 function field(label: string, value: string) {
@@ -124,10 +122,10 @@ export function buildVehicleUseAgreementBodyMarkup(data: VehicleUseAgreementForm
         ${field("Branch", data.branch)}
       </div>
 
+      <div class="vua-sig-line">${signature ? `<img class="vua-sig-img" src="${signature.url}" alt="Signature" />` : ""}</div>
       <div class="vua-sign-row">
-        <div class="vua-sign-name">Contractor's Signature: <strong>${blank(data.employeeName)}</strong></div>
-        <div class="vua-sign-sig">${signature ? `<img class="vua-sig-img" src="${signature.url}" alt="Signature" />` : ""}</div>
-        <div class="vua-sign-date">Date: ${signature ? escapeHtml(fmtDate(signature.signedAt)) : ""}</div>
+        <div>${signature ? `Contractor's Signature: <strong>${blank(data.employeeName)}</strong>` : "Contractor's Signature:"}</div>
+        <div>${signature ? `Date: ${escapeHtml(fmtDate(signature.signedAt))}` : ""}</div>
       </div>
     </div>
   `;
