@@ -397,7 +397,7 @@ function Landing() {
           <div className="relative ahs-enter-left">
             {/* Floating module icons — decorative, hidden on small screens
                 where there's no room for them not to collide with text. */}
-            <div aria-hidden className="hidden lg:block absolute inset-0 pointer-events-none">
+            <div aria-hidden className="hidden lg:block absolute inset-0 -z-10 pointer-events-none">
               {FLOATING_ICONS.map(({ Icon, style, delay, duration }, i) => (
                 <div
                   key={i}
