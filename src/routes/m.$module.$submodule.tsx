@@ -93,6 +93,7 @@ import { ROLE_LABELS } from "@/lib/roleLabels";
 import { useEffect, useState } from "react";
 import { ReportHRDaily } from "@/components/ReportHRDaily";
 import { HrOnboardingChecklistPage } from "@/components/HrOnboardingChecklistPage";
+import { TechnicianFormChecklistPage } from "@/components/TechnicianFormChecklistPage";
 import { StaffListPage } from "@/components/StaffListPage";
 import { ReportHR } from "@/components/ReportHR";
 import { ReportCSRDaily } from "@/components/ReportCSRDaily";
@@ -640,6 +641,8 @@ function SubModule() {
         ? <ReportHRDaily mod={mod} sub={sub} />
         : (sub as any).custom === "hr-todo-list"
         ? <HrOnboardingChecklistPage />
+        : (sub as any).custom === "technician-form-checklist"
+        ? <TechnicianFormChecklistPage />
         : sub.custom === "staff-list"
         ? <StaffListPage mod={mod} sub={sub} />
         : sub.custom === "work-map"

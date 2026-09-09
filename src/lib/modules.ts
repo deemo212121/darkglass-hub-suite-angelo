@@ -373,6 +373,15 @@ const hrMod: ModuleDef = {
       seed: () => ({}),
     },
     {
+      slug: "technician-form-checklist",
+      title: "Technician Form Checklist",
+      description: "Live signed/pending status of every Technician-tab form, per technician.",
+      custom: "technician-form-checklist" as any,
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
+    {
       slug: "user-management",
       title: "User Management",
       description: "User accounts administration.",
