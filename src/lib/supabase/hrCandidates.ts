@@ -184,6 +184,12 @@ export async function updateCandidateStatus(id: string, status: CandidateStatus,
   }
 }
 
+/** Updates just the free-text note on a candidate row — separate from addCandidate's initial `notes` so HR can jot down/revise something after the fact (e.g. interview impressions) without touching status. */
+export async function updateCandidateNotes(id: string, notes: string): Promise<void> {
+  const { error } = await supabase.from("hr_candidates").update({ notes: notes.trim() || null }).eq("id", id);
+  if (error) throw new Error(error.message);
+}
+
 export async function deleteCandidate(id: string): Promise<void> {
   const { error } = await supabase.from("hr_candidates").delete().eq("id", id);
   if (error) throw new Error(error.message);
