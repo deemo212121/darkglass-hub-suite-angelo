@@ -397,7 +397,7 @@ function Landing() {
           <div className="relative ahs-enter-left">
             {/* Floating module icons — decorative, hidden on small screens
                 where there's no room for them not to collide with text. */}
-            <div aria-hidden className="hidden lg:block absolute inset-0 pointer-events-none">
+            <div aria-hidden className="hidden lg:block absolute inset-0 -z-10 pointer-events-none">
               {FLOATING_ICONS.map(({ Icon, style, delay, duration }, i) => (
                 <div
                   key={i}
@@ -409,8 +409,7 @@ function Landing() {
               ))}
             </div>
 
-            <img id="ahs-landing-hero-logo" src={logo} alt="" className="h-16 w-16 object-contain drop-shadow-2xl" />
-            <h1 className="mt-6 font-display font-bold tracking-tight text-4xl sm:text-5xl xl:text-6xl">
+            <h1 className="font-display font-bold tracking-tight text-4xl sm:text-5xl xl:text-6xl">
               Admin Hub Solutions
             </h1>
             <p className="mt-5 text-lg sm:text-xl text-foreground/90 max-w-md">
@@ -657,16 +656,13 @@ function Landing() {
            card glow already use, so it reads as part of this page's look
            instead of a generic app-wide fallback. #id beats the plain
            "header img" element selector at equal !important specificity.
+           (Only the header logo remains on this page — the hero section's
+           duplicate logo above the headline was removed.)
         */
         :root[data-theme="light"] #ahs-landing-header img {
           background: linear-gradient(135deg, #5b7eff, #4c5ac0) !important;
           border-radius: 10px !important;
           padding: 5px !important;
-        }
-        :root[data-theme="light"] #ahs-landing-hero-logo {
-          background: linear-gradient(135deg, #5b7eff, #4c5ac0);
-          border-radius: 20px;
-          padding: 14px;
         }
       `}</style>
     </div>

@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect, useRef, Fragment } from "react";
 import { Link, useSearch, useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
-import { ChevronLeft, ChevronDown, ChevronUp, ChevronRight, Plus, Trash2, AlertTriangle, CheckCircle, XCircle, Paperclip, Users, Clock, UserCheck, UserX, UserMinus, Search, Bell, Download, Forward, History, FileText, ClipboardList, Landmark, GripVertical, FileCheck, Link2, Copy, Calendar } from "lucide-react";
+import { ChevronLeft, ChevronDown, ChevronUp, ChevronRight, Plus, Trash2, AlertTriangle, CheckCircle, XCircle, Paperclip, Users, Clock, UserCheck, UserX, UserMinus, Search, Bell, Download, Forward, History, FileText, ClipboardList, Landmark, GripVertical, FileCheck, Link2, Copy, Calendar, Check, Pencil } from "lucide-react";
 import { useSignaturePad } from "@/hooks/useSignaturePad";
 import { SignaturePadControls } from "@/components/SignaturePad";
 
@@ -29,6 +29,7 @@ import {
   getCandidateCvUrlForForwarding,
   getCandidates,
   updateCandidateStatus,
+  updateCandidateNotes,
   uploadCandidateCv,
   getEodHiringReport,
   getEomHiringReport,
@@ -206,29 +207,35 @@ const BRANCH_MANAGER_ROLES = new Set(["BRANCH_MANAGER", "SENIOR_BRANCH_MANAGER"]
 
 const CANDIDATE_STATUS_LABEL: Record<CandidateStatus, string> = {
   applied: "Applied",
+  phone_screening: "Phone Screening",
   interviewing: "Interviewing",
   selected: "Selected",
   training: "Training",
-  on_hold: "On Hold",
   hired: "Hired",
   rejected: "Rejected",
+  withdrawn: "Withdrawn",
+  cancelled: "Cancelled",
 };
 const CANDIDATE_STATUS_COLOR: Record<CandidateStatus, string> = {
   applied: "bg-blue-500/20 text-blue-300",
+  phone_screening: "bg-indigo-500/20 text-indigo-300",
   interviewing: "bg-yellow-500/20 text-yellow-300",
   selected: "bg-purple-500/20 text-purple-300",
   training: "bg-cyan-500/20 text-cyan-300",
-  on_hold: "bg-slate-500/20 text-slate-300",
   hired: "bg-green-500/20 text-green-300",
   rejected: "bg-red-500/20 text-red-300",
+  withdrawn: "bg-slate-500/20 text-slate-300",
+  cancelled: "bg-slate-500/20 text-slate-400",
 };
 // Statuses that require an accompanying date when selected — interview
-// date for Interviewing, training start date for Training — see
-// hr_update_candidate_status() in 0047_hr_hiring_reports.sql, which is
-// what actually persists these dates alongside the status transition.
+// date for Interviewing, training start date for Training, withdraw date
+// for Withdrawn — see hr_update_candidate_status() in
+// 0048_hr_hiring_reports.sql / 0221_hr_candidates_status_update.sql, which
+// is what actually persists these dates alongside the status transition.
 const STATUS_REQUIRES_DATE: Partial<Record<CandidateStatus, string>> = {
   interviewing: "Interview date",
   training: "Training start date",
+  withdrawn: "Withdraw date",
 };
 
 type EmploymentStatus = "active" | "inactive" | "terminated" | "resigned";
@@ -1477,6 +1484,16 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // ── Candidate handlers ──
   const allBranches = useMemo(() => LOCATIONS_DATA.map(l => l.location).sort(), []);
   const branchOptions = isBranchManager && myLocations.length > 0 ? myLocations : allBranches;
+
+  // A "Hired" candidate with no matching user account yet (matched by
+  // email, the only natural key hr_candidates and profiles share) shows as
+  // "Pending Account Creation" instead of a bare "Hired" badge — see the
+  // status cell below.
+  const employeeEmailSet = useMemo(
+    () => new Set(employees.map((e) => (e.email || "").trim().toLowerCase()).filter(Boolean)),
+    [employees]
+  );
+  const candidateNeedsAccount = (c: Candidate) => c.status === "hired" && !!c.email && !employeeEmailSet.has(c.email.trim().toLowerCase());
 
   const visibleCandidates = useMemo(() => {
     if (!isBranchManager) return candidates;
@@ -10191,6 +10208,24 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
 
+  // Candidate Note — inline pencil-edit, same click-to-edit pattern used
+  // elsewhere in this file (e.g. Estimate Time on Payroll Detail).
+  const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
+  const [noteDraft, setNoteDraft] = useState("");
+  const [savingNoteId, setSavingNoteId] = useState<string | null>(null);
+  const handleSaveCandidateNote = async (id: string) => {
+    setSavingNoteId(id);
+    try {
+      await updateCandidateNotes(id, noteDraft);
+      setCandidates((prev) => prev.map((c) => (c.id === id ? { ...c, notes: noteDraft.trim() || null } : c)));
+      setEditingNoteId(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save note.");
+    } finally {
+      setSavingNoteId(null);
+    }
+  };
+
   // ── Forward CV to a manager via the internal messenger ──
   // "Manager" = any role containing "MANAGER" (Branch Manager, Parts
   // Manager, CSR Manager, Technician Manager, etc.) — matches the same
@@ -10260,8 +10295,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // Branch Managers run the final interview and pick a candidate, but HR
   // finalizes the actual hire.
   const candidateStatusOptions = (isHrOrAdmin
-    ? ["applied", "interviewing", "selected", "training", "on_hold", "hired", "rejected"]
-    : ["interviewing", "selected", "training", "on_hold", "rejected"]) as CandidateStatus[];
+    ? ["applied", "phone_screening", "interviewing", "selected", "training", "hired", "rejected", "withdrawn", "cancelled"]
+    : ["phone_screening", "interviewing", "selected", "training", "rejected", "withdrawn", "cancelled"]) as CandidateStatus[];
 
   // ── Employee status handlers (now real — persists to employee_info + is_active) ──
   const handleUpdateEmployeeStatus = (id: string, newStatus: EmploymentStatus) => {
@@ -11933,14 +11968,15 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                 <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">CV</th>
                 <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Status</th>
                 <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Applied</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Note</th>
                 <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Actions</th>
               </tr>
             </thead>
             <tbody>
               {candidatesLoading ? (
-                <tr><td colSpan={8} className="px-4 py-8 text-center text-muted-foreground text-sm">Loading candidates…</td></tr>
+                <tr><td colSpan={9} className="px-4 py-8 text-center text-muted-foreground text-sm">Loading candidates…</td></tr>
               ) : filteredCandidates.length === 0 ? (
-                <tr><td colSpan={8} className="px-4 py-8 text-center text-muted-foreground text-sm">{visibleCandidates.length === 0 ? "No candidates yet." : "No candidates match these filters."}</td></tr>
+                <tr><td colSpan={9} className="px-4 py-8 text-center text-muted-foreground text-sm">{visibleCandidates.length === 0 ? "No candidates yet." : "No candidates match these filters."}</td></tr>
               ) : (
                 filteredCandidates.map((c) => (
                   <tr key={c.id} className="border-b border-white/5 hover:bg-white/5">
@@ -11958,9 +11994,51 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                         {!candidateStatusOptions.includes(c.status) && <option value={c.status}>{CANDIDATE_STATUS_LABEL[c.status]}</option>}
                         {candidateStatusOptions.map((s) => <option key={s} value={s}>{CANDIDATE_STATUS_LABEL[s]}</option>)}
                       </select>
+                      {candidateNeedsAccount(c) && (
+                        <div className="mt-1 flex items-center gap-1.5">
+                          <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 whitespace-nowrap">Pending Account Creation</span>
+                          <Link
+                            to="/m/$module/$submodule"
+                            params={{ module: "hr", submodule: "user-management" }}
+                            className="text-[10px] text-blue-400 hover:text-blue-300 underline whitespace-nowrap"
+                          >
+                            Create Account
+                          </Link>
+                        </div>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">
                       {c.createdAt ? new Date(c.createdAt).toLocaleString() : "—"}
+                    </td>
+                    <td className="px-4 py-3 max-w-[16rem]">
+                      {editingNoteId === c.id ? (
+                        <div className="flex items-start gap-1">
+                          <textarea
+                            autoFocus
+                            value={noteDraft}
+                            onChange={(e) => setNoteDraft(e.target.value)}
+                            onKeyDown={(e) => { if (e.key === "Escape") setEditingNoteId(null); }}
+                            rows={2}
+                            className="w-40 rounded border border-white/15 bg-slate-800 px-2 py-1 text-xs text-white focus:outline-none focus:border-blue-500"
+                          />
+                          <button
+                            onClick={() => void handleSaveCandidateNote(c.id)}
+                            disabled={savingNoteId === c.id}
+                            className="text-emerald-400 hover:text-emerald-300 disabled:opacity-40 shrink-0 mt-1"
+                          >
+                            <Check className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => { setEditingNoteId(c.id); setNoteDraft(c.notes || ""); }}
+                          className="inline-flex items-start gap-1 text-left text-xs text-muted-foreground hover:text-white"
+                          title="Click to edit"
+                        >
+                          <span className="line-clamp-2">{c.notes || "—"}</span>
+                          <Pencil className="h-3 w-3 shrink-0 mt-0.5 opacity-60" />
+                        </button>
+                      )}
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-1">

@@ -326,7 +326,10 @@ export const Route = createFileRoute("/m/$module/$submodule/$userId")({
     const module = getModule(params.module);
     const submodule = getSubModule(params.module, params.submodule);
     
-    if (!module || !submodule || module.slug !== "admin" || submodule.slug !== "user-management") {
+    // User Management also lives in the HR module (a duplicate submodule —
+    // see modules.ts) — allow either module slug, same broadening as the
+    // role-gate checks in m.$module.$submodule.tsx/submoduleAccess.ts.
+    if (!module || !submodule || (module.slug !== "admin" && module.slug !== "hr") || submodule.slug !== "user-management") {
       throw notFound();
     }
 

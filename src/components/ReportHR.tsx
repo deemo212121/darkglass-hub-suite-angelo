@@ -24,15 +24,17 @@ import { getAllAgentNotes, type CsrAgentNote } from "@/lib/supabase/csrAgentNote
 const TOOLTIP_STYLE = { background: "#ffffff", border: "1px solid #cbd5e1", borderRadius: 6, color: "#0f172a", fontSize: 12, fontWeight: 600, boxShadow: "0 4px 12px rgba(0,0,0,0.3)" } as const;
 const LEGEND_STYLE = { fontSize: 11, color: "#94a3b8" } as const;
 
-const STATUS_ORDER: CandidateStatus[] = ["applied", "interviewing", "selected", "training", "on_hold", "hired", "rejected"];
+const STATUS_ORDER: CandidateStatus[] = ["applied", "phone_screening", "interviewing", "selected", "training", "hired", "rejected", "withdrawn", "cancelled"];
 const STATUS_LABEL: Record<CandidateStatus, string> = {
   applied: "Applied",
+  phone_screening: "Phone Screening",
   interviewing: "Interviewing",
   selected: "Selected",
   training: "Training",
-  on_hold: "On Hold",
   hired: "Hired",
   rejected: "Rejected",
+  withdrawn: "Withdrawn",
+  cancelled: "Cancelled",
 };
 
 const todayIso = () => new Date().toISOString().slice(0, 10);
@@ -98,7 +100,7 @@ export function ReportHR({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
       interviewing: byStatus.get("interviewing") ?? 0,
       hired: byStatus.get("hired") ?? 0,
       rejected: byStatus.get("rejected") ?? 0,
-      onHold: byStatus.get("on_hold") ?? 0,
+      withdrawn: byStatus.get("withdrawn") ?? 0,
     };
   }, [filteredCandidates, profiles]);
 
@@ -150,7 +152,7 @@ export function ReportHR({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
       ["Interviewing", kpi.interviewing],
       ["Hired", kpi.hired],
       ["Rejected", kpi.rejected],
-      ["On Hold", kpi.onHold],
+      ["Withdrawn", kpi.withdrawn],
       ["Warnings", totalWarnings],
       ["Mistakes", totalMistakes],
       [],
@@ -207,7 +209,7 @@ export function ReportHR({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
             ["Interviewing", kpi.interviewing, "text-yellow-300", Clock],
             ["Hired", kpi.hired, "text-green-300", UserCheck],
             ["Rejected", kpi.rejected, "text-red-300", UserX],
-            ["On Hold", kpi.onHold, "text-orange-300", Clock],
+            ["Withdrawn", kpi.withdrawn, "text-orange-300", Clock],
           ].map(([label, value, color, Icon]: any) => (
             <div key={label} className="panel p-3 text-center">
               <div className="flex justify-center mb-1 text-muted-foreground"><Icon className="h-4 w-4" /></div>

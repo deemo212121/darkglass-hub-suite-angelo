@@ -8,14 +8,16 @@
 
 import { supabase } from "./client";
 
-// "training" and "on_hold" added for EOD/EOM hiring reports (0047) —
-// Interviewing/Training require a date (interview_date/training_start_date);
-// Hired moves the matching hr_staffing_targets counter by ±1; On Hold and
-// every other status are no-ops for that counter. See
-// hr_update_candidate_status() in 0047_hr_hiring_reports.sql for where
-// that side effect actually happens (atomically, alongside the status
-// history log) — never via a plain `update hr_candidates set status=...`.
-export type CandidateStatus = "applied" | "interviewing" | "selected" | "training" | "on_hold" | "hired" | "rejected";
+// "training" and "on_hold" added for EOD/EOM hiring reports (0048); "phone_screening",
+// "withdrawn", and "cancelled" added (and "on_hold" removed) by 0221_hr_candidates_status_update.sql.
+// Interviewing/Training/Withdrawn each require a date (interview_date/
+// training_start_date/withdrawn_date); Hired moves the matching
+// hr_staffing_targets counter by ±1; every other status is a no-op for
+// that counter. See hr_update_candidate_status() in
+// 0048_hr_hiring_reports.sql (updated by 0221) for where that side effect
+// actually happens (atomically, alongside the status history log) — never
+// via a plain `update hr_candidates set status=...`.
+export type CandidateStatus = "applied" | "phone_screening" | "interviewing" | "selected" | "training" | "hired" | "rejected" | "withdrawn" | "cancelled";
 
 export interface Candidate {
   id: string;
@@ -29,6 +31,7 @@ export interface Candidate {
   status: CandidateStatus;
   interviewDate: string | null;      // required when status = "interviewing"
   trainingStartDate: string | null;  // required when status = "training"
+  withdrawnDate: string | null;      // required when status = "withdrawn"
   notes: string | null;
   createdBy: string | null;
   createdByName: string | null;
@@ -39,14 +42,18 @@ export interface Candidate {
 // `full_name` is the real column (the table predates this feature — see
 // 0001_init.sql / 0030_hr_candidates.sql); mapped to `name` here so the
 // rest of the app's Candidate type reads naturally.
-const SELECT = "id, company_id, full_name, phone, email, position, branch, cv_path, status, interview_date, training_start_date, notes, created_by, created_at, updated_at, author:created_by (display_name, username)";
-// Falls back to this (pre-0047) SELECT if training_start_date doesn't
-// exist yet — i.e. 0047_hr_hiring_reports.sql hasn't been run against this
-// database. Without this, the whole Hiring tab would break on that one
-// missing column alone, even though everything else about it still works.
+const SELECT = "id, company_id, full_name, phone, email, position, branch, cv_path, status, interview_date, training_start_date, withdrawn_date, notes, created_by, created_at, updated_at, author:created_by (display_name, username)";
+// Falls back to this if withdrawn_date doesn't exist yet — i.e.
+// 0221_hr_candidates_status_update.sql hasn't been run against this
+// database, but 0048_hr_hiring_reports.sql has.
+const SELECT_MID = "id, company_id, full_name, phone, email, position, branch, cv_path, status, interview_date, training_start_date, notes, created_by, created_at, updated_at, author:created_by (display_name, username)";
+// Falls back further to this (pre-0048) SELECT if training_start_date
+// doesn't exist yet either. Without these fallbacks, the whole Hiring tab
+// would break on one missing column alone, even though everything else
+// about it still works.
 const SELECT_LEGACY = "id, company_id, full_name, phone, email, position, branch, cv_path, status, interview_date, notes, created_by, created_at, updated_at, author:created_by (display_name, username)";
 
-/** Postgres 42703 = "column ... does not exist" — the 0047 migration hasn't been applied yet. */
+/** Postgres 42703 = "column ... does not exist" — a newer migration hasn't been applied yet. */
 function isMissingColumnError(error: { code?: string } | null): boolean {
   return error?.code === "42703";
 }
@@ -64,6 +71,7 @@ function fromRow(r: any): Candidate {
     status: r.status,
     interviewDate: r.interview_date,
     trainingStartDate: r.training_start_date ?? null,
+    withdrawnDate: r.withdrawn_date ?? null,
     notes: r.notes,
     createdBy: r.created_by,
     createdByName: r.author?.display_name || r.author?.username || null,
@@ -87,6 +95,14 @@ export async function getCandidates(): Promise<Candidate[]> {
       .select(select)
       .order("created_at", { ascending: false })
       .range(from, from + CANDIDATES_PAGE_SIZE - 1);
+    if (isMissingColumnError(error) && select === SELECT) {
+      select = SELECT_MID;
+      ({ data, error } = await supabase
+        .from("hr_candidates")
+        .select(select)
+        .order("created_at", { ascending: false })
+        .range(from, from + CANDIDATES_PAGE_SIZE - 1));
+    }
     if (isMissingColumnError(error)) {
       select = SELECT_LEGACY;
       ({ data, error } = await supabase
@@ -119,6 +135,9 @@ export async function addCandidate(input: {
     notes: input.notes?.trim() || null,
   };
   let { data, error }: { data: any; error: any } = await supabase.from("hr_candidates").insert(insertPayload).select(SELECT).single();
+  if (isMissingColumnError(error)) {
+    ({ data, error } = await supabase.from("hr_candidates").insert(insertPayload).select(SELECT_MID).single());
+  }
   if (isMissingColumnError(error)) {
     ({ data, error } = await supabase.from("hr_candidates").insert(insertPayload).select(SELECT_LEGACY).single());
   }
@@ -182,6 +201,12 @@ export async function updateCandidateStatus(id: string, status: CandidateStatus,
     }
     throw new Error(error.message);
   }
+}
+
+/** Updates just the free-text note on a candidate row — separate from addCandidate's initial `notes` so HR can jot down/revise something after the fact (e.g. interview impressions) without touching status. */
+export async function updateCandidateNotes(id: string, notes: string): Promise<void> {
+  const { error } = await supabase.from("hr_candidates").update({ notes: notes.trim() || null }).eq("id", id);
+  if (error) throw new Error(error.message);
 }
 
 export async function deleteCandidate(id: string): Promise<void> {
@@ -316,7 +341,10 @@ export async function getEodHiringReport(dateStr: string): Promise<EodHiringRow[
     const row = ensure(c.position || UNSET_LABEL, c.branch || UNSET_LABEL);
     if (c.status === "interviewing") row.scheduledInterviews.push({ name: c.full_name, date: c.interview_date ?? null });
     if (c.status === "training") row.activeTrainees.push({ name: c.full_name, date: c.training_start_date ?? null });
-    if (c.status === "on_hold") row.onHold = true;
+    // "on_hold" was removed as a status (0221) — "cancelled" is the closest
+    // successor for "hiring paused for this position/branch" (as opposed to
+    // "withdrawn", which is the candidate's own choice to drop out).
+    if (c.status === "cancelled") row.onHold = true;
   }
 
   for (const [key, details] of forwards) {
@@ -425,13 +453,15 @@ export async function getEomHiringReport(yearMonth: string): Promise<EodHiringRo
   for (const t of targets) ensure(t.position || UNSET_LABEL, t.branch || UNSET_LABEL).staffNeeded = t.staffNeeded;
 
   for (const r of latestByCandidate.values()) {
-    if (r.to_status !== "interviewing" && r.to_status !== "training" && r.to_status !== "on_hold") continue;
+    // "on_hold" was removed as a status (0221) — "cancelled" is its
+    // successor here too, same reasoning as getEodHiringReport above.
+    if (r.to_status !== "interviewing" && r.to_status !== "training" && r.to_status !== "cancelled") continue;
     const row = ensure(r.position || UNSET_LABEL, r.branch || UNSET_LABEL);
     const name = r.candidate?.full_name || "(Unknown candidate)";
     const date = r.effective_date ?? r.created_at ?? null;
     if (r.to_status === "interviewing") row.scheduledInterviews.push({ name, date });
     else if (r.to_status === "training") row.activeTrainees.push({ name, date });
-    else if (r.to_status === "on_hold") row.onHold = true;
+    else if (r.to_status === "cancelled") row.onHold = true;
   }
 
   for (const [key, details] of forwards) {
