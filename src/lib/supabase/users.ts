@@ -752,6 +752,7 @@ export async function createCompanyUser(input: {
   requiredCheckOut?: string;
   workingHours?: number;
   mealMinutes?: number;
+  employmentType?: "trainee" | "regular";
 }): Promise<string> {
   // --- 1. Create the Firebase Auth credential on a SECONDARY app ---
   const primaryApp = getApps()[0];
@@ -796,7 +797,7 @@ export async function createCompanyUser(input: {
   const username = input.displayName.trim().replace(/\s+/g, " ");
   // De-duplicate extra roles and strip the primary one so it isn't double-stored.
   const extras = Array.from(new Set((input.extraRoles ?? []).filter((r) => r && r !== input.role)));
-  const { error: insertErr } = await supabase.from("profiles").insert({
+  const basePayload = {
     firebase_uid: newUid,
     email: input.email,
     username,
@@ -815,7 +816,15 @@ export async function createCompanyUser(input: {
     working_hours: input.workingHours ?? null,
     meal_minutes: input.mealMinutes ?? null,
     is_active: true,
-  });
+  };
+  let { error: insertErr } = await supabase
+    .from("profiles")
+    .insert({ ...basePayload, employment_type: input.employmentType ?? "regular" });
+  if (insertErr?.code === "42703") {
+    // employment_type (migration 0152) not applied yet — retry without it,
+    // same best-effort treatment getCompanyUsers already gives that column.
+    ({ error: insertErr } = await supabase.from("profiles").insert(basePayload));
+  }
 
   if (insertErr) {
     console.error("createCompanyUser profile insert error:", insertErr.message);
