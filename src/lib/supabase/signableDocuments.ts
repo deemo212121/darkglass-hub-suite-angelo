@@ -1,5 +1,13 @@
 import { supabase } from "./client";
 import { deleteAgentNote } from "./csrAgentNotes";
+import { getTechnicianFormExemptions } from "./technicianFormExemptions";
+import { setProfileFrozen } from "./users";
+import {
+  TECHNICIAN_FORM_TYPES,
+  SIGNABLE_DOCUMENT_REGISTRY,
+  isTechnicianExemptFromForm,
+  getDocumentReviewStatus,
+} from "@/lib/signableDocumentRegistry";
 
 export type SignableDocumentType = "warning_form" | "w8ben" | "w4" | "w9" | "w4r" | "i9" | "wage_ack" | "car_iq_agreement" | "vehicle_agreement" | "employee_confidentiality" | "meal_rest_break" | "pto_ack" | "parts_responsibility" | "mileage_fuel" | "location_consent" | "damage" | "contractor_data" | "contractor_data_us" | "direct_deposit" | "promotion_form" | "action_plan_form" | "termination_form" | "substance_screening" | "flash_technician_travel" | "nda_form" | "vehicle_use_agreement" | "contractor_addendum";
 /** "executive" only applies to promotion_form documents (see migration 0166) — every other document type just never uses that slot. */
@@ -208,6 +216,66 @@ export async function getSignableDocumentsForRecipient(recipientId: string): Pro
   return all;
 }
 
+export interface IncompleteTechForm {
+  type: SignableDocumentType;
+  label: string;
+  /** true = sent and awaiting the technician's own signature; false = never sent yet. */
+  pending: boolean;
+  /** Set only when pending — the doc to link straight to. Nothing to link to yet when not sent. */
+  docId: string | null;
+}
+
+/**
+ * Which of TECHNICIAN_FORM_TYPES a technician still needs to act on
+ * themselves — "not_sent" or "awaiting_employee" only; a form sitting in
+ * "awaiting_hr" (they've already signed, HR's countersignature is what's
+ * outstanding) is deliberately excluded since it isn't the technician's
+ * job anymore. Shared by technicianFormStatus.ts (the frozen-account "what
+ * do I still need to do" popup) and signDocument's own auto-unfreeze check
+ * below — both need exactly the same "is this technician actually done"
+ * answer, kept in one place instead of two.
+ */
+export async function getIncompleteTechnicianForms(profileId: string): Promise<IncompleteTechForm[]> {
+  const [docs, exemptions] = await Promise.all([
+    getSignableDocumentsForRecipient(profileId),
+    getTechnicianFormExemptions(),
+  ]);
+  const latestByType = new Map<SignableDocumentType, SignableDocument>();
+  for (const d of docs) {
+    if (!latestByType.has(d.documentType)) latestByType.set(d.documentType, d);
+  }
+  const incomplete: IncompleteTechForm[] = [];
+  for (const type of TECHNICIAN_FORM_TYPES) {
+    const doc = latestByType.get(type);
+    if (isTechnicianExemptFromForm(type, !!doc, exemptions.has(`${profileId}|${type}`))) continue;
+    const reviewStatus = getDocumentReviewStatus(type, doc);
+    if (reviewStatus === "done" || reviewStatus === "awaiting_hr") continue;
+    incomplete.push({ type, label: SIGNABLE_DOCUMENT_REGISTRY[type]?.label ?? type, pending: reviewStatus === "awaiting_employee", docId: doc?.id ?? null });
+  }
+  return incomplete;
+}
+
+/**
+ * If this profile is currently frozen and has just finished every
+ * Technician-tab form that's actually theirs to complete, lifts the freeze
+ * automatically — the whole point of freezing is to make sure these get
+ * done, so there's no reason to keep them locked out once they have.
+ * Called from signDocument below right after a technician-form signature;
+ * swallows its own errors (logged, not thrown) so a hiccup in this side
+ * effect can never fail the signature the caller actually cares about.
+ */
+async function maybeAutoUnfreezeTechnician(profileId: string): Promise<void> {
+  try {
+    const { data: prof, error } = await supabase.from("profiles").select("frozen").eq("id", profileId).maybeSingle();
+    if (error || !prof?.frozen) return;
+    const incomplete = await getIncompleteTechnicianForms(profileId);
+    if (incomplete.length > 0) return;
+    await setProfileFrozen(profileId, false, profileId, "Auto-unfrozen (all required forms completed)");
+  } catch (err) {
+    console.error("Auto-unfreeze check failed:", err);
+  }
+}
+
 /**
  * Records the recipient's signature and marks the document signed — awaiting
  * HR's review/confirm, not yet an official warning. `formData`, if given,
@@ -228,6 +296,10 @@ export async function signDocument(id: string, slot: SignatureSlot, entry: Signa
   const { data, error } = await supabase.from("hr_signable_documents").update(update).eq("id", id).select("id");
   if (error) throw new Error(error.message);
   if (!data || data.length === 0) throw new Error("Couldn't save the signature — you may not have permission to update this document.");
+
+  if (slot === "employee" && doc.recipientId && TECHNICIAN_FORM_TYPES.includes(doc.documentType)) {
+    await maybeAutoUnfreezeTechnician(doc.recipientId);
+  }
 }
 
 /**
