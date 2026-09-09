@@ -300,10 +300,17 @@ export function TechnicianFormChecklistPage() {
             <option value="branch">Branch (A–Z)</option>
           </select>
         </div>
-        <label className="flex items-center gap-1.5 text-xs text-slate-400 shrink-0 mt-4">
-          <input type="checkbox" checked={hideComplete} onChange={(e) => setHideComplete(e.target.checked)} className="h-3.5 w-3.5" />
-          Hide complete
-        </label>
+        <div className="flex flex-col gap-1">
+          <label className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">Complete</label>
+          <select
+            value={hideComplete ? "hide" : "show"}
+            onChange={(e) => setHideComplete(e.target.value === "hide")}
+            className="rounded-lg border border-white/15 bg-slate-900/60 px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-blue-500"
+          >
+            <option value="show">Show complete</option>
+            <option value="hide">Hide complete</option>
+          </select>
+        </div>
         {(branchFilter || sortMode !== "missing-desc" || hideComplete) && (
           <button
             type="button"
