@@ -84,7 +84,7 @@ function useHeaderMetrics() {
 }
 
 export function ModuleNavigator() {
-  const { ready, email, role, extraRoles, isTrainee } = useAuth();
+  const { ready, email, role, extraRoles, isTrainee, isFrozen } = useAuth();
   const [mounted, setMounted] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [activeModule, setActiveModule] = useState<ModuleDef | null>(null);
@@ -116,7 +116,7 @@ export function ModuleNavigator() {
     m.submodules.filter((s) => {
       if (s.hiddenFromGrid) return false;
       if (m.slug === "dashboard" && DASHBOARD_GRID_EXCLUDED_SLUGS.has(s.slug)) return false;
-      return canAccessSubmodule(role, extraRoles, m.slug, s, isTrainee);
+      return canAccessSubmodule(role, extraRoles, m.slug, s, isTrainee, isFrozen);
     });
 
   // A module only gets a pill if it has at least one submodule this viewer

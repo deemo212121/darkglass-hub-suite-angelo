@@ -269,6 +269,35 @@ export function isSubmoduleAllowedForTrainee(isTrainee: boolean, moduleSlug: str
 }
 
 /**
+ * A frozen account (profiles.frozen — HR-initiated, e.g. from the HR
+ * module's Technician Form Checklist, migration 0223) sees only Messages,
+ * regardless of role. Same "restrict-to-allowlist" shape as the Trainee
+ * restriction above, just narrower (Messages only, not Employee
+ * Self-Service) and independent of it — a frozen trainee is still
+ * restricted to Messages, not Employee Self-Service, since both checks
+ * combine via AND wherever they're both applied. Role/extra_roles are
+ * never touched, so unfreezing restores full access on its own. Ticket
+ * access and self-service timecard punches are ALSO blocked server-side
+ * (ticket.$ticketNo.tsx's own guard, plus two DB triggers) — this pair
+ * only covers the module/submodule tile-and-route gating.
+ */
+const FROZEN_ALLOWED_MODULES = new Set(["admin"]);
+const FROZEN_ALLOWED_SUBMODULES = new Set(["internal-message-support"]);
+
+/** Whether a frozen account may open this module at all. Non-frozen accounts always pass. */
+export function isModuleAllowedForFrozen(isFrozen: boolean, moduleSlug: string): boolean {
+  if (!isFrozen) return true;
+  return FROZEN_ALLOWED_MODULES.has(moduleSlug);
+}
+
+/** Whether a frozen account may open this submodule. Non-frozen accounts always pass. */
+export function isSubmoduleAllowedForFrozen(isFrozen: boolean, moduleSlug: string, submoduleSlug: string): boolean {
+  if (!isFrozen) return true;
+  if (!isModuleAllowedForFrozen(isFrozen, moduleSlug)) return false;
+  return FROZEN_ALLOWED_SUBMODULES.has(submoduleSlug);
+}
+
+/**
  * Roles allowed to flag a ticket as misdiagnosed (ticket.$ticketNo.tsx) and
  * to see the "Show Misdiagnosed" filter (TicketList.tsx) — manager-tier
  * reviewers only. "Managers" maps to the plain MANAGER role plus branch

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
+﻿import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth";
 import { setDesktopOverride } from "@/lib/device";
@@ -324,7 +324,7 @@ function buildDevTestFlashTechTrip(profileId: string): FlashTechTrip {
 }
 
 export function MobileTechApp() {
-  const { email, displayName, role, extraRoles, companyId, allowedLocations, logout, uid } = useAuth();
+  const { email, displayName, role, extraRoles, companyId, allowedLocations, logout, uid, isFrozen } = useAuth();
   const navigate = useNavigate();
 
   const [tickets, setTickets] = useState<Ticket[]>([]);
@@ -1052,31 +1052,40 @@ export function MobileTechApp() {
     // no in-header back needed.
   };
 
+  // Frozen accounts (see migration 0223) can still log in but are
+  // restricted to Chat only — same "Messages only" restriction as desktop's
+  // isFrozen gate, so a frozen technician can still complete pending forms
+  // via DM. This is a pure render-time override: `view` itself is left
+  // alone (so whatever they were on is still there if later unfrozen), only
+  // what actually renders is forced to "chat". Ticket writes and timecard
+  // punches are also blocked server-side regardless of what renders here.
+  const effectiveView: View = isFrozen ? "chat" : view;
+
   // Show the in-header back arrow only for detail (ticket report sub-view).
   // Route map is a bottom-nav primary destination so no back needed there.
-  const showTopBack = view === "detail";
+  const showTopBack = effectiveView === "detail";
 
   // The five primary tabs shown in the bottom nav.
   const activeBottomTab: BottomTab =
-    view === "chat"
+    effectiveView === "chat"
       ? "chat"
-      : view === "onhold"
+      : effectiveView === "onhold"
       ? "onhold"
-      : view === "payroll"
+      : effectiveView === "payroll"
       ? "payroll"
-      : view === "map"
+      : effectiveView === "map"
       ? "route"
-      : view === "home" ||
-        view === "timecard" ||
-        view === "clockinteam" ||
-        view === "ticketattendance" ||
-        view === "itsupport" ||
-        view === "payrolldispute" ||
-        view === "timeoff" ||
-        view === "tickettimedispute" ||
-        view === "correction" ||
-        view === "notifications" ||
-        view === "announcements"
+      : effectiveView === "home" ||
+        effectiveView === "timecard" ||
+        effectiveView === "clockinteam" ||
+        effectiveView === "ticketattendance" ||
+        effectiveView === "itsupport" ||
+        effectiveView === "payrolldispute" ||
+        effectiveView === "timeoff" ||
+        effectiveView === "tickettimedispute" ||
+        effectiveView === "correction" ||
+        effectiveView === "notifications" ||
+        effectiveView === "announcements"
       ? "home" // Home's own quick-action tiles reach all of these sub-pages
       : "tickets"; // tickets, roster, detail, parts all highlight Tickets
 
@@ -1164,7 +1173,22 @@ export function MobileTechApp() {
 
       {/* ── Scrollable content area ────────────────────────────────── */}
       <div className="mtech-content">
-        {view === "roster" && (
+        {isFrozen && (
+          <div
+            style={{
+              margin: "0.75rem",
+              padding: "0.75rem 1rem",
+              borderRadius: "0.75rem",
+              border: "1px solid rgba(56,189,248,0.4)",
+              background: "rgba(56,189,248,0.1)",
+              color: "#7dd3fc",
+              fontSize: "0.8rem",
+            }}
+          >
+            Your account has been frozen — you can still use Chat to complete any pending forms, but nothing else is available right now. Contact HR if you have questions.
+          </div>
+        )}
+        {effectiveView === "roster" && (
           <RosterView
             roster={roster}
             // A self-role lead gets a "back to my own day" row at the top;
@@ -1178,7 +1202,7 @@ export function MobileTechApp() {
           />
         )}
 
-        {view === "tickets" && (
+        {effectiveView === "tickets" && (
           <TicketsView
             loading={loading}
             tickets={visibleTickets}
@@ -1208,7 +1232,7 @@ export function MobileTechApp() {
           />
         )}
 
-        {view === "map" && (
+        {effectiveView === "map" && (
           <RouteMapView
             // Date filtering (which day's stops to show) lives inside
             // RouteMapView itself now, alongside its prev/next date
@@ -1229,7 +1253,7 @@ export function MobileTechApp() {
           />
         )}
 
-        {view === "detail" && activeTicket && (
+        {effectiveView === "detail" && activeTicket && (
           <DetailView
             ticket={activeTicket}
             tab={detailTab}
@@ -1241,14 +1265,14 @@ export function MobileTechApp() {
           />
         )}
 
-        {view === "chat" && (
+        {effectiveView === "chat" && (
           <ChatView
             firebaseUid={uid || ""}
             authorName={displayName || email || "User"}
           />
         )}
 
-        {view === "onhold" && (
+        {effectiveView === "onhold" && (
           <MobileOnHoldTicketsView
             onHoldTickets={onHoldTickets}
             updatedTickets={updatedTickets}
@@ -1265,11 +1289,11 @@ export function MobileTechApp() {
           />
         )}
 
-        {view === "payroll" && (
+        {effectiveView === "payroll" && (
           <MobilePayrollView userName={headerName} profileId={profileId} uid={uid} role={role} />
         )}
 
-        {view === "timecard" && (
+        {effectiveView === "timecard" && (
           <MobileTimecardView
             uid={uid}
             profileId={profileId}
@@ -1278,19 +1302,19 @@ export function MobileTechApp() {
           />
         )}
 
-        {view === "clockinteam" && (
+        {effectiveView === "clockinteam" && (
           <MobileClockInTeamView profileId={profileId} />
         )}
 
-        {view === "ticketattendance" && (
+        {effectiveView === "ticketattendance" && (
           <MobileTicketAttendanceView profileId={profileId} />
         )}
 
-        {view === "itsupport" && (
+        {effectiveView === "itsupport" && (
           <MobileItSupportView userName={headerName} />
         )}
 
-        {view === "payrolldispute" && (
+        {effectiveView === "payrolldispute" && (
           <MobilePayrollDisputeView
             userName={headerName}
             profileId={profileId}
@@ -1300,11 +1324,11 @@ export function MobileTechApp() {
           />
         )}
 
-        {view === "timeoff" && (
+        {effectiveView === "timeoff" && (
           <MobileTimeOffView userName={headerName} profileId={profileId} />
         )}
 
-        {view === "tickettimedispute" && (
+        {effectiveView === "tickettimedispute" && (
           <MobileTicketTimeDisputeView
             userName={headerName}
             profileId={profileId}
@@ -1315,11 +1339,11 @@ export function MobileTechApp() {
           />
         )}
 
-        {view === "correction" && (
+        {effectiveView === "correction" && (
           <MobileTimeCorrectionView userName={headerName} profileId={profileId} prefillDate={correctionPrefillDate} />
         )}
 
-        {view === "notifications" && (
+        {effectiveView === "notifications" && (
           <div className="mtech-scroll">
             <div className="mtech-payroll-heading">
               <div className="mtech-payroll-name">Notifications</div>
@@ -1329,14 +1353,14 @@ export function MobileTechApp() {
           </div>
         )}
 
-        {view === "announcements" && (
+        {effectiveView === "announcements" && (
           <div className="mtech-scroll">
             <AnnouncementsPage />
           </div>
         )}
 
         {/* parts sub-view still reachable but not in bottom nav — redirect to tickets */}
-        {view === "home" && (
+        {effectiveView === "home" && (
           <MobileHomeView
             userName={headerName}
             role={role}
@@ -1368,7 +1392,7 @@ export function MobileTechApp() {
           />
         )}
 
-        {view === "parts" && (
+        {effectiveView === "parts" && (
           <MobileStubView
             title="Part Pickup"
             message="Part pickup workflows are being redesigned for mobile. Use the desktop site to record part pickups."
@@ -1381,7 +1405,9 @@ export function MobileTechApp() {
         active={activeBottomTab}
         unreadDmCount={unreadDmCount}
         missingTimestampCount={missingTimestampTicketNos.size}
+        tabs={isFrozen ? BOTTOM_TABS.filter((t) => t.id === "chat") : BOTTOM_TABS}
         onSelect={(tab) => {
+          if (isFrozen) return; // account frozen — Chat is the only reachable tab
           if (tab === "tickets") setView(isSelfRole ? "tickets" : "roster");
           else if (tab === "route") setView("map");
           else setView(tab);
@@ -1699,16 +1725,19 @@ function BottomNav({
   unreadDmCount,
   missingTimestampCount,
   onSelect,
+  tabs = BOTTOM_TABS,
 }: {
   active: BottomTab;
   unreadDmCount: number;
   /** Tickets flagged CL-Ready to Complete with no Work Start/Work Done recorded (this technician's own, last 14 days — same scope as the Done tab's badge). */
   missingTimestampCount: number;
   onSelect: (tab: BottomTab) => void;
+  /** Frozen accounts get a Chat-only bar — see isFrozen handling in MobileTechApp. */
+  tabs?: typeof BOTTOM_TABS;
 }) {
   return (
     <nav className="mtech-bottom-nav" aria-label="Main navigation">
-      {BOTTOM_TABS.map((tab) => {
+      {tabs.map((tab) => {
         const badgeCount = tab.id === "chat" ? unreadDmCount : tab.id === "tickets" ? missingTimestampCount : 0;
         return (
         <button

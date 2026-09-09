@@ -83,6 +83,8 @@ export const ACTIVITY_ACTION_LABELS: Record<string, string> = {
   part_daily_pickup_unmarked_picked_up: "Unmarked picked up",
   part_daily_collection_marked_collected: "Marked collected",
   part_daily_collection_unmarked_collected: "Unmarked collected",
+  technician_frozen: "Froze account",
+  technician_unfrozen: "Unfroze account",
 };
 
 export function activityActionLabel(action: string): string {

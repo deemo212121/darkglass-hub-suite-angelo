@@ -12,9 +12,9 @@
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { ChevronLeft, ClipboardCheck, Loader2, ChevronDown, ExternalLink, RefreshCw, Send, Bell } from "lucide-react";
+import { ChevronLeft, ClipboardCheck, Loader2, ChevronDown, ExternalLink, RefreshCw, Send, Bell, Snowflake } from "lucide-react";
 import { useAuth } from "@/lib/auth";
-import { getCompanyUsers, getMyProfileId, type ProfileRow } from "@/lib/supabase/users";
+import { getCompanyUsers, getMyProfileId, setProfileFrozen, type ProfileRow } from "@/lib/supabase/users";
 import { TECHNICIAN_PAY_ROLES, normalizeRole, getRoleDepartmentBreakdown } from "@/lib/roleLabels";
 import { getAllSignableDocuments, createSignableDocument, type SignableDocument, type SignableDocumentType } from "@/lib/supabase/signableDocuments";
 import { SIGNABLE_DOCUMENT_REGISTRY } from "@/lib/signableDocumentRegistry";
@@ -53,6 +53,8 @@ interface TechRow {
   exempt: Set<SignableDocumentType>;
   doneCount: number;
   applicableTotal: number;
+  /** Frozen accounts can still log in but are restricted to Messages only (see migration 0223) — clock in/out and ticket writes are also blocked server-side. */
+  frozen: boolean;
 }
 
 function isComplete(doc: SignableDocument | undefined): boolean {
@@ -120,6 +122,7 @@ export function TechnicianFormChecklistPage() {
           exempt,
           doneCount,
           applicableTotal: TECH_FORM_TYPES.length - exempt.size,
+          frozen: u.frozen === true,
         };
       });
       setRows(next);
@@ -250,6 +253,38 @@ export function TechnicianFormChecklistPage() {
     }
   };
 
+  // Freeze/unfreeze — a frozen technician can still log in but is
+  // restricted to Messages only (so they can still complete pending forms
+  // there), and is also blocked server-side from clock in/out and ticket
+  // writes (migration 0223's triggers). Optimistic local update since the
+  // whole point is to see the row flip immediately.
+  const handleToggleFreeze = async (technicianId: string, technicianName: string, currentlyFrozen: boolean) => {
+    if (!myProfileId) return;
+    const verb = currentlyFrozen ? "unfreeze" : "freeze";
+    const warning = currentlyFrozen
+      ? `Unfreeze ${technicianName}? They'll regain full access to the app.`
+      : `Freeze ${technicianName}'s account? They'll still be able to log in, but will only be able to open Messages — clock in/out and ticket access will be blocked until unfrozen.`;
+    if (!window.confirm(warning)) return;
+    const key = `${technicianId}|freeze`;
+    setActionKey(key);
+    setActionError(null);
+    setRows((prev) => prev.map((r) => (r.profileId === technicianId ? { ...r, frozen: !currentlyFrozen } : r)));
+    try {
+      await setProfileFrozen(technicianId, !currentlyFrozen, myProfileId, displayName || "HR");
+      void logActivity({
+        action: currentlyFrozen ? "technician_unfrozen" : "technician_frozen",
+        targetType: "employee",
+        targetId: technicianId,
+        targetLabel: technicianName,
+      });
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : `Failed to ${verb} account.`);
+      await load();
+    } finally {
+      setActionKey(null);
+    }
+  };
+
   return (
     <main className="max-w-[1000px] mx-auto px-6 py-8">
       <div className="flex items-center gap-3 mb-4">
@@ -341,27 +376,45 @@ export function TechnicianFormChecklistPage() {
             const isOpen = expanded === r.profileId;
             const total = r.applicableTotal;
             return (
-              <div key={r.profileId} className="rounded-xl border border-white/10 bg-slate-900/40">
-                <button
-                  type="button"
-                  onClick={() => setExpanded(isOpen ? null : r.profileId)}
-                  className="flex w-full items-center gap-3 px-4 py-3 text-left"
-                >
-                  <ChevronDown className={`h-4 w-4 shrink-0 text-slate-500 transition-transform ${isOpen ? "rotate-180" : ""}`} />
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-semibold text-white">{r.name}</p>
-                    <p className="text-[11px] text-slate-400">{r.roleLabel} · {r.branch}</p>
-                  </div>
-                  <span className={`shrink-0 text-xs font-semibold ${r.doneCount === total ? "text-emerald-400" : "text-slate-300"}`}>
-                    {r.doneCount}/{total}
-                  </span>
-                  <div className="hidden h-1.5 w-24 shrink-0 overflow-hidden rounded-full bg-white/10 sm:block">
-                    <div
-                      className="h-full rounded-full bg-emerald-500"
-                      style={{ width: `${total ? (r.doneCount / total) * 100 : 0}%` }}
-                    />
-                  </div>
-                </button>
+              <div key={r.profileId} className={`rounded-xl border bg-slate-900/40 ${r.frozen ? "border-sky-500/40" : "border-white/10"}`}>
+                <div className="flex w-full items-center gap-3 px-4 py-3">
+                  <button
+                    type="button"
+                    onClick={() => setExpanded(isOpen ? null : r.profileId)}
+                    className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                  >
+                    <ChevronDown className={`h-4 w-4 shrink-0 text-slate-500 transition-transform ${isOpen ? "rotate-180" : ""}`} />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-semibold text-white flex items-center gap-1.5">
+                        {r.name}
+                        {r.frozen && <span className="shrink-0 rounded-full border border-sky-500/40 bg-sky-500/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-sky-300">Frozen</span>}
+                      </p>
+                      <p className="text-[11px] text-slate-400">{r.roleLabel} · {r.branch}</p>
+                    </div>
+                    <span className={`shrink-0 text-xs font-semibold ${r.doneCount === total ? "text-emerald-400" : "text-slate-300"}`}>
+                      {r.doneCount}/{total}
+                    </span>
+                    <div className="hidden h-1.5 w-24 shrink-0 overflow-hidden rounded-full bg-white/10 sm:block">
+                      <div
+                        className="h-full rounded-full bg-emerald-500"
+                        style={{ width: `${total ? (r.doneCount / total) * 100 : 0}%` }}
+                      />
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    disabled={actionKey === `${r.profileId}|freeze`}
+                    onClick={() => void handleToggleFreeze(r.profileId, r.name, r.frozen)}
+                    title={r.frozen ? "Unfreeze account" : "Freeze account (restrict to Messages only)"}
+                    className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border transition disabled:opacity-50 ${
+                      r.frozen
+                        ? "border-sky-500/50 bg-sky-500/15 text-sky-300 hover:bg-sky-500/25"
+                        : "border-white/15 bg-white/5 text-slate-400 hover:text-sky-300 hover:border-sky-500/40"
+                    }`}
+                  >
+                    {actionKey === `${r.profileId}|freeze` ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Snowflake className="h-3.5 w-3.5" />}
+                  </button>
+                </div>
 
                 {isOpen && (
                   <div className="border-t border-white/10 px-4 py-3">
