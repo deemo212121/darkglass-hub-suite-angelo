@@ -19,6 +19,7 @@ import { TECHNICIAN_PAY_ROLES, normalizeRole, getRoleDepartmentBreakdown } from 
 import { getAllSignableDocuments, createSignableDocument, type SignableDocument, type SignableDocumentType } from "@/lib/supabase/signableDocuments";
 import { SIGNABLE_DOCUMENT_REGISTRY } from "@/lib/signableDocumentRegistry";
 import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
+import { getTechnicianFormExemptions, setTechnicianFormExemption } from "@/lib/supabase/technicianFormExemptions";
 import { logActivity } from "@/lib/supabase/hrActivityLog";
 import { getAppUrl } from "@/lib/appUrl";
 
@@ -48,7 +49,10 @@ interface TechRow {
   roleLabel: string;
   branch: string;
   docs: Map<SignableDocumentType, SignableDocument | undefined>;
+  /** Forms marked Not Applicable for this technician — excluded from both doneCount and applicableTotal. */
+  exempt: Set<SignableDocumentType>;
   doneCount: number;
+  applicableTotal: number;
 }
 
 function isComplete(doc: SignableDocument | undefined): boolean {
@@ -78,7 +82,7 @@ export function TechnicianFormChecklistPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [users, docs] = await Promise.all([getCompanyUsers(), getAllSignableDocuments()]);
+      const [users, docs, exemptions] = await Promise.all([getCompanyUsers(), getAllSignableDocuments(), getTechnicianFormExemptions()]);
       const technicians = (users as ProfileRow[]).filter(
         (u) => u.is_active && TECHNICIAN_PAY_ROLES.has(normalizeRole(u.role))
       );
@@ -96,11 +100,16 @@ export function TechnicianFormChecklistPage() {
 
       const next: TechRow[] = technicians.map((u) => {
         const docMap = new Map<SignableDocumentType, SignableDocument | undefined>();
+        const exempt = new Set<SignableDocumentType>();
         let doneCount = 0;
         for (const type of TECH_FORM_TYPES) {
           const doc = latestByRecipientAndType.get(`${u.id}|${type}`);
           docMap.set(type, doc);
-          if (isComplete(doc)) doneCount++;
+          if (exemptions.has(`${u.id}|${type}`)) {
+            exempt.add(type);
+          } else if (isComplete(doc)) {
+            doneCount++;
+          }
         }
         return {
           profileId: u.id,
@@ -108,7 +117,9 @@ export function TechnicianFormChecklistPage() {
           roleLabel: getRoleDepartmentBreakdown(u.role || "").roleLabel,
           branch: u.assigned_branch || "—",
           docs: docMap,
+          exempt,
           doneCount,
+          applicableTotal: TECH_FORM_TYPES.length - exempt.size,
         };
       });
       setRows(next);
@@ -131,9 +142,9 @@ export function TechnicianFormChecklistPage() {
 
   const visibleRows = useMemo(() => {
     let result = rows;
-    if (hideComplete) result = result.filter((r) => r.doneCount < TECH_FORM_TYPES.length);
+    if (hideComplete) result = result.filter((r) => r.doneCount < r.applicableTotal);
     if (branchFilter) result = result.filter((r) => r.branch === branchFilter);
-    const missing = (r: TechRow) => TECH_FORM_TYPES.length - r.doneCount;
+    const missing = (r: TechRow) => r.applicableTotal - r.doneCount;
     result = [...result].sort((a, b) => {
       switch (sortMode) {
         case "missing-asc":
@@ -205,6 +216,35 @@ export function TechnicianFormChecklistPage() {
       }
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "Failed to send reminder.");
+    } finally {
+      setActionKey(null);
+    }
+  };
+
+  // "Not Applicable" — this technician doesn't need this form; excluded
+  // from doneCount/applicableTotal (see load()) rather than counted as
+  // either done or missing. Optimistic local update, then a background
+  // reload to pick up applicableTotal recomputed for real.
+  const handleToggleExempt = async (technicianId: string, type: SignableDocumentType, checked: boolean) => {
+    const key = `${technicianId}|${type}`;
+    setActionKey(key);
+    setActionError(null);
+    setRows((prev) =>
+      prev.map((r) => {
+        if (r.profileId !== technicianId) return r;
+        const exempt = new Set(r.exempt);
+        const wasComplete = isComplete(r.docs.get(type));
+        if (checked) exempt.add(type);
+        else exempt.delete(type);
+        const doneCount = r.doneCount + (checked ? (wasComplete ? -1 : 0) : (wasComplete ? 1 : 0));
+        return { ...r, exempt, doneCount, applicableTotal: TECH_FORM_TYPES.length - exempt.size };
+      })
+    );
+    try {
+      await setTechnicianFormExemption(technicianId, type, checked, displayName || "HR");
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Failed to update.");
+      await load();
     } finally {
       setActionKey(null);
     }
@@ -292,7 +332,7 @@ export function TechnicianFormChecklistPage() {
         <div className="space-y-2.5">
           {visibleRows.map((r) => {
             const isOpen = expanded === r.profileId;
-            const total = TECH_FORM_TYPES.length;
+            const total = r.applicableTotal;
             return (
               <div key={r.profileId} className="rounded-xl border border-white/10 bg-slate-900/40">
                 <button
@@ -321,13 +361,14 @@ export function TechnicianFormChecklistPage() {
                     <ul className="space-y-2">
                       {TECH_FORM_TYPES.map((type) => {
                         const doc = r.docs.get(type);
-                        const done = isComplete(doc);
-                        const pending = doc?.status === "pending_signature";
+                        const na = r.exempt.has(type);
+                        const done = !na && isComplete(doc);
+                        const pending = !na && doc?.status === "pending_signature";
                         const label = SIGNABLE_DOCUMENT_REGISTRY[type]?.label ?? type;
                         const key = `${r.profileId}|${type}`;
                         const busy = actionKey === key;
                         return (
-                          <li key={type} className="flex items-center gap-2.5 text-sm">
+                          <li key={type} className={`flex items-center gap-2.5 text-sm ${na ? "opacity-50" : ""}`}>
                             <span
                               className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${
                                 done ? "border-emerald-500 bg-emerald-500 text-slate-950" : pending ? "border-amber-500/60 bg-transparent" : "border-white/20 bg-transparent"
@@ -337,11 +378,11 @@ export function TechnicianFormChecklistPage() {
                             </span>
                             <span className={`flex-1 min-w-0 ${done ? "text-slate-400" : "text-slate-200"}`}>{label}</span>
                             <span className={`shrink-0 text-[10px] font-semibold uppercase tracking-wide ${
-                              done ? "text-emerald-400" : pending ? "text-amber-400" : "text-slate-600"
+                              na ? "text-slate-500" : done ? "text-emerald-400" : pending ? "text-amber-400" : "text-slate-600"
                             }`}>
-                              {done ? "Signed" : pending ? "Pending" : "Not sent"}
+                              {na ? "N/A" : done ? "Signed" : pending ? "Pending" : "Not sent"}
                             </span>
-                            {doc?.pdfUrl && (
+                            {!na && doc?.pdfUrl && (
                               <a
                                 href={doc.pdfUrl}
                                 target="_blank"
@@ -351,7 +392,7 @@ export function TechnicianFormChecklistPage() {
                                 view <ExternalLink className="h-3 w-3" />
                               </a>
                             )}
-                            {!done && pending && (
+                            {!na && !done && pending && (
                               <button
                                 type="button"
                                 disabled={busy}
@@ -362,7 +403,7 @@ export function TechnicianFormChecklistPage() {
                                 {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Bell className="h-3 w-3" />} Remind
                               </button>
                             )}
-                            {!done && !pending && (
+                            {!na && !done && !pending && (
                               <button
                                 type="button"
                                 disabled={busy}
@@ -373,6 +414,19 @@ export function TechnicianFormChecklistPage() {
                                 {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Send className="h-3 w-3" />} Send
                               </button>
                             )}
+                            <label
+                              title="This technician doesn't need this form"
+                              className="inline-flex shrink-0 items-center gap-1 text-[10px] text-slate-500 hover:text-slate-300 cursor-pointer"
+                            >
+                              <input
+                                type="checkbox"
+                                checked={na}
+                                disabled={busy || done}
+                                onChange={(e) => void handleToggleExempt(r.profileId, type, e.target.checked)}
+                                className="h-3 w-3"
+                              />
+                              N/A
+                            </label>
                           </li>
                         );
                       })}
