@@ -118,3 +118,47 @@ export function getDocumentReviewStatus(
   }
   return "awaiting_employee"; // pending_signature
 }
+
+/**
+ * Of TECHNICIAN_FORM_TYPES, the subset that only applies to SOME
+ * technicians (Flash Technician Travel & Out-of-State Policy — only
+ * out-of-state-travel techs need it) — these default to "N/A" instead of
+ * "needed", the opposite of every other technician form. See
+ * isTechnicianExemptFromForm/exemptionRowValueForToggle below for how that
+ * inversion is layered on top of the SAME technician_form_exemptions table
+ * used for ordinary opt-out N/A marks, without needing a second table.
+ */
+export const DEFAULT_EXEMPT_DOCUMENT_TYPES = new Set<SignableDocumentType>(["flash_technician_travel"]);
+
+/**
+ * Whether a technician should currently show as "N/A" for this document
+ * type. For an ordinary type (not in DEFAULT_EXEMPT_DOCUMENT_TYPES), that's
+ * just "does an exemption-table row exist" (opt-out semantics: needed by
+ * default, a row means explicitly marked N/A).
+ *
+ * For a DEFAULT_EXEMPT_DOCUMENT_TYPES type, it's inverted (opt-in
+ * semantics: N/A by default) — exempt UNLESS a document already exists for
+ * them (HR sending one at all is proof it's applicable) OR HR explicitly
+ * overrode the default via the same N/A checkbox, which for these types
+ * means "this technician DOES need it" rather than "doesn't" — see
+ * exemptionRowValueForToggle, which is what makes that checkbox write the
+ * inverted value to storage.
+ */
+export function isTechnicianExemptFromForm(type: SignableDocumentType, hasDoc: boolean, hasExemptionRow: boolean): boolean {
+  if (DEFAULT_EXEMPT_DOCUMENT_TYPES.has(type)) {
+    return !hasDoc && !hasExemptionRow;
+  }
+  return hasExemptionRow;
+}
+
+/**
+ * What boolean to pass to setTechnicianFormExemption when the "N/A"
+ * checkbox is toggled to `checked` for this type — inverted for
+ * DEFAULT_EXEMPT_DOCUMENT_TYPES, where checking the (already-defaulted-on)
+ * box means "revert to the default N/A" (no row) and unchecking it means
+ * "mark as an exception that DOES need this form" (create a row). See
+ * isTechnicianExemptFromForm's doc comment for the full picture.
+ */
+export function exemptionRowValueForToggle(type: SignableDocumentType, checked: boolean): boolean {
+  return DEFAULT_EXEMPT_DOCUMENT_TYPES.has(type) ? !checked : checked;
+}

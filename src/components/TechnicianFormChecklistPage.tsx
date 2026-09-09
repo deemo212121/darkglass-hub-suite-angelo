@@ -17,7 +17,7 @@ import { useAuth } from "@/lib/auth";
 import { getCompanyUsers, getMyProfileId, setProfileFrozen, type ProfileRow } from "@/lib/supabase/users";
 import { isEligibleForTechnicianFormChecklist, getRoleDepartmentBreakdown } from "@/lib/roleLabels";
 import { getAllSignableDocuments, createSignableDocument, type SignableDocument, type SignableDocumentType } from "@/lib/supabase/signableDocuments";
-import { SIGNABLE_DOCUMENT_REGISTRY, TECHNICIAN_FORM_TYPES, getDocumentReviewStatus } from "@/lib/signableDocumentRegistry";
+import { SIGNABLE_DOCUMENT_REGISTRY, TECHNICIAN_FORM_TYPES, getDocumentReviewStatus, isTechnicianExemptFromForm, exemptionRowValueForToggle } from "@/lib/signableDocumentRegistry";
 import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
 import { getTechnicianFormExemptions, setTechnicianFormExemption } from "@/lib/supabase/technicianFormExemptions";
 import { logActivity } from "@/lib/supabase/hrActivityLog";
@@ -100,7 +100,7 @@ export function TechnicianFormChecklistPage() {
         for (const type of TECH_FORM_TYPES) {
           const doc = latestByRecipientAndType.get(`${u.id}|${type}`);
           docMap.set(type, doc);
-          if (exemptions.has(`${u.id}|${type}`)) {
+          if (isTechnicianExemptFromForm(type, !!doc, exemptions.has(`${u.id}|${type}`))) {
             exempt.add(type);
           } else if (isComplete(doc, type)) {
             doneCount++;
@@ -239,7 +239,7 @@ export function TechnicianFormChecklistPage() {
       })
     );
     try {
-      await setTechnicianFormExemption(technicianId, type, checked, displayName || "HR");
+      await setTechnicianFormExemption(technicianId, type, exemptionRowValueForToggle(type, checked), displayName || "HR");
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "Failed to update.");
       await load();

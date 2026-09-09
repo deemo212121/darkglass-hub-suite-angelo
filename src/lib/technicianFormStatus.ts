@@ -15,7 +15,7 @@
  */
 import { getSignableDocumentsForRecipient, type SignableDocument, type SignableDocumentType } from "@/lib/supabase/signableDocuments";
 import { getTechnicianFormExemptions } from "@/lib/supabase/technicianFormExemptions";
-import { SIGNABLE_DOCUMENT_REGISTRY, TECHNICIAN_FORM_TYPES, getDocumentReviewStatus } from "@/lib/signableDocumentRegistry";
+import { SIGNABLE_DOCUMENT_REGISTRY, TECHNICIAN_FORM_TYPES, getDocumentReviewStatus, isTechnicianExemptFromForm } from "@/lib/signableDocumentRegistry";
 
 export interface IncompleteTechForm {
   type: SignableDocumentType;
@@ -40,8 +40,8 @@ export async function getMyIncompleteTechForms(profileId: string): Promise<Incom
 
   const incomplete: IncompleteTechForm[] = [];
   for (const type of TECHNICIAN_FORM_TYPES) {
-    if (exemptions.has(`${profileId}|${type}`)) continue;
     const doc = latestByType.get(type);
+    if (isTechnicianExemptFromForm(type, !!doc, exemptions.has(`${profileId}|${type}`))) continue;
     const reviewStatus = getDocumentReviewStatus(type, doc);
     if (reviewStatus === "done" || reviewStatus === "awaiting_hr") continue;
     incomplete.push({ type, label: SIGNABLE_DOCUMENT_REGISTRY[type]?.label ?? type, pending: reviewStatus === "awaiting_employee", docId: doc?.id ?? null });
