@@ -135,6 +135,47 @@ export function isTraineeApprovalEligible(role: string | null | undefined, extra
   return anyHeldRoleIn(TECHNICIAN_PAY_ROLES, role, extraRoles);
 }
 
+/**
+ * True if this person holds a technician-tier role either as their primary
+ * role OR as a secondary one — e.g. a CSR who also picks up Technician
+ * shifts. Same "pile up" semantics as isTraineeApprovalEligible above (in
+ * fact the identical check, just named for its own call site instead of
+ * reusing a trainee-specific name). Used by TechnicianFormChecklistPage.tsx
+ * so someone technician-tier only via extra_roles still shows up on the
+ * checklist instead of being silently dropped by a primary-role-only check.
+ */
+export function hasAnyTechnicianPayRole(role: string | null | undefined, extraRoles?: string[] | null): boolean {
+  return anyHeldRoleIn(TECHNICIAN_PAY_ROLES, role, extraRoles);
+}
+
+/**
+ * Primary roles that can plausibly be doing field-technician work — the
+ * Technician tier itself, plus Branch Manager/Senior Branch Manager (who
+ * often still run routes). Deliberately does NOT include ADMIN, SUPERADMIN,
+ * IT, PARTS_MANAGER, BIZOPS_*, TRIAGE_*, FINANCE, HR, or CSR — those roles
+ * sometimes carry TECHNICIAN in extra_roles purely as a system-access grant
+ * (e.g. so an admin can be assigned to a ticket in a pinch), not because
+ * the person is an actual field technician who needs onboarding forms
+ * tracked. Confirmed against the real roster: every Branch/Senior Branch
+ * Manager holding a Technician-tier extra role was on the printed
+ * technician sheet; every ADMIN/SUPERADMIN/IT/PARTS_MANAGER account with
+ * TECHNICIAN in extra_roles was not.
+ */
+const FIELD_TECHNICIAN_PRIMARY_ROLES = new Set([...TECHNICIAN_PAY_ROLES, "BRANCH_MANAGER", "SENIOR_BRANCH_MANAGER"]);
+
+/**
+ * True for TechnicianFormChecklistPage.tsx's roster: a technician-tier
+ * primary role, or a Branch/Senior Branch Manager who also holds a
+ * technician-tier role in extra_roles (still doing field work) — but never
+ * an office/admin-tier account that merely has Technician tacked onto
+ * extra_roles for unrelated system-access reasons. See
+ * FIELD_TECHNICIAN_PRIMARY_ROLES above for why the primary-role gate exists.
+ */
+export function isEligibleForTechnicianFormChecklist(role: string | null | undefined, extraRoles?: string[] | null): boolean {
+  if (!FIELD_TECHNICIAN_PRIMARY_ROLES.has(normalizeRole(role))) return false;
+  return hasAnyTechnicianPayRole(role, extraRoles);
+}
+
 /** Falls back to the flat ROLE_LABELS value for both fields if the role isn't in the breakdown map above. */
 export function getRoleDepartmentBreakdown(role: string | null | undefined): { department: string; roleLabel: string } {
   const code = normalizeRole(role);

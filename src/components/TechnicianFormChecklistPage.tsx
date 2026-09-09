@@ -15,7 +15,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { ChevronLeft, ClipboardCheck, Loader2, ChevronDown, ExternalLink, RefreshCw, Send, Bell, Snowflake, Search } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { getCompanyUsers, getMyProfileId, setProfileFrozen, type ProfileRow } from "@/lib/supabase/users";
-import { TECHNICIAN_PAY_ROLES, normalizeRole, getRoleDepartmentBreakdown } from "@/lib/roleLabels";
+import { isEligibleForTechnicianFormChecklist, getRoleDepartmentBreakdown } from "@/lib/roleLabels";
 import { getAllSignableDocuments, createSignableDocument, type SignableDocument, type SignableDocumentType } from "@/lib/supabase/signableDocuments";
 import { SIGNABLE_DOCUMENT_REGISTRY, TECHNICIAN_FORM_TYPES } from "@/lib/signableDocumentRegistry";
 import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
@@ -72,8 +72,14 @@ export function TechnicianFormChecklistPage() {
     setLoading(true);
     try {
       const [users, docs, exemptions] = await Promise.all([getCompanyUsers(), getAllSignableDocuments(), getTechnicianFormExemptions()]);
+      // isEligibleForTechnicianFormChecklist checks BOTH the primary role
+      // and extra_roles — a Branch/Senior Branch Manager who still does
+      // field work (Technician/Technician Manager in extra_roles) needs
+      // these forms tracked too — but skips office/admin-tier accounts that
+      // merely have Technician tacked onto extra_roles for unrelated
+      // system-access reasons (see its doc comment in roleLabels.ts).
       const technicians = (users as ProfileRow[]).filter(
-        (u) => u.is_active && TECHNICIAN_PAY_ROLES.has(normalizeRole(u.role))
+        (u) => u.is_active && isEligibleForTechnicianFormChecklist(u.role, u.extra_roles)
       );
 
       // getAllSignableDocuments returns newest-first, so the first match
