@@ -304,6 +304,11 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   // punch (absent, or clocked in but not out yet) so the table only shows
   // employees whose attendance for the day is actually complete.
   const [completeOnly, setCompleteOnly] = useState(false);
+  // Daily Attendance Tracker only — narrow to rows that have an Alerts-column
+  // flag ("issues") vs. rows showing "OK" (no flags). "issues" matches the
+  // badges actually rendered in that column (late/missing punch, over/under
+  // time), so it lines up 1:1 with what the reviewer sees.
+  const [alertFilter, setAlertFilter] = useState<"all" | "issues" | "clean">("all");
   // Daily Attendance Tracker — clicking an employee's name shows their
   // scheduled shift (Required Check In/Out) right there instead of only
   // linking out to their full profile. Keyed by the SAME id used for the
@@ -811,6 +816,8 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
       // checkIn is already guaranteed above — this now only additionally
       // requires a completed checkOut.
       if (completeOnly && record.checkOut === "—") return false;
+      if (alertFilter === "issues" && record.alerts.length === 0) return false;
+      if (alertFilter === "clean" && record.alerts.length > 0) return false;
       return true;
     })
     .sort((a, b) => (dateRangeActive && a.date !== b.date ? (a.date! < b.date! ? -1 : 1) : a.name.localeCompare(b.name)));
@@ -1636,7 +1643,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
 
               {/* Filters and Search for Daily */}
               <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
-                <div className="grid gap-3 md:grid-cols-6">
+                <div className="grid gap-3 md:grid-cols-6 lg:grid-cols-7">
                   <div>
                     <label className="block text-xs text-slate-400 uppercase mb-2">Search Employee</label>
                     <input
@@ -1663,6 +1670,14 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                       {locations.map(loc => (
                         <option key={loc} value={loc}>{loc}</option>
                       ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-400 uppercase mb-2">Filter by Alerts</label>
+                    <select value={alertFilter} onChange={(e) => setAlertFilter(e.target.value as "all" | "issues" | "clean")} className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none">
+                      <option value="all">All</option>
+                      <option value="issues">With alerts</option>
+                      <option value="clean">No alerts (OK)</option>
                     </select>
                   </div>
                   <div className="md:col-span-2">
