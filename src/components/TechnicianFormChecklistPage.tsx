@@ -12,11 +12,15 @@
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { ChevronLeft, ClipboardCheck, Loader2, ChevronDown, ExternalLink, RefreshCw } from "lucide-react";
-import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
+import { ChevronLeft, ClipboardCheck, Loader2, ChevronDown, ExternalLink, RefreshCw, Send, Bell } from "lucide-react";
+import { useAuth } from "@/lib/auth";
+import { getCompanyUsers, getMyProfileId, type ProfileRow } from "@/lib/supabase/users";
 import { TECHNICIAN_PAY_ROLES, normalizeRole, getRoleDepartmentBreakdown } from "@/lib/roleLabels";
-import { getAllSignableDocuments, type SignableDocument, type SignableDocumentType } from "@/lib/supabase/signableDocuments";
+import { getAllSignableDocuments, createSignableDocument, type SignableDocument, type SignableDocumentType } from "@/lib/supabase/signableDocuments";
 import { SIGNABLE_DOCUMENT_REGISTRY } from "@/lib/signableDocumentRegistry";
+import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
+import { logActivity } from "@/lib/supabase/hrActivityLog";
+import { getAppUrl } from "@/lib/appUrl";
 
 // Same set of forms as ReportHRDaily.tsx's automatedFormsTechnicianTabs,
 // minus contractorDataUs/vehicleUseAgreement (those moved to the BM/SBS/
@@ -55,12 +59,21 @@ type SortMode = "missing-desc" | "missing-asc" | "name" | "branch";
 
 export function TechnicianFormChecklistPage() {
   const navigate = useNavigate();
+  const { uid, displayName } = useAuth();
+  const [myProfileId, setMyProfileId] = useState<string | null>(null);
   const [rows, setRows] = useState<TechRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [hideComplete, setHideComplete] = useState(false);
   const [branchFilter, setBranchFilter] = useState("");
   const [sortMode, setSortMode] = useState<SortMode>("missing-desc");
+  const [actionKey, setActionKey] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!uid) return;
+    getMyProfileId(uid).then(setMyProfileId).catch(() => setMyProfileId(null));
+  }, [uid]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -137,6 +150,66 @@ export function TechnicianFormChecklistPage() {
     return result;
   }, [rows, hideComplete, branchFilter, sortMode]);
 
+  // "Not sent" — creates the document (same formData/recipientSlot shape
+  // every individual Send handler in ReportHRDaily.tsx uses: just the
+  // recipient's id/name, the recipient fills in everything else
+  // themselves) and DMs them the fill link.
+  const handleSendForm = async (technicianId: string, technicianName: string, type: SignableDocumentType) => {
+    const key = `${technicianId}|${type}`;
+    setActionKey(key);
+    setActionError(null);
+    try {
+      const doc = await createSignableDocument({
+        documentType: type,
+        formData: { employeeId: technicianId, employeeName: technicianName },
+        recipientId: technicianId,
+        recipientSlot: "employee",
+        pdfUrl: "",
+      });
+      if (myProfileId) {
+        const thread = await getOrCreateDmThread(myProfileId, technicianId);
+        const fillLink = `${getAppUrl()}${SIGNABLE_DOCUMENT_REGISTRY[type].internalPath}/${doc.id}`;
+        await sendMessage({
+          dmThreadId: thread.id,
+          senderId: myProfileId,
+          senderName: displayName || "HR",
+          body: `📋 Please complete the ${SIGNABLE_DOCUMENT_REGISTRY[type].label}: ${fillLink}`,
+        });
+      }
+      void logActivity({ action: `${type}_sent`, targetType: "employee", targetId: technicianId, targetLabel: technicianName });
+      await load();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Failed to send form.");
+    } finally {
+      setActionKey(null);
+    }
+  };
+
+  // "Pending" — the document already exists (they just haven't signed it
+  // yet); nudge with a DM to the SAME fill link rather than creating a
+  // duplicate document.
+  const handleRemindForm = async (doc: SignableDocument, technicianId: string, type: SignableDocumentType) => {
+    const key = `${technicianId}|${type}`;
+    setActionKey(key);
+    setActionError(null);
+    try {
+      if (myProfileId) {
+        const thread = await getOrCreateDmThread(myProfileId, technicianId);
+        const fillLink = `${getAppUrl()}${SIGNABLE_DOCUMENT_REGISTRY[type].internalPath}/${doc.id}`;
+        await sendMessage({
+          dmThreadId: thread.id,
+          senderId: myProfileId,
+          senderName: displayName || "HR",
+          body: `⏰ Reminder — please complete the ${SIGNABLE_DOCUMENT_REGISTRY[type].label}: ${fillLink}`,
+        });
+      }
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Failed to send reminder.");
+    } finally {
+      setActionKey(null);
+    }
+  };
+
   return (
     <main className="max-w-[1000px] mx-auto px-6 py-8">
       <div className="flex items-center gap-3 mb-4">
@@ -202,6 +275,10 @@ export function TechnicianFormChecklistPage() {
         )}
       </div>
 
+      {actionError && (
+        <p className="mb-4 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{actionError}</p>
+      )}
+
       {loading && rows.length === 0 ? (
         <div className="flex items-center justify-center py-16 text-slate-400">
           <Loader2 className="h-6 w-6 animate-spin" />
@@ -247,6 +324,8 @@ export function TechnicianFormChecklistPage() {
                         const done = isComplete(doc);
                         const pending = doc?.status === "pending_signature";
                         const label = SIGNABLE_DOCUMENT_REGISTRY[type]?.label ?? type;
+                        const key = `${r.profileId}|${type}`;
+                        const busy = actionKey === key;
                         return (
                           <li key={type} className="flex items-center gap-2.5 text-sm">
                             <span
@@ -271,6 +350,28 @@ export function TechnicianFormChecklistPage() {
                               >
                                 view <ExternalLink className="h-3 w-3" />
                               </a>
+                            )}
+                            {!done && pending && (
+                              <button
+                                type="button"
+                                disabled={busy}
+                                onClick={() => doc && void handleRemindForm(doc, r.profileId, type)}
+                                title="Send a reminder DM with the fill link"
+                                className="inline-flex shrink-0 items-center gap-1 text-xs text-amber-300 hover:text-amber-200 disabled:opacity-40"
+                              >
+                                {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Bell className="h-3 w-3" />} Remind
+                              </button>
+                            )}
+                            {!done && !pending && (
+                              <button
+                                type="button"
+                                disabled={busy}
+                                onClick={() => void handleSendForm(r.profileId, r.name, type)}
+                                title="Create and send this form"
+                                className="inline-flex shrink-0 items-center gap-1 text-xs text-blue-400 hover:text-blue-300 disabled:opacity-40"
+                              >
+                                {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Send className="h-3 w-3" />} Send
+                              </button>
                             )}
                           </li>
                         );
