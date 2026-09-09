@@ -51,12 +51,16 @@ function isComplete(doc: SignableDocument | undefined): boolean {
   return doc?.status === "signed" || doc?.status === "confirmed";
 }
 
+type SortMode = "missing-desc" | "missing-asc" | "name" | "branch";
+
 export function TechnicianFormChecklistPage() {
   const navigate = useNavigate();
   const [rows, setRows] = useState<TechRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [hideComplete, setHideComplete] = useState(false);
+  const [branchFilter, setBranchFilter] = useState("");
+  const [sortMode, setSortMode] = useState<SortMode>("missing-desc");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -94,7 +98,6 @@ export function TechnicianFormChecklistPage() {
           doneCount,
         };
       });
-      next.sort((a, b) => a.doneCount - b.doneCount || a.name.localeCompare(b.name));
       setRows(next);
       setExpanded((cur) => (cur && next.some((r) => r.profileId === cur) ? cur : next[0]?.profileId ?? null));
     } catch (err) {
@@ -108,14 +111,35 @@ export function TechnicianFormChecklistPage() {
     void load();
   }, [load]);
 
-  const visibleRows = useMemo(
-    () => (hideComplete ? rows.filter((r) => r.doneCount < TECH_FORM_TYPES.length) : rows),
-    [rows, hideComplete]
+  const branchOptions = useMemo(
+    () => Array.from(new Set(rows.map((r) => r.branch))).sort((a, b) => a.localeCompare(b)),
+    [rows]
   );
+
+  const visibleRows = useMemo(() => {
+    let result = rows;
+    if (hideComplete) result = result.filter((r) => r.doneCount < TECH_FORM_TYPES.length);
+    if (branchFilter) result = result.filter((r) => r.branch === branchFilter);
+    const missing = (r: TechRow) => TECH_FORM_TYPES.length - r.doneCount;
+    result = [...result].sort((a, b) => {
+      switch (sortMode) {
+        case "missing-asc":
+          return missing(a) - missing(b) || a.name.localeCompare(b.name);
+        case "name":
+          return a.name.localeCompare(b.name);
+        case "branch":
+          return a.branch.localeCompare(b.branch) || a.name.localeCompare(b.name);
+        case "missing-desc":
+        default:
+          return missing(b) - missing(a) || a.name.localeCompare(b.name);
+      }
+    });
+    return result;
+  }, [rows, hideComplete, branchFilter, sortMode]);
 
   return (
     <main className="max-w-[1000px] mx-auto px-6 py-8">
-      <div className="flex items-center gap-3 mb-6">
+      <div className="flex items-center gap-3 mb-4">
         <button
           type="button"
           onClick={() => navigate({ to: "/m/$module", params: { module: "hr" } })}
@@ -129,17 +153,53 @@ export function TechnicianFormChecklistPage() {
           </h1>
           <p className="text-sm text-slate-400">Live signed/pending status for every Technician-tab form — nothing here is manually checked.</p>
         </div>
-        <label className="flex items-center gap-1.5 text-xs text-slate-400 shrink-0">
-          <input type="checkbox" checked={hideComplete} onChange={(e) => setHideComplete(e.target.checked)} className="h-3.5 w-3.5" />
-          Hide complete
-        </label>
         <button
           type="button"
           onClick={() => void load()}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-white/15 bg-white/5 px-2.5 py-1.5 text-xs text-slate-300 hover:text-white"
+          className="inline-flex items-center gap-1.5 rounded-lg border border-white/15 bg-white/5 px-2.5 py-1.5 text-xs text-slate-300 hover:text-white shrink-0"
         >
           <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} /> Refresh
         </button>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-3 mb-6">
+        <div className="flex flex-col gap-1">
+          <label className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">Branch</label>
+          <select
+            value={branchFilter}
+            onChange={(e) => setBranchFilter(e.target.value)}
+            className="rounded-lg border border-white/15 bg-slate-900/60 px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-blue-500"
+          >
+            <option value="">All branches</option>
+            {branchOptions.map((b) => <option key={b} value={b}>{b}</option>)}
+          </select>
+        </div>
+        <div className="flex flex-col gap-1">
+          <label className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">Sort</label>
+          <select
+            value={sortMode}
+            onChange={(e) => setSortMode(e.target.value as SortMode)}
+            className="rounded-lg border border-white/15 bg-slate-900/60 px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-blue-500"
+          >
+            <option value="missing-desc">Most missing first</option>
+            <option value="missing-asc">Fewest missing first</option>
+            <option value="name">Name (A–Z)</option>
+            <option value="branch">Branch (A–Z)</option>
+          </select>
+        </div>
+        <label className="flex items-center gap-1.5 text-xs text-slate-400 shrink-0 mt-4">
+          <input type="checkbox" checked={hideComplete} onChange={(e) => setHideComplete(e.target.checked)} className="h-3.5 w-3.5" />
+          Hide complete
+        </label>
+        {(branchFilter || sortMode !== "missing-desc" || hideComplete) && (
+          <button
+            type="button"
+            onClick={() => { setBranchFilter(""); setSortMode("missing-desc"); setHideComplete(false); }}
+            className="text-xs text-blue-400 hover:text-blue-300 mt-4"
+          >
+            Reset filters
+          </button>
+        )}
       </div>
 
       {loading && rows.length === 0 ? (
