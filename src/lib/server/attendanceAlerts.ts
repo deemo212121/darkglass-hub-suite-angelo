@@ -546,9 +546,13 @@ export async function runAttendanceAlertCheck(
           const inNames = info.employeeKinds.filter((e) => e.kind === "grace_warning_clock_in").map((e) => e.name);
           const outNames = info.employeeKinds.filter((e) => e.kind === "grace_warning_clock_out").map((e) => e.name);
           const lines: string[] = [`Hi ${manager.display_name || "there"},`, ""];
-          if (inNames.length) lines.push(`Not yet clocked in (still within grace): ${inNames.join(", ")}.`);
-          if (outNames.length) lines.push(`Not yet clocked out (still within grace): ${outNames.join(", ")}.`);
-          lines.push("", "This is an early heads-up before their grace period runs out — no action needed if they're already on their way.");
+          if (inNames.length) {
+            lines.push("Not yet clocked in (still within grace time):", ...inNames.map((n) => `• ${n}`), "");
+          }
+          if (outNames.length) {
+            lines.push("Not yet clocked out (still within grace time):", ...outNames.map((n) => `• ${n}`), "");
+          }
+          lines.push("This is an early heads-up before their grace time runs out — no action needed if they're already on their way.");
           const subject = `Attendance grace warning — ${dateISO}`;
           await sendGmailMessage(accessToken, fromEmail, manager.email, subject, lines.join("\n"));
           summary.graceWarningEmailsSent++;

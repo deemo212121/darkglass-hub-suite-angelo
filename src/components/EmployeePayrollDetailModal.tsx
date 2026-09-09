@@ -211,29 +211,38 @@ export function EmployeePayrollDetailModal({
     }
     return map;
   }, [mileageEntries]);
-  // Per-day ticket stats: how many of that day's scheduled tickets were
-  // actually completed (both an Arrived and a Done on-site stamp), and the
-  // mileage rolled up from just those completed tickets — DID NOT GO / never-
-  // arrived tickets contribute no mileage. Total Mileage here is always a
-  // pure sum of the per-ticket leg mileage in the expanded breakdown, never
-  // its own editable field.
+  // Per-day ticket stats — two independent breakdowns of the same day's
+  // scheduled tickets: completion + mileage (how many of the day's tickets
+  // got both an Arrived and a Done on-site stamp, and the mileage rolled up
+  // from just those — DID NOT GO / never-arrived tickets contribute no
+  // mileage; Total Mileage is always a pure sum of the per-ticket leg
+  // mileage in the expanded breakdown, never its own editable field), and
+  // On-Site Check-In compliance (same Checked In/Missing Check-In/Missing
+  // Check-Out definitions Ticket Attendance uses in technicianWhereabouts.ts,
+  // just grouped by day instead of summed over the whole range).
   const ticketStatsByDate = useMemo(() => {
     const byDate = new Map<string, TicketAttendanceRow[]>();
     for (const r of ticketRows) {
       if (!byDate.has(r.scheduleDate)) byDate.set(r.scheduleDate, []);
       byDate.get(r.scheduleDate)!.push(r);
     }
-    const map = new Map<string, { scheduled: number; completed: number; totalMileage: number }>();
+    const map = new Map<
+      string,
+      { scheduled: number; completed: number; totalMileage: number; checkedIn: number; missingCheckIn: number; missingCheckOut: number }
+    >();
     for (const [date, dayRows] of byDate) {
       const completedRows = dayRows.filter((r) => r.arrivedAt && r.doneAt);
       map.set(date, {
         scheduled: dayRows.length,
         completed: completedRows.length,
         totalMileage: completedRows.reduce((s, r) => s + (mileageByTicketNo.get(r.ticketNo)?.legMileage ?? 0), 0),
+        checkedIn: dayRows.filter((r) => r.arrivedAt).length,
+        missingCheckIn: dayRows.filter((r) => !r.arrivedAt && r.statusGroup !== "cancelled" && !disputedTicketNosApproved.has(r.ticketNo)).length,
+        missingCheckOut: dayRows.filter((r) => r.arrivedAt && !r.doneAt && r.statusGroup !== "cancelled" && !disputedTicketNosApproved.has(r.ticketNo)).length,
       });
     }
     return map;
-  }, [ticketRows, mileageByTicketNo]);
+  }, [ticketRows, mileageByTicketNo, disputedTicketNosApproved]);
   // Full ticket rows per date, for the expanded per-day ticket table —
   // same grouping as ticketStatsByDate above, just keeping the rows instead
   // of collapsing them to counts.
@@ -722,6 +731,9 @@ export function EmployeePayrollDetailModal({
                       <th className="text-center py-1.5">Scheduled</th>
                       <th className="text-center py-1.5" title="Tickets with both an Arrived and a Done on-site stamp">Completed</th>
                       <th className="text-right py-1.5 pr-4" title="Sum of the completed tickets' leg mileage — excludes DID NOT GO and any ticket missing an arrived/done stamp. Not editable; it rolls up the per-ticket mileage in the breakdown below.">Total Mileage</th>
+                      <th className="text-center py-1.5">Checked In</th>
+                      <th className="text-center py-1.5" title="Missing Check-In">Missing In</th>
+                      <th className="text-center py-1.5" title="Missing Check-Out">Missing Out</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -830,10 +842,17 @@ export function EmployeePayrollDetailModal({
                         <td className="py-1.5 pr-4 text-right text-slate-300 whitespace-nowrap">
                           {ticketStats && ticketStats.completed > 0 ? `${ticketStats.totalMileage.toFixed(1)} mi` : <span className="text-slate-500">—</span>}
                         </td>
+                        <td className="py-1.5 text-center text-emerald-300">{ticketStats ? ticketStats.checkedIn : "—"}</td>
+                        <td className={`py-1.5 text-center ${ticketStats && ticketStats.missingCheckIn > 0 ? "text-red-300 font-semibold" : "text-slate-500"}`}>
+                          {ticketStats ? ticketStats.missingCheckIn : "—"}
+                        </td>
+                        <td className={`py-1.5 text-center ${ticketStats && ticketStats.missingCheckOut > 0 ? "text-yellow-300 font-semibold" : "text-slate-500"}`}>
+                          {ticketStats ? ticketStats.missingCheckOut : "—"}
+                        </td>
                       </tr>
                       {isExpanded && (
                         <tr>
-                          <td colSpan={13} className="px-2 py-3 bg-white/[0.02] border-b border-white/5">
+                          <td colSpan={16} className="px-2 py-3 bg-white/[0.02] border-b border-white/5">
                             {dayTicketRows.length === 0 ? (
                               <p className="text-[11px] text-slate-500 text-center py-2">No tickets scheduled this day.</p>
                             ) : (
