@@ -46,7 +46,8 @@ interface Props {
 
 type CellColor = "planned" | "late";
 
-const DOW_LABELS = ["S", "M", "T", "W", "T", "F", "S"];
+// Thursday gets "Th" (not "T") so it's distinct from Tuesday in this narrow column header.
+const DOW_LABELS = ["S", "M", "T", "W", "Th", "F", "S"];
 
 const PTO_TYPE_LABELS: Record<PtoType, string> = {
   vacation: "Vacation",
