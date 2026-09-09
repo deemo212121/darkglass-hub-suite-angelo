@@ -10,6 +10,10 @@ export interface AttendanceNoteRow {
   profileId: string;
   noteDate: string;
   content: string;
+  /** HR's own note on this (profile, day) — separate from `content` (the
+   *  general/manager-facing note) so saving one never overwrites the
+   *  other. See migration 0220. */
+  hrNote: string;
   notifyIndividual: boolean;
   notifyTeamLead: boolean;
   createdBy: string | null;
@@ -28,7 +32,7 @@ export async function getAttendanceNotes(
   for (let from = 0; ; from += PAGE_SIZE) {
     const { data, error } = await supabase
       .from("attendance_notes")
-      .select("profile_id, note_date, content, notify_individual, notify_team_lead, created_by")
+      .select("profile_id, note_date, content, hr_note, notify_individual, notify_team_lead, created_by")
       .not("profile_id", "is", null)
       .gte("note_date", startDate)
       .lte("note_date", endDate)
@@ -42,6 +46,7 @@ export async function getAttendanceNotes(
         profileId: row.profile_id,
         noteDate: row.note_date,
         content: row.content ?? "",
+        hrNote: row.hr_note ?? "",
         notifyIndividual: Boolean(row.notify_individual),
         notifyTeamLead: Boolean(row.notify_team_lead),
         createdBy: row.created_by ?? null,
@@ -74,6 +79,28 @@ export async function upsertAttendanceNote(input: {
   );
   if (error) {
     console.error("upsertAttendanceNote error:", error.message);
+    throw new Error(error.message);
+  }
+}
+
+/**
+ * Create or replace ONLY the HR note for a given profile + day — a
+ * separate slot from `content` (upsertAttendanceNote above), so an HR
+ * user saving their own note can never clobber whatever the general/
+ * manager note already says, and vice versa. Deliberately omits `content`
+ * from the upsert payload entirely (rather than sending it unchanged) so
+ * this stays a true partial update on conflict; migration 0220 relaxed
+ * `content`'s NOT NULL constraint specifically so a brand-new (profile,
+ * day) row can still be created by an HR-only save with no manager note
+ * yet on file.
+ */
+export async function upsertAttendanceHrNote(profileId: string, noteDate: string, hrNote: string): Promise<void> {
+  const { error } = await supabase.from("attendance_notes").upsert(
+    { profile_id: profileId, note_date: noteDate, hr_note: hrNote },
+    { onConflict: "profile_id,note_date" }
+  );
+  if (error) {
+    console.error("upsertAttendanceHrNote error:", error.message);
     throw new Error(error.message);
   }
 }

@@ -16,7 +16,7 @@ import {
   type TicketAttendanceRow,
 } from "@/lib/supabase/technicianWhereabouts";
 import { getCompanyTimecardEntries, getProfileIdByFirebaseUid, type CompanyTimecardEntry } from "@/lib/supabase/timecards";
-import { getVisitDiagnosisByTicketIds } from "@/lib/supabase/tickets";
+import { getVisitDiagnosisByTicketIds, getVisitResolutionByTicketIds } from "@/lib/supabase/tickets";
 import { getMileageEntries, setMileageEstimateTime, type MileageEntry } from "@/lib/supabase/mileage";
 import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
 import { getCompanyEmployeeRequests } from "@/lib/supabase/employeeRequests";
@@ -143,6 +143,7 @@ export function TicketAttendanceTab() {
   const [expandedTech, setExpandedTech] = useState<string | null>(null);
   const [timecards, setTimecards] = useState<CompanyTimecardEntry[]>([]);
   const [diagnoses, setDiagnoses] = useState<Map<string, string>>(new Map());
+  const [resolutions, setResolutions] = useState<Map<string, string>>(new Map());
   // Keyed by `${ticketId}|${workDate}` — a technician's own "Reschedule"
   // flag (migration 0215) takes priority over the diagnosis waterfall
   // below, since it directly explains why there's no diagnosis.
@@ -186,6 +187,9 @@ export function TicketAttendanceTab() {
         getVisitDiagnosisByTicketIds(ticketRows.map((r) => r.ticketId))
           .then(setDiagnoses)
           .catch((err) => console.error("Failed to load ticket diagnoses:", err));
+        getVisitResolutionByTicketIds(ticketRows.map((r) => r.ticketId))
+          .then(setResolutions)
+          .catch((err) => console.error("Failed to load ticket resolutions:", err));
         getCompanyTicketReschedules(dateFrom, dateTo)
           .then((rescheduleRows) => setReschedules(new Map(rescheduleRows.map((r) => [`${r.ticketId}|${r.workDate}`, r]))))
           .catch((err) => console.error("Failed to load ticket reschedules:", err));
@@ -376,8 +380,9 @@ export function TicketAttendanceTab() {
         createdBy: myProfileId,
       });
       setNotes((prev) => {
+        const existingHrNote = prev.find((n) => n.profileId === profileId && n.noteDate === dateFrom)?.hrNote || "";
         const next = prev.filter((n) => !(n.profileId === profileId && n.noteDate === dateFrom));
-        next.push({ profileId, noteDate: dateFrom, content, notifyIndividual: false, notifyTeamLead: false, createdBy: myProfileId });
+        next.push({ profileId, noteDate: dateFrom, content, hrNote: existingHrNote, notifyIndividual: false, notifyTeamLead: false, createdBy: myProfileId });
         return next;
       });
       setEditingNoteProfileId(null);
@@ -407,15 +412,15 @@ export function TicketAttendanceTab() {
       text: v,
       ...opts,
     });
-    // Address and Diagnosis can carry a long free-text sentence from a
-    // single row — without a cap, that one row would stretch the column
-    // for every technician/ticket, leaving huge blank space around every
-    // short "Missing"/"—" cell in that same column. Cap those two and let
-    // them wrap instead; every other column (times, statuses, numbers) is
-    // short and fixed-format, so it's safe to fit tightly and keep on one
-    // line.
-    const WRAP_COLS = new Set([3, 9]); // ticket-table column indexes: Address, Diagnosis
-    const MAX_W: Record<number, number> = { 3: 220, 9: 260 };
+    // Address, Diagnosis, and Resolution can carry a long free-text
+    // sentence from a single row — without a cap, that one row would
+    // stretch the column for every technician/ticket, leaving huge blank
+    // space around every short "Missing"/"—" cell in that same column. Cap
+    // those and let them wrap instead; every other column (times,
+    // statuses, numbers) is short and fixed-format, so it's safe to fit
+    // tightly and keep on one line.
+    const WRAP_COLS = new Set([3, 9, 10]); // ticket-table column indexes: Address, Diagnosis, Resolution
+    const MAX_W: Record<number, number> = { 3: 220, 9: 260, 10: 260 };
     const cellHtml = (c: CellDesc, colIdx?: number) => {
       const wrap = colIdx != null && WRAP_COLS.has(colIdx);
       const styles = [
@@ -448,7 +453,7 @@ export function TicketAttendanceTab() {
     const SKY = "#0369a1";
 
     const summaryHeaders = ["Technician", "Location", "Time In", "Time Out", "Alert", "Scheduled", "Checked In", "Missing Check-In", "Missing Check-Out"];
-    const ticketHeaders = ["#", "Ticket", "Status", "Address", "Estimate Time", "Arrived", "Done", "Mileage (mi)", "Map Link", "Diagnosis"];
+    const ticketHeaders = ["#", "Ticket", "Status", "Address", "Estimate Time", "Arrived", "Done", "Mileage (mi)", "Map Link", "Diagnosis", "Resolution"];
     const summaryWidths = summaryHeaders.map((h) => h.length);
     const ticketWidths = ticketHeaders.map((h) => h.length);
 
@@ -479,6 +484,7 @@ export function TicketAttendanceTab() {
         const mEntry = mileageByTicketNo.get(r.ticketNo);
         if (mEntry?.legMileage != null) totalMileage += mEntry.legMileage;
         const diagnosis = diagnoses.get(r.ticketId) || "";
+        const resolution = resolutions.get(r.ticketId) || "";
         const reschedule = reschedules.get(`${r.ticketId}|${r.scheduleDate}`);
         const dayHasPassed = r.scheduleDate < todayISO;
         const didNotGo = !diagnosis && !r.arrivedAt && dayHasPassed && r.statusGroup !== "cancelled";
@@ -518,6 +524,7 @@ export function TicketAttendanceTab() {
             return cell(mapLink || "—", { color: mapLink ? BLUE : GRAY });
           })(),
           cell(diagnosisText, { color: diagnosisColor, bold: !!reschedule || (!diagnosis && (didNotGo || noDiagnosisFound)) }),
+          cell(resolution || "—", { color: resolution ? undefined : GRAY }),
         ];
         row.forEach((c, ci) => track(ticketWidths, ci, c.text));
         return row;
@@ -546,7 +553,7 @@ export function TicketAttendanceTab() {
         "<tr>" +
           `<td colspan="6" style="text-align:right;font-weight:bold;">Total Mileage</td>` +
           cellHtml(cell(`${t.totalMileage.toFixed(1)} mi`, { bold: true, align: "right" })) +
-          `<td colspan="2"></td>` +
+          `<td colspan="3"></td>` +
           "</tr>"
       );
       parts.push("</table>");
@@ -908,6 +915,7 @@ export function TicketAttendanceTab() {
                             <th className="px-2 py-1 text-right">Mileage</th>
                             <th className="px-2 py-1 text-left">Map Link</th>
                             <th className="px-2 py-1 text-left">Diagnosis</th>
+                            <th className="px-2 py-1 text-left">Resolution</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -929,6 +937,7 @@ export function TicketAttendanceTab() {
                                   {dateRows.map((r, i) => {
                                     const mEntry = mileageByTicketNo.get(r.ticketNo);
                                     const diagnosis = diagnoses.get(r.ticketId);
+                                    const resolution = resolutions.get(r.ticketId);
                                     const reschedule = reschedules.get(`${r.ticketId}|${r.scheduleDate}`);
                                     // No Cause of Failure recorded (mobile app's required "CAUSE OF
                                     // FAILURE (TECH)" field, per visit). Two distinct empty-diagnosis
@@ -1051,6 +1060,19 @@ export function TicketAttendanceTab() {
                                             <span className="text-slate-600">—</span>
                                           )}
                                         </td>
+                                        <td className="px-2 py-1.5 max-w-[220px]">
+                                          {resolution ? (
+                                            <div className="relative group inline-block max-w-full align-top">
+                                              <span className="block truncate text-slate-400 cursor-default">{resolution}</span>
+                                              <div className="pointer-events-none absolute left-0 bottom-full z-50 mb-1.5 w-72 max-w-[min(24rem,80vw)] rounded-lg border border-white/15 bg-slate-950 px-3 py-2 text-[11px] leading-relaxed text-slate-200 shadow-2xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-opacity whitespace-normal">
+                                                <p className="text-[9px] font-semibold uppercase tracking-wide text-slate-500 mb-1">Resolution — {r.ticketNo}</p>
+                                                {resolution}
+                                              </div>
+                                            </div>
+                                          ) : (
+                                            <span className="text-slate-600">—</span>
+                                          )}
+                                        </td>
                                       </tr>
                                     );
                                   })}
@@ -1063,7 +1085,7 @@ export function TicketAttendanceTab() {
                             <td className="px-2 py-1.5 text-right text-white font-semibold">
                               {t.rows.reduce((sum, r) => sum + (mileageByTicketNo.get(r.ticketNo)?.legMileage ?? 0), 0).toFixed(1)} mi
                             </td>
-                            <td colSpan={3}></td>
+                            <td colSpan={4}></td>
                           </tr>
                         </tbody>
                       </table>

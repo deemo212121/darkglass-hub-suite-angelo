@@ -1287,6 +1287,41 @@ export async function getVisitDiagnosisByTicketIds(
 }
 
 /**
+ * Bulk-fetch the latest Resolution (visits.repair_notes — same column
+ * UIVisit's own `resolution` field reads, see rowToVisit above) for a set
+ * of tickets — same shape/rationale as getVisitDiagnosisByTicketIds right
+ * above, just a different visits column. Used by Ticket Attendance's
+ * Resolution column. Returns a `Map<ticket_id, resolution>` for tickets
+ * that have at least one visit with non-empty repair_notes.
+ */
+export async function getVisitResolutionByTicketIds(
+  ticketIds: string[],
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const uniq = Array.from(new Set(ticketIds.filter(Boolean)));
+  if (uniq.length === 0) return out;
+  await runBatched(uniq, async (batch) => {
+    const { data, error } = await supabase
+      .from("visits")
+      .select("ticket_id, repair_notes, created_at")
+      .in("ticket_id", batch)
+      .not("repair_notes", "is", null)
+      .order("created_at", { ascending: false });
+    if (error) {
+      console.error("getVisitResolutionByTicketIds error:", error.message);
+      return;
+    }
+    for (const row of data ?? []) {
+      const tid = (row as any).ticket_id as string | null;
+      const resolution = String((row as any).repair_notes ?? "").trim();
+      if (!tid || !resolution) continue;
+      if (!out.has(tid)) out.set(tid, resolution);
+    }
+  });
+  return out;
+}
+
+/**
  * Bulk-fetch full visit rows (not a derived summary) for a set of tickets,
  * keyed by ticket_id. Used by exports/reports that need the complete
  * Visit Log detail for many tickets at once — a single `.in()` query

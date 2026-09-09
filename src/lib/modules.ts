@@ -364,6 +364,15 @@ const hrMod: ModuleDef = {
       seed: () => ({}),
     },
     {
+      slug: "absent-list",
+      title: "Absent List",
+      description: "Who has no recorded check-in today (or any date) — excludes rest days and approved PTO/leave.",
+      custom: "absent-list" as any,
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
+    {
       slug: "todo-list",
       title: "To-Do List",
       description: "Finish setting up new hires — the steps User Management doesn't complete on its own.",

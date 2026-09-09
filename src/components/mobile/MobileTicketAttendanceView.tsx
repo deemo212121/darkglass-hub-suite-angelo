@@ -221,7 +221,7 @@ export function MobileTicketAttendanceView({ profileId }: { profileId: string | 
         notifyTeamLead: false,
         createdBy: profileId,
       });
-      setNoteRows((prev) => [...prev.filter((n) => n.profileId !== detail.profileId), { profileId: detail.profileId!, noteDate: todayKey, content, notifyIndividual: false, notifyTeamLead: false, createdBy: profileId }]);
+      setNoteRows((prev) => [...prev.filter((n) => n.profileId !== detail.profileId), { profileId: detail.profileId!, noteDate: todayKey, content, hrNote: prev.find((n) => n.profileId === detail.profileId)?.hrNote || "", notifyIndividual: false, notifyTeamLead: false, createdBy: profileId }]);
       setEditingNote(false);
     } catch (e) {
       alert(`Failed to save note: ${e instanceof Error ? e.message : "Unknown error"}`);
