@@ -17,7 +17,7 @@ import { useAuth } from "@/lib/auth";
 import { getCompanyUsers, getMyProfileId, setProfileFrozen, type ProfileRow } from "@/lib/supabase/users";
 import { isEligibleForTechnicianFormChecklist, getRoleDepartmentBreakdown } from "@/lib/roleLabels";
 import { getAllSignableDocuments, createSignableDocument, type SignableDocument, type SignableDocumentType } from "@/lib/supabase/signableDocuments";
-import { SIGNABLE_DOCUMENT_REGISTRY, TECHNICIAN_FORM_TYPES } from "@/lib/signableDocumentRegistry";
+import { SIGNABLE_DOCUMENT_REGISTRY, TECHNICIAN_FORM_TYPES, getDocumentReviewStatus } from "@/lib/signableDocumentRegistry";
 import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
 import { getTechnicianFormExemptions, setTechnicianFormExemption } from "@/lib/supabase/technicianFormExemptions";
 import { logActivity } from "@/lib/supabase/hrActivityLog";
@@ -43,8 +43,8 @@ interface TechRow {
   frozen: boolean;
 }
 
-function isComplete(doc: SignableDocument | undefined): boolean {
-  return doc?.status === "signed" || doc?.status === "confirmed";
+function isComplete(doc: SignableDocument | undefined, type: SignableDocumentType): boolean {
+  return getDocumentReviewStatus(type, doc) === "done";
 }
 
 type SortMode = "missing-desc" | "missing-asc" | "name" | "branch";
@@ -102,7 +102,7 @@ export function TechnicianFormChecklistPage() {
           docMap.set(type, doc);
           if (exemptions.has(`${u.id}|${type}`)) {
             exempt.add(type);
-          } else if (isComplete(doc)) {
+          } else if (isComplete(doc, type)) {
             doneCount++;
           }
         }
@@ -231,7 +231,7 @@ export function TechnicianFormChecklistPage() {
       prev.map((r) => {
         if (r.profileId !== technicianId) return r;
         const exempt = new Set(r.exempt);
-        const wasComplete = isComplete(r.docs.get(type));
+        const wasComplete = isComplete(r.docs.get(type), type);
         if (checked) exempt.add(type);
         else exempt.delete(type);
         const doneCount = r.doneCount + (checked ? (wasComplete ? -1 : 0) : (wasComplete ? 1 : 0));
@@ -437,25 +437,46 @@ export function TechnicianFormChecklistPage() {
                       {TECH_FORM_TYPES.map((type) => {
                         const doc = r.docs.get(type);
                         const na = r.exempt.has(type);
-                        const done = !na && isComplete(doc);
-                        const pending = !na && doc?.status === "pending_signature";
+                        const reviewStatus = na ? null : getDocumentReviewStatus(type, doc);
+                        const done = reviewStatus === "done";
+                        const awaitingEmployee = reviewStatus === "awaiting_employee";
+                        const awaitingHr = reviewStatus === "awaiting_hr";
                         const label = SIGNABLE_DOCUMENT_REGISTRY[type]?.label ?? type;
                         const key = `${r.profileId}|${type}`;
                         const busy = actionKey === key;
+                        const statusText = na
+                          ? "N/A"
+                          : done
+                          ? "Signed"
+                          : awaitingHr
+                          ? "Awaiting HR review"
+                          : awaitingEmployee
+                          ? "Awaiting employee signature"
+                          : "Not sent";
+                        const statusColor = na
+                          ? "text-slate-500"
+                          : done
+                          ? "text-emerald-400"
+                          : awaitingHr
+                          ? "text-sky-400"
+                          : awaitingEmployee
+                          ? "text-amber-400"
+                          : "text-slate-600";
+                        const markerClass = done
+                          ? "border-emerald-500 bg-emerald-500 text-slate-950"
+                          : awaitingHr
+                          ? "border-sky-500/60 bg-sky-500/20"
+                          : awaitingEmployee
+                          ? "border-amber-500/60 bg-transparent"
+                          : "border-white/20 bg-transparent";
                         return (
                           <li key={type} className={`flex items-center gap-2.5 text-sm ${na ? "opacity-50" : ""}`}>
-                            <span
-                              className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${
-                                done ? "border-emerald-500 bg-emerald-500 text-slate-950" : pending ? "border-amber-500/60 bg-transparent" : "border-white/20 bg-transparent"
-                              }`}
-                            >
+                            <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${markerClass}`}>
                               {done && <span className="text-[10px] font-bold leading-none">✓</span>}
                             </span>
                             <span className={`flex-1 min-w-0 ${done ? "text-slate-400" : "text-slate-200"}`}>{label}</span>
-                            <span className={`shrink-0 text-[10px] font-semibold uppercase tracking-wide ${
-                              na ? "text-slate-500" : done ? "text-emerald-400" : pending ? "text-amber-400" : "text-slate-600"
-                            }`}>
-                              {na ? "N/A" : done ? "Signed" : pending ? "Pending" : "Not sent"}
+                            <span className={`shrink-0 text-[10px] font-semibold uppercase tracking-wide ${statusColor}`}>
+                              {statusText}
                             </span>
                             {!na && doc?.pdfUrl && (
                               <a
@@ -467,7 +488,7 @@ export function TechnicianFormChecklistPage() {
                                 view <ExternalLink className="h-3 w-3" />
                               </a>
                             )}
-                            {!na && !done && pending && (
+                            {!na && awaitingEmployee && (
                               <button
                                 type="button"
                                 disabled={busy}
@@ -478,7 +499,12 @@ export function TechnicianFormChecklistPage() {
                                 {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Bell className="h-3 w-3" />} Remind
                               </button>
                             )}
-                            {!na && !done && !pending && (
+                            {!na && awaitingHr && (
+                              <span title="The employee has signed — this form now needs HR's own review/countersignature in Attendance Monitoring." className="shrink-0 text-[10px] text-sky-400/80">
+                                Needs your review
+                              </span>
+                            )}
+                            {!na && reviewStatus === "not_sent" && (
                               <button
                                 type="button"
                                 disabled={busy}
@@ -496,7 +522,7 @@ export function TechnicianFormChecklistPage() {
                               <input
                                 type="checkbox"
                                 checked={na}
-                                disabled={busy || done}
+                                disabled={busy || done || awaitingHr}
                                 onChange={(e) => void handleToggleExempt(r.profileId, type, e.target.checked)}
                                 className="h-3 w-3"
                               />

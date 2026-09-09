@@ -6,7 +6,7 @@
  * by the bundle wizard (SignBundlePage/ExternalSignBundlePage) so both
  * stay in sync with the per-type routes without duplicating this list.
  */
-import type { SignableDocumentType } from "@/lib/supabase/signableDocuments";
+import type { SignableDocumentStatus, SignableDocumentType } from "@/lib/supabase/signableDocuments";
 
 export interface SignableDocumentRegistryEntry {
   label: string;
@@ -74,3 +74,47 @@ export const TECHNICIAN_FORM_TYPES: SignableDocumentType[] = [
   "pto_ack",
   "substance_screening",
 ];
+
+/**
+ * Of TECHNICIAN_FORM_TYPES, the subset that needs an HR/employer
+ * countersignature AFTER the employee signs (ReportHRDaily.tsx's various
+ * "*EmployerDialog"/"*ManagerDialog" review flows, each ending in a
+ * confirmSignableDocument call) before the form is actually done — matches
+ * every confirmSignableDocument call site keyed to a TECHNICIAN_FORM_TYPES
+ * type in ReportHRDaily.tsx. For these, status "signed" only means the
+ * EMPLOYEE'S half is done; "confirmed" is what actually finishes it. Every
+ * other technician form type only ever needs the employee's own signature,
+ * so "signed" already means done for those.
+ */
+export const DOCUMENT_TYPES_REQUIRING_EMPLOYER_SIGNATURE = new Set<SignableDocumentType>([
+  "wage_ack",
+  "damage",
+  "flash_technician_travel",
+  "location_consent",
+  "meal_rest_break",
+  "mileage_fuel",
+  "parts_responsibility",
+  "substance_screening",
+]);
+
+/**
+ * Where a signable document currently stands, from the "is this actually
+ * finished" point of view — collapses the raw SignableDocumentStatus plus
+ * "does this type even need an employer countersign" into one of four
+ * buckets. Shared by TechnicianFormChecklistPage.tsx (HR's live status
+ * view) and technicianFormStatus.ts (a frozen technician's own "what do I
+ * still need to do" popup) so both agree on what counts as done.
+ */
+export type DocumentReviewStatus = "not_sent" | "awaiting_employee" | "awaiting_hr" | "done";
+
+export function getDocumentReviewStatus(
+  type: SignableDocumentType,
+  doc: { status: SignableDocumentStatus } | undefined
+): DocumentReviewStatus {
+  if (!doc || doc.status === "cancelled") return "not_sent";
+  if (doc.status === "confirmed") return "done";
+  if (doc.status === "signed") {
+    return DOCUMENT_TYPES_REQUIRING_EMPLOYER_SIGNATURE.has(type) ? "awaiting_hr" : "done";
+  }
+  return "awaiting_employee"; // pending_signature
+}

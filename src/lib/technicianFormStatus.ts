@@ -1,27 +1,29 @@
 /**
  * A frozen technician's own "which Technician-tab forms do I still need to
  * sign" list — powers FrozenAccountModal.tsx on both desktop and mobile.
- * Mirrors TechnicianFormChecklistPage.tsx's done/missing logic exactly
- * (same TECHNICIAN_FORM_TYPES list, same signed/confirmed = done rule,
- * same exemption carve-out) but scoped to one profile instead of the whole
- * company, via getSignableDocumentsForRecipient. Requires migration 0224
- * (a technician can only read their OWN technician_form_exemptions rows).
+ * Uses signableDocumentRegistry.ts's shared getDocumentReviewStatus, same
+ * as TechnicianFormChecklistPage.tsx, but with a narrower definition of
+ * "incomplete" than that page's done/missing count: a form sitting in
+ * "awaiting_hr" (the technician already signed; it's HR's countersignature
+ * that's outstanding, not theirs) is deliberately left OFF this list —
+ * there's nothing left for the technician themselves to do, so it
+ * shouldn't read as something blocking their unfreeze. Only "not_sent" and
+ * "awaiting_employee" (needs the technician's own action) show up here.
+ * Scoped to one profile instead of the whole company, via
+ * getSignableDocumentsForRecipient. Requires migration 0224 (a technician
+ * can only read their OWN technician_form_exemptions rows).
  */
 import { getSignableDocumentsForRecipient, type SignableDocument, type SignableDocumentType } from "@/lib/supabase/signableDocuments";
 import { getTechnicianFormExemptions } from "@/lib/supabase/technicianFormExemptions";
-import { SIGNABLE_DOCUMENT_REGISTRY, TECHNICIAN_FORM_TYPES } from "@/lib/signableDocumentRegistry";
+import { SIGNABLE_DOCUMENT_REGISTRY, TECHNICIAN_FORM_TYPES, getDocumentReviewStatus } from "@/lib/signableDocumentRegistry";
 
 export interface IncompleteTechForm {
   type: SignableDocumentType;
   label: string;
-  /** true = sent and awaiting signature; false = never sent yet. */
+  /** true = sent and awaiting the technician's own signature; false = never sent yet. */
   pending: boolean;
   /** Set only when pending — the doc to link straight to (internalPath + "/" + docId). Nothing to link to yet when not sent. */
   docId: string | null;
-}
-
-function isComplete(doc: SignableDocument | undefined): boolean {
-  return doc?.status === "signed" || doc?.status === "confirmed";
 }
 
 export async function getMyIncompleteTechForms(profileId: string): Promise<IncompleteTechForm[]> {
@@ -40,8 +42,9 @@ export async function getMyIncompleteTechForms(profileId: string): Promise<Incom
   for (const type of TECHNICIAN_FORM_TYPES) {
     if (exemptions.has(`${profileId}|${type}`)) continue;
     const doc = latestByType.get(type);
-    if (isComplete(doc)) continue;
-    incomplete.push({ type, label: SIGNABLE_DOCUMENT_REGISTRY[type]?.label ?? type, pending: !!doc, docId: doc?.id ?? null });
+    const reviewStatus = getDocumentReviewStatus(type, doc);
+    if (reviewStatus === "done" || reviewStatus === "awaiting_hr") continue;
+    incomplete.push({ type, label: SIGNABLE_DOCUMENT_REGISTRY[type]?.label ?? type, pending: reviewStatus === "awaiting_employee", docId: doc?.id ?? null });
   }
   return incomplete;
 }
