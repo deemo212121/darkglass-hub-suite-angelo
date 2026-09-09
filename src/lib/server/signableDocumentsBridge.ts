@@ -322,7 +322,7 @@ export async function handleSignableDocumentsRequest(request: Request, env?: Rec
       const notifyFields = {
         title: `Signed by ${doc.recipient_name ?? "recipient"}`,
         body: `${docLabel.name} for ${formTitle} has been signed.`,
-        link: `/m/dashboard/hr-dashboard?tab=${docLabel.tab}`,
+        link: `/m/hr/hr-dashboard?tab=${docLabel.tab}`,
       };
       const [{ creatorFirebaseUid, hrFirebaseUids }, notifyHrEnabled] = await Promise.all([
         fetchHrRoleAndCreatorFirebaseUids(envBag, doc.company_id, doc.created_by),

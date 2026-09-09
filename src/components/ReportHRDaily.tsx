@@ -7605,7 +7605,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           : doc.documentType === "substance_screening" ? "substanceScreening"
           : doc.documentType === "flash_technician_travel" ? "flashTechnicianTravel"
           : "wageAck";
-        const tabLink = `${getAppUrl()}/m/dashboard/hr-dashboard?tab=${tabKey}`;
+        const tabLink = `${getAppUrl()}/m/hr/hr-dashboard?tab=${tabKey}`;
         const body =
           doc.documentType === "i9"
             ? `📋 Please complete Section 2 (document review + employer/AR signature) of Form I-9 for ${employeeName} — [open the Form I-9 tab](${tabLink}) in the HR Dashboard.`
