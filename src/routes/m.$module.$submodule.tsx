@@ -92,6 +92,7 @@ import { getMyRoles } from "@/lib/supabase/users";
 import { ROLE_LABELS } from "@/lib/roleLabels";
 import { useEffect, useState } from "react";
 import { ReportHRDaily } from "@/components/ReportHRDaily";
+import { HrOnboardingChecklistPage } from "@/components/HrOnboardingChecklistPage";
 import { StaffListPage } from "@/components/StaffListPage";
 import { ReportHR } from "@/components/ReportHR";
 import { ReportCSRDaily } from "@/components/ReportCSRDaily";
@@ -192,7 +193,7 @@ function SubModule() {
   // system existed. This is purely additive on top of the admin-module/
   // user-management/company-settings gates below — it can only narrow
   // access further there, never grant access past one of those.
-  const moduleAllowedRoles = mod.slug === "dashboard" ? getDashboardRoleGate(sub.slug) : explicitModuleOverride;
+  const moduleAllowedRoles = (mod.slug === "dashboard" || mod.slug === "hr") ? getDashboardRoleGate(sub.slug) : explicitModuleOverride;
   const roleGrantsQuick = !moduleAllowedRoles || hasDashboardAccess(moduleAllowedRoles, role, []);
   const adminGrantsQuick = mod.slug !== "admin" || hasDashboardAccess(ADMIN_MODULE_ROLES, role, []);
   const userMgmtGrantsQuick = sub.custom !== "user-management" || hasDashboardAccess(USER_MANAGEMENT_ROLES, role, []);
@@ -637,6 +638,8 @@ function SubModule() {
         ? <CSRStatusSummary mod={mod} sub={sub} />
         : (sub as any).custom === "hr-dashboard"
         ? <ReportHRDaily mod={mod} sub={sub} />
+        : (sub as any).custom === "hr-todo-list"
+        ? <HrOnboardingChecklistPage />
         : sub.custom === "staff-list"
         ? <StaffListPage mod={mod} sub={sub} />
         : sub.custom === "work-map"

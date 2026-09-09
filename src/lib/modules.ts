@@ -53,6 +53,8 @@ const DIAGNOSES = ["Faulty board", "Drain clog", "Door switch", "Belt worn", "Se
 const RETURN_REASONS_DETAILED = ["Defective", "Wrong Part", "Not Needed", "Damaged in Shipping", "Customer Cancel", "Received damaged", "Quality issue"];
 const LOCATIONS_FOR_STORAGE = ["Section A-1", "Section A-2", "Section B-1", "Section B-2", "Section C-1", "Overflow"];
 const REFUND_METHODS = ["Original Card", "Check", "Store Credit", "PayPal", "Bank Transfer"];
+const ROLES = ["Admin","Manager","Supervisor","Technician","Viewer"];
+const DEPARTMENTS = ["Operations","Service","Parts","Sales","IT","Finance"];
 
 const pick = <T,>(arr: T[], i: number) => arr[i % arr.length];
 const pad = (n: number, len = 4) => String(n).padStart(len, "0");
@@ -281,15 +283,6 @@ const dashboardMod: ModuleDef = {
       seed: () => ({}),
     },
     {
-      slug: "hr-dashboard",
-      title: "HR & Recruitment Dashboard",
-      description: "Manage job interviews, hiring pipeline, and HR metrics.",
-      custom: "hr-dashboard" as any,
-      fields: [],
-      count: 0,
-      seed: () => ({}),
-    },
-    {
       slug: "staff-list",
       title: "Staff List",
       description: "Per-branch technician roster, branch-manager summary, and tier pay rates.",
@@ -343,6 +336,69 @@ const dashboardMod: ModuleDef = {
       fields: [],
       count: 0,
       seed: () => ({}),
+    },
+  ],
+};
+
+// --- HR ---
+// hr-dashboard used to live under the Dashboard module (custom: "hr-dashboard",
+// still handled the same way everywhere it's dispatched — see
+// m.$module.$submodule.tsx and dashboardAccess.ts's getDashboardRoleGate,
+// which specifically routes hr-dashboard's role-gate lookup to this
+// module's own namespace now instead of "dashboard"'s). Its role gate
+// (ADMIN/HR) and any per-company override still apply exactly as before —
+// see migration 0219_hr_module_role_gate_rename.sql.
+const hrMod: ModuleDef = {
+  slug: "hr",
+  label: "HR",
+  tagline: "People operations, hiring & HR tools",
+  accent: "#f43f5e",
+  submodules: [
+    {
+      slug: "hr-dashboard",
+      title: "HR & Recruitment Dashboard",
+      description: "Manage job interviews, hiring pipeline, and HR metrics.",
+      custom: "hr-dashboard" as any,
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
+    {
+      slug: "todo-list",
+      title: "To-Do List",
+      description: "Finish setting up new hires — the steps User Management doesn't complete on its own.",
+      custom: "hr-todo-list" as any,
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
+    {
+      slug: "user-management",
+      title: "User Management",
+      description: "User accounts administration.",
+      custom: "user-management" as const,
+      fields: [
+        { key: "userId", label: "User ID", filterable: true },
+        { key: "name", label: "Name", filterable: true, editable: true },
+        { key: "email", label: "Email", editable: true },
+        { key: "role", label: "Role", type: "select", options: ROLES, editable: true, filterable: true },
+        { key: "department", label: "Department", type: "select", options: DEPARTMENTS, editable: true, filterable: true },
+        { key: "status", label: "Status", type: "select", options: ["Active","Inactive"], editable: true, filterable: true },
+        { key: "lastLogin", label: "Last Login", type: "date" },
+      ],
+      count: 177,
+      seed: (i) => {
+        const name = pick(CUSTOMERS, i);
+        return {
+          userId: "U-" + pad(100 + i, 3),
+          name,
+          email: name.toLowerCase().replace(/[^a-z]/g, ".") + "@adminhub.io",
+          role: pick(ROLES, i),
+          department: pick(DEPARTMENTS, i),
+          status: i % 5 === 0 ? "Inactive" : "Active",
+          lastLogin: dateStr(-(i%30)),
+        };
+      },
     },
   ],
 };
@@ -1352,8 +1408,6 @@ const reportMod: ModuleDef = {
 // --- Admin ---
 
 // --- Admin ---
-const ROLES = ["Admin","Manager","Supervisor","Technician","Viewer"];
-const DEPARTMENTS = ["Operations","Service","Parts","Sales","IT","Finance"];
 const adminMod: ModuleDef = {
   slug: "admin",
   label: "Admin",
@@ -1563,7 +1617,7 @@ export const DASHBOARD_GRID_EXCLUDED_SLUGS = new Set([
   "csr-team-leader-dashboard",
 ]);
 
-export const MODULES: ModuleDef[] = [dashboardMod, ticketsMod, partsMod, claimsMod, reportMod, adminMod];
+export const MODULES: ModuleDef[] = [dashboardMod, ticketsMod, partsMod, claimsMod, reportMod, hrMod, adminMod];
 
 export function getModule(slug: string) {
   return MODULES.find((m) => m.slug === slug);

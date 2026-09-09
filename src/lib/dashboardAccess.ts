@@ -2,9 +2,12 @@ import { normalizeRole, ATTENDANCE_MANAGER_TIER_ROLES_ARRAY } from "./roleLabels
 import { getModuleRoleGate } from "./moduleAccess";
 
 /**
- * Role gates for the Dashboard module's submodules (mod.slug === "dashboard").
- * Keyed by submodule slug. A submodule with no entry here is open to every
- * signed-in user (e.g. the Employee Self-Service Portal).
+ * Role gates for the Dashboard module's submodules (mod.slug === "dashboard"),
+ * plus hr-dashboard even though it now lives in its own HR module (see
+ * modules.ts and getDashboardRoleGate below) — moving modules didn't change
+ * who's allowed to open it. Keyed by submodule slug. A submodule with no
+ * entry here is open to every signed-in user (e.g. the Employee Self-Service
+ * Portal).
  *
  * SUPERADMIN always passes regardless of this list — same convention as the
  * admin-module gate in m.$module.$submodule.tsx.
@@ -35,6 +38,10 @@ export const DASHBOARD_ROLE_GATES: Record<string, string[]> = {
   // Dashboard, so they need to pass this gate for that redirect to fire.
   "csr-dashboard": ["ADMIN", "CSR_MANAGER", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER", "CSR_AGENT", "CSR_TEAM_LEADER"],
   "hr-dashboard": ["ADMIN", "HR"],
+  // HR module's To-Do List (custom: "hr-todo-list" — the new-hire setup
+  // checklist, migration 0220). Same audience as hr-dashboard; keyed by its
+  // submodule slug since mod.slug === "hr" routes through getDashboardRoleGate.
+  "todo-list": ["ADMIN", "HR"],
   // Same sensitivity as hr-dashboard — personal emails, addresses, DOB-
   // adjacent contact info per branch.
   "staff-list": ["ADMIN", "HR"],
@@ -57,7 +64,14 @@ export const DASHBOARD_ROLE_GATES: Record<string, string[]> = {
  * customized list once auth.tsx's hydration resolves.
  */
 export function getDashboardRoleGate(subSlug: string): string[] | null {
-  return getModuleRoleGate("dashboard", subSlug) ?? DASHBOARD_ROLE_GATES[subSlug] ?? null;
+  // hr-dashboard moved from the Dashboard module into its own HR module
+  // (see modules.ts) — its per-company override now lives under the "hr"
+  // namespace (migration 0219_hr_module_role_gate_rename.sql moved the
+  // existing rows), matching what AccessibilityManagementPage.tsx's
+  // gateRows now reports as its module. Every other submodule here still
+  // queries "dashboard" as before.
+  const overrideModuleSlug = subSlug === "hr-dashboard" ? "hr" : "dashboard";
+  return getModuleRoleGate(overrideModuleSlug, subSlug) ?? DASHBOARD_ROLE_GATES[subSlug] ?? null;
 }
 
 /**

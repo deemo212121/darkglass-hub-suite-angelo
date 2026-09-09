@@ -15,6 +15,7 @@ import { useAllRoleOptions } from "@/lib/customRoles";
 import { auth as firebaseAuth } from "@/lib/firebase/config";
 import { ActivityLogPanel } from "@/components/ActivityLogPanel";
 import { logModuleActivity } from "@/lib/supabase/moduleActivityLog";
+import { seedOnboardingTasks } from "@/lib/supabase/employeeOnboarding";
 import { ManageWorkingHoursModal } from "@/components/ManageWorkingHoursModal";
 import { getBranchRoleSchedules, type BranchRoleScheduleRow } from "@/lib/supabase/branchSchedules";
 
@@ -1206,6 +1207,16 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
       }
 
       alert(`User ${newUserForm.userName} created successfully!\nDefault password: Welcome2024!`);
+
+      // Seed HR's post-creation setup checklist for this hire (login handoff,
+      // profile detail, off-days, pay rate, onboarding docs, ...) — surfaced
+      // on the HR module's To-Do List page. Best-effort; a failure here
+      // never blocks the account that was just created.
+      void seedOnboardingTasks(newUid, {
+        role: primaryRole,
+        extraRoles,
+        assignedBranch: newUserForm.assignedBranch,
+      }).catch((err) => console.error("Failed to seed onboarding checklist:", err));
 
       void logModuleActivity({
         module: "user-management",
