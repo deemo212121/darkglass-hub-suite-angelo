@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect, useRef, Fragment } from "react";
 import { Link, useSearch, useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
-import { ChevronLeft, ChevronDown, ChevronUp, ChevronRight, Plus, Trash2, AlertTriangle, CheckCircle, XCircle, Paperclip, Users, Clock, UserCheck, UserX, UserMinus, Search, Bell, Download, Forward, History, FileText, ClipboardList, Landmark, GripVertical, FileCheck, Link2, Copy } from "lucide-react";
+import { ChevronLeft, ChevronDown, ChevronUp, ChevronRight, Plus, Trash2, AlertTriangle, CheckCircle, XCircle, Paperclip, Users, Clock, UserCheck, UserX, UserMinus, Search, Bell, Download, Forward, History, FileText, ClipboardList, Landmark, GripVertical, FileCheck, Link2, Copy, Calendar } from "lucide-react";
 import { useSignaturePad } from "@/hooks/useSignaturePad";
 import { SignaturePadControls } from "@/components/SignaturePad";
 
@@ -119,6 +119,7 @@ import type { SubstanceScreeningFormData } from "@/lib/substanceScreeningFormTem
 import { fillSubstanceScreeningPdf } from "@/lib/substanceScreeningPdfFill";
 import { logActivity, getActivityLog, activityActionLabel, type HrActivityLogEntry } from "@/lib/supabase/hrActivityLog";
 import { HrActivityLogPanel } from "@/components/HrActivityLogPage";
+import { HrCalendarTab } from "@/components/HrCalendarTab";
 import { subscribeTableChanges } from "@/lib/supabase/realtime";
 import { getCompanyPtoRequests, ptoYearWindow, ptoDaysUsed, sickYearWindow, sickDaysUsed, reviewPtoStage, canReviewPtoStage, type PtoRequestRow, type PtoType, type PtoStage } from "@/lib/supabase/pto";
 import { getCompanyTimecardEntries, calcWorkedHours, hoursDiff, type CompanyTimecardEntry } from "@/lib/supabase/timecards";
@@ -704,7 +705,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // Reviews, the Approved log, the department trend chart, and the full
   // Employee Directory all on top of each other, forcing a long scroll to
   // reach anything below Hiring.
-  const [activeTab, setActiveTab] = useState<"hiring" | "warnings" | "masterList" | "leaders" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "promotionForm" | "actionPlanForm" | "terminationForm" | "employeeRequestManager" | "w8ben" | "i9" | "wageAck" | "carIqAgreement" | "vehicleAgreement" | "vehicleUseAgreement" | "employeeConfidentiality" | "mealRestBreak" | "ptoAck" | "partsResponsibility" | "mileageFuel" | "locationConsent" | "damage" | "contractorData" | "contractorDataUs" | "directDeposit" | "substanceScreening" | "flashTechnicianTravel" | "contractorAddendum" | "combineForms" | "employerQueue" | "ndaForm">("hiring");
+  const [activeTab, setActiveTab] = useState<"hiring" | "warnings" | "masterList" | "leaders" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "promotionForm" | "actionPlanForm" | "terminationForm" | "employeeRequestManager" | "w8ben" | "i9" | "wageAck" | "carIqAgreement" | "vehicleAgreement" | "vehicleUseAgreement" | "employeeConfidentiality" | "mealRestBreak" | "ptoAck" | "partsResponsibility" | "mileageFuel" | "locationConsent" | "damage" | "contractorData" | "contractorDataUs" | "directDeposit" | "substanceScreening" | "flashTechnicianTravel" | "contractorAddendum" | "combineForms" | "employerQueue" | "ndaForm" | "calendar">("hiring");
   const [openCategory, setOpenCategory] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   // Which floating-sidebar section headers (Automated Forms/Generate
@@ -7756,16 +7757,12 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const GENERAL_FORM_TYPES: { type: SignableDocumentType; label: string }[] = [
     { type: "w8ben", label: "Form W-8BEN" },
     { type: "w4", label: "Form W-4" },
-    { type: "w9", label: "Form W-9" },
-    { type: "w4r", label: "Form W-4R" },
-    { type: "i9", label: "Form I-9 (Employment Eligibility)" },
   ];
   const TECHNICIAN_FORM_TYPES: { type: SignableDocumentType; label: string }[] = [
     { type: "wage_ack", label: "Acknowledgment of Wage" },
     { type: "car_iq_agreement", label: "Car IQ Technician Agreement" },
     { type: "vehicle_agreement", label: "Company Vehicle Use Agreement" },
     { type: "contractor_data", label: "Employee Data" },
-    { type: "contractor_data_us", label: "Contractor Data (US)" },
     { type: "damage", label: "Damage Agreement" },
     { type: "direct_deposit", label: "Direct Deposit Authorization" },
     { type: "employee_confidentiality", label: "Employee Confidentiality Agreement" },
@@ -7776,7 +7773,17 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     { type: "parts_responsibility", label: "Parts Responsibility Form" },
     { type: "pto_ack", label: "PTO & Sick Leave Policy" },
     { type: "substance_screening", label: "Substance Screening & Conduct Agreement" },
+    { type: "w4r", label: "Form W-4R" },
+    { type: "i9", label: "Form I-9 (Employment Eligibility)" },
+  ];
+  // BM, SBS, Tech Director, Tech Assistant Director tier — same grouping as
+  // ReportHRDaily's own "Automated Forms" tab columns (automatedFormsManagementTabs).
+  const MANAGEMENT_FORM_TYPES: { type: SignableDocumentType; label: string }[] = [
+    { type: "contractor_data_us", label: "Contractor Data (US)" },
+    { type: "contractor_addendum", label: "Master Independent Contractor Subcontractor Agreement Addendum" },
+    { type: "nda_form", label: "Non-Disclosure Agreement" },
     { type: "vehicle_use_agreement", label: "Vehicle Use Agreement" },
+    { type: "w9", label: "Form W-9" },
   ];
 
   const [combineFormsRecipientId, setCombineFormsRecipientId] = useState("");
@@ -11375,7 +11382,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     { key: "promotionForm", label: "Employee Promotion / Role Change", count: 0, icon: FileText },
     { key: "warningForm", label: "Employee Warning Form", count: 0, icon: FileText },
     { key: "i9", label: "Form I-9 (Employment Eligibility)", count: sentI9AwaitingSection2Count, icon: FileCheck },
-    { key: "contractorAddendum", label: "Master Independent Contractor Subcontractor Agreement Addendum", count: 0, icon: FileText },
     { key: "actionPlanForm", label: "Manager's Action Plan Form", count: 0, icon: FileText },
     { key: "terminationForm", label: "Termination Notice Form", count: 0, icon: FileText },
     { key: "w8ben", label: "W-8 / W-9 / W-4 / W-4R Forms", count: 0, icon: Landmark },
@@ -11385,7 +11391,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     { key: "wageAck", label: "Acknowledgment of Wage", count: sentWageAckAwaitingEmployerCount, icon: FileCheck },
     { key: "carIqAgreement", label: "Car IQ Technician Agreement", count: 0, icon: FileCheck },
     { key: "vehicleAgreement", label: "Company Vehicle Use Agreement", count: 0, icon: FileCheck },
-    { key: "contractorDataUs", label: "Contractor Data (US)", count: 0, icon: FileCheck },
     { key: "damage", label: "Damage Agreement", count: sentDamageAwaitingEmployerCount, icon: FileCheck },
     { key: "directDeposit", label: "Direct Deposit Authorization", count: 0, icon: FileCheck },
     { key: "employeeConfidentiality", label: "Employee Confidentiality Agreement", count: 0, icon: FileCheck },
@@ -11397,7 +11402,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     { key: "partsResponsibility", label: "Parts Responsibility and Technician Floor Protection Acknowledgment Form", count: sentPartsResponsibilityAwaitingManagerCount, icon: FileCheck },
     { key: "ptoAck", label: "PTO & Sick Leave Policy", count: 0, icon: FileCheck },
     { key: "substanceScreening", label: "Substance Screening & Conduct Agreement", count: 0, icon: FileCheck },
-    { key: "vehicleUseAgreement", label: "Vehicle Use Agreement", count: 0, icon: FileCheck },
   ] as const;
 
   // Management-tier forms (Branch Manager / Senior Branch Manager /
@@ -11405,7 +11409,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // separate from the rank-and-file Technician Forms and the HR/admin
   // General forms.
   const automatedFormsManagementTabs = [
+    { key: "contractorDataUs", label: "Contractor Data (US)", count: 0, icon: FileCheck },
+    { key: "contractorAddendum", label: "Master Independent Contractor Subcontractor Agreement Addendum", count: 0, icon: FileText },
     { key: "ndaForm", label: "Non-Disclosure Agreement", count: 0, icon: FileText },
+    { key: "vehicleUseAgreement", label: "Vehicle Use Agreement", count: 0, icon: FileCheck },
   ] as const;
 
   // ── Tab groups — single source shared by the dropdown header nav and the
@@ -11448,6 +11455,14 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         { key: "hiring", label: "Hiring", count: visibleCandidates.length, icon: Users },
         { key: "onboarding", label: "Onboarding Documents", count: 0, icon: Paperclip },
         { key: "warnings", label: "Warnings & Mistakes", count: isHrOrAdmin ? pendingNotes.length : 0, icon: AlertTriangle },
+      ] as const,
+      columns: undefined,
+    },
+    {
+      group: "Calendar",
+      icon: Calendar,
+      tabs: [
+        { key: "calendar", label: "Calendar", count: 0, icon: Calendar },
       ] as const,
       columns: undefined,
     },
@@ -12211,6 +12226,14 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         )}
       </div>
       </>
+      )}
+
+      {activeTab === "calendar" && (
+        <HrCalendarTab
+          employees={employees.map((e) => ({ id: e.id, name: e.name, branch: e.branch, status: e.status, role: e.position }))}
+          myProfileId={myProfileId}
+          myDisplayName={displayName}
+        />
       )}
 
       {/* ── Master List — Employee Directory's same roster, split into
@@ -13078,8 +13101,38 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         <div className="px-4 pt-4">
           <h3 className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Technician</h3>
         </div>
-        <div className="p-4 pt-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        <div className="p-4 pt-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 border-b border-white/10">
           {TECHNICIAN_FORM_TYPES.map(({ type, label }) => {
+            const checked = selectedFormTypes.has(type);
+            const urgent = ROUTE_REQUIRED_DOCUMENT_TYPES.includes(type);
+            return (
+              <label
+                key={type}
+                className={`flex items-start gap-2.5 rounded-lg border p-3 cursor-pointer transition-colors ${
+                  checked
+                    ? "border-primary/50 bg-primary/10"
+                    : urgent
+                    ? "border-red-500/40 bg-red-500/20 hover:bg-red-500/30"
+                    : "border-white/10 bg-white/5 hover:bg-white/10"
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={() => toggleFormTypeSelected(type)}
+                  className="mt-0.5 h-3.5 w-3.5 shrink-0"
+                />
+                <span className="text-sm font-medium">{label}</span>
+              </label>
+            );
+          })}
+        </div>
+
+        <div className="px-4 pt-4">
+          <h3 className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">BM, SBS, Tech Director, Tech Assistant Director</h3>
+        </div>
+        <div className="p-4 pt-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          {MANAGEMENT_FORM_TYPES.map(({ type, label }) => {
             const checked = selectedFormTypes.has(type);
             const urgent = ROUTE_REQUIRED_DOCUMENT_TYPES.includes(type);
             return (

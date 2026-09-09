@@ -66,12 +66,13 @@ const fmtDate = (iso: string) => {
   return isNaN(d.getTime()) ? iso : d.toLocaleDateString();
 };
 
-/** Naive first/last split for page 4's "Printed Name" row — the employee only ever types one Full Name field (page 1); everything after the first space is treated as the last name. */
+/** First/last split for page 4's "Printed Name" row — the employee only ever types one Full Name field (page 1); the last word is treated as the last name and everything before it (first + any middle names) as the first name. */
 export function splitEmployeeName(fullName: string): { first: string; last: string } {
   const trimmed = fullName.trim();
   if (!trimmed) return { first: "", last: "" };
   const parts = trimmed.split(/\s+/);
-  return { first: parts[0], last: parts.slice(1).join(" ") };
+  if (parts.length === 1) return { first: parts[0], last: "" };
+  return { first: parts.slice(0, -1).join(" "), last: parts[parts.length - 1] };
 }
 
 export const ndaFormStyles = `
@@ -90,17 +91,16 @@ export const ndaFormStyles = `
   .nda-field-label { color: #374151; }
   .nda-bullet-list { margin: 6px 0 6px 18px; }
   .nda-bullet-list li { margin-bottom: 2px; }
-  .nda-sign-row { display: flex; gap: 24px; align-items: flex-end; border-bottom: 1px solid #9ca3af; padding: 14px 2px 10px; margin-top: 22px; }
-  .nda-sign-name { flex: 2; }
-  .nda-sign-sig { flex: 1; display: flex; align-items: flex-end; }
-  .nda-sign-date { flex: 1; }
-  .nda-sig-img { max-height: 34px; max-width: 130px; object-fit: contain; }
+  .nda-sign-row { display: flex; gap: 24px; align-items: center; border-bottom: 1px solid #9ca3af; padding: 14px 2px 10px; margin-top: 22px; }
+  .nda-sign-sig { flex: 2; display: flex; align-items: center; gap: 6px; }
+  .nda-sign-date { flex: 1; display: flex; align-items: center; gap: 6px; }
+  .nda-sig-img { max-height: 54px; max-width: 190px; object-fit: contain; }
   .nda-witness-block { margin-top: 20px; }
   .nda-witness-title { font-weight: 700; font-size: 12.5px; margin-bottom: 6px; }
 `;
 
-const EMPLOYER_NAME = "US In Home Services";
-const EMPLOYER_ADDRESS = "3663 Cherry Rd. #101, Memphis, TN 38117, USA";
+export const EMPLOYER_NAME = "US In Home Services";
+export const EMPLOYER_ADDRESS = "3663 Cherry Rd. #101, Memphis, TN 38117, USA";
 
 /** withTitle is only true on page 1 — pages 2-4 just repeat the logo, matching the reference document (no title/subtitle on later pages). */
 function header(logoDataUrl: string, withTitle: boolean): string {
@@ -115,9 +115,8 @@ function header(logoDataUrl: string, withTitle: boolean): string {
 function employeeSignRow(data: NdaFormData, signature: NdaSignature | undefined): string {
   return `
     <div class="nda-sign-row">
-      <div class="nda-sign-name">Employee Name: <strong>${blank(data.employeeName)}</strong></div>
-      <div class="nda-sign-sig">Signature: ${signature ? `<img class="nda-sig-img" src="${signature.url}" alt="Signature" />` : ""}</div>
-      <div class="nda-sign-date">Date: ${signature ? escapeHtml(fmtDate(signature.signedAt)) : ""}</div>
+      <div class="nda-sign-sig">Contractor Signature: ${signature ? `<img class="nda-sig-img" src="${signature.url}" alt="Signature" />` : ""}</div>
+      <div class="nda-sign-date">Date: ${blank(fmtDate(data.dateSigned))}</div>
     </div>
   `;
 }
@@ -135,7 +134,7 @@ export function buildNdaPage1Markup(data: NdaFormData, logoDataUrl: string, sign
         <p>Address: ${escapeHtml(EMPLOYER_ADDRESS)}</p>
       </div>
       <div class="nda-party-block">
-        <p class="nda-party-label">Employee:</p>
+        <p class="nda-party-label">Contractor:</p>
         <div class="nda-field-row">
           <div><span class="nda-field-label">Full Name:</span> <strong>${blank(data.employeeName)}</strong></div>
           <div><span class="nda-field-label">Nationality:</span> <strong>${blank(data.nationality)}</strong></div>
@@ -154,7 +153,7 @@ export function buildNdaPage1Markup(data: NdaFormData, logoDataUrl: string, sign
       </div>
 
       <div class="nda-section-title">2. Purpose</div>
-      <p>The employer may disclose certain confidential or proprietary information to the employee during their employment as an appliance technician. The employee agrees to keep this information secret and use it only for their job responsibilities.</p>
+      <p>The employer may disclose certain confidential or proprietary information to the contractor during their employment as an appliance technician. The contractor agrees to keep this information secret and use it only for their job responsibilities.</p>
 
       <div class="nda-section-title">3. Definition of Confidential Information</div>
       <p>Includes but is not limited to:</p>
@@ -176,8 +175,8 @@ export function buildNdaPage2Markup(data: NdaFormData, logoDataUrl: string, sign
     <div class="nda-container">
       ${header(logoDataUrl, false)}
 
-      <div class="nda-section-title">4. Employee Obligations</div>
-      <p>The Employee agrees to:</p>
+      <div class="nda-section-title">4. Contractor Obligations</div>
+      <p>The Contractor agrees to:</p>
       <ul class="nda-bullet-list">
         <li>Not share Confidential Information with anyone outside the company</li>
         <li>Use it only as required for their job</li>
@@ -192,13 +191,13 @@ export function buildNdaPage2Markup(data: NdaFormData, logoDataUrl: string, sign
       <p>This Agreement does not cover:</p>
       <ul class="nda-bullet-list">
         <li>Information already known before employment (without breach)</li>
-        <li>Information publicly available without employee's fault</li>
+        <li>Information publicly available without contractor's fault</li>
         <li>Data lawfully obtained from another source</li>
         <li>Info approved for release by the employer in writing</li>
       </ul>
 
       <div class="nda-section-title">7. Legal Requirements</div>
-      <p>If required by law or a government order to disclose information, the employee must inform the employer immediately.</p>
+      <p>If required by law or a government order to disclose information, the contractor must inform the employer immediately.</p>
 
       ${employeeSignRow(data, signature)}
     </div>
@@ -211,16 +210,16 @@ export function buildNdaPage3Markup(data: NdaFormData, logoDataUrl: string, sign
       ${header(logoDataUrl, false)}
 
       <div class="nda-section-title">8. Return of Information</div>
-      <p>Upon termination of employment, the employee must return or destroy all physical and digital confidential materials.</p>
+      <p>Upon termination of employment, the contractor must return or destroy all physical and digital confidential materials.</p>
 
       <div class="nda-section-title">9. No Rights Transferred</div>
-      <p>This agreement gives the employee no ownership or license to use the employer's intellectual property beyond job duties.</p>
+      <p>This agreement gives the contractor no ownership or license to use the employer's intellectual property beyond job duties.</p>
 
       <div class="nda-section-title">10. International Compliance</div>
-      <p>The employee agrees to follow applicable laws of both the Philippines and the United States regarding confidential information and employment obligations.</p>
+      <p>The contractor agrees to follow applicable laws of both the Philippines and the United States regarding confidential information and employment obligations.</p>
 
       <div class="nda-section-title">11. Injunctive Relief</div>
-      <p>The employer may seek a court order (injunction) to prevent further harm if the employee breaches confidentiality.</p>
+      <p>The employer may seek a court order (injunction) to prevent further harm if the contractor breaches confidentiality.</p>
 
       <div class="nda-section-title">12. Governing Law</div>
       <p>This agreement shall be governed by the laws of the State of Tennessee, USA. The parties agree to resolve disputes in a Tennessee court, but the agreement is enforceable internationally.</p>
@@ -237,7 +236,7 @@ export function buildNdaPage4Markup(data: NdaFormData, logoDataUrl: string, sign
       ${header(logoDataUrl, false)}
 
       <div class="nda-section-title">13. Monetary Compensation for Breach</div>
-      <p>If the employee breaches this agreement, they agree to pay monetary compensation for all losses, damages, legal fees, and associated costs incurred by the employer as a result.</p>
+      <p>If the contractor breaches this agreement, they agree to pay monetary compensation for all losses, damages, legal fees, and associated costs incurred by the employer as a result.</p>
 
       <div class="nda-section-title">14. Entire Agreement</div>
       <p>This NDA represents the full understanding. Changes must be in writing and signed by both parties.</p>
@@ -245,7 +244,7 @@ export function buildNdaPage4Markup(data: NdaFormData, logoDataUrl: string, sign
       <p style="margin-top: 16px;">IN WITNESS WHEREOF, both parties have signed this agreement on the dates below.</p>
 
       <div class="nda-witness-block">
-        <p class="nda-witness-title">Employee:</p>
+        <p class="nda-witness-title">Contractor:</p>
         <div class="nda-field-row">
           <div>Signature: ${signature ? `<img class="nda-sig-img" src="${signature.url}" alt="Signature" />` : ""}</div>
         </div>
@@ -254,7 +253,7 @@ export function buildNdaPage4Markup(data: NdaFormData, logoDataUrl: string, sign
           <div><span class="nda-field-label">Last:</span> <strong>${blank(last)}</strong></div>
         </div>
         <div class="nda-field-row">
-          <div><span class="nda-field-label">Date:</span> <strong>${signature ? escapeHtml(fmtDate(signature.signedAt)) : ""}</strong></div>
+          <div><span class="nda-field-label">Date:</span> <strong>${blank(fmtDate(data.dateSigned))}</strong></div>
         </div>
       </div>
 

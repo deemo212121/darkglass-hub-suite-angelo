@@ -269,7 +269,7 @@ export function FillVehicleUseAgreementPage({ docId }: Props) {
                   <label className={labelCls}>Contractor's Signature</label>
                   <canvas
                     {...sigPad.canvasProps}
-                    className={`bg-white rounded-md border border-white/15 w-full max-w-md mt-1 ${sigPad.canvasProps.className}`}
+                    className={`bg-white rounded-md border border-white/15 block mx-auto w-full max-w-md mt-1 ${sigPad.canvasProps.className}`}
                   />
                   <div className="mt-2">
                     <SignaturePadControls pad={sigPad} />

@@ -54,10 +54,15 @@ export interface SignaturePadHandle {
     onPointerLeave: () => void;
     className: string;
   };
-  /** True once there's something that would produce a non-empty toDataURL() — a typed name in Type mode, or an actual stroke in Draw mode. */
+  /** The "my electronic signature is legally binding" checkbox required alongside every signature — see SignaturePadControls. */
+  consentGiven: boolean;
+  setConsentGiven: (v: boolean) => void;
+  /** Raw signature presence (typed name in Type mode, or an actual stroke in Draw mode) — ignores consentGiven. Lets SignaturePadControls warn "you signed but forgot to check the box" instead of a generic "please sign" message once there's actually a signature to check against. */
+  hasSignature: () => boolean;
+  /** True once there's a signature AND consentGiven is checked — every caller's existing "please sign" gate doubles as the consent gate for free. */
   hasContent: () => boolean;
   toDataURL: () => string | null;
-  /** Resets both modes' state — the typed name AND any drawn strokes — regardless of which mode is currently active. */
+  /** Resets both modes' state — the typed name, any drawn strokes, and the consent checkbox — regardless of which mode is currently active. */
   clear: () => void;
 }
 
@@ -66,6 +71,7 @@ export function useSignaturePad(options: UseSignaturePadOptions = {}): Signature
   const [mode, setModeState] = useState<SignaturePadMode>("type");
   const [typedName, setTypedName] = useState(defaultName);
   const [fontId, setFontId] = useState<string>(SIGNATURE_FONTS[0].id);
+  const [consentGiven, setConsentGiven] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const drawingRef = useRef(false);
   const hasDrawnRef = useRef(false);
@@ -109,6 +115,7 @@ export function useSignaturePad(options: UseSignaturePadOptions = {}): Signature
     if (c) c.getContext("2d")?.clearRect(0, 0, c.width, c.height);
     hasDrawnRef.current = false;
     setTypedName("");
+    setConsentGiven(false);
   }, []);
 
   // Type-mode rendering — redraws the canvas with the typed name in the
@@ -141,9 +148,13 @@ export function useSignaturePad(options: UseSignaturePadOptions = {}): Signature
     }
   }, [mode, typedName, fontId, height]);
 
-  const hasContent = useCallback(() => {
+  const hasSignature = useCallback(() => {
     return mode === "type" ? typedName.trim().length > 0 : hasDrawnRef.current;
   }, [mode, typedName]);
+
+  const hasContent = useCallback(() => {
+    return hasSignature() && consentGiven;
+  }, [hasSignature, consentGiven]);
 
   const toDataURL = useCallback((): string | null => {
     if (!hasContent()) return null;
@@ -157,6 +168,9 @@ export function useSignaturePad(options: UseSignaturePadOptions = {}): Signature
     setTypedName,
     fontId,
     setFontId,
+    consentGiven,
+    setConsentGiven,
+    hasSignature,
     canvasProps: {
       ref: canvasRef,
       width,

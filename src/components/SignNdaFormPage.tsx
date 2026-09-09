@@ -24,7 +24,8 @@ import { getMyProfileId } from "@/lib/supabase/users";
 import { getSignableDocument, signDocument, type SignableDocument } from "@/lib/supabase/signableDocuments";
 import { uploadSignableDocumentSignature, uploadNdaForm, refreshStorageAuthToken } from "@/lib/firebase/storage";
 import { captureHtmlPagesToPdfBlob, loadAssetDataUrl } from "@/lib/pdfCapture";
-import { buildNdaFormPages, ndaFormStyles, NDA_BRANCHES, type NdaFormData } from "@/lib/ndaFormTemplate";
+import { buildNdaFormPages, ndaFormStyles, type NdaFormData } from "@/lib/ndaFormTemplate";
+import { NdaPage1Editable } from "@/components/NdaPage1Editable";
 import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
 import { logActivity } from "@/lib/supabase/hrActivityLog";
 import { getHrNotificationSettings } from "@/lib/supabase/companySettings";
@@ -63,7 +64,7 @@ export function SignNdaFormPage({ docId }: Props) {
 
   const [form, setForm] = useState<NdaFormData>({ ...BLANK_FORM });
 
-  const sigPad = useSignaturePad({ defaultName: form.employeeName, width: 440, height: 100 });
+  const sigPad = useSignaturePad({ defaultName: form.employeeName, width: 640, height: 180 });
 
   useEffect(() => {
     if (!ready || !uid) return;
@@ -85,7 +86,7 @@ export function SignNdaFormPage({ docId }: Props) {
         } else {
           setDoc(document);
           const existing = document.formData as Partial<NdaFormData>;
-          setForm((prev) => ({ ...prev, ...existing }));
+          setForm((prev) => ({ ...prev, ...existing, dateSigned: existing.dateSigned || new Date().toISOString() }));
         }
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load document.");
@@ -105,6 +106,7 @@ export function SignNdaFormPage({ docId }: Props) {
     if (!form.city.trim()) return "Enter your city.";
     if (!form.state.trim()) return "Enter your state.";
     if (!form.zip.trim()) return "Enter your zip code.";
+    if (!form.dateSigned.trim()) return "Pick the date.";
     return null;
   };
 
@@ -148,11 +150,18 @@ export function SignNdaFormPage({ docId }: Props) {
       await refreshStorageAuthToken();
       const signatureUrl = await uploadSignableDocumentSignature(companyId, doc.id, "employee", dataUrl);
       const signedAt = new Date().toISOString();
-      const finalData: NdaFormData = { ...form, dateSigned: signedAt };
+      // The document's own "Date" field is whatever the recipient picked on
+      // page 1 (see NdaPage1Editable) — signedAt below is a separate audit
+      // timestamp, not what's printed on the PDF.
+      const finalData: NdaFormData = { ...form };
       const entry = { name: displayName || form.employeeName || "Signed", url: signatureUrl, signedAt };
 
       const pages = buildNdaFormPages(finalData, logo, { ...entry, url: dataUrl });
       const pdfBlob = await captureHtmlPagesToPdfBlob(pages, ndaFormStyles);
+      // Rendering 4 separate pages (vs. every other document's single page)
+      // takes noticeably longer, so refresh again right before this last,
+      // heaviest upload — see refreshStorageAuthToken's doc comment.
+      await refreshStorageAuthToken();
       const pdfUrl = await uploadNdaForm(companyId, form.employeeName, pdfBlob);
 
       await signDocument(doc.id, "employee", entry, pdfUrl, finalData as unknown as Record<string, any>);
@@ -192,9 +201,14 @@ export function SignNdaFormPage({ docId }: Props) {
   const isRecipient = !!doc && !!myProfileId && doc.recipientId === myProfileId;
   const isSuperadmin = role === "SUPERSUPERADMIN";
 
-  const inputCls = "glass-input text-sm py-1.5 px-3 rounded-md w-full";
-
-  const currentPages = buildNdaFormPages(form, logo, undefined);
+  // Reflects whatever's currently on the signature pad (drawn or typed) in
+  // every page's preview, not just at final submit — so once the recipient
+  // signs at step 4, stepping back to pages 1-3 shows it already stamped
+  // there, same as the final PDF will.
+  const livePreviewSignature = sigPad.hasContent()
+    ? { name: displayName || form.employeeName || "Signed", url: sigPad.toDataURL() || "", signedAt: form.dateSigned }
+    : undefined;
+  const currentPages = buildNdaFormPages(form, logo, livePreviewSignature);
 
   return (
     <div className="min-h-screen bg-background">
@@ -227,65 +241,31 @@ export function SignNdaFormPage({ docId }: Props) {
               <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide shrink-0">Page {step} of {TOTAL_STEPS}</span>
             </div>
 
-            {step === 1 && (
-              <div className="p-4 space-y-3 border-b border-white/10">
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="flex flex-col gap-1">
-                    <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Full Name</label>
-                    <input value={form.employeeName} onChange={(e) => updateField("employeeName", e.target.value)} className={inputCls} />
-                  </div>
-                  <div className="flex flex-col gap-1">
-                    <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Nationality</label>
-                    <input value={form.nationality} onChange={(e) => updateField("nationality", e.target.value)} className={inputCls} />
-                  </div>
-                </div>
-                <div className="flex flex-col gap-1">
-                  <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Street Address</label>
-                  <input value={form.address} onChange={(e) => updateField("address", e.target.value)} className={inputCls} />
-                </div>
-                <div className="grid grid-cols-3 gap-3">
-                  <div className="flex flex-col gap-1">
-                    <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">City</label>
-                    <input value={form.city} onChange={(e) => updateField("city", e.target.value)} className={inputCls} />
-                  </div>
-                  <div className="flex flex-col gap-1">
-                    <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">State</label>
-                    <input value={form.state} onChange={(e) => updateField("state", e.target.value)} className={inputCls} />
-                  </div>
-                  <div className="flex flex-col gap-1">
-                    <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Zip</label>
-                    <input value={form.zip} onChange={(e) => updateField("zip", e.target.value)} className={inputCls} />
-                  </div>
-                </div>
-                <div className="flex flex-col gap-1">
-                  <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Branch (leave blank if PH)</label>
-                  <select value={form.branch} onChange={(e) => updateField("branch", e.target.value)} className={inputCls}>
-                    <option value="">Please Select</option>
-                    {NDA_BRANCHES.map((b) => <option key={b} value={b}>{b}</option>)}
-                  </select>
-                </div>
-              </div>
-            )}
-
             <div className="overflow-x-auto bg-white/5 p-4 flex justify-center">
               <div style={{ transform: "scale(0.78)", transformOrigin: "top center" }}>
                 <style dangerouslySetInnerHTML={{ __html: ndaFormStyles }} />
-                <div dangerouslySetInnerHTML={{ __html: currentPages[step - 1] }} />
+                {step === 1 ? (
+                  <NdaPage1Editable data={form} logoDataUrl={logo} updateField={updateField} signatureUrl={livePreviewSignature?.url} />
+                ) : (
+                  <div dangerouslySetInnerHTML={{ __html: currentPages[step - 1] }} />
+                )}
               </div>
             </div>
 
-            {step === TOTAL_STEPS && (
-              <div className="p-4 border-t border-white/10">
-                <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2 block">Signature</label>
-                <canvas
-                  {...sigPad.canvasProps}
-                  className={`bg-white rounded-md border border-white/15 w-full max-w-md ${sigPad.canvasProps.className}`}
-                />
-                <div className="mt-2">
-                  <SignaturePadControls pad={sigPad} />
-                </div>
+            {/* Visible on every step, not just step 4 — signing early lets
+                the recipient page back through 1-3 and see it already
+                stamped on the live preview above, instead of only finding
+                out how it looks after reaching the last page. */}
+            <div className="p-4 border-t border-white/10">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2 block">Signature</label>
+              <canvas
+                {...sigPad.canvasProps}
+                className={`bg-white rounded-md border border-white/15 block mx-auto w-full max-w-xl ${sigPad.canvasProps.className}`}
+              />
+              <div className="mt-2">
+                <SignaturePadControls pad={sigPad} />
               </div>
-            )}
+            </div>
 
             {error && (
               <p className="mx-4 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2 mt-3">{error}</p>

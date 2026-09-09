@@ -54,7 +54,14 @@ export async function captureHtmlToPdfBlob(
     // high-resolution image still gets placed at full page size below —
     // it's just scaled down to fit instead of inflating the page around it.
     const canvas = await html2canvas(body, { scale: 2, backgroundColor: "#ffffff", useCORS: true });
-    const imgData = canvas.toDataURL("image/png");
+    // JPEG, not PNG — jsPDF re-embeds a PNG's raw RGBA pixels uncompressed
+    // instead of keeping the PNG's own DEFLATE stream, so a ~400KB PNG
+    // snapshot was inflating to a ~13MB PDF page. JPEG is already compressed
+    // before it reaches jsPDF and passes through untouched. Every page here
+    // is opaque white (backgroundColor above), so JPEG's lack of an alpha
+    // channel costs nothing, and 0.92 quality is visually lossless for flat
+    // text/lines — measured ~15x smaller with no visible difference.
+    const imgData = canvas.toDataURL("image/jpeg", 0.92);
     // jsPDF's "px" unit does NOT mean CSS px @ 96dpi — it takes the format
     // numbers as raw PDF points (1/72in) verbatim. So a [816, 1056] "px" page
     // actually became an 816x1056-POINT page (11.3 x 14.7in), ~1.33x oversized
@@ -69,7 +76,7 @@ export async function captureHtmlToPdfBlob(
     const pageWidth = width * PX_TO_PT;
     const pageHeight = (canvas.height / canvas.width) * pageWidth;
     const pdf = new jsPDF({ unit: "pt", format: [pageWidth, pageHeight] });
-    pdf.addImage(imgData, "PNG", 0, 0, pageWidth, pageHeight);
+    pdf.addImage(imgData, "JPEG", 0, 0, pageWidth, pageHeight);
     return pdf.output("blob");
   } finally {
     document.body.removeChild(iframe);
@@ -111,14 +118,18 @@ export async function captureHtmlPagesToPdfBlob(
       const body = iframe.contentDocument?.body;
       if (!body) throw new Error("Could not prepare document for capture.");
       const canvas = await html2canvas(body, { scale: 2, backgroundColor: "#ffffff", useCORS: true });
-      const imgData = canvas.toDataURL("image/png");
+      // JPEG, not PNG — see captureHtmlToPdfBlob's comment above. This
+      // matters even more here: a 4-page PNG-based NDA PDF measured ~51MB
+      // (over the Storage rules' 25MB cap, causing storage/unauthorized on
+      // upload), JPEG brought the same 4 pages to well under 1MB.
+      const imgData = canvas.toDataURL("image/jpeg", 0.92);
       const pageHeightPt = (canvas.height / canvas.width) * pageWidthPt;
       if (!pdf) {
         pdf = new jsPDF({ unit: "pt", format: [pageWidthPt, pageHeightPt] });
       } else {
         pdf.addPage([pageWidthPt, pageHeightPt]);
       }
-      pdf.addImage(imgData, "PNG", 0, 0, pageWidthPt, pageHeightPt);
+      pdf.addImage(imgData, "JPEG", 0, 0, pageWidthPt, pageHeightPt);
     } finally {
       document.body.removeChild(iframe);
     }

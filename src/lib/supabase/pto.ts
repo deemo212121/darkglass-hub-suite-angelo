@@ -397,6 +397,34 @@ export async function createPtoRequest(input: {
   }
 }
 
+/**
+ * Direct HR edit of an existing request's core fields (type/dates/reason) —
+ * e.g. from the Calendar tab's click-to-edit. Recomputes hoursRequested from
+ * the (possibly changed) date range, same as createPtoRequest. Leaves
+ * status/review fields untouched — use updatePtoRequestStatus/reviewPtoStage
+ * for those.
+ */
+export async function updatePtoRequest(
+  id: string,
+  input: { ptoType: PtoType; startDate: string; endDate: string; reason: string }
+): Promise<void> {
+  const hoursRequested = weekdayCount(input.startDate, input.endDate) * 8;
+  const { error } = await supabase
+    .from("pto_requests")
+    .update({
+      pto_type: input.ptoType,
+      start_date: input.startDate,
+      end_date: input.endDate,
+      hours_requested: hoursRequested,
+      reason: input.reason || null,
+    })
+    .eq("id", id);
+  if (error) {
+    console.error("updatePtoRequest error:", error.message);
+    throw new Error(error.message);
+  }
+}
+
 /** Cancel a still-pending PTO request (the employee withdrawing their own request). */
 export async function updatePtoRequestStatus(
   id: string,
