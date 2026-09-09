@@ -9,7 +9,7 @@
  * the same name both mount this directly.
  */
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { Download, Loader2, Check, Pencil, ExternalLink, Columns3 } from "lucide-react";
+import { Download, Loader2, Check, Pencil, ExternalLink, Columns3, Filter } from "lucide-react";
 import {
   getCompanyTicketAttendance,
   slotSortKey,
@@ -125,6 +125,18 @@ export function TicketAttendanceTab() {
     notes: true,
   });
   const [columnMenuOpen, setColumnMenuOpen] = useState(false);
+  // Per-column funnel filters, in the header row — separate from the
+  // top-bar Search/Status filters. Location is a multi-select (empty set =
+  // no restriction); the tri-state ones are "all" / "has" (>0, or a note
+  // present) / "none".
+  type TriState = "all" | "has" | "none";
+  type FilterMenuKey = "location" | "missingCheckIn" | "missingCheckOut" | "notes";
+  const [openFilterMenu, setOpenFilterMenu] = useState<FilterMenuKey | null>(null);
+  const [locationFilter, setLocationFilter] = useState<Set<string>>(new Set());
+  const [missingCheckInFilter, setMissingCheckInFilter] = useState<TriState>("all");
+  const [missingCheckOutFilter, setMissingCheckOutFilter] = useState<TriState>("all");
+  const [notesFilter, setNotesFilter] = useState<TriState>("all");
+  const anyColumnFilterActive = locationFilter.size > 0 || missingCheckInFilter !== "all" || missingCheckOutFilter !== "all" || notesFilter !== "all";
   const visibleColumnCount = 1 + Object.values(visibleColumns).filter(Boolean).length; // +1 for Technician, always shown
   const [rows, setRows] = useState<TicketAttendanceRow[]>([]);
   const [loading, setLoading] = useState(false);
@@ -220,6 +232,13 @@ export function TicketAttendanceTab() {
     () => new Map(employees.map((e) => [(e.display_name || "").trim().toLowerCase(), e])),
     [employees]
   );
+  // Every distinct branch on file — the Location filter's checklist options.
+  // Sourced from the full employee roster (not just today's rows) so the
+  // list stays stable regardless of what's currently filtered/scheduled.
+  const branchOptions = useMemo(
+    () => Array.from(new Set(employees.map((e) => e.assigned_branch).filter((b): b is string => !!b))).sort(),
+    [employees]
+  );
   const timecardByProfileDate = useMemo(() => {
     const map = new Map<string, CompanyTimecardEntry>();
     for (const tc of timecards) map.set(`${tc.profileId}|${tc.workDate}`, tc);
@@ -284,12 +303,36 @@ export function TicketAttendanceTab() {
       })
       .filter((t) => {
         if (q && !t.technician.toLowerCase().includes(q) && !(t.branch || "").toLowerCase().includes(q)) return false;
-        if (statusFilter === "all") return true;
-        const bucket = t.timeIn && t.timeOut ? "present" : t.timeIn ? "presentNoTimeOut" : "absent";
-        return bucket === statusFilter;
+        if (statusFilter !== "all") {
+          const bucket = t.timeIn && t.timeOut ? "present" : t.timeIn ? "presentNoTimeOut" : "absent";
+          if (bucket !== statusFilter) return false;
+        }
+        if (locationFilter.size > 0 && !(t.branch && locationFilter.has(t.branch))) return false;
+        if (missingCheckInFilter === "has" && t.missingCheckIn === 0) return false;
+        if (missingCheckInFilter === "none" && t.missingCheckIn > 0) return false;
+        if (missingCheckOutFilter === "has" && t.missingCheckOut === 0) return false;
+        if (missingCheckOutFilter === "none" && t.missingCheckOut > 0) return false;
+        if (notesFilter === "has" && !t.note) return false;
+        if (notesFilter === "none" && t.note) return false;
+        return true;
       })
       .sort((a, b) => a.technician.localeCompare(b.technician));
-  }, [rows, search, statusFilter, disputedTicketNosApproved, employeeByNormalizedName, timecardByProfileDate, noteByProfileDate, dateFrom, dateTo, isSingleDay]);
+  }, [
+    rows,
+    search,
+    statusFilter,
+    locationFilter,
+    missingCheckInFilter,
+    missingCheckOutFilter,
+    notesFilter,
+    disputedTicketNosApproved,
+    employeeByNormalizedName,
+    timecardByProfileDate,
+    noteByProfileDate,
+    dateFrom,
+    dateTo,
+    isSingleDay,
+  ]);
 
   // Estimate Time column — inline pencil-icon edit, one free-text field, no
   // formula/source. Which mileage entry id is currently being edited, plus
@@ -518,6 +561,55 @@ export function TicketAttendanceTab() {
     document.body.removeChild(element);
   };
 
+  // Shared markup for the three tri-state ("All"/"Has"/"None") header
+  // funnel filters (Missing Check-In, Missing Check-Out, Notes) — the
+  // Location filter is its own multi-select checklist, built inline above
+  // since it doesn't fit this same shape.
+  const renderTriStateFilterHeader = (
+    key: FilterMenuKey,
+    label: string,
+    value: TriState,
+    setValue: (v: TriState) => void,
+    hasLabel: string,
+    noneLabel: string,
+    align: "left" | "right" = "right"
+  ) => (
+    <>
+      <span className={`inline-flex items-center gap-1 ${align === "right" ? "justify-end w-full" : ""}`}>
+        {label}
+        <button
+          type="button"
+          onClick={() => setOpenFilterMenu((cur) => (cur === key ? null : key))}
+          title={`Filter by ${label}`}
+          className={value !== "all" ? "text-blue-400" : "text-slate-500 hover:text-slate-300"}
+        >
+          <Filter className="h-3 w-3" />
+        </button>
+      </span>
+      {openFilterMenu === key && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setOpenFilterMenu(null)} />
+          <div className={`absolute ${align === "right" ? "right-0" : "left-0"} top-full mt-1 w-44 bg-slate-900 border border-white/15 rounded-lg shadow-2xl z-50 p-1 normal-case font-normal text-left`}>
+            {([
+              ["all", "All"],
+              ["has", hasLabel],
+              ["none", noneLabel],
+            ] as [TriState, string][]).map(([v, vLabel]) => (
+              <button
+                key={v}
+                type="button"
+                onClick={() => { setValue(v); setOpenFilterMenu(null); }}
+                className={`block w-full text-left px-2 py-1.5 text-sm rounded hover:bg-white/5 ${value === v ? "text-blue-300 font-semibold" : "text-slate-200"}`}
+              >
+                {vLabel}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </>
+  );
+
   return (
     <div className="space-y-6">
       <p className="text-xs text-slate-400">
@@ -623,14 +715,80 @@ export function TicketAttendanceTab() {
           <thead>
             <tr className="border-b border-white/10">
               <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Technician</th>
-              {visibleColumns.location && <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Location</th>}
+              {visibleColumns.location && (
+                <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase relative">
+                  <span className="inline-flex items-center gap-1">
+                    Location
+                    <button
+                      type="button"
+                      onClick={() => setOpenFilterMenu((cur) => (cur === "location" ? null : "location"))}
+                      title="Filter by location"
+                      className={locationFilter.size > 0 ? "text-blue-400" : "text-slate-500 hover:text-slate-300"}
+                    >
+                      <Filter className="h-3 w-3" />
+                    </button>
+                  </span>
+                  {openFilterMenu === "location" && (
+                    <>
+                      <div className="fixed inset-0 z-40" onClick={() => setOpenFilterMenu(null)} />
+                      <div className="absolute left-0 top-full mt-1 w-56 max-h-72 overflow-y-auto bg-slate-900 border border-white/15 rounded-lg shadow-2xl z-50 p-2 normal-case font-normal text-left">
+                        {branchOptions.length === 0 ? (
+                          <div className="text-xs text-slate-500 px-2 py-1.5">No branches on file.</div>
+                        ) : (
+                          <>
+                            {branchOptions.map((b) => (
+                              <label key={b} className="flex items-center gap-2 px-2 py-1.5 text-sm text-slate-200 hover:bg-white/5 rounded cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={locationFilter.has(b)}
+                                  onChange={() =>
+                                    setLocationFilter((prev) => {
+                                      const next = new Set(prev);
+                                      if (next.has(b)) next.delete(b);
+                                      else next.add(b);
+                                      return next;
+                                    })
+                                  }
+                                  className="h-3.5 w-3.5 accent-blue-500"
+                                />
+                                {b}
+                              </label>
+                            ))}
+                            {locationFilter.size > 0 && (
+                              <button
+                                type="button"
+                                onClick={() => setLocationFilter(new Set())}
+                                className="mt-1 w-full text-left text-xs text-blue-300 hover:text-blue-200 px-2 py-1"
+                              >
+                                Clear
+                              </button>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    </>
+                  )}
+                </th>
+              )}
               {visibleColumns.timeIn && <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Time In</th>}
               {visibleColumns.timeOut && <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Time Out</th>}
               {visibleColumns.scheduled && <th className="px-3 py-3 text-right text-xs font-semibold text-slate-400 uppercase">Scheduled</th>}
               {visibleColumns.checkedIn && <th className="px-3 py-3 text-right text-xs font-semibold text-slate-400 uppercase">Checked In</th>}
-              {visibleColumns.missingCheckIn && <th className="px-3 py-3 text-right text-xs font-semibold text-slate-400 uppercase">Missing Check-In</th>}
-              {visibleColumns.missingCheckOut && <th className="px-3 py-3 text-right text-xs font-semibold text-slate-400 uppercase">Missing Check-Out</th>}
-              {visibleColumns.notes && <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Notes</th>}
+              {visibleColumns.missingCheckIn && (
+                <th className="px-3 py-3 text-right text-xs font-semibold text-slate-400 uppercase relative">
+                  {renderTriStateFilterHeader("missingCheckIn", "Missing Check-In", missingCheckInFilter, setMissingCheckInFilter, "Has missing (>0)", "None (0)")}
+                </th>
+              )}
+              {visibleColumns.missingCheckOut && (
+                <th className="px-3 py-3 text-right text-xs font-semibold text-slate-400 uppercase relative">
+                  {renderTriStateFilterHeader("missingCheckOut", "Missing Check-Out", missingCheckOutFilter, setMissingCheckOutFilter, "Has missing (>0)", "None (0)")}
+                </th>
+              )}
+              {visibleColumns.notes && (
+                <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase relative">
+                  {renderTriStateFilterHeader("notes", "Notes", notesFilter, setNotesFilter, "Has note", "No note", "left")}
+                </th>
+              )}
             </tr>
           </thead>
           <tbody>
