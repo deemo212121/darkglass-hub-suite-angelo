@@ -46,3 +46,51 @@ export async function sendAttendanceEnrollmentEmail(managerProfileId: string): P
   if (!res.ok || !body.ok) throw new Error(body.error || "Failed to send enrollment email.");
   return { sentTo: body.sentTo || "" };
 }
+
+/** Test-mode send — a caller-supplied list of FAKE employee names, batched
+ *  into the exact same email shape the real cron sends, delivered to a
+ *  REAL manager's real inbox so you can verify delivery without waiting
+ *  for a real employee to actually hit their grace window. Nothing about
+ *  this touches the database — no fake profiles, no dedup rows — so
+ *  there's nothing to clean up and it can be sent repeatedly. */
+export async function sendAttendanceTestWarningEmail(managerProfileId: string, employeeNames: string[]): Promise<{ sentTo: string }> {
+  const idToken = await firebaseAuth?.currentUser?.getIdToken(false);
+  if (!idToken) throw new Error("You need to be logged in to send this email.");
+  const res = await fetch("/api/gmail?action=send-attendance-test-warning-email", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ idToken, managerProfileId, employeeNames }),
+  });
+  const body = (await res.json().catch(() => ({}))) as { ok?: boolean; sentTo?: string; error?: string };
+  if (!res.ok || !body.ok) throw new Error(body.error || "Failed to send test email.");
+  return { sentTo: body.sentTo || "" };
+}
+
+export interface AttendanceAlertRunSummary {
+  profilesChecked: number;
+  missingClockInFired: number;
+  missingClockOutFired: number;
+  streaksFired: number;
+  notificationsSent: number;
+  graceWarningsFired: number;
+  graceWarningEmailsSent: number;
+  errors: string[];
+}
+
+/** Manually fires the same job the every-5-minute Cron Trigger runs —
+ *  needed for local testing, since `vite dev` runs no Workers runtime at
+ *  all and the cron never fires there. A REAL run with real side effects
+ *  (writes attendance_alerts dedup rows, sends real emails), not a
+ *  sandboxed test path — pass dryRun to preview without either. */
+export async function runAttendanceAlertsNow(dryRun = false): Promise<AttendanceAlertRunSummary> {
+  const idToken = await firebaseAuth?.currentUser?.getIdToken(false);
+  if (!idToken) throw new Error("You need to be logged in to run this.");
+  const res = await fetch("/api/run-attendance-alerts", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ idToken, dryRun }),
+  });
+  const body = (await res.json().catch(() => ({}))) as { ok?: boolean; result?: AttendanceAlertRunSummary; error?: string };
+  if (!res.ok || !body.ok || !body.result) throw new Error(body.error || "Failed to run.");
+  return body.result;
+}

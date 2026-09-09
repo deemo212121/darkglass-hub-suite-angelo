@@ -1,7 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
-import { X, Plus, Pencil, Check } from "lucide-react";
+import { Fragment, useEffect, useMemo, useState } from "react";
+import { X, Plus, Pencil, Check, Loader2, ExternalLink, ChevronDown, ChevronRight } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { getAttendanceForRange, saveEntry, getProfileIdByFirebaseUid, type AttendanceRow } from "@/lib/supabase/timecards";
+import { getTicketAttendanceForTechnician, type TicketAttendanceRow } from "@/lib/supabase/technicianWhereabouts";
+import { getCompanyEmployeeRequests } from "@/lib/supabase/employeeRequests";
+import { getVisitDiagnosisByTicketIds } from "@/lib/supabase/tickets";
+import { getMileageEntries, setMileageEstimateTime, setMileageLegMileage, type MileageEntry } from "@/lib/supabase/mileage";
 import {
   getSalaryHistory,
   addSalaryEntry,
@@ -38,6 +42,8 @@ interface Props {
   onClose: () => void;
   /** Called after a rate change is saved, so the caller can refresh its own aggregate payroll view. */
   onRateChanged?: () => void;
+  /** When set (Office Payroll's per-technician review wizard), a "Next →" button appears in the footer — advances to the Tech Activity Report. Omitted for office employees and other callers. */
+  onNext?: () => void;
 }
 
 function currentMonthBounds(): { start: string; end: string } {
@@ -49,6 +55,14 @@ function currentMonthBounds(): { start: string; end: string } {
   const end = `${y}-${String(m).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
   return { start, end };
 }
+
+// Same per-day threshold AccountingDashboard.tsx's computeHoursMap already
+// uses to split regular vs. overtime for the real payroll totals (8
+// hours/day, not a weekly-rolling threshold) — kept in sync with that
+// value here so this table's per-day breakdown matches what actually gets
+// paid, not a different invented rule.
+const REGULAR_HOURS_PER_DAY = 8;
+const OVERTIME_MULTIPLIER = 1.5;
 
 const SALARY_REASON_LABELS: Record<SalaryChangeReason, string> = {
   promotion: "Promotion",
@@ -88,9 +102,11 @@ export function EmployeePayrollDetailModal({
   initialEnd,
   onClose,
   onRateChanged,
+  onNext,
 }: Props) {
   const { uid, displayName, email } = useAuth();
   const actorName = displayName || email || "Unknown";
+  const todayISO = useMemo(() => new Date().toISOString().slice(0, 10), []);
   const [myProfileId, setMyProfileId] = useState<string | null>(null);
   const fallbackMonth = currentMonthBounds();
   const [rangeStart, setRangeStart] = useState(initialStart || fallbackMonth.start);
@@ -98,6 +114,17 @@ export function EmployeePayrollDetailModal({
   const [loading, setLoading] = useState(true);
   const [attendance, setAttendance] = useState<AttendanceRow[]>([]);
   const [history, setHistory] = useState<SalaryEntryRow[]>([]);
+  const [ticketRows, setTicketRows] = useState<TicketAttendanceRow[]>([]);
+  const [diagnoses, setDiagnoses] = useState<Map<string, string>>(new Map());
+  const [mileageEntries, setMileageEntries] = useState<MileageEntry[]>([]);
+  // Which Attendance row's date is expanded to show that day's tickets —
+  // same expand-on-click pattern Ticket Attendance itself uses, just scoped
+  // to one date's tickets instead of a whole technician's range.
+  const [expandedDate, setExpandedDate] = useState<string | null>(null);
+  // Approved Ticket Time Disputes don't count as missing here — same rule
+  // Ticket Attendance itself uses. Loaded once (doesn't depend on the date
+  // range), not per-load.
+  const [disputedTicketNosApproved, setDisputedTicketNosApproved] = useState<Set<string>>(new Set());
   const [showRateForm, setShowRateForm] = useState(false);
   const [rateForm, setRateForm] = useState({
     effectiveDate: new Date().toISOString().slice(0, 10),
@@ -124,17 +151,41 @@ export function EmployeePayrollDetailModal({
     getProfileIdByFirebaseUid(uid).then(setMyProfileId).catch(() => {});
   }, [uid]);
 
+  useEffect(() => {
+    getCompanyEmployeeRequests()
+      .then((requests) =>
+        setDisputedTicketNosApproved(
+          new Set(
+            requests
+              .filter((r) => r.requestType === "ticket_time_dispute" && r.status === "approved" && r.ticketNo)
+              .map((r) => r.ticketNo!)
+          )
+        )
+      )
+      .catch((err) => console.error("Failed to load ticket time disputes for payroll detail:", err));
+    getMileageEntries()
+      .then(setMileageEntries)
+      .catch((err) => console.error("Failed to load mileage entries for payroll detail:", err));
+  }, []);
+
   const load = async (cancelledRef: { current: boolean }) => {
     setLoading(true);
     setRateEdits({});
     try {
-      const [attRows, hist] = await Promise.all([
+      const [attRows, hist, myTicketRows] = await Promise.all([
         getAttendanceForRange(profileId, rangeStart, rangeEnd, { requiredCheckIn, requiredCheckOut, workingHours, mealMinutes, daysOff: offDays, graceMinutes }),
         getSalaryHistory(profileId),
+        getTicketAttendanceForTechnician(employeeName, rangeStart, rangeEnd),
       ]);
       if (cancelledRef.current) return;
       setAttendance(attRows);
       setHistory(hist);
+      setTicketRows(myTicketRows);
+      // Not needed to render the rows themselves — fetched separately so a
+      // slow/failed lookup never blocks the times that are already back.
+      getVisitDiagnosisByTicketIds(myTicketRows.map((r) => r.ticketId))
+        .then(setDiagnoses)
+        .catch((err) => console.error("Failed to load ticket diagnoses for payroll detail:", err));
     } catch (err) {
       console.error("Failed to load employee payroll detail:", err);
     } finally {
@@ -150,6 +201,95 @@ export function EmployeePayrollDetailModal({
   }, [profileId, rangeStart, rangeEnd]);
 
   const totalHours = useMemo(() => attendance.reduce((s, r) => s + r.hoursWorked, 0), [attendance]);
+  // One non-deleted mileage entry per ticket # — same convention Ticket
+  // Attendance uses (mileage.ts).
+  const mileageByTicketNo = useMemo(() => {
+    const map = new Map<string, MileageEntry>();
+    for (const e of mileageEntries) {
+      if (e.deletedAt || !e.ticketNo || map.has(e.ticketNo)) continue;
+      map.set(e.ticketNo, e);
+    }
+    return map;
+  }, [mileageEntries]);
+  // Per-day ticket stats: how many of that day's scheduled tickets were
+  // actually completed (both an Arrived and a Done on-site stamp), and the
+  // mileage rolled up from just those completed tickets — DID NOT GO / never-
+  // arrived tickets contribute no mileage. Total Mileage here is always a
+  // pure sum of the per-ticket leg mileage in the expanded breakdown, never
+  // its own editable field.
+  const ticketStatsByDate = useMemo(() => {
+    const byDate = new Map<string, TicketAttendanceRow[]>();
+    for (const r of ticketRows) {
+      if (!byDate.has(r.scheduleDate)) byDate.set(r.scheduleDate, []);
+      byDate.get(r.scheduleDate)!.push(r);
+    }
+    const map = new Map<string, { scheduled: number; completed: number; totalMileage: number }>();
+    for (const [date, dayRows] of byDate) {
+      const completedRows = dayRows.filter((r) => r.arrivedAt && r.doneAt);
+      map.set(date, {
+        scheduled: dayRows.length,
+        completed: completedRows.length,
+        totalMileage: completedRows.reduce((s, r) => s + (mileageByTicketNo.get(r.ticketNo)?.legMileage ?? 0), 0),
+      });
+    }
+    return map;
+  }, [ticketRows, mileageByTicketNo]);
+  // Full ticket rows per date, for the expanded per-day ticket table —
+  // same grouping as ticketStatsByDate above, just keeping the rows instead
+  // of collapsing them to counts.
+  const ticketRowsByDate = useMemo(() => {
+    const map = new Map<string, TicketAttendanceRow[]>();
+    for (const r of ticketRows) {
+      if (!map.has(r.scheduleDate)) map.set(r.scheduleDate, []);
+      map.get(r.scheduleDate)!.push(r);
+    }
+    return map;
+  }, [ticketRows]);
+
+  // Estimate Time column — inline pencil-icon edit, same pattern Ticket
+  // Attendance itself uses (one free-text field on mileage_entries, no
+  // formula/source).
+  const [editingEstimateTimeId, setEditingEstimateTimeId] = useState<string | null>(null);
+  const [estimateTimeDraft, setEstimateTimeDraft] = useState("");
+  const [savingEstimateTimeId, setSavingEstimateTimeId] = useState<string | null>(null);
+  const handleSaveEstimateTime = async (entry: MileageEntry) => {
+    const value = estimateTimeDraft;
+    setSavingEstimateTimeId(entry.id);
+    try {
+      await setMileageEstimateTime(entry.id, value);
+      setMileageEntries((prev) => prev.map((e) => (e.id === entry.id ? { ...e, estimateTime: value.trim() || null } : e)));
+      setEditingEstimateTimeId(null);
+    } catch (err) {
+      alert(`Failed to save Estimate Time: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setSavingEstimateTimeId(null);
+    }
+  };
+
+  // Per-ticket Mileage — same inline pencil-edit pattern. Overrides that
+  // ticket's leg_mileage; the day's "Total Mileage" column re-sums live.
+  const [editingLegMileageId, setEditingLegMileageId] = useState<string | null>(null);
+  const [legMileageDraft, setLegMileageDraft] = useState("");
+  const [savingLegMileageId, setSavingLegMileageId] = useState<string | null>(null);
+  const handleSaveLegMileage = async (entry: MileageEntry) => {
+    const trimmed = legMileageDraft.trim();
+    const value = trimmed === "" ? null : Number(trimmed);
+    if (value != null && !Number.isFinite(value)) {
+      alert("Enter a number, or leave blank to reset.");
+      return;
+    }
+    setSavingLegMileageId(entry.id);
+    try {
+      await setMileageLegMileage(entry.id, value);
+      const rounded = value == null ? null : Math.round(value * 10) / 10;
+      setMileageEntries((prev) => prev.map((e) => (e.id === entry.id ? { ...e, legMileage: rounded } : e)));
+      setEditingLegMileageId(null);
+    } catch (err) {
+      alert(`Failed to save Mileage: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setSavingLegMileageId(null);
+    }
+  };
   const warnings = useMemo(() => attendance.filter((r) => r.status !== "present" && r.status !== "day-off"), [attendance]);
   // The entry effective as of the end of the viewed period — used to decide
   // whether this employee is currently paid hourly or a fixed salary, and
@@ -160,10 +300,26 @@ export function EmployeePayrollDetailModal({
   // 0118) — shows the monthly amount for this calendar-month estimate.
   // Hourly pay is still each day's hours at whichever rate was effective ON
   // that day, so a mid-month raise/promotion is handled automatically
-  // instead of needing one flat rate for the whole period.
+  // instead of needing one flat rate for the whole period. Same per-day
+  // regular/overtime split as the Attendance table's own Payment column
+  // below (and AccountingDashboard.tsx's computeHoursMap) — kept in sync
+  // so this tile's total always matches summing that column by hand.
   const computedPay = useMemo(() => {
-    if (isCurrentlyFixed && currentEntry?.annualSalary) return monthlySalary(currentEntry.annualSalary);
-    return attendance.reduce((s, r) => s + r.hoursWorked * rateEffectiveOn(history, r.date), 0);
+    if (isCurrentlyFixed && currentEntry?.annualSalary) {
+      const fixed = monthlySalary(currentEntry.annualSalary);
+      return { regularPay: fixed, overtimePay: 0, total: fixed };
+    }
+    return attendance.reduce(
+      (acc, r) => {
+        const rate = rateEffectiveOn(history, r.date);
+        const regular = Math.min(r.hoursWorked, REGULAR_HOURS_PER_DAY);
+        const overtime = Math.max(0, r.hoursWorked - REGULAR_HOURS_PER_DAY);
+        const regularPay = regular * rate;
+        const overtimePay = overtime * rate * OVERTIME_MULTIPLIER;
+        return { regularPay: acc.regularPay + regularPay, overtimePay: acc.overtimePay + overtimePay, total: acc.total + regularPay + overtimePay };
+      },
+      { regularPay: 0, overtimePay: 0, total: 0 }
+    );
   }, [attendance, history, isCurrentlyFixed, currentEntry]);
   const rateNow = useMemo(() => currentRate(history), [history]);
 
@@ -307,7 +463,7 @@ export function EmployeePayrollDetailModal({
   return (
     <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={onClose}>
       <div
-        className="bg-slate-900 border border-white/15 rounded-xl w-full max-w-5xl max-h-[90vh] flex flex-col shadow-2xl"
+        className="bg-slate-900 border border-white/15 rounded-xl w-full max-w-[95vw] max-h-[90vh] flex flex-col shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-5 py-4 border-b border-white/10 bg-slate-950 rounded-t-xl">
@@ -360,7 +516,12 @@ export function EmployeePayrollDetailModal({
             </div>
             <div className="bg-slate-800/50 border border-white/10 rounded-lg p-3">
               <p className="text-xs text-slate-400 uppercase">Est. Pay ({rangeStart} – {rangeEnd})</p>
-              <p className="text-xl font-bold text-green-300 mt-1">${computedPay.toFixed(2)}</p>
+              <p className="text-xl font-bold text-green-300 mt-1">${computedPay.total.toFixed(2)}</p>
+              {!isCurrentlyFixed && (
+                <p className="text-xs text-slate-400 mt-0.5">
+                  ${computedPay.regularPay.toFixed(2)} regular + ${computedPay.overtimePay.toFixed(2)} overtime = ${computedPay.total.toFixed(2)}
+                </p>
+              )}
             </div>
           </div>
 
@@ -554,8 +715,13 @@ export function EmployeePayrollDetailModal({
                       <th className="text-left py-1.5">Meal Out</th>
                       <th className="text-left py-1.5">Check Out</th>
                       <th className="text-right py-1.5">Hours</th>
+                      <th className="text-right py-1.5">Overtime</th>
                       <th className="text-right py-1.5">Rate</th>
                       <th className="text-right py-1.5">Status</th>
+                      <th className="text-right py-1.5">Payment</th>
+                      <th className="text-center py-1.5">Scheduled</th>
+                      <th className="text-center py-1.5" title="Tickets with both an Arrived and a Done on-site stamp">Completed</th>
+                      <th className="text-right py-1.5 pr-4" title="Sum of the completed tickets' leg mileage — excludes DID NOT GO and any ticket missing an arrived/done stamp. Not editable; it rolls up the per-ticket mileage in the breakdown below.">Total Mileage</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -563,12 +729,28 @@ export function EmployeePayrollDetailModal({
                       const dayIsFixed = entryEffectiveOn(history, row.date)?.compensationType === "fixed";
                       const edit = attendanceEdits[row.date];
                       const isRestDay = row.status === "day-off";
+                      const regularHours = Math.min(row.hoursWorked, REGULAR_HOURS_PER_DAY);
+                      const overtimeHours = Math.max(0, row.hoursWorked - REGULAR_HOURS_PER_DAY);
+                      const dayRate = rateEffectiveOn(history, row.date);
+                      const dayPayment = regularHours * dayRate + overtimeHours * dayRate * OVERTIME_MULTIPLIER;
+                      const ticketStats = ticketStatsByDate.get(row.date);
+                      const dayTicketRows = ticketRowsByDate.get(row.date) || [];
+                      const isExpanded = expandedDate === row.date;
                       return (
-                      <tr key={row.date} className={`border-b border-white/5${isRestDay ? " opacity-40" : ""}`}>
-                        <td className="py-1.5 text-slate-200 whitespace-nowrap">{row.date}</td>
+                      <Fragment key={row.date}>
+                      <tr
+                        className={`border-b border-white/5 cursor-pointer hover:bg-white/5 transition${isRestDay ? " opacity-40" : ""}${isExpanded ? " bg-white/5" : ""}`}
+                        onClick={() => setExpandedDate((cur) => (cur === row.date ? null : row.date))}
+                      >
+                        <td className="py-1.5 text-slate-200 whitespace-nowrap">
+                          <span className="inline-flex items-center gap-1">
+                            {isExpanded ? <ChevronDown className="h-3 w-3 text-slate-500" /> : <ChevronRight className="h-3 w-3 text-slate-500" />}
+                            {row.date}
+                          </span>
+                        </td>
                         {attendanceEditing ? (
                           <>
-                            <td className="py-1.5">
+                            <td className="py-1.5" onClick={(e) => e.stopPropagation()}>
                               <input
                                 type="time"
                                 step="1"
@@ -577,7 +759,7 @@ export function EmployeePayrollDetailModal({
                                 className="w-24 bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-slate-100 focus:outline-none focus:border-blue-500"
                               />
                             </td>
-                            <td className="py-1.5">
+                            <td className="py-1.5" onClick={(e) => e.stopPropagation()}>
                               <input
                                 type="time"
                                 step="1"
@@ -586,7 +768,7 @@ export function EmployeePayrollDetailModal({
                                 className="w-24 bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-slate-100 focus:outline-none focus:border-blue-500"
                               />
                             </td>
-                            <td className="py-1.5">
+                            <td className="py-1.5" onClick={(e) => e.stopPropagation()}>
                               <input
                                 type="time"
                                 step="1"
@@ -595,7 +777,7 @@ export function EmployeePayrollDetailModal({
                                 className="w-24 bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-slate-100 focus:outline-none focus:border-blue-500"
                               />
                             </td>
-                            <td className="py-1.5">
+                            <td className="py-1.5" onClick={(e) => e.stopPropagation()}>
                               <input
                                 type="time"
                                 step="1"
@@ -607,14 +789,15 @@ export function EmployeePayrollDetailModal({
                           </>
                         ) : (
                           <>
-                            <td className="py-1.5 text-slate-300">{row.clockIn || "—"}</td>
-                            <td className="py-1.5 text-slate-300">{row.mealStart || "—"}</td>
-                            <td className="py-1.5 text-slate-300">{row.mealEnd || "—"}</td>
-                            <td className="py-1.5 text-slate-300">{row.clockOut || "—"}</td>
+                            <td className={`py-1.5 ${row.clockIn ? "text-green-300" : "text-slate-500"}`}>{row.clockIn || "—"}</td>
+                            <td className={`py-1.5 ${row.mealStart ? "text-orange-300" : "text-slate-500"}`}>{row.mealStart || "—"}</td>
+                            <td className={`py-1.5 ${row.mealEnd ? "text-orange-300" : "text-slate-500"}`}>{row.mealEnd || "—"}</td>
+                            <td className={`py-1.5 ${row.clockOut ? "text-red-300" : "text-slate-500"}`}>{row.clockOut || "—"}</td>
                           </>
                         )}
-                        <td className="py-1.5 text-right text-slate-200">{row.hoursWorked ? row.hoursWorked.toFixed(1) : "—"}</td>
-                        <td className="py-1.5 text-right">
+                        <td className="py-1.5 text-right text-slate-200">{row.hoursWorked ? regularHours.toFixed(1) : "—"}</td>
+                        <td className={`py-1.5 text-right ${overtimeHours > 0 ? "text-orange-300 font-semibold" : "text-slate-500"}`}>{overtimeHours > 0 ? overtimeHours.toFixed(1) : "—"}</td>
+                        <td className="py-1.5 text-right" onClick={(e) => e.stopPropagation()}>
                           {dayIsFixed ? (
                             <span className="text-slate-500" title="Fixed-salary pay doesn't vary by day — edit it from Salary History above instead">Fixed Salary</span>
                           ) : (
@@ -633,7 +816,195 @@ export function EmployeePayrollDetailModal({
                           )}
                         </td>
                         <td className={`py-1.5 text-right font-semibold ${STATUS_COLOR[row.status]}`}>{STATUS_LABEL[row.status]}</td>
+                        <td className="py-1.5 text-right font-semibold text-green-300">
+                          {dayIsFixed ? (
+                            <span className="text-slate-500 font-normal" title="Fixed-salary pay doesn't vary by day">—</span>
+                          ) : row.hoursWorked ? (
+                            `$${dayPayment.toFixed(2)}`
+                          ) : (
+                            <span className="text-slate-500 font-normal">—</span>
+                          )}
+                        </td>
+                        <td className="py-1.5 text-center text-slate-300">{ticketStats ? ticketStats.scheduled : "—"}</td>
+                        <td className="py-1.5 text-center text-emerald-300">{ticketStats ? ticketStats.completed : "—"}</td>
+                        <td className="py-1.5 pr-4 text-right text-slate-300 whitespace-nowrap">
+                          {ticketStats && ticketStats.completed > 0 ? `${ticketStats.totalMileage.toFixed(1)} mi` : <span className="text-slate-500">—</span>}
+                        </td>
                       </tr>
+                      {isExpanded && (
+                        <tr>
+                          <td colSpan={13} className="px-2 py-3 bg-white/[0.02] border-b border-white/5">
+                            {dayTicketRows.length === 0 ? (
+                              <p className="text-[11px] text-slate-500 text-center py-2">No tickets scheduled this day.</p>
+                            ) : (
+                              <table className="w-full text-[11px]">
+                                <thead>
+                                  <tr className="text-slate-500">
+                                    <th className="px-2 py-1 text-left">#</th>
+                                    <th className="px-2 py-1 text-left">Ticket</th>
+                                    <th className="px-2 py-1 text-left">Status</th>
+                                    <th className="px-2 py-1 text-left">Address</th>
+                                    <th className="px-2 py-1 text-left">Estimate Time</th>
+                                    <th className="px-2 py-1 text-left">Arrived</th>
+                                    <th className="px-2 py-1 text-left">Done</th>
+                                    <th className="px-2 py-1 text-right">Mileage</th>
+                                    <th className="px-2 py-1 text-left">Map Link</th>
+                                    <th className="px-2 py-1 text-left">Diagnosis</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {dayTicketRows.map((r, i) => {
+                                    const mEntry = mileageByTicketNo.get(r.ticketNo);
+                                    const diagnosis = diagnoses.get(r.ticketId);
+                                    const isDisputed = disputedTicketNosApproved.has(r.ticketNo);
+                                    const dayHasPassed = r.scheduleDate < todayISO;
+                                    const didNotGo = !diagnosis && !r.arrivedAt && dayHasPassed && r.statusGroup !== "cancelled";
+                                    const noDiagnosisFound = !diagnosis && !!r.arrivedAt;
+                                    const isEditingEstimate = mEntry && editingEstimateTimeId === mEntry.id;
+                                    return (
+                                      <tr key={r.ticketNo} className="border-t border-white/5">
+                                        <td className="px-2 py-1.5 text-slate-500 font-semibold text-center">{i + 1}</td>
+                                        <td className="px-2 py-1.5">
+                                          <a href={`/ticket/${r.ticketNo}`} target="_blank" rel="noopener noreferrer" className="text-blue-300 hover:text-blue-200 hover:underline">
+                                            {r.ticketNo}
+                                          </a>
+                                        </td>
+                                        <td className="px-2 py-1.5 text-slate-300">
+                                          {r.timeSlot && <span className="text-slate-500">{r.timeSlot} · </span>}
+                                          {r.status}
+                                        </td>
+                                        <td className="px-2 py-1.5 text-slate-400">{r.address || "—"}</td>
+                                        <td className="px-2 py-1.5">
+                                          {isEditingEstimate ? (
+                                            <div className="flex items-center gap-1">
+                                              <input
+                                                type="text"
+                                                autoFocus
+                                                value={estimateTimeDraft}
+                                                onChange={(e) => setEstimateTimeDraft(e.target.value)}
+                                                onKeyDown={(e) => { if (e.key === "Enter") void handleSaveEstimateTime(mEntry!); if (e.key === "Escape") setEditingEstimateTimeId(null); }}
+                                                className="w-20 rounded border border-white/15 bg-slate-800 px-1 py-0.5 text-[11px] text-white"
+                                              />
+                                              <button
+                                                onClick={() => void handleSaveEstimateTime(mEntry!)}
+                                                disabled={savingEstimateTimeId === mEntry!.id}
+                                                className="text-emerald-400 hover:text-emerald-300 disabled:opacity-40"
+                                              >
+                                                {savingEstimateTimeId === mEntry!.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+                                              </button>
+                                            </div>
+                                          ) : (
+                                            <button
+                                              onClick={() => {
+                                                if (!mEntry) return;
+                                                setEditingEstimateTimeId(mEntry.id);
+                                                setEstimateTimeDraft(mEntry.estimateTime ?? "");
+                                              }}
+                                              disabled={!mEntry}
+                                              title={mEntry ? "Click to edit" : "Sync mileage first"}
+                                              className="flex items-center gap-1 text-slate-300 hover:text-white disabled:text-slate-600 disabled:cursor-not-allowed"
+                                            >
+                                              {mEntry?.estimateTime || <span className="text-slate-600">—</span>}
+                                              {mEntry && <Pencil className="h-2.5 w-2.5 text-slate-500 shrink-0" />}
+                                            </button>
+                                          )}
+                                        </td>
+                                        <td className="px-2 py-1.5">
+                                          {r.arrivedAt ? (
+                                            <span className="text-emerald-300">{new Date(r.arrivedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>
+                                          ) : isDisputed ? (
+                                            <span className="text-blue-300">Fixed via dispute</span>
+                                          ) : r.statusGroup === "cancelled" ? (
+                                            <span className="text-slate-500">—</span>
+                                          ) : (
+                                            <span className="text-red-300">Missing</span>
+                                          )}
+                                        </td>
+                                        <td className="px-2 py-1.5">
+                                          {r.doneAt ? (
+                                            <span className="text-emerald-300">{new Date(r.doneAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>
+                                          ) : isDisputed ? (
+                                            <span className="text-blue-300">Fixed via dispute</span>
+                                          ) : !r.arrivedAt || r.statusGroup === "cancelled" ? (
+                                            <span className="text-slate-500">—</span>
+                                          ) : (
+                                            <span className="text-yellow-300">Missing</span>
+                                          )}
+                                        </td>
+                                        <td className="px-2 py-1.5 text-right text-slate-300">
+                                          {mEntry && editingLegMileageId === mEntry.id ? (
+                                            <div className="flex items-center justify-end gap-1">
+                                              <input
+                                                type="number"
+                                                step="0.1"
+                                                min="0"
+                                                autoFocus
+                                                value={legMileageDraft}
+                                                onChange={(e) => setLegMileageDraft(e.target.value)}
+                                                onKeyDown={(e) => { if (e.key === "Enter") void handleSaveLegMileage(mEntry); if (e.key === "Escape") setEditingLegMileageId(null); }}
+                                                placeholder="—"
+                                                className="w-16 rounded border border-white/15 bg-slate-800 px-1 py-0.5 text-[11px] text-right text-white"
+                                              />
+                                              <button
+                                                onClick={() => void handleSaveLegMileage(mEntry)}
+                                                disabled={savingLegMileageId === mEntry.id}
+                                                className="text-emerald-400 hover:text-emerald-300 disabled:opacity-40"
+                                              >
+                                                {savingLegMileageId === mEntry.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+                                              </button>
+                                            </div>
+                                          ) : (
+                                            <button
+                                              onClick={() => {
+                                                if (!mEntry) return;
+                                                setEditingLegMileageId(mEntry.id);
+                                                setLegMileageDraft(mEntry.legMileage != null ? String(mEntry.legMileage) : "");
+                                              }}
+                                              disabled={!mEntry}
+                                              title={mEntry ? "Click to edit this ticket's mileage" : "Sync mileage first"}
+                                              className="inline-flex items-center gap-1 text-slate-300 hover:text-white disabled:text-slate-600 disabled:cursor-not-allowed"
+                                            >
+                                              {mEntry?.legMileage != null ? `${mEntry.legMileage.toFixed(1)} mi` : <span className="text-slate-600">—</span>}
+                                              {mEntry && <Pencil className="h-2.5 w-2.5 text-slate-500 shrink-0" />}
+                                            </button>
+                                          )}
+                                        </td>
+                                        <td className="px-2 py-1.5">
+                                          {mEntry?.googleMapLink ? (
+                                            <a href={mEntry.googleMapLink} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-blue-300 hover:text-blue-200 hover:underline">
+                                              Open <ExternalLink className="h-3 w-3" />
+                                            </a>
+                                          ) : (
+                                            <span className="text-slate-600">—</span>
+                                          )}
+                                        </td>
+                                        <td className="px-2 py-1.5 max-w-[220px]">
+                                          {diagnosis ? (
+                                            <div className="relative group inline-block max-w-full align-top">
+                                              <span className="block truncate text-slate-400 cursor-default">{diagnosis}</span>
+                                              <div className="pointer-events-none absolute left-0 bottom-full z-50 mb-1.5 w-72 max-w-[min(24rem,80vw)] rounded-lg border border-white/15 bg-slate-950 px-3 py-2 text-[11px] leading-relaxed text-slate-200 shadow-2xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-opacity whitespace-normal">
+                                                <p className="text-[9px] font-semibold uppercase tracking-wide text-slate-500 mb-1">Diagnosis — {r.ticketNo}</p>
+                                                {diagnosis}
+                                              </div>
+                                            </div>
+                                          ) : didNotGo ? (
+                                            <span className="text-red-300 font-semibold">DID NOT GO</span>
+                                          ) : noDiagnosisFound ? (
+                                            <span className="text-amber-300 font-semibold">NO DIAGNOSIS FOUND</span>
+                                          ) : (
+                                            <span className="text-slate-600">—</span>
+                                          )}
+                                        </td>
+                                      </tr>
+                                    );
+                                  })}
+                                </tbody>
+                              </table>
+                            )}
+                          </td>
+                        </tr>
+                      )}
+                      </Fragment>
                       );
                     })}
                   </tbody>
@@ -642,6 +1013,19 @@ export function EmployeePayrollDetailModal({
             )}
           </div>
         </div>
+
+        {onNext && (
+          <div className="flex items-center justify-between gap-3 px-5 py-3 border-t border-white/10 bg-slate-950 rounded-b-xl">
+            <p className="text-xs text-slate-500">Review the clock-in/out and ticket detail above, then continue to the Tech Activity Report.</p>
+            <button
+              type="button"
+              onClick={onNext}
+              className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold transition shrink-0"
+            >
+              Next →
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

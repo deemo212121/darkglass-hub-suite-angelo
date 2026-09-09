@@ -63,7 +63,8 @@ import {
   payGraceMinutesFor,
 } from "../attendanceGrace";
 import { TECHNICIAN_PAY_ROLES } from "../roleLabels";
-import { readEnv, fetchGmailConnection, refreshAccessToken, sendGmailMessage } from "./gmailBridge";
+import { readEnv, fetchGmailConnection, refreshAccessToken, sendGmailMessage, fetchProfileByFirebaseUid } from "./gmailBridge";
+import { verifyFirebaseToken } from "./supabaseTokenBridge";
 
 type AlertType = "missing_clock_in" | "missing_clock_out";
 type NotificationKind = AlertType | "pattern_missing_clock_in" | "pattern_missing_clock_out";
@@ -560,4 +561,40 @@ export async function runAttendanceAlertCheck(
   }
 
   return summary;
+}
+
+// Manual "Run Now" trigger — the every-5-minute Cron Trigger above only
+// ever fires in a deployed Worker; `vite dev` runs no Workers runtime at
+// all (the Cloudflare Vite plugin is build-only — see vite.config.ts's own
+// comment on this), so there is no way to exercise this job locally
+// without it. This is a REAL run (writes real attendance_alerts dedup
+// rows, sends real grace-warning emails) — not a separate sandboxed test
+// path — same side effects the cron itself has, just triggered by a
+// button instead of a timer. SuperAdmin-only, since it's reachable from
+// Attendance Monitoring's Settings tab (which is itself hidden from every
+// other role) and nothing else should be able to fire it on demand.
+export async function handleRunAttendanceAlertsRequest(request: Request, env: Record<string, string | undefined>): Promise<Response> {
+  const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+  if (request.method !== "POST") return json({ error: "Method not allowed" }, 405);
+  try {
+    const payload = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+    const idToken = typeof payload.idToken === "string" ? payload.idToken : "";
+    if (!idToken) return json({ error: "Missing idToken" }, 400);
+
+    const envResult = readEnv(env);
+    if ("error" in envResult) return json(envResult, 500);
+
+    const claims = await verifyFirebaseToken(idToken, envResult.firebaseProjectId);
+    const caller = await fetchProfileByFirebaseUid(envResult, claims.sub);
+    if (!caller) return json({ error: "Profile not found" }, 403);
+    const isCallerSuperAdmin = [caller.role, ...caller.extraRoles].some((r) => (r || "").toUpperCase() === "SUPERADMIN");
+    if (!isCallerSuperAdmin) return json({ error: "Only a SuperAdmin can run this" }, 403);
+
+    const dryRun = payload.dryRun === true;
+    const result = await runAttendanceAlertCheck(env, { dryRun });
+    return json({ ok: true, result });
+  } catch (err) {
+    console.error("[attendanceAlerts] manual run error:", err);
+    return json({ error: err instanceof Error ? err.message : "Run failed" }, 500);
+  }
 }

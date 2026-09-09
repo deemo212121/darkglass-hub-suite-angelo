@@ -119,7 +119,7 @@ function b64urlEncode(input: string): string {
 
 // ---- profiles / connections (Supabase REST, service-role key) ----
 
-async function fetchProfileByFirebaseUid(
+export async function fetchProfileByFirebaseUid(
   env: EnvBag,
   firebaseUid: string
 ): Promise<{ id: string; companyId: string; role: string | null; extraRoles: string[]; name: string } | null> {
@@ -698,6 +698,73 @@ export async function handleGmailRequest(request: Request, env?: Record<string, 
       return json({ ok: true, sentTo: manager.email });
     } catch (err) {
       console.error("[gmail] send-attendance-enrollment-email error:", err);
+      return json({ error: err instanceof Error ? err.message : "Send failed" }, 500);
+    }
+  }
+
+  // Test-send for the Settings tab's "Test Mode" — sends the exact same
+  // batched grace-warning shape attendanceAlerts.ts's real cron sends, but
+  // to a caller-supplied list of FAKE employee names (never touches
+  // profiles/timecard_entries/attendance_alerts — nothing here is real,
+  // nothing needs cleanup), so a SuperAdmin can verify the email actually
+  // arrives without waiting for a real employee to hit their real grace
+  // window. Clearly marked [TEST] so it's never mistaken for a real alert.
+  if (url.searchParams.get("action") === "send-attendance-test-warning-email") {
+    if (request.method !== "POST") return json({ error: "Method not allowed" }, 405);
+    try {
+      const payload = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+      const idToken = typeof payload.idToken === "string" ? payload.idToken : "";
+      const managerProfileId = typeof payload.managerProfileId === "string" ? payload.managerProfileId : "";
+      const employeeNames = Array.isArray(payload.employeeNames)
+        ? payload.employeeNames.filter((n): n is string => typeof n === "string" && n.trim().length > 0)
+        : [];
+      if (!idToken) return json({ error: "Missing idToken" }, 400);
+      if (!managerProfileId) return json({ error: "Missing managerProfileId" }, 400);
+      if (employeeNames.length === 0) return json({ error: "No test employees to include — add at least one first." }, 400);
+
+      const claims = await verifyFirebaseToken(idToken, envBag.firebaseProjectId);
+      const caller = await fetchProfileByFirebaseUid(envBag, claims.sub);
+      if (!caller) return json({ error: "Profile not found" }, 403);
+      const isCallerSuperAdmin = [caller.role, ...caller.extraRoles].some((r) => (r || "").toUpperCase() === "SUPERADMIN");
+      if (!isCallerSuperAdmin) return json({ error: "Only a SuperAdmin can send a test." }, 403);
+
+      const manager = await fetchProfileById(envBag, managerProfileId);
+      if (!manager || manager.companyId !== caller.companyId) return json({ error: "Manager not found" }, 404);
+      if (!manager.email) return json({ error: `${manager.name} has no email on file — can't notify them.` }, 400);
+
+      const connection = await fetchGmailConnection(envBag, caller.companyId, "ATTENDANCE");
+      if (!connection) return json({ error: `Gmail is not connected for Attendance warnings yet. Connect it above first.` }, 409);
+
+      let accessToken: string;
+      try {
+        accessToken = await refreshAccessToken(envBag, connection.refreshToken);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes("invalid_grant")) {
+          return json({
+            error: `The Attendance Gmail connection has expired or was revoked. Click "Connect Gmail" above to reconnect, then try again.`,
+            reauthRequired: true,
+            region: "ATTENDANCE",
+          }, 409);
+        }
+        throw err;
+      }
+      const fromEmail = connection.connectedEmail || "me";
+      const subject = "[TEST] Attendance grace warning";
+      const body = [
+        `Hi ${manager.name},`,
+        "",
+        `This is a TEST message — none of the names below are real employees, and nothing about this test was recorded anywhere.`,
+        "",
+        `Not yet clocked in (still within grace): ${employeeNames.join(", ")}.`,
+        "",
+        "This is what a real grace-warning email looks like.",
+      ].join("\n");
+      await sendGmailMessage(accessToken, fromEmail, manager.email, subject, body);
+
+      return json({ ok: true, sentTo: manager.email });
+    } catch (err) {
+      console.error("[gmail] send-attendance-test-warning-email error:", err);
       return json({ error: err instanceof Error ? err.message : "Send failed" }, 500);
     }
   }
