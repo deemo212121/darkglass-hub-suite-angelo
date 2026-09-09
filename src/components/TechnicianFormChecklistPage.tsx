@@ -12,36 +12,22 @@
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { ChevronLeft, ClipboardCheck, Loader2, ChevronDown, ExternalLink, RefreshCw, Send, Bell, Snowflake } from "lucide-react";
+import { ChevronLeft, ClipboardCheck, Loader2, ChevronDown, ExternalLink, RefreshCw, Send, Bell, Snowflake, Search } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { getCompanyUsers, getMyProfileId, setProfileFrozen, type ProfileRow } from "@/lib/supabase/users";
 import { TECHNICIAN_PAY_ROLES, normalizeRole, getRoleDepartmentBreakdown } from "@/lib/roleLabels";
 import { getAllSignableDocuments, createSignableDocument, type SignableDocument, type SignableDocumentType } from "@/lib/supabase/signableDocuments";
-import { SIGNABLE_DOCUMENT_REGISTRY } from "@/lib/signableDocumentRegistry";
+import { SIGNABLE_DOCUMENT_REGISTRY, TECHNICIAN_FORM_TYPES } from "@/lib/signableDocumentRegistry";
 import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
 import { getTechnicianFormExemptions, setTechnicianFormExemption } from "@/lib/supabase/technicianFormExemptions";
 import { logActivity } from "@/lib/supabase/hrActivityLog";
 import { getAppUrl } from "@/lib/appUrl";
 
-// Same set of forms as ReportHRDaily.tsx's automatedFormsTechnicianTabs,
-// minus contractorDataUs/vehicleUseAgreement (those moved to the BM/SBS/
-// Tech Director tier, not rank-and-file technicians).
-const TECH_FORM_TYPES: SignableDocumentType[] = [
-  "wage_ack",
-  "car_iq_agreement",
-  "vehicle_agreement",
-  "damage",
-  "direct_deposit",
-  "employee_confidentiality",
-  "contractor_data",
-  "flash_technician_travel",
-  "location_consent",
-  "meal_rest_break",
-  "mileage_fuel",
-  "parts_responsibility",
-  "pto_ack",
-  "substance_screening",
-];
+// TECH_FORM_TYPES now lives in signableDocumentRegistry.ts as
+// TECHNICIAN_FORM_TYPES, shared with the frozen-account "forms you still
+// need to sign" popup — kept as a local alias so nothing else in this file
+// needs to change.
+const TECH_FORM_TYPES = TECHNICIAN_FORM_TYPES;
 
 interface TechRow {
   profileId: string;
@@ -72,6 +58,7 @@ export function TechnicianFormChecklistPage() {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [hideComplete, setHideComplete] = useState(false);
   const [branchFilter, setBranchFilter] = useState("");
+  const [search, setSearch] = useState("");
   const [sortMode, setSortMode] = useState<SortMode>("missing-desc");
   const [actionKey, setActionKey] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -147,6 +134,8 @@ export function TechnicianFormChecklistPage() {
     let result = rows;
     if (hideComplete) result = result.filter((r) => r.doneCount < r.applicableTotal);
     if (branchFilter) result = result.filter((r) => r.branch === branchFilter);
+    const q = search.trim().toLowerCase();
+    if (q) result = result.filter((r) => r.name.toLowerCase().includes(q));
     const missing = (r: TechRow) => r.applicableTotal - r.doneCount;
     result = [...result].sort((a, b) => {
       switch (sortMode) {
@@ -162,7 +151,7 @@ export function TechnicianFormChecklistPage() {
       }
     });
     return result;
-  }, [rows, hideComplete, branchFilter, sortMode]);
+  }, [rows, hideComplete, branchFilter, sortMode, search]);
 
   // "Not sent" — creates the document (same formData/recipientSlot shape
   // every individual Send handler in ReportHRDaily.tsx uses: just the
@@ -301,6 +290,11 @@ export function TechnicianFormChecklistPage() {
           </h1>
           <p className="text-sm text-slate-400">Live signed/pending status for every Technician-tab form — nothing here is manually checked.</p>
         </div>
+        <span className="shrink-0 rounded-full border border-white/15 bg-white/5 px-2.5 py-1 text-xs font-semibold text-slate-300">
+          {visibleRows.length === rows.length
+            ? `${rows.length} technician${rows.length === 1 ? "" : "s"}`
+            : `${visibleRows.length} of ${rows.length} technicians`}
+        </span>
         <button
           type="button"
           onClick={() => void load()}
@@ -311,6 +305,19 @@ export function TechnicianFormChecklistPage() {
       </div>
 
       <div className="flex flex-wrap items-center gap-3 mb-6">
+        <div className="flex flex-col gap-1">
+          <label className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">Search</label>
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Technician name…"
+              className="w-44 rounded-lg border border-white/15 bg-slate-900/60 py-1.5 pl-8 pr-2.5 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-blue-500"
+            />
+          </div>
+        </div>
         <div className="flex flex-col gap-1">
           <label className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">Branch</label>
           <select
@@ -346,10 +353,10 @@ export function TechnicianFormChecklistPage() {
             <option value="hide">Hide complete</option>
           </select>
         </div>
-        {(branchFilter || sortMode !== "missing-desc" || hideComplete) && (
+        {(search || branchFilter || sortMode !== "missing-desc" || hideComplete) && (
           <button
             type="button"
-            onClick={() => { setBranchFilter(""); setSortMode("missing-desc"); setHideComplete(false); }}
+            onClick={() => { setSearch(""); setBranchFilter(""); setSortMode("missing-desc"); setHideComplete(false); }}
             className="text-xs text-blue-400 hover:text-blue-300 mt-4"
           >
             Reset filters
@@ -368,7 +375,9 @@ export function TechnicianFormChecklistPage() {
       ) : visibleRows.length === 0 ? (
         <div className="rounded-xl border border-white/10 bg-slate-900/40 px-6 py-16 text-center">
           <ClipboardCheck className="mx-auto h-8 w-8 text-slate-600" />
-          <p className="mt-3 text-sm text-slate-400">{rows.length === 0 ? "No active technicians found." : "Every technician is fully signed up."}</p>
+          <p className="mt-3 text-sm text-slate-400">
+            {rows.length === 0 ? "No active technicians found." : search.trim() ? `No technician matches "${search.trim()}".` : "Every technician is fully signed up."}
+          </p>
         </div>
       ) : (
         <div className="space-y-2.5">

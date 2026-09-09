@@ -188,6 +188,26 @@ export async function getAllSignableDocuments(): Promise<SignableDocument[]> {
   return all;
 }
 
+/** Every signable document for one recipient, ANY type, most recent first —
+ *  the frozen-account "which forms do I still need to sign" popup
+ *  (FrozenAccountModal.tsx, via technicianFormStatus.ts) and any other
+ *  self-service view that only needs one person's own documents. */
+export async function getSignableDocumentsForRecipient(recipientId: string): Promise<SignableDocument[]> {
+  const all: SignableDocument[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from("hr_signable_documents")
+      .select(SELECT)
+      .eq("recipient_id", recipientId)
+      .order("created_at", { ascending: false })
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) throw new Error(error.message);
+    all.push(...(data ?? []).map(mapRow));
+    if (!data || data.length < PAGE_SIZE) break;
+  }
+  return all;
+}
+
 /**
  * Records the recipient's signature and marks the document signed — awaiting
  * HR's review/confirm, not yet an official warning. `formData`, if given,

@@ -49,3 +49,28 @@ export const SIGNABLE_DOCUMENT_REGISTRY: Record<SignableDocumentType, SignableDo
 export function signableDocumentLabel(type: SignableDocumentType): string {
   return SIGNABLE_DOCUMENT_REGISTRY[type]?.label ?? type;
 }
+
+/**
+ * Same set of forms as ReportHRDaily.tsx's automatedFormsTechnicianTabs,
+ * minus contractorDataUs/vehicleUseAgreement (those moved to the BM/SBS/
+ * Tech Director tier, not rank-and-file technicians). Shared between
+ * TechnicianFormChecklistPage.tsx (HR's live status view) and
+ * technicianFormStatus.ts (a frozen technician's own "what do I still need
+ * to sign" popup) so the two lists can never drift apart.
+ */
+export const TECHNICIAN_FORM_TYPES: SignableDocumentType[] = [
+  "wage_ack",
+  "car_iq_agreement",
+  "vehicle_agreement",
+  "damage",
+  "direct_deposit",
+  "employee_confidentiality",
+  "contractor_data",
+  "flash_technician_travel",
+  "location_consent",
+  "meal_rest_break",
+  "mileage_fuel",
+  "parts_responsibility",
+  "pto_ack",
+  "substance_screening",
+];

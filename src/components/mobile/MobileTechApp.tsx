@@ -90,6 +90,7 @@ import { NotificationCenterPanel } from "@/components/NotificationCenterPage";
 import { AnnouncementsMenu } from "@/components/AnnouncementsMenu";
 import { createOrUpdateTicketReschedule, getTicketReschedulesForTicketNos, type TicketRescheduleRow } from "@/lib/supabase/ticketReschedules";
 import { AnnouncementBanner } from "@/components/AnnouncementBanner";
+import { FrozenAccountModal } from "@/components/FrozenAccountModal";
 import { TraineeAttendanceMobileModal } from "@/components/mobile/TraineeAttendanceMobileModal";
 import { MobileTicketAttendanceView } from "@/components/mobile/MobileTicketAttendanceView";
 import { AnnouncementsPage } from "@/components/AnnouncementsPage";
@@ -1170,6 +1171,8 @@ export function MobileTechApp() {
         myProfileId={profileId}
         trigger={traineeReviewTrigger}
       />
+
+      {isFrozen && <FrozenAccountModal />}
 
       {/* ── Scrollable content area ────────────────────────────────── */}
       <div className="mtech-content">
