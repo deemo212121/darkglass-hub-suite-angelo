@@ -94,6 +94,7 @@ import { useEffect, useState } from "react";
 import { ReportHRDaily } from "@/components/ReportHRDaily";
 import { HrOnboardingChecklistPage } from "@/components/HrOnboardingChecklistPage";
 import { TechnicianFormChecklistPage } from "@/components/TechnicianFormChecklistPage";
+import { AbsentListPage } from "@/components/AbsentListPage";
 import { StaffListPage } from "@/components/StaffListPage";
 import { ReportHR } from "@/components/ReportHR";
 import { ReportCSRDaily } from "@/components/ReportCSRDaily";
@@ -675,6 +676,8 @@ function SubModule() {
         ? <HrOnboardingChecklistPage />
         : (sub as any).custom === "technician-form-checklist"
         ? <TechnicianFormChecklistPage />
+        : (sub as any).custom === "absent-list"
+        ? <AbsentListPage mod={mod} sub={sub} />
         : sub.custom === "staff-list"
         ? <StaffListPage mod={mod} sub={sub} />
         : sub.custom === "work-map"

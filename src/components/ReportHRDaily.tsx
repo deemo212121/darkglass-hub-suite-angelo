@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect, useRef, Fragment } from "react";
 import { Link, useSearch, useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
-import { ChevronLeft, ChevronDown, ChevronUp, ChevronRight, Plus, Trash2, AlertTriangle, CheckCircle, XCircle, Paperclip, Users, Clock, UserCheck, UserX, UserMinus, Search, Bell, Download, Forward, History, FileText, ClipboardList, Landmark, GripVertical, FileCheck, Link2, Copy, Calendar, Check, Pencil } from "lucide-react";
+import { ChevronLeft, ChevronDown, ChevronUp, ChevronRight, Plus, Trash2, AlertTriangle, CheckCircle, XCircle, Paperclip, Users, Clock, UserCheck, UserX, UserMinus, Search, Bell, Download, Forward, History, FileText, ClipboardList, Landmark, GripVertical, FileCheck, Link2, Copy, Calendar, Check, Pencil, Filter } from "lucide-react";
 import { useSignaturePad } from "@/hooks/useSignaturePad";
 import { SignaturePadControls } from "@/components/SignaturePad";
 
@@ -30,6 +30,8 @@ import {
   getCandidates,
   updateCandidateStatus,
   updateCandidateNotes,
+  updateCandidateFields,
+  setCandidateOutreach,
   uploadCandidateCv,
   getEodHiringReport,
   getEomHiringReport,
@@ -57,6 +59,7 @@ import { captureHtmlToPdfBlob, captureHtmlPagesToPdfBlob, loadAssetDataUrl as lo
 import {
   createSignableDocument,
   getSignableDocuments,
+  getAllSignableDocuments,
   confirmSignableDocument,
   cancelSignableDocument,
   deleteSignableDocument,
@@ -69,6 +72,8 @@ import {
   type SignableDocumentType,
   type SignatureSlot as DocSignatureSlot,
 } from "@/lib/supabase/signableDocuments";
+import { SIGNABLE_DOCUMENT_REGISTRY } from "@/lib/signableDocumentRegistry";
+import { getCandidateRequiredFormTypes, setCandidateRequiredFormTypes } from "@/lib/supabase/candidateRequiredForms";
 import { buildWarningFormBodyMarkup, buildWarnNoteText, warningFormStyles, type WarningFormData, type SignatureSlot } from "@/lib/warningFormTemplate";
 import { buildNdaFormPages, ndaFormStyles, type NdaFormData } from "@/lib/ndaFormTemplate";
 import { buildWarningFormDocxBlob } from "@/lib/warningFormDocx";
@@ -121,6 +126,7 @@ import { fillSubstanceScreeningPdf } from "@/lib/substanceScreeningPdfFill";
 import { logActivity, getActivityLog, activityActionLabel, type HrActivityLogEntry } from "@/lib/supabase/hrActivityLog";
 import { HrActivityLogPanel } from "@/components/HrActivityLogPage";
 import { HrCalendarTab } from "@/components/HrCalendarTab";
+import { InterviewCalendarTab, type InterviewCalendarCandidate } from "@/components/InterviewCalendarTab";
 import { subscribeTableChanges } from "@/lib/supabase/realtime";
 import { getCompanyPtoRequests, ptoYearWindow, ptoDaysUsed, sickYearWindow, sickDaysUsed, reviewPtoStage, canReviewPtoStage, type PtoRequestRow, type PtoType, type PtoStage } from "@/lib/supabase/pto";
 import { getCompanyTimecardEntries, calcWorkedHours, hoursDiff, type CompanyTimecardEntry } from "@/lib/supabase/timecards";
@@ -227,6 +233,14 @@ const CANDIDATE_STATUS_COLOR: Record<CandidateStatus, string> = {
   withdrawn: "bg-slate-500/20 text-slate-300",
   cancelled: "bg-slate-500/20 text-slate-400",
 };
+/** "14:30" -> "2:30 PM" — interview_time is stored as plain 24h "HH:MM" text (0228), formatted for display wherever it's shown. */
+function formatHHMM(hhmm: string): string {
+  const [h, m] = hhmm.split(":").map(Number);
+  if (Number.isNaN(h) || Number.isNaN(m)) return hhmm;
+  const period = h >= 12 ? "PM" : "AM";
+  const hour12 = h % 12 || 12;
+  return `${hour12}:${String(m).padStart(2, "0")} ${period}`;
+}
 // Statuses that require an accompanying date when selected — interview
 // date for Interviewing, training start date for Training, withdraw date
 // for Withdrawn — see hr_update_candidate_status() in
@@ -371,6 +385,9 @@ const CANONICAL_DEPARTMENT_GROUPS: { name: string; match: RegExp }[] = [
 
 /** Master List's Department column dropdown — the 6 real destinations plus Unlisted (to explicitly park someone there), used to move a person between departments straight from the table. */
 const MASTER_LIST_DEPARTMENT_OPTIONS = [...CANONICAL_DEPARTMENT_GROUPS.map((g) => g.name), MASTER_LIST_UNLISTED];
+
+/** Where a candidate was found — Add Candidate's Source dropdown; "Other" reveals a free-text field instead of saving the literal word "Other". */
+const CANDIDATE_SOURCE_OPTIONS = ["Indeed", "ZipRecruiter", "Other"];
 
 /**
  * Sentinel for the Master List "Trainee" tab — cross-cutting (a trainee can
@@ -712,7 +729,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // Reviews, the Approved log, the department trend chart, and the full
   // Employee Directory all on top of each other, forcing a long scroll to
   // reach anything below Hiring.
-  const [activeTab, setActiveTab] = useState<"hiring" | "warnings" | "masterList" | "leaders" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "promotionForm" | "actionPlanForm" | "terminationForm" | "employeeRequestManager" | "w8ben" | "i9" | "wageAck" | "carIqAgreement" | "vehicleAgreement" | "vehicleUseAgreement" | "employeeConfidentiality" | "mealRestBreak" | "ptoAck" | "partsResponsibility" | "mileageFuel" | "locationConsent" | "damage" | "contractorData" | "contractorDataUs" | "directDeposit" | "substanceScreening" | "flashTechnicianTravel" | "contractorAddendum" | "combineForms" | "employerQueue" | "ndaForm" | "calendar">("hiring");
+  const [activeTab, setActiveTab] = useState<"hiring" | "warnings" | "masterList" | "leaders" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "promotionForm" | "actionPlanForm" | "terminationForm" | "employeeRequestManager" | "w8ben" | "i9" | "wageAck" | "carIqAgreement" | "vehicleAgreement" | "vehicleUseAgreement" | "employeeConfidentiality" | "mealRestBreak" | "ptoAck" | "partsResponsibility" | "mileageFuel" | "locationConsent" | "damage" | "contractorData" | "contractorDataUs" | "directDeposit" | "substanceScreening" | "flashTechnicianTravel" | "contractorAddendum" | "combineForms" | "employerQueue" | "ndaForm" | "calendar" | "interviewCalendar">("hiring");
   const [openCategory, setOpenCategory] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   // Which floating-sidebar section headers (Automated Forms/Generate
@@ -1333,11 +1350,29 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [candidatesLoading, setCandidatesLoading] = useState(true);
   const [showAddCandidate, setShowAddCandidate] = useState(false);
-  const [newCandidate, setNewCandidate] = useState({ name: "", phone: "", email: "", position: "", branch: "" });
+  const [newCandidate, setNewCandidate] = useState({ name: "", phone: "", email: "", position: "", branch: "", department: "", branchManagerId: "", source: "", sourceOther: "" });
   const [cvFile, setCvFile] = useState<File | null>(null);
   const [savingCandidate, setSavingCandidate] = useState(false);
   const [hiringSearch, setHiringSearch] = useState("");
-  const [hiringStatusFilter, setHiringStatusFilter] = useState<"" | CandidateStatus>("");
+  const [hiringStatusFilter, setHiringStatusFilter] = useState<Set<string>>(new Set());
+  // Per-column funnel filters in the header row — Position/Branch are
+  // multi-select (empty set = no restriction); CV/Account Status/Note are
+  // tri-state (All/Has/None). Same pattern Ticket Attendance and Absent
+  // List's own header filters already use.
+  type HiringTriState = "all" | "has" | "none";
+  type HiringFilterMenuKey = "position" | "branch" | "branchManager" | "assignedInterviewer" | "department" | "outreach" | "status" | "cv" | "accountStatus" | "note";
+  const [hiringFilterMenu, setHiringFilterMenu] = useState<HiringFilterMenuKey | null>(null);
+  const [hiringPositionFilter, setHiringPositionFilter] = useState<Set<string>>(new Set());
+  const [hiringBranchFilter, setHiringBranchFilter] = useState<Set<string>>(new Set());
+  const [hiringBranchManagerFilter, setHiringBranchManagerFilter] = useState<Set<string>>(new Set());
+  const [hiringAssignedInterviewerFilter, setHiringAssignedInterviewerFilter] = useState<Set<string>>(new Set());
+  const [hiringDepartmentFilter, setHiringDepartmentFilter] = useState<Set<string>>(new Set());
+  // Any-of (OR) match — e.g. checking "Text AM" + "Call PM" shows anyone
+  // with EITHER done, not only candidates with both.
+  const [hiringOutreachFilter, setHiringOutreachFilter] = useState<Set<string>>(new Set());
+  const [hiringCvFilter, setHiringCvFilter] = useState<HiringTriState>("all");
+  const [hiringAccountStatusFilter, setHiringAccountStatusFilter] = useState<HiringTriState>("all");
+  const [hiringNoteFilter, setHiringNoteFilter] = useState<HiringTriState>("all");
 
   const loadCandidates = async () => {
     setCandidatesLoading(true);
@@ -1347,6 +1382,23 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       console.error("Failed to load candidates:", err);
     } finally {
       setCandidatesLoading(false);
+    }
+  };
+
+  // Forms column — every signed/pending document company-wide (one bulk
+  // call, every type at once) plus each candidate's own picked list of
+  // which types actually apply to them. Neither depends on the selected
+  // date range or anything else that changes often, so this loads once
+  // alongside candidates/employees, not per-render.
+  const [allSignableDocs, setAllSignableDocs] = useState<SignableDocument[]>([]);
+  const [requiredFormsByCandidateId, setRequiredFormsByCandidateId] = useState<Map<string, SignableDocumentType[]>>(new Map());
+  const loadCandidateForms = async () => {
+    try {
+      const [docs, required] = await Promise.all([getAllSignableDocuments(), getCandidateRequiredFormTypes()]);
+      setAllSignableDocs(docs);
+      setRequiredFormsByCandidateId(required);
+    } catch (err) {
+      console.error("Failed to load candidate forms:", err);
     }
   };
 
@@ -1394,6 +1446,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     if (!ready) return;
     loadEmployees();
     loadCandidates();
+    loadCandidateForms();
     loadNotes();
     loadPtoRequests();
     loadTodayTimecardEntries();
@@ -1494,17 +1547,253 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     [employees]
   );
   const candidateNeedsAccount = (c: Candidate) => c.status === "hired" && !!c.email && !employeeEmailSet.has(c.email.trim().toLowerCase());
+  const candidateHasAccount = (c: Candidate) => !!c.email && employeeEmailSet.has(c.email.trim().toLowerCase());
+
+  // Forms column — same email-matching convention as Account Status above,
+  // just resolved to the actual profile id (needed to filter
+  // hr_signable_documents.recipient_id, which is never keyed by email —
+  // that table only ever stores a profile id or a free-typed name).
+  const profileIdByEmail = useMemo(
+    () => new Map(employees.filter((e) => e.email).map((e) => [e.email.trim().toLowerCase(), e.id])),
+    [employees]
+  );
+  // Which document TYPES are complete (signed or confirmed — same
+  // "complete" definition getTechnicianIdsMissingRouteDocuments already
+  // uses) for a given profile, across every signable document ever sent to
+  // them — a candidate whose account existed under an old email that later
+  // changed would still show correctly once employeeEmailSet reflects the
+  // current one.
+  const completeDocTypesByProfileId = useMemo(() => {
+    const map = new Map<string, Set<SignableDocumentType>>();
+    for (const doc of allSignableDocs) {
+      if (!doc.recipientId || (doc.status !== "signed" && doc.status !== "confirmed")) continue;
+      const set = map.get(doc.recipientId) ?? new Set<SignableDocumentType>();
+      set.add(doc.documentType);
+      map.set(doc.recipientId, set);
+    }
+    return map;
+  }, [allSignableDocs]);
+  // Which document TYPES are sent but still awaiting a signature, per
+  // profile — lets the Forms popup show "Sent" (vs. "Signed") so HR can
+  // tell a Send actually went out instead of wondering if it worked.
+  const pendingDocTypesByProfileId = useMemo(() => {
+    const map = new Map<string, Set<SignableDocumentType>>();
+    for (const doc of allSignableDocs) {
+      if (!doc.recipientId || doc.status !== "pending_signature") continue;
+      const set = map.get(doc.recipientId) ?? new Set<SignableDocumentType>();
+      set.add(doc.documentType);
+      map.set(doc.recipientId, set);
+    }
+    return map;
+  }, [allSignableDocs]);
+  // null = HR hasn't picked which forms apply to this candidate yet (no
+  // "X/Y" to show at all, distinct from "0/Y" which means forms ARE
+  // configured but none are complete).
+  const candidateFormProgress = (c: Candidate): { complete: number; total: number } | null => {
+    const required = requiredFormsByCandidateId.get(c.id);
+    if (!required || required.length === 0) return null;
+    const profileId = c.email ? profileIdByEmail.get(c.email.trim().toLowerCase()) : undefined;
+    const complete = profileId ? completeDocTypesByProfileId.get(profileId) : undefined;
+    return { complete: complete ? required.filter((t) => complete.has(t)).length : 0, total: required.length };
+  };
+
+  // Which Automated Forms tab (activeTab, ~line 719) sends each document
+  // type — several types share one tab (w4/w9/w4r all live under the
+  // combined "w8ben" tab). Lets the Forms popup's "Send →" jump straight
+  // to the right tab instead of making HR hunt through ~26 of them; the
+  // actual send still goes through that tab's own tested per-type flow
+  // (each type needs its own real details — name, dates, terms — that
+  // can't be safely auto-filled here), so it lands on their Automated
+  // Forms page exactly like any other form sent that way.
+  const SIGNABLE_TYPE_TO_HR_TAB: Record<SignableDocumentType, typeof activeTab> = {
+    warning_form: "warningForm",
+    promotion_form: "promotionForm",
+    action_plan_form: "actionPlanForm",
+    termination_form: "terminationForm",
+    w8ben: "w8ben",
+    w4: "w8ben",
+    w9: "w8ben",
+    w4r: "w8ben",
+    i9: "i9",
+    wage_ack: "wageAck",
+    car_iq_agreement: "carIqAgreement",
+    vehicle_agreement: "vehicleAgreement",
+    employee_confidentiality: "employeeConfidentiality",
+    meal_rest_break: "mealRestBreak",
+    pto_ack: "ptoAck",
+    parts_responsibility: "partsResponsibility",
+    mileage_fuel: "mileageFuel",
+    location_consent: "locationConsent",
+    damage: "damage",
+    contractor_data: "contractorData",
+    contractor_data_us: "contractorDataUs",
+    direct_deposit: "directDeposit",
+    substance_screening: "substanceScreening",
+    flash_technician_travel: "flashTechnicianTravel",
+    nda_form: "ndaForm",
+    vehicle_use_agreement: "vehicleUseAgreement",
+    contractor_addendum: "contractorAddendum",
+  };
+
+  // Forms popup — checkbox list of every SignableDocumentType, letting HR
+  // pick which ones actually apply to this one candidate (position/branch
+  // dependent, no fixed company-wide list — see migration 0224's header
+  // comment). `selected` is the set of currently-checked types.
+  const [formsDialog, setFormsDialog] = useState<{ candidateId: string; candidateName: string; selected: Set<SignableDocumentType> } | null>(null);
+  const [savingFormsDialog, setSavingFormsDialog] = useState(false);
+  const [formsDialogSearch, setFormsDialogSearch] = useState("");
+  const openFormsDialog = (c: Candidate) => {
+    const existing = requiredFormsByCandidateId.get(c.id) ?? [];
+    setFormsDialog({ candidateId: c.id, candidateName: c.name, selected: new Set(existing) });
+    setFormsDialogSearch("");
+  };
+  // Returns the freshly-saved types (so handleSendType can navigate right
+  // after saving without waiting on a state re-render to read them back).
+  const saveFormsDialog = async (dialog: { candidateId: string; selected: Set<SignableDocumentType> }): Promise<SignableDocumentType[]> => {
+    const types = Array.from(dialog.selected);
+    await setCandidateRequiredFormTypes(dialog.candidateId, types);
+    setRequiredFormsByCandidateId((prev) => {
+      const next = new Map(prev);
+      next.set(dialog.candidateId, types);
+      return next;
+    });
+    return types;
+  };
+  const handleSaveFormsDialog = async () => {
+    if (!formsDialog) return;
+    setSavingFormsDialog(true);
+    try {
+      await saveFormsDialog(formsDialog);
+      setFormsDialog(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save required forms.");
+    } finally {
+      setSavingFormsDialog(false);
+    }
+  };
+  // "Send →" on one form — saves the current picks first (so nothing
+  // checked in this popup is lost), then jumps to that type's Automated
+  // Forms tab to actually send it through the real flow.
+  const handleSendType = async (type: SignableDocumentType) => {
+    if (!formsDialog) return;
+    setSavingFormsDialog(true);
+    try {
+      await saveFormsDialog(formsDialog);
+      setFormsDialog(null);
+      setActiveTab(SIGNABLE_TYPE_TO_HR_TAB[type]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save required forms.");
+    } finally {
+      setSavingFormsDialog(false);
+    }
+  };
+
+  // Branch → its Branch Manager's name, for the Hiring table's own Branch
+  // Manager column — falls back to the Senior Branch Manager for any
+  // branch with no direct Branch Manager on file. Real profiles only (the
+  // same `employees` roster already loaded for Account Status above), not
+  // a separate lookup table — a branch's manager is just whichever active
+  // employee holds that role with assigned_branch set to it.
+  const branchManagerByBranch = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const e of employees) {
+      if (!e.branch || map.has(e.branch)) continue;
+      if (normalizeRole(e.position) === "BRANCH_MANAGER" || e.extraRoles.map(normalizeRole).includes("BRANCH_MANAGER")) {
+        map.set(e.branch, e.name);
+      }
+    }
+    for (const e of employees) {
+      if (!e.branch || map.has(e.branch)) continue;
+      if (normalizeRole(e.position) === "SENIOR_BRANCH_MANAGER" || e.extraRoles.map(normalizeRole).includes("SENIOR_BRANCH_MANAGER")) {
+        map.set(e.branch, e.name);
+      }
+    }
+    return map;
+  }, [employees]);
+
+  // Real Branch Manager / Senior Branch Manager profiles, for the "Branch
+  // Manager" dropdown on Add Candidate and the Hiring table's manual
+  // override — lets HR pick a specific person instead of only ever relying
+  // on branchManagerByBranch's auto-derived one (which breaks down for a
+  // branch with nobody on file yet, or two branches sharing one manager).
+  const branchManagerOptions = useMemo(
+    () =>
+      employees
+        .filter(
+          (e) =>
+            e.status === "active" &&
+            (normalizeRole(e.position) === "BRANCH_MANAGER" ||
+              normalizeRole(e.position) === "SENIOR_BRANCH_MANAGER" ||
+              e.extraRoles.map(normalizeRole).includes("BRANCH_MANAGER") ||
+              e.extraRoles.map(normalizeRole).includes("SENIOR_BRANCH_MANAGER"))
+        )
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    [employees]
+  );
+
+  // Real HR-role profiles, for the Hiring table's "Assigned Interviewer"
+  // dropdown — who on the HR team is actually running this candidate's
+  // interview process.
+  const hrPersonnelOptions = useMemo(
+    () =>
+      employees
+        .filter((e) => e.status === "active" && (normalizeRole(e.position) === "HR" || e.extraRoles.map(normalizeRole).includes("HR")))
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    [employees]
+  );
+
+  // Resolved display names — same fallback logic the table cells themselves
+  // use (manual override, else auto-derived from branch for Branch Manager;
+  // nothing auto-derived for Assigned Interviewer) — shared with the column
+  // filters below so "filter by X" always matches what's actually shown.
+  const branchManagerNameForCandidate = (c: Candidate): string | null =>
+    (c.branchManagerId && employees.find((e) => e.id === c.branchManagerId)?.name) ||
+    (c.branch ? branchManagerByBranch.get(c.branch) : undefined) ||
+    null;
+  const assignedInterviewerNameForCandidate = (c: Candidate): string | null =>
+    (c.assignedInterviewerId && employees.find((e) => e.id === c.assignedInterviewerId)?.name) || null;
 
   const visibleCandidates = useMemo(() => {
     if (!isBranchManager) return candidates;
     return candidates.filter((c) => c.branch && myLocations.includes(c.branch));
   }, [candidates, isBranchManager, myLocations]);
 
+  // Column-filter option lists — sourced from the full visible roster (not
+  // just what's currently filtered) so the checklists stay stable.
+  const hiringPositionOptions = useMemo(
+    () => Array.from(new Set(visibleCandidates.map((c) => c.position).filter((p): p is string => !!p))).sort(),
+    [visibleCandidates]
+  );
+  const hiringBranchOptions = useMemo(
+    () => Array.from(new Set(visibleCandidates.map((c) => c.branch).filter((b): b is string => !!b))).sort(),
+    [visibleCandidates]
+  );
+  const hiringBranchManagerOptions = useMemo(
+    () => Array.from(new Set(visibleCandidates.map(branchManagerNameForCandidate).filter((n): n is string => !!n))).sort(),
+    [visibleCandidates]
+  );
+  const hiringAssignedInterviewerOptions = useMemo(
+    () => Array.from(new Set(visibleCandidates.map(assignedInterviewerNameForCandidate).filter((n): n is string => !!n))).sort(),
+    [visibleCandidates]
+  );
+  const hiringDepartmentOptions = useMemo(
+    () => Array.from(new Set(visibleCandidates.map((c) => c.department).filter((d): d is string => !!d))).sort(),
+    [visibleCandidates]
+  );
+  const HIRING_OUTREACH_OPTIONS = ["Text AM", "Text PM", "Call AM", "Call PM"] as const;
+  // Matched by label (not raw status code) so the header checklist can
+  // show human-readable text without the generic multi-select renderer
+  // needing a separate label-mapping prop.
+  const hiringStatusOptions = useMemo(
+    () => Array.from(new Set(visibleCandidates.map((c) => CANDIDATE_STATUS_LABEL[c.status]))).sort(),
+    [visibleCandidates]
+  );
+
   // Search/Status filters narrow what the table shows — KPI tiles and the
   // tab badge count stay based on visibleCandidates (unfiltered) above.
   const filteredCandidates = useMemo(() => {
     let result = visibleCandidates;
-    if (hiringStatusFilter) result = result.filter((c) => c.status === hiringStatusFilter);
+    if (hiringStatusFilter.size > 0) result = result.filter((c) => hiringStatusFilter.has(CANDIDATE_STATUS_LABEL[c.status]));
     const q = hiringSearch.trim().toLowerCase();
     if (q) {
       result = result.filter((c) =>
@@ -1513,8 +1802,51 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         (c.branch ?? "").toLowerCase().includes(q),
       );
     }
+    if (hiringPositionFilter.size > 0) result = result.filter((c) => c.position && hiringPositionFilter.has(c.position));
+    if (hiringBranchFilter.size > 0) result = result.filter((c) => c.branch && hiringBranchFilter.has(c.branch));
+    if (hiringBranchManagerFilter.size > 0) {
+      result = result.filter((c) => {
+        const name = branchManagerNameForCandidate(c);
+        return !!name && hiringBranchManagerFilter.has(name);
+      });
+    }
+    if (hiringAssignedInterviewerFilter.size > 0) {
+      result = result.filter((c) => {
+        const name = assignedInterviewerNameForCandidate(c);
+        return !!name && hiringAssignedInterviewerFilter.has(name);
+      });
+    }
+    if (hiringDepartmentFilter.size > 0) result = result.filter((c) => c.department && hiringDepartmentFilter.has(c.department));
+    if (hiringOutreachFilter.size > 0) {
+      result = result.filter(
+        (c) =>
+          (hiringOutreachFilter.has("Text AM") && c.textedAm) ||
+          (hiringOutreachFilter.has("Text PM") && c.textedPm) ||
+          (hiringOutreachFilter.has("Call AM") && c.calledAm) ||
+          (hiringOutreachFilter.has("Call PM") && c.calledPm)
+      );
+    }
+    if (hiringCvFilter !== "all") result = result.filter((c) => (hiringCvFilter === "has" ? !!c.cvPath : !c.cvPath));
+    if (hiringAccountStatusFilter !== "all") {
+      result = result.filter((c) => (hiringAccountStatusFilter === "has" ? candidateHasAccount(c) : !candidateHasAccount(c)));
+    }
+    if (hiringNoteFilter !== "all") result = result.filter((c) => (hiringNoteFilter === "has" ? !!c.notes : !c.notes));
     return result;
-  }, [visibleCandidates, hiringSearch, hiringStatusFilter]);
+  }, [
+    visibleCandidates,
+    hiringSearch,
+    hiringStatusFilter,
+    hiringPositionFilter,
+    hiringBranchFilter,
+    hiringBranchManagerFilter,
+    hiringAssignedInterviewerFilter,
+    hiringDepartmentFilter,
+    hiringOutreachFilter,
+    hiringCvFilter,
+    hiringAccountStatusFilter,
+    hiringNoteFilter,
+    employeeEmailSet,
+  ]);
 
   const kpi = useMemo(() => ({
     candidates: visibleCandidates.length,
@@ -7825,6 +8157,48 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [combineFormsSentNotice, setCombineFormsSentNotice] = useState<string | null>(null);
   const [combineFormsCopyLink, setCombineFormsCopyLink] = useState<string | null>(null);
 
+  // "Send All Selected" on the Forms popup (~line 1606) — saves the
+  // candidate's picks, then jumps to Bulk Form Send with those picks and
+  // the candidate (or their name, if they have no AHS account yet)
+  // preselected, instead of making HR re-check the same boxes there. Only
+  // the types Bulk Form Send actually supports get preselected — it covers
+  // onboarding paperwork, not the HR action forms (warning/promotion/
+  // termination), which stay reachable only via each row's own "Send →".
+  const handleSendAllSelected = async () => {
+    if (!formsDialog) return;
+    const bulkSendableTypes = new Set<SignableDocumentType>(
+      [...GENERAL_FORM_TYPES, ...TECHNICIAN_FORM_TYPES, ...MANAGEMENT_FORM_TYPES].map((f) => f.type)
+    );
+    const toSend = Array.from(formsDialog.selected).filter((t) => bulkSendableTypes.has(t));
+    if (toSend.length === 0) {
+      setError('None of the selected forms can be sent as a bundle — use "Send →" next to each one instead.');
+      return;
+    }
+    setSavingFormsDialog(true);
+    try {
+      await saveFormsDialog(formsDialog);
+      const candidate = candidates.find((c) => c.id === formsDialog.candidateId);
+      const profileId = candidate?.email ? profileIdByEmail.get(candidate.email.trim().toLowerCase()) : undefined;
+      const recipient = profileId ? employees.find((e) => e.id === profileId) : undefined;
+      setSelectedFormTypes(new Set(toSend));
+      if (recipient) {
+        setCombineFormsRecipientId(recipient.id);
+        setCombineFormsRecipientSearch(`${recipient.name} — ${ROLE_LABELS[normalizeRole(recipient.position)] ?? recipient.position}`);
+        setCombineFormsExternalName("");
+      } else {
+        setCombineFormsRecipientId("");
+        setCombineFormsRecipientSearch("");
+        setCombineFormsExternalName(formsDialog.candidateName);
+      }
+      setFormsDialog(null);
+      setActiveTab("combineForms");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save required forms.");
+    } finally {
+      setSavingFormsDialog(false);
+    }
+  };
+
   const handleGenerateCombinedForms = async (deliver: "message" | "copyLink") => {
     // "message" always needs a real AHS teammate (there's no one to DM otherwise).
     // "copyLink" also accepts a typed name, or no name at all — same "name isn't
@@ -10066,11 +10440,14 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     setSavingCandidate(true);
     setError(null);
     try {
-      const created = await addCandidate(newCandidate);
+      const created = await addCandidate({
+        ...newCandidate,
+        source: newCandidate.source === "Other" ? newCandidate.sourceOther.trim() : newCandidate.source,
+      });
       // The candidate row is saved at this point — close the form and
       // refresh the list regardless of what happens next, so a CV upload
       // failure doesn't strand the UI on a stale, still-open form.
-      setNewCandidate({ name: "", phone: "", email: "", position: "", branch: "" });
+      setNewCandidate({ name: "", phone: "", email: "", position: "", branch: "", department: "", branchManagerId: "", source: "", sourceOther: "" });
       setCvFile(null);
       setShowAddCandidate(false);
       await loadCandidates();
@@ -10095,16 +10472,29 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
 
-  // Interviewing/Training require an accompanying date — instead of saving
-  // immediately, open a small dialog to collect it first.
-  const [statusDateDialog, setStatusDateDialog] = useState<{ candidateId: string; candidateName: string; status: CandidateStatus; label: string; date: string } | null>(null);
+  // Interviewing/Training/Withdrawn require an accompanying date — instead
+  // of saving immediately, open a small dialog to collect it first.
+  // Interviewing also collects a time (feeds the Interview Calendar tab);
+  // Training also collects an end date — both in the same dialog, both
+  // optional (status still saves without one).
+  const [statusDateDialog, setStatusDateDialog] = useState<{ candidateId: string; candidateName: string; status: CandidateStatus; label: string; date: string; time: string; timezone: "CST" | "EST"; endDate: string } | null>(null);
 
   const handleCandidateStatus = async (id: string, status: CandidateStatus) => {
     const requiredLabel = STATUS_REQUIRES_DATE[status];
     if (requiredLabel) {
       const candidate = candidates.find((c) => c.id === id);
-      const existingDate = status === "interviewing" ? candidate?.interviewDate : candidate?.trainingStartDate;
-      setStatusDateDialog({ candidateId: id, candidateName: candidate?.name || "", status, label: requiredLabel, date: existingDate || today });
+      const existingDate =
+        status === "interviewing" ? candidate?.interviewDate : status === "training" ? candidate?.trainingStartDate : candidate?.withdrawnDate;
+      setStatusDateDialog({
+        candidateId: id,
+        candidateName: candidate?.name || "",
+        status,
+        label: requiredLabel,
+        date: existingDate || today,
+        time: candidate?.interviewTime || "",
+        timezone: candidate?.interviewTimezone || "CST",
+        endDate: candidate?.trainingEndDate || "",
+      });
       return;
     }
     try {
@@ -10120,14 +10510,27 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const handleConfirmStatusDate = async () => {
     if (!statusDateDialog) return;
     try {
-      await updateCandidateStatus(statusDateDialog.candidateId, statusDateDialog.status, statusDateDialog.date);
+      await updateCandidateStatus(
+        statusDateDialog.candidateId,
+        statusDateDialog.status,
+        statusDateDialog.date,
+        statusDateDialog.status === "training" ? statusDateDialog.endDate || undefined : undefined,
+        statusDateDialog.status === "interviewing" ? statusDateDialog.time || undefined : undefined,
+        statusDateDialog.status === "interviewing" ? statusDateDialog.timezone : undefined
+      );
       await loadCandidates();
       void logActivity({
         action: "candidate_status_changed",
         targetType: "candidate",
         targetId: statusDateDialog.candidateId,
         targetLabel: statusDateDialog.candidateName,
-        details: { status: statusDateDialog.status, date: statusDateDialog.date },
+        details: {
+          status: statusDateDialog.status,
+          date: statusDateDialog.date,
+          time: statusDateDialog.time || undefined,
+          timezone: statusDateDialog.status === "interviewing" ? statusDateDialog.timezone : undefined,
+          endDate: statusDateDialog.endDate || undefined,
+        },
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to update candidate status.");
@@ -10226,6 +10629,93 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
 
+  // Candidate/Position/Branch/Contact — inline-editable so a data-entry
+  // mismatch (e.g. an email typo silently making Account Status read "Not
+  // Created" even though a real account exists under the correct address)
+  // can be fixed directly here instead of needing to delete and re-add the
+  // whole candidate. Same click-to-edit pattern as the Note column above,
+  // one shared draft object since Contact edits two fields (phone + email)
+  // at once.
+  type CandidateEditField = "name" | "position" | "branch" | "contact" | "department" | "branchManager" | "assignedInterviewer";
+  const [editingCandidateCell, setEditingCandidateCell] = useState<{ id: string; field: CandidateEditField } | null>(null);
+  const [candidateFieldDraft, setCandidateFieldDraft] = useState({ name: "", position: "", branch: "", phone: "", email: "", department: "", branchManagerId: "", assignedInterviewerId: "", source: "", sourceOther: "" });
+  const [savingCandidateFieldId, setSavingCandidateFieldId] = useState<string | null>(null);
+  const startEditCandidateCell = (c: Candidate, field: CandidateEditField) => {
+    setEditingCandidateCell({ id: c.id, field });
+    // A source matching one of the fixed options (Indeed/ZipRecruiter)
+    // reselects that option; anything else on file (including from before
+    // this dropdown existed) is treated as a custom "Other" value.
+    const isKnownSource = c.source && CANDIDATE_SOURCE_OPTIONS.includes(c.source) && c.source !== "Other";
+    setCandidateFieldDraft({
+      name: c.name,
+      position: c.position || "",
+      branch: c.branch || "",
+      phone: c.phone || "",
+      email: c.email || "",
+      department: c.department || "",
+      branchManagerId: c.branchManagerId || "",
+      assignedInterviewerId: c.assignedInterviewerId || "",
+      source: isKnownSource ? c.source! : c.source ? "Other" : "",
+      sourceOther: isKnownSource ? "" : c.source || "",
+    });
+  };
+  const handleSaveCandidateField = async (id: string, field: CandidateEditField) => {
+    setSavingCandidateFieldId(id);
+    try {
+      if (field === "contact") {
+        const resolvedSource = candidateFieldDraft.source === "Other" ? candidateFieldDraft.sourceOther : candidateFieldDraft.source;
+        await updateCandidateFields(id, { phone: candidateFieldDraft.phone, email: candidateFieldDraft.email, source: resolvedSource });
+        setCandidates((prev) =>
+          prev.map((c) =>
+            c.id === id
+              ? { ...c, phone: candidateFieldDraft.phone.trim() || null, email: candidateFieldDraft.email.trim() || null, source: resolvedSource.trim() || null }
+              : c
+          )
+        );
+      } else if (field === "name") {
+        await updateCandidateFields(id, { name: candidateFieldDraft.name });
+        setCandidates((prev) => prev.map((c) => (c.id === id ? { ...c, name: candidateFieldDraft.name.trim() } : c)));
+      } else if (field === "position") {
+        await updateCandidateFields(id, { position: candidateFieldDraft.position });
+        setCandidates((prev) => prev.map((c) => (c.id === id ? { ...c, position: candidateFieldDraft.position.trim() || null } : c)));
+      } else if (field === "branch") {
+        await updateCandidateFields(id, { branch: candidateFieldDraft.branch });
+        setCandidates((prev) => prev.map((c) => (c.id === id ? { ...c, branch: candidateFieldDraft.branch.trim() || null } : c)));
+      } else if (field === "department") {
+        await updateCandidateFields(id, { department: candidateFieldDraft.department });
+        setCandidates((prev) => prev.map((c) => (c.id === id ? { ...c, department: candidateFieldDraft.department.trim() || null } : c)));
+      } else if (field === "branchManager") {
+        await updateCandidateFields(id, { branchManagerId: candidateFieldDraft.branchManagerId });
+        setCandidates((prev) => prev.map((c) => (c.id === id ? { ...c, branchManagerId: candidateFieldDraft.branchManagerId.trim() || null } : c)));
+      } else if (field === "assignedInterviewer") {
+        await updateCandidateFields(id, { assignedInterviewerId: candidateFieldDraft.assignedInterviewerId });
+        setCandidates((prev) => prev.map((c) => (c.id === id ? { ...c, assignedInterviewerId: candidateFieldDraft.assignedInterviewerId.trim() || null } : c)));
+      }
+      setEditingCandidateCell(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save.");
+    } finally {
+      setSavingCandidateFieldId(null);
+    }
+  };
+
+  // Texted / Called AM+PM — 4 independent flags (0226), toggled directly
+  // from the Hiring table with no popup/edit mode, unlike the fields above.
+  const [savingOutreachId, setSavingOutreachId] = useState<string | null>(null);
+  const handleToggleOutreach = async (c: Candidate, field: "textedAm" | "textedPm" | "calledAm" | "calledPm") => {
+    const next = !c[field];
+    setSavingOutreachId(c.id);
+    setCandidates((prev) => prev.map((row) => (row.id === c.id ? { ...row, [field]: next } : row)));
+    try {
+      await setCandidateOutreach(c.id, field, next);
+    } catch (err) {
+      setCandidates((prev) => prev.map((row) => (row.id === c.id ? { ...row, [field]: !next } : row)));
+      setError(err instanceof Error ? err.message : "Failed to save.");
+    } finally {
+      setSavingOutreachId(null);
+    }
+  };
+
   // ── Forward CV to a manager via the internal messenger ──
   // "Manager" = any role containing "MANAGER" (Branch Manager, Parts
   // Manager, CSR Manager, Technician Manager, etc.) — matches the same
@@ -10254,23 +10744,39 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   }, [managerRecipients, forwardRecipientSearch]);
 
   const handleForwardCv = async () => {
-    if (!forwardCvDialog?.cvPath || !forwardRecipientId || !uid) return;
+    if (!forwardCvDialog || !forwardRecipientId || !uid) return;
     setForwardSending(true);
     try {
       const myProfileId = await getMyProfileId(uid);
       if (!myProfileId) throw new Error("Could not resolve your profile.");
-      const cvUrl = await getCandidateCvUrlForForwarding(forwardCvDialog.cvPath);
       const thread = await getOrCreateDmThread(myProfileId, forwardRecipientId);
-      const details = [forwardCvDialog.position, forwardCvDialog.branch].filter(Boolean).join(", ");
-      // cvPath is "{companyId}/{candidateId}/{timestamp}_{originalFilename}"
-      // (see uploadCandidateCv) — strip the leading timestamp so the link
-      // label reads as the real filename, not a raw signed URL.
-      const filename = (forwardCvDialog.cvPath.split("/").pop() || "CV").replace(/^\d+_/, "");
+      // Full candidate details, not just the CV file — a manager deciding
+      // whether to interview someone needs the position/branch/contact
+      // info too, not only a filename link.
+      const lines = [
+        `📋 Candidate details — ${forwardCvDialog.name}`,
+        forwardCvDialog.position ? `Position: ${forwardCvDialog.position}` : null,
+        forwardCvDialog.branch ? `Branch: ${forwardCvDialog.branch}` : null,
+        forwardCvDialog.department ? `Department: ${forwardCvDialog.department}` : null,
+        `Status: ${CANDIDATE_STATUS_LABEL[forwardCvDialog.status]}`,
+        forwardCvDialog.phone ? `Phone: ${forwardCvDialog.phone}` : null,
+        forwardCvDialog.email ? `Email: ${forwardCvDialog.email}` : null,
+        forwardCvDialog.createdAt ? `Applied: ${new Date(forwardCvDialog.createdAt).toLocaleDateString()}` : null,
+        forwardCvDialog.notes ? `Notes: ${forwardCvDialog.notes}` : null,
+      ].filter((l): l is string => Boolean(l));
+      if (forwardCvDialog.cvPath) {
+        const cvUrl = await getCandidateCvUrlForForwarding(forwardCvDialog.cvPath);
+        // cvPath is "{companyId}/{candidateId}/{timestamp}_{originalFilename}"
+        // (see uploadCandidateCv) — strip the leading timestamp so the link
+        // label reads as the real filename, not a raw signed URL.
+        const filename = (forwardCvDialog.cvPath.split("/").pop() || "CV").replace(/^\d+_/, "");
+        lines.push(`CV: [${filename}](${cvUrl})`);
+      }
       await sendMessage({
         dmThreadId: thread.id,
         senderId: myProfileId,
         senderName: displayName || "HR",
-        body: `📄 Candidate CV forwarded — ${forwardCvDialog.name}${details ? ` (${details})` : ""}: [${filename}](${cvUrl})`,
+        body: lines.join("\n"),
       });
       // Counted against the candidate's own Position+Branch on the EOD/EOM
       // "CVs Sent to BM" column — best-effort, a logging failure shouldn't
@@ -11498,6 +12004,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       icon: Calendar,
       tabs: [
         { key: "calendar", label: "Calendar", count: 0, icon: Calendar },
+        { key: "interviewCalendar", label: "Interview Calendar", count: kpi.scheduled, icon: Calendar },
       ] as const,
       columns: undefined,
     },
@@ -11684,10 +12191,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       {/* ── KPI overview — every tile is clickable, same as Attendance: it jumps straight to the tab/filter that explains the number instead of just displaying it. ── */}
       <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2 mb-4">
         {[
-          { label: "Candidates", value: kpi.candidates, color: "text-blue-300", icon: <Users className="h-4 w-4" />, onClick: () => { setActiveTab("hiring"); setHiringStatusFilter(""); } },
-          { label: "Scheduled for Interview", value: kpi.scheduled, color: "text-yellow-300", icon: <Clock className="h-4 w-4" />, onClick: () => { setActiveTab("hiring"); setHiringStatusFilter("interviewing"); } },
-          { label: "Rejected", value: kpi.rejected, color: "text-red-300", icon: <XCircle className="h-4 w-4" />, onClick: () => { setActiveTab("hiring"); setHiringStatusFilter("rejected"); } },
-          { label: "Hired", value: kpi.hired, color: "text-green-300", icon: <UserCheck className="h-4 w-4" />, onClick: () => { setActiveTab("hiring"); setHiringStatusFilter("hired"); } },
+          { label: "Candidates", value: kpi.candidates, color: "text-blue-300", icon: <Users className="h-4 w-4" />, onClick: () => { setActiveTab("hiring"); setHiringStatusFilter(new Set()); } },
+          { label: "Scheduled for Interview", value: kpi.scheduled, color: "text-yellow-300", icon: <Clock className="h-4 w-4" />, onClick: () => { setActiveTab("hiring"); setHiringStatusFilter(new Set([CANDIDATE_STATUS_LABEL.interviewing])); } },
+          { label: "Rejected", value: kpi.rejected, color: "text-red-300", icon: <XCircle className="h-4 w-4" />, onClick: () => { setActiveTab("hiring"); setHiringStatusFilter(new Set([CANDIDATE_STATUS_LABEL.rejected])); } },
+          { label: "Hired", value: kpi.hired, color: "text-green-300", icon: <UserCheck className="h-4 w-4" />, onClick: () => { setActiveTab("hiring"); setHiringStatusFilter(new Set([CANDIDATE_STATUS_LABEL.hired])); } },
           { label: "Terminated", value: kpi.terminated, color: "text-red-400", icon: <UserX className="h-4 w-4" />, onClick: () => setActiveTab("masterList") },
           { label: "Resigned", value: kpi.resigned, color: "text-slate-300", icon: <UserMinus className="h-4 w-4" />, onClick: () => setActiveTab("masterList") },
         ].map((k) => (
@@ -11916,20 +12423,28 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                 <input value={hiringSearch} onChange={(e) => setHiringSearch(e.target.value)} placeholder="Name, position, or branch…" className="glass-input text-sm py-1.5 pl-8 pr-3 rounded-md w-56" />
               </div>
             </div>
-            <div className="flex flex-col gap-1">
-              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Status</label>
-              <select value={hiringStatusFilter} onChange={(e) => setHiringStatusFilter(e.target.value as any)} className="glass-input text-sm py-1.5 px-3 rounded-md">
-                <option value="">All</option>
-                {(["applied", "interviewing", "selected", "hired", "rejected"] as CandidateStatus[]).map((s) => (
-                  <option key={s} value={s}>{CANDIDATE_STATUS_LABEL[s]}</option>
-                ))}
-              </select>
-            </div>
-            {(hiringSearch || hiringStatusFilter) && (
-              <button onClick={() => { setHiringSearch(""); setHiringStatusFilter(""); }} className="btn text-sm px-3 mb-0.5">Clear</button>
+            {(hiringSearch || hiringStatusFilter.size > 0 || hiringPositionFilter.size > 0 || hiringBranchFilter.size > 0 || hiringBranchManagerFilter.size > 0 || hiringAssignedInterviewerFilter.size > 0 || hiringDepartmentFilter.size > 0 || hiringOutreachFilter.size > 0 || hiringCvFilter !== "all" || hiringAccountStatusFilter !== "all" || hiringNoteFilter !== "all") && (
+              <button
+                onClick={() => {
+                  setHiringSearch("");
+                  setHiringStatusFilter(new Set());
+                  setHiringPositionFilter(new Set());
+                  setHiringBranchFilter(new Set());
+                  setHiringBranchManagerFilter(new Set());
+                  setHiringAssignedInterviewerFilter(new Set());
+                  setHiringDepartmentFilter(new Set());
+                  setHiringOutreachFilter(new Set());
+                  setHiringCvFilter("all");
+                  setHiringAccountStatusFilter("all");
+                  setHiringNoteFilter("all");
+                }}
+                className="btn text-sm px-3 mb-0.5"
+              >
+                Clear
+              </button>
             )}
             <span className="text-xs text-muted-foreground mb-1.5 ml-auto">
-              {filteredCandidates.length}{(hiringSearch || hiringStatusFilter) ? ` of ${visibleCandidates.length}` : ""} candidates
+              {filteredCandidates.length}{filteredCandidates.length !== visibleCandidates.length ? ` of ${visibleCandidates.length}` : ""} candidates
             </span>
           </div>
         </div>
@@ -11950,6 +12465,31 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                 <input type="file" accept=".pdf,.doc,.docx" className="hidden" onChange={(e) => setCvFile(e.target.files?.[0] ?? null)} />
               </label>
             </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
+              <select value={newCandidate.department} onChange={(e) => setNewCandidate({ ...newCandidate, department: e.target.value })} className="glass-input text-sm py-1.5 px-3 rounded-md">
+                <option value="">Select Department</option>
+                {MASTER_LIST_DEPARTMENT_OPTIONS.map((d) => <option key={d} value={d}>{d}</option>)}
+              </select>
+              <select value={newCandidate.branchManagerId} onChange={(e) => setNewCandidate({ ...newCandidate, branchManagerId: e.target.value })} className="glass-input text-sm py-1.5 px-3 rounded-md">
+                <option value="">Select Branch Manager</option>
+                {branchManagerOptions.map((m) => <option key={m.id} value={m.id}>{m.name}{m.branch ? ` — ${m.branch}` : ""}</option>)}
+              </select>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
+              <select value={newCandidate.source} onChange={(e) => setNewCandidate({ ...newCandidate, source: e.target.value })} className="glass-input text-sm py-1.5 px-3 rounded-md">
+                <option value="">Where was this applicant found?</option>
+                {CANDIDATE_SOURCE_OPTIONS.map((s) => <option key={s} value={s}>{s === "Other" ? "Other, please specify" : s}</option>)}
+              </select>
+              {newCandidate.source === "Other" && (
+                <input
+                  type="text"
+                  placeholder="Specify source"
+                  value={newCandidate.sourceOther}
+                  onChange={(e) => setNewCandidate({ ...newCandidate, sourceOther: e.target.value })}
+                  className="glass-input text-sm py-1.5 px-3 rounded-md"
+                />
+              )}
+            </div>
             <div className="flex gap-2">
               <button onClick={handleAddCandidate} disabled={savingCandidate || !newCandidate.name.trim()} className="btn bg-green-600 hover:bg-green-700 text-white text-sm px-4 py-1.5 disabled:opacity-50">{savingCandidate ? "Saving…" : "Save"}</button>
               <button onClick={() => setShowAddCandidate(false)} className="btn text-sm px-4 py-1.5">Cancel</button>
@@ -11957,33 +12497,391 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           </div>
         )}
 
+        {(() => {
+          // Shared markup for the multi-select header filters (Position/Branch).
+          const renderHiringMultiSelectHeader = (
+            key: HiringFilterMenuKey,
+            label: string,
+            options: string[],
+            selected: Set<string>,
+            setSelected: (s: Set<string>) => void
+          ) => (
+            <>
+              <span className="inline-flex items-center gap-1">
+                {label}
+                <button
+                  type="button"
+                  onClick={() => setHiringFilterMenu((cur) => (cur === key ? null : key))}
+                  title={`Filter by ${label}`}
+                  className={selected.size > 0 ? "text-blue-400" : "text-muted-foreground hover:text-slate-300"}
+                >
+                  <Filter className="h-3 w-3" />
+                </button>
+              </span>
+              {hiringFilterMenu === key && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setHiringFilterMenu(null)} />
+                  <div className="absolute left-0 top-full mt-1 w-56 max-h-72 overflow-y-auto bg-slate-900 border border-white/15 rounded-lg shadow-2xl z-50 p-2 normal-case font-normal text-left">
+                    {options.length === 0 ? (
+                      <div className="text-xs text-muted-foreground px-2 py-1.5">No options.</div>
+                    ) : (
+                      <>
+                        {options.map((opt) => (
+                          <label key={opt} className="flex items-center gap-2 px-2 py-1.5 text-sm text-slate-200 hover:bg-white/5 rounded cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={selected.has(opt)}
+                              onChange={() => {
+                                const next = new Set(selected);
+                                if (next.has(opt)) next.delete(opt);
+                                else next.add(opt);
+                                setSelected(next);
+                              }}
+                              className="h-3.5 w-3.5 accent-blue-500"
+                            />
+                            {opt}
+                          </label>
+                        ))}
+                        {selected.size > 0 && (
+                          <button type="button" onClick={() => setSelected(new Set())} className="mt-1 w-full text-left text-xs text-blue-300 hover:text-blue-200 px-2 py-1">
+                            Clear
+                          </button>
+                        )}
+                      </>
+                    )}
+                  </div>
+                </>
+              )}
+            </>
+          );
+          // Shared markup for the tri-state header filters (CV/Account Status/Note).
+          const renderHiringTriStateHeader = (
+            key: HiringFilterMenuKey,
+            label: string,
+            value: HiringTriState,
+            setValue: (v: HiringTriState) => void,
+            hasLabel: string,
+            noneLabel: string
+          ) => (
+            <>
+              <span className="inline-flex items-center gap-1">
+                {label}
+                <button
+                  type="button"
+                  onClick={() => setHiringFilterMenu((cur) => (cur === key ? null : key))}
+                  title={`Filter by ${label}`}
+                  className={value !== "all" ? "text-blue-400" : "text-muted-foreground hover:text-slate-300"}
+                >
+                  <Filter className="h-3 w-3" />
+                </button>
+              </span>
+              {hiringFilterMenu === key && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setHiringFilterMenu(null)} />
+                  <div className="absolute left-0 top-full mt-1 w-40 bg-slate-900 border border-white/15 rounded-lg shadow-2xl z-50 p-1 normal-case font-normal text-left">
+                    {([
+                      ["all", "All"],
+                      ["has", hasLabel],
+                      ["none", noneLabel],
+                    ] as [HiringTriState, string][]).map(([v, vLabel]) => (
+                      <button
+                        key={v}
+                        type="button"
+                        onClick={() => { setValue(v); setHiringFilterMenu(null); }}
+                        className={`block w-full text-left px-2 py-1.5 text-sm rounded hover:bg-white/5 ${value === v ? "text-blue-300 font-semibold" : "text-slate-200"}`}
+                      >
+                        {vLabel}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+            </>
+          );
+          return (
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-white/10 bg-white/5">
                 <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Candidate</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Position</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Branch</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase relative">
+                  {renderHiringMultiSelectHeader("position", "Position", hiringPositionOptions, hiringPositionFilter, setHiringPositionFilter)}
+                </th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase relative">
+                  {renderHiringMultiSelectHeader("branch", "Branch", hiringBranchOptions, hiringBranchFilter, setHiringBranchFilter)}
+                </th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase relative">
+                  {renderHiringMultiSelectHeader("branchManager", "Branch Manager", hiringBranchManagerOptions, hiringBranchManagerFilter, setHiringBranchManagerFilter)}
+                </th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase relative">
+                  {renderHiringMultiSelectHeader("assignedInterviewer", "Assigned Interviewer", hiringAssignedInterviewerOptions, hiringAssignedInterviewerFilter, setHiringAssignedInterviewerFilter)}
+                </th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase relative">
+                  {renderHiringMultiSelectHeader("department", "Department", hiringDepartmentOptions, hiringDepartmentFilter, setHiringDepartmentFilter)}
+                </th>
                 <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Contact</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">CV</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Status</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Applied</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Note</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase relative">
+                  {renderHiringMultiSelectHeader("outreach", "Texted / Called", [...HIRING_OUTREACH_OPTIONS], hiringOutreachFilter, setHiringOutreachFilter)}
+                </th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase relative">
+                  {renderHiringTriStateHeader("cv", "CV", hiringCvFilter, setHiringCvFilter, "Has CV", "No CV")}
+                </th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase relative">
+                  {renderHiringMultiSelectHeader("status", "Status", hiringStatusOptions, hiringStatusFilter, setHiringStatusFilter)}
+                </th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase relative">
+                  {renderHiringTriStateHeader("accountStatus", "Account Status", hiringAccountStatusFilter, setHiringAccountStatusFilter, "Created", "Not Created")}
+                </th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Forms</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase relative">
+                  {renderHiringTriStateHeader("note", "Note", hiringNoteFilter, setHiringNoteFilter, "Has note", "No note")}
+                </th>
                 <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Actions</th>
               </tr>
             </thead>
             <tbody>
               {candidatesLoading ? (
-                <tr><td colSpan={9} className="px-4 py-8 text-center text-muted-foreground text-sm">Loading candidates…</td></tr>
+                <tr><td colSpan={14} className="px-4 py-8 text-center text-muted-foreground text-sm">Loading candidates…</td></tr>
               ) : filteredCandidates.length === 0 ? (
-                <tr><td colSpan={9} className="px-4 py-8 text-center text-muted-foreground text-sm">{visibleCandidates.length === 0 ? "No candidates yet." : "No candidates match these filters."}</td></tr>
+                <tr><td colSpan={14} className="px-4 py-8 text-center text-muted-foreground text-sm">{visibleCandidates.length === 0 ? "No candidates yet." : "No candidates match these filters."}</td></tr>
               ) : (
                 filteredCandidates.map((c) => (
                   <tr key={c.id} className="border-b border-white/5 hover:bg-white/5">
-                    <td className="px-4 py-3 font-medium">{c.name}</td>
-                    <td className="px-4 py-3 text-sm text-muted-foreground">{c.position || "—"}</td>
-                    <td className="px-4 py-3 text-sm text-muted-foreground">{c.branch || "—"}</td>
-                    <td className="px-4 py-3 text-xs text-muted-foreground">{c.phone || c.email ? <>{c.phone && <div>{c.phone}</div>}{c.email && <div>{c.email}</div>}</> : "—"}</td>
+                    <td className="px-4 py-3 font-medium">
+                      {editingCandidateCell?.id === c.id && editingCandidateCell.field === "name" ? (
+                        <div className="flex items-center gap-1">
+                          <input
+                            autoFocus
+                            type="text"
+                            value={candidateFieldDraft.name}
+                            onChange={(e) => setCandidateFieldDraft({ ...candidateFieldDraft, name: e.target.value })}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") void handleSaveCandidateField(c.id, "name");
+                              if (e.key === "Escape") setEditingCandidateCell(null);
+                            }}
+                            className="w-32 rounded border border-white/15 bg-slate-800 px-1.5 py-0.5 text-xs text-white"
+                          />
+                          <button onClick={() => void handleSaveCandidateField(c.id, "name")} disabled={savingCandidateFieldId === c.id} className="text-emerald-400 hover:text-emerald-300 disabled:opacity-40">
+                            <Check className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      ) : (
+                        <button onClick={() => startEditCandidateCell(c, "name")} className="flex items-center gap-1 text-left hover:text-blue-300">
+                          {c.name}
+                          <Pencil className="h-2.5 w-2.5 text-muted-foreground shrink-0" />
+                        </button>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-sm text-muted-foreground">
+                      {editingCandidateCell?.id === c.id && editingCandidateCell.field === "position" ? (
+                        <div className="flex items-center gap-1">
+                          <input
+                            autoFocus
+                            type="text"
+                            value={candidateFieldDraft.position}
+                            onChange={(e) => setCandidateFieldDraft({ ...candidateFieldDraft, position: e.target.value })}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") void handleSaveCandidateField(c.id, "position");
+                              if (e.key === "Escape") setEditingCandidateCell(null);
+                            }}
+                            className="w-28 rounded border border-white/15 bg-slate-800 px-1.5 py-0.5 text-xs text-white"
+                          />
+                          <button onClick={() => void handleSaveCandidateField(c.id, "position")} disabled={savingCandidateFieldId === c.id} className="text-emerald-400 hover:text-emerald-300 disabled:opacity-40">
+                            <Check className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      ) : (
+                        <button onClick={() => startEditCandidateCell(c, "position")} className="flex items-center gap-1 text-left hover:text-blue-300">
+                          {c.position || <span className="text-muted-foreground">—</span>}
+                          <Pencil className="h-2.5 w-2.5 text-muted-foreground shrink-0" />
+                        </button>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-sm text-muted-foreground">
+                      {editingCandidateCell?.id === c.id && editingCandidateCell.field === "branch" ? (
+                        <div className="flex items-center gap-1">
+                          <select
+                            autoFocus
+                            value={candidateFieldDraft.branch}
+                            onChange={(e) => setCandidateFieldDraft({ ...candidateFieldDraft, branch: e.target.value })}
+                            className="rounded border border-white/15 bg-slate-800 px-1.5 py-0.5 text-xs text-white"
+                          >
+                            <option value="">Select Branch</option>
+                            {allBranches.map((b) => <option key={b} value={b}>{b}</option>)}
+                          </select>
+                          <button onClick={() => void handleSaveCandidateField(c.id, "branch")} disabled={savingCandidateFieldId === c.id} className="text-emerald-400 hover:text-emerald-300 disabled:opacity-40">
+                            <Check className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      ) : (
+                        <button onClick={() => startEditCandidateCell(c, "branch")} className="flex items-center gap-1 text-left hover:text-blue-300">
+                          {c.branch || <span className="text-muted-foreground">—</span>}
+                          <Pencil className="h-2.5 w-2.5 text-muted-foreground shrink-0" />
+                        </button>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-sm text-muted-foreground whitespace-nowrap">
+                      {editingCandidateCell?.id === c.id && editingCandidateCell.field === "branchManager" ? (
+                        <div className="flex items-center gap-1">
+                          <select
+                            autoFocus
+                            value={candidateFieldDraft.branchManagerId}
+                            onChange={(e) => setCandidateFieldDraft({ ...candidateFieldDraft, branchManagerId: e.target.value })}
+                            className="rounded border border-white/15 bg-slate-800 px-1.5 py-0.5 text-xs text-white"
+                          >
+                            <option value="">Auto (from Branch)</option>
+                            {branchManagerOptions.map((m) => <option key={m.id} value={m.id}>{m.name}{m.branch ? ` — ${m.branch}` : ""}</option>)}
+                          </select>
+                          <button onClick={() => void handleSaveCandidateField(c.id, "branchManager")} disabled={savingCandidateFieldId === c.id} className="text-emerald-400 hover:text-emerald-300 disabled:opacity-40">
+                            <Check className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      ) : (
+                        <button onClick={() => startEditCandidateCell(c, "branchManager")} className="flex items-center gap-1 text-left hover:text-blue-300">
+                          {branchManagerNameForCandidate(c) || <span className="text-muted-foreground">—</span>}
+                          <Pencil className="h-2.5 w-2.5 text-muted-foreground shrink-0" />
+                        </button>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-sm text-muted-foreground whitespace-nowrap">
+                      {editingCandidateCell?.id === c.id && editingCandidateCell.field === "assignedInterviewer" ? (
+                        <div className="flex items-center gap-1">
+                          <select
+                            autoFocus
+                            value={candidateFieldDraft.assignedInterviewerId}
+                            onChange={(e) => setCandidateFieldDraft({ ...candidateFieldDraft, assignedInterviewerId: e.target.value })}
+                            className="rounded border border-white/15 bg-slate-800 px-1.5 py-0.5 text-xs text-white"
+                          >
+                            <option value="">Unassigned</option>
+                            {hrPersonnelOptions.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+                          </select>
+                          <button onClick={() => void handleSaveCandidateField(c.id, "assignedInterviewer")} disabled={savingCandidateFieldId === c.id} className="text-emerald-400 hover:text-emerald-300 disabled:opacity-40">
+                            <Check className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      ) : (
+                        <button onClick={() => startEditCandidateCell(c, "assignedInterviewer")} className="flex items-center gap-1 text-left hover:text-blue-300">
+                          {assignedInterviewerNameForCandidate(c) || <span className="text-muted-foreground">—</span>}
+                          <Pencil className="h-2.5 w-2.5 text-muted-foreground shrink-0" />
+                        </button>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-sm text-muted-foreground whitespace-nowrap">
+                      {editingCandidateCell?.id === c.id && editingCandidateCell.field === "department" ? (
+                        <div className="flex items-center gap-1">
+                          <select
+                            autoFocus
+                            value={candidateFieldDraft.department}
+                            onChange={(e) => setCandidateFieldDraft({ ...candidateFieldDraft, department: e.target.value })}
+                            className="rounded border border-white/15 bg-slate-800 px-1.5 py-0.5 text-xs text-white"
+                          >
+                            <option value="">Select Department</option>
+                            {MASTER_LIST_DEPARTMENT_OPTIONS.map((d) => <option key={d} value={d}>{d}</option>)}
+                          </select>
+                          <button onClick={() => void handleSaveCandidateField(c.id, "department")} disabled={savingCandidateFieldId === c.id} className="text-emerald-400 hover:text-emerald-300 disabled:opacity-40">
+                            <Check className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      ) : (
+                        <button onClick={() => startEditCandidateCell(c, "department")} className="flex items-center gap-1 text-left hover:text-blue-300">
+                          {c.department || <span className="text-muted-foreground">—</span>}
+                          <Pencil className="h-2.5 w-2.5 text-muted-foreground shrink-0" />
+                        </button>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-xs text-muted-foreground">
+                      {editingCandidateCell?.id === c.id && editingCandidateCell.field === "contact" ? (
+                        <div className="flex flex-col gap-1">
+                          <input
+                            autoFocus
+                            type="text"
+                            placeholder="Phone"
+                            value={candidateFieldDraft.phone}
+                            onChange={(e) => setCandidateFieldDraft({ ...candidateFieldDraft, phone: e.target.value })}
+                            onKeyDown={(e) => { if (e.key === "Escape") setEditingCandidateCell(null); }}
+                            className="w-36 rounded border border-white/15 bg-slate-800 px-1.5 py-0.5 text-xs text-white"
+                          />
+                          <input
+                            type="email"
+                            placeholder="Email"
+                            value={candidateFieldDraft.email}
+                            onChange={(e) => setCandidateFieldDraft({ ...candidateFieldDraft, email: e.target.value })}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") void handleSaveCandidateField(c.id, "contact");
+                              if (e.key === "Escape") setEditingCandidateCell(null);
+                            }}
+                            className="w-36 rounded border border-white/15 bg-slate-800 px-1.5 py-0.5 text-xs text-white"
+                          />
+                          <select
+                            value={candidateFieldDraft.source}
+                            onChange={(e) => setCandidateFieldDraft({ ...candidateFieldDraft, source: e.target.value })}
+                            className="w-36 rounded border border-white/15 bg-slate-800 px-1.5 py-0.5 text-xs text-white"
+                          >
+                            <option value="">Source: none</option>
+                            {CANDIDATE_SOURCE_OPTIONS.map((s) => <option key={s} value={s}>{s === "Other" ? "Other, please specify" : s}</option>)}
+                          </select>
+                          {candidateFieldDraft.source === "Other" && (
+                            <input
+                              type="text"
+                              placeholder="Specify source"
+                              value={candidateFieldDraft.sourceOther}
+                              onChange={(e) => setCandidateFieldDraft({ ...candidateFieldDraft, sourceOther: e.target.value })}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") void handleSaveCandidateField(c.id, "contact");
+                                if (e.key === "Escape") setEditingCandidateCell(null);
+                              }}
+                              className="w-36 rounded border border-white/15 bg-slate-800 px-1.5 py-0.5 text-xs text-white"
+                            />
+                          )}
+                          <button
+                            onClick={() => void handleSaveCandidateField(c.id, "contact")}
+                            disabled={savingCandidateFieldId === c.id}
+                            className="self-start text-emerald-400 hover:text-emerald-300 disabled:opacity-40"
+                          >
+                            <Check className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      ) : (
+                        <button onClick={() => startEditCandidateCell(c, "contact")} className="flex items-start gap-1 text-left hover:text-blue-300">
+                          {c.phone || c.email || c.source ? (
+                            <div>
+                              {c.phone && <div>{c.phone}</div>}
+                              {c.email && <div>{c.email}</div>}
+                              {c.source && <div className="text-muted-foreground">Source: {c.source}</div>}
+                            </div>
+                          ) : (
+                            <span className="text-muted-foreground">—</span>
+                          )}
+                          <Pencil className="h-2.5 w-2.5 text-muted-foreground shrink-0 mt-0.5" />
+                        </button>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="grid grid-cols-2 gap-1 w-max">
+                        {(
+                          [
+                            ["textedAm", "Text AM"],
+                            ["textedPm", "Text PM"],
+                            ["calledAm", "Call AM"],
+                            ["calledPm", "Call PM"],
+                          ] as const
+                        ).map(([field, label]) => (
+                          <button
+                            key={field}
+                            type="button"
+                            onClick={() => void handleToggleOutreach(c, field)}
+                            disabled={savingOutreachId === c.id}
+                            className={`text-[10px] font-semibold px-1.5 py-0.5 rounded whitespace-nowrap disabled:opacity-40 ${
+                              c[field]
+                                ? "bg-green-500/20 text-green-300 hover:bg-green-500/30"
+                                : "bg-slate-500/20 text-slate-400 hover:bg-slate-500/30 hover:text-slate-200"
+                            }`}
+                          >
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                    </td>
                     <td className="px-4 py-3">
                       {c.cvPath ? (
                         <button onClick={() => handleViewCv(c.cvPath!)} className="text-blue-400 hover:text-blue-300 text-xs underline">View CV</button>
@@ -11994,6 +12892,29 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                         {!candidateStatusOptions.includes(c.status) && <option value={c.status}>{CANDIDATE_STATUS_LABEL[c.status]}</option>}
                         {candidateStatusOptions.map((s) => <option key={s} value={s}>{CANDIDATE_STATUS_LABEL[s]}</option>)}
                       </select>
+                      {c.createdAt && (
+                        <div className="mt-1 text-[10px] text-muted-foreground whitespace-nowrap">
+                          Applied: {new Date(c.createdAt).toLocaleDateString()}
+                        </div>
+                      )}
+                      {c.status === "interviewing" && c.interviewDate && (
+                        <div className="mt-1 text-[10px] text-muted-foreground whitespace-nowrap">
+                          Interview: {new Date(c.interviewDate + "T00:00:00").toLocaleDateString()}
+                          {c.interviewTime ? ` ${formatHHMM(c.interviewTime)}${c.interviewTimezone ? ` ${c.interviewTimezone}` : ""}` : ""}
+                        </div>
+                      )}
+                      {c.status === "training" && (c.trainingStartDate || c.trainingEndDate) && (
+                        <div className="mt-1 text-[10px] text-muted-foreground whitespace-nowrap">
+                          Training: {c.trainingStartDate ? new Date(c.trainingStartDate + "T00:00:00").toLocaleDateString() : "—"}
+                          {" → "}
+                          {c.trainingEndDate ? new Date(c.trainingEndDate + "T00:00:00").toLocaleDateString() : "—"}
+                        </div>
+                      )}
+                      {c.status === "withdrawn" && c.withdrawnDate && (
+                        <div className="mt-1 text-[10px] text-muted-foreground whitespace-nowrap">
+                          Withdrawn: {new Date(c.withdrawnDate + "T00:00:00").toLocaleDateString()}
+                        </div>
+                      )}
                       {candidateNeedsAccount(c) && (
                         <div className="mt-1 flex items-center gap-1.5">
                           <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 whitespace-nowrap">Pending Account Creation</span>
@@ -12007,8 +12928,40 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                         </div>
                       )}
                     </td>
-                    <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">
-                      {c.createdAt ? new Date(c.createdAt).toLocaleString() : "—"}
+                    <td className="px-4 py-3">
+                      {c.email && employeeEmailSet.has(c.email.trim().toLowerCase()) ? (
+                        <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-green-500/20 text-green-300 whitespace-nowrap">Created</span>
+                      ) : (
+                        <Link
+                          to="/m/$module/$submodule"
+                          params={{ module: "hr", submodule: "user-management" }}
+                          title="Go to User Management to add this person"
+                          className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-slate-500/20 text-slate-400 hover:bg-slate-500/30 hover:text-slate-200 whitespace-nowrap"
+                        >
+                          Not Created
+                        </Link>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      {(() => {
+                        const progress = candidateFormProgress(c);
+                        return (
+                          <button
+                            type="button"
+                            onClick={() => openFormsDialog(c)}
+                            title="Click to pick which forms apply to this candidate"
+                            className={`text-[10px] font-semibold px-1.5 py-0.5 rounded whitespace-nowrap ${
+                              !progress
+                                ? "bg-slate-500/20 text-slate-400 hover:bg-slate-500/30 hover:text-slate-200"
+                                : progress.complete === progress.total
+                                ? "bg-green-500/20 text-green-300 hover:bg-green-500/30"
+                                : "bg-amber-500/20 text-amber-300 hover:bg-amber-500/30"
+                            }`}
+                          >
+                            {progress ? `${progress.complete}/${progress.total}` : "Select forms"}
+                          </button>
+                        );
+                      })()}
                     </td>
                     <td className="px-4 py-3 max-w-[16rem]">
                       {editingNoteId === c.id ? (
@@ -12042,15 +12995,13 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-1">
-                        {c.cvPath && (
-                          <button
-                            onClick={() => { setForwardCvDialog(c); setForwardRecipientId(""); setForwardRecipientSearch(""); }}
-                            title="Forward CV to a manager"
-                            className="btn text-blue-400 hover:text-blue-300 text-sm p-1"
-                          >
-                            <Forward className="h-4 w-4" />
-                          </button>
-                        )}
+                        <button
+                          onClick={() => { setForwardCvDialog(c); setForwardRecipientId(""); setForwardRecipientSearch(""); }}
+                          title="Forward candidate details to a manager"
+                          className="btn text-blue-400 hover:text-blue-300 text-sm p-1"
+                        >
+                          <Forward className="h-4 w-4" />
+                        </button>
                         {isHrOrAdmin && (
                           <button onClick={() => handleDeleteCandidate(c.id)} className="btn text-red-400 hover:text-red-300 text-sm p-1"><Trash2 className="h-4 w-4" /></button>
                         )}
@@ -12062,6 +13013,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             </tbody>
           </table>
         </div>
+          );
+        })()}
       </div>
       )}
 
@@ -12311,6 +13264,29 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           employees={employees.map((e) => ({ id: e.id, name: e.name, branch: e.branch, status: e.status, role: e.position }))}
           myProfileId={myProfileId}
           myDisplayName={displayName}
+        />
+      )}
+
+      {activeTab === "interviewCalendar" && (
+        <InterviewCalendarTab
+          candidates={candidates
+            .filter((c): c is Candidate & { interviewDate: string } => c.status === "interviewing" && !!c.interviewDate)
+            .map(
+              (c): InterviewCalendarCandidate => ({
+                id: c.id,
+                name: c.name,
+                position: c.position,
+                branch: c.branch,
+                phone: c.phone,
+                email: c.email,
+                interviewDate: c.interviewDate,
+                interviewTime: c.interviewTime,
+                interviewTimezone: c.interviewTimezone,
+                interviewerName: assignedInterviewerNameForCandidate(c),
+                notes: c.notes,
+              })
+            )}
+          onGoToHiring={() => setActiveTab("hiring")}
         />
       )}
 
@@ -22933,8 +23909,41 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               type="date"
               value={statusDateDialog.date}
               onChange={(e) => setStatusDateDialog({ ...statusDateDialog, date: e.target.value })}
-              className="glass-input text-sm py-1.5 px-3 rounded-md w-full mb-4"
+              className={`glass-input text-sm py-1.5 px-3 rounded-md w-full ${statusDateDialog.status === "interviewing" || statusDateDialog.status === "training" ? "mb-3" : "mb-4"}`}
             />
+            {statusDateDialog.status === "interviewing" && (
+              <>
+                <p className="text-sm text-muted-foreground mb-1">Interview time (optional):</p>
+                <div className="flex gap-2 mb-4">
+                  <input
+                    type="time"
+                    value={statusDateDialog.time}
+                    onChange={(e) => setStatusDateDialog({ ...statusDateDialog, time: e.target.value })}
+                    className="glass-input text-sm py-1.5 px-3 rounded-md flex-1"
+                  />
+                  <select
+                    value={statusDateDialog.timezone}
+                    onChange={(e) => setStatusDateDialog({ ...statusDateDialog, timezone: e.target.value as "CST" | "EST" })}
+                    className="glass-input text-sm py-1.5 px-3 rounded-md w-24"
+                  >
+                    <option value="CST">CST</option>
+                    <option value="EST">EST</option>
+                  </select>
+                </div>
+              </>
+            )}
+            {statusDateDialog.status === "training" && (
+              <>
+                <p className="text-sm text-muted-foreground mb-1">Training end date (optional):</p>
+                <input
+                  type="date"
+                  value={statusDateDialog.endDate}
+                  min={statusDateDialog.date}
+                  onChange={(e) => setStatusDateDialog({ ...statusDateDialog, endDate: e.target.value })}
+                  className="glass-input text-sm py-1.5 px-3 rounded-md w-full mb-4"
+                />
+              </>
+            )}
             <div className="flex gap-2 justify-end">
               <button onClick={() => setStatusDateDialog(null)} className="btn text-sm px-4 py-2">Cancel</button>
               <button onClick={handleConfirmStatusDate} className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white">Save</button>
@@ -22943,13 +23952,115 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         </div>
       )}
 
-      {/* Forward CV to a manager — sends a link via the internal messenger (Team Messenger) */}
+      {/* Forms column — pick which onboarding form types apply to this
+          candidate. No fixed company-wide required-forms list exists, so
+          this is a per-candidate checklist (migration 0224); the "X/Y"
+          badge is then computed live from whichever of these types have a
+          signed/confirmed document for their matched profile. */}
+      {formsDialog && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-800 border border-white/10 rounded-lg p-6 max-w-md w-full">
+            <h3 className="text-lg font-bold mb-1">Required Forms</h3>
+            <p className="text-sm text-muted-foreground mb-3">
+              Which forms apply to <span className="font-semibold text-white">{formsDialog.candidateName}</span>?
+            </p>
+            <div className="relative mb-2">
+              <Search className="h-3.5 w-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+              <input
+                type="text"
+                autoFocus
+                value={formsDialogSearch}
+                onChange={(e) => setFormsDialogSearch(e.target.value)}
+                placeholder="Filter forms…"
+                className="glass-input text-sm py-1.5 pl-8 pr-3 rounded-md w-full"
+              />
+            </div>
+            <div className="max-h-80 overflow-y-auto border border-white/10 rounded-md divide-y divide-white/5 mb-4">
+              {(() => {
+                const q = formsDialogSearch.trim().toLowerCase();
+                const types = (Object.keys(SIGNABLE_DOCUMENT_REGISTRY) as SignableDocumentType[]).filter(
+                  (type) => !q || SIGNABLE_DOCUMENT_REGISTRY[type].label.toLowerCase().includes(q)
+                );
+                if (types.length === 0) {
+                  return <div className="px-3 py-4 text-sm text-muted-foreground text-center">No forms match "{formsDialogSearch}".</div>;
+                }
+                const dialogCandidate = candidates.find((c) => c.id === formsDialog.candidateId);
+                const dialogProfileId = dialogCandidate?.email ? profileIdByEmail.get(dialogCandidate.email.trim().toLowerCase()) : undefined;
+                const signedTypes = dialogProfileId ? completeDocTypesByProfileId.get(dialogProfileId) : undefined;
+                const pendingTypes = dialogProfileId ? pendingDocTypesByProfileId.get(dialogProfileId) : undefined;
+                return types.map((type) => {
+                  const checked = formsDialog.selected.has(type);
+                  const isSigned = signedTypes?.has(type) ?? false;
+                  const isPending = !isSigned && (pendingTypes?.has(type) ?? false);
+                  return (
+                    <div key={type} className="px-3 py-2">
+                      <div className="flex items-center gap-2 -mx-3 px-3 py-0.5 hover:bg-white/5">
+                        <label className="flex items-center gap-2 text-sm text-slate-200 cursor-pointer flex-1">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => {
+                              const next = new Set(formsDialog.selected);
+                              if (next.has(type)) next.delete(type);
+                              else next.add(type);
+                              setFormsDialog({ ...formsDialog, selected: next });
+                            }}
+                            className="h-3.5 w-3.5 accent-blue-500 shrink-0"
+                          />
+                          {SIGNABLE_DOCUMENT_REGISTRY[type].label}
+                        </label>
+                        {isSigned && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-500/15 text-green-300 border border-green-500/30 shrink-0">Signed</span>
+                        )}
+                        {isPending && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow-500/15 text-yellow-300 border border-yellow-500/30 shrink-0">Sent</span>
+                        )}
+                        {checked && (
+                          <button
+                            type="button"
+                            onClick={() => void handleSendType(type)}
+                            disabled={savingFormsDialog}
+                            className="text-xs text-blue-400 hover:text-blue-300 underline disabled:opacity-40 shrink-0"
+                          >
+                            Send →
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                });
+              })()}
+            </div>
+            {formsDialog.selected.size > 0 && (
+              <button
+                type="button"
+                onClick={() => void handleSendAllSelected()}
+                disabled={savingFormsDialog}
+                className="w-full mb-3 text-xs px-3 py-2 rounded-md border border-blue-500/30 bg-blue-500/10 text-blue-300 hover:bg-blue-500/20 disabled:opacity-40 flex items-center justify-center gap-1.5"
+              >
+                <Link2 className="h-3.5 w-3.5" /> Send All Selected via Bulk Form Send
+              </button>
+            )}
+            <div className="flex gap-2 justify-between items-center">
+              <span className="text-xs text-muted-foreground">{formsDialog.selected.size} selected</span>
+              <div className="flex gap-2">
+                <button onClick={() => setFormsDialog(null)} disabled={savingFormsDialog} className="btn text-sm px-4 py-2">Cancel</button>
+                <button onClick={handleSaveFormsDialog} disabled={savingFormsDialog} className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50">
+                  {savingFormsDialog ? "Saving…" : "Save"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Forward candidate details to a manager — sends name/position/branch/contact/status (plus the CV link, if one's on file) via the internal messenger (Team Messenger) */}
       {forwardCvDialog && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-slate-800 border border-white/10 rounded-lg p-6 max-w-sm w-full">
-            <h3 className="text-lg font-bold mb-2">Forward CV</h3>
+            <h3 className="text-lg font-bold mb-2">Forward Candidate</h3>
             <p className="text-sm text-muted-foreground mb-4">
-              Send <span className="font-semibold text-white">{forwardCvDialog.name}</span>'s CV to a manager via the internal messenger.
+              Send <span className="font-semibold text-white">{forwardCvDialog.name}</span>'s details{forwardCvDialog.cvPath ? " and CV" : ""} to a manager via the internal messenger.
             </p>
             <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient</label>
             <div className="relative mt-1 mb-4">
