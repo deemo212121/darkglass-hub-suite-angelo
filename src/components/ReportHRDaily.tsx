@@ -207,29 +207,35 @@ const BRANCH_MANAGER_ROLES = new Set(["BRANCH_MANAGER", "SENIOR_BRANCH_MANAGER"]
 
 const CANDIDATE_STATUS_LABEL: Record<CandidateStatus, string> = {
   applied: "Applied",
+  phone_screening: "Phone Screening",
   interviewing: "Interviewing",
   selected: "Selected",
   training: "Training",
-  on_hold: "On Hold",
   hired: "Hired",
   rejected: "Rejected",
+  withdrawn: "Withdrawn",
+  cancelled: "Cancelled",
 };
 const CANDIDATE_STATUS_COLOR: Record<CandidateStatus, string> = {
   applied: "bg-blue-500/20 text-blue-300",
+  phone_screening: "bg-indigo-500/20 text-indigo-300",
   interviewing: "bg-yellow-500/20 text-yellow-300",
   selected: "bg-purple-500/20 text-purple-300",
   training: "bg-cyan-500/20 text-cyan-300",
-  on_hold: "bg-slate-500/20 text-slate-300",
   hired: "bg-green-500/20 text-green-300",
   rejected: "bg-red-500/20 text-red-300",
+  withdrawn: "bg-slate-500/20 text-slate-300",
+  cancelled: "bg-slate-500/20 text-slate-400",
 };
 // Statuses that require an accompanying date when selected — interview
-// date for Interviewing, training start date for Training — see
-// hr_update_candidate_status() in 0047_hr_hiring_reports.sql, which is
-// what actually persists these dates alongside the status transition.
+// date for Interviewing, training start date for Training, withdraw date
+// for Withdrawn — see hr_update_candidate_status() in
+// 0048_hr_hiring_reports.sql / 0221_hr_candidates_status_update.sql, which
+// is what actually persists these dates alongside the status transition.
 const STATUS_REQUIRES_DATE: Partial<Record<CandidateStatus, string>> = {
   interviewing: "Interview date",
   training: "Training start date",
+  withdrawn: "Withdraw date",
 };
 
 type EmploymentStatus = "active" | "inactive" | "terminated" | "resigned";
@@ -1478,6 +1484,16 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // ── Candidate handlers ──
   const allBranches = useMemo(() => LOCATIONS_DATA.map(l => l.location).sort(), []);
   const branchOptions = isBranchManager && myLocations.length > 0 ? myLocations : allBranches;
+
+  // A "Hired" candidate with no matching user account yet (matched by
+  // email, the only natural key hr_candidates and profiles share) shows as
+  // "Pending Account Creation" instead of a bare "Hired" badge — see the
+  // status cell below.
+  const employeeEmailSet = useMemo(
+    () => new Set(employees.map((e) => (e.email || "").trim().toLowerCase()).filter(Boolean)),
+    [employees]
+  );
+  const candidateNeedsAccount = (c: Candidate) => c.status === "hired" && !!c.email && !employeeEmailSet.has(c.email.trim().toLowerCase());
 
   const visibleCandidates = useMemo(() => {
     if (!isBranchManager) return candidates;
@@ -10279,8 +10295,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // Branch Managers run the final interview and pick a candidate, but HR
   // finalizes the actual hire.
   const candidateStatusOptions = (isHrOrAdmin
-    ? ["applied", "interviewing", "selected", "training", "on_hold", "hired", "rejected"]
-    : ["interviewing", "selected", "training", "on_hold", "rejected"]) as CandidateStatus[];
+    ? ["applied", "phone_screening", "interviewing", "selected", "training", "hired", "rejected", "withdrawn", "cancelled"]
+    : ["phone_screening", "interviewing", "selected", "training", "rejected", "withdrawn", "cancelled"]) as CandidateStatus[];
 
   // ── Employee status handlers (now real — persists to employee_info + is_active) ──
   const handleUpdateEmployeeStatus = (id: string, newStatus: EmploymentStatus) => {
@@ -11978,6 +11994,18 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                         {!candidateStatusOptions.includes(c.status) && <option value={c.status}>{CANDIDATE_STATUS_LABEL[c.status]}</option>}
                         {candidateStatusOptions.map((s) => <option key={s} value={s}>{CANDIDATE_STATUS_LABEL[s]}</option>)}
                       </select>
+                      {candidateNeedsAccount(c) && (
+                        <div className="mt-1 flex items-center gap-1.5">
+                          <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 whitespace-nowrap">Pending Account Creation</span>
+                          <Link
+                            to="/m/$module/$submodule"
+                            params={{ module: "hr", submodule: "user-management" }}
+                            className="text-[10px] text-blue-400 hover:text-blue-300 underline whitespace-nowrap"
+                          >
+                            Create Account
+                          </Link>
+                        </div>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">
                       {c.createdAt ? new Date(c.createdAt).toLocaleString() : "—"}
