@@ -192,7 +192,7 @@ function SubModule() {
   // system existed. This is purely additive on top of the admin-module/
   // user-management/company-settings gates below — it can only narrow
   // access further there, never grant access past one of those.
-  const moduleAllowedRoles = mod.slug === "dashboard" ? getDashboardRoleGate(sub.slug) : explicitModuleOverride;
+  const moduleAllowedRoles = (mod.slug === "dashboard" || mod.slug === "hr") ? getDashboardRoleGate(sub.slug) : explicitModuleOverride;
   const roleGrantsQuick = !moduleAllowedRoles || hasDashboardAccess(moduleAllowedRoles, role, []);
   const adminGrantsQuick = mod.slug !== "admin" || hasDashboardAccess(ADMIN_MODULE_ROLES, role, []);
   const userMgmtGrantsQuick = sub.custom !== "user-management" || hasDashboardAccess(USER_MANAGEMENT_ROLES, role, []);

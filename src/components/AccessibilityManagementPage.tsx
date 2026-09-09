@@ -527,7 +527,7 @@ export function AccessibilityManagementPage({ mod, sub }: Props) {
       const effective: Record<string, string[]> = {};
       for (const row of gateRows) {
         const key = `${row.moduleSlug}:${row.slug}`;
-        const hardcodedDefault = row.moduleSlug === "dashboard" ? DASHBOARD_ROLE_GATES[row.slug] : undefined;
+        const hardcodedDefault = (row.moduleSlug === "dashboard" || row.moduleSlug === "hr") ? DASHBOARD_ROLE_GATES[row.slug] : undefined;
         effective[key] = overrides[key] ?? hardcodedDefault ?? allRoleValues;
       }
       setDashboardGates(effective);

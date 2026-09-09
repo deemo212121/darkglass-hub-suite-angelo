@@ -20,6 +20,7 @@ import {
   saveTraineeEntry,
   deleteTraineeEntry,
   clearTraineePunch,
+  getPendingTraineeReviewCount,
   SELF_CHECKED_OUT_EVENT,
   type TraineeTimecardStatus,
 } from "@/lib/supabase/traineeTimecards";
@@ -328,13 +329,33 @@ function FullTimecardPage({ uid, ready }: { uid: string | null; ready: boolean }
 
   const saveEntry = async () => {
     if (!editingDate || !modalEntry) return;
-    // Optimistic local update
-    const newEntries = { ...entries, [editingDate]: modalEntry };
-    setEntries(newEntries);
     if (!profileId) {
       alert("Could not resolve your profile. Please re-login.");
       return;
     }
+    // Reviewing a trainee now takes priority over this viewer's own sign-
+    // out completing — if this save would record TODAY's Check Out and
+    // they still have a trainee day pending, hold it (nothing written, no
+    // optimistic update either) until every one of those is Approved or
+    // Rejected. Dispatching the event here pops TraineeAttendanceReviewModal
+    // right away to make that actionable.
+    if (editingDate === modalServerToday && modalEntry.checkOut) {
+      try {
+        const pendingCount = await getPendingTraineeReviewCount(profileId);
+        if (pendingCount > 0) {
+          window.dispatchEvent(new CustomEvent(SELF_CHECKED_OUT_EVENT));
+          alert(`You have ${pendingCount} trainee day${pendingCount === 1 ? "" : "s"} awaiting your review — resolve ${pendingCount === 1 ? "it" : "them"} before you can time out.`);
+          return;
+        }
+      } catch (err) {
+        // Fail OPEN — a network hiccup checking for pending trainees must
+        // never itself block a legitimate checkout.
+        console.error("Failed to check pending trainee review before checkout:", err);
+      }
+    }
+    // Optimistic local update
+    const newEntries = { ...entries, [editingDate]: modalEntry };
+    setEntries(newEntries);
     try {
       if (employmentType === "trainee" && editingDate === modalServerToday) {
         await saveTraineeEntry(profileId, editingDate, modalEntry, directManagerId);

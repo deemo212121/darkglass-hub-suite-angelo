@@ -1049,7 +1049,7 @@ export async function handleJotformRequest(
     }
 
     const dedupeId = submissionID ? `jotform_${submissionID}` : `jotform_${crypto.randomUUID()}`;
-    const notificationLink = `/m/dashboard/hr-dashboard?tab=jotformDocuments&submissionId=${encodeURIComponent(submissionID)}`;
+    const notificationLink = `/m/hr/hr-dashboard?tab=jotformDocuments&submissionId=${encodeURIComponent(submissionID)}`;
     const results = await Promise.all(
       hrUids.map((uid) =>
         writeNotification(projectId!, accessToken, uid, dedupeId, {

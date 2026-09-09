@@ -57,7 +57,7 @@ import {
 import { getTicketBilling, saveTicketBilling, type TicketBilling } from "@/lib/supabase/billing";
 import { getMyPayslips, payslipStatusLabel, type MyPayslipRow } from "@/lib/supabase/payslips";
 import { getMyProfileSchedule, getMonthEntries, getCompanyTimecardEntries, saveEntry as saveTimecardEntry, savePunch, clearPunch, canEditPunch, resolveScheduledShiftHours, type UITimeEntry, type CompanyTimecardEntry, type PunchField } from "@/lib/supabase/timecards";
-import { getTraineeEntryForDate, saveTraineePunch, clearTraineePunch, type TraineeTimecardStatus } from "@/lib/supabase/traineeTimecards";
+import { getTraineeEntryForDate, saveTraineePunch, clearTraineePunch, getPendingTraineeReviewCount, type TraineeTimecardStatus } from "@/lib/supabase/traineeTimecards";
 import { resolveTeamLeadOrManager } from "@/lib/notifyRouting";
 import { visibleAttendanceProfileIds } from "@/lib/notifyRouting";
 import { getCsrTeamComposition, type CsrTeamComposition } from "@/lib/supabase/csrTeams";
@@ -1142,23 +1142,23 @@ export function MobileTechApp() {
         top="calc(var(--mt-header-h, 52px) + 0.75rem)"
       />
 
-      {/* Mobile-native Trainee Attendance review — appears ONLY right after
-          this viewer's own Check Out (see MobileHomeView's onSelfCheckedOut,
-          which bumps traineeReviewTrigger), so a manager with a trainee
-          reviews the whole day (Time In AND Time Out, usually both already
-          in by their own end-of-shift) in one pass instead of being
-          interrupted mid-day. Exclusive to the trainee's own resolved
-          direct manager (isDirectTraineeManager) — a fallback reviewer
-          (Admin/HR/SuperAdmin/Finance/Senior Branch Manager) can still act
-          from the Trainee Attendance tab, but is never forced into this
-          unclosable popup for someone else's trainee; a manager with no
-          trainees under them never sees it at all. Can only be dismissed
-          by Approving/Rejecting each pending day (no X/close), but never
-          blocks or fails the manager's own checkout, which has already
-          completed by the time this fires. */}
+      {/* Mobile-native Trainee Attendance review — appears the moment this
+          viewer ATTEMPTS their own Check Out (see MobileHomeView's
+          persistPunch, which now checks getPendingTraineeReviewCount and
+          bumps traineeReviewTrigger BEFORE saving), so a manager with a
+          trainee reviews the whole day (Time In AND Time Out, usually both
+          already in by their own end-of-shift) in one pass. Per the user's
+          explicit call, the Check Out itself is held — not recorded — until
+          every pending trainee day is resolved; tapping Time Out again
+          afterward succeeds normally. Exclusive to the trainee's own
+          resolved direct manager (isDirectTraineeManager) — a fallback
+          reviewer (Admin/HR/SuperAdmin/Finance/Senior Branch Manager) can
+          still act from the Trainee Attendance tab without ever being
+          gated by this; a manager with no trainees under them never sees
+          it and their checkout is never held. Can only be dismissed by
+          Approving/Rejecting each pending day (no X/close). */}
       <TraineeAttendanceMobileModal
         myProfileId={profileId}
-        users={users}
         trigger={traineeReviewTrigger}
       />
 
@@ -5637,7 +5637,7 @@ function MobileHomeView({
    * card (a write surface for whoever is physically on site) is hidden. */
   viewingReportName?: string | null;
   onExitReport?: () => void;
-  /** Fired once this viewer's OWN Check Out just saved (or queued) successfully — see persistPunch. Used to surface the Trainee Attendance review right at end-of-shift instead of interrupting mid-day (see TraineeAttendanceMobileModal). */
+  /** Fired both when this viewer ATTEMPTS their own Check Out (to surface any pending trainee review that's now holding it) and again once it actually saves (or queued) successfully — see persistPunch. Used to trigger TraineeAttendanceMobileModal's check. */
   onSelfCheckedOut?: () => void;
 }) {
   const hourNow = new Date().getHours();
@@ -5758,6 +5758,25 @@ function MobileHomeView({
       alert("Could not resolve your profile. Please re-login.");
       return;
     }
+    // Reviewing a trainee now takes priority over this viewer's own sign-
+    // out completing — if they still have a trainee day pending, Check Out
+    // itself is held (not saved) until every one of those is Approved or
+    // Rejected. The review screen pops up right here to make that
+    // actionable, instead of just leaving them stuck with no explanation.
+    if (field === "checkOut") {
+      try {
+        const pendingCount = await getPendingTraineeReviewCount(scheduleProfileId);
+        if (pendingCount > 0) {
+          onSelfCheckedOut?.();
+          alert(`You have ${pendingCount} trainee day${pendingCount === 1 ? "" : "s"} awaiting your review — resolve ${pendingCount === 1 ? "it" : "them"} before you can time out.`);
+          return;
+        }
+      } catch (err) {
+        // Fail OPEN — a network hiccup checking for pending trainees must
+        // never itself block a legitimate checkout.
+        console.error("Failed to check pending trainee review before checkout:", err);
+      }
+    }
     setSaving(true);
     // Only true once the punch has genuinely landed somewhere (saved, or
     // queued for later sync) — a total failure (both the save AND the
@@ -5809,12 +5828,10 @@ function MobileHomeView({
       setSaving(false);
     }
     // Tied specifically to THIS viewer's own Check Out (not Time In/Meal),
-    // and only once it actually went through — see the user's ask: reviewing
-    // a trainee's pending day should happen once at the manager's own
-    // end-of-shift (when both the trainee's Time In AND Time Out are
-    // usually already in), not interrupt them mid-day, and it must never
-    // block or fail their own checkout if they don't act on it. A manager
-    // with no trainees just gets a no-op fetch that finds nothing pending —
+    // and only once it actually went through. By this point the pending-
+    // review gate above has already let this checkout proceed — reaching
+    // here means there was nothing pending, or it's a no-op re-check. A
+    // manager with no trainees just gets a no-op fetch that finds nothing —
     // see TraineeAttendanceMobileModal's own trigger effect.
     if (persisted && field === "checkOut") onSelfCheckedOut?.();
   };

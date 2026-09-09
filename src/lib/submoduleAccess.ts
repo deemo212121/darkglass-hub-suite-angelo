@@ -37,7 +37,7 @@ export function canAccessSubmodule(
   if (isTrainee && !isSubmoduleAllowedForTrainee(isTrainee, moduleSlug, sub.slug)) return false;
 
   const explicitModuleOverride = getModuleRoleGate(moduleSlug, sub.slug);
-  const moduleAllowedRoles = moduleSlug === "dashboard" ? getDashboardRoleGate(sub.slug) : explicitModuleOverride;
+  const moduleAllowedRoles = (moduleSlug === "dashboard" || moduleSlug === "hr") ? getDashboardRoleGate(sub.slug) : explicitModuleOverride;
 
   if (!explicitModuleOverride && !isSubmoduleAllowed(role, moduleSlug, sub.slug, extraRoles)) return false;
 

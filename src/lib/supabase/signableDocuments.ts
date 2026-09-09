@@ -1,7 +1,7 @@
 import { supabase } from "./client";
 import { deleteAgentNote } from "./csrAgentNotes";
 
-export type SignableDocumentType = "warning_form" | "w8ben" | "w4" | "w9" | "w4r" | "i9" | "wage_ack" | "car_iq_agreement" | "vehicle_agreement" | "employee_confidentiality" | "meal_rest_break" | "pto_ack" | "parts_responsibility" | "mileage_fuel" | "location_consent" | "damage" | "contractor_data" | "contractor_data_us" | "direct_deposit" | "promotion_form" | "action_plan_form" | "termination_form" | "substance_screening" | "flash_technician_travel" | "vehicle_use_agreement";
+export type SignableDocumentType = "warning_form" | "w8ben" | "w4" | "w9" | "w4r" | "i9" | "wage_ack" | "car_iq_agreement" | "vehicle_agreement" | "employee_confidentiality" | "meal_rest_break" | "pto_ack" | "parts_responsibility" | "mileage_fuel" | "location_consent" | "damage" | "contractor_data" | "contractor_data_us" | "direct_deposit" | "promotion_form" | "action_plan_form" | "termination_form" | "substance_screening" | "flash_technician_travel" | "nda_form" | "vehicle_use_agreement" | "contractor_addendum";
 /** "executive" only applies to promotion_form documents (see migration 0166) — every other document type just never uses that slot. */
 export type SignatureSlot = "employee" | "manager" | "senior_manager" | "hr_staff" | "executive";
 export type SignableDocumentStatus = "pending_signature" | "signed" | "confirmed" | "cancelled";

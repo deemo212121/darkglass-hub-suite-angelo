@@ -11,9 +11,9 @@
  */
 import { supabase } from "./client";
 import { getEntryForDate, saveEntry, type UITimeEntry, type PunchField } from "./timecards";
-import { getCompanyUsers } from "./users";
+import { getCompanyUsers, type ProfileRow } from "./users";
 import { createNotification } from "./notifications";
-import { isAttendanceFullAccessRole, isTraineeFallbackReviewerRole } from "@/lib/roleLabels";
+import { isAttendanceFullAccessRole, isTraineeFallbackReviewerRole, isTraineeApprovalEligible } from "@/lib/roleLabels";
 
 /** Same deep-link convention timecard_corrections' own notifications already
  *  use (see reviewCorrectionStage) — the bell-icon notification list keys
@@ -26,12 +26,16 @@ import { isAttendanceFullAccessRole, isTraineeFallbackReviewerRole } from "@/lib
 export const TRAINEE_ATTENDANCE_LINK = "/m/dashboard/attendance-monitoring?tab=trainee-attendance";
 
 /**
- * Fired on `window` the instant the CURRENT viewer's own Check Out just
- * saved successfully — from TimeClockMenu.tsx (header widget) and
- * routes/timecard.tsx (My Timecard modal's Save). TraineeAttendanceReviewModal.tsx
+ * Fired on `window` from TimeClockMenu.tsx (header widget) and
+ * routes/timecard.tsx (My Timecard modal's Save) BOTH the moment the
+ * CURRENT viewer ATTEMPTS their own Check Out — via getPendingTraineeReviewCount,
+ * before anything is written, if a trainee day is still pending — and again
+ * once a checkout actually saves successfully. TraineeAttendanceReviewModal.tsx
  * listens for this to surface any pending trainee day this viewer can
  * approve, right at their own end-of-shift instead of the instant a trainee
- * clocks in — same "review once, at your own sign-out" convention mobile's
+ * clocks in. Per the user's explicit call, the pre-emptive firing is what
+ * makes the checkout ACTUALLY HELD rather than just a courtesy popup —
+ * same "review once, at your own sign-out" convention mobile's
  * TraineeAttendanceMobileModal already uses (there it's plain props/state
  * instead of a DOM event, since mobile is one component tree; desktop's
  * two punch surfaces aren't, so a window event is the simplest way for
@@ -301,6 +305,72 @@ export function isDirectTraineeManager(
   viewerProfileId: string | null
 ): boolean {
   return !!viewerProfileId && entry.managerId === viewerProfileId;
+}
+
+export interface TraineeReviewQueueItem {
+  kind: "entry" | "noshow";
+  trainee: ProfileRow;
+  /** Set for kind "entry" — the real pending row to Approve/Reject. Null for "noshow", which has no row to act on yet (see recordTraineeDayWithoutPunch). */
+  entry: TraineeTimecardEntry | null;
+  /** entry.workDate for "entry"; today's date for "noshow" (there's no punch to read a date off, so "no-show TODAY" is the only well-defined day to flag). */
+  workDate: string;
+}
+
+/**
+ * Everything this manager still needs to act on: any trainee day already
+ * sitting "pending" (isDirectTraineeManager match), PLUS any Technician-
+ * department trainee under them (profiles.manager_name match, same
+ * Technician-only scoping as isTraineeApprovalEligible everywhere else)
+ * who hasn't punched AT ALL yet today. A no-show is exactly as much
+ * something to review as a late one — per the user's explicit call, it
+ * must surface here too instead of staying invisible until the trainee
+ * eventually punches (or never does). Shared by the blocking review
+ * popups (mobile's TraineeAttendanceMobileModal, desktop's
+ * TraineeAttendanceReviewModal) AND getPendingTraineeReviewCount below, so
+ * the count gating the manager's own Check Out and the list they actually
+ * see can never disagree.
+ */
+export async function getTraineeReviewQueue(managerProfileId: string): Promise<TraineeReviewQueueItem[]> {
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const [entries, roster] = await Promise.all([getCompanyTraineeEntries(), getCompanyUsers()]);
+  const manager = roster.find((p) => p.id === managerProfileId);
+  const managerName = (manager?.display_name || "").trim().toLowerCase();
+
+  const entryItems = entries
+    .filter((e) => e.status === "pending" && isDirectTraineeManager(e, managerProfileId))
+    .map((entry) => {
+      const trainee = roster.find((p) => p.id === entry.profileId);
+      return trainee ? { kind: "entry" as const, trainee, entry, workDate: entry.workDate } : null;
+    })
+    .filter((x): x is NonNullable<typeof x> => x !== null);
+
+  const entriesTodayByProfile = new Set(entries.filter((e) => e.workDate === todayIso).map((e) => e.profileId));
+  const noShowItems: TraineeReviewQueueItem[] = managerName
+    ? roster
+        .filter(
+          (p) =>
+            p.employment_type === "trainee" &&
+            isTraineeApprovalEligible(p.role, p.extra_roles) &&
+            (p.manager_name || "").trim().toLowerCase() === managerName &&
+            !entriesTodayByProfile.has(p.id)
+        )
+        .map((trainee) => ({ kind: "noshow" as const, trainee, entry: null, workDate: todayIso }))
+    : [];
+
+  return [...entryItems, ...noShowItems];
+}
+
+/**
+ * How many trainee days this manager still has to review — gates the
+ * manager's OWN Check Out (see the persistPunch/saveEntry call sites in
+ * TimeClockMenu.tsx, routes/timecard.tsx, and MobileTechApp.tsx) so it
+ * can't be recorded until every trainee under them has been reviewed, per
+ * the user's explicit call: reviewing a trainee now takes priority over
+ * the manager's own sign-out completing.
+ */
+export async function getPendingTraineeReviewCount(managerProfileId: string): Promise<number> {
+  const queue = await getTraineeReviewQueue(managerProfileId);
+  return queue.length;
 }
 
 /**

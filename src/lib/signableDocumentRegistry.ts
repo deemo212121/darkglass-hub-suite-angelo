@@ -41,7 +41,9 @@ export const SIGNABLE_DOCUMENT_REGISTRY: Record<SignableDocumentType, SignableDo
   direct_deposit: { label: "Direct Deposit Authorization", internalPath: "/fill-direct-deposit", externalPath: "/fill-direct-deposit-external" },
   substance_screening: { label: "Substance Screening & Conduct Agreement", internalPath: "/fill-substance-screening", externalPath: "/fill-substance-screening-external" },
   flash_technician_travel: { label: "Flash Technician Travel & Out-of-State Policy", internalPath: "/fill-flash-technician-travel", externalPath: "/fill-flash-technician-travel-external" },
+  nda_form: { label: "Non-Disclosure Agreement", internalPath: "/sign-nda-form", externalPath: "/sign-nda-external" },
   vehicle_use_agreement: { label: "Vehicle Use Agreement", internalPath: "/fill-vehicle-use-agreement", externalPath: "/fill-vehicle-use-agreement-external" },
+  contractor_addendum: { label: "Master Independent Contractor Subcontractor Agreement Addendum", internalPath: "/fill-contractor-addendum", externalPath: "/fill-contractor-addendum-external" },
 };
 
 export function signableDocumentLabel(type: SignableDocumentType): string {

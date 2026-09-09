@@ -36,7 +36,9 @@ export const INTERNAL_SIGNABLE_DOCUMENT_COMPONENTS: Record<SignableDocumentType,
   direct_deposit: lazy(() => import("@/components/FillDirectDepositPage").then((m) => ({ default: m.FillDirectDepositPage }))),
   substance_screening: lazy(() => import("@/components/FillSubstanceScreeningPage").then((m) => ({ default: m.FillSubstanceScreeningPage }))),
   flash_technician_travel: lazy(() => import("@/components/FillFlashTechnicianTravelPage").then((m) => ({ default: m.FillFlashTechnicianTravelPage }))),
+  nda_form: lazy(() => import("@/components/SignNdaFormPage").then((m) => ({ default: m.SignNdaFormPage }))),
   vehicle_use_agreement: lazy(() => import("@/components/FillVehicleUseAgreementPage").then((m) => ({ default: m.FillVehicleUseAgreementPage }))),
+  contractor_addendum: lazy(() => import("@/components/FillContractorAddendumPage").then((m) => ({ default: m.FillContractorAddendumPage }))),
 };
 
 export const EXTERNAL_SIGNABLE_DOCUMENT_COMPONENTS: Record<SignableDocumentType, ReturnType<typeof lazy>> = {
@@ -64,5 +66,7 @@ export const EXTERNAL_SIGNABLE_DOCUMENT_COMPONENTS: Record<SignableDocumentType,
   direct_deposit: lazy(() => import("@/components/ExternalFillDirectDepositPage").then((m) => ({ default: m.ExternalFillDirectDepositPage }))),
   substance_screening: lazy(() => import("@/components/ExternalFillSubstanceScreeningPage").then((m) => ({ default: m.ExternalFillSubstanceScreeningPage }))),
   flash_technician_travel: lazy(() => import("@/components/ExternalFillFlashTechnicianTravelPage").then((m) => ({ default: m.ExternalFillFlashTechnicianTravelPage }))),
+  nda_form: lazy(() => import("@/components/ExternalSignNdaFormPage").then((m) => ({ default: m.ExternalSignNdaFormPage }))),
   vehicle_use_agreement: lazy(() => import("@/components/ExternalFillVehicleUseAgreementPage").then((m) => ({ default: m.ExternalFillVehicleUseAgreementPage }))),
+  contractor_addendum: lazy(() => import("@/components/ExternalFillContractorAddendumPage").then((m) => ({ default: m.ExternalFillContractorAddendumPage }))),
 };

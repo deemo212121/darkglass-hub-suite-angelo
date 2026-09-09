@@ -314,13 +314,15 @@ export async function handleSignableDocumentsRequest(request: Request, env?: Rec
         contractor_data_us: { name: "Contractor Data (US)", tab: "contractorDataUs" },
         direct_deposit: { name: "Direct Deposit Authorization", tab: "directDeposit" },
         substance_screening: { name: "Substance Screening & Conduct Agreement", tab: "substanceScreening" },
+        nda_form: { name: "Non-Disclosure Agreement", tab: "ndaForm" },
         vehicle_use_agreement: { name: "Vehicle Use Agreement", tab: "vehicleUseAgreement" },
+        contractor_addendum: { name: "Master Independent Contractor Subcontractor Agreement Addendum", tab: "contractorAddendum" },
       };
       const docLabel = DOC_TYPE_LABELS[doc.document_type] ?? DOC_TYPE_LABELS.warning_form;
       const notifyFields = {
         title: `Signed by ${doc.recipient_name ?? "recipient"}`,
         body: `${docLabel.name} for ${formTitle} has been signed.`,
-        link: `/m/dashboard/hr-dashboard?tab=${docLabel.tab}`,
+        link: `/m/hr/hr-dashboard?tab=${docLabel.tab}`,
       };
       const [{ creatorFirebaseUid, hrFirebaseUids }, notifyHrEnabled] = await Promise.all([
         fetchHrRoleAndCreatorFirebaseUids(envBag, doc.company_id, doc.created_by),

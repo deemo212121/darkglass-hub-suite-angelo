@@ -60,6 +60,28 @@ function formatDeltaHM(seconds: number): string {
   const m = totalMinutes % 60;
   return `${h}:${String(m).padStart(2, "0")}`;
 }
+/**
+ * Google Maps directions link for one stop, built live from the visit order
+ * shown in this table — origin is the PREVIOUS stop's address, so the route
+ * is stop-to-stop (matching the leg mileage beside it) instead of "from
+ * wherever the viewer is sitting", which is what Google falls back to when a
+ * link has no origin. Computed here rather than read from the stored
+ * mileage-entry link so it's correct immediately, without waiting on a full
+ * mileage re-sync. The first stop of a day has no previous ticket: fall back
+ * to the stored link (branch origin) when there is one, else destination
+ * only. `rows` must be in per-day stop order; `idx` is the row's position.
+ */
+function stopToStopMapLink(rows: TicketAttendanceRow[], idx: number, storedLink?: string | null): string | null {
+  const dest = rows[idx]?.address?.trim();
+  if (!dest) return storedLink ?? null;
+  const prev = rows[idx - 1];
+  const prevAddr = prev && prev.scheduleDate === rows[idx].scheduleDate ? prev.address?.trim() : "";
+  if (prevAddr) {
+    return `https://www.google.com/maps/dir/?api=1&travelmode=driving&origin=${encodeURIComponent(prevAddr)}&destination=${encodeURIComponent(dest)}`;
+  }
+  return storedLink ?? `https://www.google.com/maps/dir/?api=1&travelmode=driving&destination=${encodeURIComponent(dest)}`;
+}
+
 const TIME_OUT_STATUS_LABEL: Record<TimeOutStatus, string> = { ok: "OK", overtime: "Overtime", undertime: "Undertime" };
 const TIME_OUT_STATUS_CLASS: Record<TimeOutStatus, string> = {
   ok: "border-emerald-400/30 bg-emerald-400/10 text-emerald-300",
@@ -491,7 +513,10 @@ export function TicketAttendanceTab() {
           cell(arrivedText, { color: arrivedColor }),
           cell(doneText, { color: doneColor }),
           cell(mEntry?.legMileage != null ? mEntry.legMileage.toFixed(1) : "—", { align: "right" }),
-          cell(mEntry?.googleMapLink || "—", { color: mEntry?.googleMapLink ? BLUE : GRAY }),
+          (() => {
+            const mapLink = stopToStopMapLink(t.rows, i, mEntry?.googleMapLink);
+            return cell(mapLink || "—", { color: mapLink ? BLUE : GRAY });
+          })(),
           cell(diagnosisText, { color: diagnosisColor, bold: !!reschedule || (!diagnosis && (didNotGo || noDiagnosisFound)) }),
         ];
         row.forEach((c, ci) => track(ticketWidths, ci, c.text));
@@ -990,13 +1015,16 @@ export function TicketAttendanceTab() {
                                             : <span className="text-slate-600">—</span>}
                                         </td>
                                         <td className="px-2 py-1.5">
-                                          {mEntry?.googleMapLink ? (
-                                            <a href={mEntry.googleMapLink} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-blue-300 hover:text-blue-200 hover:underline">
-                                              Open <ExternalLink className="h-3 w-3" />
-                                            </a>
-                                          ) : (
-                                            <span className="text-slate-600">—</span>
-                                          )}
+                                          {(() => {
+                                            const mapLink = stopToStopMapLink(dateRows, i, mEntry?.googleMapLink);
+                                            return mapLink ? (
+                                              <a href={mapLink} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-blue-300 hover:text-blue-200 hover:underline">
+                                                Open <ExternalLink className="h-3 w-3" />
+                                              </a>
+                                            ) : (
+                                              <span className="text-slate-600">—</span>
+                                            );
+                                          })()}
                                         </td>
                                         <td className="px-2 py-1.5 max-w-[220px]">
                                           {reschedule ? (

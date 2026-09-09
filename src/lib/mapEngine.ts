@@ -899,6 +899,41 @@ async function distanceMatrixLeg(
   return null;
 }
 
+/**
+ * Fallback for a stop the Distance Matrix API wouldn't resolve from ANY of
+ * its address strings — geocode the address ourselves (cache-first, through
+ * the shared geocode_cache, then live provider) and retry the matrix with an
+ * explicit lat/lng. Only reached after every string candidate already
+ * failed, so it can only rescue a leg that would otherwise be dropped (its
+ * distance then wrongly folded into the next resolved stop's leg) — it never
+ * changes a leg that already computed. Returns a maps.LatLng as `destination`
+ * so the next leg routes from the same resolved point.
+ */
+async function distanceMatrixLegViaGeocode(
+  service: any,
+  maps: any,
+  origin: any,
+  destinationCandidates: string[],
+): Promise<{ miles: number; destination: any } | null> {
+  for (const candidate of destinationCandidates) {
+    const pt = await geocodeAddress("google", candidate);
+    if (!pt) continue;
+    const dest = new maps.LatLng(pt.lat, pt.lng);
+    const miles = await new Promise<number | null>((resolve) => {
+      service.getDistanceMatrix(
+        { origins: [origin], destinations: [dest], travelMode: maps.TravelMode.DRIVING, unitSystem: maps.UnitSystem.IMPERIAL },
+        (response: any, status: string) => {
+          const element = response?.rows?.[0]?.elements?.[0];
+          if (status === "OK" && element?.status === "OK" && element.distance?.value != null) resolve(element.distance.value / 1609.344);
+          else resolve(null);
+        },
+      );
+    });
+    if (miles != null) return { miles, destination: dest };
+  }
+  return null;
+}
+
 async function computeDailyRouteMilesGoogle(
   overrideOrigin: string | null,
   office: LatLng | null,
@@ -919,7 +954,9 @@ async function computeDailyRouteMilesGoogle(
   const legMiles: (number | null)[] = new Array(stopCandidates.length).fill(null);
   let lastResolvedIndex = -1;
   for (let i = 0; i < stopCandidates.length; i++) {
-    const leg = await distanceMatrixLeg(service, maps, currentOrigin, stopCandidates[i]);
+    const leg =
+      (await distanceMatrixLeg(service, maps, currentOrigin, stopCandidates[i])) ??
+      (await distanceMatrixLegViaGeocode(service, maps, currentOrigin, stopCandidates[i]));
     if (!leg) continue; // stop couldn't be resolved — skip it, keep the route going from the last good point
     total += leg.miles;
     legMiles[i] = leg.miles;

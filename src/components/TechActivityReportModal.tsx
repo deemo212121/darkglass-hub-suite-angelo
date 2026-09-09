@@ -43,6 +43,10 @@ interface Props {
   onCategoryOverrideBlur: (profileId: string, category: string, value: string) => Promise<void>;
   savingCategoryOverrideKey: string | null;
   onClose: () => void;
+  /** Office Payroll review wizard only — when set, a footer with "← Prev" / "Done" replaces the bare close. `onPrev` returns to the attendance detail step; `onDone` records the review mark and closes back to the Office Payroll table. */
+  onPrev?: () => void;
+  onDone?: () => void;
+  doneBusy?: boolean;
 }
 
 function fmt(amount: number) {
@@ -77,6 +81,9 @@ export function TechActivityReportModal({
   onCategoryOverrideBlur,
   savingCategoryOverrideKey,
   onClose,
+  onPrev,
+  onDone,
+  doneBusy,
 }: Props) {
   const { employee, techManual, techCategoryCounts, ticketsAssigned, ticketsCompleted, workingDays, twoTechCount, hoursWorked, overtimeHours, hourlyRate, techHourlyPay } = row;
   const branch = employee.assigned_branch || "";
@@ -614,6 +621,31 @@ export function TechActivityReportModal({
             </div>
           </div>
         </div>
+
+        {(onPrev || onDone) && (
+          <div className="flex items-center justify-between gap-3 px-5 py-3 border-t border-white/10 bg-slate-950 rounded-b-xl">
+            {onPrev ? (
+              <button
+                type="button"
+                onClick={onPrev}
+                className="px-4 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-white text-sm font-semibold transition"
+              >
+                ← Prev
+              </button>
+            ) : <span />}
+            {onDone && (
+              <button
+                type="button"
+                onClick={onDone}
+                disabled={doneBusy}
+                className="px-4 py-2 rounded-lg bg-green-600 hover:bg-green-700 text-white text-sm font-semibold transition disabled:opacity-50 flex items-center gap-2"
+              >
+                {doneBusy && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                Done
+              </button>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

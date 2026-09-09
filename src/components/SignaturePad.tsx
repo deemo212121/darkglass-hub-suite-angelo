@@ -8,8 +8,29 @@
 import { SIGNATURE_FONTS, type SignaturePadHandle } from "@/hooks/useSignaturePad";
 
 export function SignaturePadControls({ pad }: { pad: SignaturePadHandle }) {
+  // Shown as soon as there's an actual signature but the box isn't checked
+  // yet — catches it right where the problem is, before the person even
+  // gets to Submit, instead of only a generic "please sign" error later.
+  const needsConsent = pad.hasSignature() && !pad.consentGiven;
   return (
     <div className="flex flex-col items-center gap-2">
+      <label className="flex items-start gap-2 max-w-sm text-left cursor-pointer">
+        <input
+          type="checkbox"
+          checked={pad.consentGiven}
+          onChange={(e) => pad.setConsentGiven(e.target.checked)}
+          className="mt-0.5 h-3.5 w-3.5 shrink-0"
+        />
+        <span className="text-[11px] text-muted-foreground">
+          I agree that my electronic signature shall be considered legally binding and equivalent to my handwritten signature for the purposes of this document.
+        </span>
+      </label>
+      {needsConsent && (
+        <p className="text-[11px] text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-1.5 max-w-sm text-center">
+          You must check the box above before you can submit.
+        </p>
+      )}
+
       <div className="flex items-center gap-1 bg-white/5 border border-white/10 rounded-md p-0.5">
         <button
           type="button"

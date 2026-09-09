@@ -190,7 +190,7 @@ export function SignTerminationFormPage({ docId }: Props) {
               <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2 block">Signature</label>
               <canvas
                 {...sigPad.canvasProps}
-                className={`bg-white rounded-md border border-white/15 w-full max-w-md ${sigPad.canvasProps.className}`}
+                className={`bg-white rounded-md border border-white/15 block mx-auto w-full max-w-md ${sigPad.canvasProps.className}`}
               />
               <div className="mt-2">
                 <SignaturePadControls pad={sigPad} />

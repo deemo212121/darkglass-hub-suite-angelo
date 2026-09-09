@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect, useRef, Fragment } from "react";
 import { Link, useSearch, useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
-import { ChevronLeft, ChevronDown, ChevronUp, ChevronRight, Plus, Trash2, AlertTriangle, CheckCircle, XCircle, Paperclip, Users, Clock, UserCheck, UserX, UserMinus, Search, Bell, Download, Forward, History, FileText, ClipboardList, Landmark, GripVertical, FileCheck, Link2, Copy } from "lucide-react";
+import { ChevronLeft, ChevronDown, ChevronUp, ChevronRight, Plus, Trash2, AlertTriangle, CheckCircle, XCircle, Paperclip, Users, Clock, UserCheck, UserX, UserMinus, Search, Bell, Download, Forward, History, FileText, ClipboardList, Landmark, GripVertical, FileCheck, Link2, Copy, Calendar } from "lucide-react";
 import { useSignaturePad } from "@/hooks/useSignaturePad";
 import { SignaturePadControls } from "@/components/SignaturePad";
 
@@ -51,8 +51,8 @@ import {
   type OnboardingDocumentColumn,
   type OnboardingGroupKey,
 } from "@/lib/supabase/onboardingDocumentColumns";
-import { uploadCoeCertificate, uploadWarningForm, uploadPromotionForm, uploadActionPlanForm, uploadTerminationForm, uploadW8benForm, uploadW4Form, uploadW4RForm, uploadI9Form, uploadWageAckForm, uploadCarIqAgreementForm, uploadVehicleAgreementForm, uploadEmployeeConfidentialityForm, uploadMealRestBreakForm, uploadPtoAckForm, uploadPartsResponsibilityForm, uploadMileageFuelForm, uploadLocationConsentForm, uploadDamageForm, uploadContractorDataForm, uploadDirectDepositForm, uploadSubstanceScreeningForm, uploadFlashTechnicianTravelForm, uploadSignableDocumentSignature, refreshStorageAuthToken } from "@/lib/firebase/storage";
-import { captureHtmlToPdfBlob, loadAssetDataUrl as loadImageDataUrl } from "@/lib/pdfCapture";
+import { uploadCoeCertificate, uploadWarningForm, uploadPromotionForm, uploadActionPlanForm, uploadTerminationForm, uploadW8benForm, uploadW4Form, uploadW4RForm, uploadI9Form, uploadWageAckForm, uploadCarIqAgreementForm, uploadVehicleAgreementForm, uploadEmployeeConfidentialityForm, uploadMealRestBreakForm, uploadPtoAckForm, uploadPartsResponsibilityForm, uploadMileageFuelForm, uploadLocationConsentForm, uploadDamageForm, uploadContractorDataForm, uploadDirectDepositForm, uploadSubstanceScreeningForm, uploadFlashTechnicianTravelForm, uploadContractorAddendumForm, uploadSignableDocumentSignature, refreshStorageAuthToken } from "@/lib/firebase/storage";
+import { captureHtmlToPdfBlob, captureHtmlPagesToPdfBlob, loadAssetDataUrl as loadImageDataUrl } from "@/lib/pdfCapture";
 import {
   createSignableDocument,
   getSignableDocuments,
@@ -66,8 +66,10 @@ import {
   ROUTE_REQUIRED_DOCUMENT_TYPES,
   type SignableDocument,
   type SignableDocumentType,
+  type SignatureSlot as DocSignatureSlot,
 } from "@/lib/supabase/signableDocuments";
 import { buildWarningFormBodyMarkup, buildWarnNoteText, warningFormStyles, type WarningFormData, type SignatureSlot } from "@/lib/warningFormTemplate";
+import { buildNdaFormPages, ndaFormStyles, type NdaFormData } from "@/lib/ndaFormTemplate";
 import { buildWarningFormDocxBlob } from "@/lib/warningFormDocx";
 import { buildPromotionFormBodyMarkup, promotionFormStyles, type PromotionFormData, type PromotionSignatureSlot } from "@/lib/promotionFormTemplate";
 import { buildPromotionFormDocxBlob } from "@/lib/promotionFormDocx";
@@ -75,6 +77,8 @@ import { buildActionPlanFormBodyMarkup, actionPlanFormStyles, type ActionPlanFor
 import { buildActionPlanFormDocxBlob } from "@/lib/actionPlanFormDocx";
 import { buildTerminationFormBodyMarkup, terminationFormStyles, type TerminationFormData, type TerminationSignatureSlot } from "@/lib/terminationFormTemplate";
 import { buildTerminationFormDocxBlob } from "@/lib/terminationFormDocx";
+import { buildContractorAddendumPdf } from "@/lib/contractorAddendumPdf";
+import { CONTRACTOR_ADDENDUM_SLOT_ORDER, CONTRACTOR_ADDENDUM_SLOT_LABEL, CONTRACTOR_ADDENDUM_DEFAULT_SIGNER_NAMES, blankContractorAddendumData, type ContractorAddendumFormData } from "@/lib/contractorAddendumFormTemplate";
 import type { W8benFormData, W8benAddress } from "@/lib/w8benFormTemplate";
 import { fillW8benPdf } from "@/lib/w8benPdfFill";
 import type { W4FormData } from "@/lib/w4FormTemplate";
@@ -115,6 +119,7 @@ import type { SubstanceScreeningFormData } from "@/lib/substanceScreeningFormTem
 import { fillSubstanceScreeningPdf } from "@/lib/substanceScreeningPdfFill";
 import { logActivity, getActivityLog, activityActionLabel, type HrActivityLogEntry } from "@/lib/supabase/hrActivityLog";
 import { HrActivityLogPanel } from "@/components/HrActivityLogPage";
+import { HrCalendarTab } from "@/components/HrCalendarTab";
 import { subscribeTableChanges } from "@/lib/supabase/realtime";
 import { getCompanyPtoRequests, ptoYearWindow, ptoDaysUsed, sickYearWindow, sickDaysUsed, reviewPtoStage, canReviewPtoStage, type PtoRequestRow, type PtoType, type PtoStage } from "@/lib/supabase/pto";
 import { getCompanyTimecardEntries, calcWorkedHours, hoursDiff, type CompanyTimecardEntry } from "@/lib/supabase/timecards";
@@ -700,7 +705,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // Reviews, the Approved log, the department trend chart, and the full
   // Employee Directory all on top of each other, forcing a long scroll to
   // reach anything below Hiring.
-  const [activeTab, setActiveTab] = useState<"hiring" | "warnings" | "masterList" | "leaders" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "promotionForm" | "actionPlanForm" | "terminationForm" | "employeeRequestManager" | "w8ben" | "i9" | "wageAck" | "carIqAgreement" | "vehicleAgreement" | "vehicleUseAgreement" | "employeeConfidentiality" | "mealRestBreak" | "ptoAck" | "partsResponsibility" | "mileageFuel" | "locationConsent" | "damage" | "contractorData" | "contractorDataUs" | "directDeposit" | "substanceScreening" | "flashTechnicianTravel" | "combineForms" | "employerQueue">("hiring");
+  const [activeTab, setActiveTab] = useState<"hiring" | "warnings" | "masterList" | "leaders" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "promotionForm" | "actionPlanForm" | "terminationForm" | "employeeRequestManager" | "w8ben" | "i9" | "wageAck" | "carIqAgreement" | "vehicleAgreement" | "vehicleUseAgreement" | "employeeConfidentiality" | "mealRestBreak" | "ptoAck" | "partsResponsibility" | "mileageFuel" | "locationConsent" | "damage" | "contractorData" | "contractorDataUs" | "directDeposit" | "substanceScreening" | "flashTechnicianTravel" | "contractorAddendum" | "combineForms" | "employerQueue" | "ndaForm" | "calendar">("hiring");
   const [openCategory, setOpenCategory] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   // Which floating-sidebar section headers (Automated Forms/Generate
@@ -4422,6 +4427,200 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
 
+  // ── Non-Disclosure Agreement (General tab) — same shape as Employee
+  // Confidentiality above: single recipient, the recipient fills in
+  // everything themselves (name, nationality, address, branch) on
+  // SignNdaFormPage.tsx and signs. No employer/HR co-signature step, and no
+  // blank-template preview here (there's nothing meaningful to preview
+  // before the employee fills it in) — see ndaFormTemplate.ts's header
+  // comment for why this is a different document from Employee
+  // Confidentiality (native HTML/letterhead PDF, not a real scanned PDF). ──
+  const [sentNdaForms, setSentNdaForms] = useState<SignableDocument[]>([]);
+  const loadSentNdaForms = async () => {
+    try {
+      setSentNdaForms(await getSignableDocuments("nda_form"));
+    } catch (err) {
+      console.error("Failed to load sent Non-Disclosure Agreement forms:", err);
+    }
+  };
+  useEffect(() => {
+    if (activeTab === "ndaForm" || activeTab === "jotformDocuments" || activeTab === "combineForms") void loadSentNdaForms();
+  }, [activeTab]);
+
+  const [ndaRecipientId, setNdaRecipientId] = useState("");
+  const [ndaRecipientSearch, setNdaRecipientSearch] = useState("");
+  const [ndaRecipientDropdownOpen, setNdaRecipientDropdownOpen] = useState(false);
+  const [ndaSending, setNdaSending] = useState(false);
+  const [ndaSendError, setNdaSendError] = useState<string | null>(null);
+  const [ndaActionBusyId, setNdaActionBusyId] = useState<string | null>(null);
+  const [ndaActionError, setNdaActionError] = useState<string | null>(null);
+  const [ndaDocPreview, setNdaDocPreview] = useState<SignableDocument | null>(null);
+  const [ndaExternalName, setNdaExternalName] = useState("");
+  const [ndaSentLink, setNdaSentLink] = useState<{ link: string; recipientName: string } | null>(null);
+  const [ndaSentLinkCopied, setNdaSentLinkCopied] = useState(false);
+  const filteredNdaRecipients = useMemo(
+    () => employees.filter((e) => e.status === "active" && e.name.toLowerCase().includes(ndaRecipientSearch.toLowerCase())),
+    [employees, ndaRecipientSearch]
+  );
+
+  const [ndaLogoDataUrl, setNdaLogoDataUrl] = useState("");
+  const [ndaPreviewOpen, setNdaPreviewOpen] = useState(false);
+  const [ndaPreviewPdfUrl, setNdaPreviewPdfUrl] = useState<string | null>(null);
+  const [ndaPreviewLoading, setNdaPreviewLoading] = useState(false);
+
+  const buildNdaPreviewData = (employeeName: string): NdaFormData => ({
+    employeeId: "",
+    employeeName,
+    nationality: "",
+    address: "",
+    city: "",
+    state: "",
+    zip: "",
+    branch: "",
+    dateSigned: "",
+  });
+
+  /** Toggles the inline collapsible preview panel — collapsing just hides it (and revokes the blob URL); expanding (re)builds a fresh blank-filled sample from the currently-selected recipient's name. Same HTML/letterhead pipeline SignNdaFormPage.tsx itself uses (captureHtmlToPdfBlob), not a real-PDF-fill byte generator like Employee Confidentiality's. */
+  const toggleNdaPreview = async () => {
+    if (ndaPreviewOpen) {
+      setNdaPreviewOpen(false);
+      if (ndaPreviewPdfUrl) URL.revokeObjectURL(ndaPreviewPdfUrl);
+      setNdaPreviewPdfUrl(null);
+      return;
+    }
+    setNdaSendError(null);
+    setNdaPreviewOpen(true);
+    setNdaPreviewLoading(true);
+    try {
+      const recipientName = employees.find((e) => e.id === ndaRecipientId)?.name || "";
+      const logo = ndaLogoDataUrl || (await loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png")));
+      if (!ndaLogoDataUrl) setNdaLogoDataUrl(logo);
+      const pdfBlob = await captureHtmlPagesToPdfBlob(buildNdaFormPages(buildNdaPreviewData(recipientName), logo, undefined), ndaFormStyles);
+      const url = URL.createObjectURL(pdfBlob);
+      setNdaPreviewPdfUrl(url);
+    } catch (err) {
+      setNdaSendError(err instanceof Error ? err.message : "Failed to build preview.");
+    } finally {
+      setNdaPreviewLoading(false);
+    }
+  };
+
+  const handleSendNda = async () => {
+    if (!ndaRecipientId || !uid) return;
+    setNdaSending(true);
+    setNdaSendError(null);
+    try {
+      const recipient = employees.find((e) => e.id === ndaRecipientId);
+      if (!recipient) throw new Error("Select a recipient first.");
+
+      const doc = await createSignableDocument({
+        documentType: "nda_form",
+        formData: { employeeId: recipient.id, employeeName: recipient.name } as unknown as Record<string, any>,
+        recipientId: ndaRecipientId,
+        recipientSlot: "employee",
+        pdfUrl: "",
+      });
+
+      const myProfileId = await getMyProfileId(uid);
+      if (!myProfileId) throw new Error("Could not resolve your profile.");
+      const thread = await getOrCreateDmThread(myProfileId, ndaRecipientId);
+      const fillLink = `${getAppUrl()}/sign-nda-form/${doc.id}`;
+      await sendMessage({
+        dmThreadId: thread.id,
+        senderId: myProfileId,
+        senderName: displayName || "HR",
+        body: `📋 Please complete the Non-Disclosure Agreement: ${fillLink}`,
+      });
+
+      void logActivity({ action: "nda_form_sent", targetType: "employee", targetId: recipient.id, targetLabel: recipient.name });
+
+      setNdaRecipientId("");
+      setNdaRecipientSearch("");
+      await loadSentNdaForms();
+    } catch (err) {
+      setNdaSendError(err instanceof Error ? err.message : "Failed to send request.");
+    } finally {
+      setNdaSending(false);
+    }
+  };
+
+  /** No AHS profile to tie this to, so no DM — the link itself (shown in the same panel, right below "Generate Link") is the only way the recipient finds out, same as the Warning Form's "External Link" mode. */
+  const handleGenerateExternalNda = async () => {
+    setNdaSending(true);
+    setNdaSendError(null);
+    try {
+      const name = ndaExternalName.trim() || "External Recipient";
+      const doc = await createSignableDocument({
+        documentType: "nda_form",
+        formData: { employeeId: "", employeeName: name } as unknown as Record<string, any>,
+        recipientName: name,
+        recipientSlot: "employee",
+        pdfUrl: "",
+      });
+
+      void logActivity({ action: "nda_form_sent", targetType: "employee", targetLabel: name, details: { external: true } });
+
+      setNdaSentLink({ link: `${getAppUrl()}/sign-nda-external/${doc.id}`, recipientName: name });
+      setNdaExternalName("");
+      await loadSentNdaForms();
+    } catch (err) {
+      setNdaSendError(err instanceof Error ? err.message : "Failed to generate link.");
+    } finally {
+      setNdaSending(false);
+    }
+  };
+
+  const handleCopyNdaSentLink = async () => {
+    if (!ndaSentLink) return;
+    try {
+      await navigator.clipboard.writeText(ndaSentLink.link);
+      setNdaSentLinkCopied(true);
+      setTimeout(() => setNdaSentLinkCopied(false), 1500);
+    } catch (err) {
+      console.error("Failed to copy link:", err);
+    }
+  };
+
+  const handleCopyNdaLink = async (doc: SignableDocument) => {
+    try {
+      const path = doc.recipientId ? "sign-nda-form" : "sign-nda-external";
+      await navigator.clipboard.writeText(`${getAppUrl()}/${path}/${doc.id}`);
+    } catch (err) {
+      console.error("Failed to copy link:", err);
+    }
+  };
+
+  const handleDownloadNdaPdf = async (doc: SignableDocument) => {
+    if (!doc.pdfUrl) return;
+    const name = (doc.formData as { employeeName?: string }).employeeName || doc.recipientName || "nda-form";
+    try {
+      const res = await fetch(doc.pdfUrl);
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = `Non-Disclosure Agreement - ${name}.pdf`;
+      a.click();
+      URL.revokeObjectURL(blobUrl);
+    } catch {
+      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
+    }
+  };
+
+  const handleDeleteNda = async (doc: SignableDocument) => {
+    if (!window.confirm("Permanently delete this Non-Disclosure Agreement request?")) return;
+    setNdaActionBusyId(doc.id);
+    setNdaActionError(null);
+    try {
+      await deleteSignableDocument(doc.id);
+      await loadSentNdaForms();
+    } catch (err) {
+      setNdaActionError(err instanceof Error ? err.message : "Failed to delete.");
+    } finally {
+      setNdaActionBusyId(null);
+    }
+  };
+
   // ── Substance Screening & Conduct Agreement — genuine two-party flow,
   // same shape as Location Sharing Consent: the recipient fills in and
   // signs first on FillSubstanceScreeningPage.tsx, then HR adds the
@@ -5692,6 +5891,260 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       setFlashTechnicianTravelEmployerError(err instanceof Error ? err.message : "Failed to save signature.");
     } finally {
       setFlashTechnicianTravelEmployerSaving(false);
+    }
+  };
+
+  // ── Master Independent Contractor Subcontractor Agreement Addendum —
+  // five-party chain (Contractor → Company HR Rep → Technical COO →
+  // Technical Director → CEO). The Contractor fills Position Level /
+  // Guaranteed Minimum Baseline Payout / their name and signs
+  // (FillContractorAddendumPage.tsx); HR then routes it to each remaining
+  // signer with "Send to next signer" (reassignSignableDocument), who signs
+  // via SignContractorAddendumPage.tsx. The PDF is generated from scratch
+  // (contractorAddendumPdf.ts) — no source asset. ──
+  const [sentContractorAddendumForms, setSentContractorAddendumForms] = useState<SignableDocument[]>([]);
+  const loadSentContractorAddendumForms = async () => {
+    try {
+      setSentContractorAddendumForms(await getSignableDocuments("contractor_addendum"));
+    } catch (err) {
+      console.error("Failed to load sent Contractor Addendum forms:", err);
+    }
+  };
+  useEffect(() => {
+    if (activeTab === "contractorAddendum") void loadSentContractorAddendumForms();
+  }, [activeTab]);
+
+  const [contractorAddendumRecipientId, setContractorAddendumRecipientId] = useState("");
+  const [contractorAddendumRecipientSearch, setContractorAddendumRecipientSearch] = useState("");
+  const [contractorAddendumRecipientDropdownOpen, setContractorAddendumRecipientDropdownOpen] = useState(false);
+  const [contractorAddendumSending, setContractorAddendumSending] = useState(false);
+  const [contractorAddendumSendError, setContractorAddendumSendError] = useState<string | null>(null);
+  const [contractorAddendumActionBusyId, setContractorAddendumActionBusyId] = useState<string | null>(null);
+  const [contractorAddendumActionError, setContractorAddendumActionError] = useState<string | null>(null);
+  const [contractorAddendumExternalName, setContractorAddendumExternalName] = useState("");
+  const [contractorAddendumSentLink, setContractorAddendumSentLink] = useState<{ link: string; recipientName: string } | null>(null);
+  const [contractorAddendumSentLinkCopied, setContractorAddendumSentLinkCopied] = useState(false);
+  const [contractorAddendumPreviewExpanded, setContractorAddendumPreviewExpanded] = useState(false);
+  const [contractorAddendumPreviewPdfUrl, setContractorAddendumPreviewPdfUrl] = useState<string | null>(null);
+  const [contractorAddendumPreviewLoading, setContractorAddendumPreviewLoading] = useState(false);
+  // "Send to next signer" dialog
+  const [contractorAddendumRouteDialog, setContractorAddendumRouteDialog] = useState<SignableDocument | null>(null);
+  const [contractorAddendumRouteSlot, setContractorAddendumRouteSlot] = useState<DocSignatureSlot>("hr_staff");
+  const [contractorAddendumRouteMode, setContractorAddendumRouteMode] = useState<"teammate" | "external">("teammate");
+  const [contractorAddendumRouteRecipientId, setContractorAddendumRouteRecipientId] = useState("");
+  const [contractorAddendumRouteRecipientSearch, setContractorAddendumRouteRecipientSearch] = useState("");
+  const [contractorAddendumRouteRecipientDropdownOpen, setContractorAddendumRouteRecipientDropdownOpen] = useState(false);
+  const [contractorAddendumRouteExternalName, setContractorAddendumRouteExternalName] = useState("");
+  const [contractorAddendumRouteSentLink, setContractorAddendumRouteSentLink] = useState<string | null>(null);
+
+  const filteredContractorAddendumRecipients = useMemo(
+    () => employees.filter((e) => e.status === "active" && e.name.toLowerCase().includes(contractorAddendumRecipientSearch.toLowerCase())),
+    [employees, contractorAddendumRecipientSearch]
+  );
+  const filteredContractorAddendumRouteRecipients = useMemo(
+    () => employees.filter((e) => e.status === "active" && e.name.toLowerCase().includes(contractorAddendumRouteRecipientSearch.toLowerCase())),
+    [employees, contractorAddendumRouteRecipientSearch]
+  );
+
+  const contractorAddendumNextSlot = (doc: SignableDocument): DocSignatureSlot | null =>
+    CONTRACTOR_ADDENDUM_SLOT_ORDER.find((s) => !doc.signatures[s]) ?? null;
+
+  const toggleContractorAddendumPreview = async () => {
+    if (contractorAddendumPreviewExpanded) {
+      setContractorAddendumPreviewExpanded(false);
+      if (contractorAddendumPreviewPdfUrl) URL.revokeObjectURL(contractorAddendumPreviewPdfUrl);
+      setContractorAddendumPreviewPdfUrl(null);
+      return;
+    }
+    setContractorAddendumSendError(null);
+    setContractorAddendumPreviewExpanded(true);
+    setContractorAddendumPreviewLoading(true);
+    try {
+      const { bytes } = await buildContractorAddendumPdf(blankContractorAddendumData());
+      const url = URL.createObjectURL(new Blob([bytes as unknown as BlobPart], { type: "application/pdf" }));
+      setContractorAddendumPreviewPdfUrl(url);
+    } catch (err) {
+      setContractorAddendumSendError(err instanceof Error ? err.message : "Failed to build preview.");
+      setContractorAddendumPreviewExpanded(false);
+    } finally {
+      setContractorAddendumPreviewLoading(false);
+    }
+  };
+
+  const handleSendContractorAddendum = async () => {
+    if (!contractorAddendumRecipientId || !uid) return;
+    setContractorAddendumSending(true);
+    setContractorAddendumSendError(null);
+    try {
+      const recipient = employees.find((e) => e.id === contractorAddendumRecipientId);
+      if (!recipient) throw new Error("Select a recipient first.");
+      const doc = await createSignableDocument({
+        documentType: "contractor_addendum",
+        formData: { ...blankContractorAddendumData(), employeeId: recipient.id, signerNames: { ...CONTRACTOR_ADDENDUM_DEFAULT_SIGNER_NAMES, employee: recipient.name } } as unknown as Record<string, any>,
+        recipientId: contractorAddendumRecipientId,
+        recipientSlot: "employee",
+        pdfUrl: "",
+      });
+      const myProfileId = await getMyProfileId(uid);
+      if (!myProfileId) throw new Error("Could not resolve your profile.");
+      const thread = await getOrCreateDmThread(myProfileId, contractorAddendumRecipientId);
+      const fillOrigin = import.meta.env.DEV ? window.location.origin : getAppUrl();
+      await sendMessage({
+        dmThreadId: thread.id,
+        senderId: myProfileId,
+        senderName: displayName || "HR",
+        body: `📋 Please complete the Master Independent Contractor Subcontractor Agreement Addendum: ${fillOrigin}/fill-contractor-addendum/${doc.id}`,
+      });
+      void logActivity({ action: "contractor_addendum_sent", targetType: "employee", targetId: recipient.id, targetLabel: recipient.name });
+      setContractorAddendumRecipientId("");
+      setContractorAddendumRecipientSearch("");
+      await loadSentContractorAddendumForms();
+    } catch (err) {
+      setContractorAddendumSendError(err instanceof Error ? err.message : "Failed to send request.");
+    } finally {
+      setContractorAddendumSending(false);
+    }
+  };
+
+  const handleGenerateExternalContractorAddendum = async () => {
+    setContractorAddendumSending(true);
+    setContractorAddendumSendError(null);
+    try {
+      const name = contractorAddendumExternalName.trim() || "External Recipient";
+      const doc = await createSignableDocument({
+        documentType: "contractor_addendum",
+        formData: { ...blankContractorAddendumData(), signerNames: { ...CONTRACTOR_ADDENDUM_DEFAULT_SIGNER_NAMES, employee: name } } as unknown as Record<string, any>,
+        recipientName: name,
+        recipientSlot: "employee",
+        pdfUrl: "",
+      });
+      void logActivity({ action: "contractor_addendum_sent", targetType: "employee", targetLabel: name, details: { external: true } });
+      const externalOrigin = import.meta.env.DEV ? window.location.origin : getAppUrl();
+      setContractorAddendumSentLink({ link: `${externalOrigin}/fill-contractor-addendum-external/${doc.id}`, recipientName: name });
+      setContractorAddendumExternalName("");
+      await loadSentContractorAddendumForms();
+    } catch (err) {
+      setContractorAddendumSendError(err instanceof Error ? err.message : "Failed to generate link.");
+    } finally {
+      setContractorAddendumSending(false);
+    }
+  };
+
+  const handleCopyContractorAddendumSentLink = async () => {
+    if (!contractorAddendumSentLink) return;
+    try {
+      await navigator.clipboard.writeText(contractorAddendumSentLink.link);
+      setContractorAddendumSentLinkCopied(true);
+      setTimeout(() => setContractorAddendumSentLinkCopied(false), 1500);
+    } catch (err) {
+      console.error("Failed to copy link:", err);
+    }
+  };
+
+  const handleCopyContractorAddendumLink = async (doc: SignableDocument) => {
+    try {
+      const done = !!doc.signatures.employee;
+      const base = done ? "sign-contractor-addendum" : "fill-contractor-addendum";
+      const path = doc.recipientId ? base : `${base}-external`;
+      const origin = import.meta.env.DEV ? window.location.origin : getAppUrl();
+      await navigator.clipboard.writeText(`${origin}/${path}/${doc.id}`);
+    } catch (err) {
+      console.error("Failed to copy link:", err);
+    }
+  };
+
+  const handleDownloadContractorAddendumPdf = async (doc: SignableDocument) => {
+    if (!doc.pdfUrl) return;
+    const name = (doc.formData as ContractorAddendumFormData).signerNames?.employee || doc.recipientName || "contractor-addendum";
+    try {
+      const res = await fetch(doc.pdfUrl);
+      const blobUrl = URL.createObjectURL(await res.blob());
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = `Master Independent Contractor Subcontractor Agreement Addendum - ${name}.pdf`;
+      a.click();
+      URL.revokeObjectURL(blobUrl);
+    } catch {
+      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
+    }
+  };
+
+  const handleDeleteContractorAddendum = async (doc: SignableDocument) => {
+    if (!window.confirm("Permanently delete this Master Independent Contractor Subcontractor Agreement Addendum request?")) return;
+    setContractorAddendumActionBusyId(doc.id);
+    setContractorAddendumActionError(null);
+    try {
+      await deleteSignableDocument(doc.id);
+      await loadSentContractorAddendumForms();
+    } catch (err) {
+      setContractorAddendumActionError(err instanceof Error ? err.message : "Failed to delete.");
+    } finally {
+      setContractorAddendumActionBusyId(null);
+    }
+  };
+
+  const handleFinalizeContractorAddendum = async (doc: SignableDocument) => {
+    setContractorAddendumActionBusyId(doc.id);
+    setContractorAddendumActionError(null);
+    try {
+      await confirmSignableDocument(doc.id, null);
+      void logActivity({ action: "contractor_addendum_finalized", targetType: "employee", targetLabel: (doc.formData as ContractorAddendumFormData).signerNames?.employee || "" });
+      await loadSentContractorAddendumForms();
+    } catch (err) {
+      setContractorAddendumActionError(err instanceof Error ? err.message : "Failed to finalize.");
+    } finally {
+      setContractorAddendumActionBusyId(null);
+    }
+  };
+
+  const handleOpenContractorAddendumRouteDialog = (doc: SignableDocument) => {
+    setContractorAddendumRouteDialog(doc);
+    setContractorAddendumRouteSlot(contractorAddendumNextSlot(doc) ?? "hr_staff");
+    setContractorAddendumRouteMode("teammate");
+    setContractorAddendumRouteRecipientId("");
+    setContractorAddendumRouteRecipientSearch("");
+    setContractorAddendumRouteExternalName("");
+    setContractorAddendumRouteSentLink(null);
+    setContractorAddendumActionError(null);
+  };
+
+  const handleSendContractorAddendumToNextSigner = async () => {
+    if (!contractorAddendumRouteDialog || !uid) return;
+    const doc = contractorAddendumRouteDialog;
+    const contractorName = (doc.formData as ContractorAddendumFormData).signerNames?.employee || doc.recipientName || "the Contractor";
+    setContractorAddendumActionBusyId(doc.id);
+    setContractorAddendumActionError(null);
+    try {
+      if (contractorAddendumRouteMode === "external") {
+        const name = contractorAddendumRouteExternalName.trim();
+        if (!name) throw new Error("Type the recipient's name.");
+        await reassignSignableDocument(doc.id, { recipientName: name }, contractorAddendumRouteSlot);
+        void logActivity({ action: "contractor_addendum_sent", targetType: "employee", targetLabel: contractorName, details: { slot: contractorAddendumRouteSlot, to: name, external: true } });
+        const origin = import.meta.env.DEV ? window.location.origin : getAppUrl();
+        setContractorAddendumRouteSentLink(`${origin}/sign-contractor-addendum-external/${doc.id}`);
+        await loadSentContractorAddendumForms();
+        return;
+      }
+      const recipient = employees.find((e) => e.id === contractorAddendumRouteRecipientId);
+      if (!recipient) throw new Error("Select a recipient first.");
+      await reassignSignableDocument(doc.id, { recipientId: recipient.id, recipientName: recipient.name }, contractorAddendumRouteSlot);
+      const myProfileId = await getMyProfileId(uid);
+      if (!myProfileId) throw new Error("Could not resolve your profile.");
+      const thread = await getOrCreateDmThread(myProfileId, recipient.id);
+      const origin = import.meta.env.DEV ? window.location.origin : getAppUrl();
+      await sendMessage({
+        dmThreadId: thread.id,
+        senderId: myProfileId,
+        senderName: displayName || "HR",
+        body: `📋 Please sign the Master Independent Contractor Subcontractor Agreement Addendum for ${contractorName} as ${CONTRACTOR_ADDENDUM_SLOT_LABEL[contractorAddendumRouteSlot]}: ${origin}/sign-contractor-addendum/${doc.id}`,
+      });
+      void logActivity({ action: "contractor_addendum_sent", targetType: "employee", targetLabel: contractorName, details: { slot: contractorAddendumRouteSlot, to: recipient.name } });
+      setContractorAddendumRouteDialog(null);
+      await loadSentContractorAddendumForms();
+    } catch (err) {
+      setContractorAddendumActionError(err instanceof Error ? err.message : "Failed to send to next signer.");
+    } finally {
+      setContractorAddendumActionBusyId(null);
     }
   };
 
@@ -7152,7 +7605,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           : doc.documentType === "substance_screening" ? "substanceScreening"
           : doc.documentType === "flash_technician_travel" ? "flashTechnicianTravel"
           : "wageAck";
-        const tabLink = `${getAppUrl()}/m/dashboard/hr-dashboard?tab=${tabKey}`;
+        const tabLink = `${getAppUrl()}/m/hr/hr-dashboard?tab=${tabKey}`;
         const body =
           doc.documentType === "i9"
             ? `📋 Please complete Section 2 (document review + employer/AR signature) of Form I-9 for ${employeeName} — [open the Form I-9 tab](${tabLink}) in the HR Dashboard.`
@@ -7304,16 +7757,12 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const GENERAL_FORM_TYPES: { type: SignableDocumentType; label: string }[] = [
     { type: "w8ben", label: "Form W-8BEN" },
     { type: "w4", label: "Form W-4" },
-    { type: "w9", label: "Form W-9" },
-    { type: "w4r", label: "Form W-4R" },
-    { type: "i9", label: "Form I-9 (Employment Eligibility)" },
   ];
   const TECHNICIAN_FORM_TYPES: { type: SignableDocumentType; label: string }[] = [
     { type: "wage_ack", label: "Acknowledgment of Wage" },
     { type: "car_iq_agreement", label: "Car IQ Technician Agreement" },
     { type: "vehicle_agreement", label: "Company Vehicle Use Agreement" },
     { type: "contractor_data", label: "Employee Data" },
-    { type: "contractor_data_us", label: "Contractor Data (US)" },
     { type: "damage", label: "Damage Agreement" },
     { type: "direct_deposit", label: "Direct Deposit Authorization" },
     { type: "employee_confidentiality", label: "Employee Confidentiality Agreement" },
@@ -7324,7 +7773,17 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     { type: "parts_responsibility", label: "Parts Responsibility Form" },
     { type: "pto_ack", label: "PTO & Sick Leave Policy" },
     { type: "substance_screening", label: "Substance Screening & Conduct Agreement" },
+    { type: "w4r", label: "Form W-4R" },
+    { type: "i9", label: "Form I-9 (Employment Eligibility)" },
+  ];
+  // BM, SBS, Tech Director, Tech Assistant Director tier — same grouping as
+  // ReportHRDaily's own "Automated Forms" tab columns (automatedFormsManagementTabs).
+  const MANAGEMENT_FORM_TYPES: { type: SignableDocumentType; label: string }[] = [
+    { type: "contractor_data_us", label: "Contractor Data (US)" },
+    { type: "contractor_addendum", label: "Master Independent Contractor Subcontractor Agreement Addendum" },
+    { type: "nda_form", label: "Non-Disclosure Agreement" },
     { type: "vehicle_use_agreement", label: "Vehicle Use Agreement" },
+    { type: "w9", label: "Form W-9" },
   ];
 
   const [combineFormsRecipientId, setCombineFormsRecipientId] = useState("");
@@ -10932,7 +11391,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     { key: "wageAck", label: "Acknowledgment of Wage", count: sentWageAckAwaitingEmployerCount, icon: FileCheck },
     { key: "carIqAgreement", label: "Car IQ Technician Agreement", count: 0, icon: FileCheck },
     { key: "vehicleAgreement", label: "Company Vehicle Use Agreement", count: 0, icon: FileCheck },
-    { key: "contractorDataUs", label: "Contractor Data (US)", count: 0, icon: FileCheck },
     { key: "damage", label: "Damage Agreement", count: sentDamageAwaitingEmployerCount, icon: FileCheck },
     { key: "directDeposit", label: "Direct Deposit Authorization", count: 0, icon: FileCheck },
     { key: "employeeConfidentiality", label: "Employee Confidentiality Agreement", count: 0, icon: FileCheck },
@@ -10944,6 +11402,16 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     { key: "partsResponsibility", label: "Parts Responsibility and Technician Floor Protection Acknowledgment Form", count: sentPartsResponsibilityAwaitingManagerCount, icon: FileCheck },
     { key: "ptoAck", label: "PTO & Sick Leave Policy", count: 0, icon: FileCheck },
     { key: "substanceScreening", label: "Substance Screening & Conduct Agreement", count: 0, icon: FileCheck },
+  ] as const;
+
+  // Management-tier forms (Branch Manager / Senior Branch Manager /
+  // Technical Director / Technical Assistant Director) — its own column,
+  // separate from the rank-and-file Technician Forms and the HR/admin
+  // General forms.
+  const automatedFormsManagementTabs = [
+    { key: "contractorDataUs", label: "Contractor Data (US)", count: 0, icon: FileCheck },
+    { key: "contractorAddendum", label: "Master Independent Contractor Subcontractor Agreement Addendum", count: 0, icon: FileText },
+    { key: "ndaForm", label: "Non-Disclosure Agreement", count: 0, icon: FileText },
     { key: "vehicleUseAgreement", label: "Vehicle Use Agreement", count: 0, icon: FileCheck },
   ] as const;
 
@@ -10962,10 +11430,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     ...(companyId === "COMP001" ? [{
       group: "Automated Forms",
       icon: Paperclip,
-      tabs: [...automatedFormsGeneralTabs, ...automatedFormsTechnicianTabs],
+      tabs: [...automatedFormsGeneralTabs, ...automatedFormsTechnicianTabs, ...automatedFormsManagementTabs],
       columns: [
         { label: "General", tabs: automatedFormsGeneralTabs },
         { label: "Technician Forms", tabs: automatedFormsTechnicianTabs },
+        { label: "BM, SBS, Tech Director, Tech Assistant Director", tabs: automatedFormsManagementTabs },
       ],
     }] : []),
     {
@@ -10986,6 +11455,14 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         { key: "hiring", label: "Hiring", count: visibleCandidates.length, icon: Users },
         { key: "onboarding", label: "Onboarding Documents", count: 0, icon: Paperclip },
         { key: "warnings", label: "Warnings & Mistakes", count: isHrOrAdmin ? pendingNotes.length : 0, icon: AlertTriangle },
+      ] as const,
+      columns: undefined,
+    },
+    {
+      group: "Calendar",
+      icon: Calendar,
+      tabs: [
+        { key: "calendar", label: "Calendar", count: 0, icon: Calendar },
       ] as const,
       columns: undefined,
     },
@@ -11083,11 +11560,15 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               </button>
               {!collapsed && (
                 section.columns ? (
-                  <div className="grid grid-cols-2 gap-x-4 gap-y-1 pl-2 border-l border-white/10 ml-4">
+                  <div className="grid grid-cols-3 gap-x-4 gap-y-1 pl-2 border-l border-white/10 ml-4">
                     {section.columns.map((col) => (
                       <div key={col.label} className="flex flex-col gap-0.5">
                         <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide px-2.5 pt-1 pb-0.5">{col.label}</p>
-                        {col.tabs.map(renderSidebarTabButton)}
+                        {col.tabs.length === 0 ? (
+                          <p className="px-2.5 py-1 text-xs text-muted-foreground italic">No forms yet.</p>
+                        ) : (
+                          col.tabs.map(renderSidebarTabButton)
+                        )}
                       </div>
                     ))}
                   </div>
@@ -11338,13 +11819,17 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                 {isOpen && (
                   <>
                     <div className="fixed inset-0 z-10" onClick={() => setOpenCategory(null)} />
-                    <div className={`absolute top-full left-0 mt-1 z-20 rounded-md border border-white/10 bg-slate-900 shadow-xl py-1 ${section.columns ? "w-[min(90vw,560px)]" : "min-w-[220px]"}`}>
+                    <div className={`absolute top-full left-0 mt-1 z-20 rounded-md border border-white/10 bg-slate-900 shadow-xl py-1 ${section.columns ? "w-[min(95vw,780px)]" : "min-w-[220px]"}`}>
                       {section.columns ? (
-                        <div className="grid grid-cols-2 gap-x-1">
+                        <div className="grid grid-cols-3 gap-x-1">
                           {section.columns.map((col) => (
                             <div key={col.label} className="flex flex-col py-1">
                               <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide px-3.5 pt-1 pb-1">{col.label}</p>
-                              {col.tabs.map(renderDropdownTabButton)}
+                              {col.tabs.length === 0 ? (
+                                <p className="px-3.5 py-1 text-xs text-muted-foreground italic">No forms yet.</p>
+                              ) : (
+                                col.tabs.map(renderDropdownTabButton)
+                              )}
                             </div>
                           ))}
                         </div>
@@ -11741,6 +12226,14 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         )}
       </div>
       </>
+      )}
+
+      {activeTab === "calendar" && (
+        <HrCalendarTab
+          employees={employees.map((e) => ({ id: e.id, name: e.name, branch: e.branch, status: e.status, role: e.position }))}
+          myProfileId={myProfileId}
+          myDisplayName={displayName}
+        />
       )}
 
       {/* ── Master List — Employee Directory's same roster, split into
@@ -12608,8 +13101,38 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         <div className="px-4 pt-4">
           <h3 className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Technician</h3>
         </div>
-        <div className="p-4 pt-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        <div className="p-4 pt-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 border-b border-white/10">
           {TECHNICIAN_FORM_TYPES.map(({ type, label }) => {
+            const checked = selectedFormTypes.has(type);
+            const urgent = ROUTE_REQUIRED_DOCUMENT_TYPES.includes(type);
+            return (
+              <label
+                key={type}
+                className={`flex items-start gap-2.5 rounded-lg border p-3 cursor-pointer transition-colors ${
+                  checked
+                    ? "border-primary/50 bg-primary/10"
+                    : urgent
+                    ? "border-red-500/40 bg-red-500/20 hover:bg-red-500/30"
+                    : "border-white/10 bg-white/5 hover:bg-white/10"
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={() => toggleFormTypeSelected(type)}
+                  className="mt-0.5 h-3.5 w-3.5 shrink-0"
+                />
+                <span className="text-sm font-medium">{label}</span>
+              </label>
+            );
+          })}
+        </div>
+
+        <div className="px-4 pt-4">
+          <h3 className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">BM, SBS, Tech Director, Tech Assistant Director</h3>
+        </div>
+        <div className="p-4 pt-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          {MANAGEMENT_FORM_TYPES.map(({ type, label }) => {
             const checked = selectedFormTypes.has(type);
             const urgent = ROUTE_REQUIRED_DOCUMENT_TYPES.includes(type);
             return (
@@ -16898,6 +17421,210 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       </>
       )}
 
+      {activeTab === "ndaForm" && (
+      <>
+      <div className="panel p-0 overflow-visible mt-4 relative z-20">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">Send Non-Disclosure Agreement</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Pick a teammate — they'll get a link to fill in their information and sign the Non-Disclosure Agreement. It comes back to you here automatically once submitted.</p>
+        </div>
+        <div className="p-4 flex flex-col md:flex-row gap-6">
+          <div className="flex flex-col gap-3 w-full md:max-w-sm md:shrink-0">
+          <div className="flex flex-col gap-1.5 pb-3 border-b border-white/10">
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">External Link (no login needed)</label>
+            {ndaSentLink ? (
+              <div className="flex flex-col gap-2">
+                <div className="rounded-md border border-green-500/30 bg-green-500/10 px-3 py-2.5">
+                  <p className="text-xs font-semibold text-green-300">Link generated for {ndaSentLink.recipientName}</p>
+                </div>
+                <div className="flex gap-2">
+                  <input type="text" readOnly value={ndaSentLink.link} onFocus={(e) => e.target.select()} className="glass-input text-xs py-1.5 px-3 rounded-md flex-1" />
+                  <button onClick={handleCopyNdaSentLink} className="btn text-xs px-3 py-1.5 shrink-0">{ndaSentLinkCopied ? "Copied!" : "Copy"}</button>
+                </div>
+                <button onClick={() => setNdaSentLink(null)} className="btn text-xs px-3 py-1.5 w-fit">Done</button>
+              </div>
+            ) : (
+              <>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={ndaExternalName}
+                    onChange={(e) => setNdaExternalName(e.target.value)}
+                    placeholder="Type their name (optional)…"
+                    className="glass-input text-sm py-1.5 px-3 rounded-md flex-1"
+                  />
+                  <button
+                    onClick={handleGenerateExternalNda}
+                    disabled={ndaSending}
+                    className="btn text-sm px-3 py-1.5 disabled:opacity-50 shrink-0"
+                  >
+                    {ndaSending ? "Generating…" : "Generate Link"}
+                  </button>
+                </div>
+                <p className="text-[10px] text-muted-foreground">No AHS account needed — they can open the link and fill it in without logging in.</p>
+              </>
+            )}
+          </div>
+
+          <div className="flex flex-col gap-1 relative">
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient (AHS teammate)</label>
+            <input
+              type="text"
+              value={ndaRecipientSearch}
+              onChange={(e) => { setNdaRecipientSearch(e.target.value); setNdaRecipientId(""); setNdaRecipientDropdownOpen(true); }}
+              onFocus={() => setNdaRecipientDropdownOpen(true)}
+              onBlur={() => setTimeout(() => setNdaRecipientDropdownOpen(false), 150)}
+              placeholder="Search a teammate…"
+              className="glass-input text-sm py-1.5 px-3 rounded-md"
+            />
+            {ndaRecipientDropdownOpen && (
+              <div className="absolute z-50 top-full mt-1 w-full max-h-96 overflow-y-auto rounded-md border border-white/15 bg-slate-900 shadow-2xl">
+                {filteredNdaRecipients.length === 0 ? (
+                  <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+                ) : (
+                  filteredNdaRecipients.map((e) => (
+                    <button
+                      key={e.id}
+                      type="button"
+                      onMouseDown={(ev) => ev.preventDefault()}
+                      onClick={() => {
+                        setNdaRecipientId(e.id);
+                        setNdaRecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`);
+                        setNdaRecipientDropdownOpen(false);
+                      }}
+                      className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${ndaRecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                    >
+                      {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+
+          {ndaSendError && (
+            <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{ndaSendError}</p>
+          )}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={toggleNdaPreview}
+              className="btn text-sm px-4 py-2 flex items-center gap-1.5"
+            >
+              Preview <ChevronDown className={`h-3.5 w-3.5 transition-transform ${ndaPreviewOpen ? "rotate-180" : ""}`} />
+            </button>
+            <button
+              onClick={handleSendNda}
+              disabled={!ndaRecipientId || ndaSending}
+              className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+            >
+              {ndaSending ? "Sending…" : "Send Request"}
+            </button>
+          </div>
+          </div>
+
+          <div className="flex-1 min-w-0">
+            {ndaPreviewOpen ? (
+              <div className="border border-white/10 rounded-md overflow-hidden bg-white/5 h-full" style={{ minHeight: 560 }}>
+                {ndaPreviewLoading || !ndaPreviewPdfUrl ? (
+                  <div className="h-full flex items-center justify-center text-sm text-muted-foreground" style={{ minHeight: 560 }}>Loading preview…</div>
+                ) : (
+                  <iframe src={ndaPreviewPdfUrl} title="Non-Disclosure Agreement Preview" className="w-full border-0" style={{ height: 560 }} />
+                )}
+              </div>
+            ) : (
+              <div className="border border-dashed border-white/15 rounded-md flex items-center justify-center text-sm text-muted-foreground" style={{ minHeight: 560 }}>
+                Click "Preview" to see the document here.
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="panel p-0 overflow-hidden mt-4">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">Sent Non-Disclosure Agreement Forms</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status.</p>
+        </div>
+        {ndaActionError && (
+          <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{ndaActionError}</p>
+        )}
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-white/10 bg-white/5">
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Employee</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Branch</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent By</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Status</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sentNdaForms.length === 0 ? (
+                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">No requests sent yet.</td></tr>
+              ) : (
+                sentNdaForms.map((doc) => {
+                  const data = doc.formData as { employeeName?: string; branch?: string };
+                  const recipient = employees.find((e) => e.id === doc.recipientId);
+                  const busy = ndaActionBusyId === doc.id;
+                  return (
+                    <tr key={doc.id} className="border-b border-white/5 hover:bg-white/5">
+                      <td className="px-4 py-3 font-medium">
+                        {doc.pdfUrl ? (
+                          <button type="button" onClick={() => setNdaDocPreview(doc)} className="text-blue-300 hover:text-blue-200 hover:underline text-left">
+                            {data.employeeName || recipient?.name || doc.recipientName || "—"}
+                          </button>
+                        ) : (
+                          data.employeeName || recipient?.name || doc.recipientName || "—"
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-muted-foreground">{data.branch || "—"}</td>
+                      <td className="px-4 py-3 text-muted-foreground">{doc.createdByName ?? "—"}</td>
+                      <td className="px-4 py-3">
+                        <span className={`px-2 py-1 rounded text-xs font-semibold ${
+                          doc.status === "signed" ? "bg-green-500/20 text-green-300"
+                          : doc.status === "cancelled" ? "bg-slate-500/20 text-slate-400"
+                          : "bg-yellow-500/20 text-yellow-300"
+                        }`}>
+                          {doc.status === "signed" ? "Submitted" : doc.status === "cancelled" ? "Cancelled" : "Awaiting Completion"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{new Date(doc.createdAt).toLocaleDateString()}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {doc.status === "pending_signature" && (
+                            <button type="button" onClick={() => handleCopyNdaLink(doc)} className="btn text-[10px] px-2 py-1">
+                              Copy Link
+                            </button>
+                          )}
+                          {doc.pdfUrl && (
+                            <button type="button" onClick={() => handleDownloadNdaPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
+                              Download PDF
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => handleDeleteNda(doc)}
+                            title="Permanently delete this request"
+                            className="text-muted-foreground hover:text-red-300 disabled:opacity-50"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      </>
+      )}
+
       {activeTab === "substanceScreening" && (
       <>
       <div className="panel p-0 overflow-visible mt-4 relative z-20">
@@ -18195,6 +18922,310 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           </table>
         </div>
       </div>
+      </>
+      )}
+
+      {activeTab === "contractorAddendum" && (
+      <>
+      <div className="panel p-0 overflow-visible mt-4 relative z-20">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">Send Master Independent Contractor Subcontractor Agreement Addendum</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">The Contractor gets a link to fill in the Position Level, Guaranteed Minimum Baseline Payout, and their name, then sign. After they submit, use "Send to next signer" on the row below to route it to the Company HR Representative and the three managerial witnesses (Technical COO, Technical Director, CEO).</p>
+        </div>
+        <div className="p-4 flex flex-col md:flex-row gap-6">
+          <div className="flex flex-col gap-3 w-full md:max-w-sm md:shrink-0">
+            <div className="flex flex-col gap-1.5 pb-3 border-b border-white/10">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">External Link (no login needed)</label>
+              {contractorAddendumSentLink ? (
+                <div className="flex flex-col gap-2">
+                  <div className="rounded-md border border-green-500/30 bg-green-500/10 px-3 py-2.5">
+                    <p className="text-xs font-semibold text-green-300">Link generated for {contractorAddendumSentLink.recipientName}</p>
+                  </div>
+                  <div className="flex gap-2">
+                    <input type="text" readOnly value={contractorAddendumSentLink.link} onFocus={(e) => e.target.select()} className="glass-input text-xs py-1.5 px-3 rounded-md flex-1" />
+                    <button onClick={handleCopyContractorAddendumSentLink} className="btn text-xs px-3 py-1.5 shrink-0">{contractorAddendumSentLinkCopied ? "Copied!" : "Copy"}</button>
+                  </div>
+                  <button onClick={() => setContractorAddendumSentLink(null)} className="btn text-xs px-3 py-1.5 w-fit">Done</button>
+                </div>
+              ) : (
+                <>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={contractorAddendumExternalName}
+                      onChange={(e) => setContractorAddendumExternalName(e.target.value)}
+                      placeholder="Type their name (optional)…"
+                      className="glass-input text-sm py-1.5 px-3 rounded-md flex-1"
+                    />
+                    <button onClick={handleGenerateExternalContractorAddendum} disabled={contractorAddendumSending} className="btn text-sm px-3 py-1.5 disabled:opacity-50 shrink-0">
+                      {contractorAddendumSending ? "Generating…" : "Generate Link"}
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground">No AHS account needed — they can open the link and fill it in without logging in.</p>
+                </>
+              )}
+            </div>
+
+            <div className="flex flex-col gap-1 relative">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Contractor (AHS teammate)</label>
+              <input
+                type="text"
+                value={contractorAddendumRecipientSearch}
+                onChange={(e) => { setContractorAddendumRecipientSearch(e.target.value); setContractorAddendumRecipientId(""); setContractorAddendumRecipientDropdownOpen(true); }}
+                onFocus={() => setContractorAddendumRecipientDropdownOpen(true)}
+                onBlur={() => setTimeout(() => setContractorAddendumRecipientDropdownOpen(false), 150)}
+                placeholder="Search a teammate…"
+                className="glass-input text-sm py-1.5 px-3 rounded-md"
+              />
+              {contractorAddendumRecipientDropdownOpen && (
+                <div className="absolute z-50 top-full mt-1 w-full max-h-96 overflow-y-auto rounded-md border border-white/15 bg-slate-900 shadow-2xl">
+                  {filteredContractorAddendumRecipients.length === 0 ? (
+                    <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+                  ) : (
+                    filteredContractorAddendumRecipients.map((e) => (
+                      <button
+                        key={e.id}
+                        type="button"
+                        onMouseDown={(ev) => ev.preventDefault()}
+                        onClick={() => {
+                          setContractorAddendumRecipientId(e.id);
+                          setContractorAddendumRecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`);
+                          setContractorAddendumRecipientDropdownOpen(false);
+                        }}
+                        className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${contractorAddendumRecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                      >
+                        {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+
+            {contractorAddendumSendError && (
+              <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{contractorAddendumSendError}</p>
+            )}
+            <div className="flex items-center gap-2">
+              <button onClick={toggleContractorAddendumPreview} className="btn text-sm px-4 py-2 flex items-center gap-1.5">
+                Preview <ChevronDown className={`h-3.5 w-3.5 transition-transform ${contractorAddendumPreviewExpanded ? "rotate-180" : ""}`} />
+              </button>
+              <button
+                onClick={handleSendContractorAddendum}
+                disabled={!contractorAddendumRecipientId || contractorAddendumSending}
+                className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+              >
+                {contractorAddendumSending ? "Sending…" : "Send Request"}
+              </button>
+            </div>
+          </div>
+
+          <div className="flex-1 min-w-0">
+            {contractorAddendumPreviewExpanded ? (
+              <div className="border border-white/10 rounded-md overflow-hidden bg-white/5 h-full" style={{ minHeight: 560 }}>
+                {contractorAddendumPreviewLoading || !contractorAddendumPreviewPdfUrl ? (
+                  <div className="h-full flex items-center justify-center text-sm text-muted-foreground" style={{ minHeight: 560 }}>Loading preview…</div>
+                ) : (
+                  <iframe src={contractorAddendumPreviewPdfUrl} title="Contractor Addendum Preview" className="w-full border-0" style={{ height: 560 }} />
+                )}
+              </div>
+            ) : (
+              <div className="border border-dashed border-white/15 rounded-md flex items-center justify-center text-sm text-muted-foreground" style={{ minHeight: 560 }}>
+                Click "Preview" to see the document here.
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="panel p-0 overflow-hidden mt-4">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">Sent Addendum Forms</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">The status shows which signer the document is waiting on. Use "Send to next signer" to route it along the chain: Contractor → Company HR Representative → Technical COO → Technical Director → CEO.</p>
+        </div>
+        {contractorAddendumActionError && (
+          <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{contractorAddendumActionError}</p>
+        )}
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-white/10 bg-white/5">
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Contractor</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent By</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Status</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sentContractorAddendumForms.length === 0 ? (
+                <tr><td colSpan={5} className="px-4 py-8 text-center text-muted-foreground text-sm">No requests sent yet.</td></tr>
+              ) : (
+                sentContractorAddendumForms.map((doc) => {
+                  const fd = doc.formData as ContractorAddendumFormData;
+                  const recipient = employees.find((e) => e.id === doc.recipientId);
+                  const busy = contractorAddendumActionBusyId === doc.id;
+                  const contractorSigned = !!doc.signatures.employee;
+                  const next = contractorAddendumNextSlot(doc);
+                  const allSigned = !next;
+                  const statusLabel =
+                    doc.status === "confirmed" ? "Completed"
+                    : doc.status === "cancelled" ? "Cancelled"
+                    : !contractorSigned ? "Awaiting Contractor"
+                    : allSigned ? "Ready to Finalize"
+                    : `Awaiting ${CONTRACTOR_ADDENDUM_SLOT_LABEL[next]}`;
+                  const statusCls =
+                    doc.status === "confirmed" ? "bg-green-500/20 text-green-300"
+                    : doc.status === "cancelled" ? "bg-slate-500/20 text-slate-400"
+                    : !contractorSigned ? "bg-yellow-500/20 text-yellow-300"
+                    : allSigned ? "bg-green-500/20 text-green-300"
+                    : "bg-orange-500/20 text-orange-300";
+                  return (
+                    <tr key={doc.id} className="border-b border-white/5 hover:bg-white/5">
+                      <td className="px-4 py-3 font-medium">
+                        {doc.pdfUrl ? (
+                          <a href={doc.pdfUrl} target="_blank" rel="noreferrer noopener" className="text-blue-300 hover:text-blue-200 hover:underline">
+                            {fd?.signerNames?.employee || recipient?.name || doc.recipientName || "—"}
+                          </a>
+                        ) : (
+                          fd?.signerNames?.employee || recipient?.name || doc.recipientName || "—"
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-muted-foreground">{doc.createdByName ?? "—"}</td>
+                      <td className="px-4 py-3">
+                        <span className={`px-2 py-1 rounded text-xs font-semibold ${statusCls}`}>{statusLabel}</span>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{new Date(doc.createdAt).toLocaleDateString()}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {doc.status !== "confirmed" && doc.status !== "cancelled" && !contractorSigned && (
+                            <button type="button" onClick={() => handleCopyContractorAddendumLink(doc)} className="btn text-[10px] px-2 py-1">Copy Link</button>
+                          )}
+                          {doc.status !== "confirmed" && doc.status !== "cancelled" && contractorSigned && !allSigned && (
+                            <button type="button" onClick={() => handleOpenContractorAddendumRouteDialog(doc)} className="btn text-[10px] px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white">
+                              Send to next signer →
+                            </button>
+                          )}
+                          {doc.status !== "confirmed" && allSigned && (
+                            <button type="button" disabled={busy} onClick={() => handleFinalizeContractorAddendum(doc)} className="btn text-[10px] px-2 py-1 bg-green-600 hover:bg-green-700 text-white disabled:opacity-50">
+                              Finalize
+                            </button>
+                          )}
+                          {doc.pdfUrl && (
+                            <button type="button" onClick={() => handleDownloadContractorAddendumPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">Download PDF</button>
+                          )}
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => handleDeleteContractorAddendum(doc)}
+                            title="Permanently delete this request"
+                            className="text-muted-foreground hover:text-red-300 disabled:opacity-50"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {contractorAddendumRouteDialog && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4" onClick={() => setContractorAddendumRouteDialog(null)}>
+          <div className="panel p-5 w-full max-w-md" onClick={(e) => e.stopPropagation()}>
+            {contractorAddendumRouteSentLink ? (
+              <>
+                <h3 className="text-lg font-bold mb-2">Link generated</h3>
+                <p className="text-sm text-muted-foreground mb-3">Send this link to the {CONTRACTOR_ADDENDUM_SLOT_LABEL[contractorAddendumRouteSlot]}.</p>
+                <input type="text" readOnly value={contractorAddendumRouteSentLink} onFocus={(e) => e.target.select()} className="glass-input text-xs py-1.5 px-3 rounded-md w-full mb-3" />
+                <div className="flex justify-end gap-2">
+                  <button onClick={() => navigator.clipboard.writeText(contractorAddendumRouteSentLink).catch(() => {})} className="btn text-sm px-4 py-2">Copy</button>
+                  <button onClick={() => setContractorAddendumRouteDialog(null)} className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white">Done</button>
+                </div>
+              </>
+            ) : (
+              <>
+                <h3 className="text-lg font-bold mb-3">Send to next signer</h3>
+
+                <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Signing as</label>
+                <select value={contractorAddendumRouteSlot} onChange={(e) => setContractorAddendumRouteSlot(e.target.value as DocSignatureSlot)} className="glass-input text-sm py-1.5 px-3 rounded-md w-full mt-1 mb-3">
+                  <option value="hr_staff">{CONTRACTOR_ADDENDUM_SLOT_LABEL.hr_staff}</option>
+                  <option value="manager">{CONTRACTOR_ADDENDUM_SLOT_LABEL.manager}</option>
+                  <option value="senior_manager">{CONTRACTOR_ADDENDUM_SLOT_LABEL.senior_manager}</option>
+                  <option value="executive">{CONTRACTOR_ADDENDUM_SLOT_LABEL.executive}</option>
+                </select>
+
+                <div className="flex rounded-md overflow-hidden border border-white/15 w-fit mb-3">
+                  <button type="button" onClick={() => setContractorAddendumRouteMode("teammate")} className={`px-3 py-1 text-xs font-medium ${contractorAddendumRouteMode === "teammate" ? "bg-blue-600 text-white" : "text-muted-foreground hover:bg-white/5"}`}>AHS Teammate</button>
+                  <button type="button" onClick={() => setContractorAddendumRouteMode("external")} className={`px-3 py-1 text-xs font-medium border-l border-white/15 ${contractorAddendumRouteMode === "external" ? "bg-blue-600 text-white" : "text-muted-foreground hover:bg-white/5"}`}>External Link</button>
+                </div>
+
+                {contractorAddendumRouteMode === "teammate" ? (
+                  <div className="relative mb-3">
+                    <input
+                      type="text"
+                      value={contractorAddendumRouteRecipientSearch}
+                      onChange={(e) => { setContractorAddendumRouteRecipientSearch(e.target.value); setContractorAddendumRouteRecipientId(""); setContractorAddendumRouteRecipientDropdownOpen(true); }}
+                      onFocus={() => setContractorAddendumRouteRecipientDropdownOpen(true)}
+                      onBlur={() => setTimeout(() => setContractorAddendumRouteRecipientDropdownOpen(false), 150)}
+                      placeholder="Search a teammate…"
+                      className="glass-input text-sm py-1.5 px-3 rounded-md w-full"
+                    />
+                    {contractorAddendumRouteRecipientDropdownOpen && (
+                      <div className="absolute z-10 mt-1 w-full max-h-48 overflow-y-auto rounded-md border border-white/15 bg-slate-800 shadow-lg">
+                        {filteredContractorAddendumRouteRecipients.length === 0 ? (
+                          <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+                        ) : (
+                          filteredContractorAddendumRouteRecipients.map((e) => (
+                            <button
+                              key={e.id}
+                              type="button"
+                              onMouseDown={(ev) => ev.preventDefault()}
+                              onClick={() => {
+                                setContractorAddendumRouteRecipientId(e.id);
+                                setContractorAddendumRouteRecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`);
+                                setContractorAddendumRouteRecipientDropdownOpen(false);
+                              }}
+                              className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${contractorAddendumRouteRecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                            >
+                              {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <input
+                    type="text"
+                    value={contractorAddendumRouteExternalName}
+                    onChange={(e) => setContractorAddendumRouteExternalName(e.target.value)}
+                    placeholder="Type their name…"
+                    className="glass-input text-sm py-1.5 px-3 rounded-md w-full mb-3"
+                  />
+                )}
+
+                {contractorAddendumActionError && (
+                  <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2 mb-3">{contractorAddendumActionError}</p>
+                )}
+                <div className="flex gap-2 justify-end">
+                  <button onClick={() => setContractorAddendumRouteDialog(null)} className="btn text-sm px-4 py-2">Cancel</button>
+                  <button
+                    onClick={handleSendContractorAddendumToNextSigner}
+                    disabled={(contractorAddendumRouteMode === "teammate" ? !contractorAddendumRouteRecipientId : !contractorAddendumRouteExternalName.trim()) || contractorAddendumActionBusyId === contractorAddendumRouteDialog.id}
+                    className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+                  >
+                    {contractorAddendumActionBusyId === contractorAddendumRouteDialog.id ? "Sending…" : contractorAddendumRouteMode === "teammate" ? "Send" : "Generate Link"}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
       </>
       )}
 
@@ -19667,6 +20698,29 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             </div>
             <div className="flex-1 overflow-hidden bg-slate-950">
               {confidentialityDocPreview.pdfUrl && <iframe src={confidentialityDocPreview.pdfUrl} title="Employee Confidentiality Agreement" className="w-full h-full min-h-[70vh] border-0" />}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Non-Disclosure Agreement Sent History — PDF preview, same inline-frame pattern used for W-8BEN/W-4/W-9/W-4R/Car IQ/Vehicle Agreement/Employee Confidentiality Sent History */}
+      {ndaDocPreview && (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => setNdaDocPreview(null)}>
+          <div className="bg-slate-900 border border-white/10 rounded-lg shadow-2xl w-full max-w-6xl h-[92vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold">{(ndaDocPreview.formData as { employeeName?: string }).employeeName || "—"}</p>
+                <p className="text-[10px] text-muted-foreground">Submitted {new Date(ndaDocPreview.signedAt ?? ndaDocPreview.createdAt).toLocaleString()}</p>
+              </div>
+              <div className="flex items-center gap-2">
+                {ndaDocPreview.pdfUrl && (
+                  <a href={ndaDocPreview.pdfUrl} target="_blank" rel="noopener noreferrer" className="btn text-xs px-2.5 py-1.5 flex items-center gap-1"><Download className="h-3 w-3" /> Download</a>
+                )}
+                <button type="button" onClick={() => setNdaDocPreview(null)} className="btn text-xs px-2.5 py-1.5">Close</button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-hidden bg-slate-950">
+              {ndaDocPreview.pdfUrl && <iframe src={ndaDocPreview.pdfUrl} title="Non-Disclosure Agreement" className="w-full h-full min-h-[70vh] border-0" />}
             </div>
           </div>
         </div>

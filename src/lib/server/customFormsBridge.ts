@@ -234,7 +234,7 @@ export async function handleCustomFormsRequest(request: Request, env?: Record<st
       const formExtras = await fetchFormNotifyRecipients(envBag, submission.formId);
       const hrUids = await resolveNotifyRecipients(envBag, submission.companyId, formExtras.notifyFirebaseUids);
       const dedupeId = `customform_${body.submissionId}`;
-      const link = `/m/dashboard/hr-dashboard?tab=customForms`;
+      const link = `/m/hr/hr-dashboard?tab=customForms`;
       await Promise.all(
         hrUids.map((uid) =>
           writeNotification(envBag, accessToken, uid, dedupeId, {
@@ -329,7 +329,7 @@ export async function handleCustomFormsRequest(request: Request, env?: Record<st
       if (!accessToken) accessToken = await getGoogleAccessToken(envBag.serviceAccountEmail, envBag.privateKey);
       const hrUids = await resolveNotifyRecipients(envBag, form.company_id, form.notify_firebase_uids);
       const dedupeId = `customform_${submissionId}`;
-      const link = `/m/dashboard/hr-dashboard?tab=customForms`;
+      const link = `/m/hr/hr-dashboard?tab=customForms`;
       await Promise.all(
         hrUids.map((uid) =>
           writeNotification(envBag, accessToken!, uid, dedupeId, {

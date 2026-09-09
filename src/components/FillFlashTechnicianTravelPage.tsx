@@ -287,7 +287,7 @@ export function FillFlashTechnicianTravelPage({ docId }: Props) {
               <label className="block text-xs font-semibold text-muted-foreground mb-1">Your Signature</label>
               <canvas
                 {...sigPad.canvasProps}
-                className={`bg-white rounded-md border border-white/15 w-full max-w-md ${sigPad.canvasProps.className}`}
+                className={`bg-white rounded-md border border-white/15 block mx-auto w-full max-w-md ${sigPad.canvasProps.className}`}
               />
               <div className="mt-2">
                 <SignaturePadControls pad={sigPad} />
