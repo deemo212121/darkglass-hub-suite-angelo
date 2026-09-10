@@ -615,7 +615,18 @@ export function MobileTechApp() {
         // tier mobile viewer (allowedLocations === null, "sees every
         // branch") still gets the unbounded fetch, since there's no
         // narrower scope to give them.
-        const rows = isSelfRole
+        //
+        // isSelfRole alone isn't enough to trigger the own-name-only fetch:
+        // it fires off holding TECHNICIAN *anywhere* (role or extra_roles),
+        // and plenty of real managers (a Technical Assistant Director, say)
+        // carry TECHNICIAN in extra_roles without being limited to their own
+        // tickets — allowedLocations is null/branch-scoped for them, same as
+        // any other manager. Name-only scoping should only apply to someone
+        // who's actually just an individual technician, i.e. not also a
+        // manager-tier role — same split the roster-scoped effect below
+        // already uses to decide whether to fold in direct reports.
+        const isIndividualTechnician = isSelfRole && !isAttendanceManagerTierRole(role, extraRoles);
+        const rows = isIndividualTechnician
           ? await getTicketsForTechnicianCandidates(technicianNameCandidates(ownName))
           : allowedLocations !== null
           ? await getTicketsForBranches(allowedLocations)
