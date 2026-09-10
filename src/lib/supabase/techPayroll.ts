@@ -9,11 +9,11 @@
  *  - getTechCompletedRepairCounts: counts completed visits per technician
  *    (grouped by repair_type + branch, so AccountingDashboard.tsx can look
  *    up each group's rate and multiply) within a payroll period.
- *  - getTechAssignedCounts: same period, but every assigned visit
+ *  - getTechAssignedCounts: same period, but every assigned ticket
  *    regardless of outcome — for the Assigned/Completed/Ratio columns.
- *  - getTechRedoTickets / getTechSecondCounts: the Tech Activity Report
- *    modal's Redo list and "Two Tech" (second_technician, migration 0126)
- *    cross-reference count.
+ *  - getTechRedoTickets / getTechOnHoldTickets / getTechSecondCounts: the
+ *    Tech Activity Report modal's Redo and On Hold lists, and "Two Tech"
+ *    (second_technician, migration 0126) cross-reference count.
  *  - tech_manual_pay_items (migration 0125): LDT count, mileage, training
  *    value, and OW Incentive % entered directly by Finance per technician
  *    per period — there's no ticket/visit data to auto-count these from.
@@ -40,13 +40,19 @@ export const REPAIR_TYPES = [
   "Sealed System(R600)", "Stacked Unit(Washer Only)", "Wall Oven",
 ];
 /**
- * A flat per-ticket rate paid on EVERY completed (redo-excluded) ticket, on
- * top of whatever its own repair_type category already pays — distinct from
- * DEFAULT_REPAIR_TYPE, which only applies to a completed visit with no
- * repair_type set at all. Shown as its own editable-rate line ("Completed
- * Tickets") on the Tech Activity Report modal.
+ * Flat per-ticket rates shown as their own editable-rate lines on the Tech
+ * Activity Report modal, each also configurable on TechPayrollSetup.tsx:
+ *  - "Completed Tickets": paid on EVERY completed (redo/on-hold-excluded)
+ *    ticket, on top of whatever its own repair_type category already pays —
+ *    distinct from DEFAULT_REPAIR_TYPE, which only applies to a completed
+ *    visit with no repair_type set at all.
+ *  - "Redo Reduction": an optional consolation rate paid per redo ticket
+ *    (getTechRedoTickets) — 0 by default (see techRateFor's fallback chain),
+ *    since a redo already doesn't count toward Completed Tickets at all;
+ *    this exists only for a company that wants to pay something for the
+ *    trip out even on a re-dispatch.
  */
-export const BASE_RATE_TYPES = ["Completed Tickets"];
+export const BASE_RATE_TYPES = ["Completed Tickets", "Redo Reduction"];
 /** Entered by Finance directly per technician per period (migration 0125) — not auto-counted from a completed visit's repair_type. */
 export const MANUAL_PAY_TYPES = ["LDT", "Mileage", "Training Paid"];
 /** Auto-counted like REPAIR_TYPES, but keyed off visits.second_technician (migration 0126) rather than repair_type. */
@@ -161,42 +167,66 @@ export interface TechRepairCount {
   count: number;
 }
 
-/**
- * Completed-repair counts per technician for a payroll period, grouped by
- * repair_type + branch so the caller can look up each group's rate and
- * multiply by count. "Completed" mirrors statusGroupOf's "completed" bucket
- * (the same rule every other "is this ticket done" check in the app uses),
- * checked against the VISIT's own repair_status (not the parent ticket's
- * status, since a ticket can have several visits and only this one is the
- * technician's own completed work). Dated by schedule_date — the day the
- * work actually happened, same convention getCsrVisitDatesByTicketIds uses.
- *
- * Redo tickets (tickets.redo — a manager-flagged re-dispatch of a prior
- * failed repair) don't count toward the technician's paid completed total,
- * same as the legacy per-tech payroll report's "Redo Reduction" line —
- * excluded outright here rather than counted then subtracted, since this
- * model pays per repair_type bucket rather than one flat completed-count rate.
- *
- * Also skips any ticket Finance has manually put on hold for payroll via the
- * Mileage tab's On Hold action (mileage_entries.payroll_excluded, migration
- * 0144) — stays excluded while on hold even though this ticket did
- * genuinely complete, but it's reversible (see setMileageEntryPayrollExcluded).
- *
- * visits has no branch/redo of its own (only its parent ticket does), so this
- * does the same two-step "fetch, then join by ticket_id via a Map" pattern
- * as getLatestVisitTechnicianByTicketIds/getVisitsByTicketIds instead of a
- * PostgREST embed (no embed pattern is used anywhere else in this file for
- * visits->tickets).
- */
 // Supabase caps an unbounded select at 1000 rows — a single semi-monthly
 // payroll period's visits for a whole company can exceed that. Page
 // through in chunks of 1000.
 const PAGE_SIZE = 1000;
 
-export async function getTechCompletedRepairCounts(
-  startDate: string,
-  endDate: string
-): Promise<TechRepairCount[]> {
+/**
+ * One "this technician did this ticket" completion candidate — the shared
+ * pool behind getTechCompletedRepairCounts / getTechRedoTickets /
+ * getTechOnHoldTickets, so the three can never drift on what counts as
+ * "completed" (see the SP-sync stale-stamp fix in tickets.ts for a concrete
+ * example of what happens when two "is this done" checks quietly disagree).
+ */
+interface TechCompletedCandidate {
+  ticketId: string;
+  ticketNo: string;
+  technician: string;
+  /** From the Visit Log entry, when one exists — null for an on-site-timestamp-only candidate (counts as DEFAULT_REPAIR_TYPE). */
+  repairType: string | null;
+  /** The ticket's branch (tickets.location) — "" if unset. */
+  location: string;
+  redo: boolean;
+  /** On hold for payroll via the Mileage tab (mileage_entries.payroll_excluded, migration 0144/0148) — manual or the automatic "no photos yet" rule. */
+  onHold: boolean;
+}
+
+/**
+ * Every technician-ticket completion within a period, from either of:
+ *  1. A Visit Log entry whose repair_status mirrors statusGroupOf's
+ *     "completed" bucket (the same rule every other "is this ticket done"
+ *     check in the app uses), checked against the VISIT's own repair_status
+ *     (not the parent ticket's status, since a ticket can have several
+ *     visits and only this one is the technician's own completed work). A
+ *     ticket with more than one completed visit in the period yields one
+ *     candidate per visit (each is its own paid repair) — NOT deduped here.
+ *  2. Failing that (this exact ticket_id has no completed Visit Log row at
+ *     all), the ticket's own on-site check-in timestamps (mobile "I'm Here"/
+ *     "I'm Done", migration 0202) both being set — a technician who
+ *     genuinely arrived and finished the job, just never had a Visit Log
+ *     entry filed for it afterward. Yields exactly one DEFAULT_REPAIR_TYPE
+ *     candidate. A ticket that was later rescheduled or reassigned never
+ *     leaks in here: updateTicketAssignment() (and, as of the SP-sync fix,
+ *     upsertTicketFromServicePower too) nulls both onsite timestamps on any
+ *     such change, so this only ever sees a ticket that stayed on this
+ *     technician/date the whole time — a ticket with neither timestamp set
+ *     (never went / no-show) is excluded the same way.
+ * Dated by schedule_date — the day the work actually happened, same
+ * convention getCsrVisitDatesByTicketIds uses.
+ *
+ * Each candidate carries (not filters out) whether its ticket is a redo or
+ * on hold for payroll — callers decide what to do with that: pay counts
+ * exclude both, the Redo/On Hold lists surface exactly the ones excluded for
+ * that reason so the exclusion is never an invisible gap in the totals.
+ *
+ * visits has no branch/redo/ticket_no of its own (only its parent ticket
+ * does), so this does the same two-step "fetch, then join by ticket_id via a
+ * Map" pattern as getLatestVisitTechnicianByTicketIds/getVisitsByTicketIds
+ * instead of a PostgREST embed (no embed pattern is used anywhere else in
+ * this file for visits->tickets).
+ */
+async function getTechCompletedCandidates(startDate: string, endDate: string): Promise<TechCompletedCandidate[]> {
   if (!startDate || !endDate) return [];
   const data: any[] = [];
   for (let from = 0; ; from += PAGE_SIZE) {
@@ -208,102 +238,176 @@ export async function getTechCompletedRepairCounts(
       .not("technician", "is", null)
       .range(from, from + PAGE_SIZE - 1);
     if (error) {
-      console.error("getTechCompletedRepairCounts error:", error.message);
+      console.error("getTechCompletedCandidates (visits) error:", error.message);
       return [];
     }
     data.push(...(page ?? []));
     if (!page || page.length < PAGE_SIZE) break;
   }
-  const completed = (data ?? []).filter(
+  const completed = data.filter(
     (r: any) => String(r.technician || "").trim() && statusGroupOf(r.repair_status || "") === "completed"
   );
-  if (completed.length === 0) return [];
 
-  const ticketIds = Array.from(new Set(completed.map((r: any) => r.ticket_id).filter(Boolean)));
+  // Fallback set: on-site-checked-in tickets with no Visit Log entry to show
+  // for it at all — see point 2 in the header comment above.
+  const onsiteRows: any[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data: page, error } = await supabase
+      .from("tickets")
+      .select("id, ticket_no, technician, location, redo")
+      .gte("schedule_date", startDate)
+      .lte("schedule_date", endDate)
+      .not("technician", "is", null)
+      .not("onsite_arrived_at", "is", null)
+      .not("onsite_done_at", "is", null)
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) {
+      console.error("getTechCompletedCandidates (on-site fallback) error:", error.message);
+      break;
+    }
+    onsiteRows.push(...(page ?? []));
+    if (!page || page.length < PAGE_SIZE) break;
+  }
+
+  if (completed.length === 0 && onsiteRows.length === 0) return [];
+
+  const visitTicketIds = Array.from(new Set(completed.map((r: any) => r.ticket_id).filter(Boolean)));
+  const allTicketIds = Array.from(new Set([...visitTicketIds, ...onsiteRows.map((t: any) => t.id)]));
   const [{ data: ticketRows, error: tErr }, { data: excludedRows, error: exErr }] = await Promise.all([
-    supabase.from("tickets").select("id, location, redo").in("id", ticketIds),
+    visitTicketIds.length
+      ? supabase.from("tickets").select("id, ticket_no, location, redo").in("id", visitTicketIds)
+      : Promise.resolve({ data: [] as any[], error: null }),
     // Tickets Finance has put on hold for payroll via the Mileage tab's On
     // Hold action (migration 0148) — while flagged, a ticket that's
     // genuinely completed still never counts toward pay, but it's
-    // reversible. Same "skip this ticket_id" treatment as redo below.
-    supabase.from("mileage_entries").select("ticket_id").eq("payroll_excluded", true).in("ticket_id", ticketIds),
+    // reversible. Same "skip this ticket_id" treatment as redo.
+    allTicketIds.length
+      ? supabase.from("mileage_entries").select("ticket_id").eq("payroll_excluded", true).in("ticket_id", allTicketIds)
+      : Promise.resolve({ data: [] as any[], error: null }),
   ]);
-  if (tErr) console.error("getTechCompletedRepairCounts (ticket location) error:", tErr.message);
-  if (exErr) console.error("getTechCompletedRepairCounts (payroll exclusions) error:", exErr.message);
-  const locationByTicket = new Map((ticketRows ?? []).map((t: any) => [t.id, t.location || ""]));
-  const redoByTicket = new Map((ticketRows ?? []).map((t: any) => [t.id, !!t.redo]));
+  if (tErr) console.error("getTechCompletedCandidates (ticket lookup) error:", tErr.message);
+  if (exErr) console.error("getTechCompletedCandidates (payroll exclusions) error:", exErr.message);
+  const ticketById = new Map((ticketRows ?? []).map((t: any) => [t.id, t]));
   const excludedTicketIds = new Set((excludedRows ?? []).map((r: any) => r.ticket_id));
 
-  const counts = new Map<string, TechRepairCount>();
+  // Any ticket_id that shows up here at all (even once) already has a real
+  // Visit Log completion — the on-site fallback below must never also add
+  // it, however many completed visits it has.
+  const visitTicketIdSet = new Set(visitTicketIds);
+
+  const out: TechCompletedCandidate[] = [];
   for (const r of completed as any[]) {
-    if (redoByTicket.get(r.ticket_id)) continue;
-    if (excludedTicketIds.has(r.ticket_id)) continue;
-    const technician = String(r.technician).trim();
-    const repairType = String(r.repair_type || "").trim() || DEFAULT_REPAIR_TYPE;
-    const branch = locationByTicket.get(r.ticket_id) || "";
-    const key = `${technician}|${repairType}|${branch}`;
+    const ticket = ticketById.get(r.ticket_id);
+    out.push({
+      ticketId: r.ticket_id,
+      ticketNo: ticket?.ticket_no || "",
+      technician: String(r.technician).trim(),
+      repairType: String(r.repair_type || "").trim() || DEFAULT_REPAIR_TYPE,
+      location: ticket?.location || "",
+      redo: !!ticket?.redo,
+      onHold: excludedTicketIds.has(r.ticket_id),
+    });
+  }
+  for (const t of onsiteRows) {
+    if (visitTicketIdSet.has(t.id)) continue; // already has a real Visit Log completion
+    out.push({
+      ticketId: t.id,
+      ticketNo: t.ticket_no || "",
+      technician: String(t.technician).trim(),
+      repairType: null,
+      location: t.location || "",
+      redo: !!t.redo,
+      onHold: excludedTicketIds.has(t.id),
+    });
+  }
+  return out;
+}
+
+/**
+ * Completed-repair counts per technician for a payroll period, grouped by
+ * repair_type + branch so the caller can look up each group's rate and
+ * multiply by count. See getTechCompletedCandidates for what counts as
+ * "completed."
+ *
+ * Redo tickets (tickets.redo — a manager-flagged re-dispatch of a prior
+ * failed repair) don't count toward the technician's paid completed total,
+ * same as the legacy per-tech payroll report's "Redo Reduction" line —
+ * excluded outright here rather than counted then subtracted, since this
+ * model pays per repair_type bucket rather than one flat completed-count
+ * rate. Same treatment for a ticket on hold for payroll (see
+ * TechCompletedCandidate.onHold) — see getTechOnHoldTickets for the visible
+ * list of which tickets that excludes.
+ */
+export async function getTechCompletedRepairCounts(
+  startDate: string,
+  endDate: string
+): Promise<TechRepairCount[]> {
+  const candidates = await getTechCompletedCandidates(startDate, endDate);
+  const counts = new Map<string, TechRepairCount>();
+  for (const c of candidates) {
+    if (c.redo || c.onHold) continue;
+    const repairType = c.repairType ?? DEFAULT_REPAIR_TYPE;
+    const key = `${c.technician}|${repairType}|${c.location}`;
     const prev = counts.get(key);
     if (prev) prev.count += 1;
-    else counts.set(key, { technician, repairType, branch, count: 1 });
+    else counts.set(key, { technician: c.technician, repairType, branch: c.location, count: 1 });
   }
   return Array.from(counts.values());
 }
 
-/** One redo'd ticket a technician's completed visit was excluded for — Tech Activity Report's Redo list. */
+/** One ticket a technician's completion was excluded for — Tech Activity Report's Redo / On Hold lists. */
 export interface TechRedoTicket {
   ticketId: string;
   ticketNo: string;
 }
 
 /**
- * The completed-but-redo-excluded tickets behind getTechCompletedRepairCounts'
- * "Redo Reduction" line — same query and same completed/redo rules, just
- * returning the excluded tickets themselves (with their ticket_no, for the
- * Tech Activity Report modal's clickable Redo list) instead of counting them
- * into a rate bucket.
+ * Distinct tickets behind getTechCompletedRepairCounts' "Redo Reduction"
+ * line — every completed ticket (per getTechCompletedCandidates) flagged
+ * tickets.redo, deduped to one entry per ticket even if it had multiple
+ * completed visits. Keeping this in sync with getTechCompletedRepairCounts'
+ * own exclusion matters for more than the list itself: the modal displays
+ * "grossCompleted − redoTickets.length = ticketsCompleted", so a technician
+ * whose redo tickets were only caught by the on-site-timestamp fallback
+ * would otherwise show "Redo Reduction: 0" while ticketsCompleted quietly
+ * came out lower than the gross count anyway — correct pay, but an
+ * inexplicable-looking gap.
  */
 export async function getTechRedoTickets(startDate: string, endDate: string): Promise<Map<string, TechRedoTicket[]>> {
+  const candidates = await getTechCompletedCandidates(startDate, endDate);
+  return groupExcludedTickets(candidates, (c) => c.redo);
+}
+
+/**
+ * Distinct tickets behind an "On Hold Reduction" line, sibling to Redo
+ * Reduction above: every completed ticket (per getTechCompletedCandidates)
+ * currently on hold for payroll via the Mileage tab (manual, or the
+ * automatic "no photos yet" rule), excluding anything already accounted for
+ * as a redo — a ticket only ever shows up in one of the two lists, matching
+ * getTechCompletedRepairCounts' own precedence (redo is checked first).
+ * Without this, "did the work but the pay isn't showing" reads as a bug
+ * instead of the reversible, expected hold it actually is.
+ */
+export async function getTechOnHoldTickets(startDate: string, endDate: string): Promise<Map<string, TechRedoTicket[]>> {
+  const candidates = await getTechCompletedCandidates(startDate, endDate);
+  return groupExcludedTickets(candidates, (c) => !c.redo && c.onHold);
+}
+
+/** Shared grouping/dedup for getTechRedoTickets / getTechOnHoldTickets — one entry per (technician, ticket), keyed by lowercased technician name. */
+function groupExcludedTickets(
+  candidates: TechCompletedCandidate[],
+  matches: (c: TechCompletedCandidate) => boolean
+): Map<string, TechRedoTicket[]> {
   const out = new Map<string, TechRedoTicket[]>();
-  if (!startDate || !endDate) return out;
-  const data: any[] = [];
-  for (let from = 0; ; from += PAGE_SIZE) {
-    const { data: page, error } = await supabase
-      .from("visits")
-      .select("ticket_id, technician, repair_status")
-      .gte("schedule_date", startDate)
-      .lte("schedule_date", endDate)
-      .not("technician", "is", null)
-      .range(from, from + PAGE_SIZE - 1);
-    if (error) {
-      console.error("getTechRedoTickets error:", error.message);
-      return out;
-    }
-    data.push(...(page ?? []));
-    if (!page || page.length < PAGE_SIZE) break;
-  }
-  const completed = (data ?? []).filter(
-    (r: any) => String(r.technician || "").trim() && statusGroupOf(r.repair_status || "") === "completed"
-  );
-  if (completed.length === 0) return out;
-
-  const ticketIds = Array.from(new Set(completed.map((r: any) => r.ticket_id).filter(Boolean)));
-  const { data: ticketRows, error: tErr } = await supabase
-    .from("tickets")
-    .select("id, ticket_no, redo")
-    .in("id", ticketIds);
-  if (tErr) console.error("getTechRedoTickets (ticket lookup) error:", tErr.message);
-  const ticketById = new Map((ticketRows ?? []).map((t: any) => [t.id, t]));
-
   const seen = new Set<string>();
-  for (const r of completed as any[]) {
-    const ticket = ticketById.get(r.ticket_id);
-    if (!ticket?.redo) continue;
-    const dedupeKey = `${String(r.technician).trim().toLowerCase()}|${r.ticket_id}`;
+  for (const c of candidates) {
+    if (!matches(c)) continue;
+    const technician = c.technician.toLowerCase();
+    const dedupeKey = `${technician}|${c.ticketId}`;
     if (seen.has(dedupeKey)) continue;
     seen.add(dedupeKey);
-    const technician = String(r.technician).trim().toLowerCase();
     const list = out.get(technician) ?? [];
-    list.push({ ticketId: ticket.id, ticketNo: ticket.ticket_no || "" });
+    list.push({ ticketId: c.ticketId, ticketNo: c.ticketNo });
     out.set(technician, list);
   }
   return out;
@@ -410,14 +514,20 @@ export async function getTechAssistedTickets(startDate: string, endDate: string)
 }
 
 /**
- * Every visit assigned to a technician within a period, regardless of
- * outcome (completed, cancelled, still open) — for the Tech Payroll tab's
- * Assigned/Completed/Ratio/Avg. Comp. columns. Unlike
- * getTechCompletedRepairCounts this doesn't need repair_type/branch/redo
- * detail, just a per-technician total. Keyed by lowercased/trimmed
- * technician name — same free-text-match convention as everywhere else
- * visits.technician gets matched against a real profile (e.g.
- * AccountingDashboard.tsx's employeeByName).
+ * Every ticket assigned to a technician within a period, regardless of
+ * outcome (completed, cancelled, still open, never even visited) — for the
+ * Tech Payroll tab's Assigned/Completed/Ratio/Avg. Comp. columns. Ticket-
+ * based (tickets.technician + schedule_date), NOT visits-based: a `visits`
+ * row only exists once someone actually files a Visit Log entry, so counting
+ * from `visits` silently dropped every ticket that was scheduled to a
+ * technician but never got a visit logged (whether or not the technician
+ * actually went — see getTechCompletedRepairCounts' on-site-timestamp
+ * fallback for the completed side of that same gap). This mirrors
+ * getTicketAttendanceForTechnician / ticketStatsByDate's "Scheduled" column
+ * on the Employee Payroll Detail modal exactly, so the two views agree.
+ * Keyed by lowercased/trimmed technician name — same free-text-match
+ * convention as everywhere else this field gets matched against a real
+ * profile (e.g. AccountingDashboard.tsx's employeeByName).
  */
 export async function getTechAssignedCounts(startDate: string, endDate: string): Promise<Map<string, number>> {
   const counts = new Map<string, number>();
@@ -425,7 +535,7 @@ export async function getTechAssignedCounts(startDate: string, endDate: string):
   const data: any[] = [];
   for (let from = 0; ; from += PAGE_SIZE) {
     const { data: page, error } = await supabase
-      .from("visits")
+      .from("tickets")
       .select("technician")
       .gte("schedule_date", startDate)
       .lte("schedule_date", endDate)
