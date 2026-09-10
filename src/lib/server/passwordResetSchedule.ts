@@ -1,13 +1,17 @@
 /**
  * Automatic weekly password reset — every Monday at 00:00 America/Chicago,
- * flips must_change_password to true for every active profile, company by
- * company. Same flag/effect as AdminUserManagementPage.tsx's "Reset All
- * Passwords" bulk action (which calls setMustChangePassword — see
- * src/lib/supabase/users.ts) and the individual "Reset Password" action,
- * just run automatically instead of an admin clicking the button — the
- * user keeps logging in with their existing password, then __root.tsx's
- * MustChangePasswordGate sends them to /profile to set a new one before
- * they can reach any dashboard (see migration 0103).
+ * flips must_change_password to true for every active profile in every
+ * company that hasn't opted out (companies.settings.weeklyPasswordResetEnabled
+ * — see set_company_weekly_password_reset RPC / companySettings.ts, toggled
+ * from AdminUserManagementPage.tsx next to the Activity Log button; absent
+ * or true means still enrolled). Same flag/effect as
+ * AdminUserManagementPage.tsx's "Reset All Passwords" bulk action (which
+ * calls setMustChangePassword — see src/lib/supabase/users.ts) and the
+ * individual "Reset Password" action, just run automatically instead of an
+ * admin clicking the button — the user keeps logging in with their
+ * existing password, then __root.tsx's MustChangePasswordGate sends them
+ * to /profile to set a new one before they can reach any dashboard (see
+ * migration 0103).
  *
  * Dispatched from the EXISTING hourly cron (see src/server.ts's
  * scheduled(), event.cron === "0 * * * *") rather than a separate cron
@@ -51,7 +55,25 @@ export async function runWeeklyPasswordReset(
   const envResult = readEnv(env);
   if ("error" in envResult) return { ok: false, error: envResult.error };
 
-  const res = await fetch(`${envResult.supabaseUrl}/rest/v1/profiles?is_active=eq.true`, {
+  // Per-company opt-out (companies.settings.weeklyPasswordResetEnabled,
+  // see set_company_weekly_password_reset RPC / companySettings.ts) — a
+  // company that's turned this off is excluded entirely; absent/true means
+  // still enrolled, same default as before this setting existed.
+  const companiesRes = await fetch(`${envResult.supabaseUrl}/rest/v1/companies?select=id,settings`, {
+    headers: {
+      apikey: envResult.supabaseServiceKey,
+      Authorization: `Bearer ${envResult.supabaseServiceKey}`,
+    },
+  });
+  if (!companiesRes.ok) return { ok: false, error: `companies fetch failed (${companiesRes.status}): ${await companiesRes.text()}` };
+  const companies = (await companiesRes.json()) as Array<{ id: string; settings: Record<string, unknown> | null }>;
+  const enrolledCompanyIds = companies
+    .filter((c) => c.settings?.weeklyPasswordResetEnabled !== false)
+    .map((c) => c.id);
+  if (enrolledCompanyIds.length === 0) return { ok: true, updated: 0 };
+
+  const companyFilter = `company_id=in.(${enrolledCompanyIds.join(",")})`;
+  const res = await fetch(`${envResult.supabaseUrl}/rest/v1/profiles?is_active=eq.true&${companyFilter}`, {
     method: "PATCH",
     headers: {
       apikey: envResult.supabaseServiceKey,

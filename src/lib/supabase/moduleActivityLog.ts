@@ -36,6 +36,8 @@ export const MODULE_ACTIVITY_ACTION_LABELS: Record<string, string> = {
   working_hours_template_saved: "Saved branch/role working-hours template",
   profile_self_updated: "Updated own profile",
   password_self_changed: "Changed own password",
+  weekly_password_reset_enabled: "Turned on weekly forced password change",
+  weekly_password_reset_disabled: "Turned off weekly forced password change",
 };
 
 export function moduleActivityActionLabel(action: string): string {
