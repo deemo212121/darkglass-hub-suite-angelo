@@ -7995,6 +7995,42 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     return { label: "Awaiting Completion", className: "bg-yellow-500/20 text-yellow-300" };
   };
 
+  // Click a column header to sort by it; click the same one again to flip
+  // direction. Defaults to the same newest-first order signedFormRows
+  // itself is already built in, so "no sort chosen yet" looks identical to
+  // today's behavior.
+  type SignedFormsSortColumn = "name" | "form" | "sentBy" | "status" | "sent";
+  const [signedFormsSortColumn, setSignedFormsSortColumn] = useState<SignedFormsSortColumn | null>(null);
+  const [signedFormsSortDir, setSignedFormsSortDir] = useState<"asc" | "desc">("asc");
+  const handleSignedFormsSort = (column: SignedFormsSortColumn) => {
+    if (signedFormsSortColumn === column) {
+      setSignedFormsSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSignedFormsSortColumn(column);
+      setSignedFormsSortDir("asc");
+    }
+  };
+  const sortedSignedFormRows = useMemo(() => {
+    if (!signedFormsSortColumn) return filteredSignedFormRows;
+    const key = (row: { doc: SignableDocument; formLabel: string }): string | number => {
+      switch (signedFormsSortColumn) {
+        case "name": return signedFormNameOf(row.doc).toLowerCase();
+        case "form": return row.formLabel.toLowerCase();
+        case "sentBy": return (row.doc.createdByName ?? "").toLowerCase();
+        case "status": return signedFormStatusLabel(row).label.toLowerCase();
+        case "sent": return new Date(row.doc.createdAt).getTime();
+      }
+    };
+    const dir = signedFormsSortDir === "asc" ? 1 : -1;
+    return [...filteredSignedFormRows].sort((a, b) => {
+      const ka = key(a), kb = key(b);
+      if (ka < kb) return -1 * dir;
+      if (ka > kb) return 1 * dir;
+      return 0;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filteredSignedFormRows, signedFormsSortColumn, signedFormsSortDir]);
+
   const [signedFormPreview, setSignedFormPreview] = useState<{ doc: SignableDocument; formLabel: string } | null>(null);
 
   const handleDownloadSignedForm = async (row: { doc: SignableDocument; formLabel: string }) => {
@@ -13899,19 +13935,37 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-white/10 bg-white/5">
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Name</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Form</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent By</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Status</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent</th>
+                {([
+                  ["name", "Name"],
+                  ["form", "Form"],
+                  ["sentBy", "Sent By"],
+                  ["status", "Status"],
+                  ["sent", "Sent"],
+                ] as [SignedFormsSortColumn, string][]).map(([column, label]) => (
+                  <th
+                    key={column}
+                    onClick={() => handleSignedFormsSort(column)}
+                    title={`Sort by ${label}`}
+                    className="px-4 py-3 text-left text-xs text-muted-foreground uppercase cursor-pointer select-none hover:text-foreground"
+                  >
+                    <span className="inline-flex items-center gap-1">
+                      {label}
+                      {signedFormsSortColumn === column ? (
+                        signedFormsSortDir === "asc" ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />
+                      ) : (
+                        <ChevronDown className="h-3 w-3 opacity-20" />
+                      )}
+                    </span>
+                  </th>
+                ))}
                 <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Document</th>
               </tr>
             </thead>
             <tbody>
-              {filteredSignedFormRows.length === 0 ? (
+              {sortedSignedFormRows.length === 0 ? (
                 <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">{signedFormRows.length === 0 ? "No signed forms sent yet." : "No forms match these filters."}</td></tr>
               ) : (
-                filteredSignedFormRows.map((row) => {
+                sortedSignedFormRows.map((row) => {
                   const status = signedFormStatusLabel(row);
                   return (
                     <tr key={row.doc.id} className="border-b border-white/5 hover:bg-white/5">
