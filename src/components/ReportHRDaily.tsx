@@ -56,6 +56,7 @@ import {
 } from "@/lib/supabase/onboardingDocumentColumns";
 import { uploadCoeCertificate, uploadWarningForm, uploadPromotionForm, uploadActionPlanForm, uploadTerminationForm, uploadW8benForm, uploadW4Form, uploadW4RForm, uploadI9Form, uploadWageAckForm, uploadCarIqAgreementForm, uploadVehicleAgreementForm, uploadEmployeeConfidentialityForm, uploadMealRestBreakForm, uploadPtoAckForm, uploadPartsResponsibilityForm, uploadMileageFuelForm, uploadLocationConsentForm, uploadDamageForm, uploadContractorDataForm, uploadDirectDepositForm, uploadSubstanceScreeningForm, uploadFlashTechnicianTravelForm, uploadContractorAddendumForm, uploadSignableDocumentSignature, refreshStorageAuthToken } from "@/lib/firebase/storage";
 import { captureHtmlToPdfBlob, captureHtmlPagesToPdfBlob, loadAssetDataUrl as loadImageDataUrl } from "@/lib/pdfCapture";
+import { downloadSignableDocumentPdf } from "@/lib/downloadSignableDocumentPdf";
 import {
   createSignableDocument,
   getSignableDocuments,
@@ -2622,18 +2623,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const handleDownloadWarningFormPdf = async (doc: SignableDocument) => {
     if (!doc.pdfUrl) return;
     const employeeName = (doc.formData as unknown as WarningFormData).employeeName || "warning-form";
-    try {
-      const res = await fetch(doc.pdfUrl);
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = `Employee Warning Form - ${employeeName}.pdf`;
-      a.click();
-      URL.revokeObjectURL(blobUrl);
-    } catch {
-      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
-    }
+    await downloadSignableDocumentPdf(doc.pdfUrl, `Employee Warning Form - ${employeeName}.pdf`);
   };
 
   // ── W-8BEN — HR just picks a recipient; the recipient fills in their own
@@ -2823,18 +2813,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const handleDownloadW8benPdf = async (doc: SignableDocument) => {
     if (!doc.pdfUrl) return;
     const employeeName = (doc.formData as Partial<W8benFormData>).employeeName || "w8ben-form";
-    try {
-      const res = await fetch(doc.pdfUrl);
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = `W-8BEN - ${employeeName}.pdf`;
-      a.click();
-      URL.revokeObjectURL(blobUrl);
-    } catch {
-      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
-    }
+    await downloadSignableDocumentPdf(doc.pdfUrl, `W-8BEN - ${employeeName}.pdf`);
   };
 
   const handleDeleteW8ben = async (doc: SignableDocument) => {
@@ -3058,18 +3037,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     if (!doc.pdfUrl) return;
     const data = doc.formData as Partial<W4FormData>;
     const employeeName = `${data.firstNameMiddleInitial ?? ""} ${data.lastName ?? ""}`.trim() || "w4-form";
-    try {
-      const res = await fetch(doc.pdfUrl);
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = `W-4 - ${employeeName}.pdf`;
-      a.click();
-      URL.revokeObjectURL(blobUrl);
-    } catch {
-      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
-    }
+    await downloadSignableDocumentPdf(doc.pdfUrl, `W-4 - ${employeeName}.pdf`);
   };
 
   const handleDeleteW4 = async (doc: SignableDocument) => {
@@ -3262,18 +3230,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     if (!doc.pdfUrl) return;
     const data = doc.formData as Partial<W9FormData>;
     const name = data.name || "w9-form";
-    try {
-      const res = await fetch(doc.pdfUrl);
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = `W-9 - ${name}.pdf`;
-      a.click();
-      URL.revokeObjectURL(blobUrl);
-    } catch {
-      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
-    }
+    await downloadSignableDocumentPdf(doc.pdfUrl, `W-9 - ${name}.pdf`);
   };
 
   const handleDeleteW9 = async (doc: SignableDocument) => {
@@ -3454,18 +3411,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     if (!doc.pdfUrl) return;
     const data = doc.formData as Partial<W4RFormData>;
     const name = `${data.firstNameMiddleInitial ?? ""} ${data.lastName ?? ""}`.trim() || "w4r-form";
-    try {
-      const res = await fetch(doc.pdfUrl);
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = `W-4R - ${name}.pdf`;
-      a.click();
-      URL.revokeObjectURL(blobUrl);
-    } catch {
-      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
-    }
+    await downloadSignableDocumentPdf(doc.pdfUrl, `W-4R - ${name}.pdf`);
   };
 
   const handleDeleteW4R = async (doc: SignableDocument) => {
@@ -3893,18 +3839,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const handleDownloadWageAckPdf = async (doc: SignableDocument) => {
     if (!doc.pdfUrl) return;
     const name = (doc.formData as Partial<WageAckFormData>).employeeName || doc.recipientName || "acknowledgment-of-wage";
-    try {
-      const res = await fetch(doc.pdfUrl);
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = `Acknowledgment of Wage - ${name}.pdf`;
-      a.click();
-      URL.revokeObjectURL(blobUrl);
-    } catch {
-      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
-    }
+    await downloadSignableDocumentPdf(doc.pdfUrl, `Acknowledgment of Wage - ${name}.pdf`);
   };
 
   // Redo the employer signature only — the employee's original signature/
@@ -4181,18 +4116,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const handleDownloadMealRestBreakPdf = async (doc: SignableDocument) => {
     if (!doc.pdfUrl) return;
     const name = (doc.formData as Partial<MealRestBreakFormData>).employeeName || doc.recipientName || "meal-rest-break";
-    try {
-      const res = await fetch(doc.pdfUrl);
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = `Meal and Rest Break Acknowledgment - ${name}.pdf`;
-      a.click();
-      URL.revokeObjectURL(blobUrl);
-    } catch {
-      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
-    }
+    await downloadSignableDocumentPdf(doc.pdfUrl, `Meal and Rest Break Acknowledgment - ${name}.pdf`);
   };
 
   const handleReopenMealRestBreakEmployer = async (doc: SignableDocument) => {
@@ -4455,18 +4379,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const handleDownloadCarIqPdf = async (doc: SignableDocument) => {
     if (!doc.pdfUrl) return;
     const name = (doc.formData as Partial<CarIqAgreementFormData>).employeeName || doc.recipientName || "car-iq-agreement";
-    try {
-      const res = await fetch(doc.pdfUrl);
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = `Car IQ Technician Agreement - ${name}.pdf`;
-      a.click();
-      URL.revokeObjectURL(blobUrl);
-    } catch {
-      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
-    }
+    await downloadSignableDocumentPdf(doc.pdfUrl, `Car IQ Technician Agreement - ${name}.pdf`);
   };
 
   const handleDeleteCarIqAgreement = async (doc: SignableDocument) => {
@@ -4650,18 +4563,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const handleDownloadVehiclePdf = async (doc: SignableDocument) => {
     if (!doc.pdfUrl) return;
     const name = (doc.formData as Partial<VehicleAgreementFormData>).employeeName || doc.recipientName || "vehicle-agreement";
-    try {
-      const res = await fetch(doc.pdfUrl);
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = `Company Vehicle Use Agreement - ${name}.pdf`;
-      a.click();
-      URL.revokeObjectURL(blobUrl);
-    } catch {
-      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
-    }
+    await downloadSignableDocumentPdf(doc.pdfUrl, `Company Vehicle Use Agreement - ${name}.pdf`);
   };
 
   const handleDeleteVehicleAgreement = async (doc: SignableDocument) => {
@@ -4844,18 +4746,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const handleDownloadConfidentialityPdf = async (doc: SignableDocument) => {
     if (!doc.pdfUrl) return;
     const name = (doc.formData as Partial<EmployeeConfidentialityFormData>).employeeName || doc.recipientName || "employee-confidentiality";
-    try {
-      const res = await fetch(doc.pdfUrl);
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = `Employee Confidentiality Agreement - ${name}.pdf`;
-      a.click();
-      URL.revokeObjectURL(blobUrl);
-    } catch {
-      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
-    }
+    await downloadSignableDocumentPdf(doc.pdfUrl, `Employee Confidentiality Agreement - ${name}.pdf`);
   };
 
   const handleDeleteConfidentiality = async (doc: SignableDocument) => {
@@ -5043,18 +4934,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const handleDownloadNdaPdf = async (doc: SignableDocument) => {
     if (!doc.pdfUrl) return;
     const name = (doc.formData as { employeeName?: string }).employeeName || doc.recipientName || "nda-form";
-    try {
-      const res = await fetch(doc.pdfUrl);
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = `Non-Disclosure Agreement - ${name}.pdf`;
-      a.click();
-      URL.revokeObjectURL(blobUrl);
-    } catch {
-      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
-    }
+    await downloadSignableDocumentPdf(doc.pdfUrl, `Non-Disclosure Agreement - ${name}.pdf`);
   };
 
   const handleDeleteNda = async (doc: SignableDocument) => {
@@ -5234,18 +5114,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const handleDownloadSubstanceScreeningPdf = async (doc: SignableDocument) => {
     if (!doc.pdfUrl) return;
     const name = (doc.formData as Partial<SubstanceScreeningFormData>).employeeName || doc.recipientName || "substance-screening";
-    try {
-      const res = await fetch(doc.pdfUrl);
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = `Substance Screening & Conduct Agreement - ${name}.pdf`;
-      a.click();
-      URL.revokeObjectURL(blobUrl);
-    } catch {
-      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
-    }
+    await downloadSignableDocumentPdf(doc.pdfUrl, `Substance Screening & Conduct Agreement - ${name}.pdf`);
   };
 
   const handleDeleteSubstanceScreening = async (doc: SignableDocument) => {
@@ -5509,18 +5378,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const handleDownloadPtoAckPdf = async (doc: SignableDocument) => {
     if (!doc.pdfUrl) return;
     const name = (doc.formData as Partial<PtoAckFormData>).employeeName || doc.recipientName || "pto-ack";
-    try {
-      const res = await fetch(doc.pdfUrl);
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = `PTO and Sick Leave Policy Acknowledgment - ${name}.pdf`;
-      a.click();
-      URL.revokeObjectURL(blobUrl);
-    } catch {
-      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
-    }
+    await downloadSignableDocumentPdf(doc.pdfUrl, `PTO and Sick Leave Policy Acknowledgment - ${name}.pdf`);
   };
 
   const handleDeletePtoAck = async (doc: SignableDocument) => {
@@ -5715,18 +5573,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const handleDownloadPartsResponsibilityPdf = async (doc: SignableDocument) => {
     if (!doc.pdfUrl) return;
     const name = (doc.formData as Partial<PartsResponsibilityFormData>).employeeName || doc.recipientName || "parts-responsibility";
-    try {
-      const res = await fetch(doc.pdfUrl);
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = `Parts Responsibility and Floor Protection Acknowledgment - ${name}.pdf`;
-      a.click();
-      URL.revokeObjectURL(blobUrl);
-    } catch {
-      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
-    }
+    await downloadSignableDocumentPdf(doc.pdfUrl, `Parts Responsibility and Floor Protection Acknowledgment - ${name}.pdf`);
   };
 
   const handleReopenPartsResponsibilityManager = async (doc: SignableDocument) => {
@@ -6000,18 +5847,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const handleDownloadMileageFuelPdf = async (doc: SignableDocument) => {
     if (!doc.pdfUrl) return;
     const name = (doc.formData as Partial<MileageFuelFormData>).employeeName || doc.recipientName || "mileage-fuel";
-    try {
-      const res = await fetch(doc.pdfUrl);
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = `Personal Vehicle Mileage and Fuel Policy Agreement - ${name}.pdf`;
-      a.click();
-      URL.revokeObjectURL(blobUrl);
-    } catch {
-      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
-    }
+    await downloadSignableDocumentPdf(doc.pdfUrl, `Personal Vehicle Mileage and Fuel Policy Agreement - ${name}.pdf`);
   };
 
   const handleReopenMileageFuelEmployer = async (doc: SignableDocument) => {
@@ -6279,18 +6115,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const handleDownloadFlashTechnicianTravelPdf = async (doc: SignableDocument) => {
     if (!doc.pdfUrl) return;
     const name = (doc.formData as Partial<FlashTechnicianTravelFormData>).employeeName || doc.recipientName || "flash-technician-travel";
-    try {
-      const res = await fetch(doc.pdfUrl);
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = `Flash Technician Travel & Out-of-State Policy - ${name}.pdf`;
-      a.click();
-      URL.revokeObjectURL(blobUrl);
-    } catch {
-      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
-    }
+    await downloadSignableDocumentPdf(doc.pdfUrl, `Flash Technician Travel & Out-of-State Policy - ${name}.pdf`);
   };
 
   const handleReopenFlashTechnicianTravelEmployer = async (doc: SignableDocument) => {
@@ -6551,17 +6376,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const handleDownloadContractorAddendumPdf = async (doc: SignableDocument) => {
     if (!doc.pdfUrl) return;
     const name = (doc.formData as ContractorAddendumFormData).signerNames?.employee || doc.recipientName || "contractor-addendum";
-    try {
-      const res = await fetch(doc.pdfUrl);
-      const blobUrl = URL.createObjectURL(await res.blob());
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = `Master Independent Contractor Subcontractor Agreement Addendum - ${name}.pdf`;
-      a.click();
-      URL.revokeObjectURL(blobUrl);
-    } catch {
-      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
-    }
+    await downloadSignableDocumentPdf(doc.pdfUrl, `Master Independent Contractor Subcontractor Agreement Addendum - ${name}.pdf`);
   };
 
   const handleDeleteContractorAddendum = async (doc: SignableDocument) => {
@@ -6854,18 +6669,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const handleDownloadLocationConsentPdf = async (doc: SignableDocument) => {
     if (!doc.pdfUrl) return;
     const name = (doc.formData as Partial<LocationConsentFormData>).employeeName || doc.recipientName || "location-consent";
-    try {
-      const res = await fetch(doc.pdfUrl);
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = `Location Sharing Consent Agreement - ${name}.pdf`;
-      a.click();
-      URL.revokeObjectURL(blobUrl);
-    } catch {
-      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
-    }
+    await downloadSignableDocumentPdf(doc.pdfUrl, `Location Sharing Consent Agreement - ${name}.pdf`);
   };
 
   const handleReopenLocationConsentEmployer = async (doc: SignableDocument) => {
@@ -7134,18 +6938,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const handleDownloadDamagePdf = async (doc: SignableDocument) => {
     if (!doc.pdfUrl) return;
     const name = (doc.formData as Partial<DamageFormData>).employeeName || doc.recipientName || "damage";
-    try {
-      const res = await fetch(doc.pdfUrl);
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = `Damage Agreement - ${name}.pdf`;
-      a.click();
-      URL.revokeObjectURL(blobUrl);
-    } catch {
-      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
-    }
+    await downloadSignableDocumentPdf(doc.pdfUrl, `Damage Agreement - ${name}.pdf`);
   };
 
   const handleReopenDamageEmployer = async (doc: SignableDocument) => {
@@ -7430,18 +7223,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const handleDownloadContractorDataPdf = async (doc: SignableDocument) => {
     if (!doc.pdfUrl) return;
     const name = (doc.formData as Partial<ContractorDataFormData>).employeeName || doc.recipientName || "employee-data";
-    try {
-      const res = await fetch(doc.pdfUrl);
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = `Employee Data - ${name}.pdf`;
-      a.click();
-      URL.revokeObjectURL(blobUrl);
-    } catch {
-      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
-    }
+    await downloadSignableDocumentPdf(doc.pdfUrl, `Employee Data - ${name}.pdf`);
   };
 
   const handleDeleteContractorData = async (doc: SignableDocument) => {
@@ -7649,18 +7431,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const handleDownloadContractorDataUsPdf = async (doc: SignableDocument) => {
     if (!doc.pdfUrl) return;
     const name = (doc.formData as Partial<ContractorDataUsFormData>).employeeName || doc.recipientName || "contractor-data-us";
-    try {
-      const res = await fetch(doc.pdfUrl);
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = `Contractor Data (US) - ${name}.pdf`;
-      a.click();
-      URL.revokeObjectURL(blobUrl);
-    } catch {
-      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
-    }
+    await downloadSignableDocumentPdf(doc.pdfUrl, `Contractor Data (US) - ${name}.pdf`);
   };
 
   const handleDeleteContractorDataUs = async (doc: SignableDocument) => {
@@ -7844,18 +7615,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const handleDownloadVehicleUseAgreementPdf = async (doc: SignableDocument) => {
     if (!doc.pdfUrl) return;
     const name = (doc.formData as Partial<VehicleUseAgreementFormData>).employeeName || doc.recipientName || "vehicle-use-agreement";
-    try {
-      const res = await fetch(doc.pdfUrl);
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = `Vehicle Use Agreement - ${name}.pdf`;
-      a.click();
-      URL.revokeObjectURL(blobUrl);
-    } catch {
-      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
-    }
+    await downloadSignableDocumentPdf(doc.pdfUrl, `Vehicle Use Agreement - ${name}.pdf`);
   };
 
   const handleDeleteVehicleUseAgreement = async (doc: SignableDocument) => {
@@ -8046,18 +7806,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const handleDownloadDirectDepositPdf = async (doc: SignableDocument) => {
     if (!doc.pdfUrl) return;
     const name = (doc.formData as Partial<DirectDepositFormData>).employeeName || doc.recipientName || "direct-deposit";
-    try {
-      const res = await fetch(doc.pdfUrl);
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = `Direct Deposit Authorization - ${name}.pdf`;
-      a.click();
-      URL.revokeObjectURL(blobUrl);
-    } catch {
-      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
-    }
+    await downloadSignableDocumentPdf(doc.pdfUrl, `Direct Deposit Authorization - ${name}.pdf`);
   };
 
   const handleDeleteDirectDeposit = async (doc: SignableDocument) => {
@@ -8251,18 +8000,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const handleDownloadSignedForm = async (row: { doc: SignableDocument; formLabel: string }) => {
     if (!row.doc.pdfUrl) return;
     const name = signedFormNameOf(row.doc);
-    try {
-      const res = await fetch(row.doc.pdfUrl);
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = `${row.formLabel} - ${name}.pdf`;
-      a.click();
-      URL.revokeObjectURL(blobUrl);
-    } catch {
-      window.open(row.doc.pdfUrl, "_blank", "noopener,noreferrer");
-    }
+    await downloadSignableDocumentPdf(row.doc.pdfUrl, `${row.formLabel} - ${name}.pdf`);
   };
 
   // ── Combine Forms — pick a technician, check off which of the acknowledgment/
@@ -8486,18 +8224,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const handleDownloadI9Pdf = async (doc: SignableDocument) => {
     if (!doc.pdfUrl) return;
     const employeeName = (doc.formData as Partial<I9FormData>).employeeName || "i9-form";
-    try {
-      const res = await fetch(doc.pdfUrl);
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = `Form I-9 - ${employeeName}.pdf`;
-      a.click();
-      URL.revokeObjectURL(blobUrl);
-    } catch {
-      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
-    }
+    await downloadSignableDocumentPdf(doc.pdfUrl, `Form I-9 - ${employeeName}.pdf`);
   };
 
   const handleDeleteI9 = async (doc: SignableDocument) => {
@@ -9055,18 +8782,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const handleDownloadPromoFormPdf = async (doc: SignableDocument) => {
     if (!doc.pdfUrl) return;
     const employeeName = (doc.formData as unknown as PromotionFormData).employeeName || "promotion-form";
-    try {
-      const res = await fetch(doc.pdfUrl);
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = `Employee Promotion Form - ${employeeName}.pdf`;
-      a.click();
-      URL.revokeObjectURL(blobUrl);
-    } catch {
-      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
-    }
+    await downloadSignableDocumentPdf(doc.pdfUrl, `Employee Promotion Form - ${employeeName}.pdf`);
   };
 
   const handleCopyPromotionFormLink = async (doc: SignableDocument) => {
@@ -9468,18 +9184,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const handleDownloadActionPlanFormPdf = async (doc: SignableDocument) => {
     if (!doc.pdfUrl) return;
     const employeeName = (doc.formData as unknown as ActionPlanFormData).employeeName || "action-plan-form";
-    try {
-      const res = await fetch(doc.pdfUrl);
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = `Manager Action Plan Form - ${employeeName}.pdf`;
-      a.click();
-      URL.revokeObjectURL(blobUrl);
-    } catch {
-      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
-    }
+    await downloadSignableDocumentPdf(doc.pdfUrl, `Manager Action Plan Form - ${employeeName}.pdf`);
   };
 
   const handleCopyActionPlanFormLink = async (doc: SignableDocument) => {
@@ -9852,18 +9557,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const handleDownloadTerminationFormPdf = async (doc: SignableDocument) => {
     if (!doc.pdfUrl) return;
     const employeeName = (doc.formData as unknown as TerminationFormData).employeeName || "termination-form";
-    try {
-      const res = await fetch(doc.pdfUrl);
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = `Termination Notice - ${employeeName}.pdf`;
-      a.click();
-      URL.revokeObjectURL(blobUrl);
-    } catch {
-      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
-    }
+    await downloadSignableDocumentPdf(doc.pdfUrl, `Termination Notice - ${employeeName}.pdf`);
   };
 
   const handleCopyTerminationFormLink = async (doc: SignableDocument) => {
