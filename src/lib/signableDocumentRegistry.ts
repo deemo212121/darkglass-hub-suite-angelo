@@ -36,7 +36,7 @@ export const SIGNABLE_DOCUMENT_REGISTRY: Record<SignableDocumentType, SignableDo
   mileage_fuel: { label: "Mileage & Fuel Policy Agreement", internalPath: "/fill-mileage-fuel", externalPath: "/fill-mileage-fuel-external" },
   location_consent: { label: "Location Sharing Consent Agreement", internalPath: "/fill-location-consent", externalPath: "/fill-location-consent-external" },
   damage: { label: "Damage Agreement", internalPath: "/fill-damage", externalPath: "/fill-damage-external" },
-  contractor_data: { label: "Contractor Data", internalPath: "/fill-contractor-data", externalPath: "/fill-contractor-data-external" },
+  contractor_data: { label: "Employee Data", internalPath: "/fill-contractor-data", externalPath: "/fill-contractor-data-external" },
   contractor_data_us: { label: "Contractor Data (US)", internalPath: "/fill-contractor-data-us", externalPath: "/fill-contractor-data-us-external" },
   direct_deposit: { label: "Direct Deposit Authorization", internalPath: "/fill-direct-deposit", externalPath: "/fill-direct-deposit-external" },
   substance_screening: { label: "Substance Screening & Conduct Agreement", internalPath: "/fill-substance-screening", externalPath: "/fill-substance-screening-external" },
