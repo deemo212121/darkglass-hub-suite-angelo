@@ -7,6 +7,7 @@ import {
   SIGNABLE_DOCUMENT_REGISTRY,
   isTechnicianExemptFromForm,
   getDocumentReviewStatus,
+  pickAuthoritativeDocument,
 } from "@/lib/signableDocumentRegistry";
 
 export type SignableDocumentType = "warning_form" | "w8ben" | "w4" | "w9" | "w4r" | "i9" | "wage_ack" | "car_iq_agreement" | "vehicle_agreement" | "employee_confidentiality" | "meal_rest_break" | "pto_ack" | "parts_responsibility" | "mileage_fuel" | "location_consent" | "damage" | "contractor_data" | "contractor_data_us" | "direct_deposit" | "promotion_form" | "action_plan_form" | "termination_form" | "substance_screening" | "flash_technician_travel" | "nda_form" | "vehicle_use_agreement" | "contractor_addendum";
@@ -279,9 +280,21 @@ export async function getIncompleteTechnicianForms(profileId: string): Promise<I
     getSignableDocumentsForRecipient(profileId),
     getTechnicianFormExemptions(),
   ]);
-  const latestByType = new Map<SignableDocumentType, SignableDocument>();
+  // Group every row per type — NOT just "keep the newest" (that let a
+  // re-sent, still-pending duplicate hide an earlier row this technician
+  // had genuinely already signed/confirmed, e.g. blocking auto-unfreeze
+  // even though they'd truly finished everything). pickAuthoritativeDocument
+  // picks whichever row actually represents the best status reached.
+  const byType = new Map<SignableDocumentType, SignableDocument[]>();
   for (const d of docs) {
-    if (!latestByType.has(d.documentType)) latestByType.set(d.documentType, d);
+    const arr = byType.get(d.documentType);
+    if (arr) arr.push(d);
+    else byType.set(d.documentType, [d]);
+  }
+  const latestByType = new Map<SignableDocumentType, SignableDocument>();
+  for (const [type, group] of byType) {
+    const best = pickAuthoritativeDocument(group);
+    if (best) latestByType.set(type, best);
   }
   const incomplete: IncompleteTechForm[] = [];
   for (const type of TECHNICIAN_FORM_TYPES) {

@@ -17,7 +17,7 @@ import { useAuth } from "@/lib/auth";
 import { getCompanyUsers, getMyProfileId, setProfileFrozen, type ProfileRow } from "@/lib/supabase/users";
 import { isEligibleForTechnicianFormChecklist, getRoleDepartmentBreakdown } from "@/lib/roleLabels";
 import { getAllSignableDocuments, createSignableDocument, type SignableDocument, type SignableDocumentType } from "@/lib/supabase/signableDocuments";
-import { SIGNABLE_DOCUMENT_REGISTRY, TECHNICIAN_FORM_TYPES, getDocumentReviewStatus, isTechnicianExemptFromForm, exemptionRowValueForToggle } from "@/lib/signableDocumentRegistry";
+import { SIGNABLE_DOCUMENT_REGISTRY, TECHNICIAN_FORM_TYPES, getDocumentReviewStatus, isTechnicianExemptFromForm, exemptionRowValueForToggle, pickAuthoritativeDocument } from "@/lib/signableDocumentRegistry";
 import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
 import { getTechnicianFormExemptions, setTechnicianFormExemption } from "@/lib/supabase/technicianFormExemptions";
 import { logActivity } from "@/lib/supabase/hrActivityLog";
@@ -82,15 +82,23 @@ export function TechnicianFormChecklistPage() {
         (u) => u.is_active && isEligibleForTechnicianFormChecklist(u.role, u.extra_roles)
       );
 
-      // getAllSignableDocuments returns newest-first, so the first match
-      // per (recipientId, documentType) is the current/latest one — a
-      // resent form correctly replaces an older stale entry instead of
-      // both counting.
-      const latestByRecipientAndType = new Map<string, SignableDocument>();
+      // Group every row per (recipientId, documentType) — NOT just "keep
+      // the newest" (that let a re-sent, still-pending duplicate hide an
+      // earlier row the technician had genuinely already signed/confirmed,
+      // making a completed form show as "Not sent" again). pickAuthoritativeDocument
+      // picks whichever row actually represents the best status reached.
+      const byRecipientAndType = new Map<string, SignableDocument[]>();
       for (const d of docs) {
         if (!d.recipientId) continue;
         const key = `${d.recipientId}|${d.documentType}`;
-        if (!latestByRecipientAndType.has(key)) latestByRecipientAndType.set(key, d);
+        const arr = byRecipientAndType.get(key);
+        if (arr) arr.push(d);
+        else byRecipientAndType.set(key, [d]);
+      }
+      const latestByRecipientAndType = new Map<string, SignableDocument>();
+      for (const [key, group] of byRecipientAndType) {
+        const best = pickAuthoritativeDocument(group);
+        if (best) latestByRecipientAndType.set(key, best);
       }
 
       const next: TechRow[] = technicians.map((u) => {

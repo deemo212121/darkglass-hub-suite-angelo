@@ -131,6 +131,38 @@ export function getDocumentReviewStatus(
   return "awaiting_employee"; // pending_signature
 }
 
+const STATUS_RANK: Record<SignableDocumentStatus, number> = {
+  confirmed: 3,
+  signed: 2,
+  pending_signature: 1,
+  cancelled: 0,
+};
+
+/**
+ * When the same (recipient, documentType) has more than one
+ * hr_signable_documents row — a resend, a duplicate, an accidental
+ * re-send-and-re-sign — this picks the one that should represent their
+ * CURRENT status. Deliberately NOT "whichever was created most recently":
+ * confirmed_at/signed_at (something a caller may draw a "as of" date from
+ * separately) reflect real completion, and a later duplicate that's only
+ * sitting at pending_signature must never make an earlier, genuinely
+ * signed/confirmed row invisible — that's exactly the bug this fixes (a
+ * technician who'd already completed a form showing "Not sent" again the
+ * moment a second copy got sent). Best status wins outright; only when two
+ * rows tie on status does the newer one win, purely for determinism.
+ */
+export function pickAuthoritativeDocument<T extends { status: SignableDocumentStatus; createdAt: string }>(
+  docs: T[]
+): T | undefined {
+  if (docs.length === 0) return undefined;
+  return docs.reduce((best, d) => {
+    const rankDiff = STATUS_RANK[d.status] - STATUS_RANK[best.status];
+    if (rankDiff > 0) return d;
+    if (rankDiff < 0) return best;
+    return d.createdAt > best.createdAt ? d : best;
+  });
+}
+
 /**
  * Of TECHNICIAN_FORM_TYPES, the subset that only applies to SOME
  * technicians (Flash Technician Travel & Out-of-State Policy — only
