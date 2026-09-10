@@ -82,15 +82,30 @@ export function TechnicianFormChecklistPage() {
         (u) => u.is_active && isEligibleForTechnicianFormChecklist(u.role, u.extra_roles)
       );
 
-      // Group every row per (recipientId, documentType) — NOT just "keep
+      // Group every row per (technician, documentType) — NOT just "keep
       // the newest" (that let a re-sent, still-pending duplicate hide an
       // earlier row the technician had genuinely already signed/confirmed,
       // making a completed form show as "Not sent" again). pickAuthoritativeDocument
       // picks whichever row actually represents the best status reached.
+      //
+      // "technician" here is formData.employeeId, NOT d.recipientId —
+      // recipientId is who currently needs to ACT on the document, and gets
+      // reassigned to whichever HR staffer completes the employer/
+      // countersign step (wage_ack, damage, i9, etc. — see the
+      // "*EmployerDialog" handlers in ReportHRDaily.tsx). A fully confirmed
+      // two-party form's recipientId permanently points at that HR staffer,
+      // not the technician, so grouping by recipientId made every one of
+      // these vanish from the checklist back to "Not sent" the moment it
+      // was actually finished — confirmed live on 2026-09-10 for a
+      // technician whose confirmed Wage Ack/Substance Screening/Location
+      // Consent each had a different HR staffer's id sitting in
+      // recipientId. formData.employeeId is set once at creation and never
+      // changes, so it's the stable "whose form is this" identity.
       const byRecipientAndType = new Map<string, SignableDocument[]>();
       for (const d of docs) {
-        if (!d.recipientId) continue;
-        const key = `${d.recipientId}|${d.documentType}`;
+        const technicianId = (d.formData as Record<string, any> | undefined)?.employeeId || d.recipientId;
+        if (!technicianId) continue;
+        const key = `${technicianId}|${d.documentType}`;
         const arr = byRecipientAndType.get(key);
         if (arr) arr.push(d);
         else byRecipientAndType.set(key, [d]);

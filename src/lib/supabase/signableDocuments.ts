@@ -224,15 +224,30 @@ export async function getAllSignableDocuments(): Promise<SignableDocument[]> {
 
 /** Every signable document for one recipient, ANY type, most recent first —
  *  the frozen-account "which forms do I still need to sign" popup
- *  (FrozenAccountModal.tsx, via technicianFormStatus.ts) and any other
- *  self-service view that only needs one person's own documents. */
+ *  (FrozenAccountModal.tsx, via technicianFormStatus.ts/
+ *  getIncompleteTechnicianForms) and any other self-service view that only
+ *  needs one person's own documents.
+ *
+ *  Matches on recipient_id OR form_data->>employeeId, not recipient_id
+ *  alone — recipient_id is who currently needs to ACT on the document
+ *  (reassignSignableDocument moves it to whichever HR staffer completes the
+ *  employer/countersign step — see wage_ack/damage/i9/etc.'s "*EmployerDialog"
+ *  handlers in ReportHRDaily.tsx), so a fully confirmed two-party form
+ *  permanently loses its recipient_id link to the original technician the
+ *  moment HR finishes reviewing it. form_data.employeeId is set once at
+ *  creation by every one of those send handlers and never changes — it's
+ *  the stable "whose form is this" identity, confirmed live on 2026-09-10:
+ *  a technician's confirmed Acknowledgment of Wage/Substance Screening/
+ *  Location Consent all had recipient_id pointing at three different HR
+ *  staffers, making them invisible here (and on the Technician Form
+ *  Checklist, which has the same fix) even though they were fully done. */
 export async function getSignableDocumentsForRecipient(recipientId: string): Promise<SignableDocument[]> {
   const all: SignableDocument[] = [];
   for (let from = 0; ; from += PAGE_SIZE) {
     const { data, error } = await supabase
       .from("hr_signable_documents")
       .select(SELECT)
-      .eq("recipient_id", recipientId)
+      .or(`recipient_id.eq.${recipientId},form_data->>employeeId.eq.${recipientId}`)
       .order("created_at", { ascending: false })
       .range(from, from + PAGE_SIZE - 1);
     if (error) throw new Error(error.message);
