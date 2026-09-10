@@ -1858,7 +1858,7 @@ async function upsertTicketFromServicePowerImpl(
   // lookup throw — we just take the first row and update it.
   const { data: existingRows, error: findErr } = await supabase
     .from("tickets")
-    .select("id, customer_id, status, product_edited_by_user, source_edited_by_user, schedule_date, time_slot")
+    .select("id, customer_id, status, product_edited_by_user, source_edited_by_user, schedule_date, time_slot, technician")
     .eq("ticket_no", input.ticketNo)
     .order("created_at", { ascending: true })
     .limit(1);
@@ -1896,6 +1896,22 @@ async function upsertTicketFromServicePowerImpl(
     const existingPeriod = (existing as any).time_slot as string | null;
     if (!incomingPeriod && existingPeriod) {
       ticketPayload.time_slot = existingPeriod;
+    }
+    // A re-sync that actually moves the schedule date (the "trust SP" case
+    // above) or reassigns the technician invalidates any prior physical
+    // on-site check-in the same way a Daily Schedule drag-drop does — see
+    // updateTicketAssignment's identical rule and migration 0202. Without
+    // this, a technician's stamps from an earlier visit attempt (e.g. a
+    // callback ServicePower re-dispatched to a new date) stay attached to
+    // the ticket and get misread as a completion on whatever date the
+    // ticket now shows, including by getTechCompletedRepairCounts' on-site
+    // fallback in techPayroll.ts.
+    const finalSchedule = ticketPayload.schedule_date as string | null;
+    const finalTechnician = (ticketPayload.technician ?? null) as string | null;
+    const existingTechnician = ((existing as any).technician ?? null) as string | null;
+    if (finalSchedule !== existingSchedule || finalTechnician !== existingTechnician) {
+      ticketPayload.onsite_arrived_at = null;
+      ticketPayload.onsite_done_at = null;
     }
     // Honor the product-info lock flag: if a user edited Product Info via
     // the ticket detail page, SP must NOT overwrite their values. Drop every

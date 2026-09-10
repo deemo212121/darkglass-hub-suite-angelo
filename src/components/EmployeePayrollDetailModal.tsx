@@ -1,8 +1,8 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { X, Plus, Pencil, Check, Loader2, ExternalLink, ChevronDown, ChevronRight } from "lucide-react";
+import { X, Plus, Pencil, Check, Loader2, ExternalLink, ChevronDown, ChevronRight, Trash2 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { getAttendanceForRange, saveEntry, getProfileIdByFirebaseUid, type AttendanceRow } from "@/lib/supabase/timecards";
-import { getTicketAttendanceForTechnician, type TicketAttendanceRow } from "@/lib/supabase/technicianWhereabouts";
+import { getTicketAttendanceForTechnician, slotSortKey, type TicketAttendanceRow } from "@/lib/supabase/technicianWhereabouts";
 import { getCompanyEmployeeRequests } from "@/lib/supabase/employeeRequests";
 import { getVisitDiagnosisByTicketIds } from "@/lib/supabase/tickets";
 import { getMileageEntries, setMileageEstimateTime, setMileageLegMileage, type MileageEntry } from "@/lib/supabase/mileage";
@@ -236,12 +236,24 @@ export function EmployeePayrollDetailModal({
   }, [ticketRows, mileageByTicketNo]);
   // Full ticket rows per date, for the expanded per-day ticket table —
   // same grouping as ticketStatsByDate above, just keeping the rows instead
-  // of collapsing them to counts.
+  // of collapsing them to counts. Within a day the rows are ordered by the
+  // technician's actual route: earliest on-site Arrived stamp first, so the
+  // "#" column reads as the real visit sequence. Stops with no Arrived
+  // stamp (Missing / DID NOT GO / cancelled) sort to the bottom, keeping
+  // their scheduled time-slot order.
   const ticketRowsByDate = useMemo(() => {
     const map = new Map<string, TicketAttendanceRow[]>();
     for (const r of ticketRows) {
       if (!map.has(r.scheduleDate)) map.set(r.scheduleDate, []);
       map.get(r.scheduleDate)!.push(r);
+    }
+    for (const dayRows of map.values()) {
+      dayRows.sort((a, b) => {
+        const aT = a.arrivedAt ? new Date(a.arrivedAt).getTime() : Infinity;
+        const bT = b.arrivedAt ? new Date(b.arrivedAt).getTime() : Infinity;
+        if (aT !== bT) return aT - bT;
+        return slotSortKey(a.timeSlot).localeCompare(slotSortKey(b.timeSlot));
+      });
     }
     return map;
   }, [ticketRows]);
@@ -424,6 +436,13 @@ export function EmployeePayrollDetailModal({
 
   const handleAttendanceEdit = (date: string, field: "checkIn" | "mealStart" | "mealEnd" | "checkOut", value: string) => {
     setAttendanceEdits((prev) => ({ ...prev, [date]: { ...prev[date], [field]: value } }));
+  };
+
+  // Wipe a day's punches (Check In / Meal / Check Out) in one click — the
+  // day recalculates to Absent on the next Done, same as if it had never
+  // been clocked. Only stages the change; nothing is written until Done.
+  const clearAttendanceRow = (date: string) => {
+    setAttendanceEdits((prev) => ({ ...prev, [date]: { checkIn: "", mealStart: "", mealEnd: "", checkOut: "" } }));
   };
 
   // Manual correction — upserts each changed day's timecard_entries row
@@ -778,13 +797,23 @@ export function EmployeePayrollDetailModal({
                               />
                             </td>
                             <td className="py-1.5" onClick={(e) => e.stopPropagation()}>
-                              <input
-                                type="time"
-                                step="1"
-                                value={edit?.checkOut ?? row.clockOut}
-                                onChange={(e) => handleAttendanceEdit(row.date, "checkOut", e.target.value)}
-                                className="w-24 bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-slate-100 focus:outline-none focus:border-blue-500"
-                              />
+                              <div className="flex items-center gap-1.5">
+                                <input
+                                  type="time"
+                                  step="1"
+                                  value={edit?.checkOut ?? row.clockOut}
+                                  onChange={(e) => handleAttendanceEdit(row.date, "checkOut", e.target.value)}
+                                  className="w-24 bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-slate-100 focus:outline-none focus:border-blue-500"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => clearAttendanceRow(row.date)}
+                                  title="Clear this day's Check In / Meal / Check Out"
+                                  className="shrink-0 text-slate-500 hover:text-red-400"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
                             </td>
                           </>
                         ) : (
@@ -840,7 +869,7 @@ export function EmployeePayrollDetailModal({
                               <table className="w-full text-[11px]">
                                 <thead>
                                   <tr className="text-slate-500">
-                                    <th className="px-2 py-1 text-left">#</th>
+                                    <th className="px-2 py-1 text-left" title="Visit order — sorted by the technician's actual on-site Arrived stamp (earliest first)">#</th>
                                     <th className="px-2 py-1 text-left">Ticket</th>
                                     <th className="px-2 py-1 text-left">Status</th>
                                     <th className="px-2 py-1 text-left">Address</th>

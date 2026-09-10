@@ -6,6 +6,7 @@ import {
   REPAIR_TYPES,
   DEFAULT_REPAIR_TYPE,
   getTechRedoTickets,
+  getTechOnHoldTickets,
   getTechAssistedTickets,
   getTechCustomPayItems,
   addTechCustomPayItem,
@@ -96,6 +97,7 @@ export function TechActivityReportModal({
   };
 
   const [redoTickets, setRedoTickets] = useState<TechRedoTicket[]>([]);
+  const [onHoldTickets, setOnHoldTickets] = useState<TechRedoTicket[]>([]);
   const [assistedTickets, setAssistedTickets] = useState<TechAssistedTicket[]>([]);
   const [customItems, setCustomItems] = useState<TechCustomPayItem[]>([]);
   const [loadingExtras, setLoadingExtras] = useState(true);
@@ -106,12 +108,14 @@ export function TechActivityReportModal({
     const nameKey = employee.full_name.trim().toLowerCase();
     Promise.all([
       getTechRedoTickets(periodStart, periodEnd),
+      getTechOnHoldTickets(periodStart, periodEnd),
       getTechAssistedTickets(periodStart, periodEnd),
       getTechCustomPayItems(employee.id, periodStart, periodEnd),
     ])
-      .then(([redoByTech, assistedByTech, custom]) => {
+      .then(([redoByTech, onHoldByTech, assistedByTech, custom]) => {
         if (cancelled) return;
         setRedoTickets(redoByTech.get(nameKey) ?? []);
+        setOnHoldTickets(onHoldByTech.get(nameKey) ?? []);
         setAssistedTickets(assistedByTech.get(nameKey) ?? []);
         setCustomItems(custom);
       })
@@ -211,17 +215,26 @@ export function TechActivityReportModal({
   const twoTechPayment = twoTechCount * twoTechRate;
   const customLinesTotal = customItems.reduce((s, i) => s + i.value * i.rate, 0);
 
-  // ticketsCompleted (from the parent row) is already net of Redo Reduction
-  // (getTechCompletedRepairCounts excludes redo'd tickets outright) — grossCompleted
-  // is derived back out just so this row can show the "gross − redo = net" arithmetic.
-  const grossCompleted = ticketsCompleted + redoTickets.length;
+  // ticketsCompleted (from the parent row) is already net of both redo and
+  // on-hold exclusions (getTechCompletedRepairCounts excludes redo'd and
+  // payroll-on-hold tickets outright). Redo gets pulled out as its own row
+  // above ("Redo Reduction") rather than folded into this row's arithmetic —
+  // a redo ticket isn't a pay-eligibility question the way an on-hold ticket
+  // is, it's just not this technician's ticket to be paid for at all. So
+  // completedBeforeHold ("already excludes redo, not yet excludes on hold")
+  // is this row's own gross, and only the on-hold subtraction shows here.
+  const completedBeforeHold = ticketsCompleted + onHoldTickets.length;
   const completedTicketsRate = techRateFor("Completed Tickets");
   const completedTicketsPayment = ticketsCompleted * completedTicketsRate;
+  // 0 by default (see BASE_RATE_TYPES) — only pays anything once a rate is
+  // configured for a company that wants a consolation amount per redo.
+  const redoReductionRate = techRateFor("Redo Reduction");
+  const redoReductionPayment = redoTickets.length * redoReductionRate;
 
   const subtotal =
     categoryPayments.reduce((s, c) => s + c.payment, 0) +
     techManual.ldtPay + techManual.mileagePay + techManual.trainingPay +
-    twoTechPayment + mcaPayment + completedTicketsPayment + customLinesTotal + row.techHourlyPay;
+    twoTechPayment + mcaPayment + completedTicketsPayment + redoReductionPayment + customLinesTotal + row.techHourlyPay;
   const owIncentivePay = (techManual.owIncentivePct / 100) * subtotal;
   const totalPayment = subtotal + owIncentivePay;
 
@@ -261,16 +274,33 @@ export function TechActivityReportModal({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-white/5">
-                  <tr title="Completed visits excluded because the underlying ticket was flagged as a redo — see the Redo list on the right.">
+                  <tr title="Tickets flagged tickets.redo (a manager-flagged re-dispatch of a prior failed repair) are pulled out here and never count toward this technician's Completed Tickets at all — see the Redo list on the right for exactly which ones. The rate is 0 by default; set one only if this company pays a consolation amount per redo.">
                     <td className="px-3 py-2 text-slate-300">Redo Reduction</td>
                     <td className="px-3 py-2 text-right text-slate-300">{redoTickets.length}</td>
-                    <td className="px-3 py-2 text-right text-slate-600">—</td>
-                    <td className="px-3 py-2 text-right text-slate-600">—</td>
+                    <td className="px-3 py-2 text-right">
+                      <div className="flex items-center justify-end gap-1.5">
+                        {savingRateKey === "Redo Reduction" && <Loader2 className="h-3 w-3 animate-spin text-slate-400" />}
+                        <input
+                          key={`Redo Reduction:${redoReductionRate}`}
+                          type="number" min={0} step={0.01}
+                          defaultValue={redoReductionRate}
+                          disabled={savingRateKey === "Redo Reduction"}
+                          onBlur={(e) => handleRateBlur("Redo Reduction", e.target.value)}
+                          className={rateCellClass}
+                        />
+                      </div>
+                    </td>
+                    <td className="px-3 py-2 text-right text-slate-200">{fmt(redoReductionPayment)}</td>
                   </tr>
-                  <tr title="Completed tickets minus Redo Reduction. This rate is paid flat on every one of them, in addition to each ticket's own repair-type rate below.">
+                  <tr title="Completed, non-redo tickets minus any currently On Hold for payroll via the Mileage tab — a manual hold, or the automatic rule that holds pay until mileage photos are uploaded. This rate is paid flat on every remaining one, in addition to each ticket's own repair-type rate below. See the On Hold panel on the right for exactly which tickets those are — a hold is reversible and moves back into this count once released.">
                     <td className="px-3 py-2 text-slate-300">Completed Tickets</td>
                     <td className="px-3 py-2 text-right text-slate-300">
-                      {grossCompleted} − {redoTickets.length} = {ticketsCompleted}
+                      <div>{completedBeforeHold} − {onHoldTickets.length} = {ticketsCompleted}</div>
+                      {onHoldTickets.length > 0 && (
+                        <div className="text-[10px] text-slate-500 mt-0.5">
+                          {onHoldTickets.length} on hold — missing photos or a manual hold
+                        </div>
+                      )}
                     </td>
                     <td className="px-3 py-2 text-right">
                       <div className="flex items-center justify-end gap-1.5">
@@ -557,6 +587,23 @@ export function TechActivityReportModal({
                 ) : (
                   <div className="flex flex-col gap-1">
                     {redoTickets.map((t) => (
+                      <Link key={t.ticketId} to="/ticket/$ticketNo" params={{ ticketNo: t.ticketNo }} target="_blank" className="text-xs text-blue-400 hover:text-blue-300 hover:underline">
+                        {t.ticketNo}
+                      </Link>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="bg-slate-800/50 border border-white/10 rounded-lg px-3 py-2.5">
+                <p className="text-[10px] text-slate-400 uppercase tracking-wide mb-1.5">On Hold (Mileage)</p>
+                {loadingExtras ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin text-slate-400" />
+                ) : onHoldTickets.length === 0 ? (
+                  <p className="text-xs text-slate-500">None</p>
+                ) : (
+                  <div className="flex flex-col gap-1">
+                    {onHoldTickets.map((t) => (
                       <Link key={t.ticketId} to="/ticket/$ticketNo" params={{ ticketNo: t.ticketNo }} target="_blank" className="text-xs text-blue-400 hover:text-blue-300 hover:underline">
                         {t.ticketNo}
                       </Link>

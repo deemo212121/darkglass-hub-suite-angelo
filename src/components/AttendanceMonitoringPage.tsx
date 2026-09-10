@@ -1,5 +1,5 @@
-import { AlertCircle, AlertTriangle, Clock, Users, UserCheck, UserX, Bell, MessageSquare, ChevronLeft, ChevronRight, Download, Calendar, FileText, CheckCircle, XCircle, Loader2, Settings } from "lucide-react";
-import { useState, useEffect, useMemo, useCallback, Fragment } from "react";
+import { AlertCircle, AlertTriangle, Clock, Users, UserCheck, UserX, Bell, MessageSquare, ChevronLeft, ChevronRight, ChevronDown, Download, Calendar, FileText, CheckCircle, XCircle, Loader2, Settings } from "lucide-react";
+import { useState, useEffect, useMemo, useCallback, useRef, Fragment } from "react";
 import { useSearch, useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
@@ -206,6 +206,89 @@ function isPenalizedLateAlert(alert: string): boolean {
   return alert.includes("Late") && !alert.includes("Covered by Grace");
 }
 
+/**
+ * Multi-select filter — a button that opens a checkbox list. `selected`
+ * empty === no filter (the "All …" state). Used for the Daily Attendance
+ * Tracker's Department / Location / Alerts filters so a reviewer can tick
+ * several at once (matches ANY ticked value) instead of one at a time.
+ */
+function CheckboxFilter({
+  label,
+  allLabel,
+  options,
+  selected,
+  onChange,
+}: {
+  label: string;
+  allLabel: string;
+  options: { value: string; label: string }[];
+  selected: string[];
+  onChange: (next: string[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [open]);
+
+  const summary =
+    selected.length === 0
+      ? allLabel
+      : selected.length === 1
+      ? options.find((o) => o.value === selected[0])?.label ?? selected[0]
+      : `${selected.length} selected`;
+
+  const toggle = (v: string) =>
+    onChange(selected.includes(v) ? selected.filter((x) => x !== v) : [...selected, v]);
+
+  return (
+    <div className="relative" ref={ref}>
+      <label className="block text-xs text-slate-400 uppercase mb-2">{label}</label>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="w-full flex items-center justify-between gap-2 bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none"
+      >
+        <span className="truncate">{summary}</span>
+        <ChevronDown className={`h-4 w-4 shrink-0 text-slate-400 transition-transform ${open ? "rotate-180" : ""}`} />
+      </button>
+      {open && (
+        <div className="absolute z-40 mt-1 w-full max-h-56 overflow-auto rounded-lg border border-white/15 bg-slate-800 shadow-xl py-1">
+          {selected.length > 0 && (
+            <button
+              type="button"
+              onClick={() => onChange([])}
+              className="w-full text-left px-3 py-1.5 text-xs text-blue-300 hover:bg-white/5"
+            >
+              Clear ({selected.length})
+            </button>
+          )}
+          {options.map((o) => (
+            <label
+              key={o.value}
+              className="flex items-center gap-2 px-3 py-1.5 text-sm text-slate-200 hover:bg-white/5 cursor-pointer"
+            >
+              <input
+                type="checkbox"
+                checked={selected.includes(o.value)}
+                onChange={() => toggle(o.value)}
+                className="h-3.5 w-3.5 rounded border-white/20 bg-slate-900 accent-blue-500"
+              />
+              <span className="truncate">{o.label}</span>
+            </label>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
   const navigate = useNavigate();
   const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
@@ -291,7 +374,8 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   }, [routeSearch.tab]);
   const [summaryView, setSummaryView] = useState<"weekly" | "monthly" | "custom">("weekly");
   const [searchEmployee, setSearchEmployee] = useState<string>("");
-  const [filterDepartment, setFilterDepartment] = useState<string>("all");
+  // Daily Attendance Tracker — multi-select (empty = no filter, i.e. "All").
+  const [filterDepartments, setFilterDepartments] = useState<string[]>([]);
   const [summaryDepartmentFilter, setSummaryDepartmentFilter] = useState<string>("all");
   const [summaryLocationFilter, setSummaryLocationFilter] = useState<string>("all");
   // Weekly Attendance Summary: narrow the roster to who checked in (or was
@@ -299,7 +383,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   // showing everyone's full Mon-Fri row.
   const [weeklyDayFilter, setWeeklyDayFilter] = useState<number | "all">("all");
   const [weeklyStatusFilter, setWeeklyStatusFilter] = useState<"all" | "present" | "absent">("all");
-  const [filterLocation, setFilterLocation] = useState<string>("all");
+  const [filterLocations, setFilterLocations] = useState<string[]>([]);
   // Daily Attendance Tracker only — hides everyone still missing either
   // punch (absent, or clocked in but not out yet) so the table only shows
   // employees whose attendance for the day is actually complete.
@@ -307,8 +391,9 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   // Daily Attendance Tracker only — narrow to rows that have an Alerts-column
   // flag ("issues") vs. rows showing "OK" (no flags). "issues" matches the
   // badges actually rendered in that column (late/missing punch, over/under
-  // time), so it lines up 1:1 with what the reviewer sees.
-  const [alertFilter, setAlertFilter] = useState<"all" | "issues" | "clean">("all");
+  // time), so it lines up 1:1 with what the reviewer sees. Multi-select for
+  // consistency with the other two: ticking both (or neither) = show all.
+  const [alertFilters, setAlertFilters] = useState<string[]>([]);
   // Daily Attendance Tracker — clicking an employee's name shows their
   // scheduled shift (Required Check In/Out) right there instead of only
   // linking out to their full profile. Keyed by the SAME id used for the
@@ -321,7 +406,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   const [selectedNote, setSelectedNote] = useState<string | null>(null);
   const [selectedCorrection, setSelectedCorrection] = useState<TimecardCorrectionRow | null>(null);
   // Attendance Corrections table's own search/filter — separate from
-  // searchEmployee/filterDepartment above, which are Daily Attendance's.
+  // searchEmployee/filterDepartments above, which are Daily Attendance's.
   const [correctionSearch, setCorrectionSearch] = useState("");
   const [correctionStatusFilter, setCorrectionStatusFilter] = useState<"all" | CorrectionStatus>("all");
   const [correctionDepartmentFilter, setCorrectionDepartmentFilter] = useState<string>("all");
@@ -811,13 +896,14 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
       // listed row-by-row here.
       if (record.checkIn === "—") return false;
       if (searchEmployee && !record.name.toLowerCase().includes(searchEmployee.toLowerCase())) return false;
-      if (filterDepartment !== "all" && record.department !== filterDepartment) return false;
-      if (filterLocation !== "all" && record.location !== filterLocation) return false;
+      if (filterDepartments.length > 0 && !filterDepartments.includes(record.department)) return false;
+      if (filterLocations.length > 0 && !filterLocations.includes(record.location)) return false;
       // checkIn is already guaranteed above — this now only additionally
       // requires a completed checkOut.
       if (completeOnly && record.checkOut === "—") return false;
-      if (alertFilter === "issues" && record.alerts.length === 0) return false;
-      if (alertFilter === "clean" && record.alerts.length > 0) return false;
+      // Both ticked (or neither) = no alert filter.
+      if (alertFilters.length === 1 && alertFilters[0] === "issues" && record.alerts.length === 0) return false;
+      if (alertFilters.length === 1 && alertFilters[0] === "clean" && record.alerts.length > 0) return false;
       return true;
     })
     .sort((a, b) => (dateRangeActive && a.date !== b.date ? (a.date! < b.date! ? -1 : 1) : a.name.localeCompare(b.name)));
@@ -1042,8 +1128,8 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
       .filter((record) => {
         if (record.checkIn !== "—" || record.isOffDay) return false;
         if (searchEmployee && !record.name.toLowerCase().includes(searchEmployee.toLowerCase())) return false;
-        if (filterDepartment !== "all" && record.department !== filterDepartment) return false;
-        if (filterLocation !== "all" && record.location !== filterLocation) return false;
+        if (filterDepartments.length > 0 && !filterDepartments.includes(record.department)) return false;
+        if (filterLocations.length > 0 && !filterLocations.includes(record.location)) return false;
         return true;
       })
       .sort((a, b) => (dateRangeActive && a.date !== b.date ? (a.date! < b.date! ? -1 : 1) : a.name.localeCompare(b.name)));
@@ -1654,32 +1740,30 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                       className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm placeholder-slate-500 focus:border-blue-500 focus:outline-none transition"
                     />
                   </div>
-                  <div>
-                    <label className="block text-xs text-slate-400 uppercase mb-2">Filter by Department</label>
-                    <select value={filterDepartment} onChange={(e) => setFilterDepartment(e.target.value)} className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none">
-                      <option value="all">All Departments</option>
-                      {departments.map(dept => (
-                        <option key={dept} value={dept}>{dept}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-xs text-slate-400 uppercase mb-2">Filter by Location</label>
-                    <select value={filterLocation} onChange={(e) => setFilterLocation(e.target.value)} className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none">
-                      <option value="all">All Locations</option>
-                      {locations.map(loc => (
-                        <option key={loc} value={loc}>{loc}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-xs text-slate-400 uppercase mb-2">Filter by Alerts</label>
-                    <select value={alertFilter} onChange={(e) => setAlertFilter(e.target.value as "all" | "issues" | "clean")} className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none">
-                      <option value="all">All</option>
-                      <option value="issues">With alerts</option>
-                      <option value="clean">No alerts (OK)</option>
-                    </select>
-                  </div>
+                  <CheckboxFilter
+                    label="Filter by Department"
+                    allLabel="All Departments"
+                    options={departments.map((dept) => ({ value: dept, label: dept }))}
+                    selected={filterDepartments}
+                    onChange={setFilterDepartments}
+                  />
+                  <CheckboxFilter
+                    label="Filter by Location"
+                    allLabel="All Locations"
+                    options={locations.map((loc) => ({ value: loc, label: loc }))}
+                    selected={filterLocations}
+                    onChange={setFilterLocations}
+                  />
+                  <CheckboxFilter
+                    label="Filter by Alerts"
+                    allLabel="All"
+                    options={[
+                      { value: "issues", label: "With alerts" },
+                      { value: "clean", label: "No alerts (OK)" },
+                    ]}
+                    selected={alertFilters}
+                    onChange={setAlertFilters}
+                  />
                   <div className="md:col-span-2">
                     <label className="block text-xs text-slate-400 uppercase mb-2">
                       Filter by Date Range
