@@ -57,6 +57,7 @@ import {
 import { uploadCoeCertificate, uploadWarningForm, uploadPromotionForm, uploadActionPlanForm, uploadTerminationForm, uploadW8benForm, uploadW4Form, uploadW4RForm, uploadI9Form, uploadWageAckForm, uploadCarIqAgreementForm, uploadVehicleAgreementForm, uploadEmployeeConfidentialityForm, uploadMealRestBreakForm, uploadPtoAckForm, uploadPartsResponsibilityForm, uploadMileageFuelForm, uploadLocationConsentForm, uploadDamageForm, uploadContractorDataForm, uploadDirectDepositForm, uploadSubstanceScreeningForm, uploadFlashTechnicianTravelForm, uploadContractorAddendumForm, uploadSignableDocumentSignature, refreshStorageAuthToken } from "@/lib/firebase/storage";
 import { captureHtmlToPdfBlob, captureHtmlPagesToPdfBlob, loadAssetDataUrl as loadImageDataUrl } from "@/lib/pdfCapture";
 import { downloadSignableDocumentPdf } from "@/lib/downloadSignableDocumentPdf";
+import { useSortableSearchTable } from "@/hooks/useSortableSearchTable";
 import {
   createSignableDocument,
   getSignableDocuments,
@@ -748,6 +749,35 @@ function LeaderTreeBranch({
         </div>
       )}
     </div>
+  );
+}
+
+/** A <th> that sorts a useSortableSearchTable-backed table on click — shared across the Sent History tables so each one doesn't reimplement the same header markup and chevron-state logic. */
+function SortableTh<C extends string>({
+  column, label, sortColumn, sortDir, onSort, className,
+}: {
+  column: C;
+  label: string;
+  sortColumn: C | null;
+  sortDir: "asc" | "desc";
+  onSort: (column: C) => void;
+  className?: string;
+}) {
+  return (
+    <th
+      onClick={() => onSort(column)}
+      title={`Sort by ${label}`}
+      className={`px-4 py-3 text-left text-xs text-muted-foreground uppercase cursor-pointer select-none hover:text-foreground ${className ?? ""}`}
+    >
+      <span className="inline-flex items-center gap-1">
+        {label}
+        {sortColumn === column ? (
+          sortDir === "asc" ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />
+        ) : (
+          <ChevronDown className="h-3 w-3 opacity-20" />
+        )}
+      </span>
+    </th>
   );
 }
 
@@ -5692,6 +5722,38 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const sentMileageFuelAwaitingEmployerCount = useMemo(
     () => sentMileageFuelForms.filter(isAwaitingEmployerStep).length,
     [sentMileageFuelForms]
+  );
+
+  type MileageFuelSortColumn = "employee" | "branch" | "sentBy" | "status" | "sent";
+  const {
+    search: mileageFuelSentSearch,
+    setSearch: setMileageFuelSentSearch,
+    sortColumn: mileageFuelSentSortColumn,
+    sortDir: mileageFuelSentSortDir,
+    handleSort: handleMileageFuelSentSort,
+    rows: sortedSentMileageFuelForms,
+  } = useSortableSearchTable<SignableDocument, MileageFuelSortColumn>(
+    sentMileageFuelForms,
+    (doc, q) => {
+      const data = doc.formData as Partial<MileageFuelFormData>;
+      const employeeName = (data.employeeName || doc.recipientName || "").toLowerCase();
+      const branch = (data.branch || "").toLowerCase();
+      return employeeName.includes(q) || branch.includes(q);
+    },
+    (doc, column) => {
+      const data = doc.formData as Partial<MileageFuelFormData>;
+      switch (column) {
+        case "employee": return (data.employeeName || doc.recipientName || "").toLowerCase();
+        case "branch": return (data.branch || "").toLowerCase();
+        case "sentBy": return (doc.createdByName ?? "").toLowerCase();
+        case "status":
+          return doc.status === "confirmed" ? "completed"
+            : isAwaitingEmployerStep(doc) ? "awaiting employer signature"
+            : doc.status === "cancelled" ? "cancelled"
+            : "awaiting employee";
+        case "sent": return new Date(doc.createdAt).getTime();
+      }
+    }
   );
 
   const [mileageFuelRecipientId, setMileageFuelRecipientId] = useState("");
@@ -19678,6 +19740,24 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <h2 className="font-semibold text-sm">Sent Mileage & Fuel Policy Agreement Forms</h2>
           <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status. "Awaiting Employer Signature" means the employee finished — add your signature to finalize.</p>
         </div>
+        <div className="px-4 py-3 border-b border-white/10 bg-white/5 flex flex-wrap items-end gap-3">
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+            <input
+              type="text"
+              value={mileageFuelSentSearch}
+              onChange={(e) => setMileageFuelSentSearch(e.target.value)}
+              placeholder="Name or branch…"
+              className="glass-input text-sm py-1.5 pl-8 pr-3 rounded-md w-56"
+            />
+          </div>
+          {mileageFuelSentSearch && (
+            <button onClick={() => setMileageFuelSentSearch("")} className="btn text-sm px-3 py-1.5">Clear</button>
+          )}
+          <span className="text-xs text-muted-foreground mb-1.5 ml-auto">
+            {sortedSentMileageFuelForms.length}{mileageFuelSentSearch ? ` of ${sentMileageFuelForms.length}` : ""} forms
+          </span>
+        </div>
         {mileageFuelActionError && (
           <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{mileageFuelActionError}</p>
         )}
@@ -19685,19 +19765,19 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-white/10 bg-white/5">
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Employee</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Branch</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent By</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Status</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent</th>
+                <SortableTh column="employee" label="Employee" sortColumn={mileageFuelSentSortColumn} sortDir={mileageFuelSentSortDir} onSort={handleMileageFuelSentSort} />
+                <SortableTh column="branch" label="Branch" sortColumn={mileageFuelSentSortColumn} sortDir={mileageFuelSentSortDir} onSort={handleMileageFuelSentSort} />
+                <SortableTh column="sentBy" label="Sent By" sortColumn={mileageFuelSentSortColumn} sortDir={mileageFuelSentSortDir} onSort={handleMileageFuelSentSort} />
+                <SortableTh column="status" label="Status" sortColumn={mileageFuelSentSortColumn} sortDir={mileageFuelSentSortDir} onSort={handleMileageFuelSentSort} />
+                <SortableTh column="sent" label="Sent" sortColumn={mileageFuelSentSortColumn} sortDir={mileageFuelSentSortDir} onSort={handleMileageFuelSentSort} />
                 <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {sentMileageFuelForms.length === 0 ? (
-                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">No requests sent yet.</td></tr>
+              {sortedSentMileageFuelForms.length === 0 ? (
+                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">{sentMileageFuelForms.length === 0 ? "No requests sent yet." : "No forms match this search."}</td></tr>
               ) : (
-                sentMileageFuelForms.map((doc) => {
+                sortedSentMileageFuelForms.map((doc) => {
                   const data = doc.formData as Partial<MileageFuelFormData>;
                   const recipient = employees.find((e) => e.id === doc.recipientId);
                   const busy = mileageFuelActionBusyId === doc.id;
