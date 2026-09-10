@@ -16,6 +16,7 @@ import { initializeApp, deleteApp, getApps } from "firebase/app";
 import { getAuth, createUserWithEmailAndPassword } from "firebase/auth";
 import { supabase } from "./client";
 import { getCompanyUsers as getFirestoreCompanyUsers } from "@/lib/firebase/users";
+import { getModuleActivityLogByAction } from "./moduleActivityLog";
 
 export type UserRole =
   | "SUPERSUPERADMIN" // Platform-level: access to all companies, creates/manages companies+admins
@@ -890,6 +891,47 @@ export async function createCompanyUser(input: {
 
   invalidateCompanyUsersCache();
   return newUid;
+}
+
+/**
+ * Who created each account (and when), keyed by lowercased email — for the
+ * HR Hiring table's "Created by" line under Account Status. The
+ * module_activity_log's "user_created" entries (see createCompanyUser's
+ * caller, AdminUserManagementPage.tsx's handleCreateUser) record targetId
+ * as the new profile's firebase_uid, not its profiles.id — and target_id
+ * has no declared FK for PostgREST to embed through (the same column holds
+ * IDs for every target type this log covers), so this cross-references the
+ * two client-side: firebase_uid -> email from profiles, then email ->
+ * {actorName, createdAt} from the activity log. Accounts created before
+ * this logging existed (or via any path other than Add New User) simply
+ * won't have an entry — not an error, just nothing to show.
+ */
+export async function getAccountCreatorsByEmail(): Promise<Map<string, { createdByName: string | null; createdAt: string }>> {
+  const result = new Map<string, { createdByName: string | null; createdAt: string }>();
+  const [{ data: profileRows, error: profileError }, activity] = await Promise.all([
+    supabase.from("profiles").select("firebase_uid, email"),
+    getModuleActivityLogByAction("user-management", "user_created"),
+  ]);
+  if (profileError) {
+    console.error("getAccountCreatorsByEmail (profiles) error:", profileError.message);
+    return result;
+  }
+  const emailByFirebaseUid = new Map<string, string>();
+  for (const r of (profileRows ?? []) as { firebase_uid: string; email: string }[]) {
+    if (r.firebase_uid && r.email) emailByFirebaseUid.set(r.firebase_uid, r.email);
+  }
+  // Newest-first from getModuleActivityLogByAction — first entry seen per
+  // email is its latest "user_created" record (there should only ever be
+  // one per account, but this guards against a stray duplicate anyway).
+  for (const entry of activity) {
+    if (!entry.targetId) continue;
+    const email = emailByFirebaseUid.get(entry.targetId);
+    if (!email) continue;
+    const key = email.trim().toLowerCase();
+    if (result.has(key)) continue;
+    result.set(key, { createdByName: entry.actorName, createdAt: entry.createdAt });
+  }
+  return result;
 }
 
 /**

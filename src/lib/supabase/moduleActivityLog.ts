@@ -126,6 +126,29 @@ export async function getModuleActivityLog(module: ActivityLogModule, limit = 20
 }
 
 /**
+ * Same table, narrowed to every entry for one action (any target) — e.g.
+ * every "user_created" entry ever logged, for building an account-creator
+ * lookup (see getAccountCreatorsByEmail in users.ts). `limit` defaults
+ * generously high since this is a low-frequency action (account creation),
+ * not paginated — a company would need tens of thousands of accounts
+ * created to ever hit it.
+ */
+export async function getModuleActivityLogByAction(module: ActivityLogModule, action: string, limit = 10000): Promise<ModuleActivityLogEntry[]> {
+  const { data, error } = await supabase
+    .from("module_activity_log")
+    .select(SELECT)
+    .eq("module", module)
+    .eq("action", action)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (error) {
+    if (isMissingTableError(error)) return [];
+    throw new Error(error.message);
+  }
+  return (data ?? []).map(mapRow);
+}
+
+/**
  * Same table, narrowed to one action against one target — e.g. My Profile's
  * "Recent password changes" list beside the Update Password button, which
  * (unlike ActivityLogPanel) is reachable by every employee, not just an

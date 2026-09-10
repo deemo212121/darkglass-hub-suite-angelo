@@ -1,32 +1,73 @@
 /**
- * Absent List — HR module. Everyone with no recorded clock-in on the
- * selected date, company-wide, excluding scheduled rest days (profiles.
- * off_days) and anyone on approved PTO/leave that day (not a genuine
- * miss). Same "no Time In = absent" convention Ticket Attendance's own
- * Status filter already uses, for consistency across the app — this page
- * is the general-purpose "who's missing today (or any day)" lookup HR
- * itself reaches for, distinct from Attendance Warning Settings' live
- * grace-window alerting (a different, narrower tool for a different
- * purpose).
+ * Absent List — HR module. Everyone with no recorded clock-in on any day in
+ * the selected date range (defaults to just today), company-wide, excluding
+ * scheduled rest days (profiles.off_days) and anyone on approved PTO/leave
+ * that day (not a genuine miss). Same "no Time In = absent" convention
+ * Ticket Attendance's own Status filter already uses, for consistency
+ * across the app — this page is the general-purpose "who's missing today
+ * (or over a stretch of days)" lookup HR itself reaches for, distinct from
+ * Attendance Warning Settings' live grace-window alerting (a different,
+ * narrower tool for a different purpose).
+ *
+ * A row is one (person, day) absence — spanning a range can put the same
+ * person in multiple rows, each with its own independently editable
+ * Note/HR Status for that specific day.
+ *
+ * Also hosts the Time Off Calendar (HrCalendarTab, moved in from HR &
+ * Recruitment Dashboard's own sidebar) as a second view toggled from the
+ * buttons up top — both pages answer "who's out and why", so they live
+ * together now instead of in two different modules.
  */
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
-import { ChevronLeft, Pencil, Check, Loader2, Filter } from "lucide-react";
+import { ChevronLeft, Pencil, Check, Loader2, Filter, CalendarDays, ListChecks, ClipboardList } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { ROLE_LABELS } from "@/lib/roleLabels";
-import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
+import { getCompanyUsers, getEmployeeInfoByProfileIds, type ProfileRow } from "@/lib/supabase/users";
 import { getCompanyTimecardEntries, getProfileIdByFirebaseUid, type CompanyTimecardEntry } from "@/lib/supabase/timecards";
 import { getAttendanceNotes, upsertAttendanceNote, upsertAttendanceHrNote, type AttendanceNoteRow } from "@/lib/supabase/attendanceNotes";
 import { getCompanyPtoRequests, type PtoRequestRow } from "@/lib/supabase/pto";
+import { HrCalendarTab } from "@/components/HrCalendarTab";
+import { TicketAttendanceTab } from "@/components/TicketAttendanceTab";
 
 function todayISO(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
+function toDateStr(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/** Every "YYYY-MM-DD" from start to end, inclusive — local calendar days, not
+ * UTC (toISOString() would shift a date backward a day for anyone east of
+ * UTC, e.g. the Philippines). */
+function enumerateDates(start: string, end: string): string[] {
+  const out: string[] = [];
+  const endD = new Date(end + "T00:00:00");
+  for (let d = new Date(start + "T00:00:00"); d <= endD; d.setDate(d.getDate() + 1)) {
+    out.push(toDateStr(d));
+  }
+  return out;
+}
+
+// HR Status — replaces what used to be a free-text HR Note with a fixed
+// reason list, still stored in the same attendance_notes.hr_note column
+// (no migration needed, it was already a plain string).
+const HR_STATUS_OPTIONS = ["Vacation", "Sick", "Personal", "Holiday", "Unpaid", "Bereavement", "Unnoticed", "Resigned", "Terminated"];
+// Resigned/Terminated end employment entirely and Unnoticed flags a no-call/
+// no-show — meaningfully different severity from an ordinary leave type, so
+// they get their own color instead of blending into the rest.
+const HR_STATUS_COLOR: Record<string, string> = {
+  Unnoticed: "text-amber-300",
+  Resigned: "text-red-300",
+  Terminated: "text-red-300",
+};
+
 interface AbsentRow {
   profile: ProfileRow;
+  date: string;
   note: string;
   hrNote: string;
 }
@@ -34,9 +75,18 @@ interface AbsentRow {
 export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
   const navigate = useNavigate();
   const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
-  const { uid } = useAuth();
+  const { uid, displayName } = useAuth();
   const [myProfileId, setMyProfileId] = useState<string | null>(null);
-  const [date, setDate] = useState(todayISO());
+  // Time Off Calendar moved in here from HR & Recruitment Dashboard's own
+  // sidebar — they're both "who's out and why" tools, so it's a toggle on
+  // this page now rather than a separate module tab. Ticket Attendance is
+  // the same self-contained tab Accounting Dashboard and Attendance
+  // Monitoring already mount (TicketAttendanceTab.tsx takes no props and
+  // fetches its own data), added as a third view so HR can check on-site
+  // check-ins without leaving this page.
+  const [view, setView] = useState<"list" | "calendar" | "ticketAttendance">("list");
+  const [dateFrom, setDateFrom] = useState(todayISO());
+  const [dateTo, setDateTo] = useState(todayISO());
   const [search, setSearch] = useState("");
   const [profiles, setProfiles] = useState<ProfileRow[]>([]);
   const [entries, setEntries] = useState<CompanyTimecardEntry[]>([]);
@@ -53,7 +103,7 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
   const [branchFilter, setBranchFilter] = useState<Set<string>>(new Set());
   const [managerFilter, setManagerFilter] = useState<Set<string>>(new Set());
   const [notesColFilter, setNotesColFilter] = useState<TriState>("all");
-  const [hrNoteColFilter, setHrNoteColFilter] = useState<TriState>("all");
+  const [hrStatusFilter, setHrStatusFilter] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (!uid) return;
@@ -62,9 +112,21 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
 
   // Employee roster + PTO requests don't depend on the selected date —
   // loaded once, separately from the per-date timecard/notes fetch below.
+  const [hireDateByProfileId, setHireDateByProfileId] = useState<Map<string, string>>(new Map());
   useEffect(() => {
     getCompanyUsers()
-      .then(setProfiles)
+      .then((rows) => {
+        setProfiles(rows);
+        // Hire dates power the Time Off Calendar's Sick Leave/Vacation PTO
+        // badges (same tenure math Master List uses) — a separate fetch
+        // since it isn't part of getCompanyUsers' own select.
+        return getEmployeeInfoByProfileIds(rows.map((p) => p.id));
+      })
+      .then((infoByProfile) => {
+        const m = new Map<string, string>();
+        for (const [id, info] of infoByProfile) if (info.hireDate) m.set(id, info.hireDate);
+        setHireDateByProfileId(m);
+      })
       .catch((err) => console.error("Failed to load employees for Absent List:", err));
     getCompanyPtoRequests()
       .then(setPtoRequests)
@@ -72,8 +134,9 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
   }, []);
 
   const load = () => {
+    if (dateTo < dateFrom) return; // invalid range mid-edit (e.g. only "From" typed so far) — wait for a valid one
     setLoading(true);
-    Promise.all([getCompanyTimecardEntries(date, date), getAttendanceNotes(date, date)])
+    Promise.all([getCompanyTimecardEntries(dateFrom, dateTo), getAttendanceNotes(dateFrom, dateTo)])
       .then(([tc, n]) => {
         setEntries(tc);
         setNotes(n);
@@ -85,22 +148,22 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [date]);
+  }, [dateFrom, dateTo]);
 
-  const checkedInProfileIds = useMemo(
-    () => new Set(entries.filter((e) => e.checkIn).map((e) => e.profileId)),
+  // Keyed "profileId|date" — check-in and notes are both per (profile, day),
+  // same as everything else on this page once it spans more than one day.
+  const checkedInSet = useMemo(
+    () => new Set(entries.filter((e) => e.checkIn).map((e) => `${e.profileId}|${e.workDate}`)),
     [entries]
   );
-  const noteByProfileId = useMemo(() => new Map(notes.map((n) => [n.profileId, n])), [notes]);
-  // Approved, paid or unpaid leave covering this date — not counted as
+  const noteByKey = useMemo(() => new Map(notes.map((n) => [`${n.profileId}|${n.noteDate}`, n])), [notes]);
+  // Approved, paid or unpaid leave covering a given date — not counted as
   // absent (it's scheduled and already reviewed), just excluded outright.
-  const onLeaveProfileIds = useMemo(() => {
-    const ids = new Set<string>();
-    for (const r of ptoRequests) {
-      if (r.status === "approved" && r.startDate <= date && date <= r.endDate) ids.add(r.profileId);
-    }
-    return ids;
-  }, [ptoRequests, date]);
+  const isOnLeave = (profileId: string, d: string) =>
+    ptoRequests.some((r) => r.profileId === profileId && r.status === "approved" && r.startDate <= d && d <= r.endDate);
+
+  // Every date in the selected range, oldest first.
+  const rangeDates = useMemo(() => (dateTo >= dateFrom ? enumerateDates(dateFrom, dateTo) : []), [dateFrom, dateTo]);
 
   // Filter-menu option lists — sourced from the full active roster (not
   // just today's absent rows) so the checklists stay stable regardless of
@@ -118,47 +181,101 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
     [profiles]
   );
 
-  const absentRows: AbsentRow[] = useMemo(() => {
-    const dow = new Date(date + "T00:00:00").getDay();
+  // Name/Role/Branch/Manager filters don't depend on the date — narrow the
+  // roster once, then apply the per-day checks (rest day/leave/check-in)
+  // per date in the range against that same narrowed list.
+  const activeFilteredProfiles = useMemo(() => {
     const q = search.trim().toLowerCase();
     return profiles
       .filter((p) => p.is_active)
-      .filter((p) => !(p.off_days ?? []).includes(dow)) // not a scheduled rest day
-      .filter((p) => !onLeaveProfileIds.has(p.id)) // not on approved PTO/leave
-      .filter((p) => !checkedInProfileIds.has(p.id)) // no check-in recorded
       .filter((p) => !q || (p.display_name || p.email).toLowerCase().includes(q))
       .filter((p) => roleFilter.size === 0 || roleFilter.has(p.role))
       .filter((p) => branchFilter.size === 0 || (p.assigned_branch && branchFilter.has(p.assigned_branch)))
-      .filter((p) => managerFilter.size === 0 || (p.manager_name && managerFilter.has(p.manager_name)))
-      .map((p) => ({ profile: p, note: noteByProfileId.get(p.id)?.content || "", hrNote: noteByProfileId.get(p.id)?.hrNote || "" }))
-      .filter((r) => notesColFilter === "all" || (notesColFilter === "has" ? !!r.note : !r.note))
-      .filter((r) => hrNoteColFilter === "all" || (hrNoteColFilter === "has" ? !!r.hrNote : !r.hrNote))
-      .sort((a, b) => (a.profile.display_name || a.profile.email).localeCompare(b.profile.display_name || b.profile.email));
-  }, [profiles, checkedInProfileIds, onLeaveProfileIds, noteByProfileId, date, search, roleFilter, branchFilter, managerFilter, notesColFilter, hrNoteColFilter]);
+      .filter((p) => managerFilter.size === 0 || (p.manager_name && managerFilter.has(p.manager_name)));
+  }, [profiles, search, roleFilter, branchFilter, managerFilter]);
+
+  const absentRows: AbsentRow[] = useMemo(() => {
+    const rows: AbsentRow[] = [];
+    for (const d of rangeDates) {
+      const dow = new Date(d + "T00:00:00").getDay();
+      for (const p of activeFilteredProfiles) {
+        if ((p.off_days ?? []).includes(dow)) continue; // scheduled rest day
+        if (isOnLeave(p.id, d)) continue; // approved PTO/leave
+        if (checkedInSet.has(`${p.id}|${d}`)) continue; // checked in that day
+        const entry = noteByKey.get(`${p.id}|${d}`);
+        const note = entry?.content || "";
+        const hrNote = entry?.hrNote || "";
+        if (notesColFilter !== "all" && (notesColFilter === "has" ? !note : !!note)) continue;
+        if (hrStatusFilter.size > 0 && !hrStatusFilter.has(hrNote)) continue;
+        rows.push({ profile: p, date: d, note, hrNote });
+      }
+    }
+    return rows.sort(
+      (a, b) => a.date.localeCompare(b.date) || (a.profile.display_name || a.profile.email).localeCompare(b.profile.display_name || b.profile.email)
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rangeDates, activeFilteredProfiles, checkedInSet, noteByKey, notesColFilter, hrStatusFilter, ptoRequests]);
 
   const onLeaveCount = useMemo(() => {
-    const dow = new Date(date + "T00:00:00").getDay();
-    return profiles.filter((p) => p.is_active && !(p.off_days ?? []).includes(dow) && onLeaveProfileIds.has(p.id)).length;
-  }, [profiles, onLeaveProfileIds, date]);
+    let count = 0;
+    for (const d of rangeDates) {
+      const dow = new Date(d + "T00:00:00").getDay();
+      count += profiles.filter((p) => p.is_active && !(p.off_days ?? []).includes(dow) && isOnLeave(p.id, d)).length;
+    }
+    return count;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profiles, rangeDates, ptoRequests]);
 
+  // absentRows is already sorted date-then-name, so grouping preserves that
+  // order — one section per day, in range order, names beneath each.
+  const groupedAbsentRows = useMemo(() => {
+    const groups = new Map<string, AbsentRow[]>();
+    for (const r of absentRows) {
+      const list = groups.get(r.date) ?? [];
+      list.push(r);
+      groups.set(r.date, list);
+    }
+    return Array.from(groups.entries());
+  }, [absentRows]);
+
+  // Shape HrCalendarTab expects — same roster this page already loads, just
+  // remapped field names.
+  const calendarEmployees = useMemo(
+    () =>
+      profiles.map((p) => ({
+        id: p.id,
+        name: p.display_name || p.email,
+        branch: p.assigned_branch || "",
+        status: p.is_active ? "active" : "inactive",
+        role: p.role,
+        startDate: hireDateByProfileId.get(p.id) || p.created_at?.slice(0, 10) || null,
+        managerName: p.manager_name || null,
+      })),
+    [profiles, hireDateByProfileId]
+  );
+
+  // Keyed "profileId|date" (not just profileId) — a person can now appear
+  // in several rows at once (one per absent day in the range), each with
+  // its own independently editable note/status.
   const [editingId, setEditingId] = useState<string | null>(null);
   const [noteDraft, setNoteDraft] = useState("");
   const [savingNoteId, setSavingNoteId] = useState<string | null>(null);
-  const handleSaveNote = async (profileId: string) => {
+  const handleSaveNote = async (profileId: string, noteDate: string) => {
     const content = noteDraft;
-    setSavingNoteId(profileId);
+    const key = `${profileId}|${noteDate}`;
+    setSavingNoteId(key);
     try {
       await upsertAttendanceNote({
         profileId,
-        noteDate: date,
+        noteDate,
         content,
         notifyIndividual: false,
         notifyTeamLead: false,
         createdBy: myProfileId,
       });
       setNotes((prev) => [
-        ...prev.filter((n) => n.profileId !== profileId),
-        { profileId, noteDate: date, content, hrNote: prev.find((n) => n.profileId === profileId)?.hrNote || "", notifyIndividual: false, notifyTeamLead: false, createdBy: myProfileId },
+        ...prev.filter((n) => !(n.profileId === profileId && n.noteDate === noteDate)),
+        { profileId, noteDate, content, hrNote: prev.find((n) => n.profileId === profileId && n.noteDate === noteDate)?.hrNote || "", notifyIndividual: false, notifyTeamLead: false, createdBy: myProfileId },
       ]);
       setEditingId(null);
     } catch (err) {
@@ -168,22 +285,19 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
     }
   };
 
-  const [editingHrNoteId, setEditingHrNoteId] = useState<string | null>(null);
-  const [hrNoteDraft, setHrNoteDraft] = useState("");
   const [savingHrNoteId, setSavingHrNoteId] = useState<string | null>(null);
-  const handleSaveHrNote = async (profileId: string) => {
-    const hrNote = hrNoteDraft;
-    setSavingHrNoteId(profileId);
+  const handleSaveHrStatus = async (profileId: string, noteDate: string, hrNote: string) => {
+    const key = `${profileId}|${noteDate}`;
+    setSavingHrNoteId(key);
     try {
-      await upsertAttendanceHrNote(profileId, date, hrNote);
+      await upsertAttendanceHrNote(profileId, noteDate, hrNote, myProfileId);
       setNotes((prev) => {
-        const existing = prev.find((n) => n.profileId === profileId);
-        if (existing) return prev.map((n) => (n.profileId === profileId ? { ...n, hrNote } : n));
-        return [...prev, { profileId, noteDate: date, content: "", hrNote, notifyIndividual: false, notifyTeamLead: false, createdBy: myProfileId }];
+        const existing = prev.find((n) => n.profileId === profileId && n.noteDate === noteDate);
+        if (existing) return prev.map((n) => (n.profileId === profileId && n.noteDate === noteDate ? { ...n, hrNote, createdBy: myProfileId ?? n.createdBy } : n));
+        return [...prev, { profileId, noteDate, content: "", hrNote, notifyIndividual: false, notifyTeamLead: false, createdBy: myProfileId }];
       });
-      setEditingHrNoteId(null);
     } catch (err) {
-      alert(`Failed to save HR note: ${err instanceof Error ? err.message : "Unknown error"}`);
+      alert(`Failed to save HR status: ${err instanceof Error ? err.message : "Unknown error"}`);
     } finally {
       setSavingHrNoteId(null);
     }
@@ -292,6 +406,83 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
     </>
   );
 
+  const renderAbsentRow = ({ profile: p, date: rowDate, note, hrNote }: AbsentRow) => {
+    const key = `${p.id}|${rowDate}`;
+    const isEditing = editingId === key;
+    return (
+      <tr key={key} className="border-b border-white/5">
+        <td className="py-2 pr-3 text-white font-medium whitespace-nowrap">{p.display_name || p.email}</td>
+        <td className="py-2 pr-3 text-slate-300 whitespace-nowrap">{ROLE_LABELS[p.role] || p.role}</td>
+        <td className="py-2 pr-3 text-slate-300 whitespace-nowrap">{p.assigned_branch || "—"}</td>
+        <td className="py-2 pr-3 text-slate-300 whitespace-nowrap">{p.manager_name || "—"}</td>
+        <td className="py-2 pr-3 min-w-[220px]">
+          {isEditing ? (
+            <div className="flex items-center gap-1">
+              <input
+                autoFocus
+                type="text"
+                value={noteDraft}
+                onChange={(e) => setNoteDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void handleSaveNote(p.id, rowDate);
+                  if (e.key === "Escape") setEditingId(null);
+                }}
+                placeholder="Why are they absent?"
+                className="glass-input text-xs py-1"
+              />
+              <button
+                type="button"
+                onClick={() => void handleSaveNote(p.id, rowDate)}
+                disabled={savingNoteId === key}
+                className="text-emerald-400 hover:text-emerald-300 disabled:opacity-40 shrink-0"
+              >
+                {savingNoteId === key ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => {
+                setEditingId(key);
+                setNoteDraft(note);
+              }}
+              className="flex items-center gap-1.5 text-left text-slate-300 hover:text-white"
+            >
+              {note ? <span className="truncate max-w-[260px]">{note}</span> : <span className="text-slate-600">Add note</span>}
+              <Pencil className="h-3 w-3 text-slate-500 shrink-0" />
+            </button>
+          )}
+        </td>
+        <td className="py-2 min-w-[160px]">
+          <div className="flex items-center gap-1.5">
+            <select
+              value={hrNote}
+              onChange={(e) => void handleSaveHrStatus(p.id, rowDate, e.target.value)}
+              disabled={savingHrNoteId === key}
+              className={`glass-input text-xs py-1 disabled:opacity-50 ${HR_STATUS_COLOR[hrNote] || "text-slate-300"}`}
+            >
+              {/* Explicit dark background on every option — the dropdown
+                  popup is browser chrome, not this page, so without it the
+                  light status text renders on the browser's own near-white
+                  popup and becomes nearly unreadable. */}
+              <option value="" className="bg-slate-800 text-slate-400">—</option>
+              {HR_STATUS_OPTIONS.map((s) => (
+                <option key={s} value={s} className={`bg-slate-800 ${HR_STATUS_COLOR[s] || "text-slate-200"}`}>{s}</option>
+              ))}
+            </select>
+            {savingHrNoteId === key && <Loader2 className="h-3.5 w-3.5 animate-spin text-slate-500 shrink-0" />}
+          </div>
+          {hrNote && (() => {
+            const addedById = noteByKey.get(key)?.createdBy;
+            if (!addedById) return null;
+            const addedByName = profiles.find((pr) => pr.id === addedById)?.display_name || profiles.find((pr) => pr.id === addedById)?.email;
+            return addedByName ? <p className="mt-1 text-[10px] text-slate-500">Added by: {addedByName}</p> : null;
+          })()}
+        </td>
+      </tr>
+    );
+  };
+
   return (
     <main className="flex-1 bg-slate-950">
       <div className="mx-auto max-w-[1400px] px-4 py-4">
@@ -304,17 +495,66 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
           <p className="text-sm text-slate-400">{sub.description}</p>
         </div>
 
+        <div className="flex gap-1.5 mb-3">
+          <button
+            type="button"
+            onClick={() => setView("list")}
+            className={`btn text-sm px-3 py-1.5 inline-flex items-center gap-1.5 ${view === "list" ? "bg-primary/20 text-primary" : ""}`}
+          >
+            <ListChecks className="h-3.5 w-3.5" /> Absent List
+          </button>
+          <button
+            type="button"
+            onClick={() => setView("calendar")}
+            className={`btn text-sm px-3 py-1.5 inline-flex items-center gap-1.5 ${view === "calendar" ? "bg-primary/20 text-primary" : ""}`}
+          >
+            <CalendarDays className="h-3.5 w-3.5" /> Time Off Calendar
+          </button>
+          <button
+            type="button"
+            onClick={() => setView("ticketAttendance")}
+            className={`btn text-sm px-3 py-1.5 inline-flex items-center gap-1.5 ${view === "ticketAttendance" ? "bg-primary/20 text-primary" : ""}`}
+          >
+            <ClipboardList className="h-3.5 w-3.5" /> Ticket Attendance
+          </button>
+        </div>
+
+        {view === "calendar" && (
+          <HrCalendarTab employees={calendarEmployees} myProfileId={myProfileId} myDisplayName={displayName} />
+        )}
+
+        {view === "ticketAttendance" && <TicketAttendanceTab />}
+
+        {view === "list" && (
         <div className="panel">
           <div className="flex flex-wrap items-end gap-3 mb-4">
             <div>
-              <label className="block text-xs text-slate-400 uppercase mb-2">Date</label>
+              <label className="block text-xs text-slate-400 uppercase mb-2">From</label>
               <input
                 type="date"
-                value={date}
-                onChange={(e) => setDate(e.target.value)}
+                value={dateFrom}
+                max={dateTo}
+                onChange={(e) => setDateFrom(e.target.value)}
                 className="glass-input"
               />
             </div>
+            <div>
+              <label className="block text-xs text-slate-400 uppercase mb-2">To</label>
+              <input
+                type="date"
+                value={dateTo}
+                min={dateFrom}
+                onChange={(e) => setDateTo(e.target.value)}
+                className="glass-input"
+              />
+            </div>
+            <button
+              type="button"
+              onClick={() => { setDateFrom(todayISO()); setDateTo(todayISO()); }}
+              className="btn text-sm py-1.5 mb-0.5"
+            >
+              Today
+            </button>
             <div>
               <label className="block text-xs text-slate-400 uppercase mb-2">Search</label>
               <input
@@ -330,7 +570,7 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
                 "Loading…"
               ) : (
                 <>
-                  <span className="text-red-300 font-semibold">{absentRows.length}</span> absent
+                  <span className="text-red-300 font-semibold">{absentRows.length}</span> absent{rangeDates.length > 1 ? " (instances)" : ""}
                   {onLeaveCount > 0 && <span className="ml-2 text-slate-500">({onLeaveCount} on approved leave, not counted)</span>}
                 </>
               )}
@@ -340,7 +580,9 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
           {loading ? (
             <p className="text-sm text-slate-400 text-center py-8">Loading…</p>
           ) : absentRows.length === 0 ? (
-            <p className="text-sm text-slate-500 text-center py-8">No one is marked absent for {date}.</p>
+            <p className="text-sm text-slate-500 text-center py-8">
+              No one is marked absent {dateFrom === dateTo ? `for ${dateFrom}` : `between ${dateFrom} and ${dateTo}`}.
+            </p>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -360,104 +602,29 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
                       {renderTriStateFilterHeader("notes", "Note", notesColFilter, setNotesColFilter, "Has note", "No note")}
                     </th>
                     <th className="py-2 relative">
-                      {renderTriStateFilterHeader("hrNote", "HR Note", hrNoteColFilter, setHrNoteColFilter, "Has note", "No note")}
+                      {renderMultiSelectFilterHeader("hrNote", "HR Status", HR_STATUS_OPTIONS, hrStatusFilter, setHrStatusFilter)}
                     </th>
                   </tr>
                 </thead>
                 <tbody>
-                  {absentRows.map(({ profile: p, note, hrNote }) => {
-                    const isEditing = editingId === p.id;
-                    const isEditingHr = editingHrNoteId === p.id;
-                    return (
-                      <tr key={p.id} className="border-b border-white/5">
-                        <td className="py-2 pr-3 text-white font-medium whitespace-nowrap">{p.display_name || p.email}</td>
-                        <td className="py-2 pr-3 text-slate-300 whitespace-nowrap">{ROLE_LABELS[p.role] || p.role}</td>
-                        <td className="py-2 pr-3 text-slate-300 whitespace-nowrap">{p.assigned_branch || "—"}</td>
-                        <td className="py-2 pr-3 text-slate-300 whitespace-nowrap">{p.manager_name || "—"}</td>
-                        <td className="py-2 pr-3 min-w-[220px]">
-                          {isEditing ? (
-                            <div className="flex items-center gap-1">
-                              <input
-                                autoFocus
-                                type="text"
-                                value={noteDraft}
-                                onChange={(e) => setNoteDraft(e.target.value)}
-                                onKeyDown={(e) => {
-                                  if (e.key === "Enter") void handleSaveNote(p.id);
-                                  if (e.key === "Escape") setEditingId(null);
-                                }}
-                                placeholder="Why are they absent?"
-                                className="glass-input text-xs py-1"
-                              />
-                              <button
-                                type="button"
-                                onClick={() => void handleSaveNote(p.id)}
-                                disabled={savingNoteId === p.id}
-                                className="text-emerald-400 hover:text-emerald-300 disabled:opacity-40 shrink-0"
-                              >
-                                {savingNoteId === p.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
-                              </button>
-                            </div>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setEditingId(p.id);
-                                setNoteDraft(note);
-                              }}
-                              className="flex items-center gap-1.5 text-left text-slate-300 hover:text-white"
-                            >
-                              {note ? <span className="truncate max-w-[260px]">{note}</span> : <span className="text-slate-600">Add note</span>}
-                              <Pencil className="h-3 w-3 text-slate-500 shrink-0" />
-                            </button>
-                          )}
-                        </td>
-                        <td className="py-2 min-w-[220px]">
-                          {isEditingHr ? (
-                            <div className="flex items-center gap-1">
-                              <input
-                                autoFocus
-                                type="text"
-                                value={hrNoteDraft}
-                                onChange={(e) => setHrNoteDraft(e.target.value)}
-                                onKeyDown={(e) => {
-                                  if (e.key === "Enter") void handleSaveHrNote(p.id);
-                                  if (e.key === "Escape") setEditingHrNoteId(null);
-                                }}
-                                placeholder="HR notes (internal)"
-                                className="glass-input text-xs py-1"
-                              />
-                              <button
-                                type="button"
-                                onClick={() => void handleSaveHrNote(p.id)}
-                                disabled={savingHrNoteId === p.id}
-                                className="text-emerald-400 hover:text-emerald-300 disabled:opacity-40 shrink-0"
-                              >
-                                {savingHrNoteId === p.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
-                              </button>
-                            </div>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setEditingHrNoteId(p.id);
-                                setHrNoteDraft(hrNote);
-                              }}
-                              className="flex items-center gap-1.5 text-left text-slate-300 hover:text-white"
-                            >
-                              {hrNote ? <span className="truncate max-w-[260px]">{hrNote}</span> : <span className="text-slate-600">Add HR note</span>}
-                              <Pencil className="h-3 w-3 text-slate-500 shrink-0" />
-                            </button>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
+                  {rangeDates.length > 1
+                    ? groupedAbsentRows.map(([groupDate, rows]) => (
+                        <Fragment key={groupDate}>
+                          <tr className="bg-white/10 border-t-2 border-b border-blue-500/30">
+                            <td colSpan={6} className="py-3 px-2 text-base font-bold text-blue-300 uppercase tracking-wide">
+                              {groupDate} <span className="text-slate-400 font-normal normal-case text-sm">({rows.length})</span>
+                            </td>
+                          </tr>
+                          {rows.map(renderAbsentRow)}
+                        </Fragment>
+                      ))
+                    : absentRows.map(renderAbsentRow)}
                 </tbody>
               </table>
             </div>
           )}
         </div>
+        )}
       </div>
     </main>
   );
