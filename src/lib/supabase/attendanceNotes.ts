@@ -94,11 +94,13 @@ export async function upsertAttendanceNote(input: {
  * day) row can still be created by an HR-only save with no manager note
  * yet on file.
  */
-export async function upsertAttendanceHrNote(profileId: string, noteDate: string, hrNote: string): Promise<void> {
-  const { error } = await supabase.from("attendance_notes").upsert(
-    { profile_id: profileId, note_date: noteDate, hr_note: hrNote },
-    { onConflict: "profile_id,note_date" }
-  );
+export async function upsertAttendanceHrNote(profileId: string, noteDate: string, hrNote: string, createdBy?: string | null): Promise<void> {
+  const payload: Record<string, unknown> = { profile_id: profileId, note_date: noteDate, hr_note: hrNote };
+  // Only stamped when given — a missing/unresolved caller id must never
+  // null out whoever set this previously, on either the first save or a
+  // later edit.
+  if (createdBy) payload.created_by = createdBy;
+  const { error } = await supabase.from("attendance_notes").upsert(payload, { onConflict: "profile_id,note_date" });
   if (error) {
     console.error("upsertAttendanceHrNote error:", error.message);
     throw new Error(error.message);

@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect, useRef, Fragment } from "react";
 import { Link, useSearch, useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
-import { ChevronLeft, ChevronDown, ChevronUp, ChevronRight, Plus, Trash2, AlertTriangle, CheckCircle, XCircle, Paperclip, Users, Clock, UserCheck, UserX, UserMinus, Search, Bell, Download, Forward, History, FileText, ClipboardList, Landmark, GripVertical, FileCheck, Link2, Copy, Calendar, Check, Pencil, Filter } from "lucide-react";
+import { ChevronLeft, ChevronDown, ChevronUp, ChevronRight, Plus, Trash2, AlertTriangle, CheckCircle, XCircle, Paperclip, Users, Clock, UserCheck, UserX, UserMinus, Search, Bell, Download, Forward, History, FileText, ClipboardList, Landmark, GripVertical, FileCheck, Link2, Copy, Calendar, Check, Pencil, Filter, Columns3 } from "lucide-react";
 import { useSignaturePad } from "@/hooks/useSignaturePad";
 import { SignaturePadControls } from "@/components/SignaturePad";
 
@@ -19,7 +19,7 @@ import { LOCATIONS_DATA } from "@/lib/zipCoverage";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { normalizeRole, ROLE_LABELS, isJotformHrRole, getRoleDepartmentBreakdown } from "@/lib/roleLabels";
-import { getCompanyUsers, getProfileEmployeeInfo, getEmployeeInfoByProfileIds, saveProfileEmployeeInfo, updateCompanyUser, getMyProfileId, type EmployeeInfo } from "@/lib/supabase/users";
+import { getCompanyUsers, getProfileEmployeeInfo, getEmployeeInfoByProfileIds, saveProfileEmployeeInfo, updateCompanyUser, getMyProfileId, getAccountCreatorsByEmail, type EmployeeInfo } from "@/lib/supabase/users";
 import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
 import { subscribeNotifications, markNotificationRead, deleteNotification, type AppNotification } from "@/lib/firebase/notifications";
 import {
@@ -28,8 +28,13 @@ import {
   getCandidateCvUrl,
   getCandidateCvUrlForForwarding,
   getCandidates,
+  getLatestStatusChanges,
+  logCandidateFieldEdit,
+  getLatestFieldEdits,
   updateCandidateStatus,
   updateCandidateNotes,
+  updateCandidateScreeningNote,
+  updateCandidateInterviewerNote,
   updateCandidateFields,
   setCandidateOutreach,
   uploadCandidateCv,
@@ -41,6 +46,8 @@ import {
   type CandidateStatus,
   type EodHiringRow,
   type CvForwardDetail,
+  type StatusChange,
+  type FieldEdit,
 } from "@/lib/supabase/hrCandidates";
 import { getAllAgentNotes, getPendingAgentNotes, reviewAgentNote, addAgentNote, deleteAgentNote, type CsrAgentNote } from "@/lib/supabase/csrAgentNotes";
 import { parseBranchAccess, LOCATIONS } from "@/lib/locations";
@@ -125,7 +132,6 @@ import type { SubstanceScreeningFormData } from "@/lib/substanceScreeningFormTem
 import { fillSubstanceScreeningPdf } from "@/lib/substanceScreeningPdfFill";
 import { logActivity, getActivityLog, activityActionLabel, type HrActivityLogEntry } from "@/lib/supabase/hrActivityLog";
 import { HrActivityLogPanel } from "@/components/HrActivityLogPage";
-import { HrCalendarTab } from "@/components/HrCalendarTab";
 import { InterviewCalendarTab, type InterviewCalendarCandidate } from "@/components/InterviewCalendarTab";
 import { subscribeTableChanges } from "@/lib/supabase/realtime";
 import { getCompanyPtoRequests, ptoYearWindow, ptoDaysUsed, sickYearWindow, sickDaysUsed, reviewPtoStage, canReviewPtoStage, type PtoRequestRow, type PtoType, type PtoStage } from "@/lib/supabase/pto";
@@ -233,6 +239,10 @@ const CANDIDATE_STATUS_COLOR: Record<CandidateStatus, string> = {
   withdrawn: "bg-slate-500/20 text-slate-300",
   cancelled: "bg-slate-500/20 text-slate-400",
 };
+/** Just the text-color class from CANDIDATE_STATUS_COLOR (no background) — for status-tinted text that sits on the page's own panel, not inside the badge itself (e.g. the "Changed by" line under the Status dropdown). */
+function candidateStatusTextColor(status: CandidateStatus): string {
+  return CANDIDATE_STATUS_COLOR[status].split(" ").find((c) => c.startsWith("text-")) ?? "text-muted-foreground";
+}
 /** "14:30" -> "2:30 PM" — interview_time is stored as plain 24h "HH:MM" text (0228), formatted for display wherever it's shown. */
 function formatHHMM(hhmm: string): string {
   const [h, m] = hhmm.split(":").map(Number);
@@ -388,6 +398,38 @@ const MASTER_LIST_DEPARTMENT_OPTIONS = [...CANONICAL_DEPARTMENT_GROUPS.map((g) =
 
 /** Where a candidate was found — Add Candidate's Source dropdown; "Other" reveals a free-text field instead of saving the literal word "Other". */
 const CANDIDATE_SOURCE_OPTIONS = ["Indeed", "ZipRecruiter", "Other"];
+
+// Toggleable columns on the Hiring table — Candidate (name) and Actions
+// stay pinned/always visible, everything else can be hidden. Same
+// key+label shape and localStorage-persisted visibility map TicketList's
+// own Columns picker already uses.
+const HIRING_COLUMNS = [
+  { key: "position", label: "Position" },
+  { key: "branch", label: "Branch" },
+  { key: "branchManager", label: "Branch Manager" },
+  { key: "assignedInterviewer", label: "Assigned Interviewer" },
+  { key: "department", label: "Department" },
+  { key: "contact", label: "Contact" },
+  { key: "outreach", label: "Texted / Called" },
+  { key: "cv", label: "CV" },
+  { key: "status", label: "Status" },
+  { key: "accountStatus", label: "Account Status" },
+  { key: "forms", label: "Forms" },
+  { key: "note", label: "Notes" },
+] as const;
+type HiringColumnKey = (typeof HIRING_COLUMNS)[number]["key"];
+const HIRING_COLUMN_VISIBILITY_KEY = "ahs:hiring:visible-columns";
+function loadHiringVisibleColumns(): Record<string, boolean> {
+  const allVisible = Object.fromEntries(HIRING_COLUMNS.map((c) => [c.key, true]));
+  try {
+    const raw = localStorage.getItem(HIRING_COLUMN_VISIBILITY_KEY);
+    if (!raw) return allVisible;
+    const saved = JSON.parse(raw) as Record<string, boolean>;
+    return { ...allVisible, ...saved }; // merge so a newly added column defaults to visible
+  } catch {
+    return allVisible;
+  }
+}
 
 /**
  * Sentinel for the Master List "Trainee" tab — cross-cutting (a trainee can
@@ -706,6 +748,12 @@ function LeaderTreeBranch({
 }
 
 export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
+  // Same component either way (all the Automated Forms state/handlers live
+  // here) — HR Paperworks (its own HR-module entry) shows ONLY the
+  // Automated Forms sidebar group and lands on it directly; HR & Recruitment
+  // Dashboard shows everything else, with Automated Forms now moved out of
+  // its sidebar entirely. See tabGroups below.
+  const paperworksOnly = (sub as any).custom === "hr-paperworks";
   const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
   const { role: myRole, extraRoles: myExtraRoles, ready, uid, displayName, companyId } = useAuth();
   const normalizedMyRole = normalizeRole(myRole);
@@ -729,7 +777,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // Reviews, the Approved log, the department trend chart, and the full
   // Employee Directory all on top of each other, forcing a long scroll to
   // reach anything below Hiring.
-  const [activeTab, setActiveTab] = useState<"hiring" | "warnings" | "masterList" | "leaders" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "promotionForm" | "actionPlanForm" | "terminationForm" | "employeeRequestManager" | "w8ben" | "i9" | "wageAck" | "carIqAgreement" | "vehicleAgreement" | "vehicleUseAgreement" | "employeeConfidentiality" | "mealRestBreak" | "ptoAck" | "partsResponsibility" | "mileageFuel" | "locationConsent" | "damage" | "contractorData" | "contractorDataUs" | "directDeposit" | "substanceScreening" | "flashTechnicianTravel" | "contractorAddendum" | "combineForms" | "employerQueue" | "ndaForm" | "calendar" | "interviewCalendar">("hiring");
+  const [activeTab, setActiveTab] = useState<"hiring" | "warnings" | "masterList" | "leaders" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "promotionForm" | "actionPlanForm" | "terminationForm" | "employeeRequestManager" | "w8ben" | "i9" | "wageAck" | "carIqAgreement" | "vehicleAgreement" | "vehicleUseAgreement" | "employeeConfidentiality" | "mealRestBreak" | "ptoAck" | "partsResponsibility" | "mileageFuel" | "locationConsent" | "damage" | "contractorData" | "contractorDataUs" | "directDeposit" | "substanceScreening" | "flashTechnicianTravel" | "contractorAddendum" | "combineForms" | "employerQueue" | "ndaForm" | "calendar" | "interviewCalendar">(paperworksOnly ? "combineForms" : "hiring");
   const [openCategory, setOpenCategory] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   // Which floating-sidebar section headers (Automated Forms/Generate
@@ -1374,10 +1422,67 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [hiringAccountStatusFilter, setHiringAccountStatusFilter] = useState<HiringTriState>("all");
   const [hiringNoteFilter, setHiringNoteFilter] = useState<HiringTriState>("all");
 
+  // Column visibility (persisted) — Candidate/Actions always show; the rest
+  // toggle from the "Columns" button in the toolbar.
+  const [visibleHiringColumns, setVisibleHiringColumns] = useState<Record<string, boolean>>(() =>
+    typeof window !== "undefined" ? loadHiringVisibleColumns() : Object.fromEntries(HIRING_COLUMNS.map((c) => [c.key, true]))
+  );
+  const [hiringColumnsMenuOpen, setHiringColumnsMenuOpen] = useState(false);
+  const isHiringColVisible = (key: HiringColumnKey) => visibleHiringColumns[key] !== false;
+  const toggleHiringColumn = (key: HiringColumnKey) => {
+    setVisibleHiringColumns((prev) => {
+      const next = { ...prev, [key]: prev[key] === false };
+      try { localStorage.setItem(HIRING_COLUMN_VISIBILITY_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+      return next;
+    });
+  };
+  const showAllHiringColumns = () => {
+    const all = Object.fromEntries(HIRING_COLUMNS.map((c) => [c.key, true]));
+    setVisibleHiringColumns(all);
+    try { localStorage.setItem(HIRING_COLUMN_VISIBILITY_KEY, JSON.stringify(all)); } catch { /* ignore */ }
+  };
+
+  const [statusChangesByCandidateId, setStatusChangesByCandidateId] = useState<Map<string, StatusChange>>(new Map());
+  // Who created the User Management account behind each "Created" Account
+  // Status badge — keyed by email since that's the only field hr_candidates
+  // and profiles share (same join key candidateHasAccount already uses).
+  const [accountCreatorsByEmail, setAccountCreatorsByEmail] = useState<Map<string, { createdByName: string | null; createdAt: string }>>(new Map());
+  // Per-column "Changed by" for every inline-editable field except Status
+  // (which has its own line above, from statusChangesByCandidateId) — keyed
+  // "candidateId||fieldName", see logCandidateFieldEdit/getLatestFieldEdits.
+  const [fieldEditsByKey, setFieldEditsByKey] = useState<Map<string, FieldEdit>>(new Map());
+  const fieldEditFor = (candidateId: string, field: string): FieldEdit | undefined => fieldEditsByKey.get(`${candidateId}||${field}`);
+  // Fire-and-forget log + optimistic local update, called right after a
+  // field save succeeds — avoids waiting on a full getLatestFieldEdits()
+  // round-trip just to show whose name was just typed.
+  const logFieldEditOptimistic = (candidateId: string, field: string) => {
+    const key = `${candidateId}||${field}`;
+    setFieldEditsByKey((prev) => {
+      const next = new Map(prev);
+      next.set(key, { changedByName: displayName || "You", changedAt: new Date().toISOString() });
+      return next;
+    });
+    void logCandidateFieldEdit(candidateId, field);
+  };
+  const renderFieldChangedBy = (candidateId: string, field: string) => {
+    const edit = fieldEditFor(candidateId, field);
+    if (!edit?.changedByName) return null;
+    return (
+      <div className="mt-1 text-[10px] text-muted-foreground whitespace-nowrap" title={new Date(edit.changedAt).toLocaleString()}>
+        Changed by: {edit.changedByName}
+      </div>
+    );
+  };
   const loadCandidates = async () => {
     setCandidatesLoading(true);
     try {
-      setCandidates(await getCandidates());
+      const [rows] = await Promise.all([
+        getCandidates(),
+        getLatestStatusChanges().then(setStatusChangesByCandidateId),
+        getAccountCreatorsByEmail().then(setAccountCreatorsByEmail),
+        getLatestFieldEdits().then(setFieldEditsByKey),
+      ]);
+      setCandidates(rows);
     } catch (err) {
       console.error("Failed to load candidates:", err);
     } finally {
@@ -1742,16 +1847,47 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     [employees]
   );
 
+  // Who's training a candidate — deliberately not role-restricted (unlike
+  // Branch Manager/HR above): a trainer could be anyone on staff, not a
+  // fixed tier.
+  const trainerOptions = useMemo(
+    () => employees.filter((e) => e.status === "active").sort((a, b) => a.name.localeCompare(b.name)),
+    [employees]
+  );
+
   // Resolved display names — same fallback logic the table cells themselves
   // use (manual override, else auto-derived from branch for Branch Manager;
-  // nothing auto-derived for Assigned Interviewer) — shared with the column
-  // filters below so "filter by X" always matches what's actually shown.
+  // nothing auto-derived for Assigned Interviewer/Trainer) — shared with the
+  // column filters below so "filter by X" always matches what's actually shown.
   const branchManagerNameForCandidate = (c: Candidate): string | null =>
     (c.branchManagerId && employees.find((e) => e.id === c.branchManagerId)?.name) ||
     (c.branch ? branchManagerByBranch.get(c.branch) : undefined) ||
     null;
   const assignedInterviewerNameForCandidate = (c: Candidate): string | null =>
     (c.assignedInterviewerId && employees.find((e) => e.id === c.assignedInterviewerId)?.name) || null;
+  const trainerNameForCandidate = (c: Candidate): string | null =>
+    (c.trainerId && employees.find((e) => e.id === c.trainerId)?.name) || null;
+
+  // Forward Candidate's recipient prefill — both the Assigned Interviewer
+  // (running this candidate's process) AND the Branch Manager (manual
+  // override, else auto-derived from branch) are pre-selected when either
+  // is on file, since a candidate's forward usually needs to reach both.
+  // Deduped in case one person holds both roles. Still just a starting
+  // point: recipients can be added/removed freely in the dialog.
+  const defaultForwardRecipientsForCandidate = (c: Candidate): { id: string; name: string }[] => {
+    const out: { id: string; name: string }[] = [];
+    const seen = new Set<string>();
+    const add = (e: { id: string; name: string } | undefined) => {
+      if (e && !seen.has(e.id)) {
+        seen.add(e.id);
+        out.push(e);
+      }
+    };
+    if (c.assignedInterviewerId) add(employees.find((emp) => emp.id === c.assignedInterviewerId && emp.status === "active"));
+    if (c.branchManagerId) add(employees.find((emp) => emp.id === c.branchManagerId && emp.status === "active"));
+    else if (c.branch) add(branchManagerOptions.find((m) => m.branch === c.branch));
+    return out;
+  };
 
   const visibleCandidates = useMemo(() => {
     if (!isBranchManager) return candidates;
@@ -10477,7 +10613,17 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // Interviewing also collects a time (feeds the Interview Calendar tab);
   // Training also collects an end date — both in the same dialog, both
   // optional (status still saves without one).
-  const [statusDateDialog, setStatusDateDialog] = useState<{ candidateId: string; candidateName: string; status: CandidateStatus; label: string; date: string; time: string; timezone: "CST" | "EST"; endDate: string } | null>(null);
+  const [statusDateDialog, setStatusDateDialog] = useState<{ candidateId: string; candidateName: string; status: CandidateStatus; label: string; date: string; time: string; timezone: "CST" | "EST"; endDate: string; trainerId: string } | null>(null);
+  // Trainer picker on the Training dialog — typeable, not a plain dropdown
+  // (trainerOptions can run long), same search+select combobox pattern as
+  // Forward Candidate's recipient picker.
+  const [trainerSearch, setTrainerSearch] = useState("");
+  const [trainerDropdownOpen, setTrainerDropdownOpen] = useState(false);
+  const filteredTrainerOptions = useMemo(() => {
+    const q = trainerSearch.trim().toLowerCase();
+    if (!q) return trainerOptions;
+    return trainerOptions.filter((t) => t.name.toLowerCase().includes(q));
+  }, [trainerOptions, trainerSearch]);
 
   const handleCandidateStatus = async (id: string, status: CandidateStatus) => {
     const requiredLabel = STATUS_REQUIRES_DATE[status];
@@ -10494,7 +10640,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         time: candidate?.interviewTime || "",
         timezone: candidate?.interviewTimezone || "CST",
         endDate: candidate?.trainingEndDate || "",
+        trainerId: candidate?.trainerId || "",
       });
+      setTrainerSearch(candidate?.trainerId ? trainerNameForCandidate(candidate) || "" : "");
+      setTrainerDropdownOpen(false);
       return;
     }
     try {
@@ -10518,6 +10667,14 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         statusDateDialog.status === "interviewing" ? statusDateDialog.time || undefined : undefined,
         statusDateDialog.status === "interviewing" ? statusDateDialog.timezone : undefined
       );
+      // Trainer isn't part of hr_update_candidate_status() (it's a plain
+      // field, not a status-transition side effect like the dates above —
+      // same convention as Branch Manager/Assigned Interviewer) but is
+      // still collected in this same Training dialog for convenience, so
+      // save it alongside the status change rather than in a separate step.
+      if (statusDateDialog.status === "training") {
+        await updateCandidateFields(statusDateDialog.candidateId, { trainerId: statusDateDialog.trainerId });
+      }
       await loadCandidates();
       void logActivity({
         action: "candidate_status_changed",
@@ -10530,6 +10687,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           time: statusDateDialog.time || undefined,
           timezone: statusDateDialog.status === "interviewing" ? statusDateDialog.timezone : undefined,
           endDate: statusDateDialog.endDate || undefined,
+          trainerId: statusDateDialog.status === "training" ? statusDateDialog.trainerId || undefined : undefined,
         },
       });
     } catch (err) {
@@ -10611,21 +10769,29 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
 
-  // Candidate Note — inline pencil-edit, same click-to-edit pattern used
-  // elsewhere in this file (e.g. Estimate Time on Payroll Detail).
-  const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
+  // Candidate Notes — three independent slots (HR/Interviewer/Screening,
+  // see 0234_hr_candidates_screening_interviewer_notes.sql) stacked in one
+  // Note column cell, each its own inline pencil-edit, same click-to-edit
+  // pattern used elsewhere in this file (e.g. Estimate Time on Payroll
+  // Detail). One shared draft/editing-cell state, keyed by which of the
+  // three fields is open, so editing one never touches the others.
+  type CandidateNoteField = "notes" | "interviewerNote" | "screeningNote";
+  const [editingNoteCell, setEditingNoteCell] = useState<{ id: string; field: CandidateNoteField } | null>(null);
   const [noteDraft, setNoteDraft] = useState("");
-  const [savingNoteId, setSavingNoteId] = useState<string | null>(null);
-  const handleSaveCandidateNote = async (id: string) => {
-    setSavingNoteId(id);
+  const [savingNoteCell, setSavingNoteCell] = useState<{ id: string; field: CandidateNoteField } | null>(null);
+  const handleSaveCandidateNote = async (id: string, field: CandidateNoteField) => {
+    setSavingNoteCell({ id, field });
     try {
-      await updateCandidateNotes(id, noteDraft);
-      setCandidates((prev) => prev.map((c) => (c.id === id ? { ...c, notes: noteDraft.trim() || null } : c)));
-      setEditingNoteId(null);
+      if (field === "notes") await updateCandidateNotes(id, noteDraft);
+      else if (field === "interviewerNote") await updateCandidateInterviewerNote(id, noteDraft);
+      else await updateCandidateScreeningNote(id, noteDraft);
+      setCandidates((prev) => prev.map((c) => (c.id === id ? { ...c, [field]: noteDraft.trim() || null } : c)));
+      logFieldEditOptimistic(id, field);
+      setEditingNoteCell(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save note.");
     } finally {
-      setSavingNoteId(null);
+      setSavingNoteCell(null);
     }
   };
 
@@ -10691,6 +10857,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         await updateCandidateFields(id, { assignedInterviewerId: candidateFieldDraft.assignedInterviewerId });
         setCandidates((prev) => prev.map((c) => (c.id === id ? { ...c, assignedInterviewerId: candidateFieldDraft.assignedInterviewerId.trim() || null } : c)));
       }
+      logFieldEditOptimistic(id, field);
       setEditingCandidateCell(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save.");
@@ -10708,6 +10875,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     setCandidates((prev) => prev.map((row) => (row.id === c.id ? { ...row, [field]: next } : row)));
     try {
       await setCandidateOutreach(c.id, field, next);
+      logFieldEditOptimistic(c.id, "outreach");
     } catch (err) {
       setCandidates((prev) => prev.map((row) => (row.id === c.id ? { ...row, [field]: !next } : row)));
       setError(err instanceof Error ? err.message : "Failed to save.");
@@ -10731,28 +10899,37 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     [employees]
   );
   const [forwardCvDialog, setForwardCvDialog] = useState<Candidate | null>(null);
-  const [forwardRecipientId, setForwardRecipientId] = useState("");
+  // Multiple recipients — pre-populated with the candidate's Assigned
+  // Interviewer + Branch Manager (see defaultForwardRecipientsForCandidate),
+  // freely addable/removable from there.
+  const [forwardRecipientIds, setForwardRecipientIds] = useState<Set<string>>(new Set());
   const [forwardRecipientSearch, setForwardRecipientSearch] = useState("");
   const [forwardRecipientDropdownOpen, setForwardRecipientDropdownOpen] = useState(false);
   const [forwardSending, setForwardSending] = useState(false);
+  const forwardRecipients = useMemo(
+    () =>
+      Array.from(forwardRecipientIds)
+        .map((id) => employees.find((e) => e.id === id))
+        .filter((e): e is Employee => !!e),
+    [forwardRecipientIds, employees]
+  );
   const filteredManagerRecipients = useMemo(() => {
     const q = forwardRecipientSearch.trim().toLowerCase();
-    if (!q) return managerRecipients;
-    return managerRecipients.filter(
-      (m) => m.name.toLowerCase().includes(q) || (ROLE_LABELS[normalizeRole(m.position)] ?? m.position).toLowerCase().includes(q)
-    );
-  }, [managerRecipients, forwardRecipientSearch]);
+    return managerRecipients
+      .filter((m) => !forwardRecipientIds.has(m.id))
+      .filter((m) => !q || m.name.toLowerCase().includes(q) || (ROLE_LABELS[normalizeRole(m.position)] ?? m.position).toLowerCase().includes(q));
+  }, [managerRecipients, forwardRecipientSearch, forwardRecipientIds]);
 
   const handleForwardCv = async () => {
-    if (!forwardCvDialog || !forwardRecipientId || !uid) return;
+    if (!forwardCvDialog || forwardRecipientIds.size === 0 || !uid) return;
     setForwardSending(true);
     try {
       const myProfileId = await getMyProfileId(uid);
       if (!myProfileId) throw new Error("Could not resolve your profile.");
-      const thread = await getOrCreateDmThread(myProfileId, forwardRecipientId);
       // Full candidate details, not just the CV file — a manager deciding
       // whether to interview someone needs the position/branch/contact
-      // info too, not only a filename link.
+      // info too, not only a filename link. Built once, sent to every
+      // selected recipient.
       const lines = [
         `📋 Candidate details — ${forwardCvDialog.name}`,
         forwardCvDialog.position ? `Position: ${forwardCvDialog.position}` : null,
@@ -10772,24 +10949,29 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         const filename = (forwardCvDialog.cvPath.split("/").pop() || "CV").replace(/^\d+_/, "");
         lines.push(`CV: [${filename}](${cvUrl})`);
       }
-      await sendMessage({
-        dmThreadId: thread.id,
-        senderId: myProfileId,
-        senderName: displayName || "HR",
-        body: lines.join("\n"),
-      });
-      // Counted against the candidate's own Position+Branch on the EOD/EOM
-      // "CVs Sent to BM" column — best-effort, a logging failure shouldn't
-      // undo the fact the message already sent successfully.
-      try {
-        await logCvForward(forwardCvDialog.id, forwardCvDialog.position, forwardCvDialog.branch, forwardRecipientId);
-      } catch (logErr) {
-        console.error("Failed to log CV forward for reporting:", logErr);
+      const body = lines.join("\n");
+      const sentTo: string[] = [];
+      for (const recipientId of forwardRecipientIds) {
+        const thread = await getOrCreateDmThread(myProfileId, recipientId);
+        await sendMessage({
+          dmThreadId: thread.id,
+          senderId: myProfileId,
+          senderName: displayName || "HR",
+          body,
+        });
+        // Counted against the candidate's own Position+Branch on the
+        // EOD/EOM "CVs Sent to BM" column — best-effort, a logging failure
+        // shouldn't undo the fact the message already sent successfully.
+        try {
+          await logCvForward(forwardCvDialog.id, forwardCvDialog.position, forwardCvDialog.branch, recipientId);
+        } catch (logErr) {
+          console.error("Failed to log CV forward for reporting:", logErr);
+        }
+        sentTo.push(employees.find((e) => e.id === recipientId)?.name ?? recipientId);
       }
-      const recipientName = managerRecipients.find((m) => m.id === forwardRecipientId)?.name;
-      void logActivity({ action: "candidate_cv_forwarded", targetType: "candidate", targetId: forwardCvDialog.id, targetLabel: forwardCvDialog.name, details: { to: recipientName ?? "" } });
+      void logActivity({ action: "candidate_cv_forwarded", targetType: "candidate", targetId: forwardCvDialog.id, targetLabel: forwardCvDialog.name, details: { to: sentTo.join(", ") } });
       setForwardCvDialog(null);
-      setForwardRecipientId("");
+      setForwardRecipientIds(new Set());
       setForwardRecipientSearch("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to forward CV.");
@@ -11966,9 +12148,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // uniformly across the array. ──
   const tabGroups = [
     // Automated Forms (COE, Warning Form, tax forms, Jotform docs, and the
-    // technician-facing acknowledgment forms) is AH Solutions-only for now —
-    // other companies don't use these forms.
-    ...(companyId === "COMP001" ? [{
+    // technician-facing acknowledgment forms) now lives only under its own
+    // HR Paperworks module entry (custom: "hr-paperworks") — not inside HR &
+    // Recruitment Dashboard's sidebar anymore. Still AH Solutions-only for
+    // now — other companies don't use these forms.
+    ...(paperworksOnly && companyId === "COMP001" ? [{
       group: "Automated Forms",
       icon: Paperclip,
       tabs: [...automatedFormsGeneralTabs, ...automatedFormsTechnicianTabs, ...automatedFormsManagementTabs],
@@ -11978,36 +12162,37 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         { label: "BM, SBS, Tech Director, Tech Assistant Director", tabs: automatedFormsManagementTabs },
       ],
     }] : []),
-    {
-      group: "Generate Reports",
-      icon: Download,
-      tabs: [
-        { key: "report", label: "Generate Report", count: 0, icon: Download },
-      ] as const,
-      columns: undefined,
-    },
-    {
-      group: "People Operations",
-      icon: Users,
-      tabs: [
-        { key: "masterList", label: "Master List", count: employees.length, icon: Users },
-        { key: "leaders", label: "Leaders", count: leadersRoster.length, icon: UserCheck },
-        { key: "employeeRequestManager", label: "Employee Request Manager", count: requestManagerPendingCount, icon: ClipboardList },
-        { key: "hiring", label: "Hiring", count: visibleCandidates.length, icon: Users },
-        { key: "onboarding", label: "Onboarding Documents", count: 0, icon: Paperclip },
-        { key: "warnings", label: "Warnings & Mistakes", count: isHrOrAdmin ? pendingNotes.length : 0, icon: AlertTriangle },
-      ] as const,
-      columns: undefined,
-    },
-    {
-      group: "Calendar",
-      icon: Calendar,
-      tabs: [
-        { key: "calendar", label: "Calendar", count: 0, icon: Calendar },
-        { key: "interviewCalendar", label: "Interview Calendar", count: kpi.scheduled, icon: Calendar },
-      ] as const,
-      columns: undefined,
-    },
+    ...(!paperworksOnly ? [
+      {
+        group: "Generate Reports",
+        icon: Download,
+        tabs: [
+          { key: "report", label: "Generate Report", count: 0, icon: Download },
+        ] as const,
+        columns: undefined,
+      },
+      {
+        group: "People Operations",
+        icon: Users,
+        tabs: [
+          { key: "masterList", label: "Master List", count: employees.length, icon: Users },
+          { key: "leaders", label: "Leaders", count: leadersRoster.length, icon: UserCheck },
+          { key: "employeeRequestManager", label: "Employee Request Manager", count: requestManagerPendingCount, icon: ClipboardList },
+          { key: "hiring", label: "Hiring", count: visibleCandidates.length, icon: Users },
+          { key: "onboarding", label: "Onboarding Documents", count: 0, icon: Paperclip },
+          { key: "warnings", label: "Warnings & Mistakes", count: isHrOrAdmin ? pendingNotes.length : 0, icon: AlertTriangle },
+        ] as const,
+        columns: undefined,
+      },
+      {
+        group: "Calendar",
+        icon: Calendar,
+        tabs: [
+          { key: "interviewCalendar", label: "Interview Calendar", count: kpi.scheduled, icon: Calendar },
+        ] as const,
+        columns: undefined,
+      },
+    ] : []),
   ] as const;
 
   // A group with `columns` (currently just "Automated Forms") renders as a
@@ -12443,6 +12628,39 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                 Clear
               </button>
             )}
+            <div className="relative mb-0.5">
+              <button
+                type="button"
+                onClick={() => setHiringColumnsMenuOpen((open) => !open)}
+                className="btn text-sm px-3 py-1.5 inline-flex items-center gap-2"
+                aria-haspopup="true"
+                aria-expanded={hiringColumnsMenuOpen}
+              >
+                <Columns3 className="h-3.5 w-3.5" /> Columns
+                <span className="text-xs text-muted-foreground">
+                  ({HIRING_COLUMNS.filter((c) => isHiringColVisible(c.key)).length}/{HIRING_COLUMNS.length})
+                </span>
+              </button>
+              {hiringColumnsMenuOpen && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setHiringColumnsMenuOpen(false)} />
+                  <div className="absolute left-0 top-full z-50 mt-2 w-56 rounded-lg border border-white/15 bg-slate-900 p-2 shadow-2xl">
+                    <div className="flex items-center justify-between px-2 py-1.5 border-b border-white/10 mb-1">
+                      <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Show columns</span>
+                      <button type="button" onClick={showAllHiringColumns} className="text-xs text-blue-400 hover:text-blue-300">Show all</button>
+                    </div>
+                    <div className="max-h-72 overflow-y-auto">
+                      {HIRING_COLUMNS.map((col) => (
+                        <label key={col.key} className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-white/5 cursor-pointer text-sm">
+                          <input type="checkbox" checked={isHiringColVisible(col.key)} onChange={() => toggleHiringColumn(col.key)} />
+                          <span className="text-slate-200">{col.label}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
             <span className="text-xs text-muted-foreground mb-1.5 ml-auto">
               {filteredCandidates.length}{filteredCandidates.length !== visibleCandidates.length ? ` of ${visibleCandidates.length}` : ""} candidates
             </span>
@@ -12604,46 +12822,66 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             <thead>
               <tr className="border-b border-white/10 bg-white/5">
                 <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Candidate</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase relative">
-                  {renderHiringMultiSelectHeader("position", "Position", hiringPositionOptions, hiringPositionFilter, setHiringPositionFilter)}
-                </th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase relative">
-                  {renderHiringMultiSelectHeader("branch", "Branch", hiringBranchOptions, hiringBranchFilter, setHiringBranchFilter)}
-                </th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase relative">
-                  {renderHiringMultiSelectHeader("branchManager", "Branch Manager", hiringBranchManagerOptions, hiringBranchManagerFilter, setHiringBranchManagerFilter)}
-                </th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase relative">
-                  {renderHiringMultiSelectHeader("assignedInterviewer", "Assigned Interviewer", hiringAssignedInterviewerOptions, hiringAssignedInterviewerFilter, setHiringAssignedInterviewerFilter)}
-                </th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase relative">
-                  {renderHiringMultiSelectHeader("department", "Department", hiringDepartmentOptions, hiringDepartmentFilter, setHiringDepartmentFilter)}
-                </th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Contact</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase relative">
-                  {renderHiringMultiSelectHeader("outreach", "Texted / Called", [...HIRING_OUTREACH_OPTIONS], hiringOutreachFilter, setHiringOutreachFilter)}
-                </th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase relative">
-                  {renderHiringTriStateHeader("cv", "CV", hiringCvFilter, setHiringCvFilter, "Has CV", "No CV")}
-                </th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase relative">
-                  {renderHiringMultiSelectHeader("status", "Status", hiringStatusOptions, hiringStatusFilter, setHiringStatusFilter)}
-                </th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase relative">
-                  {renderHiringTriStateHeader("accountStatus", "Account Status", hiringAccountStatusFilter, setHiringAccountStatusFilter, "Created", "Not Created")}
-                </th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Forms</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase relative">
-                  {renderHiringTriStateHeader("note", "Note", hiringNoteFilter, setHiringNoteFilter, "Has note", "No note")}
-                </th>
+                {isHiringColVisible("position") && (
+                  <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase relative">
+                    {renderHiringMultiSelectHeader("position", "Position", hiringPositionOptions, hiringPositionFilter, setHiringPositionFilter)}
+                  </th>
+                )}
+                {isHiringColVisible("branch") && (
+                  <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase relative">
+                    {renderHiringMultiSelectHeader("branch", "Branch", hiringBranchOptions, hiringBranchFilter, setHiringBranchFilter)}
+                  </th>
+                )}
+                {isHiringColVisible("branchManager") && (
+                  <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase relative">
+                    {renderHiringMultiSelectHeader("branchManager", "Branch Manager", hiringBranchManagerOptions, hiringBranchManagerFilter, setHiringBranchManagerFilter)}
+                  </th>
+                )}
+                {isHiringColVisible("assignedInterviewer") && (
+                  <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase relative">
+                    {renderHiringMultiSelectHeader("assignedInterviewer", "Assigned Interviewer", hiringAssignedInterviewerOptions, hiringAssignedInterviewerFilter, setHiringAssignedInterviewerFilter)}
+                  </th>
+                )}
+                {isHiringColVisible("department") && (
+                  <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase relative">
+                    {renderHiringMultiSelectHeader("department", "Department", hiringDepartmentOptions, hiringDepartmentFilter, setHiringDepartmentFilter)}
+                  </th>
+                )}
+                {isHiringColVisible("contact") && <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Contact</th>}
+                {isHiringColVisible("outreach") && (
+                  <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase relative">
+                    {renderHiringMultiSelectHeader("outreach", "Texted / Called", [...HIRING_OUTREACH_OPTIONS], hiringOutreachFilter, setHiringOutreachFilter)}
+                  </th>
+                )}
+                {isHiringColVisible("cv") && (
+                  <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase relative">
+                    {renderHiringTriStateHeader("cv", "CV", hiringCvFilter, setHiringCvFilter, "Has CV", "No CV")}
+                  </th>
+                )}
+                {isHiringColVisible("status") && (
+                  <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase relative">
+                    {renderHiringMultiSelectHeader("status", "Status", hiringStatusOptions, hiringStatusFilter, setHiringStatusFilter)}
+                  </th>
+                )}
+                {isHiringColVisible("accountStatus") && (
+                  <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase relative">
+                    {renderHiringTriStateHeader("accountStatus", "Account Status", hiringAccountStatusFilter, setHiringAccountStatusFilter, "Created", "Not Created")}
+                  </th>
+                )}
+                {isHiringColVisible("forms") && <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Forms</th>}
+                {isHiringColVisible("note") && (
+                  <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase relative">
+                    {renderHiringTriStateHeader("note", "Notes", hiringNoteFilter, setHiringNoteFilter, "Has HR note", "No HR note")}
+                  </th>
+                )}
                 <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Actions</th>
               </tr>
             </thead>
             <tbody>
               {candidatesLoading ? (
-                <tr><td colSpan={14} className="px-4 py-8 text-center text-muted-foreground text-sm">Loading candidates…</td></tr>
+                <tr><td colSpan={2 + HIRING_COLUMNS.filter((c) => isHiringColVisible(c.key)).length} className="px-4 py-8 text-center text-muted-foreground text-sm">Loading candidates…</td></tr>
               ) : filteredCandidates.length === 0 ? (
-                <tr><td colSpan={14} className="px-4 py-8 text-center text-muted-foreground text-sm">{visibleCandidates.length === 0 ? "No candidates yet." : "No candidates match these filters."}</td></tr>
+                <tr><td colSpan={2 + HIRING_COLUMNS.filter((c) => isHiringColVisible(c.key)).length} className="px-4 py-8 text-center text-muted-foreground text-sm">{visibleCandidates.length === 0 ? "No candidates yet." : "No candidates match these filters."}</td></tr>
               ) : (
                 filteredCandidates.map((c) => (
                   <tr key={c.id} className="border-b border-white/5 hover:bg-white/5">
@@ -12671,7 +12909,9 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           <Pencil className="h-2.5 w-2.5 text-muted-foreground shrink-0" />
                         </button>
                       )}
+                      {renderFieldChangedBy(c.id, "name")}
                     </td>
+                    {isHiringColVisible("position") && (
                     <td className="px-4 py-3 text-sm text-muted-foreground">
                       {editingCandidateCell?.id === c.id && editingCandidateCell.field === "position" ? (
                         <div className="flex items-center gap-1">
@@ -12696,7 +12936,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           <Pencil className="h-2.5 w-2.5 text-muted-foreground shrink-0" />
                         </button>
                       )}
+                      {renderFieldChangedBy(c.id, "position")}
                     </td>
+                    )}
+                    {isHiringColVisible("branch") && (
                     <td className="px-4 py-3 text-sm text-muted-foreground">
                       {editingCandidateCell?.id === c.id && editingCandidateCell.field === "branch" ? (
                         <div className="flex items-center gap-1">
@@ -12719,7 +12962,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           <Pencil className="h-2.5 w-2.5 text-muted-foreground shrink-0" />
                         </button>
                       )}
+                      {renderFieldChangedBy(c.id, "branch")}
                     </td>
+                    )}
+                    {isHiringColVisible("branchManager") && (
                     <td className="px-4 py-3 text-sm text-muted-foreground whitespace-nowrap">
                       {editingCandidateCell?.id === c.id && editingCandidateCell.field === "branchManager" ? (
                         <div className="flex items-center gap-1">
@@ -12742,7 +12988,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           <Pencil className="h-2.5 w-2.5 text-muted-foreground shrink-0" />
                         </button>
                       )}
+                      {renderFieldChangedBy(c.id, "branchManager")}
                     </td>
+                    )}
+                    {isHiringColVisible("assignedInterviewer") && (
                     <td className="px-4 py-3 text-sm text-muted-foreground whitespace-nowrap">
                       {editingCandidateCell?.id === c.id && editingCandidateCell.field === "assignedInterviewer" ? (
                         <div className="flex items-center gap-1">
@@ -12765,7 +13014,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           <Pencil className="h-2.5 w-2.5 text-muted-foreground shrink-0" />
                         </button>
                       )}
+                      {renderFieldChangedBy(c.id, "assignedInterviewer")}
                     </td>
+                    )}
+                    {isHiringColVisible("department") && (
                     <td className="px-4 py-3 text-sm text-muted-foreground whitespace-nowrap">
                       {editingCandidateCell?.id === c.id && editingCandidateCell.field === "department" ? (
                         <div className="flex items-center gap-1">
@@ -12788,7 +13040,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           <Pencil className="h-2.5 w-2.5 text-muted-foreground shrink-0" />
                         </button>
                       )}
+                      {renderFieldChangedBy(c.id, "department")}
                     </td>
+                    )}
+                    {isHiringColVisible("contact") && (
                     <td className="px-4 py-3 text-xs text-muted-foreground">
                       {editingCandidateCell?.id === c.id && editingCandidateCell.field === "contact" ? (
                         <div className="flex flex-col gap-1">
@@ -12855,7 +13110,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           <Pencil className="h-2.5 w-2.5 text-muted-foreground shrink-0 mt-0.5" />
                         </button>
                       )}
+                      {renderFieldChangedBy(c.id, "contact")}
                     </td>
+                    )}
+                    {isHiringColVisible("outreach") && (
                     <td className="px-4 py-3">
                       <div className="grid grid-cols-2 gap-1 w-max">
                         {(
@@ -12881,37 +13139,59 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           </button>
                         ))}
                       </div>
+                      {renderFieldChangedBy(c.id, "outreach")}
                     </td>
+                    )}
+                    {isHiringColVisible("cv") && (
                     <td className="px-4 py-3">
                       {c.cvPath ? (
                         <button onClick={() => handleViewCv(c.cvPath!)} className="text-blue-400 hover:text-blue-300 text-xs underline">View CV</button>
                       ) : <span className="text-muted-foreground text-xs">—</span>}
                     </td>
+                    )}
+                    {isHiringColVisible("status") && (
                     <td className="px-4 py-3">
                       <select value={c.status} onChange={(e) => handleCandidateStatus(c.id, e.target.value as CandidateStatus)} className={`text-xs font-semibold px-2 py-1 rounded border-0 ${CANDIDATE_STATUS_COLOR[c.status]}`}>
-                        {!candidateStatusOptions.includes(c.status) && <option value={c.status}>{CANDIDATE_STATUS_LABEL[c.status]}</option>}
-                        {candidateStatusOptions.map((s) => <option key={s} value={s}>{CANDIDATE_STATUS_LABEL[s]}</option>)}
+                        {/* The closed control can use a translucent semantic
+                            background (bg-green-500/20 etc.) since it sits on
+                            this page's own dark panel, but the native dropdown
+                            popup is browser-chrome, not this page — without an
+                            explicit solid background here, light status text
+                            (e.g. text-green-300) renders on the browser's own
+                            near-white popup and becomes nearly unreadable. */}
+                        {!candidateStatusOptions.includes(c.status) && <option value={c.status} className="bg-slate-800 text-white">{CANDIDATE_STATUS_LABEL[c.status]}</option>}
+                        {candidateStatusOptions.map((s) => <option key={s} value={s} className="bg-slate-800 text-white">{CANDIDATE_STATUS_LABEL[s]}</option>)}
                       </select>
+                      {statusChangesByCandidateId.get(c.id)?.changedByName && (
+                        <div className={`mt-1 text-[10px] whitespace-nowrap ${candidateStatusTextColor(c.status)}`} title={new Date(statusChangesByCandidateId.get(c.id)!.changedAt).toLocaleString()}>
+                          Changed by: {statusChangesByCandidateId.get(c.id)!.changedByName}
+                        </div>
+                      )}
                       {c.createdAt && (
                         <div className="mt-1 text-[10px] text-muted-foreground whitespace-nowrap">
                           Applied: {new Date(c.createdAt).toLocaleDateString()}
                         </div>
                       )}
                       {c.status === "interviewing" && c.interviewDate && (
-                        <div className="mt-1 text-[10px] text-muted-foreground whitespace-nowrap">
+                        <div className={`mt-1 text-[10px] whitespace-nowrap ${candidateStatusTextColor(c.status)}`}>
                           Interview: {new Date(c.interviewDate + "T00:00:00").toLocaleDateString()}
                           {c.interviewTime ? ` ${formatHHMM(c.interviewTime)}${c.interviewTimezone ? ` ${c.interviewTimezone}` : ""}` : ""}
                         </div>
                       )}
                       {c.status === "training" && (c.trainingStartDate || c.trainingEndDate) && (
-                        <div className="mt-1 text-[10px] text-muted-foreground whitespace-nowrap">
+                        <div className={`mt-1 text-[10px] whitespace-nowrap ${candidateStatusTextColor(c.status)}`}>
                           Training: {c.trainingStartDate ? new Date(c.trainingStartDate + "T00:00:00").toLocaleDateString() : "—"}
                           {" → "}
                           {c.trainingEndDate ? new Date(c.trainingEndDate + "T00:00:00").toLocaleDateString() : "—"}
                         </div>
                       )}
+                      {c.status === "training" && trainerNameForCandidate(c) && (
+                        <div className="mt-1 text-[10px] text-cyan-300 whitespace-nowrap">
+                          Trainer: {trainerNameForCandidate(c)}
+                        </div>
+                      )}
                       {c.status === "withdrawn" && c.withdrawnDate && (
-                        <div className="mt-1 text-[10px] text-muted-foreground whitespace-nowrap">
+                        <div className={`mt-1 text-[10px] whitespace-nowrap ${candidateStatusTextColor(c.status)}`}>
                           Withdrawn: {new Date(c.withdrawnDate + "T00:00:00").toLocaleDateString()}
                         </div>
                       )}
@@ -12928,20 +13208,34 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                         </div>
                       )}
                     </td>
+                    )}
+                    {isHiringColVisible("accountStatus") && (
                     <td className="px-4 py-3">
                       {c.email && employeeEmailSet.has(c.email.trim().toLowerCase()) ? (
-                        <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-green-500/20 text-green-300 whitespace-nowrap">Created</span>
+                        <>
+                          <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-green-500/20 text-green-300 whitespace-nowrap">Created</span>
+                          {(() => {
+                            const creator = accountCreatorsByEmail.get(c.email!.trim().toLowerCase());
+                            return creator?.createdByName ? (
+                              <div className="mt-1 text-[10px] text-green-300 whitespace-nowrap" title={new Date(creator.createdAt).toLocaleString()}>
+                                Created by: {creator.createdByName}
+                              </div>
+                            ) : null;
+                          })()}
+                        </>
                       ) : (
                         <Link
                           to="/m/$module/$submodule"
                           params={{ module: "hr", submodule: "user-management" }}
                           title="Go to User Management to add this person"
-                          className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-slate-500/20 text-slate-400 hover:bg-slate-500/30 hover:text-slate-200 whitespace-nowrap"
+                          className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-red-500/20 text-red-300 hover:bg-red-500/30 hover:text-red-200 whitespace-nowrap"
                         >
                           Not Created
                         </Link>
                       )}
                     </td>
+                    )}
+                    {isHiringColVisible("forms") && (
                     <td className="px-4 py-3">
                       {(() => {
                         const progress = candidateFormProgress(c);
@@ -12963,40 +13257,59 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                         );
                       })()}
                     </td>
-                    <td className="px-4 py-3 max-w-[16rem]">
-                      {editingNoteId === c.id ? (
-                        <div className="flex items-start gap-1">
-                          <textarea
-                            autoFocus
-                            value={noteDraft}
-                            onChange={(e) => setNoteDraft(e.target.value)}
-                            onKeyDown={(e) => { if (e.key === "Escape") setEditingNoteId(null); }}
-                            rows={2}
-                            className="w-40 rounded border border-white/15 bg-slate-800 px-2 py-1 text-xs text-white focus:outline-none focus:border-blue-500"
-                          />
-                          <button
-                            onClick={() => void handleSaveCandidateNote(c.id)}
-                            disabled={savingNoteId === c.id}
-                            className="text-emerald-400 hover:text-emerald-300 disabled:opacity-40 shrink-0 mt-1"
-                          >
-                            <Check className="h-3.5 w-3.5" />
-                          </button>
+                    )}
+                    {isHiringColVisible("note") && (
+                    <td className="px-4 py-3 max-w-[16rem] space-y-2">
+                      {(
+                        [
+                          { field: "notes" as const, label: "HR Note", value: c.notes },
+                          { field: "interviewerNote" as const, label: "Interviewer Note", value: c.interviewerNote },
+                          { field: "screeningNote" as const, label: "Screening Note", value: c.screeningNote },
+                        ]
+                      ).map(({ field, label, value }) => (
+                        <div key={field}>
+                          <p className="text-[9px] font-semibold uppercase tracking-wide text-muted-foreground/70 mb-0.5">{label}</p>
+                          {editingNoteCell?.id === c.id && editingNoteCell.field === field ? (
+                            <div className="flex items-start gap-1">
+                              <textarea
+                                autoFocus
+                                value={noteDraft}
+                                onChange={(e) => setNoteDraft(e.target.value)}
+                                onKeyDown={(e) => { if (e.key === "Escape") setEditingNoteCell(null); }}
+                                rows={2}
+                                className="w-40 rounded border border-white/15 bg-slate-800 px-2 py-1 text-xs text-white focus:outline-none focus:border-blue-500"
+                              />
+                              <button
+                                onClick={() => void handleSaveCandidateNote(c.id, field)}
+                                disabled={savingNoteCell?.id === c.id && savingNoteCell.field === field}
+                                className="text-emerald-400 hover:text-emerald-300 disabled:opacity-40 shrink-0 mt-1"
+                              >
+                                <Check className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              onClick={() => { setEditingNoteCell({ id: c.id, field }); setNoteDraft(value || ""); }}
+                              className="inline-flex items-start gap-1 text-left text-xs text-muted-foreground hover:text-white"
+                              title="Click to edit"
+                            >
+                              <span className="line-clamp-2">{value || "—"}</span>
+                              <Pencil className="h-3 w-3 shrink-0 mt-0.5 opacity-60" />
+                            </button>
+                          )}
+                          {renderFieldChangedBy(c.id, field)}
                         </div>
-                      ) : (
-                        <button
-                          onClick={() => { setEditingNoteId(c.id); setNoteDraft(c.notes || ""); }}
-                          className="inline-flex items-start gap-1 text-left text-xs text-muted-foreground hover:text-white"
-                          title="Click to edit"
-                        >
-                          <span className="line-clamp-2">{c.notes || "—"}</span>
-                          <Pencil className="h-3 w-3 shrink-0 mt-0.5 opacity-60" />
-                        </button>
-                      )}
+                      ))}
                     </td>
+                    )}
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-1">
                         <button
-                          onClick={() => { setForwardCvDialog(c); setForwardRecipientId(""); setForwardRecipientSearch(""); }}
+                          onClick={() => {
+                            setForwardCvDialog(c);
+                            setForwardRecipientIds(new Set(defaultForwardRecipientsForCandidate(c).map((r) => r.id)));
+                            setForwardRecipientSearch("");
+                          }}
                           title="Forward candidate details to a manager"
                           className="btn text-blue-400 hover:text-blue-300 text-sm p-1"
                         >
@@ -13257,14 +13570,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         )}
       </div>
       </>
-      )}
-
-      {activeTab === "calendar" && (
-        <HrCalendarTab
-          employees={employees.map((e) => ({ id: e.id, name: e.name, branch: e.branch, status: e.status, role: e.position }))}
-          myProfileId={myProfileId}
-          myDisplayName={displayName}
-        />
       )}
 
       {activeTab === "interviewCalendar" && (
@@ -23940,13 +24245,58 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                   value={statusDateDialog.endDate}
                   min={statusDateDialog.date}
                   onChange={(e) => setStatusDateDialog({ ...statusDateDialog, endDate: e.target.value })}
-                  className="glass-input text-sm py-1.5 px-3 rounded-md w-full mb-4"
+                  className="glass-input text-sm py-1.5 px-3 rounded-md w-full mb-3"
                 />
+                <p className="text-sm text-muted-foreground mb-1">Trainer:</p>
+                <div className="relative mb-4">
+                  <input
+                    type="text"
+                    value={trainerSearch}
+                    onChange={(e) => {
+                      setTrainerSearch(e.target.value);
+                      setStatusDateDialog({ ...statusDateDialog, trainerId: "" });
+                      setTrainerDropdownOpen(true);
+                    }}
+                    onFocus={() => setTrainerDropdownOpen(true)}
+                    onBlur={() => setTimeout(() => setTrainerDropdownOpen(false), 150)}
+                    placeholder="Search a trainer…"
+                    className="glass-input text-sm py-1.5 px-3 rounded-md w-full"
+                  />
+                  {trainerDropdownOpen && (
+                    <div className="absolute z-10 mt-1 w-full max-h-48 overflow-y-auto rounded-md border border-white/15 bg-slate-800 shadow-lg">
+                      {filteredTrainerOptions.length === 0 ? (
+                        <p className="px-3 py-2 text-xs text-muted-foreground">No matching employees.</p>
+                      ) : (
+                        filteredTrainerOptions.map((t) => (
+                          <button
+                            key={t.id}
+                            type="button"
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={() => {
+                              setStatusDateDialog({ ...statusDateDialog, trainerId: t.id });
+                              setTrainerSearch(t.name);
+                              setTrainerDropdownOpen(false);
+                            }}
+                            className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${statusDateDialog.trainerId === t.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                          >
+                            {t.name} {t.branch && <span className="text-muted-foreground text-xs">— {t.branch}</span>}
+                          </button>
+                        ))
+                      )}
+                    </div>
+                  )}
+                </div>
               </>
             )}
             <div className="flex gap-2 justify-end">
               <button onClick={() => setStatusDateDialog(null)} className="btn text-sm px-4 py-2">Cancel</button>
-              <button onClick={handleConfirmStatusDate} className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white">Save</button>
+              <button
+                onClick={handleConfirmStatusDate}
+                disabled={statusDateDialog.status === "training" && !statusDateDialog.trainerId}
+                className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+              >
+                Save
+              </button>
             </div>
           </div>
         </div>
@@ -24060,21 +24410,37 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <div className="bg-slate-800 border border-white/10 rounded-lg p-6 max-w-sm w-full">
             <h3 className="text-lg font-bold mb-2">Forward Candidate</h3>
             <p className="text-sm text-muted-foreground mb-4">
-              Send <span className="font-semibold text-white">{forwardCvDialog.name}</span>'s details{forwardCvDialog.cvPath ? " and CV" : ""} to a manager via the internal messenger.
+              Send <span className="font-semibold text-white">{forwardCvDialog.name}</span>'s details{forwardCvDialog.cvPath ? " and CV" : ""} to one or more managers via the internal messenger.
             </p>
-            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient</label>
-            <div className="relative mt-1 mb-4">
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipients</label>
+            {forwardRecipients.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mt-1.5">
+                {forwardRecipients.map((r) => (
+                  <span key={r.id} className="inline-flex items-center gap-1 pl-2 pr-1 py-0.5 rounded-full bg-blue-500/15 text-blue-300 text-xs border border-blue-500/25">
+                    {r.name}
+                    <button
+                      type="button"
+                      onClick={() => setForwardRecipientIds((prev) => { const next = new Set(prev); next.delete(r.id); return next; })}
+                      className="hover:text-white leading-none px-0.5"
+                      title="Remove"
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+            <div className="relative mt-1.5 mb-4">
               <input
                 type="text"
                 value={forwardRecipientSearch}
                 onChange={(e) => {
                   setForwardRecipientSearch(e.target.value);
-                  setForwardRecipientId("");
                   setForwardRecipientDropdownOpen(true);
                 }}
                 onFocus={() => setForwardRecipientDropdownOpen(true)}
                 onBlur={() => setTimeout(() => setForwardRecipientDropdownOpen(false), 150)}
-                placeholder="Search a manager…"
+                placeholder="Add another manager…"
                 className="glass-input text-sm py-1.5 px-3 rounded-md w-full"
               />
               {forwardRecipientDropdownOpen && (
@@ -24088,11 +24454,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                         type="button"
                         onMouseDown={(e) => e.preventDefault()}
                         onClick={() => {
-                          setForwardRecipientId(m.id);
-                          setForwardRecipientSearch(`${m.name} — ${ROLE_LABELS[normalizeRole(m.position)] ?? m.position}`);
-                          setForwardRecipientDropdownOpen(false);
+                          setForwardRecipientIds((prev) => new Set(prev).add(m.id));
+                          setForwardRecipientSearch("");
                         }}
-                        className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${forwardRecipientId === m.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                        className="w-full text-left px-3 py-2 text-sm hover:bg-white/10"
                       >
                         {m.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(m.position)] ?? m.position}</span>
                       </button>
@@ -24105,10 +24470,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               <p className="text-xs text-yellow-300 mb-4">No manager accounts found in this company.</p>
             )}
             <div className="flex gap-2 justify-end">
-              <button onClick={() => { setForwardCvDialog(null); setForwardRecipientId(""); setForwardRecipientSearch(""); }} className="btn text-sm px-4 py-2">Cancel</button>
+              <button onClick={() => { setForwardCvDialog(null); setForwardRecipientIds(new Set()); setForwardRecipientSearch(""); }} className="btn text-sm px-4 py-2">Cancel</button>
               <button
                 onClick={handleForwardCv}
-                disabled={!forwardRecipientId || forwardSending}
+                disabled={forwardRecipientIds.size === 0 || forwardSending}
                 className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
               >
                 {forwardSending ? "Sending…" : "Send"}

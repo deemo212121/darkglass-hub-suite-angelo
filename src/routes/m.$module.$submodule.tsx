@@ -639,6 +639,8 @@ function SubModule() {
         ? <CSRStatusSummary mod={mod} sub={sub} />
         : (sub as any).custom === "hr-dashboard"
         ? <ReportHRDaily mod={mod} sub={sub} />
+        : (sub as any).custom === "hr-paperworks"
+        ? <ReportHRDaily mod={mod} sub={sub} />
         : (sub as any).custom === "hr-todo-list"
         ? <HrOnboardingChecklistPage />
         : (sub as any).custom === "absent-list"

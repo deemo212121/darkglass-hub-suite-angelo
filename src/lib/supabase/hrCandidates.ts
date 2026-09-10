@@ -30,6 +30,7 @@ export interface Candidate {
   department: string | null;
   branchManagerId: string | null;  // manually-assigned override for the Hiring table's auto-derived Branch Manager column
   assignedInterviewerId: string | null;  // HR person running this candidate's interview process
+  trainerId: string | null;  // who's training this candidate, set from the Training status dialog
   source: string | null;  // where the applicant was found — "Indeed" / "ZipRecruiter" / free text for "Other"
   textedAm: boolean;
   textedPm: boolean;
@@ -43,7 +44,9 @@ export interface Candidate {
   trainingStartDate: string | null;  // required when status = "training"
   trainingEndDate: string | null;    // optional, settable alongside trainingStartDate
   withdrawnDate: string | null;      // required when status = "withdrawn"
-  notes: string | null;
+  notes: string | null;              // "HR Note" in the UI
+  screeningNote: string | null;
+  interviewerNote: string | null;
   createdBy: string | null;
   createdByName: string | null;
   createdAt: string;
@@ -53,10 +56,16 @@ export interface Candidate {
 // `full_name` is the real column (the table predates this feature — see
 // 0001_init.sql / 0030_hr_candidates.sql); mapped to `name` here so the
 // rest of the app's Candidate type reads naturally.
-const SELECT = "id, company_id, full_name, phone, email, position, branch, department, branch_manager_id, assigned_interviewer_id, source, texted_am, texted_pm, called_am, called_pm, cv_path, status, interview_date, interview_time, interview_timezone, training_start_date, training_end_date, withdrawn_date, notes, created_by, created_at, updated_at, author:created_by (display_name, username)";
-// Falls back to this if source doesn't exist yet — i.e.
-// 0230_hr_candidates_source.sql hasn't been run against this database,
-// but 0229_hr_candidates_interview_timezone.sql has.
+const SELECT = "id, company_id, full_name, phone, email, position, branch, department, branch_manager_id, assigned_interviewer_id, trainer_id, source, texted_am, texted_pm, called_am, called_pm, cv_path, status, interview_date, interview_time, interview_timezone, training_start_date, training_end_date, withdrawn_date, notes, screening_note, interviewer_note, created_by, created_at, updated_at, author:created_by (display_name, username)";
+// Falls back to this if screening_note/interviewer_note don't exist yet —
+// i.e. 0234_hr_candidates_screening_interviewer_notes.sql hasn't been run
+// against this database, but 0231_hr_candidates_trainer.sql has.
+const SELECT_V10 = "id, company_id, full_name, phone, email, position, branch, department, branch_manager_id, assigned_interviewer_id, trainer_id, source, texted_am, texted_pm, called_am, called_pm, cv_path, status, interview_date, interview_time, interview_timezone, training_start_date, training_end_date, withdrawn_date, notes, created_by, created_at, updated_at, author:created_by (display_name, username)";
+// Falls back further to this if trainer_id doesn't exist either — i.e.
+// 0231 hasn't run, but 0230_hr_candidates_source.sql has.
+const SELECT_V9 = "id, company_id, full_name, phone, email, position, branch, department, branch_manager_id, assigned_interviewer_id, source, texted_am, texted_pm, called_am, called_pm, cv_path, status, interview_date, interview_time, interview_timezone, training_start_date, training_end_date, withdrawn_date, notes, created_by, created_at, updated_at, author:created_by (display_name, username)";
+// Falls back further to this if source doesn't exist either — i.e.
+// 0230 hasn't run, but 0229_hr_candidates_interview_timezone.sql has.
 const SELECT_V8 = "id, company_id, full_name, phone, email, position, branch, department, branch_manager_id, assigned_interviewer_id, texted_am, texted_pm, called_am, called_pm, cv_path, status, interview_date, interview_time, interview_timezone, training_start_date, training_end_date, withdrawn_date, notes, created_by, created_at, updated_at, author:created_by (display_name, username)";
 // Falls back further to this if interview_timezone doesn't exist either —
 // i.e. 0229 hasn't run, but 0228_hr_candidates_interview_time.sql has.
@@ -103,6 +112,7 @@ function fromRow(r: any): Candidate {
     department: r.department ?? null,
     branchManagerId: r.branch_manager_id ?? null,
     assignedInterviewerId: r.assigned_interviewer_id ?? null,
+    trainerId: r.trainer_id ?? null,
     source: r.source ?? null,
     textedAm: r.texted_am ?? false,
     textedPm: r.texted_pm ?? false,
@@ -117,6 +127,8 @@ function fromRow(r: any): Candidate {
     trainingEndDate: r.training_end_date ?? null,
     withdrawnDate: r.withdrawn_date ?? null,
     notes: r.notes,
+    screeningNote: r.screening_note ?? null,
+    interviewerNote: r.interviewer_note ?? null,
     createdBy: r.created_by,
     createdByName: r.author?.display_name || r.author?.username || null,
     createdAt: r.created_at,
@@ -140,6 +152,22 @@ export async function getCandidates(): Promise<Candidate[]> {
       .order("created_at", { ascending: false })
       .range(from, from + CANDIDATES_PAGE_SIZE - 1);
     if (isMissingColumnError(error) && select === SELECT) {
+      select = SELECT_V10;
+      ({ data, error } = await supabase
+        .from("hr_candidates")
+        .select(select)
+        .order("created_at", { ascending: false })
+        .range(from, from + CANDIDATES_PAGE_SIZE - 1));
+    }
+    if (isMissingColumnError(error) && select === SELECT_V10) {
+      select = SELECT_V9;
+      ({ data, error } = await supabase
+        .from("hr_candidates")
+        .select(select)
+        .order("created_at", { ascending: false })
+        .range(from, from + CANDIDATES_PAGE_SIZE - 1));
+    }
+    if (isMissingColumnError(error) && select === SELECT_V9) {
       select = SELECT_V8;
       ({ data, error } = await supabase
         .from("hr_candidates")
@@ -247,6 +275,12 @@ export async function addCandidate(input: {
     source: input.source?.trim() || null,
   };
   let { data, error }: { data: any; error: any } = await supabase.from("hr_candidates").insert(insertPayload).select(SELECT).single();
+  if (isMissingColumnError(error)) {
+    // trainer_id (0231) not applied yet — the insert never referenced it
+    // (not an Add Candidate input, only settable later via the Training
+    // status dialog), only the RETURNING select did.
+    ({ data, error } = await supabase.from("hr_candidates").insert(insertPayload).select(SELECT_V9).single());
+  }
   if (isMissingColumnError(error)) {
     // source (0230) not applied yet — the insert itself referenced it this
     // time (unlike interview_time/timezone below, source IS a real Add
@@ -396,6 +430,18 @@ export async function updateCandidateNotes(id: string, notes: string): Promise<v
   if (error) throw new Error(error.message);
 }
 
+/** Updates the Screening Note — a separate slot from the general HR note (updateCandidateNotes above) and the Interviewer Note below, so each role's write never clobbers another's. See 0234_hr_candidates_screening_interviewer_notes.sql. */
+export async function updateCandidateScreeningNote(id: string, note: string): Promise<void> {
+  const { error } = await supabase.from("hr_candidates").update({ screening_note: note.trim() || null }).eq("id", id);
+  if (error) throw new Error(error.message);
+}
+
+/** Updates the Interviewer Note — see updateCandidateScreeningNote above for why this is a separate column from `notes`. */
+export async function updateCandidateInterviewerNote(id: string, note: string): Promise<void> {
+  const { error } = await supabase.from("hr_candidates").update({ interviewer_note: note.trim() || null }).eq("id", id);
+  if (error) throw new Error(error.message);
+}
+
 /** Flips one texted/called AM/PM flag (0226) — the Hiring table's "Texted / Called" column toggles these directly, one at a time, no popup. */
 export async function setCandidateOutreach(
   id: string,
@@ -420,7 +466,7 @@ export async function setCandidateOutreach(
  */
 export async function updateCandidateFields(
   id: string,
-  fields: Partial<{ name: string; phone: string; email: string; position: string; branch: string; department: string; branchManagerId: string; assignedInterviewerId: string; source: string }>
+  fields: Partial<{ name: string; phone: string; email: string; position: string; branch: string; department: string; branchManagerId: string; assignedInterviewerId: string; trainerId: string; source: string }>
 ): Promise<void> {
   const payload: Record<string, string | null> = {};
   if (fields.name !== undefined) payload.full_name = fields.name.trim();
@@ -431,6 +477,7 @@ export async function updateCandidateFields(
   if (fields.department !== undefined) payload.department = fields.department.trim() || null;
   if (fields.branchManagerId !== undefined) payload.branch_manager_id = fields.branchManagerId.trim() || null;
   if (fields.assignedInterviewerId !== undefined) payload.assigned_interviewer_id = fields.assignedInterviewerId.trim() || null;
+  if (fields.trainerId !== undefined) payload.trainer_id = fields.trainerId.trim() || null;
   if (fields.source !== undefined) payload.source = fields.source.trim() || null;
   const { error } = await supabase.from("hr_candidates").update(payload).eq("id", id);
   if (error) throw new Error(error.message);
@@ -439,6 +486,100 @@ export async function updateCandidateFields(
 export async function deleteCandidate(id: string): Promise<void> {
   const { error } = await supabase.from("hr_candidates").delete().eq("id", id);
   if (error) throw new Error(error.message);
+}
+
+/**
+ * Who last changed each candidate's status, and when — for the Hiring
+ * table's "Changed by" line under the Status dropdown. Reads
+ * hr_candidate_status_history (0048_hr_hiring_reports.sql), which
+ * hr_update_candidate_status() already logs a row to on every real status
+ * transition (not on a same-status date reschedule — see that function's
+ * own comment) — no separate "last edited by" column on hr_candidates
+ * itself needed. Rows come back newest-first per candidate_id, so the
+ * first one seen per candidate as we page through is its latest.
+ */
+export interface StatusChange {
+  changedByName: string | null;
+  changedAt: string;
+}
+
+const STATUS_HISTORY_PAGE_SIZE = 1000;
+
+export async function getLatestStatusChanges(): Promise<Map<string, StatusChange>> {
+  const map = new Map<string, StatusChange>();
+  for (let from = 0; ; from += STATUS_HISTORY_PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from("hr_candidate_status_history")
+      .select("candidate_id, created_at, author:changed_by (display_name, username)")
+      .order("created_at", { ascending: false })
+      .range(from, from + STATUS_HISTORY_PAGE_SIZE - 1);
+    if (error) {
+      // 42P01 = table doesn't exist yet (0048 not applied) — no history to show.
+      if (error.code === "42P01") return map;
+      console.error("getLatestStatusChanges error:", error.message);
+      return map;
+    }
+    for (const r of (data ?? []) as any[]) {
+      if (map.has(r.candidate_id)) continue; // already have this candidate's latest (newest-first order)
+      map.set(r.candidate_id, {
+        changedByName: r.author?.display_name || r.author?.username || null,
+        changedAt: r.created_at,
+      });
+    }
+    if (!data || data.length < STATUS_HISTORY_PAGE_SIZE) break;
+  }
+  return map;
+}
+
+/**
+ * Generic "who last edited this column" audit trail (0232) for the Hiring
+ * table's inline-editable fields — Status (and Trainer, set alongside it)
+ * already has its own dedicated history table/RPC (hr_candidate_status_
+ * history) and isn't logged here too.
+ */
+export interface FieldEdit {
+  changedByName: string | null;
+  changedAt: string;
+}
+
+/** Fire-and-forget — a logging failure should never block the actual field save it's attached to. */
+export async function logCandidateFieldEdit(candidateId: string, fieldName: string): Promise<void> {
+  try {
+    const { error } = await supabase.from("hr_candidate_field_edits").insert({ candidate_id: candidateId, field_name: fieldName });
+    if (error && error.code !== "42P01") console.error("logCandidateFieldEdit error:", error.message);
+  } catch (err) {
+    console.error("logCandidateFieldEdit error:", err);
+  }
+}
+
+const FIELD_EDIT_PAGE_SIZE = 1000;
+
+/** Latest edit per (candidate, field), company-wide — one bulk paginated fetch, keyed "candidateId||fieldName". */
+export async function getLatestFieldEdits(): Promise<Map<string, FieldEdit>> {
+  const map = new Map<string, FieldEdit>();
+  for (let from = 0; ; from += FIELD_EDIT_PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from("hr_candidate_field_edits")
+      .select("candidate_id, field_name, created_at, author:changed_by (display_name, username)")
+      .order("created_at", { ascending: false })
+      .range(from, from + FIELD_EDIT_PAGE_SIZE - 1);
+    if (error) {
+      // 42P01 = table doesn't exist yet (0232 not applied) — no history to show.
+      if (error.code === "42P01") return map;
+      console.error("getLatestFieldEdits error:", error.message);
+      return map;
+    }
+    for (const r of (data ?? []) as any[]) {
+      const key = `${r.candidate_id}||${r.field_name}`;
+      if (map.has(key)) continue; // already have this candidate/field's latest (newest-first order)
+      map.set(key, {
+        changedByName: r.author?.display_name || r.author?.username || null,
+        changedAt: r.created_at,
+      });
+    }
+    if (!data || data.length < FIELD_EDIT_PAGE_SIZE) break;
+  }
+  return map;
 }
 
 // =====================================================================

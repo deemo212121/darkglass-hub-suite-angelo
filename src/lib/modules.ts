@@ -364,6 +364,15 @@ const hrMod: ModuleDef = {
       seed: () => ({}),
     },
     {
+      slug: "hr-paperworks",
+      title: "HR Paperworks",
+      description: "Send and e-sign HR paperwork — warnings, promotions, tax forms (W-4/W-9/I-9), NDAs, and more.",
+      custom: "hr-paperworks" as any,
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
+    {
       slug: "absent-list",
       title: "Absent List",
       description: "Who has no recorded check-in today (or any date) — excludes rest days and approved PTO/leave.",

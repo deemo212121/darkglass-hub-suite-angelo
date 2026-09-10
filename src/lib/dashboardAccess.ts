@@ -38,6 +38,11 @@ export const DASHBOARD_ROLE_GATES: Record<string, string[]> = {
   // Dashboard, so they need to pass this gate for that redirect to fire.
   "csr-dashboard": ["ADMIN", "CSR_MANAGER", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER", "CSR_AGENT", "CSR_TEAM_LEADER"],
   "hr-dashboard": ["ADMIN", "HR"],
+  // HR module's Paperworks page (custom: "hr-paperworks") — the Automated
+  // Forms group that used to live inside hr-dashboard's own sidebar. Same
+  // audience as hr-dashboard, since it's the same sensitive form-sending
+  // tooling just moved to its own module.
+  "hr-paperworks": ["ADMIN", "HR"],
   // HR module's To-Do List (custom: "hr-todo-list" — the new-hire setup
   // checklist, migration 0220). Same audience as hr-dashboard; keyed by its
   // submodule slug since mod.slug === "hr" routes through getDashboardRoleGate.

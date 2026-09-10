@@ -1,11 +1,12 @@
 /**
- * HR Dashboard "Calendar" tab — a branch-grouped, day-by-day PTO/time-off
+ * HR Dashboard "Time Off Calendar" tab — a branch-grouped, day-by-day PTO/time-off
  * tracker modeled on the team's existing CSR Tracker spreadsheet (rows =
  * technician grouped by branch, columns = individual days spanning a couple
- * of months, colored cells mark time off). Cell color reflects how much
- * notice the request gave, the same distinction the spreadsheet's legend
- * uses: requested a week or more ahead ("planned") vs. requested less than
- * a week ahead or a same-day call-out ("late").
+ * of months, colored cells mark time off). Cell color reflects approval
+ * status — green once approved, yellow while still pending (denied/
+ * cancelled requests never populate a cell at all, see cellsByProfile) —
+ * with a single letter (V/S/P/H/U/B, see PTO_TYPE_LETTER) marking which
+ * leave type it is.
  *
  * Editable directly from the grid: click any cell — an empty one opens an
  * "Add time off" form for that employee/date, a filled one opens a detail
@@ -19,15 +20,26 @@
  */
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
-import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, Search, X } from "lucide-react";
+import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, Search, X, CheckCircle, XCircle, Loader2 } from "lucide-react";
+import { useAuth } from "@/lib/auth";
 import {
   getCompanyPtoRequests,
   createPtoRequest,
   updatePtoRequest,
   updatePtoRequestStatus,
+  ptoYearWindow,
+  ptoDaysUsed,
+  sickYearWindow,
+  sickDaysUsed,
+  reviewPtoStage,
+  canReviewPtoStage,
+  uploadPtoAttachment,
+  getPtoAttachmentUrl,
   type PtoRequestRow,
   type PtoType,
+  type PtoStage,
 } from "@/lib/supabase/pto";
+import { logModuleActivity } from "@/lib/supabase/moduleActivityLog";
 import { ROLE_LABELS, normalizeRole } from "@/lib/roleLabels";
 
 export interface CalendarEmployee {
@@ -36,6 +48,10 @@ export interface CalendarEmployee {
   branch: string;
   status: string;
   role: string;
+  /** Hire date ("YYYY-MM-DD") — drives the Sick Leave/Vacation PTO badges next to each name, same ptoYearWindow/sickYearWindow tenure logic Master List uses. Null/missing just hides those badges for that person. */
+  startDate?: string | null;
+  /** profiles.manager_name — feeds canReviewPtoStage's "requester's CURRENT manager" fallback (the PTO request's own managerId is a one-time snapshot from submission, see that function's comment). */
+  managerName?: string | null;
 }
 
 interface Props {
@@ -44,7 +60,7 @@ interface Props {
   myDisplayName: string | null;
 }
 
-type CellColor = "planned" | "late";
+type CellColor = "approved" | "pending";
 
 // Thursday gets "Th" (not "T") so it's distinct from Tuesday in this narrow column header.
 const DOW_LABELS = ["S", "M", "T", "W", "Th", "F", "S"];
@@ -58,6 +74,17 @@ const PTO_TYPE_LABELS: Record<PtoType, string> = {
   bereavement: "Bereavement",
 };
 const PTO_TYPES = Object.keys(PTO_TYPE_LABELS) as PtoType[];
+// Single-letter code shown on each colored calendar cell, since the cell
+// itself is too small for a label — cell color already conveys notice
+// (planned/late), this conveys which type of leave it is.
+const PTO_TYPE_LETTER: Record<PtoType, string> = {
+  vacation: "V",
+  sick: "S",
+  personal: "P",
+  holiday: "H",
+  unpaid: "U",
+  bereavement: "B",
+};
 
 function addMonths(date: Date, n: number): Date {
   return new Date(date.getFullYear(), date.getMonth() + n, 1);
@@ -84,8 +111,7 @@ function nextDate(iso: string): string {
 }
 
 function colorForRequest(r: PtoRequestRow): CellColor {
-  const noticeDays = daysBetween(toDateOnly(r.createdAt), r.startDate);
-  return noticeDays >= 7 ? "planned" : "late";
+  return r.status === "approved" ? "approved" : "pending";
 }
 
 const STATUS_BADGE: Record<PtoRequestRow["status"], string> = {
@@ -103,6 +129,7 @@ interface CellModalState {
 }
 
 export function HrCalendarTab({ employees, myProfileId, myDisplayName }: Props) {
+  const { role, extraRoles, companyId } = useAuth();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [requests, setRequests] = useState<PtoRequestRow[]>([]);
@@ -118,17 +145,24 @@ export function HrCalendarTab({ employees, myProfileId, myDisplayName }: Props) 
   const [formStart, setFormStart] = useState("");
   const [formEnd, setFormEnd] = useState("");
   const [formReason, setFormReason] = useState("");
+  // Optional photo attached to a request (e.g. a doctor's note) — uploaded
+  // right after the request itself is created/saved, since the upload path
+  // needs a real request id (see uploadPtoAttachment).
+  const [attachFile, setAttachFile] = useState<File | null>(null);
+  const [attachmentUrlLoading, setAttachmentUrlLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
-  const load = async () => {
+  const load = async (): Promise<PtoRequestRow[]> => {
     setLoading(true);
     setError(null);
     try {
       const rows = await getCompanyPtoRequests();
       setRequests(rows);
+      return rows;
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load time-off requests.");
+      return [];
     } finally {
       setLoading(false);
     }
@@ -184,6 +218,48 @@ export function HrCalendarTab({ employees, myProfileId, myDisplayName }: Props) 
     return map;
   }, [requests, typeFilter]);
 
+  // Sick Leave / Vacation PTO badges next to each name — same
+  // ptoYearWindow/sickYearWindow tenure math and remaining-vs-allowance
+  // shape Master List's own Sick Leave/Vacation Leave columns use, so the
+  // numbers always agree with what HR sees there. Uses every request ever
+  // made (not just what's on screen in the current 2-month window), since
+  // the allowance year rarely lines up with the visible months.
+  const requestsByProfile = useMemo(() => {
+    const map = new Map<string, PtoRequestRow[]>();
+    for (const r of requests) {
+      const arr = map.get(r.profileId);
+      if (arr) arr.push(r);
+      else map.set(r.profileId, [r]);
+    }
+    return map;
+  }, [requests]);
+  const remainingPtoByProfile = useMemo(() => {
+    const map = new Map<string, { remaining: number; allowance: number } | null>();
+    for (const e of employees) {
+      const window = ptoYearWindow(e.startDate, null);
+      if (!window) {
+        map.set(e.id, null);
+        continue;
+      }
+      const used = ptoDaysUsed(requestsByProfile.get(e.id) ?? [], window);
+      map.set(e.id, { remaining: Math.max(0, window.allowance - used), allowance: window.allowance });
+    }
+    return map;
+  }, [employees, requestsByProfile]);
+  const remainingSickByProfile = useMemo(() => {
+    const map = new Map<string, { remaining: number; allowance: number } | null>();
+    for (const e of employees) {
+      const window = sickYearWindow(e.startDate, null);
+      if (!window) {
+        map.set(e.id, null);
+        continue;
+      }
+      const used = sickDaysUsed(requestsByProfile.get(e.id) ?? [], window);
+      map.set(e.id, { remaining: Math.max(0, window.allowance - used), allowance: window.allowance });
+    }
+    return map;
+  }, [employees, requestsByProfile]);
+
   const availableRoles = useMemo(() => {
     const set = new Set(employees.filter((e) => e.status === "active").map((e) => e.role));
     return [...set].sort((a, b) => (ROLE_LABELS[normalizeRole(a)] ?? a).localeCompare(ROLE_LABELS[normalizeRole(b)] ?? b));
@@ -219,6 +295,7 @@ export function HrCalendarTab({ employees, myProfileId, myDisplayName }: Props) 
   const openCell = (employee: CalendarEmployee, date: string) => {
     const request = cellsByProfile.get(employee.id)?.get(date);
     setFormError(null);
+    setAttachFile(null);
     if (request) {
       setModal({ mode: "view", employee, date, request });
     } else {
@@ -237,12 +314,14 @@ export function HrCalendarTab({ employees, myProfileId, myDisplayName }: Props) 
     setFormEnd(modal.request.endDate);
     setFormReason(modal.request.reason);
     setFormError(null);
+    setAttachFile(null);
     setModal({ ...modal, mode: "edit" });
   };
 
   const closeModal = () => {
     setModal(null);
     setFormError(null);
+    setAttachFile(null);
   };
 
   const handleCreate = async () => {
@@ -258,7 +337,7 @@ export function HrCalendarTab({ employees, myProfileId, myDisplayName }: Props) 
     setSaving(true);
     setFormError(null);
     try {
-      await createPtoRequest({
+      const created = await createPtoRequest({
         profileId: modal.employee.id,
         ptoType: formType,
         startDate: formStart,
@@ -266,6 +345,9 @@ export function HrCalendarTab({ employees, myProfileId, myDisplayName }: Props) 
         reason: formReason,
         requestedBy: myProfileId,
       });
+      if (attachFile && companyId) {
+        await uploadPtoAttachment(created.id, companyId, attachFile);
+      }
       await load();
       closeModal();
     } catch (err) {
@@ -289,6 +371,9 @@ export function HrCalendarTab({ employees, myProfileId, myDisplayName }: Props) 
     setFormError(null);
     try {
       await updatePtoRequest(modal.request.id, { ptoType: formType, startDate: formStart, endDate: formEnd, reason: formReason });
+      if (attachFile && companyId) {
+        await uploadPtoAttachment(modal.request.id, companyId, attachFile);
+      }
       await load();
       closeModal();
     } catch (err) {
@@ -313,6 +398,41 @@ export function HrCalendarTab({ employees, myProfileId, myDisplayName }: Props) 
     }
   };
 
+  // Manager/HR/Accounting stage approvals — same reviewPtoStage/
+  // canReviewPtoStage flow (and the same pto_requests rows) Attendance
+  // Monitoring's own PTO Management tab uses, so approving here is really
+  // just doing it from this calendar instead of that table.
+  const [busyStageId, setBusyStageId] = useState<string | null>(null);
+  const handleStageAction = async (request: PtoRequestRow, stage: PtoStage, decision: "approved" | "rejected") => {
+    setBusyStageId(request.id);
+    setFormError(null);
+    try {
+      await reviewPtoStage(request, stage, decision, myProfileId || "", myDisplayName || "HR");
+      const freshRows = await load();
+      void logModuleActivity({
+        module: "attendance-monitoring",
+        actorName: myDisplayName || "HR",
+        action: decision === "approved" ? "pto_request_approved" : "pto_request_rejected",
+        targetType: "pto_request",
+        targetId: request.id,
+        targetLabel: `${modal?.employee.name ?? ""} (${request.startDate} – ${request.endDate})`,
+        details: { stage, ptoType: request.ptoType },
+      });
+      // Re-open on the freshly-saved row so the badges/buttons reflect the
+      // decision immediately instead of showing stale pending state until
+      // the modal is closed and reopened.
+      setModal((cur) => {
+        if (!cur) return cur;
+        const updated = freshRows.find((r) => r.id === request.id);
+        return updated ? { ...cur, request: updated } : cur;
+      });
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : "Failed to update request.");
+    } finally {
+      setBusyStageId(null);
+    }
+  };
+
   const inputCls = "glass-input text-sm py-1.5 px-3 rounded-md w-full";
 
   return (
@@ -320,7 +440,7 @@ export function HrCalendarTab({ employees, myProfileId, myDisplayName }: Props) 
       <div className="px-4 py-4 border-b border-white/10 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="font-semibold text-sm flex items-center gap-1.5">
-            <CalendarIcon className="h-4 w-4 text-blue-300" /> Calendar
+            <CalendarIcon className="h-4 w-4 text-blue-300" /> Time Off Calendar
           </h2>
           <p className="text-[10px] text-muted-foreground mt-0.5">
             Click any cell to add or view time-off. Approved and pending requests, by branch and technician.
@@ -410,11 +530,17 @@ export function HrCalendarTab({ employees, myProfileId, myDisplayName }: Props) 
 
       <div className="px-4 py-2 border-b border-white/10 flex flex-wrap items-center gap-4 text-[11px] text-muted-foreground">
         <span className="flex items-center gap-1.5">
-          <span className="h-3 w-3 rounded-sm bg-yellow-400/80 inline-block" /> Requested a week or more in advance
+          <span className="h-3 w-3 rounded-sm bg-green-500/80 inline-block" /> Approved
         </span>
         <span className="flex items-center gap-1.5">
-          <span className="h-3 w-3 rounded-sm bg-red-500/80 inline-block" /> Call-out / requested less than a week ahead
+          <span className="h-3 w-3 rounded-sm bg-yellow-400/80 inline-block" /> Pending approval
         </span>
+        <span className="text-slate-600">•</span>
+        {PTO_TYPES.map((t) => (
+          <span key={t} className="flex items-center gap-1">
+            <span className="font-bold text-slate-300">{PTO_TYPE_LETTER[t]}</span> = {PTO_TYPE_LABELS[t]}
+          </span>
+        ))}
       </div>
 
       {loading ? (
@@ -426,7 +552,7 @@ export function HrCalendarTab({ employees, myProfileId, myDisplayName }: Props) 
           <table className="border-collapse text-xs min-w-max">
             <thead>
               <tr>
-                <th className="sticky left-0 z-20 bg-slate-900 border-b border-r border-white/10 px-3 py-1.5 text-left font-semibold w-48">
+                <th className="sticky left-0 z-20 bg-slate-900 border-b border-r border-white/10 px-3 py-1.5 text-left font-semibold w-64">
                   Technician
                 </th>
                 {days.map((d) => (
@@ -454,7 +580,33 @@ export function HrCalendarTab({ employees, myProfileId, myDisplayName }: Props) 
                   {emps.map((e) => (
                     <tr key={e.id}>
                       <td className="sticky left-0 z-10 bg-slate-900 border-b border-r border-white/10 px-3 py-1 whitespace-nowrap">
-                        {e.name}
+                        <div className="flex items-center gap-1.5">
+                          <span className="truncate">{e.name}</span>
+                          {(() => {
+                            const sick = remainingSickByProfile.get(e.id);
+                            const pto = remainingPtoByProfile.get(e.id);
+                            return (
+                              <span className="flex items-center gap-1 shrink-0">
+                                {sick && (
+                                  <span
+                                    className="bg-teal-500/20 text-teal-300 px-1 py-0.5 rounded text-[9px] font-semibold"
+                                    title={`Sick Leave remaining/allowance: ${sick.remaining}/${sick.allowance}`}
+                                  >
+                                    {sick.remaining}/{sick.allowance}
+                                  </span>
+                                )}
+                                {pto && (
+                                  <span
+                                    className="bg-yellow-500/20 text-yellow-300 px-1 py-0.5 rounded text-[9px] font-semibold"
+                                    title={`Vacation PTO remaining/allowance: ${pto.remaining}/${pto.allowance}`}
+                                  >
+                                    {pto.remaining}/{pto.allowance}
+                                  </span>
+                                )}
+                              </span>
+                            );
+                          })()}
+                        </div>
                       </td>
                       {days.map((d) => {
                         const request = cellsByProfile.get(e.id)?.get(d.date);
@@ -463,17 +615,19 @@ export function HrCalendarTab({ employees, myProfileId, myDisplayName }: Props) 
                           <td
                             key={d.date}
                             onClick={() => openCell(e, d.date)}
-                            title={request ? `${PTO_TYPE_LABELS[request.ptoType]} — click for details` : "Click to add time off"}
-                            className={`border-b border-l border-white/5 h-6 w-7 cursor-pointer hover:ring-1 hover:ring-blue-400/60 hover:ring-inset ${
-                              color === "planned"
-                                ? "bg-yellow-400/80"
-                                : color === "late"
-                                ? "bg-red-500/80"
+                            title={request ? `${PTO_TYPE_LABELS[request.ptoType]} (${request.status}) — click for details` : "Click to add time off"}
+                            className={`border-b border-l border-white/5 h-6 w-7 cursor-pointer hover:ring-1 hover:ring-blue-400/60 hover:ring-inset text-center align-middle text-[10px] font-bold ${
+                              color === "approved"
+                                ? "bg-green-500/80 text-green-950"
+                                : color === "pending"
+                                ? "bg-yellow-400/80 text-yellow-950"
                                 : d.date === todayStr
                                 ? "bg-blue-500/10"
                                 : ""
                             }`}
-                          />
+                          >
+                            {request ? PTO_TYPE_LETTER[request.ptoType] : ""}
+                          </td>
                         );
                       })}
                     </tr>
@@ -520,8 +674,125 @@ export function HrCalendarTab({ employees, myProfileId, myDisplayName }: Props) 
                 <p><span className="text-muted-foreground">Hours:</span> {modal.request.hoursRequested}</p>
                 <p><span className="text-muted-foreground">Requested:</span> {toDateOnly(modal.request.createdAt)} ({daysBetween(toDateOnly(modal.request.createdAt), modal.request.startDate)} day{daysBetween(toDateOnly(modal.request.createdAt), modal.request.startDate) === 1 ? "" : "s"} notice)</p>
                 {modal.request.reason && <p><span className="text-muted-foreground">Reason:</span> {modal.request.reason}</p>}
+                {modal.request.attachmentPath && (
+                  <p>
+                    <span className="text-muted-foreground">Attachment:</span>{" "}
+                    <button
+                      type="button"
+                      disabled={attachmentUrlLoading}
+                      onClick={async () => {
+                        if (!modal.request?.attachmentPath) return;
+                        setAttachmentUrlLoading(true);
+                        try {
+                          const url = await getPtoAttachmentUrl(modal.request.attachmentPath);
+                          window.open(url, "_blank", "noopener,noreferrer");
+                        } catch (err) {
+                          setFormError(err instanceof Error ? err.message : "Failed to open attachment.");
+                        } finally {
+                          setAttachmentUrlLoading(false);
+                        }
+                      }}
+                      className="text-blue-400 hover:text-blue-300 underline disabled:opacity-50"
+                    >
+                      {attachmentUrlLoading ? "Opening…" : "View photo"}
+                    </button>
+                  </p>
+                )}
+
+                {(() => {
+                  const request = modal.request!;
+                  // request.managerId is a one-time snapshot from submission
+                  // — canReviewPtoStage's fallback needs the requester's
+                  // CURRENT manager (and that manager's own manager, one
+                  // level up) in case they've been reassigned since, looked
+                  // up fresh from the same roster the grid itself uses.
+                  const requesterManagerName = modal.employee.managerName ?? null;
+                  const requesterManagersManagerName = requesterManagerName
+                    ? employees.find((e) => e.name.trim().toLowerCase() === requesterManagerName.trim().toLowerCase())?.managerName ?? null
+                    : null;
+                  const stageBadge = (label: string, stageStatus: "pending" | "approved" | "rejected", reviewedBy: string | null) => (
+                    <span
+                      className={`inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-semibold border ${
+                        stageStatus === "approved"
+                          ? "bg-green-500/20 text-green-300 border-green-500/30"
+                          : stageStatus === "rejected"
+                          ? "bg-red-500/20 text-red-300 border-red-500/30"
+                          : "bg-yellow-500/20 text-yellow-300 border-yellow-500/30"
+                      }`}
+                    >
+                      {label}: {stageStatus[0].toUpperCase() + stageStatus.slice(1)}
+                      {reviewedBy ? ` — ${employees.find((e) => e.id === reviewedBy)?.name ?? "someone"}` : ""}
+                    </span>
+                  );
+                  const stageAction = (label: string, stage: PtoStage, stageStatus: "pending" | "approved" | "rejected") => {
+                    if (stageStatus !== "pending") return null;
+                    // A cancelled/denied request can still have an
+                    // untouched "pending" stage (e.g. cancelled before
+                    // anyone reviewed it) — don't offer to approve/reject
+                    // something the employee already withdrew or that's
+                    // already been turned down at another stage.
+                    if (request.status === "cancelled" || request.status === "denied") return null;
+                    if (!canReviewPtoStage(request, stage, myProfileId, role, extraRoles, myDisplayName, requesterManagerName, requesterManagersManagerName)) return null;
+                    const busy = busyStageId === request.id;
+                    return (
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[10px] text-muted-foreground w-12 shrink-0">{label}:</span>
+                        <button
+                          type="button"
+                          title={`Approve as ${label}`}
+                          onClick={() => void handleStageAction(request, stage, "approved")}
+                          disabled={busy}
+                          className="px-2 py-1 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded text-xs transition flex items-center gap-1"
+                        >
+                          {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle className="h-3 w-3" />} Approve
+                        </button>
+                        <button
+                          type="button"
+                          title={`Reject as ${label}`}
+                          onClick={() => void handleStageAction(request, stage, "rejected")}
+                          disabled={busy}
+                          className="px-2 py-1 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white rounded text-xs transition flex items-center gap-1"
+                        >
+                          {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <XCircle className="h-3 w-3" />} Reject
+                        </button>
+                      </div>
+                    );
+                  };
+                  const notWithdrawn = request.status !== "cancelled" && request.status !== "denied";
+                  const anyActionable =
+                    notWithdrawn &&
+                    ((request.managerStatus === "pending" && canReviewPtoStage(request, "manager", myProfileId, role, extraRoles, myDisplayName, requesterManagerName, requesterManagersManagerName)) ||
+                      (request.hrStatus === "pending" && canReviewPtoStage(request, "hr", myProfileId, role, extraRoles, myDisplayName, requesterManagerName, requesterManagersManagerName)) ||
+                      (request.accountingStatus === "pending" && canReviewPtoStage(request, "accounting", myProfileId, role, extraRoles, myDisplayName, requesterManagerName, requesterManagersManagerName)));
+                  return (
+                    <div className="space-y-2 pt-1 border-t border-white/10">
+                      <div className="flex flex-col gap-1 pt-2">
+                        {stageBadge("Manager", request.managerStatus, request.managerReviewedBy)}
+                        {stageBadge("HR", request.hrStatus, request.hrReviewedBy)}
+                        {stageBadge("Accounting", request.accountingStatus, request.accountingReviewedBy)}
+                      </div>
+                      <div className="flex flex-col gap-1.5">
+                        {stageAction("Manager", "manager", request.managerStatus)}
+                        {stageAction("HR", "hr", request.hrStatus)}
+                        {stageAction("Accounting", "accounting", request.accountingStatus)}
+                        {!anyActionable && notWithdrawn && (request.managerStatus === "pending" || request.hrStatus === "pending" || request.accountingStatus === "pending") && (
+                          <span className="text-[11px] text-muted-foreground">
+                            {request.managerStatus === "pending" ? "Awaiting manager approval." : "Awaiting HR or Accounting approval."}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })()}
 
                 {formError && <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{formError}</p>}
+
+                {modal.request.reviewedBy && (
+                  <p className="text-[11px] text-muted-foreground">
+                    Reviewed by: {employees.find((e) => e.id === modal.request!.reviewedBy)?.name ?? "someone"}
+                    {modal.request.reviewedAt ? ` on ${toDateOnly(modal.request.reviewedAt)}` : ""}
+                  </p>
+                )}
 
                 <div className="flex items-center gap-2 pt-2">
                   <button type="button" onClick={startEdit} className="btn text-xs px-3 py-1.5">Edit</button>
@@ -557,6 +828,19 @@ export function HrCalendarTab({ employees, myProfileId, myDisplayName }: Props) 
                 <div className="flex flex-col gap-1">
                   <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Reason</label>
                   <textarea value={formReason} onChange={(e) => setFormReason(e.target.value)} rows={2} className={inputCls} />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Attach photo (optional)</label>
+                  <input
+                    type="file"
+                    accept="image/*,.pdf"
+                    onChange={(e) => setAttachFile(e.target.files?.[0] ?? null)}
+                    className="text-xs text-muted-foreground file:mr-2 file:btn file:text-xs file:px-2 file:py-1"
+                  />
+                  {modal.mode === "edit" && modal.request?.attachmentPath && !attachFile && (
+                    <p className="text-[10px] text-muted-foreground">Already has an attachment — choosing a new file replaces it.</p>
+                  )}
+                  {attachFile && <p className="text-[10px] text-blue-300 truncate">{attachFile.name}</p>}
                 </div>
 
                 {formError && <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{formError}</p>}

@@ -227,10 +227,22 @@ export interface PtoRequestRow {
   reviewedAt: string | null;
   reviewNote: string | null;
   createdAt: string;
+  /** Storage path in the private "pto-attachments" bucket (e.g. a doctor's note for a sick day) — see uploadPtoAttachment/getPtoAttachmentUrl. */
+  attachmentPath: string | null;
 }
 
 const SELECT_COLUMNS =
+  "id, profile_id, pto_type, start_date, end_date, hours_requested, reason, status, requested_by, manager_id, manager_status, manager_reviewed_by, manager_reviewed_at, hr_status, hr_reviewed_by, hr_reviewed_at, accounting_status, accounting_reviewed_by, accounting_reviewed_at, reviewed_by, reviewed_at, review_note, created_at, attachment_path";
+
+// Falls back to this if attachment_path doesn't exist yet — i.e.
+// 0233_pto_requests_attachment.sql hasn't been run against this database.
+const SELECT_COLUMNS_NO_ATTACHMENT =
   "id, profile_id, pto_type, start_date, end_date, hours_requested, reason, status, requested_by, manager_id, manager_status, manager_reviewed_by, manager_reviewed_at, hr_status, hr_reviewed_by, hr_reviewed_at, accounting_status, accounting_reviewed_by, accounting_reviewed_at, reviewed_by, reviewed_at, review_note, created_at";
+
+/** Postgres 42703 = "column ... does not exist" — a newer migration hasn't been applied yet. */
+function isMissingColumnError(error: { code?: string } | null): boolean {
+  return error?.code === "42703";
+}
 
 function mapRow(row: any): PtoRequestRow {
   return {
@@ -257,6 +269,7 @@ function mapRow(row: any): PtoRequestRow {
     reviewedAt: row.reviewed_at ?? null,
     reviewNote: row.review_note ?? null,
     createdAt: row.created_at,
+    attachmentPath: row.attachment_path ?? null,
   };
 }
 
@@ -267,13 +280,23 @@ const PAGE_SIZE = 1000;
 /** All PTO requests for the caller's company (RLS-scoped), newest first. */
 export async function getCompanyPtoRequests(): Promise<PtoRequestRow[]> {
   const all: PtoRequestRow[] = [];
+  let select = SELECT_COLUMNS;
   for (let from = 0; ; from += PAGE_SIZE) {
-    const { data, error } = await supabase
+    let { data, error } = await supabase
       .from("pto_requests")
-      .select(SELECT_COLUMNS)
+      .select(select)
       .not("profile_id", "is", null)
       .order("created_at", { ascending: false })
       .range(from, from + PAGE_SIZE - 1);
+    if (isMissingColumnError(error) && select === SELECT_COLUMNS) {
+      select = SELECT_COLUMNS_NO_ATTACHMENT;
+      ({ data, error } = await supabase
+        .from("pto_requests")
+        .select(select)
+        .not("profile_id", "is", null)
+        .order("created_at", { ascending: false })
+        .range(from, from + PAGE_SIZE - 1));
+    }
     if (error) {
       console.error("getCompanyPtoRequests error:", error.message);
       return [];
@@ -282,6 +305,23 @@ export async function getCompanyPtoRequests(): Promise<PtoRequestRow[]> {
     if (!data || data.length < PAGE_SIZE) break;
   }
   return all;
+}
+
+/** Uploads a photo attachment for a PTO request (e.g. a doctor's note) and records its path — same private-bucket-plus-DB-column pattern as uploadCandidateCv. */
+export async function uploadPtoAttachment(requestId: string, companyId: string, file: File): Promise<void> {
+  const path = `${companyId}/${requestId}/${Date.now()}_${file.name}`;
+  const { error: uploadError } = await supabase.storage.from("pto-attachments").upload(path, file, { upsert: true });
+  if (uploadError) throw new Error(uploadError.message);
+
+  const { error } = await supabase.from("pto_requests").update({ attachment_path: path }).eq("id", requestId);
+  if (error) throw new Error(error.message);
+}
+
+/** Bucket is private — generate a short-lived signed URL on demand rather than caching one. */
+export async function getPtoAttachmentUrl(attachmentPath: string): Promise<string> {
+  const { data, error } = await supabase.storage.from("pto-attachments").createSignedUrl(attachmentPath, 3600);
+  if (error) throw new Error(error.message);
+  return data.signedUrl;
 }
 
 /**
@@ -370,6 +410,7 @@ export function weekdayCount(startDate: string, endDate: string): number {
 }
 
 /** Submit a new PTO request on behalf of an employee (profileId). */
+/** Returns the created row (its `id` is what a caller needs right after, e.g. to attach a photo via uploadPtoAttachment) — callers that don't need it can just ignore the return value, as every existing caller already does. */
 export async function createPtoRequest(input: {
   profileId: string;
   ptoType: PtoType;
@@ -378,9 +419,9 @@ export async function createPtoRequest(input: {
   reason: string;
   requestedBy: string | null;
   managerId?: string | null;
-}): Promise<void> {
+}): Promise<PtoRequestRow> {
   const hoursRequested = weekdayCount(input.startDate, input.endDate) * 8;
-  const { error } = await supabase.from("pto_requests").insert({
+  const insertPayload = {
     profile_id: input.profileId,
     pto_type: input.ptoType,
     start_date: input.startDate,
@@ -390,11 +431,16 @@ export async function createPtoRequest(input: {
     status: "pending",
     requested_by: input.requestedBy,
     manager_id: input.managerId ?? null,
-  });
+  };
+  let { data, error } = await supabase.from("pto_requests").insert(insertPayload).select(SELECT_COLUMNS).single();
+  if (isMissingColumnError(error)) {
+    ({ data, error } = await supabase.from("pto_requests").insert(insertPayload).select(SELECT_COLUMNS_NO_ATTACHMENT).single());
+  }
   if (error) {
     console.error("createPtoRequest error:", error.message);
     throw new Error(error.message);
   }
+  return mapRow(data);
 }
 
 /**
@@ -469,12 +515,17 @@ export async function reviewPtoStage(
         ? { hr_status: decision, hr_reviewed_by: reviewerId, hr_reviewed_at: nowIso }
         : { accounting_status: decision, accounting_reviewed_by: reviewerId, accounting_reviewed_at: nowIso };
 
-  const { data, error } = await supabase
+  let { data, error } = await supabase
     .from("pto_requests")
     .update(payload)
     .eq("id", request.id)
     .select(SELECT_COLUMNS)
     .single();
+  if (isMissingColumnError(error)) {
+    // attachment_path (0233) not applied yet — the update itself never
+    // referenced it, only the RETURNING select did.
+    ({ data, error } = await supabase.from("pto_requests").update(payload).eq("id", request.id).select(SELECT_COLUMNS_NO_ATTACHMENT).single());
+  }
   if (error) {
     console.error("reviewPtoStage error:", error.message);
     throw new Error(error.message);
