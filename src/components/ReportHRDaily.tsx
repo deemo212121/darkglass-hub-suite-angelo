@@ -68,6 +68,7 @@ import {
   updateSignableDocumentPdfUrl,
   signDocument,
   ROUTE_REQUIRED_DOCUMENT_TYPES,
+  getCompletedDocumentTypesByRecipientIds,
   type SignableDocument,
   type SignableDocumentType,
   type SignatureSlot as DocSignatureSlot,
@@ -340,6 +341,49 @@ const PH_ONBOARDING_DOCS = [
   "Employee Off Days Agreement",
   "W-8BEN",
 ];
+
+/**
+ * Onboarding Documents checklist columns that mean the exact same document
+ * as a real SignableDocumentType — so a technician who's already e-signed
+ * it (Technician Form Checklist / the various HR-sent form flows) shows
+ * "YES" here automatically too, instead of HR having to separately upload
+ * a copy into this grid's own file-attachment system for something that
+ * was already completed through the e-signature flow. Same "match onboarding
+ * columns to real document types by exact label text" approach
+ * URGENT_ONBOARDING_COLUMN_LABELS below already uses, just going the other
+ * direction (marking done, not flagging urgent).
+ *
+ * Deliberately conservative — only labels that are an exact or unambiguous
+ * near-exact match (typos, "Acknowledgement" vs "Acknowledgment" spelling,
+ * a more descriptive custom-column wording of the same thing) are mapped.
+ * Several shorter/vaguer columns that could plausibly mean the same thing
+ * (e.g. "CAR IQ", "Floor Protection", "Parts Responsibility Acknowledgement",
+ * "Vehicle Use Agreement") are deliberately left OUT rather than guessed —
+ * see the "split into two by accident" note on URGENT_ONBOARDING_COLUMN_LABELS
+ * for why some of these are ambiguous. This can only ever ADD a "YES" a
+ * human hasn't gotten to yet; it never removes one a human already set.
+ */
+const ONBOARDING_COLUMN_TO_DOCUMENT_TYPE: Record<string, SignableDocumentType> = {
+  "Contractor Data Sheet": "contractor_data",
+  "Direct Deposit Authorization": "direct_deposit",
+  "Non-Disclosure Agreement": "nda_form",
+  "W9": "w9",
+  "W4": "w4",
+  "W-8BEN": "w8ben",
+  "Acknowledgement of Wage": "wage_ack",
+  "Car IQ Technician Agreement": "car_iq_agreement",
+  "Company Vehicle User Agreement": "vehicle_agreement",
+  "Damage Agreement": "damage",
+  "Employee Confidentiality": "employee_confidentiality",
+  "Employee Mobile App Location Sharing Consent Agreement": "location_consent",
+  "Employee Meal & Rest Break Policy": "meal_rest_break",
+  "Personal Vehicle Mileage & Fuel Policy Agreement": "mileage_fuel",
+  "Parts Responsibility & Technician Floor Protection Acknowledgment Form": "parts_responsibility",
+  "Employee PTO & Sick Leave Policy": "pto_ack",
+  "Substance Screening & Conduct Agreement": "substance_screening",
+  "W-4R": "w4r",
+  "I-9": "i9",
+};
 
 // Job Title options for the Generate COE tab — every real role in the
 // system except the three that aren't actual job titles someone would put
@@ -11169,16 +11213,53 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
   // YES/NO on the checklist grid reflects whether a real document has
   // actually been filed (uploaded, linked, or dragged in from Jotform) for
-  // that applicant + category in onboarding_documents — not a manually
-  // toggled flag — so the grid can never claim "YES" for a document nobody
-  // attached. Re-fetched whenever the currently-visible employee list
-  // changes (group/search), keyed by profile id.
+  // that applicant + category in onboarding_documents, OR — for the columns
+  // ONBOARDING_COLUMN_TO_DOCUMENT_TYPE maps to a real SignableDocumentType —
+  // whether they've already completed that form through the e-signature
+  // flow. Either way this is never a manually toggled flag, so the grid can
+  // never claim "YES" for a document nobody actually attached/signed.
+  // Re-fetched whenever the currently-visible employee list changes
+  // (group/search), keyed by profile id.
   const [onboardingDocCategoriesByProfile, setOnboardingDocCategoriesByProfile] = useState<Map<string, Set<string>>>(new Map());
+  // Subset of the above that came from an e-signature completion rather than
+  // an actual onboarding_documents file — so the grid can tell HR which is
+  // which (clicking through to the file-attachment modal would otherwise
+  // show "nothing here" for a document that's really just signed, not
+  // uploaded, which reads as a bug if the tooltip doesn't say so upfront).
+  const [onboardingSignedLabelsByProfile, setOnboardingSignedLabelsByProfile] = useState<Map<string, Set<string>>>(new Map());
   useEffect(() => {
     if (activeTab !== "onboarding" || onboardingEmployees.length === 0) return;
     let cancelled = false;
-    getOnboardingDocumentCategoriesByProfileIds(onboardingEmployees.map((e) => e.id))
-      .then((map) => { if (!cancelled) setOnboardingDocCategoriesByProfile(map); })
+    const employeeIds = onboardingEmployees.map((e) => e.id);
+    const mappedTypes = Array.from(new Set(Object.values(ONBOARDING_COLUMN_TO_DOCUMENT_TYPE)));
+    const labelsByType = new Map<SignableDocumentType, string[]>();
+    for (const [label, type] of Object.entries(ONBOARDING_COLUMN_TO_DOCUMENT_TYPE)) {
+      const arr = labelsByType.get(type) ?? [];
+      arr.push(label);
+      labelsByType.set(type, arr);
+    }
+    Promise.all([
+      getOnboardingDocumentCategoriesByProfileIds(employeeIds),
+      getCompletedDocumentTypesByRecipientIds(employeeIds, mappedTypes),
+    ])
+      .then(([fileMap, signedMap]) => {
+        if (cancelled) return;
+        const signedLabelMap = new Map<string, Set<string>>();
+        for (const [profileId, types] of signedMap) {
+          const fileSet = fileMap.get(profileId) ?? new Set<string>();
+          const signedSet = new Set<string>();
+          for (const type of types) {
+            for (const label of labelsByType.get(type) ?? []) {
+              fileSet.add(label);
+              signedSet.add(label);
+            }
+          }
+          fileMap.set(profileId, fileSet);
+          signedLabelMap.set(profileId, signedSet);
+        }
+        setOnboardingDocCategoriesByProfile(fileMap);
+        setOnboardingSignedLabelsByProfile(signedLabelMap);
+      })
       .catch((err) => console.error("Failed to load onboarding document status:", err));
     return () => { cancelled = true; };
   }, [activeTab, onboardingEmployees]);
@@ -14870,11 +14951,18 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                     </td>
                     {onboardingDocColumns.map((doc) => {
                       const done = !!onboardingDocCategoriesByProfile.get(employee.id)?.has(doc);
+                      const viaSignature = !!onboardingSignedLabelsByProfile.get(employee.id)?.has(doc);
                       return (
                         <td key={doc} className="px-0.5 py-0.5 text-center">
                           <button
                             type="button"
-                            title={done ? `${doc} is filed — click to view` : `${doc} is missing — click to upload or link it`}
+                            title={
+                              viaSignature
+                                ? `${doc} — already e-signed through the app; click to file a copy too if you have one`
+                                : done
+                                ? `${doc} is filed — click to view`
+                                : `${doc} is missing — click to upload or link it`
+                            }
                             onClick={() => setOnboardingSelectedEmployee({ id: employee.id, name: employee.name, docList: getOnboardingDocListForEmployee(employee) })}
                             className={`w-full px-1 py-1.5 rounded text-[9px] font-bold transition-colors ${done ? "bg-green-500/20 text-green-300 hover:bg-green-500/30" : "bg-red-500/20 text-red-300 hover:bg-red-500/30"}`}
                           >

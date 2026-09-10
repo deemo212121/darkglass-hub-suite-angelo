@@ -216,6 +216,45 @@ export async function getSignableDocumentsForRecipient(recipientId: string): Pro
   return all;
 }
 
+/**
+ * Bulk "who's actually completed which document types" check — per
+ * recipient, which of the given types have a signed/confirmed row (the
+ * newest one per type/recipient wins, so a re-sent-then-signed document
+ * correctly counts and a stale cancelled one doesn't). Used by
+ * ReportHRDaily.tsx's Onboarding Documents checklist grid to fold real
+ * e-signature completions into the "has this been collected" YES/NO check
+ * for the handful of onboarding columns that map 1:1 to a real
+ * SignableDocumentType — see ONBOARDING_COLUMN_TO_DOCUMENT_TYPE there.
+ * Mirrors getOnboardingDocumentCategoriesByProfileIds's own bulk-check shape.
+ */
+export async function getCompletedDocumentTypesByRecipientIds(
+  recipientIds: string[],
+  types: SignableDocumentType[]
+): Promise<Map<string, Set<SignableDocumentType>>> {
+  const map = new Map<string, Set<SignableDocumentType>>();
+  if (recipientIds.length === 0 || types.length === 0) return map;
+  const all: Array<{ recipient_id: string; document_type: SignableDocumentType; status: SignableDocumentStatus }> = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from("hr_signable_documents")
+      .select("recipient_id, document_type, status")
+      .in("recipient_id", recipientIds)
+      .in("document_type", types)
+      .in("status", ["signed", "confirmed"])
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) throw new Error(error.message);
+    all.push(...((data ?? []) as typeof all));
+    if (!data || data.length < PAGE_SIZE) break;
+  }
+  for (const r of all) {
+    if (!r.recipient_id) continue;
+    const set = map.get(r.recipient_id) ?? new Set<SignableDocumentType>();
+    set.add(r.document_type);
+    map.set(r.recipient_id, set);
+  }
+  return map;
+}
+
 export interface IncompleteTechForm {
   type: SignableDocumentType;
   label: string;
