@@ -97,6 +97,31 @@ export async function createSignableDocument(input: {
   return mapRow(data);
 }
 
+/**
+ * "Send" preflight: which of the given types already have a non-cancelled
+ * document for this recipient? Nothing previously checked this, so HR could
+ * (and did — see the 2026-09 duplicate-forms cleanup) resend the exact same
+ * onboarding packet to someone twice with no warning. Only meaningful for a
+ * real AHS recipient (recipientId) — an external/no-login recipient has no
+ * stable identifier to match on (they all fall back to the same generic
+ * "External Recipient" name), so callers should skip this check when there's
+ * no recipientId.
+ */
+export async function getExistingActiveDocumentTypes(
+  recipientId: string,
+  types: SignableDocumentType[]
+): Promise<SignableDocumentType[]> {
+  if (types.length === 0) return [];
+  const { data, error } = await supabase
+    .from("hr_signable_documents")
+    .select("document_type")
+    .eq("recipient_id", recipientId)
+    .in("document_type", types)
+    .neq("status", "cancelled");
+  if (error) throw new Error(error.message);
+  return Array.from(new Set((data ?? []).map((r: any) => r.document_type as SignableDocumentType)));
+}
+
 export async function getSignableDocument(id: string): Promise<SignableDocument | null> {
   const { data, error } = await supabase.from("hr_signable_documents").select(SELECT).eq("id", id).maybeSingle();
   if (error) throw new Error(error.message);

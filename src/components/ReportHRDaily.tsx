@@ -69,6 +69,7 @@ import {
   signDocument,
   ROUTE_REQUIRED_DOCUMENT_TYPES,
   getCompletedDocumentTypesByRecipientIds,
+  getExistingActiveDocumentTypes,
   type SignableDocument,
   type SignableDocumentType,
   type SignatureSlot as DocSignatureSlot,
@@ -2721,6 +2722,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       const recipient = employees.find((e) => e.id === w8RecipientId);
       if (!recipient) throw new Error("Select a recipient first.");
 
+      const alreadySent = await getExistingActiveDocumentTypes(recipient.id, ["w8ben"]);
+      if (alreadySent.length > 0 && !window.confirm(`${recipient.name} already has a Form W-8BEN on file. Send another one anyway?`)) {
+        return;
+      }
+
       const doc = await createSignableDocument({
         documentType: "w8ben",
         formData: { employeeId: recipient.id, employeeName: recipient.name } as unknown as Record<string, any>,
@@ -2965,6 +2971,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       const recipient = employees.find((e) => e.id === w4RecipientId);
       if (!recipient) throw new Error("Select a recipient first.");
 
+      const alreadySent = await getExistingActiveDocumentTypes(recipient.id, ["w4"]);
+      if (alreadySent.length > 0 && !window.confirm(`${recipient.name} already has a Form W-4 on file. Send another one anyway?`)) {
+        return;
+      }
+
       const doc = await createSignableDocument({
         documentType: "w4",
         formData: { employeeId: recipient.id } as unknown as Record<string, any>,
@@ -3164,6 +3175,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       const recipient = employees.find((e) => e.id === w9RecipientId);
       if (!recipient) throw new Error("Select a recipient first.");
 
+      const alreadySent = await getExistingActiveDocumentTypes(recipient.id, ["w9"]);
+      if (alreadySent.length > 0 && !window.confirm(`${recipient.name} already has a Form W-9 on file. Send another one anyway?`)) {
+        return;
+      }
+
       const doc = await createSignableDocument({
         documentType: "w9",
         formData: { employeeId: recipient.id } as unknown as Record<string, any>,
@@ -3350,6 +3366,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     try {
       const recipient = employees.find((e) => e.id === w4rRecipientId);
       if (!recipient) throw new Error("Select a recipient first.");
+
+      const alreadySent = await getExistingActiveDocumentTypes(recipient.id, ["w4r"]);
+      if (alreadySent.length > 0 && !window.confirm(`${recipient.name} already has a Form W-4R on file. Send another one anyway?`)) {
+        return;
+      }
 
       const doc = await createSignableDocument({
         documentType: "w4r",
@@ -3627,6 +3648,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       const recipient = employees.find((e) => e.id === i9RecipientId);
       if (!recipient) throw new Error("Select a recipient first.");
 
+      const alreadySent = await getExistingActiveDocumentTypes(recipient.id, ["i9"]);
+      if (alreadySent.length > 0 && !window.confirm(`${recipient.name} already has a Form I-9 on file. Send another one anyway?`)) {
+        return;
+      }
+
       const doc = await createSignableDocument({
         documentType: "i9",
         formData: { employeeId: recipient.id, employeeName: recipient.name } as unknown as Record<string, any>,
@@ -3779,6 +3805,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     try {
       const recipient = employees.find((e) => e.id === wageAckRecipientId);
       if (!recipient) throw new Error("Select a recipient first.");
+
+      const alreadySent = await getExistingActiveDocumentTypes(recipient.id, ["wage_ack"]);
+      if (alreadySent.length > 0 && !window.confirm(`${recipient.name} already has an Acknowledgment of Wage form on file. Send another one anyway?`)) {
+        return;
+      }
 
       const doc = await createSignableDocument({
         documentType: "wage_ack",
@@ -4064,6 +4095,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       const recipient = employees.find((e) => e.id === mealRestBreakRecipientId);
       if (!recipient) throw new Error("Select a recipient first.");
 
+      const alreadySent = await getExistingActiveDocumentTypes(recipient.id, ["meal_rest_break"]);
+      if (alreadySent.length > 0 && !window.confirm(`${recipient.name} already has a Meal & Rest Break Policy on file. Send another one anyway?`)) {
+        return;
+      }
+
       const doc = await createSignableDocument({
         documentType: "meal_rest_break",
         formData: { employeeId: recipient.id, employeeName: recipient.name } as unknown as Record<string, any>,
@@ -4333,6 +4369,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       const recipient = employees.find((e) => e.id === carIqRecipientId);
       if (!recipient) throw new Error("Select a recipient first.");
 
+      const alreadySent = await getExistingActiveDocumentTypes(recipient.id, ["car_iq_agreement"]);
+      if (alreadySent.length > 0 && !window.confirm(`${recipient.name} already has a Car IQ Technician Agreement on file. Send another one anyway?`)) {
+        return;
+      }
+
       const doc = await createSignableDocument({
         documentType: "car_iq_agreement",
         formData: { employeeId: recipient.id, employeeName: recipient.name } as unknown as Record<string, any>,
@@ -4523,6 +4564,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       const recipient = employees.find((e) => e.id === vehicleRecipientId);
       if (!recipient) throw new Error("Select a recipient first.");
 
+      const alreadySent = await getExistingActiveDocumentTypes(recipient.id, ["vehicle_agreement"]);
+      if (alreadySent.length > 0 && !window.confirm(`${recipient.name} already has a Company Vehicle Use Agreement on file. Send another one anyway?`)) {
+        return;
+      }
+
       const doc = await createSignableDocument({
         documentType: "vehicle_agreement",
         formData: { employeeId: recipient.id, employeeName: recipient.name } as unknown as Record<string, any>,
@@ -4711,6 +4757,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     try {
       const recipient = employees.find((e) => e.id === confidentialityRecipientId);
       if (!recipient) throw new Error("Select a recipient first.");
+
+      const alreadySent = await getExistingActiveDocumentTypes(recipient.id, ["employee_confidentiality"]);
+      if (alreadySent.length > 0 && !window.confirm(`${recipient.name} already has an Employee Confidentiality Agreement on file. Send another one anyway?`)) {
+        return;
+      }
 
       const doc = await createSignableDocument({
         documentType: "employee_confidentiality",
@@ -4906,6 +4957,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       const recipient = employees.find((e) => e.id === ndaRecipientId);
       if (!recipient) throw new Error("Select a recipient first.");
 
+      const alreadySent = await getExistingActiveDocumentTypes(recipient.id, ["nda_form"]);
+      if (alreadySent.length > 0 && !window.confirm(`${recipient.name} already has a Non-Disclosure Agreement on file. Send another one anyway?`)) {
+        return;
+      }
+
       const doc = await createSignableDocument({
         documentType: "nda_form",
         formData: { employeeId: recipient.id, employeeName: recipient.name } as unknown as Record<string, any>,
@@ -5091,6 +5147,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     try {
       const recipient = employees.find((e) => e.id === substanceScreeningRecipientId);
       if (!recipient) throw new Error("Select a recipient first.");
+
+      const alreadySent = await getExistingActiveDocumentTypes(recipient.id, ["substance_screening"]);
+      if (alreadySent.length > 0 && !window.confirm(`${recipient.name} already has a Substance Screening & Conduct Agreement on file. Send another one anyway?`)) {
+        return;
+      }
 
       const doc = await createSignableDocument({
         documentType: "substance_screening",
@@ -5348,6 +5409,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       const recipient = employees.find((e) => e.id === ptoAckRecipientId);
       if (!recipient) throw new Error("Select a recipient first.");
 
+      const alreadySent = await getExistingActiveDocumentTypes(recipient.id, ["pto_ack"]);
+      if (alreadySent.length > 0 && !window.confirm(`${recipient.name} already has a PTO & Sick Leave Policy on file. Send another one anyway?`)) {
+        return;
+      }
+
       const doc = await createSignableDocument({
         documentType: "pto_ack",
         formData: { employeeId: recipient.id, employeeName: recipient.name } as unknown as Record<string, any>,
@@ -5548,6 +5614,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     try {
       const recipient = employees.find((e) => e.id === partsResponsibilityRecipientId);
       if (!recipient) throw new Error("Select a recipient first.");
+
+      const alreadySent = await getExistingActiveDocumentTypes(recipient.id, ["parts_responsibility"]);
+      if (alreadySent.length > 0 && !window.confirm(`${recipient.name} already has a Parts Responsibility Form on file. Send another one anyway?`)) {
+        return;
+      }
 
       const doc = await createSignableDocument({
         documentType: "parts_responsibility",
@@ -5829,6 +5900,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       const recipient = employees.find((e) => e.id === mileageFuelRecipientId);
       if (!recipient) throw new Error("Select a recipient first.");
 
+      const alreadySent = await getExistingActiveDocumentTypes(recipient.id, ["mileage_fuel"]);
+      if (alreadySent.length > 0 && !window.confirm(`${recipient.name} already has a Mileage & Fuel Policy on file. Send another one anyway?`)) {
+        return;
+      }
+
       const doc = await createSignableDocument({
         documentType: "mileage_fuel",
         formData: { employeeId: recipient.id, employeeName: recipient.name } as unknown as Record<string, any>,
@@ -6099,6 +6175,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     try {
       const recipient = employees.find((e) => e.id === flashTechnicianTravelRecipientId);
       if (!recipient) throw new Error("Select a recipient first.");
+
+      const alreadySent = await getExistingActiveDocumentTypes(recipient.id, ["flash_technician_travel"]);
+      if (alreadySent.length > 0 && !window.confirm(`${recipient.name} already has a Flash Technician Travel & Out-of-State Policy on file. Send another one anyway?`)) {
+        return;
+      }
 
       const doc = await createSignableDocument({
         documentType: "flash_technician_travel",
@@ -6371,6 +6452,12 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     try {
       const recipient = employees.find((e) => e.id === contractorAddendumRecipientId);
       if (!recipient) throw new Error("Select a recipient first.");
+
+      const alreadySent = await getExistingActiveDocumentTypes(recipient.id, ["contractor_addendum"]);
+      if (alreadySent.length > 0 && !window.confirm(`${recipient.name} already has a Master Independent Contractor Subcontractor Agreement Addendum on file. Send another one anyway?`)) {
+        return;
+      }
+
       const doc = await createSignableDocument({
         documentType: "contractor_addendum",
         formData: { ...blankContractorAddendumData(), employeeId: recipient.id, signerNames: { ...CONTRACTOR_ADDENDUM_DEFAULT_SIGNER_NAMES, employee: recipient.name } } as unknown as Record<string, any>,
@@ -6667,6 +6754,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       const recipient = employees.find((e) => e.id === locationConsentRecipientId);
       if (!recipient) throw new Error("Select a recipient first.");
 
+      const alreadySent = await getExistingActiveDocumentTypes(recipient.id, ["location_consent"]);
+      if (alreadySent.length > 0 && !window.confirm(`${recipient.name} already has a Location Sharing Consent on file. Send another one anyway?`)) {
+        return;
+      }
+
       const doc = await createSignableDocument({
         documentType: "location_consent",
         formData: { employeeId: recipient.id, employeeName: recipient.name } as unknown as Record<string, any>,
@@ -6941,6 +7033,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     try {
       const recipient = employees.find((e) => e.id === damageRecipientId);
       if (!recipient) throw new Error("Select a recipient first.");
+
+      const alreadySent = await getExistingActiveDocumentTypes(recipient.id, ["damage"]);
+      if (alreadySent.length > 0 && !window.confirm(`${recipient.name} already has a Damage Agreement on file. Send another one anyway?`)) {
+        return;
+      }
 
       const doc = await createSignableDocument({
         documentType: "damage",
@@ -7233,6 +7330,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       const recipient = employees.find((e) => e.id === contractorDataRecipientId);
       if (!recipient) throw new Error("Select a recipient first.");
 
+      const alreadySent = await getExistingActiveDocumentTypes(recipient.id, ["contractor_data"]);
+      if (alreadySent.length > 0 && !window.confirm(`${recipient.name} already has an Employee Data form on file. Send another one anyway?`)) {
+        return;
+      }
+
       const doc = await createSignableDocument({
         documentType: "contractor_data",
         formData: { employeeId: recipient.id, employeeName: recipient.name } as unknown as Record<string, any>,
@@ -7447,6 +7549,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       const recipient = employees.find((e) => e.id === contractorDataUsRecipientId);
       if (!recipient) throw new Error("Select a recipient first.");
 
+      const alreadySent = await getExistingActiveDocumentTypes(recipient.id, ["contractor_data_us"]);
+      if (alreadySent.length > 0 && !window.confirm(`${recipient.name} already has a Contractor Data (US) form on file. Send another one anyway?`)) {
+        return;
+      }
+
       const doc = await createSignableDocument({
         documentType: "contractor_data_us",
         formData: { employeeId: recipient.id, employeeName: recipient.name } as unknown as Record<string, any>,
@@ -7636,6 +7743,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     try {
       const recipient = employees.find((e) => e.id === vehicleUseAgreementRecipientId);
       if (!recipient) throw new Error("Select a recipient first.");
+
+      const alreadySent = await getExistingActiveDocumentTypes(recipient.id, ["vehicle_use_agreement"]);
+      if (alreadySent.length > 0 && !window.confirm(`${recipient.name} already has a Vehicle Use Agreement on file. Send another one anyway?`)) {
+        return;
+      }
 
       const doc = await createSignableDocument({
         documentType: "vehicle_use_agreement",
@@ -7833,6 +7945,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     try {
       const recipient = employees.find((e) => e.id === directDepositRecipientId);
       if (!recipient) throw new Error("Select a recipient first.");
+
+      const alreadySent = await getExistingActiveDocumentTypes(recipient.id, ["direct_deposit"]);
+      if (alreadySent.length > 0 && !window.confirm(`${recipient.name} already has a Direct Deposit Authorization on file. Send another one anyway?`)) {
+        return;
+      }
 
       const doc = await createSignableDocument({
         documentType: "direct_deposit",
@@ -8256,6 +8373,24 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     setCombineFormsSentNotice(null);
     setCombineFormsCopyLink(null);
     try {
+      // Nothing else stops the same packet from being generated twice for
+      // the same person (e.g. re-clicking after navigating away and back) —
+      // this is exactly how a batch of real duplicate hr_signable_documents
+      // rows got created in production. Only checked for a real AHS
+      // recipient — an external/no-login recipient has no stable identifier
+      // to match duplicates against.
+      if (recipient) {
+        const alreadySent = await getExistingActiveDocumentTypes(recipient.id, Array.from(selectedFormTypes));
+        if (alreadySent.length > 0) {
+          const labelByType = new Map(
+            [...GENERAL_FORM_TYPES, ...TECHNICIAN_FORM_TYPES, ...MANAGEMENT_FORM_TYPES].map((f) => [f.type, f.label])
+          );
+          const names = alreadySent.map((t) => labelByType.get(t) ?? t).join(", ");
+          if (!window.confirm(`${recipient.name} already has these forms on file: ${names}.\n\nSend them again anyway?`)) {
+            return;
+          }
+        }
+      }
       const docs = await Promise.all(
         Array.from(selectedFormTypes).map((type) =>
           createSignableDocument(
