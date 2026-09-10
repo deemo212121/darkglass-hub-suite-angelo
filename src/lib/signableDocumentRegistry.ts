@@ -89,13 +89,14 @@ export const TECHNICIAN_FORM_TYPES: SignableDocumentType[] = [
  * so "signed" already means done for those.
  *
  * i9 belongs here (Section 2, completed by HR, calls confirmSignableDocument
- * — see i9Section2Dialog in ReportHRDaily.tsx). w4 deliberately does NOT:
- * its own "employer info" dialog (handleSaveW4EmployerInfo) only
- * regenerates the PDF via updateSignableDocumentPdfUrl and never calls
- * confirmSignableDocument, so status never actually reaches "confirmed" —
- * putting w4 in this set would leave it permanently stuck at "awaiting_hr"
- * even after HR fills in the employer fields. w4 is treated as done the
- * moment the employee signs, same as every other single-party form.
+ * — see i9Section2Dialog in ReportHRDaily.tsx). w4 also belongs here: HR's
+ * "Fill Employer Info" step (handleSaveW4EmployerInfo) now calls
+ * confirmSignableDocument too, same as i9 Section 2 — a signed-but-not-yet-
+ * employer-completed W-4 used to read as fully "done" on the Technician
+ * Form Checklist the moment the employee signed, even though the W-4 Sent
+ * History table itself still showed it as "Submitted" (not "Completed")
+ * until HR filled in the employer fields — the checklist and the type's own
+ * Sent History table must agree on what "done" means.
  */
 export const DOCUMENT_TYPES_REQUIRING_EMPLOYER_SIGNATURE = new Set<SignableDocumentType>([
   "wage_ack",
@@ -107,6 +108,7 @@ export const DOCUMENT_TYPES_REQUIRING_EMPLOYER_SIGNATURE = new Set<SignableDocum
   "parts_responsibility",
   "substance_screening",
   "i9",
+  "w4",
 ]);
 
 /**

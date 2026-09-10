@@ -3525,6 +3525,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       const employeeName = `${data.firstNameMiddleInitial ?? ""} ${data.lastName ?? ""}`.trim();
       const pdfUrl = await uploadW4Form(w4EmployerDialog.companyId, employeeName, new Blob([pdfBytes as unknown as BlobPart], { type: "application/pdf" }));
       await updateSignableDocumentPdfUrl(w4EmployerDialog.id, pdfUrl, merged as unknown as Record<string, any>);
+      await confirmSignableDocument(w4EmployerDialog.id, null);
       setW4EmployerDialog(null);
       await loadSentW4Forms();
     } catch (err) {
@@ -17160,7 +17161,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       <div className="panel p-0 overflow-hidden mt-4">
         <div className="px-4 py-4 border-b border-white/10">
           <h2 className="font-semibold text-sm">W-4 Sent History</h2>
-          <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status.</p>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status. "Submitted" means the employee signed — fill in the employer fields to finalize.</p>
         </div>
         {w4ActionError && (
           <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{w4ActionError}</p>
@@ -17199,11 +17200,12 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                       <td className="px-4 py-3 text-muted-foreground">{doc.createdByName ?? "—"}</td>
                       <td className="px-4 py-3">
                         <span className={`px-2 py-1 rounded text-xs font-semibold ${
-                          doc.status === "signed" ? "bg-green-500/20 text-green-300"
+                          doc.status === "confirmed" ? "bg-green-500/20 text-green-300"
+                          : doc.status === "signed" ? "bg-blue-500/20 text-blue-300"
                           : doc.status === "cancelled" ? "bg-slate-500/20 text-slate-400"
                           : "bg-yellow-500/20 text-yellow-300"
                         }`}>
-                          {doc.status === "signed" ? "Submitted" : doc.status === "cancelled" ? "Cancelled" : "Awaiting Completion"}
+                          {doc.status === "confirmed" ? "Completed" : doc.status === "signed" ? "Submitted" : doc.status === "cancelled" ? "Cancelled" : "Awaiting Completion"}
                         </span>
                       </td>
                       <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{new Date(doc.createdAt).toLocaleDateString()}</td>
@@ -17220,8 +17222,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                             </button>
                           )}
                           {doc.status === "signed" && (
-                            <button type="button" onClick={() => handleOpenW4EmployerDialog(doc)} className="btn text-[10px] px-2 py-1">
-                              Fill Employer Info
+                            <button type="button" onClick={() => handleOpenW4EmployerDialog(doc)} className="btn text-[10px] px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white">
+                              Fill Employer Info →
                             </button>
                           )}
                           <button
