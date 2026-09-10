@@ -16,11 +16,19 @@
  * policy itself checks first (recipient_id = auth_profile_id(), no role
  * involved) — so nothing here needs a role gate at all.
  *
- * Only handles document types whose employer/manager step is a plain
- * signature with no fields to review (see SUPPORTED_TYPES below) — every
- * one of ReportHRDaily.tsx's own "*EmployerDialog"/"*ManagerDialog"
- * handlers this mirrors. A type not yet wired up here shows a clear
- * fallback message instead of pretending to work.
+ * Every one of ReportHRDaily.tsx's "*EmployerDialog" handlers for these
+ * types is structurally identical: a plain signature pad (no fields to
+ * review), reassign-to-self for the RLS "claim", regenerate the PDF with
+ * both signatures, signDocument + confirmSignableDocument. UNIFORM_CONFIGS
+ * captures the one thing that differs per type (which fill/upload
+ * functions, which formData key already holds the employee's signature)
+ * instead of duplicating that handler 7 times. parts_responsibility uses
+ * different field names (technician/manager instead of employee/employer)
+ * so it's handled as its own small case. i9's Section 2 needs real review
+ * fields (documents examined, first day employed, business info) — not
+ * just a signature — so it isn't wired up here yet; SUPPORTED_TYPES governs
+ * which document types show the working flow vs. the "not available here
+ * yet" fallback.
  */
 import { useEffect, useState } from "react";
 import { Link } from "@tanstack/react-router";
@@ -36,8 +44,26 @@ import {
   type SignableDocument,
   type SignableDocumentType,
 } from "@/lib/supabase/signableDocuments";
-import { uploadSignableDocumentSignature, uploadPartsResponsibilityForm, refreshStorageAuthToken } from "@/lib/firebase/storage";
+import {
+  uploadSignableDocumentSignature,
+  uploadPartsResponsibilityForm,
+  uploadWageAckForm,
+  uploadDamageForm,
+  uploadMealRestBreakForm,
+  uploadMileageFuelForm,
+  uploadLocationConsentForm,
+  uploadSubstanceScreeningForm,
+  uploadFlashTechnicianTravelForm,
+  refreshStorageAuthToken,
+} from "@/lib/firebase/storage";
 import { fillPartsResponsibilityPdf } from "@/lib/partsResponsibilityPdfFill";
+import { fillWageAckPdf } from "@/lib/wageAckPdfFill";
+import { fillDamagePdf } from "@/lib/damagePdfFill";
+import { fillMealRestBreakPdf } from "@/lib/mealRestBreakPdfFill";
+import { fillMileageFuelPdf } from "@/lib/mileageFuelPdfFill";
+import { fillLocationConsentPdf } from "@/lib/locationConsentPdfFill";
+import { fillSubstanceScreeningPdf } from "@/lib/substanceScreeningPdfFill";
+import { fillFlashTechnicianTravelPdf } from "@/lib/flashTechnicianTravelPdfFill";
 import type { PartsResponsibilityFormData } from "@/lib/partsResponsibilityFormTemplate";
 import { useSignaturePad } from "@/hooks/useSignaturePad";
 import { SignaturePadControls } from "@/components/SignaturePad";
@@ -49,10 +75,37 @@ interface Props {
 
 const TYPE_LABEL: Partial<Record<SignableDocumentType, string>> = {
   parts_responsibility: "Parts Responsibility and Technician Floor Protection Acknowledgment Form",
+  wage_ack: "Acknowledgment of Wage & Compensation Structure",
+  damage: "Damage, Part Loss, and Tool Penalty Commission Deduction Agreement",
+  meal_rest_break: "Employee Meal and Rest Break Policy Acknowledgment",
+  mileage_fuel: "Personal Vehicle Mileage and Fuel Policy Agreement",
+  location_consent: "Employee Mobile App Location Sharing Consent Agreement",
+  substance_screening: "Substance Screening & Conduct Agreement",
+  flash_technician_travel: "Flash Technician Travel & Out-of-State Policy",
 };
 
-/** Document types this page can complete — see the file header for why only some are here yet. */
-const SUPPORTED_TYPES = new Set<SignableDocumentType>(["parts_responsibility"]);
+interface UniformSignConfig {
+  /** formData key already holding the employee/technician's own signature — every type but substance_screening uses "employeeSignatureDataUrl". */
+  employeeSigField: string;
+  fillPdf: (data: any, employeeSigBytes?: Uint8Array, employerSigBytes?: Uint8Array) => Promise<Uint8Array>;
+  uploadPdf: (companyId: string, employeeName: string, blob: Blob) => Promise<string>;
+  logAction: string;
+  nameFallback: string;
+}
+
+/** Every type here writes the employer half to "employerSignatureDataUrl"/"employerDateSigned" — only the employee-side read field and the fill/upload functions differ. */
+const UNIFORM_CONFIGS: Partial<Record<SignableDocumentType, UniformSignConfig>> = {
+  wage_ack: { employeeSigField: "employeeSignatureDataUrl", fillPdf: fillWageAckPdf, uploadPdf: uploadWageAckForm, logAction: "wage_ack_employer_signed", nameFallback: "acknowledgment-of-wage" },
+  damage: { employeeSigField: "employeeSignatureDataUrl", fillPdf: fillDamagePdf, uploadPdf: uploadDamageForm, logAction: "damage_employer_signed", nameFallback: "damage" },
+  meal_rest_break: { employeeSigField: "employeeSignatureDataUrl", fillPdf: fillMealRestBreakPdf, uploadPdf: uploadMealRestBreakForm, logAction: "meal_rest_break_employer_signed", nameFallback: "meal-rest-break" },
+  mileage_fuel: { employeeSigField: "employeeSignatureDataUrl", fillPdf: fillMileageFuelPdf, uploadPdf: uploadMileageFuelForm, logAction: "mileage_fuel_employer_signed", nameFallback: "mileage-fuel" },
+  location_consent: { employeeSigField: "employeeSignatureDataUrl", fillPdf: fillLocationConsentPdf, uploadPdf: uploadLocationConsentForm, logAction: "location_consent_employer_signed", nameFallback: "location-consent" },
+  substance_screening: { employeeSigField: "signatureDataUrl", fillPdf: fillSubstanceScreeningPdf, uploadPdf: uploadSubstanceScreeningForm, logAction: "substance_screening_employer_signed", nameFallback: "substance-screening" },
+  flash_technician_travel: { employeeSigField: "employeeSignatureDataUrl", fillPdf: fillFlashTechnicianTravelPdf, uploadPdf: uploadFlashTechnicianTravelForm, logAction: "flash_technician_travel_employer_signed", nameFallback: "flash-technician-travel" },
+};
+
+/** Document types this page can complete — see the file header for why i9 isn't here yet. */
+const SUPPORTED_TYPES = new Set<SignableDocumentType>(["parts_responsibility", ...Object.keys(UNIFORM_CONFIGS) as SignableDocumentType[]]);
 
 export function ManagerReviewPage({ docId }: Props) {
   const { ready, uid, displayName, role } = useAuth();
@@ -93,8 +146,62 @@ export function ManagerReviewPage({ docId }: Props) {
   const isSuperadmin = role === "SUPERSUPERADMIN";
   const isSupportedType = !!doc && SUPPORTED_TYPES.has(doc.documentType);
 
+  const handleSubmitPartsResponsibility = async (dataUrl: string) => {
+    if (!doc || !myProfileId) return;
+    await reassignSignableDocument(doc.id, { recipientId: myProfileId, recipientName: displayName || "Manager" }, "hr_staff");
+
+    const existing = doc.formData as PartsResponsibilityFormData;
+    const technicianSigBytes = existing.technicianSignatureDataUrl
+      ? new Uint8Array(await (await fetch(existing.technicianSignatureDataUrl)).arrayBuffer())
+      : undefined;
+
+    await refreshStorageAuthToken();
+    const managerSigBytes = new Uint8Array(await (await fetch(dataUrl)).arrayBuffer());
+    const signatureUrl = await uploadSignableDocumentSignature(doc.companyId, doc.id, "hr_staff", dataUrl);
+    const signedAt = new Date().toISOString();
+
+    const merged: PartsResponsibilityFormData = { ...existing, managerSignatureDataUrl: dataUrl, managerDateSigned: signedAt };
+
+    const pdfBytes = await fillPartsResponsibilityPdf(merged, technicianSigBytes, managerSigBytes);
+    const pdfUrl = await uploadPartsResponsibilityForm(doc.companyId, existing.employeeName || "parts-responsibility", new Blob([pdfBytes as unknown as BlobPart], { type: "application/pdf" }));
+
+    const entry = { name: displayName || "Manager", url: signatureUrl, signedAt };
+    await signDocument(doc.id, "hr_staff", entry, pdfUrl, merged as unknown as Record<string, any>);
+    await confirmSignableDocument(doc.id, null);
+
+    void logActivity({ action: "parts_responsibility_manager_signed", targetType: "employee", targetLabel: existing.employeeName || "" });
+    setDoc({ ...doc, status: "confirmed", pdfUrl, formData: merged as unknown as Record<string, any> });
+  };
+
+  const handleSubmitUniform = async (config: UniformSignConfig, dataUrl: string) => {
+    if (!doc || !myProfileId) return;
+    await reassignSignableDocument(doc.id, { recipientId: myProfileId, recipientName: displayName || "Manager" }, "hr_staff");
+
+    const existing = doc.formData as Record<string, any>;
+    const employeeSigBytes = existing[config.employeeSigField]
+      ? new Uint8Array(await (await fetch(existing[config.employeeSigField])).arrayBuffer())
+      : undefined;
+
+    await refreshStorageAuthToken();
+    const employerSigBytes = new Uint8Array(await (await fetch(dataUrl)).arrayBuffer());
+    const signatureUrl = await uploadSignableDocumentSignature(doc.companyId, doc.id, "hr_staff", dataUrl);
+    const signedAt = new Date().toISOString();
+
+    const merged = { ...existing, employerSignatureDataUrl: dataUrl, employerDateSigned: signedAt };
+
+    const pdfBytes = await config.fillPdf(merged, employeeSigBytes, employerSigBytes);
+    const pdfUrl = await config.uploadPdf(doc.companyId, existing.employeeName || config.nameFallback, new Blob([pdfBytes as unknown as BlobPart], { type: "application/pdf" }));
+
+    const entry = { name: displayName || "Manager", url: signatureUrl, signedAt };
+    await signDocument(doc.id, "hr_staff", entry, pdfUrl, merged as Record<string, any>);
+    await confirmSignableDocument(doc.id, null);
+
+    void logActivity({ action: config.logAction, targetType: "employee", targetLabel: existing.employeeName || "" });
+    setDoc({ ...doc, status: "confirmed", pdfUrl, formData: merged });
+  };
+
   const handleSubmit = async () => {
-    if (!doc || !myProfileId || doc.documentType !== "parts_responsibility") return;
+    if (!doc || !myProfileId) return;
     if (!sigPad.hasContent()) {
       setError("Please add your signature.");
       return;
@@ -107,34 +214,13 @@ export function ManagerReviewPage({ docId }: Props) {
     setSubmitting(true);
     setError(null);
     try {
-      // Refreshes recipientName to the live displayName and keeps the RLS
-      // "recipient_id = auth_profile_id()" path unambiguous — a no-op in
-      // the common case (this page is only reachable because that's
-      // already true), same claim-pattern ReportHRDaily.tsx's own dialog
-      // uses.
-      await reassignSignableDocument(doc.id, { recipientId: myProfileId, recipientName: displayName || "Manager" }, "hr_staff");
-
-      const existing = doc.formData as PartsResponsibilityFormData;
-      const technicianSigBytes = existing.technicianSignatureDataUrl
-        ? new Uint8Array(await (await fetch(existing.technicianSignatureDataUrl)).arrayBuffer())
-        : undefined;
-
-      await refreshStorageAuthToken();
-      const managerSigBytes = new Uint8Array(await (await fetch(dataUrl)).arrayBuffer());
-      const signatureUrl = await uploadSignableDocumentSignature(doc.companyId, doc.id, "hr_staff", dataUrl);
-      const signedAt = new Date().toISOString();
-
-      const merged: PartsResponsibilityFormData = { ...existing, managerSignatureDataUrl: dataUrl, managerDateSigned: signedAt };
-
-      const pdfBytes = await fillPartsResponsibilityPdf(merged, technicianSigBytes, managerSigBytes);
-      const pdfUrl = await uploadPartsResponsibilityForm(doc.companyId, existing.employeeName || "parts-responsibility", new Blob([pdfBytes as unknown as BlobPart], { type: "application/pdf" }));
-
-      const entry = { name: displayName || "Manager", url: signatureUrl, signedAt };
-      await signDocument(doc.id, "hr_staff", entry, pdfUrl, merged as unknown as Record<string, any>);
-      await confirmSignableDocument(doc.id, null);
-
-      void logActivity({ action: "parts_responsibility_manager_signed", targetType: "employee", targetLabel: existing.employeeName || "" });
-      setDoc({ ...doc, status: "confirmed", pdfUrl, formData: merged as unknown as Record<string, any> });
+      if (doc.documentType === "parts_responsibility") {
+        await handleSubmitPartsResponsibility(dataUrl);
+      } else {
+        const config = UNIFORM_CONFIGS[doc.documentType];
+        if (!config) return;
+        await handleSubmitUniform(config, dataUrl);
+      }
       setSubmitted(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save signature.");
@@ -181,7 +267,7 @@ export function ManagerReviewPage({ docId }: Props) {
           <div className="panel p-4">
             <h1 className="text-lg font-bold mb-2">Add Your Signature</h1>
             <p className="text-sm text-muted-foreground mb-4">
-              Manager/supervisor signature for <span className="font-semibold text-foreground">{employeeName}</span>'s {label}.
+              Manager/employer signature for <span className="font-semibold text-foreground">{employeeName}</span>'s {label}.
             </p>
 
             <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2 block">Add your signature</label>

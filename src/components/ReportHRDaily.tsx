@@ -8102,50 +8102,38 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       if (myProfileId) {
         const employeeName = (doc.formData as { employeeName?: string })?.employeeName || doc.recipientName || "an employee";
         const thread = await getOrCreateDmThread(myProfileId, recipient.id);
-        // Deep-links straight to the right Automated Forms tab (same
-        // ?tab= param VALID_HR_TABS/hrSearchParams already reads on load) —
-        // a real clickable link, not just an instruction to go find the
-        // tab manually.
-        //
-        // parts_responsibility is the one exception: it links straight to
-        // sign-manager-review instead, a standalone page authorized by
-        // "are you this document's current recipient" rather than the HR
-        // Dashboard's ADMIN/HR-only role gate. The reassign target here is
-        // routinely a real line manager with neither role — confirmed live
-        // on 2026-09-10 for three Branch/Senior Branch Managers who
-        // couldn't open the old hr-dashboard link at all. The other types
-        // below still point there until they get the same treatment.
-        const tabKey =
-          doc.documentType === "i9" ? "i9"
-          : doc.documentType === "meal_rest_break" ? "mealRestBreak"
-          : doc.documentType === "mileage_fuel" ? "mileageFuel"
-          : doc.documentType === "location_consent" ? "locationConsent"
-          : doc.documentType === "damage" ? "damage"
-          : doc.documentType === "substance_screening" ? "substanceScreening"
-          : doc.documentType === "flash_technician_travel" ? "flashTechnicianTravel"
-          : "wageAck";
+        // Every type but i9 now links straight to sign-manager-review — a
+        // standalone page authorized by "are you this document's current
+        // recipient" rather than the HR Dashboard's ADMIN/HR-only role
+        // gate. The reassign target here is routinely a real line manager
+        // with neither role — confirmed live on 2026-09-10 for three
+        // Branch/Senior Branch Managers who couldn't open the old
+        // hr-dashboard link at all. i9's Section 2 needs real review
+        // fields (documents examined, first day employed, business info),
+        // not just a signature, so it isn't on that page yet and still
+        // deep-links into the HR Dashboard's Form I-9 tab.
         const tabLink =
-          doc.documentType === "parts_responsibility"
-            ? `${getAppUrl()}/sign-manager-review/${doc.id}`
-            : `${getAppUrl()}/m/hr/hr-dashboard?tab=${tabKey}`;
+          doc.documentType === "i9"
+            ? `${getAppUrl()}/m/hr/hr-dashboard?tab=i9`
+            : `${getAppUrl()}/sign-manager-review/${doc.id}`;
         const body =
           doc.documentType === "i9"
             ? `📋 Please complete Section 2 (document review + employer/AR signature) of Form I-9 for ${employeeName} — [open the Form I-9 tab](${tabLink}) in the HR Dashboard.`
             : doc.documentType === "meal_rest_break"
-            ? `📋 Please add the employer signature to the Employee Meal and Rest Break Policy Acknowledgment for ${employeeName} — [open the Meal & Rest Break Policy tab](${tabLink}) in the HR Dashboard.`
+            ? `📋 Please add the employer signature to the Employee Meal and Rest Break Policy Acknowledgment for ${employeeName}: ${tabLink}`
             : doc.documentType === "parts_responsibility"
             ? `📋 Please add the manager/supervisor signature to the Parts Responsibility and Technician Floor Protection Acknowledgment Form for ${employeeName}: ${tabLink}`
             : doc.documentType === "mileage_fuel"
-            ? `📋 Please add the employer/representative signature to the Personal Vehicle Mileage and Fuel Policy Agreement for ${employeeName} — [open the Mileage & Fuel Policy tab](${tabLink}) in the HR Dashboard.`
+            ? `📋 Please add the employer/representative signature to the Personal Vehicle Mileage and Fuel Policy Agreement for ${employeeName}: ${tabLink}`
             : doc.documentType === "location_consent"
-            ? `📋 Please add the employer/representative signature to the Employee Mobile App Location Sharing Consent Agreement for ${employeeName} — [open the Location Sharing Consent tab](${tabLink}) in the HR Dashboard.`
+            ? `📋 Please add the employer/representative signature to the Employee Mobile App Location Sharing Consent Agreement for ${employeeName}: ${tabLink}`
             : doc.documentType === "damage"
-            ? `📋 Please add the employer/representative signature to the Damage, Part Loss, and Tool Penalty Commission Deduction Agreement for ${employeeName} — [open the Damage Agreement tab](${tabLink}) in the HR Dashboard.`
+            ? `📋 Please add the employer/representative signature to the Damage, Part Loss, and Tool Penalty Commission Deduction Agreement for ${employeeName}: ${tabLink}`
             : doc.documentType === "substance_screening"
-            ? `📋 Please add the company representative signature to the Substance Screening & Conduct Agreement for ${employeeName} — [open the Substance Screening & Conduct Agreement tab](${tabLink}) in the HR Dashboard.`
+            ? `📋 Please add the company representative signature to the Substance Screening & Conduct Agreement for ${employeeName}: ${tabLink}`
             : doc.documentType === "flash_technician_travel"
-            ? `📋 Please add the employer/representative signature to the Flash Technician Travel & Out-of-State Policy for ${employeeName} — [open the Flash Technician Travel tab](${tabLink}) in the HR Dashboard.`
-            : `📋 Please add the employer/representative signature to the Acknowledgment of Wage & Compensation Structure for ${employeeName} — [open the Acknowledgment of Wage tab](${tabLink}) in the HR Dashboard.`;
+            ? `📋 Please add the employer/representative signature to the Flash Technician Travel & Out-of-State Policy for ${employeeName}: ${tabLink}`
+            : `📋 Please add the employer/representative signature to the Acknowledgment of Wage & Compensation Structure for ${employeeName}: ${tabLink}`;
         await sendMessage({
           dmThreadId: thread.id,
           senderId: myProfileId,
