@@ -44,6 +44,11 @@ export const SIGNABLE_DOCUMENT_REGISTRY: Record<SignableDocumentType, SignableDo
   nda_form: { label: "Non-Disclosure Agreement", internalPath: "/sign-nda-form", externalPath: "/sign-nda-external" },
   vehicle_use_agreement: { label: "Vehicle Use Agreement", internalPath: "/fill-vehicle-use-agreement", externalPath: "/fill-vehicle-use-agreement-external" },
   contractor_addendum: { label: "Master Independent Contractor Subcontractor Agreement Addendum", internalPath: "/fill-contractor-addendum", externalPath: "/fill-contractor-addendum-external" },
+  // No external (no-login) variant yet — every recipient of this one is an
+  // existing AHS technician, not an outside candidate, so externalPath just
+  // points at the same internal, login-gated route rather than a route that
+  // doesn't exist.
+  master_w2_agreement: { label: "Master W-2 Technician Agreement", internalPath: "/fill-master-w2-agreement", externalPath: "/fill-master-w2-agreement" },
 };
 
 export function signableDocumentLabel(type: SignableDocumentType): string {
@@ -109,6 +114,7 @@ export const DOCUMENT_TYPES_REQUIRING_EMPLOYER_SIGNATURE = new Set<SignableDocum
   "substance_screening",
   "i9",
   "w4",
+  "master_w2_agreement",
 ]);
 
 /**

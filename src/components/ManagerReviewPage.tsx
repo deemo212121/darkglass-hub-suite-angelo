@@ -55,6 +55,7 @@ import {
   uploadLocationConsentForm,
   uploadSubstanceScreeningForm,
   uploadFlashTechnicianTravelForm,
+  uploadMasterW2AgreementForm,
   refreshStorageAuthToken,
 } from "@/lib/firebase/storage";
 import { fillPartsResponsibilityPdf } from "@/lib/partsResponsibilityPdfFill";
@@ -66,6 +67,8 @@ import { fillLocationConsentPdf } from "@/lib/locationConsentPdfFill";
 import { fillSubstanceScreeningPdf } from "@/lib/substanceScreeningPdfFill";
 import { fillFlashTechnicianTravelPdf } from "@/lib/flashTechnicianTravelPdfFill";
 import type { PartsResponsibilityFormData } from "@/lib/partsResponsibilityFormTemplate";
+import { captureHtmlToPdfBlob, loadAssetDataUrl } from "@/lib/pdfCapture";
+import { masterW2AgreementStyles, buildMasterW2AgreementBodyMarkup, type MasterW2AgreementFormData } from "@/lib/masterW2AgreementFormTemplate";
 import { useSignaturePad } from "@/hooks/useSignaturePad";
 import { SignaturePadControls } from "@/components/SignaturePad";
 import { logActivity } from "@/lib/supabase/hrActivityLog";
@@ -83,6 +86,7 @@ const TYPE_LABEL: Partial<Record<SignableDocumentType, string>> = {
   location_consent: "Employee Mobile App Location Sharing Consent Agreement",
   substance_screening: "Substance Screening & Conduct Agreement",
   flash_technician_travel: "Flash Technician Travel & Out-of-State Policy",
+  master_w2_agreement: "Master W-2 Technician Comprehensive Policy, Consent & Agreement",
 };
 
 interface UniformSignConfig {
@@ -105,8 +109,8 @@ const UNIFORM_CONFIGS: Partial<Record<SignableDocumentType, UniformSignConfig>> 
   flash_technician_travel: { employeeSigField: "employeeSignatureDataUrl", fillPdf: fillFlashTechnicianTravelPdf, uploadPdf: uploadFlashTechnicianTravelForm, logAction: "flash_technician_travel_employer_signed", nameFallback: "flash-technician-travel" },
 };
 
-/** Document types this page can complete — see the file header for why i9 isn't here yet. */
-const SUPPORTED_TYPES = new Set<SignableDocumentType>(["parts_responsibility", ...Object.keys(UNIFORM_CONFIGS) as SignableDocumentType[]]);
+/** Document types this page can complete — see the file header for why i9 isn't here yet. master_w2_agreement is HTML-captured (see masterW2AgreementFormTemplate.ts), not a pdf-lib byte-fill like the UNIFORM_CONFIGS types, so it's handled as its own case (handleSubmitMasterW2Agreement) rather than fitting UniformSignConfig's fillPdf shape. */
+const SUPPORTED_TYPES = new Set<SignableDocumentType>(["parts_responsibility", "master_w2_agreement", ...Object.keys(UNIFORM_CONFIGS) as SignableDocumentType[]]);
 
 export function ManagerReviewPage({ docId }: Props) {
   const { ready, uid, displayName, role } = useAuth();
@@ -202,6 +206,29 @@ export function ManagerReviewPage({ docId }: Props) {
     setDoc({ ...doc, status: "confirmed", pdfUrl, formData: merged });
   };
 
+  const handleSubmitMasterW2Agreement = async (dataUrl: string) => {
+    if (!doc || !myProfileId) return;
+    await reassignSignableDocument(doc.id, { recipientId: myProfileId, recipientName: displayName || "Manager" }, "hr_staff");
+
+    const existing = doc.formData as MasterW2AgreementFormData;
+    await refreshStorageAuthToken();
+    const signatureUrl = await uploadSignableDocumentSignature(doc.companyId, doc.id, "hr_staff", dataUrl);
+    const signedAt = new Date().toISOString();
+
+    const merged: MasterW2AgreementFormData = { ...existing, employerSignatureDataUrl: dataUrl, employerDateSigned: signedAt };
+
+    const logo = await loadAssetDataUrl(() => import("@/assets/us-in-home-services-logo.png"));
+    const pdfBlob = await captureHtmlToPdfBlob(buildMasterW2AgreementBodyMarkup(merged, logo), masterW2AgreementStyles);
+    const pdfUrl = await uploadMasterW2AgreementForm(doc.companyId, existing.employeeName || "master-w2-agreement", pdfBlob);
+
+    const entry = { name: displayName || "Manager", url: signatureUrl, signedAt };
+    await signDocument(doc.id, "hr_staff", entry, pdfUrl, merged as unknown as Record<string, any>);
+    await confirmSignableDocument(doc.id, null);
+
+    void logActivity({ action: "master_w2_agreement_employer_signed", targetType: "employee", targetLabel: existing.employeeName || "" });
+    setDoc({ ...doc, status: "confirmed", pdfUrl, formData: merged as unknown as Record<string, any> });
+  };
+
   const handleSubmit = async () => {
     if (!doc || !myProfileId) return;
     if (!sigPad.hasContent()) {
@@ -218,6 +245,8 @@ export function ManagerReviewPage({ docId }: Props) {
     try {
       if (doc.documentType === "parts_responsibility") {
         await handleSubmitPartsResponsibility(dataUrl);
+      } else if (doc.documentType === "master_w2_agreement") {
+        await handleSubmitMasterW2Agreement(dataUrl);
       } else {
         const config = UNIFORM_CONFIGS[doc.documentType];
         if (!config) return;
