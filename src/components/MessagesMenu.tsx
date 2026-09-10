@@ -117,7 +117,14 @@ export function MessagesMenu() {
         ].filter(Boolean) as string[];
         // Generous cap — comfortably covers "most recent message per thread"
         // for any realistic number of channels/DMs without being unbounded.
-        const MAX_RECENT_ROWS = Math.max(200, (targetChannelIds.length + dmIds.length) * 5);
+        // The floor only matters for someone with under ~20 total threads
+        // (100/5) — past that the *5 term already takes over regardless of
+        // the floor's value, so lowering it from 200 doesn't shrink the
+        // budget for this company's actual power users (checked live: one
+        // outlier has 91 DM threads alone, well past where the floor still
+        // applies) — it only trims the query for the median user, who has
+        // ~10 threads total.
+        const MAX_RECENT_ROWS = Math.max(100, (targetChannelIds.length + dmIds.length) * 5);
         const { data: recent } = await supabase
           .from("messages")
           .select("id, channel_id, dm_thread_id, sender_id, sender_name, body, kind, is_announcement, created_at, edited_at, deleted_at")
