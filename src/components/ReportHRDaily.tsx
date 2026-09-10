@@ -10856,7 +10856,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   };
 
   // Candidate Notes — three independent slots (HR/Interviewer/Screening,
-  // see 0234_hr_candidates_screening_interviewer_notes.sql) stacked in one
+  // see 0241_hr_candidates_screening_interviewer_notes.sql) stacked in one
   // Note column cell, each its own inline pencil-edit, same click-to-edit
   // pattern used elsewhere in this file (e.g. Estimate Time on Payroll
   // Detail). One shared draft/editing-cell state, keyed by which of the

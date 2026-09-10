@@ -235,7 +235,7 @@ const SELECT_COLUMNS =
   "id, profile_id, pto_type, start_date, end_date, hours_requested, reason, status, requested_by, manager_id, manager_status, manager_reviewed_by, manager_reviewed_at, hr_status, hr_reviewed_by, hr_reviewed_at, accounting_status, accounting_reviewed_by, accounting_reviewed_at, reviewed_by, reviewed_at, review_note, created_at, attachment_path";
 
 // Falls back to this if attachment_path doesn't exist yet — i.e.
-// 0233_pto_requests_attachment.sql hasn't been run against this database.
+// 0240_pto_requests_attachment.sql hasn't been run against this database.
 const SELECT_COLUMNS_NO_ATTACHMENT =
   "id, profile_id, pto_type, start_date, end_date, hours_requested, reason, status, requested_by, manager_id, manager_status, manager_reviewed_by, manager_reviewed_at, hr_status, hr_reviewed_by, hr_reviewed_at, accounting_status, accounting_reviewed_by, accounting_reviewed_at, reviewed_by, reviewed_at, review_note, created_at";
 
@@ -522,7 +522,7 @@ export async function reviewPtoStage(
     .select(SELECT_COLUMNS)
     .single();
   if (isMissingColumnError(error)) {
-    // attachment_path (0233) not applied yet — the update itself never
+    // attachment_path (0240) not applied yet — the update itself never
     // referenced it, only the RETURNING select did.
     ({ data, error } = await supabase.from("pto_requests").update(payload).eq("id", request.id).select(SELECT_COLUMNS_NO_ATTACHMENT).single());
   }
