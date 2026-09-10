@@ -35,6 +35,7 @@ import { Route as SignPromotionFormDocIdRouteImport } from './routes/sign-promot
 import { Route as SignPromotionExternalDocIdRouteImport } from './routes/sign-promotion-external.$docId'
 import { Route as SignNdaFormDocIdRouteImport } from './routes/sign-nda-form.$docId'
 import { Route as SignNdaExternalDocIdRouteImport } from './routes/sign-nda-external.$docId'
+import { Route as SignManagerReviewDocIdRouteImport } from './routes/sign-manager-review.$docId'
 import { Route as SignExternalDocIdRouteImport } from './routes/sign-external.$docId'
 import { Route as SignDocumentDocIdRouteImport } from './routes/sign-document.$docId'
 import { Route as SignContractorAddendumDocIdRouteImport } from './routes/sign-contractor-addendum.$docId'
@@ -226,6 +227,11 @@ const SignNdaFormDocIdRoute = SignNdaFormDocIdRouteImport.update({
 const SignNdaExternalDocIdRoute = SignNdaExternalDocIdRouteImport.update({
   id: '/sign-nda-external/$docId',
   path: '/sign-nda-external/$docId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SignManagerReviewDocIdRoute = SignManagerReviewDocIdRouteImport.update({
+  id: '/sign-manager-review/$docId',
+  path: '/sign-manager-review/$docId',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SignExternalDocIdRoute = SignExternalDocIdRouteImport.update({
@@ -627,6 +633,7 @@ export interface FileRoutesByFullPath {
   '/sign-contractor-addendum/$docId': typeof SignContractorAddendumDocIdRoute
   '/sign-document/$docId': typeof SignDocumentDocIdRoute
   '/sign-external/$docId': typeof SignExternalDocIdRoute
+  '/sign-manager-review/$docId': typeof SignManagerReviewDocIdRoute
   '/sign-nda-external/$docId': typeof SignNdaExternalDocIdRoute
   '/sign-nda-form/$docId': typeof SignNdaFormDocIdRoute
   '/sign-promotion-external/$docId': typeof SignPromotionExternalDocIdRoute
@@ -714,6 +721,7 @@ export interface FileRoutesByTo {
   '/sign-contractor-addendum/$docId': typeof SignContractorAddendumDocIdRoute
   '/sign-document/$docId': typeof SignDocumentDocIdRoute
   '/sign-external/$docId': typeof SignExternalDocIdRoute
+  '/sign-manager-review/$docId': typeof SignManagerReviewDocIdRoute
   '/sign-nda-external/$docId': typeof SignNdaExternalDocIdRoute
   '/sign-nda-form/$docId': typeof SignNdaFormDocIdRoute
   '/sign-promotion-external/$docId': typeof SignPromotionExternalDocIdRoute
@@ -802,6 +810,7 @@ export interface FileRoutesById {
   '/sign-contractor-addendum/$docId': typeof SignContractorAddendumDocIdRoute
   '/sign-document/$docId': typeof SignDocumentDocIdRoute
   '/sign-external/$docId': typeof SignExternalDocIdRoute
+  '/sign-manager-review/$docId': typeof SignManagerReviewDocIdRoute
   '/sign-nda-external/$docId': typeof SignNdaExternalDocIdRoute
   '/sign-nda-form/$docId': typeof SignNdaFormDocIdRoute
   '/sign-promotion-external/$docId': typeof SignPromotionExternalDocIdRoute
@@ -891,6 +900,7 @@ export interface FileRouteTypes {
     | '/sign-contractor-addendum/$docId'
     | '/sign-document/$docId'
     | '/sign-external/$docId'
+    | '/sign-manager-review/$docId'
     | '/sign-nda-external/$docId'
     | '/sign-nda-form/$docId'
     | '/sign-promotion-external/$docId'
@@ -978,6 +988,7 @@ export interface FileRouteTypes {
     | '/sign-contractor-addendum/$docId'
     | '/sign-document/$docId'
     | '/sign-external/$docId'
+    | '/sign-manager-review/$docId'
     | '/sign-nda-external/$docId'
     | '/sign-nda-form/$docId'
     | '/sign-promotion-external/$docId'
@@ -1065,6 +1076,7 @@ export interface FileRouteTypes {
     | '/sign-contractor-addendum/$docId'
     | '/sign-document/$docId'
     | '/sign-external/$docId'
+    | '/sign-manager-review/$docId'
     | '/sign-nda-external/$docId'
     | '/sign-nda-form/$docId'
     | '/sign-promotion-external/$docId'
@@ -1153,6 +1165,7 @@ export interface RootRouteChildren {
   SignContractorAddendumDocIdRoute: typeof SignContractorAddendumDocIdRoute
   SignDocumentDocIdRoute: typeof SignDocumentDocIdRoute
   SignExternalDocIdRoute: typeof SignExternalDocIdRoute
+  SignManagerReviewDocIdRoute: typeof SignManagerReviewDocIdRoute
   SignNdaExternalDocIdRoute: typeof SignNdaExternalDocIdRoute
   SignNdaFormDocIdRoute: typeof SignNdaFormDocIdRoute
   SignPromotionExternalDocIdRoute: typeof SignPromotionExternalDocIdRoute
@@ -1345,6 +1358,13 @@ declare module '@tanstack/react-router' {
       path: '/sign-nda-external/$docId'
       fullPath: '/sign-nda-external/$docId'
       preLoaderRoute: typeof SignNdaExternalDocIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/sign-manager-review/$docId': {
+      id: '/sign-manager-review/$docId'
+      path: '/sign-manager-review/$docId'
+      fullPath: '/sign-manager-review/$docId'
+      preLoaderRoute: typeof SignManagerReviewDocIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/sign-external/$docId': {
@@ -1881,6 +1901,7 @@ const rootRouteChildren: RootRouteChildren = {
   SignContractorAddendumDocIdRoute: SignContractorAddendumDocIdRoute,
   SignDocumentDocIdRoute: SignDocumentDocIdRoute,
   SignExternalDocIdRoute: SignExternalDocIdRoute,
+  SignManagerReviewDocIdRoute: SignManagerReviewDocIdRoute,
   SignNdaExternalDocIdRoute: SignNdaExternalDocIdRoute,
   SignNdaFormDocIdRoute: SignNdaFormDocIdRoute,
   SignPromotionExternalDocIdRoute: SignPromotionExternalDocIdRoute,

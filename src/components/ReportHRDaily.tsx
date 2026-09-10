@@ -8106,24 +8106,35 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         // ?tab= param VALID_HR_TABS/hrSearchParams already reads on load) —
         // a real clickable link, not just an instruction to go find the
         // tab manually.
+        //
+        // parts_responsibility is the one exception: it links straight to
+        // sign-manager-review instead, a standalone page authorized by
+        // "are you this document's current recipient" rather than the HR
+        // Dashboard's ADMIN/HR-only role gate. The reassign target here is
+        // routinely a real line manager with neither role — confirmed live
+        // on 2026-09-10 for three Branch/Senior Branch Managers who
+        // couldn't open the old hr-dashboard link at all. The other types
+        // below still point there until they get the same treatment.
         const tabKey =
           doc.documentType === "i9" ? "i9"
           : doc.documentType === "meal_rest_break" ? "mealRestBreak"
-          : doc.documentType === "parts_responsibility" ? "partsResponsibility"
           : doc.documentType === "mileage_fuel" ? "mileageFuel"
           : doc.documentType === "location_consent" ? "locationConsent"
           : doc.documentType === "damage" ? "damage"
           : doc.documentType === "substance_screening" ? "substanceScreening"
           : doc.documentType === "flash_technician_travel" ? "flashTechnicianTravel"
           : "wageAck";
-        const tabLink = `${getAppUrl()}/m/hr/hr-dashboard?tab=${tabKey}`;
+        const tabLink =
+          doc.documentType === "parts_responsibility"
+            ? `${getAppUrl()}/sign-manager-review/${doc.id}`
+            : `${getAppUrl()}/m/hr/hr-dashboard?tab=${tabKey}`;
         const body =
           doc.documentType === "i9"
             ? `📋 Please complete Section 2 (document review + employer/AR signature) of Form I-9 for ${employeeName} — [open the Form I-9 tab](${tabLink}) in the HR Dashboard.`
             : doc.documentType === "meal_rest_break"
             ? `📋 Please add the employer signature to the Employee Meal and Rest Break Policy Acknowledgment for ${employeeName} — [open the Meal & Rest Break Policy tab](${tabLink}) in the HR Dashboard.`
             : doc.documentType === "parts_responsibility"
-            ? `📋 Please add the manager/supervisor signature to the Parts Responsibility and Technician Floor Protection Acknowledgment Form for ${employeeName} — [open the Parts Responsibility and Technician Floor Protection Acknowledgment Form tab](${tabLink}) in the HR Dashboard.`
+            ? `📋 Please add the manager/supervisor signature to the Parts Responsibility and Technician Floor Protection Acknowledgment Form for ${employeeName}: ${tabLink}`
             : doc.documentType === "mileage_fuel"
             ? `📋 Please add the employer/representative signature to the Personal Vehicle Mileage and Fuel Policy Agreement for ${employeeName} — [open the Mileage & Fuel Policy tab](${tabLink}) in the HR Dashboard.`
             : doc.documentType === "location_consent"
