@@ -12475,7 +12475,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   ] as const;
 
   const automatedFormsTechnicianTabs = [
-    { key: "masterW2Agreement", label: "Master W-2 Technician Agreement", count: sentMasterW2AgreementAwaitingEmployerCount, icon: FileCheck },
     { key: "wageAck", label: "Acknowledgment of Wage", count: sentWageAckAwaitingEmployerCount, icon: FileCheck },
     { key: "carIqAgreement", label: "Car IQ Technician Agreement", count: 0, icon: FileCheck },
     { key: "vehicleAgreement", label: "Company Vehicle Use Agreement", count: 0, icon: FileCheck },
@@ -12490,6 +12489,17 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     { key: "partsResponsibility", label: "Parts Responsibility and Technician Floor Protection Acknowledgment Form", count: sentPartsResponsibilityAwaitingManagerCount, icon: FileCheck },
     { key: "ptoAck", label: "PTO & Sick Leave Policy", count: 0, icon: FileCheck },
     { key: "substanceScreening", label: "Substance Screening & Conduct Agreement", count: 0, icon: FileCheck },
+  ] as const;
+
+  // "New Automation Forms" — a separate sidebar group, sibling to
+  // "Automated Forms" rather than a 4th column inside it, for the new
+  // consolidated form types (starting with Master W-2 Technician
+  // Agreement) as they're built. General is the exact same
+  // automatedFormsGeneralTabs list as the old group — same tab keys, so
+  // clicking either copy lands on the identical tab — just reachable from
+  // both places per the explicit ask to keep General available here too.
+  const newAutomationFormsTechnicianTabs = [
+    { key: "masterW2Agreement", label: "Master W-2 Technician Agreement", count: sentMasterW2AgreementAwaitingEmployerCount, icon: FileCheck },
   ] as const;
 
   // Management-tier forms (Branch Manager / Senior Branch Manager /
@@ -12525,6 +12535,20 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         { label: "General", tabs: automatedFormsGeneralTabs },
         { label: "Technician Forms", tabs: automatedFormsTechnicianTabs },
         { label: "BM, SBS, Tech Director, Tech Assistant Director", tabs: automatedFormsManagementTabs },
+      ],
+    }] : []),
+    // New Automation Forms — a separate sidebar group (not a 4th column
+    // inside "Automated Forms" above) for new consolidated form types as
+    // they're built, starting with Master W-2 Technician Agreement. Same
+    // General column as the group above (reused as-is, same tab keys) per
+    // the explicit ask to keep General reachable from here too.
+    ...(paperworksOnly && companyId === "COMP001" ? [{
+      group: "New Automation Forms",
+      icon: Paperclip,
+      tabs: [...automatedFormsGeneralTabs, ...newAutomationFormsTechnicianTabs],
+      columns: [
+        { label: "General", tabs: automatedFormsGeneralTabs },
+        { label: "New Technician Forms", tabs: newAutomationFormsTechnicianTabs },
       ],
     }] : []),
     ...(!paperworksOnly ? [
