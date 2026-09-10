@@ -3989,10 +3989,64 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [masterW2AgreementActionBusyId, setMasterW2AgreementActionBusyId] = useState<string | null>(null);
   const [masterW2AgreementActionError, setMasterW2AgreementActionError] = useState<string | null>(null);
   const [masterW2AgreementDocPreview, setMasterW2AgreementDocPreview] = useState<SignableDocument | null>(null);
+  const [masterW2AgreementPreviewExpanded, setMasterW2AgreementPreviewExpanded] = useState(false);
+  const [masterW2AgreementPreviewPdfUrl, setMasterW2AgreementPreviewPdfUrl] = useState<string | null>(null);
+  const [masterW2AgreementPreviewLoading, setMasterW2AgreementPreviewLoading] = useState(false);
   const filteredMasterW2AgreementRecipients = useMemo(
     () => employees.filter((e) => e.status === "active" && e.name.toLowerCase().includes(masterW2AgreementRecipientSearch.toLowerCase())),
     [employees, masterW2AgreementRecipientSearch]
   );
+
+  const buildMasterW2AgreementPreviewData = (employeeName: string): MasterW2AgreementFormData => {
+    const [firstName = "", ...rest] = employeeName.trim().split(/\s+/).filter(Boolean);
+    const lastName = rest.length ? rest[rest.length - 1] : "";
+    const middleName = rest.length > 1 ? rest.slice(0, -1).join(" ") : "";
+    return {
+      employeeId: "",
+      employeeName,
+      firstName,
+      middleName,
+      lastName,
+      branch: "",
+      effectiveDate: "",
+      addressStreet: "",
+      addressCity: "",
+      addressState: "",
+      addressZip: "",
+      phone: "",
+      email: "",
+      licensePhotoPath: "",
+      ssnCardPhotoPath: "",
+      employeeDateSigned: "",
+      employeeSignatureDataUrl: "",
+      employerDateSigned: "",
+      employerSignatureDataUrl: "",
+    };
+  };
+
+  /** Toggles the inline collapsible preview panel — collapsing just hides it (and revokes the blob URL); expanding (re)builds a fresh blank-filled sample from the currently-selected recipient's name. HTML-captured (not a pdf-lib fill like the other types' own preview), same technique as the document itself. */
+  const toggleMasterW2AgreementPreview = async () => {
+    if (masterW2AgreementPreviewExpanded) {
+      setMasterW2AgreementPreviewExpanded(false);
+      if (masterW2AgreementPreviewPdfUrl) URL.revokeObjectURL(masterW2AgreementPreviewPdfUrl);
+      setMasterW2AgreementPreviewPdfUrl(null);
+      return;
+    }
+    setMasterW2AgreementSendError(null);
+    setMasterW2AgreementPreviewExpanded(true);
+    setMasterW2AgreementPreviewLoading(true);
+    try {
+      const recipientName = employees.find((e) => e.id === masterW2AgreementRecipientId)?.name || "";
+      const logo = masterW2AgreementLogoDataUrl || (await loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png")));
+      const pdfBlob = await captureHtmlToPdfBlob(buildMasterW2AgreementBodyMarkup(buildMasterW2AgreementPreviewData(recipientName), logo), masterW2AgreementStyles);
+      const url = URL.createObjectURL(pdfBlob);
+      setMasterW2AgreementPreviewPdfUrl(url);
+    } catch (err) {
+      setMasterW2AgreementSendError(err instanceof Error ? err.message : "Failed to build preview.");
+    } finally {
+      setMasterW2AgreementPreviewLoading(false);
+    }
+  };
 
   const handleSendMasterW2Agreement = async () => {
     if (!masterW2AgreementRecipientId || !uid) return;
@@ -12500,6 +12554,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // both places per the explicit ask to keep General available here too.
   const newAutomationFormsTechnicianTabs = [
     { key: "masterW2Agreement", label: "Master W-2 Technician Agreement", count: sentMasterW2AgreementAwaitingEmployerCount, icon: FileCheck },
+    { key: "directDeposit", label: "Direct Deposit Authorization", count: 0, icon: FileCheck },
   ] as const;
 
   // Management-tier forms (Branch Manager / Senior Branch Manager /
@@ -20580,13 +20635,37 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             {masterW2AgreementSendError && (
               <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{masterW2AgreementSendError}</p>
             )}
-            <button
-              onClick={handleSendMasterW2Agreement}
-              disabled={!masterW2AgreementRecipientId || masterW2AgreementSending}
-              className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 w-fit"
-            >
-              {masterW2AgreementSending ? "Sending…" : "Send Request"}
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={toggleMasterW2AgreementPreview}
+                className="btn text-sm px-4 py-2 flex items-center gap-1.5"
+              >
+                Preview <ChevronDown className={`h-3.5 w-3.5 transition-transform ${masterW2AgreementPreviewExpanded ? "rotate-180" : ""}`} />
+              </button>
+              <button
+                onClick={handleSendMasterW2Agreement}
+                disabled={!masterW2AgreementRecipientId || masterW2AgreementSending}
+                className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+              >
+                {masterW2AgreementSending ? "Sending…" : "Send Request"}
+              </button>
+            </div>
+          </div>
+
+          <div className="flex-1 min-w-0">
+            {masterW2AgreementPreviewExpanded ? (
+              <div className="border border-white/10 rounded-md overflow-hidden bg-white/5 h-full" style={{ minHeight: 560 }}>
+                {masterW2AgreementPreviewLoading || !masterW2AgreementPreviewPdfUrl ? (
+                  <div className="h-full flex items-center justify-center text-sm text-muted-foreground" style={{ minHeight: 560 }}>Loading preview…</div>
+                ) : (
+                  <iframe src={masterW2AgreementPreviewPdfUrl} title="Master W-2 Technician Agreement Preview" className="w-full border-0" style={{ height: 560 }} />
+                )}
+              </div>
+            ) : (
+              <div className="border border-dashed border-white/15 rounded-md flex items-center justify-center text-sm text-muted-foreground" style={{ minHeight: 560 }}>
+                Click "Preview" to see the document here.
+              </div>
+            )}
           </div>
         </div>
       </div>
