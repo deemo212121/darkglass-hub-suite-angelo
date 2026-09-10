@@ -5262,6 +5262,20 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
 
+  const handleReopenSubstanceScreeningEmployer = async (doc: SignableDocument) => {
+    if (!window.confirm("Re-open this for a new employer signature? The employee's signature stays as-is.")) return;
+    setSubstanceScreeningActionBusyId(doc.id);
+    setSubstanceScreeningActionError(null);
+    try {
+      await reopenEmployerSignature(doc.id);
+      await loadSentSubstanceScreeningForms();
+    } catch (err) {
+      setSubstanceScreeningActionError(err instanceof Error ? err.message : "Failed to reopen for re-signing.");
+    } finally {
+      setSubstanceScreeningActionBusyId(null);
+    }
+  };
+
   // ── Complete Employer Signature — same shape as Location Consent's own
   // dialog above: a plain signature pad (no fields to review), reassigns
   // the document to the current HR user first so the RLS update policy
@@ -8495,6 +8509,25 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       await loadSentI9Forms();
     } catch (err) {
       setI9ActionError(err instanceof Error ? err.message : "Failed to delete.");
+    } finally {
+      setI9ActionBusyId(null);
+    }
+  };
+
+  // Re-opens Section 2 for a redo — keeps the employee's Section 1 signature
+  // and formData untouched, same "reassign back to pending_signature/
+  // hr_staff" primitive every other document type's own Re-sign uses. Once
+  // reopened, the row's status/recipientSlot match isAwaitingEmployerStep
+  // again, so "Complete Section 2 →" reappears on its own.
+  const handleReopenI9Section2 = async (doc: SignableDocument) => {
+    if (!window.confirm("Re-open Section 2 for a redo? The employee's Section 1 signature stays as-is.")) return;
+    setI9ActionBusyId(doc.id);
+    setI9ActionError(null);
+    try {
+      await reopenEmployerSignature(doc.id);
+      await loadSentI9Forms();
+    } catch (err) {
+      setI9ActionError(err instanceof Error ? err.message : "Failed to reopen for re-signing.");
     } finally {
       setI9ActionBusyId(null);
     }
@@ -17846,6 +17879,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                               Download PDF
                             </button>
                           )}
+                          {doc.status === "confirmed" && (
+                            <button type="button" onClick={() => handleReopenI9Section2(doc)} className="btn text-[10px] px-2 py-1" title="Redo Section 2 — keeps the employee's Section 1 signature">
+                              Re-sign
+                            </button>
+                          )}
                           <button
                             type="button"
                             disabled={busy}
@@ -19093,6 +19131,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           {doc.pdfUrl && (
                             <button type="button" onClick={() => handleDownloadSubstanceScreeningPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
                               Download PDF
+                            </button>
+                          )}
+                          {doc.status === "confirmed" && (
+                            <button type="button" onClick={() => handleReopenSubstanceScreeningEmployer(doc)} className="btn text-[10px] px-2 py-1" title="Redo the employer signature — keeps the employee's original signature">
+                              Re-sign
                             </button>
                           )}
                           <button

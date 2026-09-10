@@ -41,6 +41,7 @@ import {
   reassignSignableDocument,
   signDocument,
   confirmSignableDocument,
+  reopenEmployerSignature,
   type SignableDocument,
   type SignableDocumentType,
 } from "@/lib/supabase/signableDocuments";
@@ -115,6 +116,7 @@ export function ManagerReviewPage({ docId }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  const [reopening, setReopening] = useState(false);
 
   const sigPad = useSignaturePad({ width: 440, height: 100 });
 
@@ -229,6 +231,27 @@ export function ManagerReviewPage({ docId }: Props) {
     }
   };
 
+  // Keeps recipientId (and so isRecipient) untouched — reopenEmployerSignature
+  // only resets status/confirmed_at, not who the document is assigned to —
+  // so whoever just confirmed it can immediately redo it without needing a
+  // fresh DM link.
+  const handleReopen = async () => {
+    if (!doc) return;
+    if (!window.confirm("Re-open this for a new signature? Nothing else on the form changes.")) return;
+    setReopening(true);
+    setError(null);
+    try {
+      await reopenEmployerSignature(doc.id);
+      setDoc({ ...doc, status: "pending_signature" });
+      setSubmitted(false);
+      sigPad.clear();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to reopen for re-signing.");
+    } finally {
+      setReopening(false);
+    }
+  };
+
   const employeeName = doc ? ((doc.formData as { employeeName?: string })?.employeeName || doc.recipientName || "—") : "—";
   const label = doc ? (TYPE_LABEL[doc.documentType] ?? doc.documentType) : "";
 
@@ -258,10 +281,21 @@ export function ManagerReviewPage({ docId }: Props) {
           <div className="panel p-6 text-center">
             <p className="text-sm font-semibold mb-2">✓ Signed{submitted ? " and sent back to HR" : ""}.</p>
             {doc.pdfUrl && (
-              <a href={doc.pdfUrl} target="_blank" rel="noreferrer noopener" className="text-blue-300 hover:text-blue-200 underline text-sm">
+              <a href={doc.pdfUrl} target="_blank" rel="noreferrer noopener" className="text-blue-300 hover:text-blue-200 underline text-sm block mb-3">
                 View the completed PDF
               </a>
             )}
+            {error && (
+              <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2 mt-2 mb-2">{error}</p>
+            )}
+            <button
+              onClick={handleReopen}
+              disabled={reopening}
+              className="btn text-xs px-3 py-1.5 disabled:opacity-50"
+              title="Redo your signature — nothing else on the form changes"
+            >
+              {reopening ? "Reopening…" : "Not right? Re-sign"}
+            </button>
           </div>
         ) : (
           <div className="panel p-4">
