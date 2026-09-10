@@ -216,10 +216,13 @@ export function EmployeePayrollDetailModal({
   // got both an Arrived and a Done on-site stamp, and the mileage rolled up
   // from just those — DID NOT GO / never-arrived tickets contribute no
   // mileage; Total Mileage is always a pure sum of the per-ticket leg
-  // mileage in the expanded breakdown, never its own editable field), and
-  // On-Site Check-In compliance (same Checked In/Missing Check-In/Missing
-  // Check-Out definitions Ticket Attendance uses in technicianWhereabouts.ts,
-  // just grouped by day instead of summed over the whole range).
+  // mileage in the expanded breakdown PLUS the day's own drive-home leg
+  // (mileage.ts migration 0237 — kept off any one ticket's own legMileage
+  // so it never reads as that ticket's drive), never its own editable
+  // field), and On-Site Check-In compliance (same Checked In/Missing
+  // Check-In/Missing Check-Out definitions Ticket Attendance uses in
+  // technicianWhereabouts.ts, just grouped by day instead of summed over
+  // the whole range).
   const ticketStatsByDate = useMemo(() => {
     const byDate = new Map<string, TicketAttendanceRow[]>();
     for (const r of ticketRows) {
@@ -235,7 +238,10 @@ export function EmployeePayrollDetailModal({
       map.set(date, {
         scheduled: dayRows.length,
         completed: completedRows.length,
-        totalMileage: completedRows.reduce((s, r) => s + (mileageByTicketNo.get(r.ticketNo)?.legMileage ?? 0), 0),
+        totalMileage: completedRows.reduce((s, r) => {
+          const entry = mileageByTicketNo.get(r.ticketNo);
+          return s + (entry?.legMileage ?? 0) + (entry?.homeLegMileage ?? 0);
+        }, 0),
         checkedIn: dayRows.filter((r) => r.arrivedAt).length,
         missingCheckIn: dayRows.filter((r) => !r.arrivedAt && r.statusGroup !== "cancelled" && !disputedTicketNosApproved.has(r.ticketNo)).length,
         missingCheckOut: dayRows.filter((r) => r.arrivedAt && !r.doneAt && r.statusGroup !== "cancelled" && !disputedTicketNosApproved.has(r.ticketNo)).length,
@@ -749,7 +755,7 @@ export function EmployeePayrollDetailModal({
                       <th className="text-right py-1.5">Payment</th>
                       <th className="text-center py-1.5">Scheduled</th>
                       <th className="text-center py-1.5" title="Tickets with both an Arrived and a Done on-site stamp">Completed</th>
-                      <th className="text-right py-1.5 pr-4" title="Sum of the completed tickets' leg mileage — excludes DID NOT GO and any ticket missing an arrived/done stamp. Not editable; it rolls up the per-ticket mileage in the breakdown below.">Total Mileage</th>
+                      <th className="text-right py-1.5 pr-4" title="Sum of the completed tickets' leg mileage plus the day's own drive-home leg — excludes DID NOT GO and any ticket missing an arrived/done stamp. Not editable; it rolls up the per-ticket mileage (and the → Home/Branch line) in the breakdown below.">Total Mileage</th>
                       <th className="text-center py-1.5">Checked In</th>
                       <th className="text-center py-1.5" title="Missing Check-In">Missing In</th>
                       <th className="text-center py-1.5" title="Missing Check-Out">Missing Out</th>
@@ -766,6 +772,13 @@ export function EmployeePayrollDetailModal({
                       const dayPayment = regularHours * dayRate + overtimeHours * dayRate * OVERTIME_MULTIPLIER;
                       const ticketStats = ticketStatsByDate.get(row.date);
                       const dayTicketRows = ticketRowsByDate.get(row.date) || [];
+                      // The day's own drive-home leg (mileage.ts migration 0237) — set on
+                      // exactly one ticket (whichever was the day's actual last completed
+                      // stop), kept out of the per-ticket Mileage column so it never reads
+                      // as that one ticket's own drive.
+                      const dayHomeLegMileage = dayTicketRows
+                        .map((r) => mileageByTicketNo.get(r.ticketNo)?.homeLegMileage)
+                        .find((m): m is number => m != null) ?? null;
                       const isExpanded = expandedDate === row.date;
                       return (
                       <Fragment key={row.date}>
@@ -1046,6 +1059,13 @@ export function EmployeePayrollDetailModal({
                                       </tr>
                                     );
                                   })}
+                                  {dayHomeLegMileage != null && (
+                                    <tr className="border-t border-white/5" title="The day's final drive home (or back to branch) after the last completed stop — kept separate from any one ticket's own leg mileage.">
+                                      <td colSpan={7} className="px-2 py-1.5 text-right text-slate-500 italic">→ Home / Branch</td>
+                                      <td className="px-2 py-1.5 text-right text-slate-400">{dayHomeLegMileage.toFixed(1)} mi</td>
+                                      <td colSpan={2}></td>
+                                    </tr>
+                                  )}
                                 </tbody>
                               </table>
                             )}

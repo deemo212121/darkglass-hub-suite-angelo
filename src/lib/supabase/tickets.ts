@@ -13,6 +13,7 @@
 import { supabase } from "./client";
 import type { Ticket } from "@/lib/ticketData";
 import { mapSource, mapSourceFromTicketNumber } from "@/lib/mfgSource";
+import { syncMileageForTicketDay } from "./mileage";
 
 // ---- helpers ---------------------------------------------------------------
 
@@ -725,14 +726,17 @@ export async function setTicketOnsiteCheckIn(
   at: string
 ): Promise<void> {
   if (event === "done") {
-    const { error } = await supabase
+    const { data, error } = await supabase
       .from("tickets")
       .update({ onsite_done_at: at })
-      .eq("ticket_no", ticketNo);
+      .eq("ticket_no", ticketNo)
+      .select("technician, schedule_date")
+      .maybeSingle();
     if (error) {
       console.error("setTicketOnsiteCheckIn error:", error.message);
       throw new Error(error.message);
     }
+    triggerMileageRecompute(data);
     return;
   }
 
@@ -753,15 +757,37 @@ export async function setTicketOnsiteCheckIn(
   // longer-running tickets). The `.or` filter below only matches rows
   // where there's no arrival yet OR a previous visit was already closed
   // out, so a genuine callback (re-check-in AFTER done) still works.
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("tickets")
     .update({ onsite_arrived_at: at, onsite_done_at: null })
     .eq("ticket_no", ticketNo)
-    .or("onsite_arrived_at.is.null,onsite_done_at.not.is.null");
+    .or("onsite_arrived_at.is.null,onsite_done_at.not.is.null")
+    .select("technician, schedule_date")
+    .maybeSingle();
   if (error) {
     console.error("setTicketOnsiteCheckIn error:", error.message);
     throw new Error(error.message);
   }
+  triggerMileageRecompute(data);
+}
+
+/**
+ * Fires the event-driven, single-technician/single-day mileage recompute
+ * (see mileage.ts's syncMileageForTicketDay) right after a real check-in
+ * write — so mileage/route order reflects it immediately instead of
+ * waiting for the next full "Sync from Tickets" batch run. Deliberately
+ * NOT awaited: recompute failures are already swallowed/logged inside
+ * syncMileageForTicketDay itself, and a check-in write should never be
+ * held up waiting on a route/mileage lookup. `data` is null for a
+ * dev-only/nonexistent ticket_no (the update matches zero rows) or when
+ * the `.or` filter above skips a stale double-tap — either way, nothing to
+ * recompute.
+ */
+function triggerMileageRecompute(data: { technician: string | null; schedule_date: string | null } | null): void {
+  if (!data?.technician || !data.schedule_date) return;
+  syncMileageForTicketDay(data.technician, data.schedule_date).catch((err) =>
+    console.error("triggerMileageRecompute failed:", err)
+  );
 }
 
 /**

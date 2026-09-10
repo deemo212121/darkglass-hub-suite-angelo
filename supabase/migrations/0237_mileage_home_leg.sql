@@ -1,0 +1,25 @@
+-- =====================================================================
+-- 0237 — Split the day's "drive home" leg out of leg_mileage
+--
+-- computeDailyRouteMiles (mapEngine.ts) has always folded the day's final
+-- "drive home" distance into the LAST stop's own leg_mileage figure, so
+-- summing every ticket's leg_mileage for a day reconstructs the day total.
+-- That made total_mileage correct, but made the per-ticket Mileage column
+-- misleading: whichever ticket happened to be scheduled last showed its
+-- own real leg PLUS an unrelated commute-home distance baked in with no way
+-- to tell the two apart — confirmed live on 2026-09-08: ticket SA-4913298's
+-- real leg (6365914211BL -> SA-4913298) is 7.5 mi, but its stored
+-- leg_mileage read 43.6 mi (7.5 + a 36.1 mi drive home to 478 Pinecrest
+-- Drive folded in), which reads as a routing bug even though the day total
+-- was correct all along.
+--
+-- home_leg_mileage carries that drive-home distance on its own, set only on
+-- the day's actual last (non-deleted, non-rescheduled) stop's row — null
+-- for every other stop. leg_mileage from this point forward is ALWAYS just
+-- that one ticket's own incoming leg, never anything folded in. Existing
+-- rows are left as-is (their leg_mileage still has the old fold-in) until
+-- the next sync/recalculate naturally rewrites them — see
+-- syncMileageFromTickets and recalculateMileageDayRoute (mileage.ts).
+-- =====================================================================
+
+alter table mileage_entries add column if not exists home_leg_mileage numeric;
