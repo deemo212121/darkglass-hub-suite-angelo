@@ -25,6 +25,9 @@ import {
 // actual desktop browser.
 import {
   getCompanyTickets,
+  getTicketsForTechnicianCandidates,
+  getTicketsForBranches,
+  getTicketByNumber,
   getTicketVisits,
   updateTicketVisit,
   updateTicketStatus,
@@ -160,6 +163,33 @@ const MOBILE_REPAIR_STATUSES = [
 
 // Roles that see their OWN tickets directly (skip the technician roster).
 const SELF_ROLES = new Set(["TECHNICIAN"]);
+
+// Same name/alias variants myTickets' own tolerant client-side filter
+// checks a ticket's `technician` field against (full name, last-name-only,
+// email-local-part) — extracted so the same candidate list can also drive
+// the server-side scoped ticket fetch (getTicketsForTechnicianCandidates)
+// instead of pulling the whole company's ticket history just to filter it
+// down in JS afterward.
+//
+// Split into `exact` (matched only as a whole value, case-insensitive) vs
+// `fuzzy` (matched as a substring in either direction) — mirrors myTickets'
+// own split exactly, and for the same reason its comment gives: a bare
+// last name has to stay an EXACT-only candidate, or "Smith" would pull in
+// every Smith in the company (confirmed empirically — an early version of
+// this fetch that ilike'd the last name too pulled ~3x more tickets than
+// necessary for a common surname). Multi-word/email candidates are safe to
+// substring-match since they're specific enough not to collide.
+function technicianNameCandidates(name: string): { exact: string[]; fuzzy: string[] } {
+  const normalise = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ");
+  const scope = normalise(name);
+  if (!scope) return { exact: [], fuzzy: [] };
+  const exact = new Set<string>([scope]);
+  const fuzzy = new Set<string>([scope]);
+  const parts = scope.split(" ");
+  if (parts.length >= 2) exact.add(parts[parts.length - 1]); // last-name-only: exact match only
+  if (scope.includes("@")) fuzzy.add(scope.split("@")[0]);
+  return { exact: Array.from(exact), fuzzy: Array.from(fuzzy) };
+}
 
 // How far back On Hold Tickets' "Updated" sub-tab looks for a released hold.
 const RECENTLY_RELEASED_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
@@ -572,7 +602,24 @@ export function MobileTechApp() {
     (async () => {
       try {
         setLoading(true);
-        const rows = await getCompanyTickets();
+        // Scoped by who's actually looking, not the company's entire ticket
+        // history — getCompanyTickets() (every ticket ever, full customer
+        // join) was showing up as one of the biggest queries in Supabase's
+        // own Query Performance report, and almost every mobile session is
+        // exactly the case that doesn't need it: a plain technician only
+        // ever needs their OWN tickets, and a branch manager/lead only needs
+        // their own branch's. A self-role tech who also leads direct
+        // reports gets those reports' tickets folded in separately (see the
+        // roster-scoped effect below, once `roster` itself is known) — this
+        // first pass only has `ownName` to go on. Only a SuperAdmin/Admin-
+        // tier mobile viewer (allowedLocations === null, "sees every
+        // branch") still gets the unbounded fetch, since there's no
+        // narrower scope to give them.
+        const rows = isSelfRole
+          ? await getTicketsForTechnicianCandidates(technicianNameCandidates(ownName))
+          : allowedLocations !== null
+          ? await getTicketsForBranches(allowedLocations)
+          : await getCompanyTickets();
         // Overlay the latest visit-recorded technician onto tickets whose
         // `technician` is blank. Same rule the Work Map and Daily Schedule
         // already use — without this, a tech only sees the tickets where
@@ -749,6 +796,41 @@ export function MobileTechApp() {
       .sort(sortByName);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [users, profileId, csrComposition, isSelfRole, role, extraRoles, ownName]);
+
+  // A self-role lead's direct reports' tickets aren't covered by the main
+  // ticket-load effect above — that one only knows `ownName` at the time it
+  // runs, before `roster` (which needs the separately-fetched `users` list)
+  // is known. Once roster resolves to a non-empty direct-report list (only
+  // ever true for a self-role tech who is NOT manager-tier — see the
+  // `roster` memo's own branches), fetch those reports' tickets too and
+  // fold them into the same `tickets` array myTickets/onHoldTickets/etc.
+  // already read from, so drilling into a report (viewingReport below)
+  // keeps working exactly like it did when the whole company was loaded
+  // upfront. Runs once per roster change, not per report drilled into.
+  const reportRosterLoadedRef = useRef(false);
+  useEffect(() => {
+    if (!isSelfRole || isAttendanceManagerTierRole(role, extraRoles)) return;
+    if (roster.length === 0 || reportRosterLoadedRef.current) return;
+    reportRosterLoadedRef.current = true;
+    let cancelled = false;
+    const perReport = roster.map((r) => technicianNameCandidates(r.name));
+    const candidates = {
+      exact: perReport.flatMap((c) => c.exact),
+      fuzzy: perReport.flatMap((c) => c.fuzzy),
+    };
+    getTicketsForTechnicianCandidates(candidates)
+      .then((rows) => {
+        if (cancelled || rows.length === 0) return;
+        setTickets((prev) => {
+          // _id (the real Supabase row id) is runtime-only, not part of Ticket's declared type.
+          const byId = new Map(prev.map((t) => [(t as any)._id, t] as const));
+          for (const t of rows) { const id = (t as any)._id; if (!byId.has(id)) byId.set(id, t); }
+          return Array.from(byId.values());
+        });
+      })
+      .catch((err) => console.warn("Mobile: failed to load direct reports' tickets", err));
+    return () => { cancelled = true; };
+  }, [roster, isSelfRole, role, extraRoles]);
 
   // A self-role Technician who's also a working lead can drill into one of
   // their direct reports (see the `roster` memo below) to track that
@@ -961,6 +1043,27 @@ export function MobileTechApp() {
     () => tickets.find((t) => t.ticketNo === activeTicketNo) || null,
     [tickets, activeTicketNo]
   );
+
+  // Fallback for a persisted/deep-linked activeTicketNo that isn't in the
+  // now-scoped `tickets` array — e.g. a manager's stale nav-state pointing
+  // at a ticket outside their branch, or (briefly, before the roster-scoped
+  // effect above resolves) a self-role lead's persisted selection of a
+  // direct report's ticket. Only one specific ticket, not a reason to widen
+  // the whole app's fetch back out.
+  const activeTicketFetchAttemptedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!activeTicketNo || activeTicket || loading) return;
+    if (activeTicketFetchAttemptedRef.current === activeTicketNo) return;
+    activeTicketFetchAttemptedRef.current = activeTicketNo;
+    let cancelled = false;
+    getTicketByNumber(activeTicketNo)
+      .then((t) => {
+        if (cancelled || !t) return;
+        setTickets((prev) => (prev.some((p) => (p as any)._id === (t as any)._id) ? prev : [...prev, t]));
+      })
+      .catch((err) => console.warn("Mobile: failed to load deep-linked ticket", err));
+    return () => { cancelled = true; };
+  }, [activeTicketNo, activeTicket, loading]);
 
   // On Hold Tickets bottom-nav tab (replaces the old Tech Sheets stub) —
   // joins mileageEntries' payroll-hold flag back to the real Ticket by

@@ -360,6 +360,141 @@ export async function getCompanyTickets(): Promise<Ticket[]> {
   return all;
 }
 
+/**
+ * One technician's own tickets (any status, any age) — same full shape as
+ * getCompanyTickets, just filtered server-side by `technician` instead of
+ * fetching the company's entire history. Built for MobileTechApp.tsx,
+ * whose own client-side match (`myTickets`) is a tolerant fuzzy filter
+ * (full name / last-name-only / email-local-part, substring either
+ * direction) needed because the same person can appear under slightly
+ * different strings across dispatch sources — see its comment. This
+ * mirrors that tolerance so it can't miss a ticket the old
+ * unbounded-fetch-then-filter-in-JS approach would have caught.
+ *
+ * `exact` candidates (a bare last name) are matched as a whole value only —
+ * NOT substring-matched — same reason myTickets' own comment gives: an
+ * ilike substring match on just "Smith" would pull in every Smith in the
+ * company, not this one technician. `fuzzy` candidates (full name,
+ * email-local-part — specific enough not to collide) ARE substring-matched
+ * either direction, same as myTickets. One request per candidate rather
+ * than a single combined `.or()` filter — a technician name containing a
+ * comma (the fuzzy-match comment gives "Koetsier, Jordan" as a real
+ * example) would otherwise collide with PostgREST's `.or()` separator
+ * syntax.
+ *
+ * Also pulls in tickets whose OWN `technician` field is blank/"Unassigned"
+ * but which have a `visits` row crediting this technician — MobileTechApp's
+ * getLatestVisitTechnicianByTicketIds overlay relies on exactly these
+ * showing up (a ticket assigned only via the Visit Log, not the ticket's
+ * own field); an `ilike` on `tickets.technician` alone would silently miss
+ * them since the name isn't on the ticket row at all until that overlay
+ * runs client-side afterward.
+ */
+export async function getTicketsForTechnicianCandidates(candidates: { exact: string[]; fuzzy: string[] }): Promise<Ticket[]> {
+  const exact = Array.from(new Set(candidates.exact.map((c) => c.trim()).filter(Boolean)));
+  const fuzzy = Array.from(new Set(candidates.fuzzy.map((c) => c.trim()).filter(Boolean)));
+  if (exact.length === 0 && fuzzy.length === 0) return [];
+  const [exactRows, fuzzyRows, viaVisits] = await Promise.all([
+    Promise.all(exact.map((c) => fetchAllTicketsMatchingTechnician(c, false))),
+    Promise.all(fuzzy.map((c) => fetchAllTicketsMatchingTechnician(c, true))),
+    fetchTicketsCreditedInVisitsOnly(exact, fuzzy),
+  ]);
+  // _id (the real Supabase row id) is a runtime-only field on Ticket, not
+  // part of its declared UI-facing type — see rowToTicket's own comment.
+  const byId = new Map<string, Ticket>();
+  for (const rows of [...exactRows, ...fuzzyRows]) for (const t of rows) byId.set((t as any)._id, t);
+  for (const t of viaVisits) byId.set((t as any)._id, t);
+  return Array.from(byId.values());
+}
+
+/** Tickets found only via a `visits` row crediting one of these technician candidates — see getTicketsForTechnicianCandidates' doc comment. */
+async function fetchTicketsCreditedInVisitsOnly(exact: string[], fuzzy: string[]): Promise<Ticket[]> {
+  const queryVisits = async (candidate: string, isFuzzy: boolean) => {
+    const escaped = candidate.replace(/[%_]/g, (m) => `\\${m}`);
+    const { data, error } = await supabase
+      .from("visits")
+      .select("ticket_id")
+      .ilike("technician", isFuzzy ? `%${escaped}%` : escaped);
+    if (error) {
+      console.error("fetchTicketsCreditedInVisitsOnly error:", error.message);
+      return [] as string[];
+    }
+    return ((data ?? []) as Array<{ ticket_id: string | null }>).map((r) => r.ticket_id).filter((id): id is string => !!id);
+  };
+  const perCandidate = await Promise.all([
+    ...exact.map((c) => queryVisits(c, false)),
+    ...fuzzy.map((c) => queryVisits(c, true)),
+  ]);
+  const ticketIds = Array.from(new Set(perCandidate.flat()));
+  if (ticketIds.length === 0) return [];
+  const all: Ticket[] = [];
+  for (let from = 0; from < ticketIds.length; from += PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from("tickets")
+      .select(SELECT)
+      .in("id", ticketIds.slice(from, from + PAGE_SIZE));
+    if (error) {
+      console.error("fetchTicketsCreditedInVisitsOnly (tickets) error:", error.message);
+      continue;
+    }
+    all.push(...(data ?? []).map(rowToTicket));
+  }
+  return all;
+}
+
+async function fetchAllTicketsMatchingTechnician(candidate: string, isFuzzy: boolean): Promise<Ticket[]> {
+  // Escape ilike's own wildcard characters so a candidate that happens to
+  // contain "%" or "_" (unlikely in a name, but not impossible) is matched
+  // literally rather than as a pattern.
+  const escaped = candidate.replace(/[%_]/g, (m) => `\\${m}`);
+  const all: Ticket[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from("tickets")
+      .select(SELECT)
+      .ilike("technician", isFuzzy ? `%${escaped}%` : escaped)
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false })
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) {
+      console.error("getTicketsForTechnicianCandidates error:", error.message);
+      throw new Error(error.message);
+    }
+    all.push(...(data ?? []).map(rowToTicket));
+    if (!data || data.length < PAGE_SIZE) break;
+  }
+  return all;
+}
+
+/**
+ * Every ticket assigned to any of the given branches — same full shape as
+ * getCompanyTickets, for a manager-tier mobile viewer's roster (their
+ * branch's technicians) instead of the whole company's. `branches` should
+ * already be the viewer's own allowedLocations (a SuperAdmin/Admin with
+ * allowedLocations === null still needs the unbounded getCompanyTickets).
+ */
+export async function getTicketsForBranches(branches: string[]): Promise<Ticket[]> {
+  const clean = Array.from(new Set(branches.map((b) => b.trim()).filter(Boolean)));
+  if (clean.length === 0) return [];
+  const all: Ticket[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from("tickets")
+      .select(SELECT)
+      .in("location", clean)
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false })
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) {
+      console.error("getTicketsForBranches error:", error.message);
+      throw new Error(error.message);
+    }
+    all.push(...(data ?? []).map(rowToTicket));
+    if (!data || data.length < PAGE_SIZE) break;
+  }
+  return all;
+}
+
 export interface ScheduledTicketRow {
   ticketNo: string;
   technician: string;
