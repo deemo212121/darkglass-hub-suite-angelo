@@ -759,17 +759,19 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
     getBranchRoleSchedules().then(setBranchSchedules).catch(() => {});
   }, []);
   // Company-wide opt-out for the automatic weekly forced password reset
-  // (migration 0235) — shown next to the Activity Log button, on both
+  // (migrations 0235/0236) — shown next to the Activity Log button, on both
   // /m/admin/user-management and /m/hr/user-management (same component).
-  // Only ADMIN/SUPERADMIN can actually flip it (enforced server-side by
-  // set_company_weekly_password_reset); everyone else on this page sees
-  // its current state but can't change it.
-  const canManagePasswordResetSetting = ["ADMIN", "SUPERADMIN"].includes(normalizeRole(auth.role));
+  // SUPERADMIN only, per the user's explicit call — hidden entirely (not
+  // just disabled) for everyone else, and enforced server-side too by
+  // set_company_weekly_password_reset so it can't be flipped by a raw
+  // request from someone who isn't SUPERADMIN either.
+  const canManagePasswordResetSetting = normalizeRole(auth.role) === "SUPERADMIN";
   const [weeklyPasswordResetEnabled, setWeeklyPasswordResetEnabledState] = useState(true);
   const [savingPasswordResetSetting, setSavingPasswordResetSetting] = useState(false);
   useEffect(() => {
+    if (!canManagePasswordResetSetting) return;
     getCompanyWeeklyPasswordResetEnabled().then(setWeeklyPasswordResetEnabledState).catch(() => {});
-  }, []);
+  }, [canManagePasswordResetSetting]);
   const handleToggleWeeklyPasswordReset = async (next: boolean) => {
     if (!canManagePasswordResetSetting || savingPasswordResetSetting) return;
     const prev = weeklyPasswordResetEnabled;
@@ -1353,24 +1355,20 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
 
           <div className="mt-4 flex flex-wrap items-center gap-3">
             <ActivityLogPanel module="user-management" title="User Management Activity Log" />
-            <div
-              className={`flex items-center gap-2 rounded-lg border border-white/15 bg-slate-900/80 px-3 py-2 text-sm ${
-                canManagePasswordResetSetting ? "" : "opacity-60"
-              }`}
-              title={
-                canManagePasswordResetSetting
-                  ? "Every Monday, everyone is automatically forced to change their password on next login. Turn this off to stop that."
-                  : "Only an Admin can change this setting."
-              }
-            >
-              <KeyRound className="h-4 w-4 text-slate-400 shrink-0" />
-              <span className="text-slate-300 whitespace-nowrap">Weekly forced password change</span>
-              <Switch
-                checked={weeklyPasswordResetEnabled}
-                disabled={!canManagePasswordResetSetting || savingPasswordResetSetting}
-                onCheckedChange={handleToggleWeeklyPasswordReset}
-              />
-            </div>
+            {canManagePasswordResetSetting && (
+              <div
+                className="flex items-center gap-2 rounded-lg border border-white/15 bg-slate-900/80 px-3 py-2 text-sm"
+                title="Every Monday, everyone is automatically forced to change their password on next login. Turn this off to stop that."
+              >
+                <KeyRound className="h-4 w-4 text-slate-400 shrink-0" />
+                <span className="text-slate-300 whitespace-nowrap">Weekly forced password change</span>
+                <Switch
+                  checked={weeklyPasswordResetEnabled}
+                  disabled={savingPasswordResetSetting}
+                  onCheckedChange={handleToggleWeeklyPasswordReset}
+                />
+              </div>
+            )}
           </div>
 
           <div className="mt-5 flex flex-wrap items-end gap-4">
