@@ -781,6 +781,73 @@ function SortableTh<C extends string>({
   );
 }
 
+/** Same as SortableTh, plus a funnel icon that opens an Excel-style checklist of the column's actual values — for a low-cardinality column (Branch, Status, Sent By) where picking from what's really there beats free-text search. */
+function FilterableTh<C extends string>({
+  column, label, sortColumn, sortDir, onSort, options, isChecked, onToggleValue, onClear, isFiltered, className,
+}: {
+  column: C;
+  label: string;
+  sortColumn: C | null;
+  sortDir: "asc" | "desc";
+  onSort: (column: C) => void;
+  options: string[];
+  isChecked: (value: string) => boolean;
+  onToggleValue: (value: string) => void;
+  onClear: () => void;
+  isFiltered: boolean;
+  className?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLTableCellElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onClickOutside = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onClickOutside);
+    return () => document.removeEventListener("mousedown", onClickOutside);
+  }, [open]);
+
+  return (
+    <th ref={ref} className={`px-4 py-3 text-left text-xs text-muted-foreground uppercase relative ${className ?? ""}`}>
+      <span className="inline-flex items-center gap-1.5">
+        <span onClick={() => onSort(column)} title={`Sort by ${label}`} className="cursor-pointer select-none hover:text-foreground inline-flex items-center gap-1">
+          {label}
+          {sortColumn === column ? (
+            sortDir === "asc" ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />
+          ) : (
+            <ChevronDown className="h-3 w-3 opacity-20" />
+          )}
+        </span>
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          title={`Filter by ${label}`}
+          className={`p-0.5 rounded hover:bg-white/10 ${isFiltered ? "text-blue-400" : "text-muted-foreground/70"}`}
+        >
+          <Filter className="h-3 w-3" />
+        </button>
+      </span>
+      {open && (
+        <div className="absolute z-20 mt-1.5 left-0 bg-slate-800 border border-white/10 rounded-md shadow-xl p-2 w-52 max-h-72 overflow-y-auto normal-case font-normal text-foreground">
+          <div className="flex items-center justify-between mb-1.5 pb-1.5 border-b border-white/10">
+            <span className="text-[10px] text-muted-foreground">{options.length} value{options.length === 1 ? "" : "s"}</span>
+            {isFiltered && (
+              <button type="button" onClick={onClear} className="text-[10px] text-blue-300 hover:text-blue-200">Clear filter</button>
+            )}
+          </div>
+          {options.map((opt) => (
+            <label key={opt} className="flex items-center gap-2 py-1 px-1 text-xs cursor-pointer hover:bg-white/5 rounded">
+              <input type="checkbox" checked={isChecked(opt)} onChange={() => onToggleValue(opt)} />
+              <span className="truncate">{opt || "(blank)"}</span>
+            </label>
+          ))}
+        </div>
+      )}
+    </th>
+  );
+}
+
 export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
   const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
   const { role: myRole, extraRoles: myExtraRoles, ready, uid, displayName, companyId } = useAuth();
@@ -5725,12 +5792,22 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   );
 
   type MileageFuelSortColumn = "employee" | "branch" | "sentBy" | "status" | "sent";
+  const mileageFuelStatusLabel = (doc: SignableDocument): string =>
+    doc.status === "confirmed" ? "Completed"
+      : isAwaitingEmployerStep(doc) ? "Awaiting Employer Signature"
+      : doc.status === "cancelled" ? "Cancelled"
+      : "Awaiting Employee";
   const {
     search: mileageFuelSentSearch,
     setSearch: setMileageFuelSentSearch,
     sortColumn: mileageFuelSentSortColumn,
     sortDir: mileageFuelSentSortDir,
     handleSort: handleMileageFuelSentSort,
+    filterOptionsFor: mileageFuelFilterOptionsFor,
+    toggleFilterValue: mileageFuelToggleFilterValue,
+    clearColumnFilter: mileageFuelClearColumnFilter,
+    isColumnFiltered: mileageFuelIsColumnFiltered,
+    isValueChecked: mileageFuelIsValueChecked,
     rows: sortedSentMileageFuelForms,
   } = useSortableSearchTable<SignableDocument, MileageFuelSortColumn>(
     sentMileageFuelForms,
@@ -5746,12 +5823,17 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         case "employee": return (data.employeeName || doc.recipientName || "").toLowerCase();
         case "branch": return (data.branch || "").toLowerCase();
         case "sentBy": return (doc.createdByName ?? "").toLowerCase();
-        case "status":
-          return doc.status === "confirmed" ? "completed"
-            : isAwaitingEmployerStep(doc) ? "awaiting employer signature"
-            : doc.status === "cancelled" ? "cancelled"
-            : "awaiting employee";
+        case "status": return mileageFuelStatusLabel(doc).toLowerCase();
         case "sent": return new Date(doc.createdAt).getTime();
+      }
+    },
+    (doc, column) => {
+      const data = doc.formData as Partial<MileageFuelFormData>;
+      switch (column) {
+        case "branch": return data.branch || "—";
+        case "sentBy": return doc.createdByName ?? "—";
+        case "status": return mileageFuelStatusLabel(doc);
+        default: return "";
       }
     }
   );
@@ -19766,16 +19848,40 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             <thead>
               <tr className="border-b border-white/10 bg-white/5">
                 <SortableTh column="employee" label="Employee" sortColumn={mileageFuelSentSortColumn} sortDir={mileageFuelSentSortDir} onSort={handleMileageFuelSentSort} />
-                <SortableTh column="branch" label="Branch" sortColumn={mileageFuelSentSortColumn} sortDir={mileageFuelSentSortDir} onSort={handleMileageFuelSentSort} />
-                <SortableTh column="sentBy" label="Sent By" sortColumn={mileageFuelSentSortColumn} sortDir={mileageFuelSentSortDir} onSort={handleMileageFuelSentSort} />
-                <SortableTh column="status" label="Status" sortColumn={mileageFuelSentSortColumn} sortDir={mileageFuelSentSortDir} onSort={handleMileageFuelSentSort} />
+                <FilterableTh
+                  column="branch" label="Branch"
+                  sortColumn={mileageFuelSentSortColumn} sortDir={mileageFuelSentSortDir} onSort={handleMileageFuelSentSort}
+                  options={mileageFuelFilterOptionsFor("branch")}
+                  isChecked={(v) => mileageFuelIsValueChecked("branch", v)}
+                  onToggleValue={(v) => mileageFuelToggleFilterValue("branch", v)}
+                  onClear={() => mileageFuelClearColumnFilter("branch")}
+                  isFiltered={mileageFuelIsColumnFiltered("branch")}
+                />
+                <FilterableTh
+                  column="sentBy" label="Sent By"
+                  sortColumn={mileageFuelSentSortColumn} sortDir={mileageFuelSentSortDir} onSort={handleMileageFuelSentSort}
+                  options={mileageFuelFilterOptionsFor("sentBy")}
+                  isChecked={(v) => mileageFuelIsValueChecked("sentBy", v)}
+                  onToggleValue={(v) => mileageFuelToggleFilterValue("sentBy", v)}
+                  onClear={() => mileageFuelClearColumnFilter("sentBy")}
+                  isFiltered={mileageFuelIsColumnFiltered("sentBy")}
+                />
+                <FilterableTh
+                  column="status" label="Status"
+                  sortColumn={mileageFuelSentSortColumn} sortDir={mileageFuelSentSortDir} onSort={handleMileageFuelSentSort}
+                  options={mileageFuelFilterOptionsFor("status")}
+                  isChecked={(v) => mileageFuelIsValueChecked("status", v)}
+                  onToggleValue={(v) => mileageFuelToggleFilterValue("status", v)}
+                  onClear={() => mileageFuelClearColumnFilter("status")}
+                  isFiltered={mileageFuelIsColumnFiltered("status")}
+                />
                 <SortableTh column="sent" label="Sent" sortColumn={mileageFuelSentSortColumn} sortDir={mileageFuelSentSortDir} onSort={handleMileageFuelSentSort} />
                 <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Actions</th>
               </tr>
             </thead>
             <tbody>
               {sortedSentMileageFuelForms.length === 0 ? (
-                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">{sentMileageFuelForms.length === 0 ? "No requests sent yet." : "No forms match this search."}</td></tr>
+                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">{sentMileageFuelForms.length === 0 ? "No requests sent yet." : "No forms match this search/filter."}</td></tr>
               ) : (
                 sortedSentMileageFuelForms.map((doc) => {
                   const data = doc.formData as Partial<MileageFuelFormData>;
@@ -19802,7 +19908,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           : doc.status === "cancelled" ? "bg-slate-500/20 text-slate-400"
                           : "bg-yellow-500/20 text-yellow-300"
                         }`}>
-                          {doc.status === "confirmed" ? "Completed" : awaitingEmployer ? "Awaiting Employer Signature" : doc.status === "cancelled" ? "Cancelled" : "Awaiting Employee"}
+                          {mileageFuelStatusLabel(doc)}
                         </span>
                       </td>
                       <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{new Date(doc.createdAt).toLocaleDateString()}</td>
