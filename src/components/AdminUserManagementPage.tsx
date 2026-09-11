@@ -141,9 +141,7 @@ type UMFilterableField = (typeof UM_FILTERABLE_FIELDS)[number];
 function colValue(record: { id: string; loginName: string; userName: string; type: string; email?: string; manager?: string; technicianId?: string; office?: string; isActive?: boolean }, field: string): string {
   switch (field as UMFilterableField) {
     case "id":            return String(record.id ?? "");
-    // The cell now displays the full name (userName), same as the User
-    // Name column — see the "Login Name" <td> comment above.
-    case "loginName":     return String(record.userName ?? "");
+    case "loginName":     return String(record.loginName ?? "");
     case "userName":      return String(record.userName ?? "");
     // Readable label, not the raw role code/legacy free-text value - two
     // rows stored differently (e.g. "PARTS_MANAGER" vs legacy "Parts
@@ -1292,6 +1290,7 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
         email: newUserForm.email,
         password: "Welcome2024!", // Default password
         displayName: newUserForm.userName,
+        loginName: newUserForm.loginName,
         role: primaryRole as any,
         extraRoles: extraRoles as any,
         phoneNumber: "",
@@ -1592,8 +1591,7 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
                     return (
                     <tr key={rowKey} className="hover:bg-white/5">
                       <td className="px-2.5 py-2 align-top">{record.id}</td>
-                      {/* Displays the full name, same as User Name — but userId stays record.loginName (the real username) since that's what the detail page's getProfileByUsername lookup resolves by; only the visible text changes here. */}
-                      <td className="px-2.5 py-2 align-top break-words"><UserLink moduleSlug={mod.slug} submoduleSlug={sub.slug} userId={record.loginName}>{record.userName}</UserLink></td>
+                      <td className="px-2.5 py-2 align-top break-words"><UserLink moduleSlug={mod.slug} submoduleSlug={sub.slug} userId={record.loginName}>{record.loginName}</UserLink></td>
                       <td className="px-2.5 py-2 align-top break-words"><UserLink moduleSlug={mod.slug} submoduleSlug={sub.slug} userId={record.loginName}>{record.userName}</UserLink></td>
                       <td className="px-2.5 py-2 align-top break-words">{roleDisplay(record.type)}</td>
                       <td className="px-2.5 py-2 align-top break-words text-slate-300">{record.email || "—"}</td>

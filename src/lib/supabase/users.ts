@@ -796,6 +796,8 @@ export async function createCompanyUser(input: {
   email: string;
   password: string;
   displayName: string;
+  /** The Add User modal's "Login Name" field — the real login credential (e.g. "FirstName.LastName"), matched case-insensitively by login_email_for_username. Falls back to displayName (space-preserved) when omitted, for any caller that doesn't collect a separate login name. */
+  loginName?: string;
   role: UserRole;
   extraRoles?: UserRole[];
   companyId?: string;
@@ -848,11 +850,13 @@ export async function createCompanyUser(input: {
   // company_id is stamped server-side by the trg_profiles_stamp_company trigger
   // from the calling admin's company (auth_company_id()), so we don't send it.
   // This avoids the client passing the wrong format (e.g. legacy "COMP001").
-  // Username is the full name itself (not the old "FirstName.LastName" dotted
-  // form) — it's also what getUserByUsername/login_email_for_username match
-  // against for username-based login, so this is what an employee actually
-  // types at the login screen.
-  const username = input.displayName.trim().replace(/\s+/g, " ");
+  // Username is whatever was typed into the Add User modal's "Login Name"
+  // field — the real login credential (still the "FirstName.LastName"
+  // dotted convention every existing account uses), matched
+  // case-insensitively by getUserByUsername/login_email_for_username. Falls
+  // back to the full name (space-preserved) only for a caller that never
+  // collected a separate login name.
+  const username = input.loginName?.trim() || input.displayName.trim().replace(/\s+/g, " ");
   // De-duplicate extra roles and strip the primary one so it isn't double-stored.
   const extras = Array.from(new Set((input.extraRoles ?? []).filter((r) => r && r !== input.role)));
   const basePayload = {
