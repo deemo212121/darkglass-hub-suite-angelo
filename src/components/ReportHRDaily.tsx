@@ -12528,6 +12528,15 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     { key: "w8ben", label: "W-8 / W-9 / W-4 / W-4R Forms", count: 0, icon: Landmark },
   ] as const;
 
+  // "New Automation Forms"' own General column — the same first 7 of
+  // automatedFormsGeneralTabs above, minus Form I-9/Manager's Action Plan
+  // Form/Termination Notice Form/W-8ben — those 4 live directly under New
+  // Technician Forms instead (see newAutomationFormsTechnicianTabs below),
+  // so listing them here too would just be a duplicate.
+  const newAutomationFormsGeneralTabs = automatedFormsGeneralTabs.filter(
+    (t) => !["i9", "actionPlanForm", "terminationForm", "w8ben"].includes(t.key)
+  );
+
   const automatedFormsTechnicianTabs = [
     { key: "wageAck", label: "Acknowledgment of Wage", count: sentWageAckAwaitingEmployerCount, icon: FileCheck },
     { key: "carIqAgreement", label: "Car IQ Technician Agreement", count: 0, icon: FileCheck },
@@ -12596,15 +12605,17 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }] : []),
     // New Automation Forms — a separate sidebar group (not a 4th column
     // inside "Automated Forms" above) for new consolidated form types as
-    // they're built, starting with Master W-2 Technician Agreement. Same
-    // General column as the group above (reused as-is, same tab keys) per
-    // the explicit ask to keep General reachable from here too.
+    // they're built, starting with Master W-2 Technician Agreement. General
+    // here is trimmed (newAutomationFormsGeneralTabs) — I-9/Action Plan/
+    // Termination/W-8ben deliberately excluded since I-9 and W-8ben already
+    // live directly under New Technician Forms, and Action Plan/Termination
+    // aren't part of this group at all.
     ...(paperworksOnly && companyId === "COMP001" ? [{
       group: "New Automation Forms",
       icon: Paperclip,
-      tabs: [...automatedFormsGeneralTabs, ...newAutomationFormsTechnicianTabs],
+      tabs: [...newAutomationFormsGeneralTabs, ...newAutomationFormsTechnicianTabs],
       columns: [
-        { label: "General", tabs: automatedFormsGeneralTabs },
+        { label: "General", tabs: newAutomationFormsGeneralTabs },
         { label: "New Technician Forms", tabs: newAutomationFormsTechnicianTabs },
       ],
     }] : []),
