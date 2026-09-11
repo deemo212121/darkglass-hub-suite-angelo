@@ -341,9 +341,18 @@ export function TechnicianFormChecklistPage() {
     setActionKey(key);
     setActionError(null);
     try {
+      // Tag shared types (w4/i9/direct_deposit/w8ben) with the active tab's
+      // own formSource bucket — without this, sending a form from e.g. the
+      // New Technician tab created an UNTAGGED document, which this same
+      // tab's own bucket filter (loadDocsForActiveTab) would then never
+      // count as this person's, so the row it was just sent from wouldn't
+      // even reflect the send. See SHARED_OLD_NEW_AUTOMATION_TYPES's doc
+      // comment in signableDocumentRegistry.ts.
+      const formSourceTag =
+        SHARED_OLD_NEW_AUTOMATION_TYPES.has(type) && activeConfig.formSourceBucket === "new" ? { formSource: "new_automation" } : {};
       const doc = await createSignableDocument({
         documentType: type,
-        formData: { employeeId: personId, employeeName: personName },
+        formData: { employeeId: personId, employeeName: personName, ...formSourceTag },
         recipientId: personId,
         recipientSlot: "employee",
         pdfUrl: "",
