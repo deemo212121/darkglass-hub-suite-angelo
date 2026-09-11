@@ -191,14 +191,24 @@ export type DocumentReviewStatus = "not_sent" | "awaiting_employee" | "awaiting_
 
 export function getDocumentReviewStatus(
   type: SignableDocumentType,
-  doc: { status: SignableDocumentStatus } | undefined
+  doc: { status: SignableDocumentStatus; recipientSlot?: string } | undefined
 ): DocumentReviewStatus {
   if (!doc || doc.status === "cancelled") return "not_sent";
   if (doc.status === "confirmed") return "done";
   if (doc.status === "signed") {
     return DOCUMENT_TYPES_REQUIRING_EMPLOYER_SIGNATURE.has(type) ? "awaiting_hr" : "done";
   }
-  return "awaiting_employee"; // pending_signature
+  // pending_signature usually means nobody's signed yet, but
+  // reopenEmployerSignature/reassignSignableDocument (signableDocuments.ts)
+  // also park an ALREADY employee-signed document back here — with
+  // recipientSlot moved to "hr_staff" — while it's reopened for a redo of
+  // just the employer signature. Same shape ReportHRDaily.tsx's own
+  // isAwaitingEmployerStep already checks for. Without this, a reopened
+  // document (employee's signature intact and untouched) wrongly showed
+  // "Awaiting employee signature" + a "Remind" button here instead of
+  // "Awaiting HR review".
+  if (doc.recipientSlot === "hr_staff") return "awaiting_hr";
+  return "awaiting_employee"; // pending_signature, recipientSlot "employee"
 }
 
 const STATUS_RANK: Record<SignableDocumentStatus, number> = {
