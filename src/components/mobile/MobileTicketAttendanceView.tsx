@@ -32,6 +32,7 @@ import { getCompanyTimecardEntries, type CompanyTimecardEntry } from "@/lib/supa
 import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
 import { getAttendanceNotes, upsertAttendanceNote, type AttendanceNoteRow } from "@/lib/supabase/attendanceNotes";
 import { ROLE_LABELS } from "@/lib/roleLabels";
+import { useAuth } from "@/lib/auth";
 
 const FULL_ACCESS_ROLES = new Set(["SUPERADMIN", "TECHNICAL_DIRECTOR", "TECHNICAL_ASSISTANT_DIRECTOR"]);
 const MANAGER_TIER_ROLES = new Set(["SENIOR_BRANCH_MANAGER", "BRANCH_MANAGER"]);
@@ -86,6 +87,7 @@ function fmtTime(iso: string): string {
 }
 
 export function MobileTicketAttendanceView({ profileId }: { profileId: string | null }) {
+  const { companyId } = useAuth();
   const [loading, setLoading] = useState(true);
   const [allProfiles, setAllProfiles] = useState<ProfileRow[]>([]);
   const [ticketRows, setTicketRows] = useState<TicketAttendanceRow[]>([]);
@@ -209,7 +211,7 @@ export function MobileTicketAttendanceView({ profileId }: { profileId: string | 
   };
 
   const handleSaveNote = async () => {
-    if (!detail?.profileId || viewAsProfileId) return;
+    if (!detail?.profileId || viewAsProfileId || !companyId) return;
     const content = noteDraft;
     setSavingNote(true);
     try {
@@ -220,8 +222,28 @@ export function MobileTicketAttendanceView({ profileId }: { profileId: string | 
         notifyIndividual: false,
         notifyTeamLead: false,
         createdBy: profileId,
+        companyId,
       });
-      setNoteRows((prev) => [...prev.filter((n) => n.profileId !== detail.profileId), { profileId: detail.profileId!, noteDate: todayKey, content, hrNote: prev.find((n) => n.profileId === detail.profileId)?.hrNote || "", notifyIndividual: false, notifyTeamLead: false, createdBy: profileId }]);
+      setNoteRows((prev) => {
+        const existing = prev.find((n) => n.profileId === detail.profileId);
+        return [
+          ...prev.filter((n) => n.profileId !== detail.profileId),
+          {
+            profileId: detail.profileId!,
+            noteDate: todayKey,
+            content,
+            hrNote: existing?.hrNote || "",
+            notifyIndividual: false,
+            notifyTeamLead: false,
+            createdBy: profileId,
+            attachmentPath: existing?.attachmentPath ?? null,
+            attachmentAddedBy: existing?.attachmentAddedBy ?? null,
+            attachmentAddedAt: existing?.attachmentAddedAt ?? null,
+            attachmentRemovedBy: existing?.attachmentRemovedBy ?? null,
+            attachmentRemovedAt: existing?.attachmentRemovedAt ?? null,
+          },
+        ];
+      });
       setEditingNote(false);
     } catch (e) {
       alert(`Failed to save note: ${e instanceof Error ? e.message : "Unknown error"}`);

@@ -292,7 +292,7 @@ function CheckboxFilter({
 export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
   const navigate = useNavigate();
   const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
-  const { uid, ready, allowedLocations, displayName, role, extraRoles } = useAuth();
+  const { uid, ready, allowedLocations, displayName, role, extraRoles, companyId } = useAuth();
   // Attendance notes (the quick "Add Note" / Notify Individual / Notify Team
   // Lead flow) are open to HR/Finance/Admin for the whole roster, and to
   // manager-tier roles for their own direct reports — the row itself is
@@ -1190,7 +1190,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
 
   const handleSaveNote = async () => {
     if (!canManageNotes) return;
-    if (!selectedNote) return;
+    if (!selectedNote || !companyId) return;
     const employee = allProfileById.get(selectedNote);
     setSavingNote(true);
     try {
@@ -1201,6 +1201,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
         notifyIndividual,
         notifyTeamLead,
         createdBy: myProfileId,
+        companyId,
       });
       setNotesData({ ...notesData, [selectedNote]: { content: newNote, notifyIndividual, notifyTeamLead, createdBy: myProfileId } });
       void logModuleActivity({

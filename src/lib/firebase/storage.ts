@@ -397,6 +397,61 @@ export async function deleteJotformDocumentFile(fullPath: string): Promise<void>
 }
 
 /**
+ * Upload a photo/file backing up a PTO/time-off request (Time Off
+ * Calendar's own "Attach photo" field on Add/Edit time off) — a doctor's
+ * note, etc. Stored under companies/{companyId}/pto-attachments/{requestId}/,
+ * same convention as uploadPayrollDisputeAttachment above. Returns the
+ * download URL directly (same as every other upload in this file) — no
+ * separate "sign the URL" step needed the way a private Supabase bucket
+ * requires, which is what this replaces (see pto.ts's uploadPtoAttachment).
+ */
+export async function uploadPtoRequestAttachment(companyId: string, requestId: string, file: File): Promise<string> {
+  if (!isFirebaseReady() || !storage) {
+    throw new Error("Firebase Storage not configured");
+  }
+  const folder = `companies/${companyId}/pto-attachments/${requestId}`;
+  const objectName = `${Date.now()}-${sanitizeFileName(file.name)}`;
+  const objectRef = ref(storage, `${folder}/${objectName}`);
+  const snapshot = await uploadBytes(objectRef, file, { contentType: file.type || "application/octet-stream" });
+  return getDownloadURL(snapshot.ref);
+}
+
+/**
+ * Upload a photo/file backing up an HR Status set on Absent List (e.g. a
+ * doctor's note) — no formal PTO request exists yet for these, so this is
+ * keyed by (profileId, noteDate) instead of a request id. Stored under
+ * companies/{companyId}/attendance-note-attachments/{profileId}/{noteDate}/.
+ * Returns the download URL directly, same as uploadPtoRequestAttachment
+ * above — see that function's comment for why.
+ */
+export async function uploadAttendanceNoteAttachmentFile(companyId: string, profileId: string, noteDate: string, file: File): Promise<string> {
+  if (!isFirebaseReady() || !storage) {
+    throw new Error("Firebase Storage not configured");
+  }
+  const folder = `companies/${companyId}/attendance-note-attachments/${profileId}/${noteDate}`;
+  const objectName = `${Date.now()}-${sanitizeFileName(file.name)}`;
+  const objectRef = ref(storage, `${folder}/${objectName}`);
+  const snapshot = await uploadBytes(objectRef, file, { contentType: file.type || "application/octet-stream" });
+  return getDownloadURL(snapshot.ref);
+}
+
+/**
+ * Delete a PTO/attendance-note attachment given its download URL — used by
+ * the "Remove" action next to View on both the Time Off Calendar and Absent
+ * List. Unlike deleteTicketPhoto/deleteOnboardingDocumentFile above, this
+ * takes the download URL directly rather than a bare storage path: the two
+ * upload functions above only return the URL (no fullPath), and ref()
+ * accepts a full https://firebasestorage.googleapis.com/... download URL
+ * just as well as a bare path.
+ */
+export async function deleteAttachmentByUrl(url: string): Promise<void> {
+  if (!isFirebaseReady() || !storage) {
+    throw new Error("Firebase Storage not configured");
+  }
+  await deleteObject(ref(storage, url));
+}
+
+/**
  * Upload a generated Certificate of Employment PDF so it can be linked in a
  * Team Messenger message — same "generate client-side, upload, share a
  * link" pattern as the CV-forwarding feature on the Hiring tab.
