@@ -1,6 +1,6 @@
 import { useMemo, useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
-import { Link, useNavigate } from "@tanstack/react-router";
+import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
 import { BrandedLoader } from "@/components/BrandedLoader";
 import { ChevronDown, ChevronLeft, Check, Filter, Search, Loader2, KeyRound, RotateCcw, Ban, CheckCircle2 } from "lucide-react";
@@ -740,7 +740,9 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
   // Per-column funnel filters: { fieldName: Set<allowed values> }
   // Empty set or missing key = no filter on that column.
   // "__none__" sentinel = user toggled (Select All) off → hide everything.
-  const [colFilters, setColFilters] = useState<Record<string, Set<string>>>({});
+  // Defaults to "Active only" — deactivated accounts stay hidden unless HR
+  // explicitly switches the Status filter to "All"/"Deactivated only".
+  const [colFilters, setColFilters] = useState<Record<string, Set<string>>>({ status: new Set(["Active"]) });
   const setColFilter = (field: string, next: Set<string>) =>
     setColFilters((prev) => ({ ...prev, [field]: next }));
   // Column filters AND together silently — narrowing one column and then a
@@ -748,8 +750,13 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
   // both at once, which looks like the whole filter system broke when it's
   // really just an old filter still active on another column. Surface how
   // many columns are currently narrowed, plus a one-click way to clear them.
-  const activeFilterCount = Object.values(colFilters).filter((sel) => sel && sel.size > 0).length;
-  const clearAllFilters = () => setColFilters({});
+  // "status" is excluded here — it already has its own dedicated, always-
+  // visible Status dropdown, so counting it again would show this banner
+  // on every page load just from the "Active only" default above.
+  const activeFilterCount = Object.entries(colFilters).filter(([field, sel]) => field !== "status" && sel && sel.size > 0).length;
+  // Leaves the Status filter alone — it's not part of what this banner/
+  // button counts or clears, since it has its own dedicated dropdown.
+  const clearAllFilters = () => setColFilters((prev) => ({ status: prev.status ?? new Set() }));
   const [showAddUserModal, setShowAddUserModal] = useState(false);
   const [showWorkingHoursModal, setShowWorkingHoursModal] = useState(false);
   // Loaded once so the Add User form can prefill Required Schedule from a
@@ -824,6 +831,46 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
     isTrainee: false,
   });
 
+  // Deep-link from the Hiring table's Account Status "Not Created" badge —
+  // arrives with ?openAddUser=1 plus whatever candidate data is on file,
+  // auto-opening Add User pre-filled instead of leaving HR to retype it.
+  // Snapshotted into a ref (not read live) so it only drives this one-time
+  // prefill on mount, same pattern ReportHRDaily.tsx's own
+  // initialHrSearchRef uses for its own ?profileId= restore.
+  const addUserSearchParams =
+    (useSearch({ strict: false }) as {
+      openAddUser?: string;
+      prefillName?: string;
+      prefillEmail?: string;
+      prefillBranch?: string;
+      prefillManager?: string;
+      prefillLoginName?: string;
+      prefillUserType?: string;
+    }) ?? {};
+  const initialAddUserSearchRef = useRef(addUserSearchParams);
+  useEffect(() => {
+    const params = initialAddUserSearchRef.current;
+    if (!params.openAddUser) return;
+    setNewUserForm((prev) => ({
+      ...prev,
+      loginName: params.prefillLoginName || prev.loginName,
+      userName: params.prefillName || prev.userName,
+      email: params.prefillEmail || prev.email,
+      assignedBranch: params.prefillBranch || prev.assignedBranch,
+      // Manager isn't set here — managerCandidates (below) hasn't loaded
+      // yet this early (it's derived from `users`, an async fetch), and
+      // the <select> needs an EXACT string match to show anything selected.
+      // See the dedicated effect below for that.
+      // Candidate's Position is now drawn from this same role list (see
+      // ReportHRDaily.tsx's candidatePositionOptions), so it maps straight
+      // onto User Type instead of being left for HR to re-pick.
+      userType: params.prefillUserType || prev.userType,
+      userTypes: params.prefillUserType ? [params.prefillUserType] : prev.userTypes,
+    }));
+    setShowAddUserModal(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Load users from Supabase on mount (RLS scopes to the caller's company).
   // Supabase is now the source of truth — we read only from it.
   useEffect(() => {
@@ -865,16 +912,24 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
       }
       return true;
     });
-    if (!query) return matches;
-    // The blob search above matches ANY field, including "Manager" - so
-    // searching a manager's own name previously surfaced every one of
-    // their direct reports (whose row also contains that name) ahead of
-    // the manager themselves, in whatever order the data happened to load.
-    // Sort (stably) so a match on the person's own login/username always
-    // outranks a match that only came from some other field.
-    const isDirectMatch = (r: UserRow) =>
-      r.loginName.toLowerCase().includes(query) || r.userName.toLowerCase().includes(query);
-    return [...matches].sort((a, b) => Number(isDirectMatch(b)) - Number(isDirectMatch(a)));
+    let ordered = matches;
+    if (query) {
+      // The blob search above matches ANY field, including "Manager" - so
+      // searching a manager's own name previously surfaced every one of
+      // their direct reports (whose row also contains that name) ahead of
+      // the manager themselves, in whatever order the data happened to load.
+      // Sort (stably) so a match on the person's own login/username always
+      // outranks a match that only came from some other field.
+      const isDirectMatch = (r: UserRow) =>
+        r.loginName.toLowerCase().includes(query) || r.userName.toLowerCase().includes(query);
+      ordered = [...matches].sort((a, b) => Number(isDirectMatch(b)) - Number(isDirectMatch(a)));
+    }
+    // Deactivated accounts sink to the bottom, after every active one —
+    // stable sort, so it only regroups by status and never disturbs the
+    // search-relevance ordering (or underlying load order) within either
+    // group. Applies regardless of the Status filter, so switching to
+    // "All" doesn't scatter deactivated rows throughout the active ones.
+    return [...ordered].sort((a, b) => Number(a.isActive === false) - Number(b.isActive === false));
   }, [search, users, colFilters]);
 
   // Manager cells store a free-text display name (profiles.manager_name),
@@ -1065,6 +1120,23 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
     });
     return Array.from(new Set(eligible.map((u) => u.userName).filter(Boolean))).sort((a, b) => a.localeCompare(b));
   }, [users]);
+
+  // Deep-link Manager prefill (see addUserSearchParams above) — done here,
+  // once managerCandidates has actually loaded, rather than in that
+  // earlier effect: the <select> needs an EXACT string match against one
+  // of these names to show anything selected, so this waits for the real
+  // list and resolves case-insensitively/trimmed in case the Hiring
+  // table's own name formatting drifts slightly from this page's.
+  const managerPrefillAppliedRef = useRef(false);
+  useEffect(() => {
+    if (managerPrefillAppliedRef.current) return;
+    const wanted = initialAddUserSearchRef.current.prefillManager;
+    if (!wanted || managerCandidates.length === 0) return;
+    const match = managerCandidates.find((name) => name.trim().toLowerCase() === wanted.trim().toLowerCase());
+    if (!match) return;
+    managerPrefillAppliedRef.current = true;
+    setNewUserForm((prev) => ({ ...prev, manager: match }));
+  }, [managerCandidates]);
 
   const handleAddUserFormChange = (field: keyof NewUserFormData, value: any) => {
     setNewUserForm((prev) => ({ ...prev, [field]: value }));
@@ -1440,7 +1512,6 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
                 <col style={{ width: "7%" }} />
                 <col style={{ width: "13%" }} />
                 <col style={{ width: "8%" }} />
-                <col style={{ width: "6%" }} />
                 <col style={{ width: "7%" }} />
                 <col style={{ width: "8%" }} />
                 <col style={{ width: "6%" }} />
@@ -1485,12 +1556,6 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
                     </span>
                   </th>
                   <th className="px-2.5 py-2 text-left">
-                    <span className="inline-flex items-center">Tech ID
-                      <ColumnFilter field="technicianId" label="Technician ID" options={columnOptions["technicianId"] || []}
-                        selected={colFilters["technicianId"] || new Set()} onChange={(n) => setColFilter("technicianId", n)} />
-                    </span>
-                  </th>
-                  <th className="px-2.5 py-2 text-left">
                     <span className="inline-flex items-center">Branch
                       <ColumnFilter field="office" label="Assigned Branch" options={columnOptions["office"] || []}
                         selected={colFilters["office"] || new Set()} onChange={(n) => setColFilter("office", n)} />
@@ -1509,13 +1574,13 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
               <tbody className="divide-y divide-white/10 bg-slate-950/60 text-slate-200">
                 {loading ? (
                   <tr>
-                    <td colSpan={11} className="px-4 py-2">
+                    <td colSpan={10} className="px-4 py-2">
                       <BrandedLoader label="Loading users…" />
                     </td>
                   </tr>
                 ) : filtered.length === 0 ? (
                   <tr>
-                    <td colSpan={11} className="px-4 py-10 text-center text-slate-400">
+                    <td colSpan={10} className="px-4 py-10 text-center text-slate-400">
                       {users.length === 0 ? "No users found. Create your first user above." : "No records match that search."}
                     </td>
                   </tr>
@@ -1533,7 +1598,6 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
                       <td className="px-2.5 py-2 align-top break-words">{roleDisplay(record.type)}</td>
                       <td className="px-2.5 py-2 align-top break-words text-slate-300">{record.email || "—"}</td>
                       <td className="px-2.5 py-2 align-top break-words"><UserLink moduleSlug={mod.slug} submoduleSlug={sub.slug} userId={loginNameByDisplayName.get(record.manager) || record.manager || record.loginName}>{record.manager || "—"}</UserLink></td>
-                      <td className="px-2.5 py-2 align-top break-words text-slate-300">{record.technicianId || "—"}</td>
                       <td className="px-2.5 py-2 align-top break-words text-slate-300">{record.office}</td>
                       <td className="px-2.5 py-2 align-top text-slate-300">
                         {branchAccessExpandable ? (
@@ -1563,15 +1627,6 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
                       </td>
                       <td className="px-2.5 py-2 align-top">
                         <div className="flex flex-wrap items-center justify-end gap-1">
-                          <button
-                            type="button"
-                            onClick={() => setResetModal({ mode: "single", row: record })}
-                            title="Force Password Change"
-                            aria-label="Force Password Change"
-                            className="inline-flex items-center gap-1 rounded border border-blue-500/40 bg-blue-500/10 px-2 py-1 text-[11px] font-semibold whitespace-nowrap text-blue-300 hover:bg-blue-500/20"
-                          >
-                            <KeyRound className="h-3 w-3" /> Reset PW
-                          </button>
                           <button
                             type="button"
                             onClick={() => setResetToDefaultTarget(record)}
