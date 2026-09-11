@@ -922,7 +922,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // Reviews, the Approved log, the department trend chart, and the full
   // Employee Directory all on top of each other, forcing a long scroll to
   // reach anything below Hiring.
-  const [activeTab, setActiveTab] = useState<"hiring" | "warnings" | "masterList" | "leaders" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "promotionForm" | "actionPlanForm" | "terminationForm" | "employeeRequestManager" | "w8ben" | "i9" | "wageAck" | "carIqAgreement" | "vehicleAgreement" | "vehicleUseAgreement" | "employeeConfidentiality" | "mealRestBreak" | "ptoAck" | "partsResponsibility" | "mileageFuel" | "locationConsent" | "damage" | "contractorData" | "contractorDataUs" | "directDeposit" | "substanceScreening" | "flashTechnicianTravel" | "contractorAddendum" | "combineForms" | "employerQueue" | "ndaForm" | "calendar" | "interviewCalendar" | "masterW2Agreement">(paperworksOnly ? "combineForms" : "hiring");
+  const [activeTab, setActiveTab] = useState<"hiring" | "warnings" | "masterList" | "leaders" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "promotionForm" | "actionPlanForm" | "terminationForm" | "employeeRequestManager" | "w8ben" | "i9" | "wageAck" | "carIqAgreement" | "vehicleAgreement" | "vehicleUseAgreement" | "employeeConfidentiality" | "mealRestBreak" | "ptoAck" | "partsResponsibility" | "mileageFuel" | "locationConsent" | "damage" | "contractorData" | "contractorDataUs" | "directDeposit" | "substanceScreening" | "flashTechnicianTravel" | "contractorAddendum" | "combineForms" | "employerQueue" | "ndaForm" | "calendar" | "interviewCalendar" | "masterW2Agreement" | "newW4">(paperworksOnly ? "combineForms" : "hiring");
   const [openCategory, setOpenCategory] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   // Which floating-sidebar section headers (Automated Forms/Generate
@@ -3069,6 +3069,13 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // ── W-4 — same pattern as W-8BEN above: HR just picks a recipient, the
   // recipient fills in everything themselves on FillW4Page.tsx. ──
   const [w8FormType, setW8FormType] = useState<"w8ben" | "w4" | "w9" | "w4r">("w8ben");
+  // "newW4" (New Technician Forms) reuses the exact same W-4 send/sent-history
+  // block as the combined "w8ben" tab's own W-4 sub-tab — just pinned to W-4
+  // and without the W-8BEN/W-9/W-4R switcher, so there's only one W-4 flow to
+  // maintain instead of a second copy.
+  useEffect(() => {
+    if (activeTab === "newW4") setW8FormType("w4");
+  }, [activeTab]);
   const [sentW4Forms, setSentW4Forms] = useState<SignableDocument[]>([]);
   const loadSentW4Forms = async () => {
     try {
@@ -12563,7 +12570,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // both places per the explicit ask to keep General available here too.
   const newAutomationFormsTechnicianTabs = [
     { key: "masterW2Agreement", label: "Master W-2 Technician Agreement", count: sentMasterW2AgreementAwaitingEmployerCount, icon: FileCheck },
-    { key: "w8ben", label: "W-8 / W-9 / W-4 / W-4R Forms", count: 0, icon: Landmark },
+    { key: "newW4", label: "Form W-4", count: 0, icon: Landmark },
     { key: "i9", label: "Form I-9 (Employment Eligibility)", count: sentI9AwaitingSection2Count, icon: FileCheck },
     { key: "directDeposit", label: "Direct Deposit Authorization", count: 0, icon: FileCheck },
   ] as const;
@@ -17383,8 +17390,9 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       </>
       )}
 
-      {activeTab === "w8ben" && (
+      {(activeTab === "w8ben" || activeTab === "newW4") && (
       <>
+      {activeTab === "w8ben" && (
       <div className="flex gap-2 mt-4">
         {(["w8ben", "w4", "w9", "w4r"] as const).map((ft) => (
           <button
@@ -17399,6 +17407,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           </button>
         ))}
       </div>
+      )}
 
       {w8FormType === "w8ben" && (
       <>
