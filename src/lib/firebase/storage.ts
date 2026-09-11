@@ -615,6 +615,17 @@ export async function uploadMasterW2OfficeAgreementForm(companyId: string, emplo
   return getDownloadURL(snapshot.ref);
 }
 
+export async function uploadMasterPhContractorAgreementForm(companyId: string, employeeName: string, pdfBlob: Blob): Promise<string> {
+  if (!isFirebaseReady() || !storage) {
+    throw new Error("Firebase Storage not configured");
+  }
+  const folder = `companies/${companyId}/master-ph-contractor-agreement-forms`;
+  const objectName = `${Date.now()}-${sanitizeFileName(employeeName || "master-ph-contractor-agreement")}.pdf`;
+  const objectRef = ref(storage, `${folder}/${objectName}`);
+  const snapshot = await uploadBytes(objectRef, pdfBlob, { contentType: "application/pdf" });
+  return getDownloadURL(snapshot.ref);
+}
+
 export async function uploadMileageFuelForm(companyId: string, employeeName: string, pdfBlob: Blob): Promise<string> {
   if (!isFirebaseReady() || !storage) {
     throw new Error("Firebase Storage not configured");

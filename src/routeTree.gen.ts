@@ -69,6 +69,7 @@ import { Route as FillMealRestBreakDocIdRouteImport } from './routes/fill-meal-r
 import { Route as FillMealRestBreakExternalDocIdRouteImport } from './routes/fill-meal-rest-break-external.$docId'
 import { Route as FillMasterW2OfficeAgreementDocIdRouteImport } from './routes/fill-master-w2-office-agreement.$docId'
 import { Route as FillMasterW2AgreementDocIdRouteImport } from './routes/fill-master-w2-agreement.$docId'
+import { Route as FillMasterPhContractorAgreementDocIdRouteImport } from './routes/fill-master-ph-contractor-agreement.$docId'
 import { Route as FillLocationConsentDocIdRouteImport } from './routes/fill-location-consent.$docId'
 import { Route as FillLocationConsentExternalDocIdRouteImport } from './routes/fill-location-consent-external.$docId'
 import { Route as FillI9DocIdRouteImport } from './routes/fill-i9.$docId'
@@ -417,6 +418,12 @@ const FillMasterW2AgreementDocIdRoute =
     path: '/fill-master-w2-agreement/$docId',
     getParentRoute: () => rootRouteImport,
   } as any)
+const FillMasterPhContractorAgreementDocIdRoute =
+  FillMasterPhContractorAgreementDocIdRouteImport.update({
+    id: '/fill-master-ph-contractor-agreement/$docId',
+    path: '/fill-master-ph-contractor-agreement/$docId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const FillLocationConsentDocIdRoute =
   FillLocationConsentDocIdRouteImport.update({
     id: '/fill-location-consent/$docId',
@@ -616,6 +623,7 @@ export interface FileRoutesByFullPath {
   '/fill-i9/$docId': typeof FillI9DocIdRoute
   '/fill-location-consent-external/$docId': typeof FillLocationConsentExternalDocIdRoute
   '/fill-location-consent/$docId': typeof FillLocationConsentDocIdRoute
+  '/fill-master-ph-contractor-agreement/$docId': typeof FillMasterPhContractorAgreementDocIdRoute
   '/fill-master-w2-agreement/$docId': typeof FillMasterW2AgreementDocIdRoute
   '/fill-master-w2-office-agreement/$docId': typeof FillMasterW2OfficeAgreementDocIdRoute
   '/fill-meal-rest-break-external/$docId': typeof FillMealRestBreakExternalDocIdRoute
@@ -706,6 +714,7 @@ export interface FileRoutesByTo {
   '/fill-i9/$docId': typeof FillI9DocIdRoute
   '/fill-location-consent-external/$docId': typeof FillLocationConsentExternalDocIdRoute
   '/fill-location-consent/$docId': typeof FillLocationConsentDocIdRoute
+  '/fill-master-ph-contractor-agreement/$docId': typeof FillMasterPhContractorAgreementDocIdRoute
   '/fill-master-w2-agreement/$docId': typeof FillMasterW2AgreementDocIdRoute
   '/fill-master-w2-office-agreement/$docId': typeof FillMasterW2OfficeAgreementDocIdRoute
   '/fill-meal-rest-break-external/$docId': typeof FillMealRestBreakExternalDocIdRoute
@@ -797,6 +806,7 @@ export interface FileRoutesById {
   '/fill-i9/$docId': typeof FillI9DocIdRoute
   '/fill-location-consent-external/$docId': typeof FillLocationConsentExternalDocIdRoute
   '/fill-location-consent/$docId': typeof FillLocationConsentDocIdRoute
+  '/fill-master-ph-contractor-agreement/$docId': typeof FillMasterPhContractorAgreementDocIdRoute
   '/fill-master-w2-agreement/$docId': typeof FillMasterW2AgreementDocIdRoute
   '/fill-master-w2-office-agreement/$docId': typeof FillMasterW2OfficeAgreementDocIdRoute
   '/fill-meal-rest-break-external/$docId': typeof FillMealRestBreakExternalDocIdRoute
@@ -889,6 +899,7 @@ export interface FileRouteTypes {
     | '/fill-i9/$docId'
     | '/fill-location-consent-external/$docId'
     | '/fill-location-consent/$docId'
+    | '/fill-master-ph-contractor-agreement/$docId'
     | '/fill-master-w2-agreement/$docId'
     | '/fill-master-w2-office-agreement/$docId'
     | '/fill-meal-rest-break-external/$docId'
@@ -979,6 +990,7 @@ export interface FileRouteTypes {
     | '/fill-i9/$docId'
     | '/fill-location-consent-external/$docId'
     | '/fill-location-consent/$docId'
+    | '/fill-master-ph-contractor-agreement/$docId'
     | '/fill-master-w2-agreement/$docId'
     | '/fill-master-w2-office-agreement/$docId'
     | '/fill-meal-rest-break-external/$docId'
@@ -1069,6 +1081,7 @@ export interface FileRouteTypes {
     | '/fill-i9/$docId'
     | '/fill-location-consent-external/$docId'
     | '/fill-location-consent/$docId'
+    | '/fill-master-ph-contractor-agreement/$docId'
     | '/fill-master-w2-agreement/$docId'
     | '/fill-master-w2-office-agreement/$docId'
     | '/fill-meal-rest-break-external/$docId'
@@ -1160,6 +1173,7 @@ export interface RootRouteChildren {
   FillI9DocIdRoute: typeof FillI9DocIdRoute
   FillLocationConsentExternalDocIdRoute: typeof FillLocationConsentExternalDocIdRoute
   FillLocationConsentDocIdRoute: typeof FillLocationConsentDocIdRoute
+  FillMasterPhContractorAgreementDocIdRoute: typeof FillMasterPhContractorAgreementDocIdRoute
   FillMasterW2AgreementDocIdRoute: typeof FillMasterW2AgreementDocIdRoute
   FillMasterW2OfficeAgreementDocIdRoute: typeof FillMasterW2OfficeAgreementDocIdRoute
   FillMealRestBreakExternalDocIdRoute: typeof FillMealRestBreakExternalDocIdRoute
@@ -1626,6 +1640,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof FillMasterW2AgreementDocIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/fill-master-ph-contractor-agreement/$docId': {
+      id: '/fill-master-ph-contractor-agreement/$docId'
+      path: '/fill-master-ph-contractor-agreement/$docId'
+      fullPath: '/fill-master-ph-contractor-agreement/$docId'
+      preLoaderRoute: typeof FillMasterPhContractorAgreementDocIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/fill-location-consent/$docId': {
       id: '/fill-location-consent/$docId'
       path: '/fill-location-consent/$docId'
@@ -1907,6 +1928,8 @@ const rootRouteChildren: RootRouteChildren = {
   FillI9DocIdRoute: FillI9DocIdRoute,
   FillLocationConsentExternalDocIdRoute: FillLocationConsentExternalDocIdRoute,
   FillLocationConsentDocIdRoute: FillLocationConsentDocIdRoute,
+  FillMasterPhContractorAgreementDocIdRoute:
+    FillMasterPhContractorAgreementDocIdRoute,
   FillMasterW2AgreementDocIdRoute: FillMasterW2AgreementDocIdRoute,
   FillMasterW2OfficeAgreementDocIdRoute: FillMasterW2OfficeAgreementDocIdRoute,
   FillMealRestBreakExternalDocIdRoute: FillMealRestBreakExternalDocIdRoute,

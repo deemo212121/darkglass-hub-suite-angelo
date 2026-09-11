@@ -61,12 +61,13 @@ import {
   type OnboardingDocumentColumn,
   type OnboardingGroupKey,
 } from "@/lib/supabase/onboardingDocumentColumns";
-import { uploadCoeCertificate, uploadWarningForm, uploadPromotionForm, uploadActionPlanForm, uploadTerminationForm, uploadW8benForm, uploadW4Form, uploadW4RForm, uploadI9Form, uploadWageAckForm, uploadCarIqAgreementForm, uploadVehicleAgreementForm, uploadEmployeeConfidentialityForm, uploadMealRestBreakForm, uploadPtoAckForm, uploadPartsResponsibilityForm, uploadMileageFuelForm, uploadLocationConsentForm, uploadDamageForm, uploadContractorDataForm, uploadDirectDepositForm, uploadSubstanceScreeningForm, uploadFlashTechnicianTravelForm, uploadContractorAddendumForm, uploadMasterW2AgreementForm, uploadMasterW2OfficeAgreementForm, uploadSignableDocumentSignature, refreshStorageAuthToken } from "@/lib/firebase/storage";
+import { uploadCoeCertificate, uploadWarningForm, uploadPromotionForm, uploadActionPlanForm, uploadTerminationForm, uploadW8benForm, uploadW4Form, uploadW4RForm, uploadI9Form, uploadWageAckForm, uploadCarIqAgreementForm, uploadVehicleAgreementForm, uploadEmployeeConfidentialityForm, uploadMealRestBreakForm, uploadPtoAckForm, uploadPartsResponsibilityForm, uploadMileageFuelForm, uploadLocationConsentForm, uploadDamageForm, uploadContractorDataForm, uploadDirectDepositForm, uploadSubstanceScreeningForm, uploadFlashTechnicianTravelForm, uploadContractorAddendumForm, uploadMasterW2AgreementForm, uploadMasterW2OfficeAgreementForm, uploadMasterPhContractorAgreementForm, uploadSignableDocumentSignature, refreshStorageAuthToken } from "@/lib/firebase/storage";
 import { captureHtmlToPdfBlob, captureHtmlPagesToPdfBlob, loadAssetDataUrl as loadImageDataUrl } from "@/lib/pdfCapture";
 import { downloadSignableDocumentPdf } from "@/lib/downloadSignableDocumentPdf";
 import { useSortableSearchTable } from "@/hooks/useSortableSearchTable";
 import { masterW2AgreementStyles, buildMasterW2AgreementBodyMarkup, type MasterW2AgreementFormData } from "@/lib/masterW2AgreementFormTemplate";
 import { masterW2OfficeAgreementStyles, buildMasterW2OfficeAgreementBodyMarkup, type MasterW2OfficeAgreementFormData } from "@/lib/masterW2OfficeAgreementFormTemplate";
+import { masterPhContractorAgreementStyles, buildMasterPhContractorAgreementBodyMarkup, type MasterPhContractorAgreementFormData } from "@/lib/masterPhContractorAgreementFormTemplate";
 import { getTechnicianIdDocumentUrl } from "@/lib/supabase/technicianIdDocuments";
 import {
   createSignableDocument,
@@ -923,7 +924,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // Reviews, the Approved log, the department trend chart, and the full
   // Employee Directory all on top of each other, forcing a long scroll to
   // reach anything below Hiring.
-  const [activeTab, setActiveTab] = useState<"hiring" | "warnings" | "masterList" | "leaders" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "promotionForm" | "actionPlanForm" | "terminationForm" | "employeeRequestManager" | "w8ben" | "i9" | "wageAck" | "carIqAgreement" | "vehicleAgreement" | "vehicleUseAgreement" | "employeeConfidentiality" | "mealRestBreak" | "ptoAck" | "partsResponsibility" | "mileageFuel" | "locationConsent" | "damage" | "contractorData" | "contractorDataUs" | "directDeposit" | "substanceScreening" | "flashTechnicianTravel" | "contractorAddendum" | "combineForms" | "employerQueue" | "ndaForm" | "calendar" | "interviewCalendar" | "masterW2Agreement" | "newW4" | "masterW2OfficeAgreement">(paperworksOnly ? "combineForms" : "hiring");
+  const [activeTab, setActiveTab] = useState<"hiring" | "warnings" | "masterList" | "leaders" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "promotionForm" | "actionPlanForm" | "terminationForm" | "employeeRequestManager" | "w8ben" | "i9" | "wageAck" | "carIqAgreement" | "vehicleAgreement" | "vehicleUseAgreement" | "employeeConfidentiality" | "mealRestBreak" | "ptoAck" | "partsResponsibility" | "mileageFuel" | "locationConsent" | "damage" | "contractorData" | "contractorDataUs" | "directDeposit" | "substanceScreening" | "flashTechnicianTravel" | "contractorAddendum" | "combineForms" | "employerQueue" | "ndaForm" | "calendar" | "interviewCalendar" | "masterW2Agreement" | "newW4" | "masterW2OfficeAgreement" | "newW8ben" | "masterPhContractorAgreement">(paperworksOnly ? "combineForms" : "hiring");
   const [openCategory, setOpenCategory] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   // Which floating-sidebar section headers (Automated Forms/Generate
@@ -1886,6 +1887,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     contractor_addendum: "contractorAddendum",
     master_w2_agreement: "masterW2Agreement",
     master_w2_office_agreement: "masterW2OfficeAgreement",
+    master_ph_contractor_agreement: "masterPhContractorAgreement",
   };
 
   // Forms popup — checkbox list of every SignableDocumentType, letting HR
@@ -3071,12 +3073,15 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // ── W-4 — same pattern as W-8BEN above: HR just picks a recipient, the
   // recipient fills in everything themselves on FillW4Page.tsx. ──
   const [w8FormType, setW8FormType] = useState<"w8ben" | "w4" | "w9" | "w4r">("w8ben");
-  // "newW4" (New Technician Forms) reuses the exact same W-4 send/sent-history
-  // block as the combined "w8ben" tab's own W-4 sub-tab — just pinned to W-4
-  // and without the W-8BEN/W-9/W-4R switcher, so there's only one W-4 flow to
-  // maintain instead of a second copy.
+  // "newW4" (New Technician Forms / New Office Forms) and "newW8ben" (PH
+  // Staff) each reuse the exact same send/sent-history block their
+  // respective sub-tab already has on the combined "w8ben" tab — just
+  // pinned to one form type and without the W-8BEN/W-9/W-4/W-4R switcher,
+  // so there's only one flow per form type to maintain instead of a second
+  // copy per column that links to it.
   useEffect(() => {
     if (activeTab === "newW4") setW8FormType("w4");
+    if (activeTab === "newW8ben") setW8FormType("w8ben");
   }, [activeTab]);
   const [sentW4Forms, setSentW4Forms] = useState<SignableDocument[]>([]);
   const loadSentW4Forms = async () => {
@@ -4483,6 +4488,296 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       setMasterW2OfficeAgreementEmployerError(err instanceof Error ? err.message : "Failed to save signature.");
     } finally {
       setMasterW2OfficeAgreementEmployerSaving(false);
+    }
+  };
+
+  // ── Master PH Contractor Agreement — same two-party HTML-captured flow
+  // as the two Master W-2 agreements above, for PH staff engaged as
+  // independent contractors rather than W-2 employees (see
+  // masterPhContractorAgreementFormTemplate.ts's header comment for how the
+  // document itself differs — nationality/marital/spouse fields instead of
+  // a branch, no wage/equipment/substance-screening sections). No
+  // license/SSN photo capture. ──
+  const [sentMasterPhContractorAgreementForms, setSentMasterPhContractorAgreementForms] = useState<SignableDocument[]>([]);
+  const loadSentMasterPhContractorAgreementForms = async () => {
+    try {
+      setSentMasterPhContractorAgreementForms(await getSignableDocuments("master_ph_contractor_agreement"));
+    } catch (err) {
+      console.error("Failed to load sent Master PH Contractor Agreement forms:", err);
+    }
+  };
+  useEffect(() => {
+    if (activeTab === "masterPhContractorAgreement" || activeTab === "jotformDocuments" || activeTab === "combineForms" || activeTab === "employerQueue") void loadSentMasterPhContractorAgreementForms();
+  }, [activeTab]);
+  const sentMasterPhContractorAgreementAwaitingEmployerCount = useMemo(
+    () => sentMasterPhContractorAgreementForms.filter(isAwaitingEmployerStep).length,
+    [sentMasterPhContractorAgreementForms]
+  );
+
+  type MasterPhContractorAgreementSortColumn = "employee" | "nationality" | "sentBy" | "status" | "sent";
+  const masterPhContractorAgreementStatusLabel = (doc: SignableDocument): string =>
+    doc.status === "confirmed" ? "Completed"
+      : isAwaitingEmployerStep(doc) ? "Awaiting Employer Signature"
+      : doc.status === "cancelled" ? "Cancelled"
+      : "Awaiting Contractor";
+  const {
+    search: masterPhContractorAgreementSentSearch,
+    setSearch: setMasterPhContractorAgreementSentSearch,
+    sortColumn: masterPhContractorAgreementSentSortColumn,
+    sortDir: masterPhContractorAgreementSentSortDir,
+    handleSort: handleMasterPhContractorAgreementSentSort,
+    filterOptionsFor: masterPhContractorAgreementFilterOptionsFor,
+    toggleFilterValue: masterPhContractorAgreementToggleFilterValue,
+    clearColumnFilter: masterPhContractorAgreementClearColumnFilter,
+    isColumnFiltered: masterPhContractorAgreementIsColumnFiltered,
+    isValueChecked: masterPhContractorAgreementIsValueChecked,
+    rows: sortedSentMasterPhContractorAgreementForms,
+  } = useSortableSearchTable<SignableDocument, MasterPhContractorAgreementSortColumn>(
+    sentMasterPhContractorAgreementForms,
+    (doc, q) => {
+      const data = doc.formData as Partial<MasterPhContractorAgreementFormData>;
+      const employeeName = (data.employeeName || doc.recipientName || "").toLowerCase();
+      const nationality = (data.nationality || "").toLowerCase();
+      return employeeName.includes(q) || nationality.includes(q);
+    },
+    (doc, column) => {
+      const data = doc.formData as Partial<MasterPhContractorAgreementFormData>;
+      switch (column) {
+        case "employee": return (data.employeeName || doc.recipientName || "").toLowerCase();
+        case "nationality": return (data.nationality || "").toLowerCase();
+        case "sentBy": return (doc.createdByName ?? "").toLowerCase();
+        case "status": return masterPhContractorAgreementStatusLabel(doc).toLowerCase();
+        case "sent": return new Date(doc.createdAt).getTime();
+      }
+    },
+    (doc, column) => {
+      const data = doc.formData as Partial<MasterPhContractorAgreementFormData>;
+      switch (column) {
+        case "nationality": return data.nationality || "—";
+        case "sentBy": return doc.createdByName ?? "—";
+        case "status": return masterPhContractorAgreementStatusLabel(doc);
+        default: return "";
+      }
+    }
+  );
+
+  const [masterPhContractorAgreementRecipientId, setMasterPhContractorAgreementRecipientId] = useState("");
+  const [masterPhContractorAgreementRecipientSearch, setMasterPhContractorAgreementRecipientSearch] = useState("");
+  const [masterPhContractorAgreementRecipientDropdownOpen, setMasterPhContractorAgreementRecipientDropdownOpen] = useState(false);
+  const [masterPhContractorAgreementSending, setMasterPhContractorAgreementSending] = useState(false);
+  const [masterPhContractorAgreementSendError, setMasterPhContractorAgreementSendError] = useState<string | null>(null);
+  const [masterPhContractorAgreementActionBusyId, setMasterPhContractorAgreementActionBusyId] = useState<string | null>(null);
+  const [masterPhContractorAgreementActionError, setMasterPhContractorAgreementActionError] = useState<string | null>(null);
+  const [masterPhContractorAgreementDocPreview, setMasterPhContractorAgreementDocPreview] = useState<SignableDocument | null>(null);
+  const [masterPhContractorAgreementPreviewExpanded, setMasterPhContractorAgreementPreviewExpanded] = useState(false);
+  const [masterPhContractorAgreementPreviewPdfUrl, setMasterPhContractorAgreementPreviewPdfUrl] = useState<string | null>(null);
+  const [masterPhContractorAgreementPreviewLoading, setMasterPhContractorAgreementPreviewLoading] = useState(false);
+  const filteredMasterPhContractorAgreementRecipients = useMemo(
+    () => employees.filter((e) => e.status === "active" && e.name.toLowerCase().includes(masterPhContractorAgreementRecipientSearch.toLowerCase())),
+    [employees, masterPhContractorAgreementRecipientSearch]
+  );
+
+  const buildMasterPhContractorAgreementPreviewData = (employeeName: string): MasterPhContractorAgreementFormData => {
+    const [firstName = "", ...rest] = employeeName.trim().split(/\s+/).filter(Boolean);
+    const lastName = rest.length ? rest[rest.length - 1] : "";
+    const middleName = rest.length > 1 ? rest.slice(0, -1).join(" ") : "";
+    return {
+      employeeId: "",
+      employeeName,
+      firstName,
+      middleName,
+      lastName,
+      nationality: "",
+      nationalityOther: "",
+      addressStreet: "",
+      addressCity: "",
+      addressState: "",
+      addressZip: "",
+      addressCountry: "",
+      phone: "",
+      otherPhone: "",
+      email: "",
+      dateOfBirth: "",
+      startDate: "",
+      maritalStatus: "",
+      spouseName: "",
+      spouseEmployer: "",
+      contractorDateSigned: "",
+      contractorSignatureDataUrl: "",
+      employerDateSigned: "",
+      employerSignatureDataUrl: "",
+    };
+  };
+
+  /** Toggles the inline collapsible preview panel — collapsing just hides it (and revokes the blob URL); expanding (re)builds a fresh blank-filled sample from the currently-selected recipient's name. HTML-captured (not a pdf-lib fill like the other types' own preview), same technique as the document itself. */
+  const toggleMasterPhContractorAgreementPreview = async () => {
+    if (masterPhContractorAgreementPreviewExpanded) {
+      setMasterPhContractorAgreementPreviewExpanded(false);
+      if (masterPhContractorAgreementPreviewPdfUrl) URL.revokeObjectURL(masterPhContractorAgreementPreviewPdfUrl);
+      setMasterPhContractorAgreementPreviewPdfUrl(null);
+      return;
+    }
+    setMasterPhContractorAgreementSendError(null);
+    setMasterPhContractorAgreementPreviewExpanded(true);
+    setMasterPhContractorAgreementPreviewLoading(true);
+    try {
+      const recipientName = employees.find((e) => e.id === masterPhContractorAgreementRecipientId)?.name || "";
+      const logo = masterPhContractorAgreementLogoDataUrl || (await loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png")));
+      const pdfBlob = await captureHtmlToPdfBlob(buildMasterPhContractorAgreementBodyMarkup(buildMasterPhContractorAgreementPreviewData(recipientName), logo), masterPhContractorAgreementStyles);
+      const url = URL.createObjectURL(pdfBlob);
+      setMasterPhContractorAgreementPreviewPdfUrl(url);
+    } catch (err) {
+      setMasterPhContractorAgreementSendError(err instanceof Error ? err.message : "Failed to build preview.");
+    } finally {
+      setMasterPhContractorAgreementPreviewLoading(false);
+    }
+  };
+
+  const handleSendMasterPhContractorAgreement = async () => {
+    if (!masterPhContractorAgreementRecipientId || !uid) return;
+    setMasterPhContractorAgreementSending(true);
+    setMasterPhContractorAgreementSendError(null);
+    try {
+      const recipient = employees.find((e) => e.id === masterPhContractorAgreementRecipientId);
+      if (!recipient) throw new Error("Select a recipient first.");
+
+      const alreadySent = await getExistingActiveDocumentTypes(recipient.id, ["master_ph_contractor_agreement"]);
+      if (alreadySent.length > 0 && !window.confirm(`${recipient.name} already has a Master PH Contractor Agreement on file. Send another one anyway?`)) {
+        return;
+      }
+
+      const doc = await createSignableDocument({
+        documentType: "master_ph_contractor_agreement",
+        formData: { employeeId: recipient.id, employeeName: recipient.name } as unknown as Record<string, any>,
+        recipientId: masterPhContractorAgreementRecipientId,
+        recipientSlot: "employee",
+        pdfUrl: "",
+      });
+
+      const myProfileId = await getMyProfileId(uid);
+      if (!myProfileId) throw new Error("Could not resolve your profile.");
+      const thread = await getOrCreateDmThread(myProfileId, masterPhContractorAgreementRecipientId);
+      const fillLink = `${getAppUrl()}/fill-master-ph-contractor-agreement/${doc.id}`;
+      await sendMessage({
+        dmThreadId: thread.id,
+        senderId: myProfileId,
+        senderName: displayName || "HR",
+        body: `📋 Please complete the Master Philippines Independent Contractor Comprehensive Agreement: ${fillLink}`,
+      });
+
+      void logActivity({ action: "master_ph_contractor_agreement_sent", targetType: "employee", targetId: recipient.id, targetLabel: recipient.name });
+
+      setMasterPhContractorAgreementRecipientId("");
+      setMasterPhContractorAgreementRecipientSearch("");
+      await loadSentMasterPhContractorAgreementForms();
+    } catch (err) {
+      setMasterPhContractorAgreementSendError(err instanceof Error ? err.message : "Failed to send request.");
+    } finally {
+      setMasterPhContractorAgreementSending(false);
+    }
+  };
+
+  const handleCopyMasterPhContractorAgreementLink = async (doc: SignableDocument) => {
+    try {
+      await navigator.clipboard.writeText(`${getAppUrl()}/fill-master-ph-contractor-agreement/${doc.id}`);
+    } catch (err) {
+      console.error("Failed to copy link:", err);
+    }
+  };
+
+  const handleDownloadMasterPhContractorAgreementPdf = async (doc: SignableDocument) => {
+    if (!doc.pdfUrl) return;
+    const name = (doc.formData as Partial<MasterPhContractorAgreementFormData>).employeeName || doc.recipientName || "master-ph-contractor-agreement";
+    await downloadSignableDocumentPdf(doc.pdfUrl, `Master PH Contractor Agreement - ${name}.pdf`);
+  };
+
+  const handleReopenMasterPhContractorAgreementEmployer = async (doc: SignableDocument) => {
+    if (!window.confirm("Re-open this for a new employer signature? The contractor's signature stays as-is.")) return;
+    setMasterPhContractorAgreementActionBusyId(doc.id);
+    setMasterPhContractorAgreementActionError(null);
+    try {
+      await reopenEmployerSignature(doc.id);
+      await loadSentMasterPhContractorAgreementForms();
+    } catch (err) {
+      setMasterPhContractorAgreementActionError(err instanceof Error ? err.message : "Failed to reopen for re-signing.");
+    } finally {
+      setMasterPhContractorAgreementActionBusyId(null);
+    }
+  };
+
+  const handleDeleteMasterPhContractorAgreement = async (doc: SignableDocument) => {
+    if (!window.confirm("Permanently delete this Master PH Contractor Agreement request?")) return;
+    setMasterPhContractorAgreementActionBusyId(doc.id);
+    setMasterPhContractorAgreementActionError(null);
+    try {
+      await deleteSignableDocument(doc.id);
+      await loadSentMasterPhContractorAgreementForms();
+    } catch (err) {
+      setMasterPhContractorAgreementActionError(err instanceof Error ? err.message : "Failed to delete.");
+    } finally {
+      setMasterPhContractorAgreementActionBusyId(null);
+    }
+  };
+
+  // ── Complete Employer Signature — a plain signature pad (no fields to
+  // review), reassigns the document to the current HR user first so the
+  // RLS update policy allows it (same "claim" pattern Wage Ack's own dialog
+  // uses), then regenerates the whole PDF fresh with both signatures. ──
+  const [masterPhContractorAgreementEmployerDialog, setMasterPhContractorAgreementEmployerDialog] = useState<SignableDocument | null>(null);
+  const [masterPhContractorAgreementEmployerSaving, setMasterPhContractorAgreementEmployerSaving] = useState(false);
+  const [masterPhContractorAgreementEmployerError, setMasterPhContractorAgreementEmployerError] = useState<string | null>(null);
+  const masterPhContractorAgreementEmployerSigPad = useSignaturePad({ width: 400, height: 120 });
+  const [masterPhContractorAgreementLogoDataUrl, setMasterPhContractorAgreementLogoDataUrl] = useState("");
+
+  const handleOpenMasterPhContractorAgreementEmployerDialog = (doc: SignableDocument) => {
+    setMasterPhContractorAgreementEmployerDialog(doc);
+    setMasterPhContractorAgreementEmployerError(null);
+    if (!masterPhContractorAgreementLogoDataUrl) {
+      loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png")).then(setMasterPhContractorAgreementLogoDataUrl).catch(() => {});
+    }
+  };
+
+  const handleSaveMasterPhContractorAgreementEmployerSignature = async () => {
+    if (!masterPhContractorAgreementEmployerDialog || !uid) return;
+    if (!masterPhContractorAgreementEmployerSigPad.hasContent()) {
+      setMasterPhContractorAgreementEmployerError("Please add your signature.");
+      return;
+    }
+    setMasterPhContractorAgreementEmployerSaving(true);
+    setMasterPhContractorAgreementEmployerError(null);
+    try {
+      const myProfileId = await getMyProfileId(uid);
+      if (!myProfileId) throw new Error("Could not resolve your profile.");
+
+      await reassignSignableDocument(masterPhContractorAgreementEmployerDialog.id, { recipientId: myProfileId, recipientName: displayName || "HR" }, "hr_staff");
+
+      const existing = masterPhContractorAgreementEmployerDialog.formData as MasterPhContractorAgreementFormData;
+      const dataUrl = masterPhContractorAgreementEmployerSigPad.toDataURL();
+      if (!dataUrl) {
+        setMasterPhContractorAgreementEmployerError("Please add your signature.");
+        return;
+      }
+      await refreshStorageAuthToken();
+      const signatureUrl = await uploadSignableDocumentSignature(masterPhContractorAgreementEmployerDialog.companyId, masterPhContractorAgreementEmployerDialog.id, "hr_staff", dataUrl);
+      const signedAt = new Date().toISOString();
+
+      const merged: MasterPhContractorAgreementFormData = { ...existing, employerSignatureDataUrl: dataUrl, employerDateSigned: signedAt };
+
+      const logo = masterPhContractorAgreementLogoDataUrl || (await loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png")));
+      const pdfBlob = await captureHtmlToPdfBlob(buildMasterPhContractorAgreementBodyMarkup(merged, logo), masterPhContractorAgreementStyles);
+      const pdfUrl = await uploadMasterPhContractorAgreementForm(masterPhContractorAgreementEmployerDialog.companyId, existing.employeeName || "master-ph-contractor-agreement", pdfBlob);
+
+      const entry = { name: displayName || "HR", url: signatureUrl, signedAt };
+      await signDocument(masterPhContractorAgreementEmployerDialog.id, "hr_staff", entry, pdfUrl, merged as unknown as Record<string, any>);
+      await confirmSignableDocument(masterPhContractorAgreementEmployerDialog.id, null);
+
+      void logActivity({ action: "master_ph_contractor_agreement_employer_signed", targetType: "employee", targetLabel: existing.employeeName || "" });
+      setMasterPhContractorAgreementEmployerDialog(null);
+      await loadSentMasterPhContractorAgreementForms();
+    } catch (err) {
+      setMasterPhContractorAgreementEmployerError(err instanceof Error ? err.message : "Failed to save signature.");
+    } finally {
+      setMasterPhContractorAgreementEmployerSaving(false);
     }
   };
 
@@ -12871,6 +13166,19 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     { key: "directDeposit", label: "Direct Deposit Authorization", count: 0, icon: FileCheck },
   ] as const;
 
+  // "PH Staff" — the Philippines-contractor counterpart to New Technician/
+  // New Office Forms: Master PH Contractor Agreement is its own document
+  // (independent-contractor relationship, not W-2 — see
+  // masterPhContractorAgreementFormTemplate.ts), Form W-8BEN is the same
+  // shared tab reused from the combined "w8ben" tab (pinned via "newW8ben",
+  // same trick "newW4" uses for W-4), and Direct Deposit is the same shared
+  // tab reused from New Technician/New Office Forms.
+  const newAutomationFormsPhTabs = [
+    { key: "masterPhContractorAgreement", label: "Master PH Contractor Agreement", count: sentMasterPhContractorAgreementAwaitingEmployerCount, icon: FileCheck },
+    { key: "newW8ben", label: "Form W-8BEN", count: 0, icon: Landmark },
+    { key: "directDeposit", label: "Direct Deposit Authorization", count: 0, icon: FileCheck },
+  ] as const;
+
   // Management-tier forms (Branch Manager / Senior Branch Manager /
   // Technical Director / Technical Assistant Director) — its own column,
   // separate from the rank-and-file Technician Forms and the HR/admin
@@ -12916,11 +13224,12 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     ...(paperworksOnly && companyId === "COMP001" ? [{
       group: "New Automation Forms",
       icon: Paperclip,
-      tabs: [...newAutomationFormsGeneralTabs, ...newAutomationFormsTechnicianTabs, ...newAutomationFormsOfficeTabs],
+      tabs: [...newAutomationFormsGeneralTabs, ...newAutomationFormsTechnicianTabs, ...newAutomationFormsOfficeTabs, ...newAutomationFormsPhTabs],
       columns: [
         { label: "General", tabs: newAutomationFormsGeneralTabs },
         { label: "New Technician Forms", tabs: newAutomationFormsTechnicianTabs },
         { label: "New Office Forms (US)", tabs: newAutomationFormsOfficeTabs },
+        { label: "PH Staff", tabs: newAutomationFormsPhTabs },
       ],
     }] : []),
     ...(!paperworksOnly ? [
@@ -13048,7 +13357,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               </button>
               {!collapsed && (
                 section.columns ? (
-                  <div className="grid grid-cols-3 gap-x-4 gap-y-1 pl-2 border-l border-white/10 ml-4">
+                  <div className={`grid ${section.columns.length >= 4 ? "grid-cols-4" : "grid-cols-3"} gap-x-4 gap-y-1 pl-2 border-l border-white/10 ml-4`}>
                     {section.columns.map((col) => (
                       <div key={col.label} className="flex flex-col gap-0.5">
                         <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide px-2.5 pt-1 pb-0.5">{col.label}</p>
@@ -13307,9 +13616,9 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                 {isOpen && (
                   <>
                     <div className="fixed inset-0 z-10" onClick={() => setOpenCategory(null)} />
-                    <div className={`absolute top-full left-0 mt-1 z-20 rounded-md border border-white/10 bg-slate-900 shadow-xl py-1 ${section.columns ? "w-[min(95vw,780px)]" : "min-w-[220px]"}`}>
+                    <div className={`absolute top-full left-0 mt-1 z-20 rounded-md border border-white/10 bg-slate-900 shadow-xl py-1 ${section.columns ? (section.columns.length >= 4 ? "w-[min(95vw,980px)]" : "w-[min(95vw,780px)]") : "min-w-[220px]"}`}>
                       {section.columns ? (
-                        <div className="grid grid-cols-3 gap-x-1">
+                        <div className={`grid ${section.columns.length >= 4 ? "grid-cols-4" : "grid-cols-3"} gap-x-1`}>
                           {section.columns.map((col) => (
                             <div key={col.label} className="flex flex-col py-1">
                               <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide px-3.5 pt-1 pb-1">{col.label}</p>
@@ -17687,7 +17996,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       </>
       )}
 
-      {(activeTab === "w8ben" || activeTab === "newW4") && (
+      {(activeTab === "w8ben" || activeTab === "newW4" || activeTab === "newW8ben") && (
       <>
       {activeTab === "w8ben" && (
       <div className="flex gap-2 mt-4">
@@ -21501,6 +21810,294 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             </div>
             <div className="flex-1 overflow-hidden bg-slate-950">
               {masterW2OfficeAgreementDocPreview.pdfUrl && <iframe src={masterW2OfficeAgreementDocPreview.pdfUrl} title="Master W-2 Office Agreement" className="w-full h-full min-h-[70vh] border-0" />}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activeTab === "masterPhContractorAgreement" && (
+      <>
+      <div className="panel p-0 overflow-visible mt-4 relative z-20">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">Send Master PH Contractor Agreement Request</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Pick a teammate — they'll get a link to fill in their info and sign. Once they submit, it lands back here for HR to add the employer signature. Covers the independent-contractor relationship, confidentiality/NDA, the PH off-days & leave policy, and governing law/e-signature terms in one document.</p>
+        </div>
+        <div className="p-4 flex flex-col md:flex-row gap-6">
+          <div className="flex flex-col gap-3 w-full md:max-w-sm md:shrink-0">
+            <div className="flex flex-col gap-1 relative">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient (AHS teammate)</label>
+              <input
+                type="text"
+                value={masterPhContractorAgreementRecipientSearch}
+                onChange={(e) => { setMasterPhContractorAgreementRecipientSearch(e.target.value); setMasterPhContractorAgreementRecipientId(""); setMasterPhContractorAgreementRecipientDropdownOpen(true); }}
+                onFocus={() => setMasterPhContractorAgreementRecipientDropdownOpen(true)}
+                onBlur={() => setTimeout(() => setMasterPhContractorAgreementRecipientDropdownOpen(false), 150)}
+                placeholder="Search a teammate…"
+                className="glass-input text-sm py-1.5 px-3 rounded-md"
+              />
+              {masterPhContractorAgreementRecipientDropdownOpen && (
+                <div className="absolute z-50 top-full mt-1 w-full max-h-96 overflow-y-auto rounded-md border border-white/15 bg-slate-900 shadow-2xl">
+                  {filteredMasterPhContractorAgreementRecipients.length === 0 ? (
+                    <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+                  ) : (
+                    filteredMasterPhContractorAgreementRecipients.map((e) => (
+                      <button
+                        key={e.id}
+                        type="button"
+                        onMouseDown={(ev) => ev.preventDefault()}
+                        onClick={() => {
+                          setMasterPhContractorAgreementRecipientId(e.id);
+                          setMasterPhContractorAgreementRecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`);
+                          setMasterPhContractorAgreementRecipientDropdownOpen(false);
+                        }}
+                        className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${masterPhContractorAgreementRecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                      >
+                        {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+
+            {masterPhContractorAgreementSendError && (
+              <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{masterPhContractorAgreementSendError}</p>
+            )}
+            <div className="flex items-center gap-2">
+              <button
+                onClick={toggleMasterPhContractorAgreementPreview}
+                className="btn text-sm px-4 py-2 flex items-center gap-1.5"
+              >
+                Preview <ChevronDown className={`h-3.5 w-3.5 transition-transform ${masterPhContractorAgreementPreviewExpanded ? "rotate-180" : ""}`} />
+              </button>
+              <button
+                onClick={handleSendMasterPhContractorAgreement}
+                disabled={!masterPhContractorAgreementRecipientId || masterPhContractorAgreementSending}
+                className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+              >
+                {masterPhContractorAgreementSending ? "Sending…" : "Send Request"}
+              </button>
+            </div>
+          </div>
+
+          <div className="flex-1 min-w-0">
+            {masterPhContractorAgreementPreviewExpanded ? (
+              <div className="border border-white/10 rounded-md overflow-hidden bg-white/5 h-full" style={{ minHeight: 560 }}>
+                {masterPhContractorAgreementPreviewLoading || !masterPhContractorAgreementPreviewPdfUrl ? (
+                  <div className="h-full flex items-center justify-center text-sm text-muted-foreground" style={{ minHeight: 560 }}>Loading preview…</div>
+                ) : (
+                  <iframe src={masterPhContractorAgreementPreviewPdfUrl} title="Master PH Contractor Agreement Preview" className="w-full border-0" style={{ height: 560 }} />
+                )}
+              </div>
+            ) : (
+              <div className="border border-dashed border-white/15 rounded-md flex items-center justify-center text-sm text-muted-foreground" style={{ minHeight: 560 }}>
+                Click "Preview" to see the document here.
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="panel p-0 overflow-hidden mt-4">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">Sent Master PH Contractor Agreement Forms</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status. "Awaiting Employer Signature" means the contractor finished — add your signature to finalize.</p>
+        </div>
+        <div className="px-4 py-3 border-b border-white/10 bg-white/5 flex flex-wrap items-end gap-3">
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+            <input
+              type="text"
+              value={masterPhContractorAgreementSentSearch}
+              onChange={(e) => setMasterPhContractorAgreementSentSearch(e.target.value)}
+              placeholder="Name or nationality…"
+              className="glass-input text-sm py-1.5 pl-8 pr-3 rounded-md w-56"
+            />
+          </div>
+          {masterPhContractorAgreementSentSearch && (
+            <button onClick={() => setMasterPhContractorAgreementSentSearch("")} className="btn text-sm px-3 py-1.5">Clear</button>
+          )}
+          <span className="text-xs text-muted-foreground mb-1.5 ml-auto">
+            {sortedSentMasterPhContractorAgreementForms.length}{masterPhContractorAgreementSentSearch ? ` of ${sentMasterPhContractorAgreementForms.length}` : ""} forms
+          </span>
+        </div>
+        {masterPhContractorAgreementActionError && (
+          <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{masterPhContractorAgreementActionError}</p>
+        )}
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-white/10 bg-white/5">
+                <SortableTh column="employee" label="Employee" sortColumn={masterPhContractorAgreementSentSortColumn} sortDir={masterPhContractorAgreementSentSortDir} onSort={handleMasterPhContractorAgreementSentSort} />
+                <FilterableTh
+                  column="nationality" label="Nationality"
+                  sortColumn={masterPhContractorAgreementSentSortColumn} sortDir={masterPhContractorAgreementSentSortDir} onSort={handleMasterPhContractorAgreementSentSort}
+                  options={masterPhContractorAgreementFilterOptionsFor("nationality")}
+                  isChecked={(v) => masterPhContractorAgreementIsValueChecked("nationality", v)}
+                  onToggleValue={(v) => masterPhContractorAgreementToggleFilterValue("nationality", v)}
+                  onClear={() => masterPhContractorAgreementClearColumnFilter("nationality")}
+                  isFiltered={masterPhContractorAgreementIsColumnFiltered("nationality")}
+                />
+                <FilterableTh
+                  column="sentBy" label="Sent By"
+                  sortColumn={masterPhContractorAgreementSentSortColumn} sortDir={masterPhContractorAgreementSentSortDir} onSort={handleMasterPhContractorAgreementSentSort}
+                  options={masterPhContractorAgreementFilterOptionsFor("sentBy")}
+                  isChecked={(v) => masterPhContractorAgreementIsValueChecked("sentBy", v)}
+                  onToggleValue={(v) => masterPhContractorAgreementToggleFilterValue("sentBy", v)}
+                  onClear={() => masterPhContractorAgreementClearColumnFilter("sentBy")}
+                  isFiltered={masterPhContractorAgreementIsColumnFiltered("sentBy")}
+                />
+                <FilterableTh
+                  column="status" label="Status"
+                  sortColumn={masterPhContractorAgreementSentSortColumn} sortDir={masterPhContractorAgreementSentSortDir} onSort={handleMasterPhContractorAgreementSentSort}
+                  options={masterPhContractorAgreementFilterOptionsFor("status")}
+                  isChecked={(v) => masterPhContractorAgreementIsValueChecked("status", v)}
+                  onToggleValue={(v) => masterPhContractorAgreementToggleFilterValue("status", v)}
+                  onClear={() => masterPhContractorAgreementClearColumnFilter("status")}
+                  isFiltered={masterPhContractorAgreementIsColumnFiltered("status")}
+                />
+                <SortableTh column="sent" label="Sent" sortColumn={masterPhContractorAgreementSentSortColumn} sortDir={masterPhContractorAgreementSentSortDir} onSort={handleMasterPhContractorAgreementSentSort} />
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sortedSentMasterPhContractorAgreementForms.length === 0 ? (
+                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">{sentMasterPhContractorAgreementForms.length === 0 ? "No requests sent yet." : "No forms match this search/filter."}</td></tr>
+              ) : (
+                sortedSentMasterPhContractorAgreementForms.map((doc) => {
+                  const data = doc.formData as Partial<MasterPhContractorAgreementFormData>;
+                  const recipient = employees.find((e) => e.id === doc.recipientId);
+                  const busy = masterPhContractorAgreementActionBusyId === doc.id;
+                  const awaitingEmployer = isAwaitingEmployerStep(doc);
+                  return (
+                    <tr key={doc.id} className="border-b border-white/5 hover:bg-white/5">
+                      <td className="px-4 py-3 font-medium">
+                        {doc.pdfUrl ? (
+                          <button type="button" onClick={() => setMasterPhContractorAgreementDocPreview(doc)} className="text-blue-300 hover:text-blue-200 hover:underline text-left">
+                            {data.employeeName || recipient?.name || doc.recipientName || "—"}
+                          </button>
+                        ) : (
+                          data.employeeName || recipient?.name || doc.recipientName || "—"
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-muted-foreground">{data.nationality || "—"}</td>
+                      <td className="px-4 py-3 text-muted-foreground">{doc.createdByName ?? "—"}</td>
+                      <td className="px-4 py-3">
+                        <span className={`px-2 py-1 rounded text-xs font-semibold ${
+                          doc.status === "confirmed" ? "bg-green-500/20 text-green-300"
+                          : awaitingEmployer ? "bg-orange-500/20 text-orange-300"
+                          : doc.status === "cancelled" ? "bg-slate-500/20 text-slate-400"
+                          : "bg-yellow-500/20 text-yellow-300"
+                        }`}>
+                          {masterPhContractorAgreementStatusLabel(doc)}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{new Date(doc.createdAt).toLocaleDateString()}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {doc.status === "pending_signature" && doc.recipientSlot === "employee" && (
+                            <button type="button" onClick={() => handleCopyMasterPhContractorAgreementLink(doc)} className="btn text-[10px] px-2 py-1">
+                              Copy Link
+                            </button>
+                          )}
+                          {awaitingEmployer && (
+                            <>
+                              <button type="button" onClick={() => handleOpenMasterPhContractorAgreementEmployerDialog(doc)} className="btn text-[10px] px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white">
+                                Add Employer Signature →
+                              </button>
+                              <button type="button" onClick={() => handleOpenEmployerReassign(doc)} className="btn text-[10px] px-2 py-1">
+                                Send to Employer
+                              </button>
+                            </>
+                          )}
+                          {doc.pdfUrl && (
+                            <button type="button" onClick={() => handleDownloadMasterPhContractorAgreementPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
+                              Download PDF
+                            </button>
+                          )}
+                          {doc.status === "confirmed" && (
+                            <button type="button" onClick={() => handleReopenMasterPhContractorAgreementEmployer(doc)} className="btn text-[10px] px-2 py-1" title="Redo the employer signature — keeps the contractor's original signature">
+                              Re-sign
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => handleDeleteMasterPhContractorAgreement(doc)}
+                            title="Permanently delete this request"
+                            className="text-muted-foreground hover:text-red-300 disabled:opacity-50"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      </>
+      )}
+
+      {masterPhContractorAgreementEmployerDialog && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-800 border border-white/10 rounded-lg p-6 max-w-sm w-full">
+            <h3 className="text-lg font-bold mb-2">Add Employer Signature</h3>
+            <p className="text-sm text-muted-foreground mb-4">
+              Employer representative signature for{" "}
+              <span className="font-semibold text-white">{(masterPhContractorAgreementEmployerDialog.formData as Partial<MasterPhContractorAgreementFormData>).employeeName || "—"}</span>'s
+              Master Philippines Independent Contractor Comprehensive Agreement.
+            </p>
+
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2 block">Add your signature</label>
+            <canvas
+              {...masterPhContractorAgreementEmployerSigPad.canvasProps}
+              className={`bg-white rounded-md border border-white/15 w-full ${masterPhContractorAgreementEmployerSigPad.canvasProps.className}`}
+            />
+            <div className="flex justify-center mt-2">
+              <SignaturePadControls pad={masterPhContractorAgreementEmployerSigPad} />
+            </div>
+
+            {masterPhContractorAgreementEmployerError && (
+              <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2 mt-3">{masterPhContractorAgreementEmployerError}</p>
+            )}
+            <div className="flex gap-2 justify-end mt-4">
+              <button onClick={() => setMasterPhContractorAgreementEmployerDialog(null)} className="btn text-sm px-4 py-2">Cancel</button>
+              <button
+                onClick={handleSaveMasterPhContractorAgreementEmployerSignature}
+                disabled={masterPhContractorAgreementEmployerSaving}
+                className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+              >
+                {masterPhContractorAgreementEmployerSaving ? "Saving…" : "Complete & Sign"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Master PH Contractor Agreement Sent History PDF preview — same inline-frame pattern used for the other Sent History tables */}
+      {masterPhContractorAgreementDocPreview && (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => setMasterPhContractorAgreementDocPreview(null)}>
+          <div className="bg-slate-900 border border-white/10 rounded-lg shadow-2xl w-full max-w-6xl h-[92vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold">{(masterPhContractorAgreementDocPreview.formData as Partial<MasterPhContractorAgreementFormData>).employeeName || "—"}</p>
+                <p className="text-[10px] text-muted-foreground">
+                  {masterPhContractorAgreementDocPreview.status === "confirmed" ? "Completed" : "Submitted"} {new Date(masterPhContractorAgreementDocPreview.signedAt ?? masterPhContractorAgreementDocPreview.createdAt).toLocaleString()}
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                {masterPhContractorAgreementDocPreview.pdfUrl && (
+                  <a href={masterPhContractorAgreementDocPreview.pdfUrl} target="_blank" rel="noopener noreferrer" className="btn text-xs px-2.5 py-1.5 flex items-center gap-1"><Download className="h-3 w-3" /> Download</a>
+                )}
+                <button type="button" onClick={() => setMasterPhContractorAgreementDocPreview(null)} className="btn text-xs px-2.5 py-1.5">Close</button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-hidden bg-slate-950">
+              {masterPhContractorAgreementDocPreview.pdfUrl && <iframe src={masterPhContractorAgreementDocPreview.pdfUrl} title="Master PH Contractor Agreement" className="w-full h-full min-h-[70vh] border-0" />}
             </div>
           </div>
         </div>

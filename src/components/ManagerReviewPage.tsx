@@ -57,6 +57,7 @@ import {
   uploadFlashTechnicianTravelForm,
   uploadMasterW2AgreementForm,
   uploadMasterW2OfficeAgreementForm,
+  uploadMasterPhContractorAgreementForm,
   refreshStorageAuthToken,
 } from "@/lib/firebase/storage";
 import { fillPartsResponsibilityPdf } from "@/lib/partsResponsibilityPdfFill";
@@ -71,6 +72,7 @@ import type { PartsResponsibilityFormData } from "@/lib/partsResponsibilityFormT
 import { captureHtmlToPdfBlob, loadAssetDataUrl } from "@/lib/pdfCapture";
 import { masterW2AgreementStyles, buildMasterW2AgreementBodyMarkup, type MasterW2AgreementFormData } from "@/lib/masterW2AgreementFormTemplate";
 import { masterW2OfficeAgreementStyles, buildMasterW2OfficeAgreementBodyMarkup, type MasterW2OfficeAgreementFormData } from "@/lib/masterW2OfficeAgreementFormTemplate";
+import { masterPhContractorAgreementStyles, buildMasterPhContractorAgreementBodyMarkup, type MasterPhContractorAgreementFormData } from "@/lib/masterPhContractorAgreementFormTemplate";
 import { useSignaturePad } from "@/hooks/useSignaturePad";
 import { SignaturePadControls } from "@/components/SignaturePad";
 import { logActivity } from "@/lib/supabase/hrActivityLog";
@@ -90,6 +92,7 @@ const TYPE_LABEL: Partial<Record<SignableDocumentType, string>> = {
   flash_technician_travel: "Flash Technician Travel & Out-of-State Policy",
   master_w2_agreement: "Master W-2 Technician Comprehensive Policy, Consent & Agreement",
   master_w2_office_agreement: "Master W-2 Office & Logistics Comprehensive Policy, Conduct & Agreement",
+  master_ph_contractor_agreement: "Master Philippines Independent Contractor Comprehensive Agreement",
 };
 
 interface UniformSignConfig {
@@ -112,8 +115,8 @@ const UNIFORM_CONFIGS: Partial<Record<SignableDocumentType, UniformSignConfig>> 
   flash_technician_travel: { employeeSigField: "employeeSignatureDataUrl", fillPdf: fillFlashTechnicianTravelPdf, uploadPdf: uploadFlashTechnicianTravelForm, logAction: "flash_technician_travel_employer_signed", nameFallback: "flash-technician-travel" },
 };
 
-/** Document types this page can complete — see the file header for why i9 isn't here yet. master_w2_agreement/master_w2_office_agreement are HTML-captured (see masterW2AgreementFormTemplate.ts / masterW2OfficeAgreementFormTemplate.ts), not a pdf-lib byte-fill like the UNIFORM_CONFIGS types, so they're handled as their own cases (handleSubmitMasterW2Agreement/handleSubmitMasterW2OfficeAgreement) rather than fitting UniformSignConfig's fillPdf shape. */
-const SUPPORTED_TYPES = new Set<SignableDocumentType>(["parts_responsibility", "master_w2_agreement", "master_w2_office_agreement", ...Object.keys(UNIFORM_CONFIGS) as SignableDocumentType[]]);
+/** Document types this page can complete — see the file header for why i9 isn't here yet. master_w2_agreement/master_w2_office_agreement/master_ph_contractor_agreement are HTML-captured (see masterW2AgreementFormTemplate.ts / masterW2OfficeAgreementFormTemplate.ts / masterPhContractorAgreementFormTemplate.ts), not a pdf-lib byte-fill like the UNIFORM_CONFIGS types, so they're handled as their own cases (handleSubmitMasterW2Agreement/handleSubmitMasterW2OfficeAgreement/handleSubmitMasterPhContractorAgreement) rather than fitting UniformSignConfig's fillPdf shape. */
+const SUPPORTED_TYPES = new Set<SignableDocumentType>(["parts_responsibility", "master_w2_agreement", "master_w2_office_agreement", "master_ph_contractor_agreement", ...Object.keys(UNIFORM_CONFIGS) as SignableDocumentType[]]);
 
 export function ManagerReviewPage({ docId }: Props) {
   const { ready, uid, displayName, role } = useAuth();
@@ -255,6 +258,29 @@ export function ManagerReviewPage({ docId }: Props) {
     setDoc({ ...doc, status: "confirmed", pdfUrl, formData: merged as unknown as Record<string, any> });
   };
 
+  const handleSubmitMasterPhContractorAgreement = async (dataUrl: string) => {
+    if (!doc || !myProfileId) return;
+    await reassignSignableDocument(doc.id, { recipientId: myProfileId, recipientName: displayName || "Manager" }, "hr_staff");
+
+    const existing = doc.formData as MasterPhContractorAgreementFormData;
+    await refreshStorageAuthToken();
+    const signatureUrl = await uploadSignableDocumentSignature(doc.companyId, doc.id, "hr_staff", dataUrl);
+    const signedAt = new Date().toISOString();
+
+    const merged: MasterPhContractorAgreementFormData = { ...existing, employerSignatureDataUrl: dataUrl, employerDateSigned: signedAt };
+
+    const logo = await loadAssetDataUrl(() => import("@/assets/us-in-home-services-logo.png"));
+    const pdfBlob = await captureHtmlToPdfBlob(buildMasterPhContractorAgreementBodyMarkup(merged, logo), masterPhContractorAgreementStyles);
+    const pdfUrl = await uploadMasterPhContractorAgreementForm(doc.companyId, existing.employeeName || "master-ph-contractor-agreement", pdfBlob);
+
+    const entry = { name: displayName || "Manager", url: signatureUrl, signedAt };
+    await signDocument(doc.id, "hr_staff", entry, pdfUrl, merged as unknown as Record<string, any>);
+    await confirmSignableDocument(doc.id, null);
+
+    void logActivity({ action: "master_ph_contractor_agreement_employer_signed", targetType: "employee", targetLabel: existing.employeeName || "" });
+    setDoc({ ...doc, status: "confirmed", pdfUrl, formData: merged as unknown as Record<string, any> });
+  };
+
   const handleSubmit = async () => {
     if (!doc || !myProfileId) return;
     if (!sigPad.hasContent()) {
@@ -275,6 +301,8 @@ export function ManagerReviewPage({ docId }: Props) {
         await handleSubmitMasterW2Agreement(dataUrl);
       } else if (doc.documentType === "master_w2_office_agreement") {
         await handleSubmitMasterW2OfficeAgreement(dataUrl);
+      } else if (doc.documentType === "master_ph_contractor_agreement") {
+        await handleSubmitMasterPhContractorAgreement(dataUrl);
       } else {
         const config = UNIFORM_CONFIGS[doc.documentType];
         if (!config) return;

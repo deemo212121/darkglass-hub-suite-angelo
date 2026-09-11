@@ -52,6 +52,9 @@ export const SIGNABLE_DOCUMENT_REGISTRY: Record<SignableDocumentType, SignableDo
   // Same reasoning as master_w2_agreement above — office recipients are all
   // existing AHS employees, not outside candidates.
   master_w2_office_agreement: { label: "Master W-2 Office Agreement", internalPath: "/fill-master-w2-office-agreement", externalPath: "/fill-master-w2-office-agreement" },
+  // Same reasoning as master_w2_agreement above — PH recipients are all
+  // existing AHS contractors, not outside candidates.
+  master_ph_contractor_agreement: { label: "Master PH Contractor Agreement", internalPath: "/fill-master-ph-contractor-agreement", externalPath: "/fill-master-ph-contractor-agreement" },
 };
 
 export function signableDocumentLabel(type: SignableDocumentType): string {
@@ -119,6 +122,7 @@ export const DOCUMENT_TYPES_REQUIRING_EMPLOYER_SIGNATURE = new Set<SignableDocum
   "w4",
   "master_w2_agreement",
   "master_w2_office_agreement",
+  "master_ph_contractor_agreement",
 ]);
 
 /**
