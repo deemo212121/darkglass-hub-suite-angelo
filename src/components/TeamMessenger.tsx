@@ -45,6 +45,7 @@ import {
   getMyProfileId,
   type ProfileRow,
 } from "@/lib/supabase/users";
+import { isTabVisible, onTabVisible } from "@/lib/pageVisibility";
 
 const CHANNEL_ADMIN_ROLES = ["ADMIN", "SUPERADMIN"];
 
@@ -307,7 +308,8 @@ export function TeamMessenger({ mod, sub }: Props) {
     // time sink in the whole project (top query by total time, ~68k calls)
     // once enough staff had a thread open through the day.
     let lastSeenMessageId: string | null | undefined = undefined; // undefined = baseline not established yet
-    const pollId = window.setInterval(async () => {
+    const pollTick = async () => {
+      if (!isTabVisible()) return;
       try {
         const latest = await peekLatestThreadMessage(
           active.kind === "channel" ? { channelId: active.id } : { dmThreadId: active.id }
@@ -331,12 +333,20 @@ export function TeamMessenger({ mod, sub }: Props) {
           return rows;
         });
       } catch { /* ignore */ }
-    }, 2000);
+    };
+    const pollId = window.setInterval(pollTick, 2000);
+    // Catches up immediately on refocus instead of waiting out the rest of
+    // the interval — see pageVisibility.ts. This is the poll that was once
+    // the #1 query by total time in prod (see comment above), so background
+    // tabs sitting on an open thread all day is exactly the load this exists
+    // to cut.
+    const unsubVisible = onTabVisible(pollTick);
 
     return () => {
       cancelled = true;
       unsubscribe();
       window.clearInterval(pollId);
+      unsubVisible();
     };
   }, [active?.id, active?.kind]); // eslint-disable-line react-hooks/exhaustive-deps
 

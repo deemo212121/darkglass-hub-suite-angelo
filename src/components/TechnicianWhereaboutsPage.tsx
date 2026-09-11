@@ -18,6 +18,7 @@ import { getTechnicianWhereabouts, distinctBranches, LIVE_FRESH_MS, type Technic
 import { getSignableDocuments } from "@/lib/supabase/signableDocuments";
 import { TechnicianDayRouteModal } from "@/components/TechnicianDayRouteModal";
 import { getCompanyMapProvider } from "@/lib/supabase/companySettings";
+import { isTabVisible, onTabVisible } from "@/lib/pageVisibility";
 import {
   getLeaflet,
   loadGoogleMapsScript,
@@ -122,8 +123,12 @@ export function TechnicianWhereaboutsPage({ mod, sub }: { mod: ModuleDef; sub: S
   // against re-querying + re-geocoding on every render.
   useEffect(() => {
     void load();
-    const intervalId = window.setInterval(() => void load(), AUTO_REFRESH_MS);
-    return () => window.clearInterval(intervalId);
+    const poll = () => { if (isTabVisible()) void load(); };
+    const intervalId = window.setInterval(poll, AUTO_REFRESH_MS);
+    // Catches up immediately on refocus instead of waiting out the rest of
+    // the interval — see pageVisibility.ts.
+    const unsubVisible = onTabVisible(() => void load());
+    return () => { window.clearInterval(intervalId); unsubVisible(); };
   }, []);
 
   const branches = useMemo(() => distinctBranches(rows ?? []), [rows]);

@@ -14,6 +14,7 @@ import { getCsrTeamComposition, type CsrTeamComposition } from "@/lib/supabase/c
 import { visibleAttendanceProfileIds } from "@/lib/notifyRouting";
 import { getCompanyTickets, getTicketAuditLog, type TicketAuditEntry } from "@/lib/supabase/tickets";
 import { ROLE_LABELS } from "@/lib/roleLabels";
+import { isTabVisible, onTabVisible } from "@/lib/pageVisibility";
 // Classification lives in lib/ (not here) so lib-side aggregators
 // (universalActivityLog.ts) can use it without a lib -> component import —
 // see ticketActivityBuckets.ts's own header comment. Re-exported for
@@ -283,10 +284,17 @@ export function DailyActivityPage({
   useEffect(() => {
     if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; }
     const minutes = parseInt(autoRefresh, 10);
+    let unsubVisible: (() => void) | null = null;
     if (minutes > 0) {
-      intervalRef.current = setInterval(() => { load(); }, minutes * 60 * 1000);
+      intervalRef.current = setInterval(() => { if (isTabVisible()) load(); }, minutes * 60 * 1000);
+      // Catches up immediately on refocus instead of waiting out the rest
+      // of the interval — see pageVisibility.ts.
+      unsubVisible = onTabVisible(() => load());
     }
-    return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
+    return () => {
+      if (intervalRef.current) clearInterval(intervalRef.current);
+      if (unsubVisible) unsubVisible();
+    };
   }, [autoRefresh, load]);
 
   const userTypeOptions = useMemo(

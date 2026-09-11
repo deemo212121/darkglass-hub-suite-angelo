@@ -13,6 +13,7 @@
 import { useEffect, useRef, useState } from "react";
 import { CalendarDays, Check, CheckCheck, CheckCircle2, ImagePlus, MessageCircle, Phone, Send, ShieldCheck, X } from "lucide-react";
 import { LOCATIONS } from "@/lib/locations";
+import { isTabVisible, onTabVisible } from "@/lib/pageVisibility";
 
 const CALLBACK_PREFERENCE_LABELS: Record<string, string> = { now: "Now", "30min": "In 30 minutes", tomorrow: "Tomorrow" };
 // "custom" has no fixed label — the customer types their own preferred time,
@@ -179,6 +180,7 @@ export function LiveChatWidget() {
     if (phase !== "chat" || !sessionId) return;
     let cancelled = false;
     const tick = async () => {
+      if (cancelled || !isTabVisible()) return;
       try {
         const data = await pollLiveChat(sessionId);
         if (cancelled) return;
@@ -191,9 +193,13 @@ export function LiveChatWidget() {
     };
     void tick();
     const interval = setInterval(tick, POLL_INTERVAL_MS);
+    // Catches up immediately on refocus instead of waiting out the rest of
+    // the interval — see pageVisibility.ts.
+    const unsubVisible = onTabVisible(tick);
     return () => {
       cancelled = true;
       clearInterval(interval);
+      unsubVisible();
     };
   }, [phase, sessionId]);
 

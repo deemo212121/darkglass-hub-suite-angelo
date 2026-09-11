@@ -40,6 +40,7 @@ import { hasConfirmedLocationConsent, upsertMyLocationPing, clearMyLocationPing 
 import { setLocationSharingStatus } from "@/lib/locationSharingStatus";
 import { useLiveLocation } from "@/lib/liveLocationContext";
 import { TECHNICIAN_PAY_ROLES, normalizeRole } from "@/lib/roleLabels";
+import { isTabVisible, onTabVisible } from "@/lib/pageVisibility";
 
 // Routine tracing -- "not eligible" fires on every load for every
 // non-technician account (Admin/CSR/HR/SUPERADMIN...), which is the normal,
@@ -133,13 +134,19 @@ export function TechnicianLocationTracker() {
     };
 
     check();
-    const interval = window.setInterval(check, POLL_MS);
-    document.addEventListener("visibilitychange", check);
+    // visibilitychange is handled by onTabVisible below (also gates the
+    // interval itself, which used to keep ticking every POLL_MS in every
+    // background tab). focus stays as a belt-and-suspenders extra — it
+    // catches a same-tab-visible-different-window-focus edge case
+    // visibilitychange alone won't (e.g. alt-tabbing between two windows on
+    // a multi-monitor setup without the document itself losing visibility).
+    const interval = window.setInterval(() => { if (isTabVisible()) check(); }, POLL_MS);
+    const unsubVisible = onTabVisible(check);
     window.addEventListener("focus", check);
     return () => {
       cancelled = true;
       window.clearInterval(interval);
-      document.removeEventListener("visibilitychange", check);
+      unsubVisible();
       window.removeEventListener("focus", check);
     };
   }, [armed, profileId]);

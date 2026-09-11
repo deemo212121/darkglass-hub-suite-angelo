@@ -98,6 +98,7 @@ import { FrozenAccountModal } from "@/components/FrozenAccountModal";
 import { TraineeAttendanceMobileModal } from "@/components/mobile/TraineeAttendanceMobileModal";
 import { MobileTicketAttendanceView } from "@/components/mobile/MobileTicketAttendanceView";
 import { AnnouncementsPage } from "@/components/AnnouncementsPage";
+import { isTabVisible, onTabVisible } from "@/lib/pageVisibility";
 import {
   parseServicePerformed,
   composeServicePerformed,
@@ -416,6 +417,7 @@ export function MobileTechApp() {
     if (!profileId) return;
     let cancelled = false;
     const refresh = () => {
+      if (!isTabVisible()) return;
       getUnreadCounts(profileId)
         .then((counts) => {
           if (!cancelled) setUnreadDmCount(Object.values(counts.perDm).reduce((a, b) => a + b, 0));
@@ -424,7 +426,10 @@ export function MobileTechApp() {
     };
     refresh();
     const intervalId = window.setInterval(refresh, 30000);
-    return () => { cancelled = true; window.clearInterval(intervalId); };
+    // Catches up immediately on refocus instead of waiting out the rest of
+    // the interval — see pageVisibility.ts.
+    const unsubVisible = onTabVisible(refresh);
+    return () => { cancelled = true; window.clearInterval(intervalId); unsubVisible(); };
   }, [profileId]);
 
   // Persist the mobile tech-app navigation state across page reloads.
@@ -4203,6 +4208,7 @@ function ChatView({ firebaseUid, authorName }: { firebaseUid: string; authorName
     // is the fast path, this is just the fallback.
     let lastPeekedId: string | null = null;
     const poll = async () => {
+      if (cancelled || !isTabVisible()) return;
       try {
         const top = await peekLatestThreadMessage({ dmThreadId: thread.id });
         if (top?.id === lastPeekedId) return;
@@ -4214,10 +4220,14 @@ function ChatView({ firebaseUid, authorName }: { firebaseUid: string; authorName
       }
     };
     const intervalId = window.setInterval(poll, 5000);
+    // Catches up immediately on refocus instead of waiting out the rest of
+    // the interval — see pageVisibility.ts.
+    const unsubVisible = onTabVisible(poll);
     return () => {
       cancelled = true;
       window.clearInterval(intervalId);
       unsub && unsub();
+      unsubVisible();
     };
   }, [thread]);
 

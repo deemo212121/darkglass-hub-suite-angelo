@@ -38,6 +38,7 @@ import { getCompanyUsers } from "@/lib/supabase/users";
 import { resolveTeamLeadOrManager } from "@/lib/notifyRouting";
 import { getCompanyPtoRequests } from "@/lib/supabase/pto";
 import { getServerNow, zonedDateKey, zonedTimeString, type ScheduleTimezone } from "@/lib/serverTime";
+import { isTabVisible, onTabVisible } from "@/lib/pageVisibility";
 
 const EMPTY_ENTRY: UITimeEntry = { checkIn: "", checkOut: "", mealStart: "", mealEnd: "", notes: "" };
 
@@ -182,13 +183,19 @@ export function TimeClockButtons() {
     const check = () => {
       if (todayKey() !== loadedDateKeyRef.current) loadToday(profileId);
     };
-    document.addEventListener("visibilitychange", check);
+    // visibilitychange is handled by onTabVisible below (also gates the
+    // interval itself, which used to keep ticking every 60s in every
+    // background tab). focus stays as a belt-and-suspenders extra — it
+    // catches a same-tab-visible-different-window-focus edge case
+    // visibilitychange alone won't (e.g. alt-tabbing between two windows on
+    // a multi-monitor setup without the document itself losing visibility).
     window.addEventListener("focus", check);
-    const interval = setInterval(check, 60000);
+    const interval = setInterval(() => { if (isTabVisible()) check(); }, 60000);
+    const unsubVisible = onTabVisible(check);
     return () => {
-      document.removeEventListener("visibilitychange", check);
       window.removeEventListener("focus", check);
       clearInterval(interval);
+      unsubVisible();
     };
   }, [profileId]);
 

@@ -44,6 +44,7 @@ import { LOCATIONS } from "@/lib/locations";
 import { getCsrTeamComposition, type CsrTeamMemberRow } from "@/lib/supabase/csrTeams";
 import { createNotification } from "@/lib/supabase/notifications";
 import { hasDashboardAccess } from "@/lib/dashboardAccess";
+import { isTabVisible, onTabVisible } from "@/lib/pageVisibility";
 import {
   addLiveChatInternalNote,
   assistLiveChatSession,
@@ -359,17 +360,21 @@ export function LiveChatSupportPage({ mod, sub }: Props) {
     // where something actually changed — realtime is the fast path, this is
     // just the safety net for tenants without it enabled.
     let lastSignature: string | null = null;
-    const pollId = window.setInterval(async () => {
+    const pollTick = async () => {
+      if (!isTabVisible()) return;
       try {
         const sig = await peekLiveChatSessionsSignature();
         if (sig === lastSignature) return;
         lastSignature = sig;
         loadSessions();
       } catch { /* ignore */ }
-    }, 5000);
+    };
+    const pollId = window.setInterval(pollTick, 5000);
+    const unsubVisible = onTabVisible(pollTick);
     return () => {
       unsubscribe();
       window.clearInterval(pollId);
+      unsubVisible();
     };
   }, []);
 
@@ -402,19 +407,22 @@ export function LiveChatSupportPage({ mod, sub }: Props) {
     // calling it unconditionally every 4s was writing to the DB that often
     // regardless of whether anything was actually new.
     let lastPeekedId: string | null = null;
-    const pollId = window.setInterval(async () => {
-      if (cancelled) return;
+    const pollTick = async () => {
+      if (cancelled || !isTabVisible()) return;
       try {
         const id = await peekLatestLiveChatMessageId(activeId);
         if (id === lastPeekedId) return;
         lastPeekedId = id;
         refetch();
       } catch { /* ignore */ }
-    }, 4000);
+    };
+    const pollId = window.setInterval(pollTick, 4000);
+    const unsubVisible = onTabVisible(pollTick);
     return () => {
       cancelled = true;
       unsubscribe();
       window.clearInterval(pollId);
+      unsubVisible();
     };
   }, [activeId]);
 
