@@ -331,7 +331,7 @@ export async function handleGmailRequest(request: Request, env?: Record<string, 
   // query string — naively appending "?gmailConnected=..." after it would
   // produce an invalid double-"?" URL.
   const returnUrlFor = (origin: string, region: Region, extraParams: Record<string, string>) => {
-    const path = region === "ATTENDANCE" ? "/m/dashboard/attendance-monitoring" : "/m/dashboard/accounting-dashboard";
+    const path = region === "ATTENDANCE" ? "/m/dashboard/attendance-monitoring" : "/m/accounting/accounting-dashboard";
     const u = new URL(path, origin);
     if (region === "ATTENDANCE") u.searchParams.set("tab", "settings");
     for (const [k, v] of Object.entries(extraParams)) u.searchParams.set(k, v);

@@ -39,7 +39,12 @@ export function canAccessSubmodule(
   if (isFrozen && !isSubmoduleAllowedForFrozen(isFrozen, moduleSlug, sub.slug)) return false;
 
   const explicitModuleOverride = getModuleRoleGate(moduleSlug, sub.slug);
-  const moduleAllowedRoles = (moduleSlug === "dashboard" || moduleSlug === "hr") ? getDashboardRoleGate(sub.slug) : explicitModuleOverride;
+  // Kept in sync with m.$module.$submodule.tsx's identical moduleAllowedRoles
+  // line — "accounting" is included alongside "dashboard"/"hr" so
+  // accounting-dashboard's hardcoded ADMIN/FINANCE default still applies
+  // here (the floating quick-nav) even though it moved out of the
+  // Dashboard module into its own Accounting module (see modules.ts).
+  const moduleAllowedRoles = (moduleSlug === "dashboard" || moduleSlug === "hr" || moduleSlug === "accounting") ? getDashboardRoleGate(sub.slug) : explicitModuleOverride;
 
   if (!explicitModuleOverride && !isSubmoduleAllowed(role, moduleSlug, sub.slug, extraRoles)) return false;
 

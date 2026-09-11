@@ -217,6 +217,122 @@ export function resolveScheduledNetHours(
 }
 
 /**
+ * Total scheduled ("duty") hours across every day in [periodStart,
+ * periodEnd] that isn't one of the employee's own off days — the
+ * period-level threshold payroll calculators split actual worked hours
+ * against: regular = min(totalRawHours, duty), overtime = max(0,
+ * totalRawHours - duty). This replaced capping each day at a flat 8 hours
+ * independently and summing THOSE — a single long day used to generate
+ * "overtime" on its own even when the employee was still behind on hours
+ * from an earlier short day in the same period, which double-counted nothing
+ * but overstated overtime pay relative to what was actually owed. Returns 0
+ * when there's no configured schedule to derive hours from (no
+ * required_check_in/check_out and no working_hours override) or no period
+ * given — callers should fall back to the old per-day cap in that case
+ * rather than silently zeroing out overtime for someone with no schedule on
+ * file.
+ */
+export function computeScheduledDutyHours(
+  requiredCheckIn: string,
+  requiredCheckOut: string,
+  workingHours: number | null | undefined,
+  mealMinutes: number | null | undefined,
+  offDays: number[] | null | undefined,
+  periodStart: string,
+  periodEnd: string
+): number {
+  if (!periodStart || !periodEnd) return 0;
+  const netHours = resolveScheduledNetHours(requiredCheckIn, requiredCheckOut, workingHours, mealMinutes);
+  if (netHours <= 0) return 0;
+  const offDaySet = new Set(offDays ?? []);
+  let total = 0;
+  for (let d = new Date(`${periodStart}T00:00:00`); d <= new Date(`${periodEnd}T00:00:00`); d.setDate(d.getDate() + 1)) {
+    if (!offDaySet.has(d.getDay())) total += netHours;
+  }
+  return total;
+}
+
+/** YYYY-MM-DD of the Sunday that starts the calendar week containing `dateStr`. */
+export function startOfWeekSunday(dateStr: string): string {
+  const d = new Date(`${dateStr}T00:00:00`);
+  d.setDate(d.getDate() - d.getDay());
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function addDaysISO(dateStr: string, days: number): string {
+  const d = new Date(`${dateStr}T00:00:00`);
+  d.setDate(d.getDate() + days);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/**
+ * Splits a chronological run of per-day worked hours into regular vs.
+ * overtime, resetting the overtime threshold every calendar week (Sunday
+ * through Saturday) instead of pooling a whole (possibly multi-week) query
+ * range into one cap. Two things go wrong without this: (1) a shortfall in
+ * one week of a multi-week payroll period would silently "absorb" real
+ * overtime earned in another week, since a flat period-wide cap only cares
+ * about the total; (2) a caller viewing a sub-range that starts mid-week
+ * (e.g. Thursday through Saturday) would compute that sub-range's own tiny
+ * duty cap from scratch, ignoring that the week's regular-hours quota may
+ * already have been used up earlier in the week, outside the viewed range.
+ *
+ * `days` must span from the Sunday that starts the first day you want a
+ * result for, through the last day you want a result for — a caller that
+ * only wants to DISPLAY a narrower sub-range (e.g. this modal's freely
+ * adjustable Start/End pickers) still needs to pass the wider, week-aligned
+ * array so earlier same-week days can seed the running total; it just
+ * ignores/discards result entries for dates before its own display start.
+ * Returns a map of every input date to that day's {regular, overtime} split.
+ */
+export function splitRegularOvertimeWeekly(
+  days: { date: string; rawHours: number }[],
+  schedule: {
+    requiredCheckIn?: string | null;
+    requiredCheckOut?: string | null;
+    workingHours?: number | null;
+    mealMinutes?: number | null;
+    offDays?: number[] | null;
+  },
+  fallbackRegularHoursPerDay = 8
+): Map<string, { regular: number; overtime: number }> {
+  const result = new Map<string, { regular: number; overtime: number }>();
+  const sorted = [...days].sort((a, b) => a.date.localeCompare(b.date));
+  let currentWeekStart = "";
+  let weekDuty = 0;
+  let cumulativeRaw = 0;
+  for (const { date, rawHours } of sorted) {
+    const weekStart = startOfWeekSunday(date);
+    if (weekStart !== currentWeekStart) {
+      currentWeekStart = weekStart;
+      weekDuty = computeScheduledDutyHours(
+        schedule.requiredCheckIn || "",
+        schedule.requiredCheckOut || "",
+        schedule.workingHours,
+        schedule.mealMinutes,
+        schedule.offDays,
+        weekStart,
+        addDaysISO(weekStart, 6)
+      );
+      cumulativeRaw = 0;
+    }
+    let regular: number;
+    let overtime: number;
+    if (weekDuty > 0) {
+      const before = cumulativeRaw;
+      cumulativeRaw += rawHours;
+      regular = Math.max(0, Math.min(cumulativeRaw, weekDuty) - before);
+      overtime = rawHours - regular;
+    } else {
+      regular = Math.min(rawHours, fallbackRegularHoursPerDay);
+      overtime = Math.max(0, rawHours - fallbackRegularHoursPerDay);
+    }
+    result.set(date, { regular, overtime });
+  }
+  return result;
+}
+
+/**
  * Load all timecard entries for a profile in a given month.
  * @param profileId the logged-in user's profile id
  * @param year e.g. 2026

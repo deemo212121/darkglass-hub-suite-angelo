@@ -7135,7 +7135,7 @@ function MobilePayrollDisputeView({
       });
       void notifyRequestReviewers({
         body: `💰 New Payroll Dispute from ${userName} (${payPeriod.trim()}).`,
-        linkTo: "/m/dashboard/accounting-dashboard?tab=payrollDisputes",
+        linkTo: "/m/accounting/accounting-dashboard?tab=payrollDisputes",
         senderId: profileId,
         senderName: userName,
       });
@@ -7690,7 +7690,7 @@ function MobileTicketTimeDisputeView({ userName, profileId, companyId, technicia
       });
       void notifyRequestReviewers({
         body: `⚠️ New Ticket Time Dispute from ${userName} (Ticket ${ticketNo}).`,
-        linkTo: "/m/dashboard/accounting-dashboard?tab=ticketTimeDisputes",
+        linkTo: "/m/accounting/accounting-dashboard?tab=ticketTimeDisputes",
         senderId: profileId,
         senderName: userName,
       });

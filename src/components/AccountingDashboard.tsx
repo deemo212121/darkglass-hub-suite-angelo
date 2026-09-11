@@ -7,8 +7,6 @@ import {
   ChevronLeft,
   DollarSign,
   TrendingUp,
-  PieChart as PieChartIcon,
-  BarChart3,
   FileText,
   LogOut,
   RefreshCw,
@@ -33,24 +31,20 @@ import {
   Pencil,
   Check,
   ExternalLink,
+  History,
+  Search,
+  Building2,
 } from "lucide-react";
-import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  Tooltip,
-  ResponsiveContainer,
-  Legend,
-} from "recharts";
 import * as XLSX from "xlsx";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { supabase } from "@/lib/supabase/client";
+import { LOCATIONS } from "@/lib/locations";
+import { getBranchRates, upsertBranchRate, type BranchRate } from "@/lib/supabase/branchRates";
 import { EmployeePayrollDetailModal } from "@/components/EmployeePayrollDetailModal";
 import { getRepairStatuses, type RepairStatus } from "@/lib/supabase/repairStatuses";
 import { TicketColumnFilter } from "@/components/TicketColumnFilter";
 import { getRoleDepartmentBreakdown, normalizeRole, TECHNICIAN_PAY_ROLES } from "@/lib/roleLabels";
-import { calcWorkedHours, getMyProfileSchedule, resolveScheduledNetHours, getAttendanceForRange } from "@/lib/supabase/timecards";
+import { calcWorkedHours, getMyProfileSchedule, resolveScheduledNetHours, computeScheduledDutyHours, getAttendanceForRange, startOfWeekSunday, splitRegularOvertimeWeekly } from "@/lib/supabase/timecards";
 import { payGraceMinutesFor, applyGraceToCheckIn, roundCheckOutToSchedule } from "@/lib/attendanceGrace";
 import { updatePayrollLineItemExtra, updatePayrollLineItemPaid } from "@/lib/supabase/payslips";
 import { getEmployeeInfoByProfileIds, getCompanyUsers, getTechnicianContactInfoByIds, type EmployeeInfo } from "@/lib/supabase/users";
@@ -99,7 +93,7 @@ import { listTicketPhotos, hasTicketPhotos, type TicketPhoto } from "@/lib/fireb
 import { captureHtmlToPdfBlob, blobToBase64 } from "@/lib/pdfCapture";
 import { renderPayslipBodyHtml, PAYSLIP_STYLES, formatClockTime, offDaysInRange, ptoDaysInRange, type PayslipDailyRow, type EmployeePayslipData } from "@/lib/payslipTemplate";
 import { ActivityLogPanel } from "@/components/ActivityLogPanel";
-import { logModuleActivity } from "@/lib/supabase/moduleActivityLog";
+import { logModuleActivity, getModuleActivityLog, moduleActivityActionLabel, type ModuleActivityLogEntry } from "@/lib/supabase/moduleActivityLog";
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 // PH employees are paid in PHP; this converts their PHP-denominated rate into
@@ -299,14 +293,6 @@ export interface EmployeePayrollRow {
   isTechPortion?: boolean;
 }
 
-interface MonthlyBarData {
-  month: string;
-  usOfficePayroll: number;
-  usTechPayroll: number;
-  phPayroll: number;
-  total: number;
-}
-
 // ─── Helper ──────────────────────────────────────────────────────────────────
 // Weekends are off days — a period should never end on one (nothing worked
 // there anyway), so roll back to the Friday before.
@@ -338,22 +324,62 @@ function rollBackToWeekday(d: Date): Date {
 // for PAID hours (not the raw punch — see attendanceGrace.ts): PH 5 min, US
 // office 15 min, Technicians none (commission-based). Clock-out is never
 // grace-adjusted — only lateness at the start of a shift is forgiven.
+/**
+ * Duty hours per employee for [periodStart, periodEnd], computed ONCE and
+ * shared by computeHoursMap's regular/overtime split and the "Duty Hours"
+ * display column below — both must agree on the exact same number for the
+ * same employee/period, so there is deliberately only one call site for
+ * computeDutyHours per render instead of two separate ones that could in
+ * principle read a stale/different `emp` object and silently disagree.
+ */
+function computeDutyHoursByEmployee(
+  employees: SupabaseEmployee[],
+  periodStart: string,
+  periodEnd: string
+): Map<string, number> {
+  const map = new Map<string, number>();
+  for (const emp of employees) {
+    map.set(emp.id, computeDutyHours(emp, periodStart, periodEnd));
+  }
+  return map;
+}
+
 function computeHoursMap(
   entries: TimecardEntry[],
   employees: SupabaseEmployee[],
   ptoRequests: PtoRequestRow[],
   periodStart: string,
-  periodEnd: string
+  periodEnd: string,
+  dutyHoursByEmployeeId: Map<string, number>,
+  // Same-shape rows from the partial calendar week BEFORE periodStart (empty
+  // when periodStart is already a Sunday) — used ONLY to seed the weekly
+  // overtime carry-over below, never counted into this employee's own
+  // regular/overtime totals themselves (those stay scoped to the real
+  // period). See weekSeedTimecardEntries at its call site.
+  seedEntries: TimecardEntry[] = []
 ): Map<string, { regular: number; overtime: number }> {
   const hoursMap = new Map<string, { regular: number; overtime: number }>();
   const punchedDates = new Map<string, Set<string>>();
   const employeeById = new Map(employees.map((e) => [e.id, e]));
-  for (const tc of entries) {
+
+  // Raw (uncapped) worked hours per employee PER DAY (not just a period
+  // total) — needed so the split below can reset the overtime threshold at
+  // every calendar week boundary instead of pooling the whole (possibly
+  // multi-week) period into one cap. Also keeps the old flat per-day-capped
+  // total as a fallback ONLY for someone with no schedule configured at all
+  // (computeDutyHours returns 0 for them), so a missing schedule doesn't
+  // just silently drop all their overtime.
+  const rawByEmployeeDate = new Map<string, Map<string, number>>();
+  const legacyDailyCapByEmployee = new Map<string, { regular: number; overtime: number }>();
+  for (const tc of [...seedEntries, ...entries]) {
     const key = tc.profile_id || tc.employee_id;
     if (!key || !tc.check_in || !tc.check_out) continue;
-    const dates = punchedDates.get(key) ?? new Set<string>();
-    dates.add(tc.work_date);
-    punchedDates.set(key, dates);
+    const isSeedRow = tc.work_date < periodStart;
+    if (!isSeedRow) {
+      const dates = punchedDates.get(key) ?? new Set<string>();
+      dates.add(tc.work_date);
+      punchedDates.set(key, dates);
+    }
     const emp = employeeById.get(key);
     const graceMinutes = emp ? payGraceMinutesFor(emp.country) : 0;
     const paidCheckIn = emp?.requiredCheckIn
@@ -369,10 +395,51 @@ function computeHoursMap(
       mealEnd: tc.meal_end || "",
       notes: "",
     });
-    const reg = Math.min(hours, REGULAR_HOURS_PER_DAY);
-    const ot = Math.max(0, hours - REGULAR_HOURS_PER_DAY);
-    const prev = hoursMap.get(key) ?? { regular: 0, overtime: 0 };
-    hoursMap.set(key, { regular: prev.regular + reg, overtime: prev.overtime + ot });
+    const byDate = rawByEmployeeDate.get(key) ?? new Map<string, number>();
+    byDate.set(tc.work_date, (byDate.get(tc.work_date) ?? 0) + hours);
+    rawByEmployeeDate.set(key, byDate);
+    if (!isSeedRow) {
+      const prevLegacy = legacyDailyCapByEmployee.get(key) ?? { regular: 0, overtime: 0 };
+      legacyDailyCapByEmployee.set(key, {
+        regular: prevLegacy.regular + Math.min(hours, REGULAR_HOURS_PER_DAY),
+        overtime: prevLegacy.overtime + Math.max(0, hours - REGULAR_HOURS_PER_DAY),
+      });
+    }
+  }
+
+  // Split each employee's daily hours against their OWN calendar week's duty
+  // total, resetting at every Sunday (splitRegularOvertimeWeekly) — regular
+  // is whatever of a week's worked hours fits under that week's duty total,
+  // overtime is only the excess beyond it. A day where someone works 12-16
+  // hours no longer generates overtime on its own while they're still behind
+  // on hours from an earlier short day in the SAME WEEK (the old per-day
+  // 8-hour cap did exactly that); and a shortfall in one week of a
+  // multi-week period can no longer "absorb" real overtime earned in
+  // another week the way a single flat period-wide cap used to (see the
+  // user reports this fix was made for).
+  for (const [key, byDate] of rawByEmployeeDate) {
+    const duty = dutyHoursByEmployeeId.get(key) ?? 0;
+    if (duty <= 0) {
+      hoursMap.set(key, legacyDailyCapByEmployee.get(key) ?? { regular: 0, overtime: 0 });
+      continue;
+    }
+    const emp = employeeById.get(key);
+    const days = [...byDate.entries()].map(([date, rawHours]) => ({ date, rawHours }));
+    const split = splitRegularOvertimeWeekly(days, {
+      requiredCheckIn: emp?.requiredCheckIn,
+      requiredCheckOut: emp?.requiredCheckOut,
+      workingHours: emp?.workingHours,
+      mealMinutes: emp?.mealMinutes,
+      offDays: emp?.offDays,
+    });
+    let regular = 0;
+    let overtime = 0;
+    for (const [date, hrs] of split) {
+      if (date < periodStart || date > periodEnd) continue;
+      regular += hrs.regular;
+      overtime += hrs.overtime;
+    }
+    hoursMap.set(key, { regular, overtime });
   }
 
   if (!periodStart || !periodEnd) return hoursMap;
@@ -405,15 +472,8 @@ function computeHoursMap(
 // attendance at a glance, independent of whether those hours were
 // actually punched.
 function computeDutyHours(emp: SupabaseEmployee | undefined, periodStart: string, periodEnd: string): number {
-  if (!emp || !periodStart || !periodEnd) return 0;
-  const netHours = resolveScheduledNetHours(emp.requiredCheckIn || "", emp.requiredCheckOut || "", emp.workingHours, emp.mealMinutes);
-  if (netHours <= 0) return 0;
-  const offDays = new Set(emp.offDays ?? []);
-  let total = 0;
-  for (let d = new Date(`${periodStart}T00:00:00`); d <= new Date(`${periodEnd}T00:00:00`); d.setDate(d.getDate() + 1)) {
-    if (!offDays.has(d.getDay())) total += netHours;
-  }
-  return total;
+  if (!emp) return 0;
+  return computeScheduledDutyHours(emp.requiredCheckIn || "", emp.requiredCheckOut || "", emp.workingHours, emp.mealMinutes, emp.offDays, periodStart, periodEnd);
 }
 
 // Attendance rows with a clock-in but no clock-out — payroll can't trust
@@ -529,6 +589,18 @@ function fmt(amount: number) {
   return `$${amount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
+// Badge color for the Activity Logs tab — same heuristic
+// HrActivityLogPanel.tsx's ACTION_BADGE_COLOR uses, adapted to this
+// module's own action vocabulary (payroll_run_generated, payslip_sent,
+// gmail_connected/disconnected, mileage_ticket_payroll_hold/unhold,
+// mileage_photo_reminder_sent).
+function ACCOUNTING_ACTION_BADGE_COLOR(action: string): string {
+  if (action.includes("disconnected") || (action.includes("hold") && !action.includes("unhold"))) return "bg-red-500/20 text-red-300 border-red-500/30";
+  if (action.includes("connected") || action.includes("sent") || action.includes("generated") || action.includes("unhold")) return "bg-green-500/20 text-green-300 border-green-500/30";
+  if (action.includes("regenerated")) return "bg-yellow-500/20 text-yellow-300 border-yellow-500/30";
+  return "bg-blue-500/20 text-blue-300 border-blue-500/30";
+}
+
 // Per-status color for the Mileage tab's Status column — sourced from the
 // Admin > Repair Statuses module's own admin-configured rows (real
 // Supabase-backed config, repairStatuses.ts) instead of a separate
@@ -588,18 +660,22 @@ function parseGmailRegionParam(value: string | null): GmailRegion {
   return value === "PH" ? "PH" : "US";
 }
 
-type AccountingDashboardTabId = "overview" | "payroll" | "mileage" | "payrollDisputes" | "reports" | "flashTech" | "ticketAttendance" | "ticketTimeDisputes";
+type AccountingDashboardTabId = "overview" | "payroll" | "mileage" | "payrollDisputes" | "reports" | "flashTech" | "ticketAttendance" | "ticketTimeDisputes" | "branchRates";
 // Shared by the top tab row and the floating left quick-nav so the two
 // never drift out of sync.
-const ACCOUNTING_DASHBOARD_TABS: { id: AccountingDashboardTabId; label: string; Icon: typeof PieChartIcon }[] = [
+const ACCOUNTING_DASHBOARD_TABS: { id: AccountingDashboardTabId; label: string; Icon: typeof History }[] = [
   { id: "flashTech", label: "Flash Tech", Icon: RouteIcon },
   { id: "mileage", label: "Mileage", Icon: MapPin },
   { id: "payroll", label: "Office Payroll", Icon: DollarSign },
-  { id: "overview", label: "Overview", Icon: PieChartIcon },
   { id: "payrollDisputes", label: "Payroll Disputes", Icon: AlertCircle },
   { id: "reports", label: "Reports", Icon: FileText },
   { id: "ticketAttendance", label: "Ticket Attendance", Icon: FileText },
+  { id: "branchRates", label: "Branch Rates", Icon: Building2 },
   { id: "ticketTimeDisputes", label: "Ticket Time Disputes", Icon: Clock },
+  // Kept the label "Overview" (not "Report") since the Reports tab above
+  // already owns that name — this one moved last because its content now
+  // covers every other tab's headline numbers, not just payroll's.
+  { id: "overview", label: "Activity Logs", Icon: History },
 ];
 
 // ─── Component ───────────────────────────────────────────────────────────────
@@ -633,7 +709,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   };
   const [activeTab, setActiveTab] = usePersistedTab<AccountingDashboardTabId>(
     "ahs:accounting-dashboard-active-tab",
-    ["overview", "payroll", "mileage", "payrollDisputes", "flashTech", "reports", "ticketAttendance", "ticketTimeDisputes"],
+    ["overview", "payroll", "mileage", "payrollDisputes", "flashTech", "reports", "ticketAttendance", "ticketTimeDisputes", "branchRates"],
     "overview",
   );
   // Deep link from a bell-icon notification straight into the Payroll
@@ -666,6 +742,83 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       .finally(() => setPayrollDisputesLoading(false));
   }, [activeTab, payrollDisputesLoaded]);
   const [payrollDisputesSubTab, setPayrollDisputesSubTab] = useState<"pending" | "approved">("pending");
+
+  // Activity Logs tab — every module_activity_log row for "accounting"
+  // (payroll runs generated, payslips sent, mileage holds toggled, Gmail
+  // connects), same rows ActivityLogPanel's modal already shows on the
+  // Payroll tab, surfaced here as this dashboard's own version of
+  // HrActivityLogPanel.tsx. Lazy-loaded only once the tab is actually opened.
+  const [accountingActivityLog, setAccountingActivityLog] = useState<ModuleActivityLogEntry[]>([]);
+  const [accountingActivityLoading, setAccountingActivityLoading] = useState(false);
+  const [accountingActivityLoaded, setAccountingActivityLoaded] = useState(false);
+  useEffect(() => {
+    if (activeTab !== "overview" || accountingActivityLoaded) return;
+    setAccountingActivityLoading(true);
+    getModuleActivityLog("accounting", 500)
+      .then((rows) => { setAccountingActivityLog(rows); setAccountingActivityLoaded(true); })
+      .catch((err) => console.error("Failed to load accounting activity log:", err))
+      .finally(() => setAccountingActivityLoading(false));
+  }, [activeTab, accountingActivityLoaded]);
+  const [activityLogSearch, setActivityLogSearch] = useState("");
+  const [activityLogActorFilter, setActivityLogActorFilter] = useState("");
+  const [activityLogActionFilter, setActivityLogActionFilter] = useState("");
+  const [activityLogFrom, setActivityLogFrom] = useState("");
+  const [activityLogTo, setActivityLogTo] = useState("");
+
+  // Branch Rates tab — one reference $ rate per branch (migration 0245),
+  // seeded from the full canonical branch list (LOCATIONS) rather than only
+  // branches with a saved row yet, so every branch shows up even before
+  // Finance has touched it. Lazy-loaded only once the tab is opened.
+  const [branchRatesByName, setBranchRatesByName] = useState<Map<string, BranchRate>>(new Map());
+  const [branchRatesLoading, setBranchRatesLoading] = useState(false);
+  const [branchRatesLoaded, setBranchRatesLoaded] = useState(false);
+  const [branchRateSaving, setBranchRateSaving] = useState<string | null>(null);
+  const [branchRateSearch, setBranchRateSearch] = useState("");
+  useEffect(() => {
+    if (activeTab !== "branchRates" || branchRatesLoaded) return;
+    setBranchRatesLoading(true);
+    getBranchRates()
+      .then((rows) => {
+        setBranchRatesByName(new Map(rows.map((r) => [r.branch, r])));
+        setBranchRatesLoaded(true);
+      })
+      .catch((err) => console.error("Failed to load branch rates:", err))
+      .finally(() => setBranchRatesLoading(false));
+  }, [activeTab, branchRatesLoaded]);
+  const handleBranchRateBlur = async (branch: string, value: string) => {
+    const rate = Number(value.replace(/[^\d.]/g, "")) || 0;
+    if ((branchRatesByName.get(branch)?.rate ?? 0) === rate) return;
+    setBranchRateSaving(branch);
+    try {
+      await upsertBranchRate(branch, rate);
+      setBranchRatesByName((prev) => {
+        const next = new Map(prev);
+        const existing = next.get(branch);
+        next.set(branch, { id: existing?.id ?? branch, branch, rate, updatedAt: new Date().toISOString() });
+        return next;
+      });
+      void logModuleActivity({
+        module: "accounting",
+        actorName: displayName || email || "Admin",
+        action: "branch_rate_saved",
+        targetType: "branch",
+        targetLabel: branch,
+        details: { rate },
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : `Failed to save the rate for ${branch}.`);
+    } finally {
+      setBranchRateSaving(null);
+    }
+  };
+  const branchRateFilteredLocations = branchRateSearch.trim()
+    ? LOCATIONS.filter((b) => b.toLowerCase().includes(branchRateSearch.trim().toLowerCase()))
+    : LOCATIONS;
+  // "Prefill from Technician Rates" state — the derived count and the
+  // handler itself live further down (see suggestedBranchRateByName's own
+  // comment), since they depend on data derived later in this component.
+  const [branchRatePrefilling, setBranchRatePrefilling] = useState(false);
+
   const pendingPayrollDisputes = payrollDisputes.filter((r) => r.status === "pending");
   // Approved disputes stay visible (not just pending ones) so an accidental
   // Approve click can be walked back — see handlePayrollDisputeAction's
@@ -715,9 +868,6 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     }
   };
 
-  // Overview KPI cards default to the live current-period preview, but can
-  // be pointed at any previously generated payroll run instead.
-  const [selectedRunId, setSelectedRunId] = useState<string>("current");
   const [selectedCurrency, setSelectedCurrency] = useState<"USD" | "PHP">("USD");
   // Technicians (piece-rate per completed repair ticket) and office
   // employees (hourly) now share the one Office Payroll tab — a primary
@@ -1335,6 +1485,50 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     }
   }, [genStart, genEnd]);
 
+  // Only the partial calendar week BEFORE genStart (empty when genStart is
+  // already a Sunday, the normal case) — fetched separately from
+  // timecardEntries above so every OTHER consumer of timecardEntries
+  // (working-days counts, payroll-line generation, nation filtering) keeps
+  // seeing exactly the generation period, not a widened one. Exists solely
+  // to seed computeHoursMap's per-week overtime carry-over for a period that
+  // happens to start mid-week — see splitRegularOvertimeWeekly.
+  const [weekSeedTimecardEntries, setWeekSeedTimecardEntries] = useState<TimecardEntry[]>([]);
+  useEffect(() => {
+    if (!genStart) {
+      setWeekSeedTimecardEntries([]);
+      return;
+    }
+    const seedStart = startOfWeekSunday(genStart);
+    if (seedStart >= genStart) {
+      setWeekSeedTimecardEntries([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const all: TimecardEntry[] = [];
+        for (let from = 0; ; from += PAGE_SIZE) {
+          const { data, error } = await supabase
+            .from("timecard_entries")
+            .select("profile_id,employee_id,work_date,check_in,check_out,meal_start,meal_end,status")
+            .gte("work_date", seedStart)
+            .lt("work_date", genStart)
+            .range(from, from + PAGE_SIZE - 1);
+          if (error) throw error;
+          all.push(...((data ?? []) as TimecardEntry[]));
+          if (!data || data.length < PAGE_SIZE) break;
+        }
+        if (!cancelled) setWeekSeedTimecardEntries(all);
+      } catch (error) {
+        console.error("Failed to load pre-period week seed attendance:", error instanceof Error ? error.message : error);
+        if (!cancelled) setWeekSeedTimecardEntries([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [genStart]);
+
   useEffect(() => {
     reloadTimecardEntries();
   }, [reloadTimecardEntries]);
@@ -1534,7 +1728,8 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
 
   // Hours worked per employee in current period. Computed from real
   // check_in/check_out punches (see REGULAR_HOURS_PER_DAY comment above).
-  const hoursMap = computeHoursMap(timecardEntries, employees, ptoRequests, genStart, genEnd);
+  const dutyHoursByEmployeeId = computeDutyHoursByEmployee(employees, genStart, genEnd);
+  const hoursMap = computeHoursMap(timecardEntries, employees, ptoRequests, genStart, genEnd, dutyHoursByEmployeeId, weekSeedTimecardEntries);
 
   // Technicians are paid per completed repair ticket (Tech Payroll) instead
   // of hourly-or-fixed — any field-technician tier (TECHNICIAN,
@@ -1545,6 +1740,65 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // hourly treatment instead of silently falling through to a plain
   // office hourly row.
   const isTechRole = (emp: SupabaseEmployee) => TECHNICIAN_PAY_ROLES.has(normalizeRole(emp.role));
+
+  // Suggested per-branch rate for Branch Rates' "Prefill from Technician
+  // Rates" button — derived from each branch's own field technicians'
+  // current effective hourly rate (same comp?.hourly_rate ?? emp.hourly_rate
+  // lookup payroll rows use). Only suggests a rate when every technician at
+  // that branch with a real (>0) rate on file agrees on the SAME value — a
+  // branch with technicians on different rates, or none with a rate on file
+  // at all, is left out entirely rather than guessing which one should
+  // represent the whole branch.
+  const suggestedBranchRateByName = new Map<string, number>();
+  {
+    const ratesByBranch = new Map<string, Set<number>>();
+    for (const emp of employees) {
+      if (!emp.isActive || !isTechRole(emp) || !emp.assigned_branch) continue;
+      const comp = latestCompMap.get(emp.id);
+      const rate = comp?.hourly_rate ?? emp.hourly_rate ?? 0;
+      if (!(rate > 0)) continue;
+      const set = ratesByBranch.get(emp.assigned_branch) ?? new Set<number>();
+      set.add(rate);
+      ratesByBranch.set(emp.assigned_branch, set);
+    }
+    for (const [branch, rates] of ratesByBranch) {
+      if (rates.size === 1) suggestedBranchRateByName.set(branch, [...rates][0]);
+    }
+  }
+  // "Prefill from Technician Rates" — fills every branch that (a) doesn't
+  // already have a saved rate (never overwrites a value Finance already set,
+  // even $0) and (b) has a suggestion in suggestedBranchRateByName above.
+  // Branches failing either check are left alone — "skip those data not
+  // available" — rather than guessed at.
+  const branchRatePrefillCount = LOCATIONS.filter((b) => !branchRatesByName.has(b) && suggestedBranchRateByName.has(b)).length;
+  const handlePrefillBranchRates = async () => {
+    const toFill = LOCATIONS.filter((b) => !branchRatesByName.has(b) && suggestedBranchRateByName.has(b));
+    if (toFill.length === 0) return;
+    setBranchRatePrefilling(true);
+    try {
+      for (const branch of toFill) {
+        const rate = suggestedBranchRateByName.get(branch)!;
+        await upsertBranchRate(branch, rate);
+        setBranchRatesByName((prev) => {
+          const next = new Map(prev);
+          next.set(branch, { id: branch, branch, rate, updatedAt: new Date().toISOString() });
+          return next;
+        });
+      }
+      void logModuleActivity({
+        module: "accounting",
+        actorName: displayName || email || "Admin",
+        action: "branch_rate_saved",
+        targetType: "branch",
+        targetLabel: `${toFill.length} branch${toFill.length === 1 ? "" : "es"} (prefilled from technician rates)`,
+        details: { branches: toFill },
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to prefill branch rates.");
+    } finally {
+      setBranchRatePrefilling(false);
+    }
+  };
   // Holds a technician-tier role as a secondary/extra role while their
   // primary role is something else (e.g. a CSR Agent who also picks up
   // technician work) — gets an ADDITIONAL tech-portion payroll row
@@ -1699,7 +1953,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     const hourlyRate = isFixed ? 0 : comp?.hourly_rate ?? emp.hourly_rate ?? 0;
     const annualSalary = isFixed ? comp?.annual_salary ?? 0 : null;
     const hours = hoursMap.get(emp.id) ?? { regular: 0, overtime: 0 };
-    const dutyHours = computeDutyHours(emp, genStart, genEnd);
+    const dutyHours = dutyHoursByEmployeeId.get(emp.id) ?? 0;
     const workingDays = workingDaysCountByProfile.get(emp.id) ?? 0;
 
     const includeTech = getsTechPortion(emp);
@@ -1875,90 +2129,31 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     return payrollLineItems.some((li) => li.payroll_run_id === run.id && nationIds.has(li.profile_id));
   })();
 
-  // Overview KPI cards: either the live current-period preview (computed
-  // above from payrollRows) or a specific historical run's actual recorded
-  // payroll_line_items — selected via the dropdown on the Overview tab.
-  const selectedRun = selectedRunId === "current" ? null : payrollRuns.find((r) => r.id === selectedRunId) ?? null;
-  const overviewSummary = (() => {
-    if (!selectedRun) {
-      return {
-        totalPayrollUSD,
-        totalUSPayroll,
-        totalPHPayroll,
-        usCount: usRows.length,
-        phCount: phRows.length,
-        avgPayPerEmployee,
-        periodLabel: genStart && genEnd ? `${genStart} – ${genEnd} · USD` : "USD",
-        employeeCount: payrollRows.length,
-        employeeCountLabel: "Active",
-      };
-    }
-    const items = payrollLineItems.filter((li) => li.payroll_run_id === selectedRun.id);
-    let usTotal = 0, phTotal = 0, usCount = 0, phCount = 0;
-    for (const li of items) {
-      const emp = employees.find((e) => e.id === li.profile_id);
-      const usd = toUSD(li);
-      if (emp?.country === "PH") { phTotal += usd; phCount++; }
-      else { usTotal += usd; usCount++; }
-    }
-    const total = usTotal + phTotal;
-    return {
-      totalPayrollUSD: total,
-      totalUSPayroll: usTotal,
-      totalPHPayroll: phTotal,
-      usCount,
-      phCount,
-      avgPayPerEmployee: items.length > 0 ? total / items.length : 0,
-      periodLabel: `${selectedRun.period_start} – ${selectedRun.period_end} · USD`,
-      employeeCount: items.length,
-      employeeCountLabel: "Paid in this run",
-    };
-  })();
-
-  // Monthly bar chart data from payroll_line_items grouped by run period.
-  // US is split into Office/Tech (same TECHNICIAN-role split as US
-  // Payroll's Office/Tech toggle) since that's where the piece-rate Tech
-  // Payroll employees are. PH stays one combined bar.
-  const monthlyBarData: MonthlyBarData[] = (() => {
-    const map = new Map<string, { usOfficePayroll: number; usTechPayroll: number; phPayroll: number }>();
-    for (const run of payrollRuns) {
-      const label = run.period_start
-        ? new Date(run.period_start).toLocaleString("en-US", { month: "short", year: "2-digit" })
-        : run.id;
-      const items = payrollLineItems.filter((li) => li.payroll_run_id === run.id);
-      const usOffice = items
-        .filter((li) => {
-          const emp = employees.find((e) => e.id === li.profile_id);
-          return emp?.country === "US" && !(emp && isTechRole(emp));
-        })
-        .reduce((s, li) => s + toUSD(li), 0);
-      const usTech = items
-        .filter((li) => {
-          const emp = employees.find((e) => e.id === li.profile_id);
-          return emp?.country === "US" && !!emp && isTechRole(emp);
-        })
-        .reduce((s, li) => s + toUSD(li), 0);
-      const ph = items
-        .filter((li) => {
-          const emp = employees.find((e) => e.id === li.profile_id);
-          return emp?.country === "PH";
-        })
-        .reduce((s, li) => s + toUSD(li), 0);
-      const prev = map.get(label) ?? { usOfficePayroll: 0, usTechPayroll: 0, phPayroll: 0 };
-      map.set(label, {
-        usOfficePayroll: prev.usOfficePayroll + usOffice,
-        usTechPayroll: prev.usTechPayroll + usTech,
-        phPayroll: prev.phPayroll + ph,
-      });
-    }
-    return Array.from(map.entries()).map(([month, v]) => ({
-      month,
-      usOfficePayroll: Math.round(v.usOfficePayroll),
-      usTechPayroll: Math.round(v.usTechPayroll),
-      phPayroll: Math.round(v.phPayroll),
-      total: Math.round(v.usOfficePayroll + v.usTechPayroll + v.phPayroll),
-    }));
-  })();
+  // Activity Logs tab filters — same shape as HrActivityLogPanel.tsx's,
+  // just filtered client-side over the already-loaded accountingActivityLog
+  // (getModuleActivityLog has no server-side date-range param to push
+  // from/to down to, unlike hrActivityLog.ts's getActivityLog).
+  const activityLogActionOptions = useMemo(
+    () => Array.from(new Set(accountingActivityLog.map((e) => e.action))).sort(),
+    [accountingActivityLog]
+  );
+  const activityLogActorOptions = useMemo(
+    () => Array.from(new Set(accountingActivityLog.map((e) => e.actorName).filter((n): n is string => !!n))).sort(),
+    [accountingActivityLog]
+  );
+  const activityLogFiltered = useMemo(() => {
+    const q = activityLogSearch.trim().toLowerCase();
+    const fromTs = activityLogFrom ? `${activityLogFrom}T00:00:00` : null;
+    const toTs = activityLogTo ? `${activityLogTo}T23:59:59` : null;
+    return accountingActivityLog.filter((e) => {
+      if (activityLogActionFilter && e.action !== activityLogActionFilter) return false;
+      if (activityLogActorFilter && e.actorName !== activityLogActorFilter) return false;
+      if (fromTs && e.createdAt < fromTs) return false;
+      if (toTs && e.createdAt > toTs) return false;
+      if (q && !(e.actorName ?? "").toLowerCase().includes(q) && !(e.targetLabel ?? "").toLowerCase().includes(q) && !moduleActivityActionLabel(e.action).toLowerCase().includes(q)) return false;
+      return true;
+    });
+  }, [accountingActivityLog, activityLogSearch, activityLogActionFilter, activityLogActorFilter, activityLogFrom, activityLogTo]);
 
   // ── Toggle "include in payroll" per employee ─────────────────────────────────
   // Persisted on the profile (not just this session) since it's a standing
@@ -3156,81 +3351,100 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
           })}
         </div>
 
-        {/* ── Overview Tab ─────────────────────────────────────────────────── */}
+        {/* ── Activity Logs Tab (was Overview) — same filterable-table
+             pattern as HrActivityLogPanel.tsx, over module_activity_log
+             rows for "accounting" instead of hr_activity_log. ──────────── */}
         {activeTab === "overview" && (
-          <div className="space-y-6">
-            {/* Period selector */}
-            <div className="flex items-center gap-3">
-              <label className="text-xs text-slate-400 uppercase tracking-wide">Period</label>
-              <select
-                title="Select payroll period"
-                value={selectedRunId}
-                onChange={(e) => setSelectedRunId(e.target.value)}
-                className="bg-slate-800/50 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:border-blue-500 focus:outline-none"
-              >
-                <option value="current">Current Period (Live)</option>
-                {payrollRuns.map((run) => (
-                  <option key={run.id} value={run.id}>
-                    {run.period_start} – {run.period_end}
-                  </option>
-                ))}
-              </select>
+          <div className="panel p-0 overflow-hidden">
+            <div className="px-4 py-4 border-b border-white/10 flex items-center justify-between gap-3">
+              <div>
+                <h2 className="font-semibold text-sm">Activity Logs</h2>
+                <p className="text-[10px] text-muted-foreground mt-0.5">Every action taken across the Accounting Dashboard — who did what, and when.</p>
+              </div>
+              {accountingActivityLoading && <Loader2 className="h-4 w-4 animate-spin text-slate-400 shrink-0" />}
             </div>
 
-            {/* KPI Cards */}
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-              <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
-                <p className="text-xs text-slate-400 mb-1">Total Employees</p>
-                <p className="text-2xl font-bold text-green-300">{overviewSummary.employeeCount}</p>
-                <p className="text-xs text-slate-500 mt-1">{overviewSummary.employeeCountLabel}</p>
+            <div className="px-4 py-3 border-b border-white/10 bg-white/5 flex flex-wrap items-end gap-3">
+              <div className="relative">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+                <input
+                  type="text"
+                  value={activityLogSearch}
+                  onChange={(e) => setActivityLogSearch(e.target.value)}
+                  placeholder="Actor, target, or action…"
+                  className="glass-input text-sm py-1.5 pl-8 pr-3 rounded-md w-56"
+                />
               </div>
-              <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
-                <p className="text-xs text-slate-400 mb-1">{selectedRun ? "Total Payroll (Selected Period)" : "Total Payroll (Current Period)"}</p>
-                <p className="text-2xl font-bold text-blue-300">{fmt(overviewSummary.totalPayrollUSD)}</p>
-                <p className="text-xs text-slate-500 mt-1">{overviewSummary.periodLabel}</p>
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Actor</label>
+                <select value={activityLogActorFilter} onChange={(e) => setActivityLogActorFilter(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md">
+                  <option value="">All</option>
+                  {activityLogActorOptions.map((a) => <option key={a} value={a}>{a}</option>)}
+                </select>
               </div>
-              <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
-                <p className="text-xs text-slate-400 mb-1">US / PH Split</p>
-                <p className="text-lg font-bold text-purple-300">
-                  {fmt(overviewSummary.totalUSPayroll)} / {fmt(overviewSummary.totalPHPayroll)}
-                </p>
-                <p className="text-xs text-slate-500 mt-1">
-                  {overviewSummary.usCount} US · {overviewSummary.phCount} PH employees
-                </p>
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Action</label>
+                <select value={activityLogActionFilter} onChange={(e) => setActivityLogActionFilter(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md">
+                  <option value="">All</option>
+                  {activityLogActionOptions.map((a) => <option key={a} value={a}>{moduleActivityActionLabel(a)}</option>)}
+                </select>
               </div>
-              <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
-                <p className="text-xs text-slate-400 mb-1">Avg Pay / Employee</p>
-                <p className="text-2xl font-bold text-amber-300">{fmt(overviewSummary.avgPayPerEmployee)}</p>
-                <p className="text-xs text-slate-500 mt-1">{selectedRun ? "Selected period" : "Current period"}</p>
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">From</label>
+                <input type="date" value={activityLogFrom} onChange={(e) => setActivityLogFrom(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
               </div>
-            </div>
-
-            {/* Monthly bar chart */}
-            <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
-              <h3 className="text-sm font-bold text-white mb-4 flex items-center gap-2">
-                <BarChart3 className="h-4 w-4 text-slate-400" />
-                Monthly Payroll Totals (USD)
-              </h3>
-              {monthlyBarData.length === 0 ? (
-                <p className="text-slate-500 text-sm py-8 text-center">
-                  No completed payroll runs yet.
-                </p>
-              ) : (
-                <ResponsiveContainer width="100%" height={300} debounce={200}>
-                  <BarChart data={monthlyBarData}>
-                    <XAxis dataKey="month" stroke="#94a3b8" />
-                    <YAxis stroke="#94a3b8" tickFormatter={(v) => `$${(v as number / 1000).toFixed(0)}k`} />
-                    <Tooltip
-                      contentStyle={{ background: "#1e293b", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 6 }}
-                      formatter={(value) => [`$${(value as number).toLocaleString()}`, undefined]}
-                    />
-                    <Legend />
-                    <Bar dataKey="usOfficePayroll" name="US Office" fill="#34d399" radius={[4, 4, 0, 0]} />
-                    <Bar dataKey="usTechPayroll" name="US Tech" fill="#f472b6" radius={[4, 4, 0, 0]} />
-                    <Bar dataKey="phPayroll" name="PH Payroll (USD)" fill="#818cf8" radius={[4, 4, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">To</label>
+                <input type="date" value={activityLogTo} onChange={(e) => setActivityLogTo(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+              </div>
+              {(activityLogSearch || activityLogActionFilter || activityLogActorFilter || activityLogFrom || activityLogTo) && (
+                <button
+                  onClick={() => { setActivityLogSearch(""); setActivityLogActionFilter(""); setActivityLogActorFilter(""); setActivityLogFrom(""); setActivityLogTo(""); }}
+                  className="btn text-sm px-3 py-1.5"
+                >
+                  Clear
+                </button>
               )}
+              <span className="ml-auto text-[10px] text-muted-foreground">{activityLogFiltered.length} entr{activityLogFiltered.length === 1 ? "y" : "ies"}</span>
+            </div>
+
+            <div className="overflow-x-auto max-h-[70vh] overflow-y-auto">
+              <table className="w-full text-sm">
+                <thead className="sticky top-0">
+                  <tr className="border-b border-white/10 bg-slate-900">
+                    <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Actor</th>
+                    <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Action</th>
+                    <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Target</th>
+                    <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Details</th>
+                    <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">When</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {accountingActivityLoading ? (
+                    <tr><td colSpan={5} className="px-4 py-8 text-center text-muted-foreground text-sm"><Loader2 className="h-4 w-4 animate-spin inline-block mr-2" /> Loading…</td></tr>
+                  ) : activityLogFiltered.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="px-4 py-8 text-center text-muted-foreground text-sm">
+                        No activity recorded{activityLogSearch || activityLogActionFilter || activityLogActorFilter ? " matching these filters." : " yet."}
+                      </td>
+                    </tr>
+                  ) : (
+                    activityLogFiltered.map((e) => (
+                      <tr key={e.id} className="border-b border-white/5 hover:bg-white/5">
+                        <td className="px-4 py-3 font-medium whitespace-nowrap">{e.actorName ?? "Unknown"}</td>
+                        <td className="px-4 py-3">
+                          <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold border ${ACCOUNTING_ACTION_BADGE_COLOR(e.action)}`}>{moduleActivityActionLabel(e.action)}</span>
+                        </td>
+                        <td className="px-4 py-3 text-muted-foreground">{e.targetLabel ?? "—"}</td>
+                        <td className="px-4 py-3 text-muted-foreground max-w-sm truncate" title={Object.keys(e.details).length ? JSON.stringify(e.details) : ""}>
+                          {Object.entries(e.details).map(([k, v]) => `${k}: ${v}`).join(", ") || "—"}
+                        </td>
+                        <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{new Date(e.createdAt).toLocaleString()}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
             </div>
           </div>
         )}
@@ -3516,9 +3730,9 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                           />
                         </span>
                       </th>
-                      <th className="px-4 py-3 text-center text-xs text-slate-400 uppercase" title="Expected hours based on the employee's set schedule, for comparison against Reg. Hours">Duty Hours</th>
+                      <th className="px-4 py-3 text-center text-xs text-slate-400 uppercase" title="Reg. Hours + OT Hours">Total Hours</th>
                       <th className="px-4 py-3 text-center text-xs text-slate-400 uppercase">OT Hours</th>
-                      <th className="px-4 py-3 text-center text-xs text-slate-400 uppercase" title="Scheduled meal break, same as Duty Hours — a fixed per-shift amount, not a period total">Meal Time</th>
+                      <th className="px-4 py-3 text-center text-xs text-slate-400 uppercase" title="Scheduled meal break — a fixed per-shift amount, not a period total">Meal Time</th>
                       <th className="px-4 py-3 text-center text-xs text-slate-400 uppercase">
                         <span className="inline-flex items-center justify-center">
                           Rate
@@ -3608,11 +3822,8 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                               <td className="px-4 py-3 text-center text-slate-300">
                                 {row.hoursWorked.toFixed(1)}
                               </td>
-                              <td
-                                className={`px-4 py-3 text-center ${row.hoursWorked < row.dutyHours ? "text-amber-300" : "text-slate-300"}`}
-                                title="Expected hours based on the employee's set schedule"
-                              >
-                                {row.dutyHours.toFixed(1)}
+                              <td className="px-4 py-3 text-center text-slate-300">
+                                {(row.hoursWorked + row.overtimeHours).toFixed(1)}
                               </td>
                               <td className="px-4 py-3 text-center text-orange-300">
                                 {row.overtimeHours.toFixed(1)}
@@ -4766,6 +4977,109 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                         )}
                       </Fragment>
                     ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* ── Branch Rates Tab ─────────────────────────────────────────────── */}
+        {activeTab === "branchRates" && (
+          <div className="panel p-0 overflow-hidden">
+            <div className="px-4 py-4 border-b border-white/10 flex items-center justify-between gap-3">
+              <div>
+                <h2 className="font-semibold text-sm">Branch Rates</h2>
+                <p className="text-[10px] text-muted-foreground mt-0.5">Reference rate per branch — for Finance's own use, not tied to any payroll calculation.</p>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                {branchRatesLoading && <Loader2 className="h-4 w-4 animate-spin text-slate-400" />}
+                <button
+                  type="button"
+                  onClick={() => void handlePrefillBranchRates()}
+                  disabled={branchRatePrefilling || branchRatePrefillCount === 0}
+                  title={
+                    branchRatePrefillCount === 0
+                      ? "No branch has an unset rate with a clear technician rate to suggest"
+                      : `Fills the ${branchRatePrefillCount} branch${branchRatePrefillCount === 1 ? "" : "es"} with no rate saved yet from their own technicians' current hourly rate — branches with no clear technician rate on file are left as-is`
+                  }
+                  className="text-xs px-3 py-1.5 rounded-md border border-white/10 text-slate-300 hover:text-white hover:bg-white/5 disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-1.5"
+                >
+                  {branchRatePrefilling ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+                  Prefill from Technician Rates{branchRatePrefillCount > 0 ? ` (${branchRatePrefillCount})` : ""}
+                </button>
+              </div>
+            </div>
+
+            <div className="px-4 py-3 border-b border-white/10 bg-white/5 flex items-center gap-3">
+              <div className="relative">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+                <input
+                  type="text"
+                  value={branchRateSearch}
+                  onChange={(e) => setBranchRateSearch(e.target.value)}
+                  placeholder="Branch…"
+                  className="glass-input text-sm py-1.5 pl-8 pr-3 rounded-md w-56"
+                />
+              </div>
+              <span className="ml-auto text-[10px] text-muted-foreground">{branchRateFilteredLocations.length} branch{branchRateFilteredLocations.length === 1 ? "" : "es"}</span>
+            </div>
+
+            {error && (
+              <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{error}</p>
+            )}
+
+            <div className="overflow-x-auto max-h-[70vh] overflow-y-auto">
+              <table className="w-full text-sm">
+                <thead className="sticky top-0">
+                  <tr className="border-b border-white/10 bg-slate-900">
+                    <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Branch</th>
+                    <th className="px-4 py-3 text-right text-xs text-muted-foreground uppercase">Rate</th>
+                    <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Last Updated</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {branchRateFilteredLocations.length === 0 ? (
+                    <tr><td colSpan={3} className="px-4 py-8 text-center text-muted-foreground text-sm">No branch matches "{branchRateSearch}".</td></tr>
+                  ) : (
+                    branchRateFilteredLocations.map((branch) => {
+                      const existing = branchRatesByName.get(branch);
+                      const saving = branchRateSaving === branch;
+                      const suggested = suggestedBranchRateByName.get(branch);
+                      return (
+                        <tr key={branch} className="border-b border-white/5 hover:bg-white/5">
+                          <td className="px-4 py-3 font-medium whitespace-nowrap">{branch}</td>
+                          <td className="px-4 py-3 text-right">
+                            <div className="flex items-center justify-end gap-1.5">
+                              {saving && <Loader2 className="h-3.5 w-3.5 animate-spin text-slate-400" />}
+                              <span className="text-muted-foreground">$</span>
+                              <input
+                                // Keyed on the saved rate (not just branch) so
+                                // this uncontrolled input remounts and picks
+                                // up the new defaultValue after "Prefill from
+                                // Technician Rates" updates it out from under
+                                // an already-mounted row.
+                                key={`${branch}:${existing?.rate ?? 0}`}
+                                type="number"
+                                step="0.01"
+                                min="0"
+                                defaultValue={existing?.rate ?? 0}
+                                onBlur={(e) => void handleBranchRateBlur(branch, e.target.value)}
+                                disabled={saving}
+                                className="glass-input text-sm py-1 px-2 rounded-md w-28 text-right disabled:opacity-50"
+                              />
+                            </div>
+                          </td>
+                          <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">
+                            {existing?.updatedAt
+                              ? new Date(existing.updatedAt).toLocaleString()
+                              : suggested
+                              ? <span className="text-slate-500 italic">Suggested: ${suggested.toFixed(2)}</span>
+                              : <span className="text-slate-600 italic">No technician rate on file</span>}
+                          </td>
+                        </tr>
+                      );
+                    })
                   )}
                 </tbody>
               </table>

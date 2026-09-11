@@ -120,15 +120,6 @@ const dashboardMod: ModuleDef = {
       }),
     },
     {
-      slug: "accounting-dashboard",
-      title: "Accounting Dashboard",
-      description: "Attendance monitoring, payroll calculation, and employee time tracking.",
-      custom: "accounting-dashboard" as any,
-      fields: [],
-      count: 0,
-      seed: () => ({}),
-    },
-    {
       slug: "attendance-monitoring",
       title: "Attendance Monitoring Dashboard",
       description: "Track daily attendance, late arrivals, and absences.",
@@ -340,6 +331,47 @@ const dashboardMod: ModuleDef = {
   ],
 };
 
+// --- Accounting ---
+// accounting-dashboard used to live under the Dashboard module (custom:
+// "accounting-dashboard", still handled the same way everywhere it's
+// dispatched — see m.$module.$submodule.tsx and dashboardAccess.ts's
+// getDashboardRoleGate, which specifically routes accounting-dashboard's
+// role-gate lookup to this module's own namespace now instead of
+// "dashboard"'s, same move already made for hr-dashboard). Its role gate
+// (ADMIN/FINANCE) and any per-company override still apply exactly as
+// before — see migration 0244_accounting_module_role_gate_rename.sql.
+const accountingMod: ModuleDef = {
+  slug: "accounting",
+  label: "Accounting",
+  tagline: "Attendance monitoring, payroll calculation, and employee time tracking",
+  accent: "#6366f1",
+  submodules: [
+    {
+      slug: "accounting-dashboard",
+      title: "Accounting Dashboard",
+      description: "Attendance monitoring, payroll calculation, and employee time tracking.",
+      custom: "accounting-dashboard" as any,
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
+    // Same submodule (slug "absent-list") also lives under the HR module's
+    // own tile grid — carried over here too so it's reachable from either
+    // module, same AbsentListPage either way (dispatch in
+    // m.$module.$submodule.tsx is keyed by `custom`, not by which module
+    // hosts it).
+    {
+      slug: "absent-list",
+      title: "Employee Monitoring",
+      description: "Who has no recorded check-in today (or any date) — excludes rest days and approved PTO/leave.",
+      custom: "absent-list" as any,
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
+  ],
+};
+
 // --- HR ---
 // hr-dashboard used to live under the Dashboard module (custom: "hr-dashboard",
 // still handled the same way everywhere it's dispatched — see
@@ -374,7 +406,7 @@ const hrMod: ModuleDef = {
     },
     {
       slug: "absent-list",
-      title: "Absent List",
+      title: "Employee Monitoring",
       description: "Who has no recorded check-in today (or any date) — excludes rest days and approved PTO/leave.",
       custom: "absent-list" as any,
       fields: [],
@@ -1635,7 +1667,7 @@ export const DASHBOARD_GRID_EXCLUDED_SLUGS = new Set([
   "csr-team-leader-dashboard",
 ]);
 
-export const MODULES: ModuleDef[] = [dashboardMod, ticketsMod, partsMod, claimsMod, reportMod, hrMod, adminMod];
+export const MODULES: ModuleDef[] = [dashboardMod, ticketsMod, partsMod, claimsMod, reportMod, hrMod, adminMod, accountingMod];
 
 export function getModule(slug: string) {
   return MODULES.find((m) => m.slug === slug);

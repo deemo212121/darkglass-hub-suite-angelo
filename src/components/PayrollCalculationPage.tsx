@@ -5,7 +5,7 @@ import { ChevronLeft, Download } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
-import { getCompanyTimecardEntries, calcWorkedHours, type CompanyTimecardEntry } from "@/lib/supabase/timecards";
+import { getCompanyTimecardEntries, calcWorkedHours, computeScheduledDutyHours, startOfWeekSunday, splitRegularOvertimeWeekly, type CompanyTimecardEntry } from "@/lib/supabase/timecards";
 import { getCompanySalaryEntries, rateEffectiveOn, entryEffectiveOn, currentRate, perCutoffSalary, type SalaryEntryRow } from "@/lib/supabase/salary";
 import { EmployeePayrollDetailModal } from "@/components/EmployeePayrollDetailModal";
 import { ActivityLogPanel } from "@/components/ActivityLogPanel";
@@ -54,6 +54,12 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
   const [loading, setLoading] = useState(true);
   const [profiles, setProfiles] = useState<ProfileRow[]>([]);
   const [entries, setEntries] = useState<CompanyTimecardEntry[]>([]);
+  // Only the partial calendar week BEFORE startDate (empty when startDate is
+  // already a Sunday) — kept separate from `entries` so nothing else here
+  // (totals, CSV export) sees a widened period; it exists solely to seed the
+  // weekly overtime carry-over for a period that happens to start mid-week.
+  // See splitRegularOvertimeWeekly.
+  const [seedEntries, setSeedEntries] = useState<CompanyTimecardEntry[]>([]);
   const [salaryEntries, setSalaryEntries] = useState<SalaryEntryRow[]>([]);
 
   const [search, setSearch] = useState("");
@@ -70,13 +76,20 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [profileRows, entryRows, salaryRows] = await Promise.all([
+      const seedStart = startOfWeekSunday(startDate);
+      const needsSeed = seedStart < startDate;
+      const [profileRows, entryRows, seedRows, salaryRows] = await Promise.all([
         getCompanyUsers(),
         getCompanyTimecardEntries(startDate, endDate),
+        needsSeed ? getCompanyTimecardEntries(seedStart, startDate) : Promise.resolve([]),
         getCompanySalaryEntries(),
       ]);
       setProfiles(profileRows.filter((p) => p.is_active));
       setEntries(entryRows);
+      // getCompanyTimecardEntries is inclusive on both ends, so the seed
+      // fetch's own upper bound (startDate) would double-count startDate
+      // itself alongside entryRows — drop it here.
+      setSeedEntries(needsSeed ? seedRows.filter((e) => e.workDate < startDate) : []);
       setSalaryEntries(salaryRows);
     } catch (err) {
       console.error("Failed to load payroll data:", err);
@@ -105,6 +118,15 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
     return map;
   }, [entries]);
 
+  const seedEntriesByProfile = useMemo(() => {
+    const map = new Map<string, CompanyTimecardEntry[]>();
+    for (const e of seedEntries) {
+      if (!map.has(e.profileId)) map.set(e.profileId, []);
+      map.get(e.profileId)!.push(e);
+    }
+    return map;
+  }, [seedEntries]);
+
   // Each day's hours are paid at whichever rate was effective ON that day —
   // a mid-period raise/promotion is handled automatically instead of
   // needing one flat rate for the whole period. Fixed-salary employees
@@ -112,9 +134,23 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
   // amount (annual / 24) regardless of hours actually worked, with no
   // overtime — regularHours/overtimeHours are still tallied from real
   // attendance for visibility, they just don't feed into grossPay.
+  //
+  // Regular vs overtime resets every calendar week (Sunday-Saturday), each
+  // week capped at that week's own scheduled/duty hours
+  // (splitRegularOvertimeWeekly) — not a flat per-day 8-hour cap (a long day
+  // no longer generates overtime on its own while the employee is still
+  // behind on hours from an earlier short day in the SAME WEEK), and not one
+  // pooled cap across the whole (possibly multi-week) period either (a
+  // shortfall in one week can't "absorb" real overtime earned in another).
+  // seedEntriesByProfile supplies the partial week before startDate (if any)
+  // purely so that first week's carry-over is seeded correctly even though
+  // those days aren't part of this period. Falls back to the old flat
+  // per-day 8-hour cap only when no schedule is configured at all (dutyHours
+  // 0), so a missing schedule doesn't just silently drop all their overtime.
   const rows: PayrollRow[] = useMemo(() => {
     return profiles.map((p) => {
-      const dayEntries = entriesByProfile.get(p.id) ?? [];
+      const dayEntries = (entriesByProfile.get(p.id) ?? []).slice().sort((a, b) => a.workDate.localeCompare(b.workDate));
+      const seedDayEntries = seedEntriesByProfile.get(p.id) ?? [];
       const history = historyByProfile.get(p.id) ?? [];
       const currentEntry = entryEffectiveOn(history, endDate);
       const isFixed = currentEntry?.compensationType === "fixed";
@@ -122,27 +158,58 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
       let overtimeHours = 0;
       let grossPay = 0;
       const graceMinutes = payGraceMinutesFor(profileCountry(p));
-      for (const day of dayEntries) {
-        if (!day.checkIn || !day.checkOut) continue;
+      const dutyHours = computeScheduledDutyHours(
+        p.required_check_in || "",
+        p.required_check_out || "",
+        p.working_hours,
+        p.meal_minutes,
+        p.off_days,
+        startDate,
+        endDate
+      );
+      const hoursForDay = (day: CompanyTimecardEntry): number => {
         const paidCheckIn = p.required_check_in
           ? applyGraceToCheckIn(day.checkIn, p.required_check_in, graceMinutes)
           : day.checkIn;
         const paidCheckOut = p.required_check_out
           ? roundCheckOutToSchedule(day.checkOut, p.required_check_out)
           : day.checkOut;
-        const hours = calcWorkedHours({
-          checkIn: paidCheckIn,
-          checkOut: paidCheckOut,
-          mealStart: day.mealStart,
-          mealEnd: day.mealEnd,
-          notes: "",
-        });
-        const reg = Math.min(hours, REGULAR_HOURS_PER_DAY);
-        const ot = Math.max(0, hours - REGULAR_HOURS_PER_DAY);
+        return calcWorkedHours({ checkIn: paidCheckIn, checkOut: paidCheckOut, mealStart: day.mealStart, mealEnd: day.mealEnd, notes: "" });
+      };
+      const rawByDate = new Map<string, number>();
+      for (const day of [...seedDayEntries, ...dayEntries]) {
+        if (!day.checkIn || !day.checkOut) continue;
+        rawByDate.set(day.workDate, (rawByDate.get(day.workDate) ?? 0) + hoursForDay(day));
+      }
+      const split =
+        dutyHours > 0
+          ? splitRegularOvertimeWeekly(
+              [...rawByDate.entries()].map(([date, rawHours]) => ({ date, rawHours })),
+              {
+                requiredCheckIn: p.required_check_in,
+                requiredCheckOut: p.required_check_out,
+                workingHours: p.working_hours,
+                mealMinutes: p.meal_minutes,
+                offDays: p.off_days,
+              }
+            )
+          : new Map<string, { regular: number; overtime: number }>();
+      const realDates = [...new Set(dayEntries.filter((d) => d.checkIn && d.checkOut).map((d) => d.workDate))].sort();
+      for (const date of realDates) {
+        let reg: number, ot: number;
+        if (dutyHours > 0) {
+          const s = split.get(date) ?? { regular: 0, overtime: 0 };
+          reg = s.regular;
+          ot = s.overtime;
+        } else {
+          const hours = rawByDate.get(date) ?? 0;
+          reg = Math.min(hours, REGULAR_HOURS_PER_DAY);
+          ot = Math.max(0, hours - REGULAR_HOURS_PER_DAY);
+        }
         regularHours += reg;
         overtimeHours += ot;
         if (!isFixed) {
-          const rate = rateEffectiveOn(history, day.workDate);
+          const rate = rateEffectiveOn(history, date);
           grossPay += reg * rate + ot * rate * OT_MULTIPLIER;
         }
       }
@@ -162,7 +229,7 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
         grossPay,
       };
     });
-  }, [profiles, entriesByProfile, historyByProfile, endDate]);
+  }, [profiles, entriesByProfile, seedEntriesByProfile, historyByProfile, startDate, endDate]);
 
   const countryRows = rows.filter((r) => r.country === selectedCountry);
   const departments = Array.from(new Set(countryRows.map((r) => r.department).filter(Boolean)));
