@@ -126,6 +126,40 @@ export const DOCUMENT_TYPES_REQUIRING_EMPLOYER_SIGNATURE = new Set<SignableDocum
 ]);
 
 /**
+ * Form W-4/I-9/Direct Deposit Authorization/W-8BEN each have exactly one
+ * underlying document type and Sent History list, reused by BOTH the
+ * legacy "Automated Forms" group's own tab and the "New Automation Forms"
+ * group's tabs (New Technician/New Office/PH Staff) — rather than
+ * duplicating four already-working send/sign flows per group. Without a
+ * way to tell them apart, every send showed up in every group's Sent
+ * History table AND every checklist tab that tracks that type, which reads
+ * as "old forms leaking into new" (and vice versa) — the two are supposed
+ * to stay separate. `formSource` is stamped into formData at send time (see
+ * ReportHRDaily.tsx's handleSendW4/handleSendI9/handleSendDirectDeposit/
+ * handleSendW8ben, keyed off which tab the send happened from) and survives
+ * every later formData rewrite, since every fill page seeds its form state
+ * from the existing formData and spreads that whole state back out on
+ * submit (untyped extra keys ride along even though the page's own
+ * FormData type doesn't declare them) — see e.g. FillI9Page.tsx's
+ * `setForm((prev) => ({ ...prev, ...existing }))` / `finalData = { ...form, ... }`.
+ */
+export function isNewAutomationDoc(doc: { formData: Record<string, any> }): boolean {
+  return doc.formData?.formSource === "new_automation";
+}
+
+/**
+ * The subset of SignableDocumentType that's genuinely shared between an old
+ * and a new tab/checklist (see isNewAutomationDoc above) — every OTHER type
+ * either only ever exists under the new group (the Master Agreements) or
+ * isn't split by formSource at all yet (e.g. contractor_addendum, still one
+ * shared list on purpose — its multi-signer "Send to Next Signer" chain is
+ * a bigger change than the formSource split covers). Used by
+ * TechnicianFormChecklistPage.tsx to decide which of a tab's form types
+ * need bucket-filtering before counting a document as this person's.
+ */
+export const SHARED_OLD_NEW_AUTOMATION_TYPES = new Set<SignableDocumentType>(["w4", "i9", "direct_deposit", "w8ben"]);
+
+/**
  * Where a signable document currently stands, from the "is this actually
  * finished" point of view — collapses the raw SignableDocumentStatus plus
  * "does this type even need an employer countersign" into one of four

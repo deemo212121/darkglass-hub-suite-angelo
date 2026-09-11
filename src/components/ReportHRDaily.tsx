@@ -87,7 +87,7 @@ import {
   type SignableDocumentType,
   type SignatureSlot as DocSignatureSlot,
 } from "@/lib/supabase/signableDocuments";
-import { SIGNABLE_DOCUMENT_REGISTRY } from "@/lib/signableDocumentRegistry";
+import { SIGNABLE_DOCUMENT_REGISTRY, isNewAutomationDoc } from "@/lib/signableDocumentRegistry";
 import { getCandidateRequiredFormTypes, setCandidateRequiredFormTypes } from "@/lib/supabase/candidateRequiredForms";
 import { buildWarningFormBodyMarkup, buildWarnNoteText, warningFormStyles, type WarningFormData, type SignatureSlot } from "@/lib/warningFormTemplate";
 import { buildNdaFormPages, ndaFormStyles, type NdaFormData } from "@/lib/ndaFormTemplate";
@@ -182,27 +182,10 @@ function isAwaitingEmployerStep(doc: { status: string; recipientSlot: string }):
   return (doc.status === "signed" && doc.recipientSlot === "employee") || (doc.status === "pending_signature" && doc.recipientSlot === "hr_staff");
 }
 
-/**
- * Form W-4/I-9/Direct Deposit Authorization/W-8BEN each have exactly one
- * underlying document type and Sent History list, reused by BOTH the
- * legacy "Automated Forms" group's own tab and the "New Automation Forms"
- * group's tabs (New Technician/New Office/PH Staff) — rather than
- * duplicating four already-working send/sign flows per group. Without a
- * way to tell them apart, every send showed up in every group's Sent
- * History table, which reads as "old forms leaking into new" (and vice
- * versa) — the two are supposed to stay separate lists. `formSource` is
- * stamped into formData at send time (see handleSendW4/handleSendI9/
- * handleSendDirectDeposit/handleSendW8ben's `activeTab === "new…"` check)
- * and survives every later formData rewrite, since every fill page seeds
- * its form state from the existing formData and spreads that whole state
- * back out on submit (untyped extra keys ride along even though the
- * page's own FormData type doesn't declare them) — see e.g.
- * FillI9Page.tsx's `setForm((prev) => ({ ...prev, ...existing }))` /
- * `finalData = { ...form, ... }`.
- */
-function isNewAutomationDoc(doc: { formData: Record<string, any> }): boolean {
-  return doc.formData?.formSource === "new_automation";
-}
+// isNewAutomationDoc now lives in signableDocumentRegistry.ts (imported
+// below) — TechnicianFormChecklistPage.tsx needs the same formSource-bucket
+// logic for its own new/old checklist tabs, so it moved to the shared
+// registry file instead of staying a local-only helper here.
 
 // Certificate of Employment's editable body — the prose paragraphs between
 // the greeting and the signature block (see companySettings.ts's

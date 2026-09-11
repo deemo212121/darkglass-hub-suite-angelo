@@ -1,10 +1,10 @@
 /**
  * HR module -> Staff Form Checklist. Per-person live status of every
  * signable form for 5 tiers, each its own tab — pulled straight from
- * hr_signable_documents via getAllSignableDocuments, not a separately-
- * tracked checklist. Unlike HrOnboardingChecklistPage (a manually-ticked
- * punch list), nothing here is editable: a form only shows complete once
- * it's actually been signed.
+ * hr_signable_documents via getSignableDocumentsByTypes, scoped to
+ * whichever tab is active, not a separately-tracked checklist. Unlike
+ * HrOnboardingChecklistPage (a manually-ticked punch list), nothing here is
+ * editable: a form only shows complete once it's actually been signed.
  *
  * Tabs (see CHECKLIST_TABS below):
  *  - Technician — the original 16-form checklist, unchanged.
@@ -18,9 +18,16 @@
  *    Deposit). Deliberately excluded from Office Staff (US) even though
  *    they're US-based, since they need this tier's forms tracked instead.
  *
- * One fetch (users/docs/exemptions) serves all 5 tabs — each tab's row list
- * is just a different filter+form-type-set derived from the same raw data,
- * recomputed via useMemo when the active tab or the raw data changes.
+ * W-4/I-9/Direct Deposit/W-8BEN are shared document types between an old
+ * tab and one or more new ones — each tab only counts submissions from its
+ * own formSourceBucket (see SHARED_OLD_NEW_AUTOMATION_TYPES/
+ * isNewAutomationDoc in signableDocumentRegistry.ts), so e.g. New
+ * Technician's W-4 row never shows "done" off an old-flow submission it
+ * never actually sent, and vice versa.
+ *
+ * The roster (loadUsers) is fetched once; documents+exemptions
+ * (loadDocsForActiveTab) are re-fetched, scoped to just that tab's own form
+ * types, whenever the active tab changes — see load()'s own comments.
  *
  * Dispatched from m.$module.$submodule.tsx for custom ===
  * "technician-form-checklist"; the route already renders <AppHeader />
@@ -33,7 +40,7 @@ import { useAuth } from "@/lib/auth";
 import { getCompanyUsers, getMyProfileId, setProfileFrozen, type ProfileRow } from "@/lib/supabase/users";
 import { isEligibleForTechnicianFormChecklist, isBmAndUpRole, getRoleDepartmentBreakdown } from "@/lib/roleLabels";
 import { getSignableDocumentsByTypes, createSignableDocument, type SignableDocument, type SignableDocumentType } from "@/lib/supabase/signableDocuments";
-import { SIGNABLE_DOCUMENT_REGISTRY, TECHNICIAN_FORM_TYPES, getDocumentReviewStatus, isTechnicianExemptFromForm, exemptionRowValueForToggle, pickAuthoritativeDocument } from "@/lib/signableDocumentRegistry";
+import { SIGNABLE_DOCUMENT_REGISTRY, TECHNICIAN_FORM_TYPES, getDocumentReviewStatus, isTechnicianExemptFromForm, exemptionRowValueForToggle, pickAuthoritativeDocument, isNewAutomationDoc, SHARED_OLD_NEW_AUTOMATION_TYPES } from "@/lib/signableDocumentRegistry";
 import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
 import { getTechnicianFormExemptions, setTechnicianFormExemption } from "@/lib/supabase/technicianFormExemptions";
 import { logActivity } from "@/lib/supabase/hrActivityLog";
@@ -60,6 +67,16 @@ interface ChecklistTabConfig {
   isEligible: (u: ProfileRow) => boolean;
   /** Plural noun used in "N technicians" / "No office staff found." messaging. */
   noun: string;
+  /**
+   * Which formSource bucket this tab's SHARED_OLD_NEW_AUTOMATION_TYPES
+   * (w4/i9/direct_deposit/w8ben) should count — "old" for the original
+   * Technician tab (only pre-New-Automation-Forms submissions), "new" for
+   * every other tab (only submissions sent through their own "New
+   * Automation Forms" flow). A form type NOT in SHARED_OLD_NEW_AUTOMATION_TYPES
+   * (the Master Agreements, Contractor Addendum, W-9) ignores this — there's
+   * no old/new split for those yet, so every submission counts regardless.
+   */
+  formSourceBucket: "old" | "new";
 }
 
 const CHECKLIST_TABS: ChecklistTabConfig[] = [
@@ -69,6 +86,7 @@ const CHECKLIST_TABS: ChecklistTabConfig[] = [
     formTypes: TECHNICIAN_FORM_TYPES,
     isEligible: (u) => isEligibleForTechnicianFormChecklist(u.role, u.extra_roles),
     noun: "technicians",
+    formSourceBucket: "old",
   },
   {
     key: "newTechnician",
@@ -76,6 +94,7 @@ const CHECKLIST_TABS: ChecklistTabConfig[] = [
     formTypes: NEW_TECHNICIAN_FORM_TYPES,
     isEligible: (u) => isEligibleForTechnicianFormChecklist(u.role, u.extra_roles),
     noun: "technicians",
+    formSourceBucket: "new",
   },
   {
     key: "officeStaffUs",
@@ -83,6 +102,7 @@ const CHECKLIST_TABS: ChecklistTabConfig[] = [
     formTypes: OFFICE_STAFF_US_FORM_TYPES,
     isEligible: (u) => !isPhBranch(u) && !isBmAndUpRole(u.role) && !isEligibleForTechnicianFormChecklist(u.role, u.extra_roles),
     noun: "office staff",
+    formSourceBucket: "new",
   },
   {
     key: "phStaff",
@@ -90,6 +110,7 @@ const CHECKLIST_TABS: ChecklistTabConfig[] = [
     formTypes: PH_STAFF_FORM_TYPES,
     isEligible: (u) => isPhBranch(u),
     noun: "PH staff",
+    formSourceBucket: "new",
   },
   {
     key: "bmAndUp",
@@ -97,6 +118,7 @@ const CHECKLIST_TABS: ChecklistTabConfig[] = [
     formTypes: BM_AND_UP_FORM_TYPES,
     isEligible: (u) => isBmAndUpRole(u.role),
     noun: "management staff",
+    formSourceBucket: "new",
   },
 ];
 
@@ -190,6 +212,13 @@ export function TechnicianFormChecklistPage() {
       for (const d of docs) {
         const personId = (d.formData as Record<string, any> | undefined)?.employeeId || d.recipientId;
         if (!personId) continue;
+        // Only w4/i9/direct_deposit/w8ben are actually shared between an
+        // old and a new tab — see SHARED_OLD_NEW_AUTOMATION_TYPES's doc
+        // comment. A doc of one of those types that isn't from this tab's
+        // own bucket doesn't count toward this tab's checklist at all —
+        // without this, e.g. New Technician's W-4 row showed "done" off an
+        // old-flow W-4 submission it never actually sent.
+        if (SHARED_OLD_NEW_AUTOMATION_TYPES.has(d.documentType) && isNewAutomationDoc(d) !== (activeConfig.formSourceBucket === "new")) continue;
         const key = `${personId}|${d.documentType}`;
         const arr = byKey.get(key);
         if (arr) arr.push(d);
