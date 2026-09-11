@@ -13637,13 +13637,18 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
   return (
     <div className="min-h-screen flex flex-col">
-      {/* ── Floating sidebar nav — hover the left edge to open, same as the ticket page's "Sections" tab; no click needed ── */}
+      {/* ── Floating sidebar nav — hover the "Sections" tab itself to open
+          (not just the left edge generally), no click needed. onMouseEnter
+          lives on the tab pill alone so brushing past the edge elsewhere
+          doesn't trigger it; onMouseLeave stays on the outer container,
+          which already resizes to match the open panel's width, so moving
+          off the expanded panel is what closes it. ── */}
       <div
         className={`fixed left-0 top-0 bottom-0 z-40 transition-[width] duration-150 ${sidebarOpen ? sidebarPanelWidthCls : "w-8"}`}
-        onMouseEnter={() => setSidebarOpen(true)}
         onMouseLeave={() => setSidebarOpen(false)}
       >
         <div
+          onMouseEnter={() => setSidebarOpen(true)}
           className={`absolute left-1 top-1/2 -translate-y-1/2 flex items-center gap-0.5 rounded-md border border-blue-400/40 bg-blue-500/20 text-blue-200 px-1 py-2 shadow-md shadow-blue-900/30 select-none transition-opacity ${sidebarOpen ? "opacity-0 pointer-events-none" : "opacity-100"}`}
         >
           <ChevronRight className="h-3 w-3" />
