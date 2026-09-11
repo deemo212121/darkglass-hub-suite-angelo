@@ -9,6 +9,7 @@ import {
 } from "@/lib/firebase/storage";
 import { compressImage, validateImageFile, formatBytes } from "@/lib/imageCompression";
 import { enqueuePhotoUpload, pendingQueueCount } from "@/lib/offlineQueue";
+import { isTabVisible, onTabVisible } from "@/lib/pageVisibility";
 
 const MAX_PHOTOS = 20;
 
@@ -99,6 +100,7 @@ export function TicketPhotos({
     let cancelled = false;
     let lastCount: number | null = null;
     const check = async () => {
+      if (cancelled || !isTabVisible()) return;
       const n = await pendingQueueCount().catch(() => null);
       if (cancelled || n === null) return;
       if (lastCount !== null && n < lastCount) {
@@ -111,9 +113,13 @@ export function TicketPhotos({
     };
     check();
     const interval = window.setInterval(check, 15_000);
+    // Catches up immediately on refocus instead of waiting out the rest of
+    // the interval — see pageVisibility.ts.
+    const unsubVisible = onTabVisible(check);
     return () => {
       cancelled = true;
       window.clearInterval(interval);
+      unsubVisible();
     };
   }, [uploadQueue, cid, ticketPath]);
 

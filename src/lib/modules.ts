@@ -356,7 +356,7 @@ const hrMod: ModuleDef = {
   submodules: [
     {
       slug: "hr-dashboard",
-      title: "HR & Recruitment Dashboard",
+      title: "HR To Do List",
       description: "Manage job interviews, hiring pipeline, and HR metrics.",
       custom: "hr-dashboard" as any,
       fields: [],
@@ -377,15 +377,6 @@ const hrMod: ModuleDef = {
       title: "Absent List",
       description: "Who has no recorded check-in today (or any date) — excludes rest days and approved PTO/leave.",
       custom: "absent-list" as any,
-      fields: [],
-      count: 0,
-      seed: () => ({}),
-    },
-    {
-      slug: "todo-list",
-      title: "To-Do List",
-      description: "Finish setting up new hires — the steps User Management doesn't complete on its own.",
-      custom: "hr-todo-list" as any,
       fields: [],
       count: 0,
       seed: () => ({}),

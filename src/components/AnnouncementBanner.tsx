@@ -24,6 +24,7 @@ import {
 import { getMyProfileId } from "@/lib/supabase/users";
 import { supabase } from "@/lib/supabase/client";
 import { playAnnouncementSound } from "@/lib/notifySound";
+import { isTabVisible, onTabVisible } from "@/lib/pageVisibility";
 
 function formatTimestamp(value: string) {
   const date = new Date(value);
@@ -162,8 +163,8 @@ export function AnnouncementBanner({ onOpen, top = "5rem" }: AnnouncementBannerP
       onMessage: handleRow,
     });
 
-    const poll = window.setInterval(async () => {
-      if (cancelled) return;
+    const pollTick = async () => {
+      if (cancelled || !isTabVisible()) return;
       try {
         const { data } = await supabase
           .from("messages")
@@ -185,7 +186,11 @@ export function AnnouncementBanner({ onOpen, top = "5rem" }: AnnouncementBannerP
           .sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
         if (newest) handleRow(newest);
       } catch { /* ignore */ }
-    }, 20000);
+    };
+    const poll = window.setInterval(pollTick, 20000);
+    // Catches up immediately on refocus instead of waiting out the rest of
+    // the interval — see pageVisibility.ts.
+    const unsubVisible = onTabVisible(pollTick);
 
     // Also re-fetch the read pointer when something elsewhere in the app
     // marks announcements as read (Mark all read button, opening the channel,
@@ -197,6 +202,7 @@ export function AnnouncementBanner({ onOpen, top = "5rem" }: AnnouncementBannerP
       cancelled = true;
       unsub();
       window.clearInterval(poll);
+      unsubVisible();
       window.removeEventListener("ahs:unread-changed", onChanged);
     };
   }, [channel?.id, profileId]); // eslint-disable-line react-hooks/exhaustive-deps
