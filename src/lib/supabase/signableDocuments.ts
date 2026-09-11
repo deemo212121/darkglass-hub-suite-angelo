@@ -1,7 +1,16 @@
 import { supabase } from "./client";
 import { deleteAgentNote } from "./csrAgentNotes";
+import { getTechnicianFormExemptions } from "./technicianFormExemptions";
+import { setProfileFrozen } from "./users";
+import {
+  TECHNICIAN_FORM_TYPES,
+  SIGNABLE_DOCUMENT_REGISTRY,
+  isTechnicianExemptFromForm,
+  getDocumentReviewStatus,
+  pickAuthoritativeDocument,
+} from "@/lib/signableDocumentRegistry";
 
-export type SignableDocumentType = "warning_form" | "w8ben" | "w4" | "w9" | "w4r" | "i9" | "wage_ack" | "car_iq_agreement" | "vehicle_agreement" | "employee_confidentiality" | "meal_rest_break" | "pto_ack" | "parts_responsibility" | "mileage_fuel" | "location_consent" | "damage" | "contractor_data" | "contractor_data_us" | "direct_deposit" | "promotion_form" | "action_plan_form" | "termination_form" | "substance_screening" | "flash_technician_travel" | "nda_form" | "vehicle_use_agreement" | "contractor_addendum";
+export type SignableDocumentType = "warning_form" | "w8ben" | "w4" | "w9" | "w4r" | "i9" | "wage_ack" | "car_iq_agreement" | "vehicle_agreement" | "employee_confidentiality" | "meal_rest_break" | "pto_ack" | "parts_responsibility" | "mileage_fuel" | "location_consent" | "damage" | "contractor_data" | "contractor_data_us" | "direct_deposit" | "promotion_form" | "action_plan_form" | "termination_form" | "substance_screening" | "flash_technician_travel" | "nda_form" | "vehicle_use_agreement" | "contractor_addendum" | "master_w2_agreement";
 /** "executive" only applies to promotion_form documents (see migration 0166) — every other document type just never uses that slot. */
 export type SignatureSlot = "employee" | "manager" | "senior_manager" | "hr_staff" | "executive";
 export type SignableDocumentStatus = "pending_signature" | "signed" | "confirmed" | "cancelled";
@@ -86,6 +95,31 @@ export async function createSignableDocument(input: {
     .single();
   if (error) throw new Error(error.message);
   return mapRow(data);
+}
+
+/**
+ * "Send" preflight: which of the given types already have a non-cancelled
+ * document for this recipient? Nothing previously checked this, so HR could
+ * (and did — see the 2026-09 duplicate-forms cleanup) resend the exact same
+ * onboarding packet to someone twice with no warning. Only meaningful for a
+ * real AHS recipient (recipientId) — an external/no-login recipient has no
+ * stable identifier to match on (they all fall back to the same generic
+ * "External Recipient" name), so callers should skip this check when there's
+ * no recipientId.
+ */
+export async function getExistingActiveDocumentTypes(
+  recipientId: string,
+  types: SignableDocumentType[]
+): Promise<SignableDocumentType[]> {
+  if (types.length === 0) return [];
+  const { data, error } = await supabase
+    .from("hr_signable_documents")
+    .select("document_type")
+    .eq("recipient_id", recipientId)
+    .in("document_type", types)
+    .neq("status", "cancelled");
+  if (error) throw new Error(error.message);
+  return Array.from(new Set((data ?? []).map((r: any) => r.document_type as SignableDocumentType)));
 }
 
 export async function getSignableDocument(id: string): Promise<SignableDocument | null> {
@@ -188,6 +222,152 @@ export async function getAllSignableDocuments(): Promise<SignableDocument[]> {
   return all;
 }
 
+/** Every signable document for one recipient, ANY type, most recent first —
+ *  the frozen-account "which forms do I still need to sign" popup
+ *  (FrozenAccountModal.tsx, via technicianFormStatus.ts/
+ *  getIncompleteTechnicianForms) and any other self-service view that only
+ *  needs one person's own documents.
+ *
+ *  Matches on recipient_id OR form_data->>employeeId, not recipient_id
+ *  alone — recipient_id is who currently needs to ACT on the document
+ *  (reassignSignableDocument moves it to whichever HR staffer completes the
+ *  employer/countersign step — see wage_ack/damage/i9/etc.'s "*EmployerDialog"
+ *  handlers in ReportHRDaily.tsx), so a fully confirmed two-party form
+ *  permanently loses its recipient_id link to the original technician the
+ *  moment HR finishes reviewing it. form_data.employeeId is set once at
+ *  creation by every one of those send handlers and never changes — it's
+ *  the stable "whose form is this" identity, confirmed live on 2026-09-10:
+ *  a technician's confirmed Acknowledgment of Wage/Substance Screening/
+ *  Location Consent all had recipient_id pointing at three different HR
+ *  staffers, making them invisible here (and on the Technician Form
+ *  Checklist, which has the same fix) even though they were fully done. */
+export async function getSignableDocumentsForRecipient(recipientId: string): Promise<SignableDocument[]> {
+  const all: SignableDocument[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from("hr_signable_documents")
+      .select(SELECT)
+      .or(`recipient_id.eq.${recipientId},form_data->>employeeId.eq.${recipientId}`)
+      .order("created_at", { ascending: false })
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) throw new Error(error.message);
+    all.push(...(data ?? []).map(mapRow));
+    if (!data || data.length < PAGE_SIZE) break;
+  }
+  return all;
+}
+
+/**
+ * Bulk "who's actually completed which document types" check — per
+ * recipient, which of the given types have a signed/confirmed row (the
+ * newest one per type/recipient wins, so a re-sent-then-signed document
+ * correctly counts and a stale cancelled one doesn't). Used by
+ * ReportHRDaily.tsx's Onboarding Documents checklist grid to fold real
+ * e-signature completions into the "has this been collected" YES/NO check
+ * for the handful of onboarding columns that map 1:1 to a real
+ * SignableDocumentType — see ONBOARDING_COLUMN_TO_DOCUMENT_TYPE there.
+ * Mirrors getOnboardingDocumentCategoriesByProfileIds's own bulk-check shape.
+ */
+export async function getCompletedDocumentTypesByRecipientIds(
+  recipientIds: string[],
+  types: SignableDocumentType[]
+): Promise<Map<string, Set<SignableDocumentType>>> {
+  const map = new Map<string, Set<SignableDocumentType>>();
+  if (recipientIds.length === 0 || types.length === 0) return map;
+  const all: Array<{ recipient_id: string; document_type: SignableDocumentType; status: SignableDocumentStatus }> = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from("hr_signable_documents")
+      .select("recipient_id, document_type, status")
+      .in("recipient_id", recipientIds)
+      .in("document_type", types)
+      .in("status", ["signed", "confirmed"])
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) throw new Error(error.message);
+    all.push(...((data ?? []) as typeof all));
+    if (!data || data.length < PAGE_SIZE) break;
+  }
+  for (const r of all) {
+    if (!r.recipient_id) continue;
+    const set = map.get(r.recipient_id) ?? new Set<SignableDocumentType>();
+    set.add(r.document_type);
+    map.set(r.recipient_id, set);
+  }
+  return map;
+}
+
+export interface IncompleteTechForm {
+  type: SignableDocumentType;
+  label: string;
+  /** true = sent and awaiting the technician's own signature; false = never sent yet. */
+  pending: boolean;
+  /** Set only when pending — the doc to link straight to. Nothing to link to yet when not sent. */
+  docId: string | null;
+}
+
+/**
+ * Which of TECHNICIAN_FORM_TYPES a technician still needs to act on
+ * themselves — "not_sent" or "awaiting_employee" only; a form sitting in
+ * "awaiting_hr" (they've already signed, HR's countersignature is what's
+ * outstanding) is deliberately excluded since it isn't the technician's
+ * job anymore. Shared by technicianFormStatus.ts (the frozen-account "what
+ * do I still need to do" popup) and signDocument's own auto-unfreeze check
+ * below — both need exactly the same "is this technician actually done"
+ * answer, kept in one place instead of two.
+ */
+export async function getIncompleteTechnicianForms(profileId: string): Promise<IncompleteTechForm[]> {
+  const [docs, exemptions] = await Promise.all([
+    getSignableDocumentsForRecipient(profileId),
+    getTechnicianFormExemptions(),
+  ]);
+  // Group every row per type — NOT just "keep the newest" (that let a
+  // re-sent, still-pending duplicate hide an earlier row this technician
+  // had genuinely already signed/confirmed, e.g. blocking auto-unfreeze
+  // even though they'd truly finished everything). pickAuthoritativeDocument
+  // picks whichever row actually represents the best status reached.
+  const byType = new Map<SignableDocumentType, SignableDocument[]>();
+  for (const d of docs) {
+    const arr = byType.get(d.documentType);
+    if (arr) arr.push(d);
+    else byType.set(d.documentType, [d]);
+  }
+  const latestByType = new Map<SignableDocumentType, SignableDocument>();
+  for (const [type, group] of byType) {
+    const best = pickAuthoritativeDocument(group);
+    if (best) latestByType.set(type, best);
+  }
+  const incomplete: IncompleteTechForm[] = [];
+  for (const type of TECHNICIAN_FORM_TYPES) {
+    const doc = latestByType.get(type);
+    if (isTechnicianExemptFromForm(type, !!doc, exemptions.has(`${profileId}|${type}`))) continue;
+    const reviewStatus = getDocumentReviewStatus(type, doc);
+    if (reviewStatus === "done" || reviewStatus === "awaiting_hr") continue;
+    incomplete.push({ type, label: SIGNABLE_DOCUMENT_REGISTRY[type]?.label ?? type, pending: reviewStatus === "awaiting_employee", docId: doc?.id ?? null });
+  }
+  return incomplete;
+}
+
+/**
+ * If this profile is currently frozen and has just finished every
+ * Technician-tab form that's actually theirs to complete, lifts the freeze
+ * automatically — the whole point of freezing is to make sure these get
+ * done, so there's no reason to keep them locked out once they have.
+ * Called from signDocument below right after a technician-form signature;
+ * swallows its own errors (logged, not thrown) so a hiccup in this side
+ * effect can never fail the signature the caller actually cares about.
+ */
+async function maybeAutoUnfreezeTechnician(profileId: string): Promise<void> {
+  try {
+    const { data: prof, error } = await supabase.from("profiles").select("frozen").eq("id", profileId).maybeSingle();
+    if (error || !prof?.frozen) return;
+    const incomplete = await getIncompleteTechnicianForms(profileId);
+    if (incomplete.length > 0) return;
+    await setProfileFrozen(profileId, false, profileId, "Auto-unfrozen (all required forms completed)");
+  } catch (err) {
+    console.error("Auto-unfreeze check failed:", err);
+  }
+}
+
 /**
  * Records the recipient's signature and marks the document signed — awaiting
  * HR's review/confirm, not yet an official warning. `formData`, if given,
@@ -208,6 +388,10 @@ export async function signDocument(id: string, slot: SignatureSlot, entry: Signa
   const { data, error } = await supabase.from("hr_signable_documents").update(update).eq("id", id).select("id");
   if (error) throw new Error(error.message);
   if (!data || data.length === 0) throw new Error("Couldn't save the signature — you may not have permission to update this document.");
+
+  if (slot === "employee" && doc.recipientId && TECHNICIAN_FORM_TYPES.includes(doc.documentType)) {
+    await maybeAutoUnfreezeTechnician(doc.recipientId);
+  }
 }
 
 /**

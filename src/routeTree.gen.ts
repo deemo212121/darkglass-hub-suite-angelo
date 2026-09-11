@@ -35,6 +35,7 @@ import { Route as SignPromotionFormDocIdRouteImport } from './routes/sign-promot
 import { Route as SignPromotionExternalDocIdRouteImport } from './routes/sign-promotion-external.$docId'
 import { Route as SignNdaFormDocIdRouteImport } from './routes/sign-nda-form.$docId'
 import { Route as SignNdaExternalDocIdRouteImport } from './routes/sign-nda-external.$docId'
+import { Route as SignManagerReviewDocIdRouteImport } from './routes/sign-manager-review.$docId'
 import { Route as SignExternalDocIdRouteImport } from './routes/sign-external.$docId'
 import { Route as SignDocumentDocIdRouteImport } from './routes/sign-document.$docId'
 import { Route as SignContractorAddendumDocIdRouteImport } from './routes/sign-contractor-addendum.$docId'
@@ -66,6 +67,7 @@ import { Route as FillMileageFuelDocIdRouteImport } from './routes/fill-mileage-
 import { Route as FillMileageFuelExternalDocIdRouteImport } from './routes/fill-mileage-fuel-external.$docId'
 import { Route as FillMealRestBreakDocIdRouteImport } from './routes/fill-meal-rest-break.$docId'
 import { Route as FillMealRestBreakExternalDocIdRouteImport } from './routes/fill-meal-rest-break-external.$docId'
+import { Route as FillMasterW2AgreementDocIdRouteImport } from './routes/fill-master-w2-agreement.$docId'
 import { Route as FillLocationConsentDocIdRouteImport } from './routes/fill-location-consent.$docId'
 import { Route as FillLocationConsentExternalDocIdRouteImport } from './routes/fill-location-consent-external.$docId'
 import { Route as FillI9DocIdRouteImport } from './routes/fill-i9.$docId'
@@ -226,6 +228,11 @@ const SignNdaFormDocIdRoute = SignNdaFormDocIdRouteImport.update({
 const SignNdaExternalDocIdRoute = SignNdaExternalDocIdRouteImport.update({
   id: '/sign-nda-external/$docId',
   path: '/sign-nda-external/$docId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SignManagerReviewDocIdRoute = SignManagerReviewDocIdRouteImport.update({
+  id: '/sign-manager-review/$docId',
+  path: '/sign-manager-review/$docId',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SignExternalDocIdRoute = SignExternalDocIdRouteImport.update({
@@ -395,6 +402,12 @@ const FillMealRestBreakExternalDocIdRoute =
   FillMealRestBreakExternalDocIdRouteImport.update({
     id: '/fill-meal-rest-break-external/$docId',
     path: '/fill-meal-rest-break-external/$docId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const FillMasterW2AgreementDocIdRoute =
+  FillMasterW2AgreementDocIdRouteImport.update({
+    id: '/fill-master-w2-agreement/$docId',
+    path: '/fill-master-w2-agreement/$docId',
     getParentRoute: () => rootRouteImport,
   } as any)
 const FillLocationConsentDocIdRoute =
@@ -596,6 +609,7 @@ export interface FileRoutesByFullPath {
   '/fill-i9/$docId': typeof FillI9DocIdRoute
   '/fill-location-consent-external/$docId': typeof FillLocationConsentExternalDocIdRoute
   '/fill-location-consent/$docId': typeof FillLocationConsentDocIdRoute
+  '/fill-master-w2-agreement/$docId': typeof FillMasterW2AgreementDocIdRoute
   '/fill-meal-rest-break-external/$docId': typeof FillMealRestBreakExternalDocIdRoute
   '/fill-meal-rest-break/$docId': typeof FillMealRestBreakDocIdRoute
   '/fill-mileage-fuel-external/$docId': typeof FillMileageFuelExternalDocIdRoute
@@ -627,6 +641,7 @@ export interface FileRoutesByFullPath {
   '/sign-contractor-addendum/$docId': typeof SignContractorAddendumDocIdRoute
   '/sign-document/$docId': typeof SignDocumentDocIdRoute
   '/sign-external/$docId': typeof SignExternalDocIdRoute
+  '/sign-manager-review/$docId': typeof SignManagerReviewDocIdRoute
   '/sign-nda-external/$docId': typeof SignNdaExternalDocIdRoute
   '/sign-nda-form/$docId': typeof SignNdaFormDocIdRoute
   '/sign-promotion-external/$docId': typeof SignPromotionExternalDocIdRoute
@@ -683,6 +698,7 @@ export interface FileRoutesByTo {
   '/fill-i9/$docId': typeof FillI9DocIdRoute
   '/fill-location-consent-external/$docId': typeof FillLocationConsentExternalDocIdRoute
   '/fill-location-consent/$docId': typeof FillLocationConsentDocIdRoute
+  '/fill-master-w2-agreement/$docId': typeof FillMasterW2AgreementDocIdRoute
   '/fill-meal-rest-break-external/$docId': typeof FillMealRestBreakExternalDocIdRoute
   '/fill-meal-rest-break/$docId': typeof FillMealRestBreakDocIdRoute
   '/fill-mileage-fuel-external/$docId': typeof FillMileageFuelExternalDocIdRoute
@@ -714,6 +730,7 @@ export interface FileRoutesByTo {
   '/sign-contractor-addendum/$docId': typeof SignContractorAddendumDocIdRoute
   '/sign-document/$docId': typeof SignDocumentDocIdRoute
   '/sign-external/$docId': typeof SignExternalDocIdRoute
+  '/sign-manager-review/$docId': typeof SignManagerReviewDocIdRoute
   '/sign-nda-external/$docId': typeof SignNdaExternalDocIdRoute
   '/sign-nda-form/$docId': typeof SignNdaFormDocIdRoute
   '/sign-promotion-external/$docId': typeof SignPromotionExternalDocIdRoute
@@ -771,6 +788,7 @@ export interface FileRoutesById {
   '/fill-i9/$docId': typeof FillI9DocIdRoute
   '/fill-location-consent-external/$docId': typeof FillLocationConsentExternalDocIdRoute
   '/fill-location-consent/$docId': typeof FillLocationConsentDocIdRoute
+  '/fill-master-w2-agreement/$docId': typeof FillMasterW2AgreementDocIdRoute
   '/fill-meal-rest-break-external/$docId': typeof FillMealRestBreakExternalDocIdRoute
   '/fill-meal-rest-break/$docId': typeof FillMealRestBreakDocIdRoute
   '/fill-mileage-fuel-external/$docId': typeof FillMileageFuelExternalDocIdRoute
@@ -802,6 +820,7 @@ export interface FileRoutesById {
   '/sign-contractor-addendum/$docId': typeof SignContractorAddendumDocIdRoute
   '/sign-document/$docId': typeof SignDocumentDocIdRoute
   '/sign-external/$docId': typeof SignExternalDocIdRoute
+  '/sign-manager-review/$docId': typeof SignManagerReviewDocIdRoute
   '/sign-nda-external/$docId': typeof SignNdaExternalDocIdRoute
   '/sign-nda-form/$docId': typeof SignNdaFormDocIdRoute
   '/sign-promotion-external/$docId': typeof SignPromotionExternalDocIdRoute
@@ -860,6 +879,7 @@ export interface FileRouteTypes {
     | '/fill-i9/$docId'
     | '/fill-location-consent-external/$docId'
     | '/fill-location-consent/$docId'
+    | '/fill-master-w2-agreement/$docId'
     | '/fill-meal-rest-break-external/$docId'
     | '/fill-meal-rest-break/$docId'
     | '/fill-mileage-fuel-external/$docId'
@@ -891,6 +911,7 @@ export interface FileRouteTypes {
     | '/sign-contractor-addendum/$docId'
     | '/sign-document/$docId'
     | '/sign-external/$docId'
+    | '/sign-manager-review/$docId'
     | '/sign-nda-external/$docId'
     | '/sign-nda-form/$docId'
     | '/sign-promotion-external/$docId'
@@ -947,6 +968,7 @@ export interface FileRouteTypes {
     | '/fill-i9/$docId'
     | '/fill-location-consent-external/$docId'
     | '/fill-location-consent/$docId'
+    | '/fill-master-w2-agreement/$docId'
     | '/fill-meal-rest-break-external/$docId'
     | '/fill-meal-rest-break/$docId'
     | '/fill-mileage-fuel-external/$docId'
@@ -978,6 +1000,7 @@ export interface FileRouteTypes {
     | '/sign-contractor-addendum/$docId'
     | '/sign-document/$docId'
     | '/sign-external/$docId'
+    | '/sign-manager-review/$docId'
     | '/sign-nda-external/$docId'
     | '/sign-nda-form/$docId'
     | '/sign-promotion-external/$docId'
@@ -1034,6 +1057,7 @@ export interface FileRouteTypes {
     | '/fill-i9/$docId'
     | '/fill-location-consent-external/$docId'
     | '/fill-location-consent/$docId'
+    | '/fill-master-w2-agreement/$docId'
     | '/fill-meal-rest-break-external/$docId'
     | '/fill-meal-rest-break/$docId'
     | '/fill-mileage-fuel-external/$docId'
@@ -1065,6 +1089,7 @@ export interface FileRouteTypes {
     | '/sign-contractor-addendum/$docId'
     | '/sign-document/$docId'
     | '/sign-external/$docId'
+    | '/sign-manager-review/$docId'
     | '/sign-nda-external/$docId'
     | '/sign-nda-form/$docId'
     | '/sign-promotion-external/$docId'
@@ -1122,6 +1147,7 @@ export interface RootRouteChildren {
   FillI9DocIdRoute: typeof FillI9DocIdRoute
   FillLocationConsentExternalDocIdRoute: typeof FillLocationConsentExternalDocIdRoute
   FillLocationConsentDocIdRoute: typeof FillLocationConsentDocIdRoute
+  FillMasterW2AgreementDocIdRoute: typeof FillMasterW2AgreementDocIdRoute
   FillMealRestBreakExternalDocIdRoute: typeof FillMealRestBreakExternalDocIdRoute
   FillMealRestBreakDocIdRoute: typeof FillMealRestBreakDocIdRoute
   FillMileageFuelExternalDocIdRoute: typeof FillMileageFuelExternalDocIdRoute
@@ -1153,6 +1179,7 @@ export interface RootRouteChildren {
   SignContractorAddendumDocIdRoute: typeof SignContractorAddendumDocIdRoute
   SignDocumentDocIdRoute: typeof SignDocumentDocIdRoute
   SignExternalDocIdRoute: typeof SignExternalDocIdRoute
+  SignManagerReviewDocIdRoute: typeof SignManagerReviewDocIdRoute
   SignNdaExternalDocIdRoute: typeof SignNdaExternalDocIdRoute
   SignNdaFormDocIdRoute: typeof SignNdaFormDocIdRoute
   SignPromotionExternalDocIdRoute: typeof SignPromotionExternalDocIdRoute
@@ -1345,6 +1372,13 @@ declare module '@tanstack/react-router' {
       path: '/sign-nda-external/$docId'
       fullPath: '/sign-nda-external/$docId'
       preLoaderRoute: typeof SignNdaExternalDocIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/sign-manager-review/$docId': {
+      id: '/sign-manager-review/$docId'
+      path: '/sign-manager-review/$docId'
+      fullPath: '/sign-manager-review/$docId'
+      preLoaderRoute: typeof SignManagerReviewDocIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/sign-external/$docId': {
@@ -1562,6 +1596,13 @@ declare module '@tanstack/react-router' {
       path: '/fill-meal-rest-break-external/$docId'
       fullPath: '/fill-meal-rest-break-external/$docId'
       preLoaderRoute: typeof FillMealRestBreakExternalDocIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/fill-master-w2-agreement/$docId': {
+      id: '/fill-master-w2-agreement/$docId'
+      path: '/fill-master-w2-agreement/$docId'
+      fullPath: '/fill-master-w2-agreement/$docId'
+      preLoaderRoute: typeof FillMasterW2AgreementDocIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/fill-location-consent/$docId': {
@@ -1845,6 +1886,7 @@ const rootRouteChildren: RootRouteChildren = {
   FillI9DocIdRoute: FillI9DocIdRoute,
   FillLocationConsentExternalDocIdRoute: FillLocationConsentExternalDocIdRoute,
   FillLocationConsentDocIdRoute: FillLocationConsentDocIdRoute,
+  FillMasterW2AgreementDocIdRoute: FillMasterW2AgreementDocIdRoute,
   FillMealRestBreakExternalDocIdRoute: FillMealRestBreakExternalDocIdRoute,
   FillMealRestBreakDocIdRoute: FillMealRestBreakDocIdRoute,
   FillMileageFuelExternalDocIdRoute: FillMileageFuelExternalDocIdRoute,
@@ -1881,6 +1923,7 @@ const rootRouteChildren: RootRouteChildren = {
   SignContractorAddendumDocIdRoute: SignContractorAddendumDocIdRoute,
   SignDocumentDocIdRoute: SignDocumentDocIdRoute,
   SignExternalDocIdRoute: SignExternalDocIdRoute,
+  SignManagerReviewDocIdRoute: SignManagerReviewDocIdRoute,
   SignNdaExternalDocIdRoute: SignNdaExternalDocIdRoute,
   SignNdaFormDocIdRoute: SignNdaFormDocIdRoute,
   SignPromotionExternalDocIdRoute: SignPromotionExternalDocIdRoute,

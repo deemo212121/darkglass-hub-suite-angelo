@@ -58,33 +58,33 @@ export interface Candidate {
 // rest of the app's Candidate type reads naturally.
 const SELECT = "id, company_id, full_name, phone, email, position, branch, department, branch_manager_id, assigned_interviewer_id, trainer_id, source, texted_am, texted_pm, called_am, called_pm, cv_path, status, interview_date, interview_time, interview_timezone, training_start_date, training_end_date, withdrawn_date, notes, screening_note, interviewer_note, created_by, created_at, updated_at, author:created_by (display_name, username)";
 // Falls back to this if screening_note/interviewer_note don't exist yet —
-// i.e. 0234_hr_candidates_screening_interviewer_notes.sql hasn't been run
-// against this database, but 0231_hr_candidates_trainer.sql has.
+// i.e. 0241_hr_candidates_screening_interviewer_notes.sql hasn't been run
+// against this database, but 0238_hr_candidates_trainer.sql has.
 const SELECT_V10 = "id, company_id, full_name, phone, email, position, branch, department, branch_manager_id, assigned_interviewer_id, trainer_id, source, texted_am, texted_pm, called_am, called_pm, cv_path, status, interview_date, interview_time, interview_timezone, training_start_date, training_end_date, withdrawn_date, notes, created_by, created_at, updated_at, author:created_by (display_name, username)";
 // Falls back further to this if trainer_id doesn't exist either — i.e.
-// 0231 hasn't run, but 0230_hr_candidates_source.sql has.
+// 0238 hasn't run, but 0234_hr_candidates_source.sql has.
 const SELECT_V9 = "id, company_id, full_name, phone, email, position, branch, department, branch_manager_id, assigned_interviewer_id, source, texted_am, texted_pm, called_am, called_pm, cv_path, status, interview_date, interview_time, interview_timezone, training_start_date, training_end_date, withdrawn_date, notes, created_by, created_at, updated_at, author:created_by (display_name, username)";
 // Falls back further to this if source doesn't exist either — i.e.
-// 0230 hasn't run, but 0229_hr_candidates_interview_timezone.sql has.
+// 0234 hasn't run, but 0233_hr_candidates_interview_timezone.sql has.
 const SELECT_V8 = "id, company_id, full_name, phone, email, position, branch, department, branch_manager_id, assigned_interviewer_id, texted_am, texted_pm, called_am, called_pm, cv_path, status, interview_date, interview_time, interview_timezone, training_start_date, training_end_date, withdrawn_date, notes, created_by, created_at, updated_at, author:created_by (display_name, username)";
 // Falls back further to this if interview_timezone doesn't exist either —
-// i.e. 0229 hasn't run, but 0228_hr_candidates_interview_time.sql has.
+// i.e. 0233 hasn't run, but 0232_hr_candidates_interview_time.sql has.
 const SELECT_V7 = "id, company_id, full_name, phone, email, position, branch, department, branch_manager_id, assigned_interviewer_id, texted_am, texted_pm, called_am, called_pm, cv_path, status, interview_date, interview_time, training_start_date, training_end_date, withdrawn_date, notes, created_by, created_at, updated_at, author:created_by (display_name, username)";
 // Falls back further to this if interview_time doesn't exist either —
-// i.e. 0228 hasn't run, but 0227_hr_candidates_assigned_interviewer.sql has.
+// i.e. 0232 hasn't run, but 0231_hr_candidates_assigned_interviewer.sql has.
 const SELECT_V6 = "id, company_id, full_name, phone, email, position, branch, department, branch_manager_id, assigned_interviewer_id, texted_am, texted_pm, called_am, called_pm, cv_path, status, interview_date, training_start_date, training_end_date, withdrawn_date, notes, created_by, created_at, updated_at, author:created_by (display_name, username)";
 // Falls back further to this if assigned_interviewer_id doesn't exist
-// either — i.e. 0227 hasn't run, but 0226_hr_candidates_outreach.sql has.
+// either — i.e. 0231 hasn't run, but 0230_hr_candidates_outreach.sql has.
 const SELECT_V5 = "id, company_id, full_name, phone, email, position, branch, department, branch_manager_id, texted_am, texted_pm, called_am, called_pm, cv_path, status, interview_date, training_start_date, training_end_date, withdrawn_date, notes, created_by, created_at, updated_at, author:created_by (display_name, username)";
 // Falls back further to this if texted_am/texted_pm/called_am/called_pm
-// don't exist either — i.e. 0226 hasn't run, but
-// 0225_hr_candidates_department_branch_manager.sql has.
+// don't exist either — i.e. 0230 hasn't run, but
+// 0229_hr_candidates_department_branch_manager.sql has.
 const SELECT_V4 = "id, company_id, full_name, phone, email, position, branch, department, branch_manager_id, cv_path, status, interview_date, training_start_date, training_end_date, withdrawn_date, notes, created_by, created_at, updated_at, author:created_by (display_name, username)";
 // Falls back further to this if department/branch_manager_id don't exist
-// yet either — i.e. 0225 hasn't run, but 0223_hr_candidates_training_end_date.sql has.
+// yet either — i.e. 0229 hasn't run, but 0227_hr_candidates_training_end_date.sql has.
 const SELECT_V3 = "id, company_id, full_name, phone, email, position, branch, cv_path, status, interview_date, training_start_date, training_end_date, withdrawn_date, notes, created_by, created_at, updated_at, author:created_by (display_name, username)";
 // Falls back further to this if training_end_date doesn't exist yet — i.e.
-// 0223 hasn't been run either, but 0221_hr_candidates_status_update.sql has.
+// 0227 hasn't been run either, but 0221_hr_candidates_status_update.sql has.
 const SELECT_V2 = "id, company_id, full_name, phone, email, position, branch, cv_path, status, interview_date, training_start_date, withdrawn_date, notes, created_by, created_at, updated_at, author:created_by (display_name, username)";
 // Falls back further to this if withdrawn_date doesn't exist yet either —
 // i.e. 0221 hasn't run, but 0048_hr_hiring_reports.sql has.
@@ -276,7 +276,7 @@ export async function addCandidate(input: {
   };
   let { data, error }: { data: any; error: any } = await supabase.from("hr_candidates").insert(insertPayload).select(SELECT).single();
   if (isMissingColumnError(error)) {
-    // trainer_id (0231) not applied yet — the insert never referenced it
+    // trainer_id (0238) not applied yet — the insert never referenced it
     // (not an Add Candidate input, only settable later via the Training
     // status dialog), only the RETURNING select did.
     ({ data, error } = await supabase.from("hr_candidates").insert(insertPayload).select(SELECT_V9).single());
@@ -363,10 +363,10 @@ export async function getCandidateCvUrlForForwarding(cvPath: string): Promise<st
  * so re-saving the same status never double-logs or double-counts.
  * `effectiveDate` is the interview date (status = "interviewing") or
  * training start date (status = "training"); ignored for other statuses.
- * `trainingEndDate` (0223_hr_candidates_training_end_date.sql) only ever
+ * `trainingEndDate` (0227_hr_candidates_training_end_date.sql) only ever
  * applies alongside status = "training", set together with the start date
  * from the same dialog. `interviewTime`/`interviewTimezone`
- * (0228/0229_hr_candidates_interview_time*.sql) only ever apply alongside
+ * (0232/0233_hr_candidates_interview_time*.sql) only ever apply alongside
  * status = "interviewing".
  */
 export async function updateCandidateStatus(
@@ -430,7 +430,7 @@ export async function updateCandidateNotes(id: string, notes: string): Promise<v
   if (error) throw new Error(error.message);
 }
 
-/** Updates the Screening Note — a separate slot from the general HR note (updateCandidateNotes above) and the Interviewer Note below, so each role's write never clobbers another's. See 0234_hr_candidates_screening_interviewer_notes.sql. */
+/** Updates the Screening Note — a separate slot from the general HR note (updateCandidateNotes above) and the Interviewer Note below, so each role's write never clobbers another's. See 0241_hr_candidates_screening_interviewer_notes.sql. */
 export async function updateCandidateScreeningNote(id: string, note: string): Promise<void> {
   const { error } = await supabase.from("hr_candidates").update({ screening_note: note.trim() || null }).eq("id", id);
   if (error) throw new Error(error.message);
@@ -532,7 +532,7 @@ export async function getLatestStatusChanges(): Promise<Map<string, StatusChange
 }
 
 /**
- * Generic "who last edited this column" audit trail (0232) for the Hiring
+ * Generic "who last edited this column" audit trail (0239) for the Hiring
  * table's inline-editable fields — Status (and Trainer, set alongside it)
  * already has its own dedicated history table/RPC (hr_candidate_status_
  * history) and isn't logged here too.
@@ -564,7 +564,7 @@ export async function getLatestFieldEdits(): Promise<Map<string, FieldEdit>> {
       .order("created_at", { ascending: false })
       .range(from, from + FIELD_EDIT_PAGE_SIZE - 1);
     if (error) {
-      // 42P01 = table doesn't exist yet (0232 not applied) — no history to show.
+      // 42P01 = table doesn't exist yet (0239 not applied) — no history to show.
       if (error.code === "42P01") return map;
       console.error("getLatestFieldEdits error:", error.message);
       return map;

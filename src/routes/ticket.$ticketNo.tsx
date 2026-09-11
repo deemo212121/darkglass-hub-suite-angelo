@@ -1,4 +1,4 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
 import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { AppHeader } from "@/components/Header";
 import { Footer } from "@/components/Footer";
@@ -1134,7 +1134,7 @@ export const Route = createFileRoute("/ticket/$ticketNo")({
 function TicketDetailsPage() {
   const { ticketNo } = Route.useParams();
   const navigate = useNavigate();
-  const { email: currentUserEmail, ready: authReady, displayName: currentUserName, role: currentUserRole, extraRoles: currentUserExtraRoles, companyId: currentCompanyId, uid } = useAuth();
+  const { email: currentUserEmail, ready: authReady, displayName: currentUserName, role: currentUserRole, extraRoles: currentUserExtraRoles, companyId: currentCompanyId, uid, isFrozen } = useAuth();
   // Tech-only required-field gating: technicians (and anyone using the mobile
   // tech app) must fill Cause of Failure + Service Performed before saving a
   // visit. On desktop / web for other roles these stay optional.
@@ -5712,6 +5712,31 @@ function TicketDetailsPage() {
   const editingLockedVisit = Boolean(
     editingVisitId && visitLogEntries.find((entry) => entry.id === editingVisitId)?.locked
   );
+
+  // A frozen technician's ticket access is also blocked server-side (see
+  // migration 0223's trg_block_frozen_ticket_write trigger) — this early
+  // return just keeps them from ever landing on a page they can't act on.
+  if (isFrozen) {
+    return (
+      <>
+        <AppHeader />
+        <main className="max-w-[1400px] mx-auto px-6 py-8 page-fade-in">
+          <div className="panel text-center max-w-md mx-auto">
+            <h1 className="text-xl font-semibold">Account frozen</h1>
+            <p className="text-sm text-muted-foreground mt-2">Your account has been frozen — you can still open Messages to complete any pending forms, but nothing else is available right now. Contact HR if you have questions.</p>
+            <Link
+              to="/m/$module/$submodule"
+              params={{ module: "admin", submodule: "internal-message-support" }}
+              className="btn btn-primary mt-4 inline-flex"
+            >
+              Go to Messages
+            </Link>
+          </div>
+        </main>
+        <Footer />
+      </>
+    );
+  }
 
   return (
     <>

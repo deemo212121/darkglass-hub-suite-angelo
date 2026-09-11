@@ -61,8 +61,12 @@ import {
   type OnboardingDocumentColumn,
   type OnboardingGroupKey,
 } from "@/lib/supabase/onboardingDocumentColumns";
-import { uploadCoeCertificate, uploadWarningForm, uploadPromotionForm, uploadActionPlanForm, uploadTerminationForm, uploadW8benForm, uploadW4Form, uploadW4RForm, uploadI9Form, uploadWageAckForm, uploadCarIqAgreementForm, uploadVehicleAgreementForm, uploadEmployeeConfidentialityForm, uploadMealRestBreakForm, uploadPtoAckForm, uploadPartsResponsibilityForm, uploadMileageFuelForm, uploadLocationConsentForm, uploadDamageForm, uploadContractorDataForm, uploadDirectDepositForm, uploadSubstanceScreeningForm, uploadFlashTechnicianTravelForm, uploadContractorAddendumForm, uploadSignableDocumentSignature, refreshStorageAuthToken } from "@/lib/firebase/storage";
+import { uploadCoeCertificate, uploadWarningForm, uploadPromotionForm, uploadActionPlanForm, uploadTerminationForm, uploadW8benForm, uploadW4Form, uploadW4RForm, uploadI9Form, uploadWageAckForm, uploadCarIqAgreementForm, uploadVehicleAgreementForm, uploadEmployeeConfidentialityForm, uploadMealRestBreakForm, uploadPtoAckForm, uploadPartsResponsibilityForm, uploadMileageFuelForm, uploadLocationConsentForm, uploadDamageForm, uploadContractorDataForm, uploadDirectDepositForm, uploadSubstanceScreeningForm, uploadFlashTechnicianTravelForm, uploadContractorAddendumForm, uploadMasterW2AgreementForm, uploadSignableDocumentSignature, refreshStorageAuthToken } from "@/lib/firebase/storage";
 import { captureHtmlToPdfBlob, captureHtmlPagesToPdfBlob, loadAssetDataUrl as loadImageDataUrl } from "@/lib/pdfCapture";
+import { downloadSignableDocumentPdf } from "@/lib/downloadSignableDocumentPdf";
+import { useSortableSearchTable } from "@/hooks/useSortableSearchTable";
+import { masterW2AgreementStyles, buildMasterW2AgreementBodyMarkup, type MasterW2AgreementFormData } from "@/lib/masterW2AgreementFormTemplate";
+import { getTechnicianIdDocumentUrl } from "@/lib/supabase/technicianIdDocuments";
 import {
   createSignableDocument,
   getSignableDocuments,
@@ -75,6 +79,8 @@ import {
   updateSignableDocumentPdfUrl,
   signDocument,
   ROUTE_REQUIRED_DOCUMENT_TYPES,
+  getCompletedDocumentTypesByRecipientIds,
+  getExistingActiveDocumentTypes,
   type SignableDocument,
   type SignableDocumentType,
   type SignatureSlot as DocSignatureSlot,
@@ -350,6 +356,49 @@ const PH_ONBOARDING_DOCS = [
   "Employee Off Days Agreement",
   "W-8BEN",
 ];
+
+/**
+ * Onboarding Documents checklist columns that mean the exact same document
+ * as a real SignableDocumentType — so a technician who's already e-signed
+ * it (Technician Form Checklist / the various HR-sent form flows) shows
+ * "YES" here automatically too, instead of HR having to separately upload
+ * a copy into this grid's own file-attachment system for something that
+ * was already completed through the e-signature flow. Same "match onboarding
+ * columns to real document types by exact label text" approach
+ * URGENT_ONBOARDING_COLUMN_LABELS below already uses, just going the other
+ * direction (marking done, not flagging urgent).
+ *
+ * Deliberately conservative — only labels that are an exact or unambiguous
+ * near-exact match (typos, "Acknowledgement" vs "Acknowledgment" spelling,
+ * a more descriptive custom-column wording of the same thing) are mapped.
+ * Several shorter/vaguer columns that could plausibly mean the same thing
+ * (e.g. "CAR IQ", "Floor Protection", "Parts Responsibility Acknowledgement",
+ * "Vehicle Use Agreement") are deliberately left OUT rather than guessed —
+ * see the "split into two by accident" note on URGENT_ONBOARDING_COLUMN_LABELS
+ * for why some of these are ambiguous. This can only ever ADD a "YES" a
+ * human hasn't gotten to yet; it never removes one a human already set.
+ */
+const ONBOARDING_COLUMN_TO_DOCUMENT_TYPE: Record<string, SignableDocumentType> = {
+  "Contractor Data Sheet": "contractor_data",
+  "Direct Deposit Authorization": "direct_deposit",
+  "Non-Disclosure Agreement": "nda_form",
+  "W9": "w9",
+  "W4": "w4",
+  "W-8BEN": "w8ben",
+  "Acknowledgement of Wage": "wage_ack",
+  "Car IQ Technician Agreement": "car_iq_agreement",
+  "Company Vehicle User Agreement": "vehicle_agreement",
+  "Damage Agreement": "damage",
+  "Employee Confidentiality": "employee_confidentiality",
+  "Employee Mobile App Location Sharing Consent Agreement": "location_consent",
+  "Employee Meal & Rest Break Policy": "meal_rest_break",
+  "Personal Vehicle Mileage & Fuel Policy Agreement": "mileage_fuel",
+  "Parts Responsibility & Technician Floor Protection Acknowledgment Form": "parts_responsibility",
+  "Employee PTO & Sick Leave Policy": "pto_ack",
+  "Substance Screening & Conduct Agreement": "substance_screening",
+  "W-4R": "w4r",
+  "I-9": "i9",
+};
 
 // Job Title options for the Generate COE tab — every real role in the
 // system except the three that aren't actual job titles someone would put
@@ -747,6 +796,102 @@ function LeaderTreeBranch({
   );
 }
 
+/** A <th> that sorts a useSortableSearchTable-backed table on click — shared across the Sent History tables so each one doesn't reimplement the same header markup and chevron-state logic. */
+function SortableTh<C extends string>({
+  column, label, sortColumn, sortDir, onSort, className,
+}: {
+  column: C;
+  label: string;
+  sortColumn: C | null;
+  sortDir: "asc" | "desc";
+  onSort: (column: C) => void;
+  className?: string;
+}) {
+  return (
+    <th
+      onClick={() => onSort(column)}
+      title={`Sort by ${label}`}
+      className={`px-4 py-3 text-left text-xs text-muted-foreground uppercase cursor-pointer select-none hover:text-foreground ${className ?? ""}`}
+    >
+      <span className="inline-flex items-center gap-1">
+        {label}
+        {sortColumn === column ? (
+          sortDir === "asc" ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />
+        ) : (
+          <ChevronDown className="h-3 w-3 opacity-20" />
+        )}
+      </span>
+    </th>
+  );
+}
+
+/** Same as SortableTh, plus a funnel icon that opens an Excel-style checklist of the column's actual values — for a low-cardinality column (Branch, Status, Sent By) where picking from what's really there beats free-text search. */
+function FilterableTh<C extends string>({
+  column, label, sortColumn, sortDir, onSort, options, isChecked, onToggleValue, onClear, isFiltered, className,
+}: {
+  column: C;
+  label: string;
+  sortColumn: C | null;
+  sortDir: "asc" | "desc";
+  onSort: (column: C) => void;
+  options: string[];
+  isChecked: (value: string) => boolean;
+  onToggleValue: (value: string) => void;
+  onClear: () => void;
+  isFiltered: boolean;
+  className?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLTableCellElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onClickOutside = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onClickOutside);
+    return () => document.removeEventListener("mousedown", onClickOutside);
+  }, [open]);
+
+  return (
+    <th ref={ref} className={`px-4 py-3 text-left text-xs text-muted-foreground uppercase relative ${className ?? ""}`}>
+      <span className="inline-flex items-center gap-1.5">
+        <span onClick={() => onSort(column)} title={`Sort by ${label}`} className="cursor-pointer select-none hover:text-foreground inline-flex items-center gap-1">
+          {label}
+          {sortColumn === column ? (
+            sortDir === "asc" ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />
+          ) : (
+            <ChevronDown className="h-3 w-3 opacity-20" />
+          )}
+        </span>
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          title={`Filter by ${label}`}
+          className={`p-0.5 rounded hover:bg-white/10 ${isFiltered ? "text-blue-400" : "text-muted-foreground/70"}`}
+        >
+          <Filter className="h-3 w-3" />
+        </button>
+      </span>
+      {open && (
+        <div className="absolute z-20 mt-1.5 left-0 bg-slate-800 border border-white/10 rounded-md shadow-xl p-2 w-52 max-h-72 overflow-y-auto normal-case font-normal text-foreground">
+          <div className="flex items-center justify-between mb-1.5 pb-1.5 border-b border-white/10">
+            <span className="text-[10px] text-muted-foreground">{options.length} value{options.length === 1 ? "" : "s"}</span>
+            {isFiltered && (
+              <button type="button" onClick={onClear} className="text-[10px] text-blue-300 hover:text-blue-200">Clear filter</button>
+            )}
+          </div>
+          {options.map((opt) => (
+            <label key={opt} className="flex items-center gap-2 py-1 px-1 text-xs cursor-pointer hover:bg-white/5 rounded">
+              <input type="checkbox" checked={isChecked(opt)} onChange={() => onToggleValue(opt)} />
+              <span className="truncate">{opt || "(blank)"}</span>
+            </label>
+          ))}
+        </div>
+      )}
+    </th>
+  );
+}
+
 export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
   // Same component either way (all the Automated Forms state/handlers live
   // here) — HR Paperworks (its own HR-module entry) shows ONLY the
@@ -777,7 +922,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // Reviews, the Approved log, the department trend chart, and the full
   // Employee Directory all on top of each other, forcing a long scroll to
   // reach anything below Hiring.
-  const [activeTab, setActiveTab] = useState<"hiring" | "warnings" | "masterList" | "leaders" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "promotionForm" | "actionPlanForm" | "terminationForm" | "employeeRequestManager" | "w8ben" | "i9" | "wageAck" | "carIqAgreement" | "vehicleAgreement" | "vehicleUseAgreement" | "employeeConfidentiality" | "mealRestBreak" | "ptoAck" | "partsResponsibility" | "mileageFuel" | "locationConsent" | "damage" | "contractorData" | "contractorDataUs" | "directDeposit" | "substanceScreening" | "flashTechnicianTravel" | "contractorAddendum" | "combineForms" | "employerQueue" | "ndaForm" | "calendar" | "interviewCalendar">(paperworksOnly ? "combineForms" : "hiring");
+  const [activeTab, setActiveTab] = useState<"hiring" | "warnings" | "masterList" | "leaders" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "promotionForm" | "actionPlanForm" | "terminationForm" | "employeeRequestManager" | "w8ben" | "i9" | "wageAck" | "carIqAgreement" | "vehicleAgreement" | "vehicleUseAgreement" | "employeeConfidentiality" | "mealRestBreak" | "ptoAck" | "partsResponsibility" | "mileageFuel" | "locationConsent" | "damage" | "contractorData" | "contractorDataUs" | "directDeposit" | "substanceScreening" | "flashTechnicianTravel" | "contractorAddendum" | "combineForms" | "employerQueue" | "ndaForm" | "calendar" | "interviewCalendar" | "masterW2Agreement">(paperworksOnly ? "combineForms" : "hiring");
   const [openCategory, setOpenCategory] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   // Which floating-sidebar section headers (Automated Forms/Generate
@@ -1738,6 +1883,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     nda_form: "ndaForm",
     vehicle_use_agreement: "vehicleUseAgreement",
     contractor_addendum: "contractorAddendum",
+    master_w2_agreement: "masterW2Agreement",
   };
 
   // Forms popup — checkbox list of every SignableDocumentType, letting HR
@@ -2713,18 +2859,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const handleDownloadWarningFormPdf = async (doc: SignableDocument) => {
     if (!doc.pdfUrl) return;
     const employeeName = (doc.formData as unknown as WarningFormData).employeeName || "warning-form";
-    try {
-      const res = await fetch(doc.pdfUrl);
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = `Employee Warning Form - ${employeeName}.pdf`;
-      a.click();
-      URL.revokeObjectURL(blobUrl);
-    } catch {
-      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
-    }
+    await downloadSignableDocumentPdf(doc.pdfUrl, `Employee Warning Form - ${employeeName}.pdf`);
   };
 
   // ── W-8BEN — HR just picks a recipient; the recipient fills in their own
@@ -2812,6 +2947,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     try {
       const recipient = employees.find((e) => e.id === w8RecipientId);
       if (!recipient) throw new Error("Select a recipient first.");
+
+      const alreadySent = await getExistingActiveDocumentTypes(recipient.id, ["w8ben"]);
+      if (alreadySent.length > 0 && !window.confirm(`${recipient.name} already has a Form W-8BEN on file. Send another one anyway?`)) {
+        return;
+      }
 
       const doc = await createSignableDocument({
         documentType: "w8ben",
@@ -2909,18 +3049,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const handleDownloadW8benPdf = async (doc: SignableDocument) => {
     if (!doc.pdfUrl) return;
     const employeeName = (doc.formData as Partial<W8benFormData>).employeeName || "w8ben-form";
-    try {
-      const res = await fetch(doc.pdfUrl);
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = `W-8BEN - ${employeeName}.pdf`;
-      a.click();
-      URL.revokeObjectURL(blobUrl);
-    } catch {
-      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
-    }
+    await downloadSignableDocumentPdf(doc.pdfUrl, `W-8BEN - ${employeeName}.pdf`);
   };
 
   const handleDeleteW8ben = async (doc: SignableDocument) => {
@@ -3057,6 +3186,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       const recipient = employees.find((e) => e.id === w4RecipientId);
       if (!recipient) throw new Error("Select a recipient first.");
 
+      const alreadySent = await getExistingActiveDocumentTypes(recipient.id, ["w4"]);
+      if (alreadySent.length > 0 && !window.confirm(`${recipient.name} already has a Form W-4 on file. Send another one anyway?`)) {
+        return;
+      }
+
       const doc = await createSignableDocument({
         documentType: "w4",
         formData: { employeeId: recipient.id } as unknown as Record<string, any>,
@@ -3139,18 +3273,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     if (!doc.pdfUrl) return;
     const data = doc.formData as Partial<W4FormData>;
     const employeeName = `${data.firstNameMiddleInitial ?? ""} ${data.lastName ?? ""}`.trim() || "w4-form";
-    try {
-      const res = await fetch(doc.pdfUrl);
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = `W-4 - ${employeeName}.pdf`;
-      a.click();
-      URL.revokeObjectURL(blobUrl);
-    } catch {
-      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
-    }
+    await downloadSignableDocumentPdf(doc.pdfUrl, `W-4 - ${employeeName}.pdf`);
   };
 
   const handleDeleteW4 = async (doc: SignableDocument) => {
@@ -3256,6 +3379,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       const recipient = employees.find((e) => e.id === w9RecipientId);
       if (!recipient) throw new Error("Select a recipient first.");
 
+      const alreadySent = await getExistingActiveDocumentTypes(recipient.id, ["w9"]);
+      if (alreadySent.length > 0 && !window.confirm(`${recipient.name} already has a Form W-9 on file. Send another one anyway?`)) {
+        return;
+      }
+
       const doc = await createSignableDocument({
         documentType: "w9",
         formData: { employeeId: recipient.id } as unknown as Record<string, any>,
@@ -3338,18 +3466,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     if (!doc.pdfUrl) return;
     const data = doc.formData as Partial<W9FormData>;
     const name = data.name || "w9-form";
-    try {
-      const res = await fetch(doc.pdfUrl);
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = `W-9 - ${name}.pdf`;
-      a.click();
-      URL.revokeObjectURL(blobUrl);
-    } catch {
-      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
-    }
+    await downloadSignableDocumentPdf(doc.pdfUrl, `W-9 - ${name}.pdf`);
   };
 
   const handleDeleteW9 = async (doc: SignableDocument) => {
@@ -3443,6 +3560,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       const recipient = employees.find((e) => e.id === w4rRecipientId);
       if (!recipient) throw new Error("Select a recipient first.");
 
+      const alreadySent = await getExistingActiveDocumentTypes(recipient.id, ["w4r"]);
+      if (alreadySent.length > 0 && !window.confirm(`${recipient.name} already has a Form W-4R on file. Send another one anyway?`)) {
+        return;
+      }
+
       const doc = await createSignableDocument({
         documentType: "w4r",
         formData: { employeeId: recipient.id } as unknown as Record<string, any>,
@@ -3525,18 +3647,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     if (!doc.pdfUrl) return;
     const data = doc.formData as Partial<W4RFormData>;
     const name = `${data.firstNameMiddleInitial ?? ""} ${data.lastName ?? ""}`.trim() || "w4r-form";
-    try {
-      const res = await fetch(doc.pdfUrl);
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = `W-4R - ${name}.pdf`;
-      a.click();
-      URL.revokeObjectURL(blobUrl);
-    } catch {
-      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
-    }
+    await downloadSignableDocumentPdf(doc.pdfUrl, `W-4R - ${name}.pdf`);
   };
 
   const handleDeleteW4R = async (doc: SignableDocument) => {
@@ -3596,6 +3707,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       const employeeName = `${data.firstNameMiddleInitial ?? ""} ${data.lastName ?? ""}`.trim();
       const pdfUrl = await uploadW4Form(w4EmployerDialog.companyId, employeeName, new Blob([pdfBytes as unknown as BlobPart], { type: "application/pdf" }));
       await updateSignableDocumentPdfUrl(w4EmployerDialog.id, pdfUrl, merged as unknown as Record<string, any>);
+      await confirmSignableDocument(w4EmployerDialog.id, null);
       setW4EmployerDialog(null);
       await loadSentW4Forms();
     } catch (err) {
@@ -3719,6 +3831,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       const recipient = employees.find((e) => e.id === i9RecipientId);
       if (!recipient) throw new Error("Select a recipient first.");
 
+      const alreadySent = await getExistingActiveDocumentTypes(recipient.id, ["i9"]);
+      if (alreadySent.length > 0 && !window.confirm(`${recipient.name} already has a Form I-9 on file. Send another one anyway?`)) {
+        return;
+      }
+
       const doc = await createSignableDocument({
         documentType: "i9",
         formData: { employeeId: recipient.id, employeeName: recipient.name } as unknown as Record<string, any>,
@@ -3785,6 +3902,297 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       setTimeout(() => setI9SentLinkCopied(false), 1500);
     } catch (err) {
       console.error("Failed to copy link:", err);
+    }
+  };
+
+  // ── Master W-2 Technician Agreement — consolidates 11 of the individual
+  // Technician Forms (Wage, Meal & Rest Break, Location Consent, Mileage &
+  // Fuel, Car IQ, Company Vehicle Use, Flash Technician Travel, Damage,
+  // Parts Responsibility, PTO, Confidentiality, Substance Screening) into
+  // one document with one signature — see masterW2AgreementFormTemplate.ts's
+  // header comment. HTML-captured (no source PDF, same technique as the
+  // Warning Form), genuine two-party flow like Acknowledgment of Wage: HR
+  // sends a link, the employee fills their info + uploads a license/SSN
+  // card photo and signs (FillMasterW2AgreementPage.tsx), then it lands
+  // back here for HR to add the "Employer Representative" signature. The
+  // 11 individual forms this supersedes are left in place, still sendable —
+  // this is additive, not a replacement, until a decision is made on
+  // retiring them. ──
+  const [sentMasterW2AgreementForms, setSentMasterW2AgreementForms] = useState<SignableDocument[]>([]);
+  const loadSentMasterW2AgreementForms = async () => {
+    try {
+      setSentMasterW2AgreementForms(await getSignableDocuments("master_w2_agreement"));
+    } catch (err) {
+      console.error("Failed to load sent Master W-2 Agreement forms:", err);
+    }
+  };
+  useEffect(() => {
+    if (activeTab === "masterW2Agreement" || activeTab === "jotformDocuments" || activeTab === "combineForms" || activeTab === "employerQueue") void loadSentMasterW2AgreementForms();
+  }, [activeTab]);
+  const sentMasterW2AgreementAwaitingEmployerCount = useMemo(
+    () => sentMasterW2AgreementForms.filter(isAwaitingEmployerStep).length,
+    [sentMasterW2AgreementForms]
+  );
+
+  type MasterW2AgreementSortColumn = "employee" | "branch" | "sentBy" | "status" | "sent";
+  const masterW2AgreementStatusLabel = (doc: SignableDocument): string =>
+    doc.status === "confirmed" ? "Completed"
+      : isAwaitingEmployerStep(doc) ? "Awaiting Employer Signature"
+      : doc.status === "cancelled" ? "Cancelled"
+      : "Awaiting Employee";
+  const {
+    search: masterW2AgreementSentSearch,
+    setSearch: setMasterW2AgreementSentSearch,
+    sortColumn: masterW2AgreementSentSortColumn,
+    sortDir: masterW2AgreementSentSortDir,
+    handleSort: handleMasterW2AgreementSentSort,
+    filterOptionsFor: masterW2AgreementFilterOptionsFor,
+    toggleFilterValue: masterW2AgreementToggleFilterValue,
+    clearColumnFilter: masterW2AgreementClearColumnFilter,
+    isColumnFiltered: masterW2AgreementIsColumnFiltered,
+    isValueChecked: masterW2AgreementIsValueChecked,
+    rows: sortedSentMasterW2AgreementForms,
+  } = useSortableSearchTable<SignableDocument, MasterW2AgreementSortColumn>(
+    sentMasterW2AgreementForms,
+    (doc, q) => {
+      const data = doc.formData as Partial<MasterW2AgreementFormData>;
+      const employeeName = (data.employeeName || doc.recipientName || "").toLowerCase();
+      const branch = (data.branch || "").toLowerCase();
+      return employeeName.includes(q) || branch.includes(q);
+    },
+    (doc, column) => {
+      const data = doc.formData as Partial<MasterW2AgreementFormData>;
+      switch (column) {
+        case "employee": return (data.employeeName || doc.recipientName || "").toLowerCase();
+        case "branch": return (data.branch || "").toLowerCase();
+        case "sentBy": return (doc.createdByName ?? "").toLowerCase();
+        case "status": return masterW2AgreementStatusLabel(doc).toLowerCase();
+        case "sent": return new Date(doc.createdAt).getTime();
+      }
+    },
+    (doc, column) => {
+      const data = doc.formData as Partial<MasterW2AgreementFormData>;
+      switch (column) {
+        case "branch": return data.branch || "—";
+        case "sentBy": return doc.createdByName ?? "—";
+        case "status": return masterW2AgreementStatusLabel(doc);
+        default: return "";
+      }
+    }
+  );
+
+  const [masterW2AgreementRecipientId, setMasterW2AgreementRecipientId] = useState("");
+  const [masterW2AgreementRecipientSearch, setMasterW2AgreementRecipientSearch] = useState("");
+  const [masterW2AgreementRecipientDropdownOpen, setMasterW2AgreementRecipientDropdownOpen] = useState(false);
+  const [masterW2AgreementSending, setMasterW2AgreementSending] = useState(false);
+  const [masterW2AgreementSendError, setMasterW2AgreementSendError] = useState<string | null>(null);
+  const [masterW2AgreementActionBusyId, setMasterW2AgreementActionBusyId] = useState<string | null>(null);
+  const [masterW2AgreementActionError, setMasterW2AgreementActionError] = useState<string | null>(null);
+  const [masterW2AgreementDocPreview, setMasterW2AgreementDocPreview] = useState<SignableDocument | null>(null);
+  const [masterW2AgreementPreviewExpanded, setMasterW2AgreementPreviewExpanded] = useState(false);
+  const [masterW2AgreementPreviewPdfUrl, setMasterW2AgreementPreviewPdfUrl] = useState<string | null>(null);
+  const [masterW2AgreementPreviewLoading, setMasterW2AgreementPreviewLoading] = useState(false);
+  const filteredMasterW2AgreementRecipients = useMemo(
+    () => employees.filter((e) => e.status === "active" && e.name.toLowerCase().includes(masterW2AgreementRecipientSearch.toLowerCase())),
+    [employees, masterW2AgreementRecipientSearch]
+  );
+
+  const buildMasterW2AgreementPreviewData = (employeeName: string): MasterW2AgreementFormData => {
+    const [firstName = "", ...rest] = employeeName.trim().split(/\s+/).filter(Boolean);
+    const lastName = rest.length ? rest[rest.length - 1] : "";
+    const middleName = rest.length > 1 ? rest.slice(0, -1).join(" ") : "";
+    return {
+      employeeId: "",
+      employeeName,
+      firstName,
+      middleName,
+      lastName,
+      branch: "",
+      effectiveDate: "",
+      addressStreet: "",
+      addressCity: "",
+      addressState: "",
+      addressZip: "",
+      phone: "",
+      email: "",
+      licensePhotoPath: "",
+      ssnCardPhotoPath: "",
+      employeeDateSigned: "",
+      employeeSignatureDataUrl: "",
+      employerDateSigned: "",
+      employerSignatureDataUrl: "",
+    };
+  };
+
+  /** Toggles the inline collapsible preview panel — collapsing just hides it (and revokes the blob URL); expanding (re)builds a fresh blank-filled sample from the currently-selected recipient's name. HTML-captured (not a pdf-lib fill like the other types' own preview), same technique as the document itself. */
+  const toggleMasterW2AgreementPreview = async () => {
+    if (masterW2AgreementPreviewExpanded) {
+      setMasterW2AgreementPreviewExpanded(false);
+      if (masterW2AgreementPreviewPdfUrl) URL.revokeObjectURL(masterW2AgreementPreviewPdfUrl);
+      setMasterW2AgreementPreviewPdfUrl(null);
+      return;
+    }
+    setMasterW2AgreementSendError(null);
+    setMasterW2AgreementPreviewExpanded(true);
+    setMasterW2AgreementPreviewLoading(true);
+    try {
+      const recipientName = employees.find((e) => e.id === masterW2AgreementRecipientId)?.name || "";
+      const logo = masterW2AgreementLogoDataUrl || (await loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png")));
+      const pdfBlob = await captureHtmlToPdfBlob(buildMasterW2AgreementBodyMarkup(buildMasterW2AgreementPreviewData(recipientName), logo), masterW2AgreementStyles);
+      const url = URL.createObjectURL(pdfBlob);
+      setMasterW2AgreementPreviewPdfUrl(url);
+    } catch (err) {
+      setMasterW2AgreementSendError(err instanceof Error ? err.message : "Failed to build preview.");
+    } finally {
+      setMasterW2AgreementPreviewLoading(false);
+    }
+  };
+
+  const handleSendMasterW2Agreement = async () => {
+    if (!masterW2AgreementRecipientId || !uid) return;
+    setMasterW2AgreementSending(true);
+    setMasterW2AgreementSendError(null);
+    try {
+      const recipient = employees.find((e) => e.id === masterW2AgreementRecipientId);
+      if (!recipient) throw new Error("Select a recipient first.");
+
+      const alreadySent = await getExistingActiveDocumentTypes(recipient.id, ["master_w2_agreement"]);
+      if (alreadySent.length > 0 && !window.confirm(`${recipient.name} already has a Master W-2 Technician Agreement on file. Send another one anyway?`)) {
+        return;
+      }
+
+      const doc = await createSignableDocument({
+        documentType: "master_w2_agreement",
+        formData: { employeeId: recipient.id, employeeName: recipient.name } as unknown as Record<string, any>,
+        recipientId: masterW2AgreementRecipientId,
+        recipientSlot: "employee",
+        pdfUrl: "",
+      });
+
+      const myProfileId = await getMyProfileId(uid);
+      if (!myProfileId) throw new Error("Could not resolve your profile.");
+      const thread = await getOrCreateDmThread(myProfileId, masterW2AgreementRecipientId);
+      const fillLink = `${getAppUrl()}/fill-master-w2-agreement/${doc.id}`;
+      await sendMessage({
+        dmThreadId: thread.id,
+        senderId: myProfileId,
+        senderName: displayName || "HR",
+        body: `📋 Please complete the Master W-2 Technician Comprehensive Policy, Consent & Agreement: ${fillLink}`,
+      });
+
+      void logActivity({ action: "master_w2_agreement_sent", targetType: "employee", targetId: recipient.id, targetLabel: recipient.name });
+
+      setMasterW2AgreementRecipientId("");
+      setMasterW2AgreementRecipientSearch("");
+      await loadSentMasterW2AgreementForms();
+    } catch (err) {
+      setMasterW2AgreementSendError(err instanceof Error ? err.message : "Failed to send request.");
+    } finally {
+      setMasterW2AgreementSending(false);
+    }
+  };
+
+  const handleCopyMasterW2AgreementLink = async (doc: SignableDocument) => {
+    try {
+      await navigator.clipboard.writeText(`${getAppUrl()}/fill-master-w2-agreement/${doc.id}`);
+    } catch (err) {
+      console.error("Failed to copy link:", err);
+    }
+  };
+
+  const handleDownloadMasterW2AgreementPdf = async (doc: SignableDocument) => {
+    if (!doc.pdfUrl) return;
+    const name = (doc.formData as Partial<MasterW2AgreementFormData>).employeeName || doc.recipientName || "master-w2-agreement";
+    await downloadSignableDocumentPdf(doc.pdfUrl, `Master W-2 Technician Agreement - ${name}.pdf`);
+  };
+
+  const handleReopenMasterW2AgreementEmployer = async (doc: SignableDocument) => {
+    if (!window.confirm("Re-open this for a new employer signature? The employee's signature stays as-is.")) return;
+    setMasterW2AgreementActionBusyId(doc.id);
+    setMasterW2AgreementActionError(null);
+    try {
+      await reopenEmployerSignature(doc.id);
+      await loadSentMasterW2AgreementForms();
+    } catch (err) {
+      setMasterW2AgreementActionError(err instanceof Error ? err.message : "Failed to reopen for re-signing.");
+    } finally {
+      setMasterW2AgreementActionBusyId(null);
+    }
+  };
+
+  const handleDeleteMasterW2Agreement = async (doc: SignableDocument) => {
+    if (!window.confirm("Permanently delete this Master W-2 Technician Agreement request?")) return;
+    setMasterW2AgreementActionBusyId(doc.id);
+    setMasterW2AgreementActionError(null);
+    try {
+      await deleteSignableDocument(doc.id);
+      await loadSentMasterW2AgreementForms();
+    } catch (err) {
+      setMasterW2AgreementActionError(err instanceof Error ? err.message : "Failed to delete.");
+    } finally {
+      setMasterW2AgreementActionBusyId(null);
+    }
+  };
+
+  // ── Complete Employer Signature — a plain signature pad (no fields to
+  // review), reassigns the document to the current HR user first so the
+  // RLS update policy allows it (same "claim" pattern Wage Ack's own dialog
+  // uses), then regenerates the whole PDF fresh with both signatures. ──
+  const [masterW2AgreementEmployerDialog, setMasterW2AgreementEmployerDialog] = useState<SignableDocument | null>(null);
+  const [masterW2AgreementEmployerSaving, setMasterW2AgreementEmployerSaving] = useState(false);
+  const [masterW2AgreementEmployerError, setMasterW2AgreementEmployerError] = useState<string | null>(null);
+  const masterW2AgreementEmployerSigPad = useSignaturePad({ width: 400, height: 120 });
+  const [masterW2AgreementLogoDataUrl, setMasterW2AgreementLogoDataUrl] = useState("");
+
+  const handleOpenMasterW2AgreementEmployerDialog = (doc: SignableDocument) => {
+    setMasterW2AgreementEmployerDialog(doc);
+    setMasterW2AgreementEmployerError(null);
+    if (!masterW2AgreementLogoDataUrl) {
+      loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png")).then(setMasterW2AgreementLogoDataUrl).catch(() => {});
+    }
+  };
+
+  const handleSaveMasterW2AgreementEmployerSignature = async () => {
+    if (!masterW2AgreementEmployerDialog || !uid) return;
+    if (!masterW2AgreementEmployerSigPad.hasContent()) {
+      setMasterW2AgreementEmployerError("Please add your signature.");
+      return;
+    }
+    setMasterW2AgreementEmployerSaving(true);
+    setMasterW2AgreementEmployerError(null);
+    try {
+      const myProfileId = await getMyProfileId(uid);
+      if (!myProfileId) throw new Error("Could not resolve your profile.");
+
+      await reassignSignableDocument(masterW2AgreementEmployerDialog.id, { recipientId: myProfileId, recipientName: displayName || "HR" }, "hr_staff");
+
+      const existing = masterW2AgreementEmployerDialog.formData as MasterW2AgreementFormData;
+      const dataUrl = masterW2AgreementEmployerSigPad.toDataURL();
+      if (!dataUrl) {
+        setMasterW2AgreementEmployerError("Please add your signature.");
+        return;
+      }
+      await refreshStorageAuthToken();
+      const signatureUrl = await uploadSignableDocumentSignature(masterW2AgreementEmployerDialog.companyId, masterW2AgreementEmployerDialog.id, "hr_staff", dataUrl);
+      const signedAt = new Date().toISOString();
+
+      const merged: MasterW2AgreementFormData = { ...existing, employerSignatureDataUrl: dataUrl, employerDateSigned: signedAt };
+
+      const logo = masterW2AgreementLogoDataUrl || (await loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png")));
+      const pdfBlob = await captureHtmlToPdfBlob(buildMasterW2AgreementBodyMarkup(merged, logo), masterW2AgreementStyles);
+      const pdfUrl = await uploadMasterW2AgreementForm(masterW2AgreementEmployerDialog.companyId, existing.employeeName || "master-w2-agreement", pdfBlob);
+
+      const entry = { name: displayName || "HR", url: signatureUrl, signedAt };
+      await signDocument(masterW2AgreementEmployerDialog.id, "hr_staff", entry, pdfUrl, merged as unknown as Record<string, any>);
+      await confirmSignableDocument(masterW2AgreementEmployerDialog.id, null);
+
+      void logActivity({ action: "master_w2_agreement_employer_signed", targetType: "employee", targetLabel: existing.employeeName || "" });
+      setMasterW2AgreementEmployerDialog(null);
+      await loadSentMasterW2AgreementForms();
+    } catch (err) {
+      setMasterW2AgreementEmployerError(err instanceof Error ? err.message : "Failed to save signature.");
+    } finally {
+      setMasterW2AgreementEmployerSaving(false);
     }
   };
 
@@ -3872,6 +4280,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       const recipient = employees.find((e) => e.id === wageAckRecipientId);
       if (!recipient) throw new Error("Select a recipient first.");
 
+      const alreadySent = await getExistingActiveDocumentTypes(recipient.id, ["wage_ack"]);
+      if (alreadySent.length > 0 && !window.confirm(`${recipient.name} already has an Acknowledgment of Wage form on file. Send another one anyway?`)) {
+        return;
+      }
+
       const doc = await createSignableDocument({
         documentType: "wage_ack",
         formData: { employeeId: recipient.id, employeeName: recipient.name } as unknown as Record<string, any>,
@@ -3953,18 +4366,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const handleDownloadWageAckPdf = async (doc: SignableDocument) => {
     if (!doc.pdfUrl) return;
     const name = (doc.formData as Partial<WageAckFormData>).employeeName || doc.recipientName || "acknowledgment-of-wage";
-    try {
-      const res = await fetch(doc.pdfUrl);
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = `Acknowledgment of Wage - ${name}.pdf`;
-      a.click();
-      URL.revokeObjectURL(blobUrl);
-    } catch {
-      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
-    }
+    await downloadSignableDocumentPdf(doc.pdfUrl, `Acknowledgment of Wage - ${name}.pdf`);
   };
 
   // Redo the employer signature only — the employee's original signature/
@@ -4156,6 +4558,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       const recipient = employees.find((e) => e.id === mealRestBreakRecipientId);
       if (!recipient) throw new Error("Select a recipient first.");
 
+      const alreadySent = await getExistingActiveDocumentTypes(recipient.id, ["meal_rest_break"]);
+      if (alreadySent.length > 0 && !window.confirm(`${recipient.name} already has a Meal & Rest Break Policy on file. Send another one anyway?`)) {
+        return;
+      }
+
       const doc = await createSignableDocument({
         documentType: "meal_rest_break",
         formData: { employeeId: recipient.id, employeeName: recipient.name } as unknown as Record<string, any>,
@@ -4236,18 +4643,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const handleDownloadMealRestBreakPdf = async (doc: SignableDocument) => {
     if (!doc.pdfUrl) return;
     const name = (doc.formData as Partial<MealRestBreakFormData>).employeeName || doc.recipientName || "meal-rest-break";
-    try {
-      const res = await fetch(doc.pdfUrl);
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = `Meal and Rest Break Acknowledgment - ${name}.pdf`;
-      a.click();
-      URL.revokeObjectURL(blobUrl);
-    } catch {
-      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
-    }
+    await downloadSignableDocumentPdf(doc.pdfUrl, `Meal and Rest Break Acknowledgment - ${name}.pdf`);
   };
 
   const handleReopenMealRestBreakEmployer = async (doc: SignableDocument) => {
@@ -4425,6 +4821,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       const recipient = employees.find((e) => e.id === carIqRecipientId);
       if (!recipient) throw new Error("Select a recipient first.");
 
+      const alreadySent = await getExistingActiveDocumentTypes(recipient.id, ["car_iq_agreement"]);
+      if (alreadySent.length > 0 && !window.confirm(`${recipient.name} already has a Car IQ Technician Agreement on file. Send another one anyway?`)) {
+        return;
+      }
+
       const doc = await createSignableDocument({
         documentType: "car_iq_agreement",
         formData: { employeeId: recipient.id, employeeName: recipient.name } as unknown as Record<string, any>,
@@ -4505,18 +4906,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const handleDownloadCarIqPdf = async (doc: SignableDocument) => {
     if (!doc.pdfUrl) return;
     const name = (doc.formData as Partial<CarIqAgreementFormData>).employeeName || doc.recipientName || "car-iq-agreement";
-    try {
-      const res = await fetch(doc.pdfUrl);
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = `Car IQ Technician Agreement - ${name}.pdf`;
-      a.click();
-      URL.revokeObjectURL(blobUrl);
-    } catch {
-      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
-    }
+    await downloadSignableDocumentPdf(doc.pdfUrl, `Car IQ Technician Agreement - ${name}.pdf`);
   };
 
   const handleDeleteCarIqAgreement = async (doc: SignableDocument) => {
@@ -4615,6 +5005,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       const recipient = employees.find((e) => e.id === vehicleRecipientId);
       if (!recipient) throw new Error("Select a recipient first.");
 
+      const alreadySent = await getExistingActiveDocumentTypes(recipient.id, ["vehicle_agreement"]);
+      if (alreadySent.length > 0 && !window.confirm(`${recipient.name} already has a Company Vehicle Use Agreement on file. Send another one anyway?`)) {
+        return;
+      }
+
       const doc = await createSignableDocument({
         documentType: "vehicle_agreement",
         formData: { employeeId: recipient.id, employeeName: recipient.name } as unknown as Record<string, any>,
@@ -4695,18 +5090,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const handleDownloadVehiclePdf = async (doc: SignableDocument) => {
     if (!doc.pdfUrl) return;
     const name = (doc.formData as Partial<VehicleAgreementFormData>).employeeName || doc.recipientName || "vehicle-agreement";
-    try {
-      const res = await fetch(doc.pdfUrl);
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = `Company Vehicle Use Agreement - ${name}.pdf`;
-      a.click();
-      URL.revokeObjectURL(blobUrl);
-    } catch {
-      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
-    }
+    await downloadSignableDocumentPdf(doc.pdfUrl, `Company Vehicle Use Agreement - ${name}.pdf`);
   };
 
   const handleDeleteVehicleAgreement = async (doc: SignableDocument) => {
@@ -4804,6 +5188,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       const recipient = employees.find((e) => e.id === confidentialityRecipientId);
       if (!recipient) throw new Error("Select a recipient first.");
 
+      const alreadySent = await getExistingActiveDocumentTypes(recipient.id, ["employee_confidentiality"]);
+      if (alreadySent.length > 0 && !window.confirm(`${recipient.name} already has an Employee Confidentiality Agreement on file. Send another one anyway?`)) {
+        return;
+      }
+
       const doc = await createSignableDocument({
         documentType: "employee_confidentiality",
         formData: { employeeId: recipient.id, employeeName: recipient.name } as unknown as Record<string, any>,
@@ -4884,18 +5273,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const handleDownloadConfidentialityPdf = async (doc: SignableDocument) => {
     if (!doc.pdfUrl) return;
     const name = (doc.formData as Partial<EmployeeConfidentialityFormData>).employeeName || doc.recipientName || "employee-confidentiality";
-    try {
-      const res = await fetch(doc.pdfUrl);
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = `Employee Confidentiality Agreement - ${name}.pdf`;
-      a.click();
-      URL.revokeObjectURL(blobUrl);
-    } catch {
-      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
-    }
+    await downloadSignableDocumentPdf(doc.pdfUrl, `Employee Confidentiality Agreement - ${name}.pdf`);
   };
 
   const handleDeleteConfidentiality = async (doc: SignableDocument) => {
@@ -4998,6 +5376,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       const recipient = employees.find((e) => e.id === ndaRecipientId);
       if (!recipient) throw new Error("Select a recipient first.");
 
+      const alreadySent = await getExistingActiveDocumentTypes(recipient.id, ["nda_form"]);
+      if (alreadySent.length > 0 && !window.confirm(`${recipient.name} already has a Non-Disclosure Agreement on file. Send another one anyway?`)) {
+        return;
+      }
+
       const doc = await createSignableDocument({
         documentType: "nda_form",
         formData: { employeeId: recipient.id, employeeName: recipient.name } as unknown as Record<string, any>,
@@ -5078,18 +5461,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const handleDownloadNdaPdf = async (doc: SignableDocument) => {
     if (!doc.pdfUrl) return;
     const name = (doc.formData as { employeeName?: string }).employeeName || doc.recipientName || "nda-form";
-    try {
-      const res = await fetch(doc.pdfUrl);
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = `Non-Disclosure Agreement - ${name}.pdf`;
-      a.click();
-      URL.revokeObjectURL(blobUrl);
-    } catch {
-      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
-    }
+    await downloadSignableDocumentPdf(doc.pdfUrl, `Non-Disclosure Agreement - ${name}.pdf`);
   };
 
   const handleDeleteNda = async (doc: SignableDocument) => {
@@ -5184,6 +5556,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       const recipient = employees.find((e) => e.id === substanceScreeningRecipientId);
       if (!recipient) throw new Error("Select a recipient first.");
 
+      const alreadySent = await getExistingActiveDocumentTypes(recipient.id, ["substance_screening"]);
+      if (alreadySent.length > 0 && !window.confirm(`${recipient.name} already has a Substance Screening & Conduct Agreement on file. Send another one anyway?`)) {
+        return;
+      }
+
       const doc = await createSignableDocument({
         documentType: "substance_screening",
         formData: { employeeId: recipient.id, employeeName: recipient.name } as unknown as Record<string, any>,
@@ -5264,18 +5641,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const handleDownloadSubstanceScreeningPdf = async (doc: SignableDocument) => {
     if (!doc.pdfUrl) return;
     const name = (doc.formData as Partial<SubstanceScreeningFormData>).employeeName || doc.recipientName || "substance-screening";
-    try {
-      const res = await fetch(doc.pdfUrl);
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = `Substance Screening & Conduct Agreement - ${name}.pdf`;
-      a.click();
-      URL.revokeObjectURL(blobUrl);
-    } catch {
-      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
-    }
+    await downloadSignableDocumentPdf(doc.pdfUrl, `Substance Screening & Conduct Agreement - ${name}.pdf`);
   };
 
   const handleDeleteSubstanceScreening = async (doc: SignableDocument) => {
@@ -5287,6 +5653,20 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       await loadSentSubstanceScreeningForms();
     } catch (err) {
       setSubstanceScreeningActionError(err instanceof Error ? err.message : "Failed to delete.");
+    } finally {
+      setSubstanceScreeningActionBusyId(null);
+    }
+  };
+
+  const handleReopenSubstanceScreeningEmployer = async (doc: SignableDocument) => {
+    if (!window.confirm("Re-open this for a new employer signature? The employee's signature stays as-is.")) return;
+    setSubstanceScreeningActionBusyId(doc.id);
+    setSubstanceScreeningActionError(null);
+    try {
+      await reopenEmployerSignature(doc.id);
+      await loadSentSubstanceScreeningForms();
+    } catch (err) {
+      setSubstanceScreeningActionError(err instanceof Error ? err.message : "Failed to reopen for re-signing.");
     } finally {
       setSubstanceScreeningActionBusyId(null);
     }
@@ -5440,6 +5820,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       const recipient = employees.find((e) => e.id === ptoAckRecipientId);
       if (!recipient) throw new Error("Select a recipient first.");
 
+      const alreadySent = await getExistingActiveDocumentTypes(recipient.id, ["pto_ack"]);
+      if (alreadySent.length > 0 && !window.confirm(`${recipient.name} already has a PTO & Sick Leave Policy on file. Send another one anyway?`)) {
+        return;
+      }
+
       const doc = await createSignableDocument({
         documentType: "pto_ack",
         formData: { employeeId: recipient.id, employeeName: recipient.name } as unknown as Record<string, any>,
@@ -5520,18 +5905,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const handleDownloadPtoAckPdf = async (doc: SignableDocument) => {
     if (!doc.pdfUrl) return;
     const name = (doc.formData as Partial<PtoAckFormData>).employeeName || doc.recipientName || "pto-ack";
-    try {
-      const res = await fetch(doc.pdfUrl);
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = `PTO and Sick Leave Policy Acknowledgment - ${name}.pdf`;
-      a.click();
-      URL.revokeObjectURL(blobUrl);
-    } catch {
-      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
-    }
+    await downloadSignableDocumentPdf(doc.pdfUrl, `PTO and Sick Leave Policy Acknowledgment - ${name}.pdf`);
   };
 
   const handleDeletePtoAck = async (doc: SignableDocument) => {
@@ -5641,6 +6015,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       const recipient = employees.find((e) => e.id === partsResponsibilityRecipientId);
       if (!recipient) throw new Error("Select a recipient first.");
 
+      const alreadySent = await getExistingActiveDocumentTypes(recipient.id, ["parts_responsibility"]);
+      if (alreadySent.length > 0 && !window.confirm(`${recipient.name} already has a Parts Responsibility Form on file. Send another one anyway?`)) {
+        return;
+      }
+
       const doc = await createSignableDocument({
         documentType: "parts_responsibility",
         formData: { employeeId: recipient.id, employeeName: recipient.name } as unknown as Record<string, any>,
@@ -5721,18 +6100,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const handleDownloadPartsResponsibilityPdf = async (doc: SignableDocument) => {
     if (!doc.pdfUrl) return;
     const name = (doc.formData as Partial<PartsResponsibilityFormData>).employeeName || doc.recipientName || "parts-responsibility";
-    try {
-      const res = await fetch(doc.pdfUrl);
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = `Parts Responsibility and Floor Protection Acknowledgment - ${name}.pdf`;
-      a.click();
-      URL.revokeObjectURL(blobUrl);
-    } catch {
-      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
-    }
+    await downloadSignableDocumentPdf(doc.pdfUrl, `Parts Responsibility and Floor Protection Acknowledgment - ${name}.pdf`);
   };
 
   const handleReopenPartsResponsibilityManager = async (doc: SignableDocument) => {
@@ -5853,6 +6221,53 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     [sentMileageFuelForms]
   );
 
+  type MileageFuelSortColumn = "employee" | "branch" | "sentBy" | "status" | "sent";
+  const mileageFuelStatusLabel = (doc: SignableDocument): string =>
+    doc.status === "confirmed" ? "Completed"
+      : isAwaitingEmployerStep(doc) ? "Awaiting Employer Signature"
+      : doc.status === "cancelled" ? "Cancelled"
+      : "Awaiting Employee";
+  const {
+    search: mileageFuelSentSearch,
+    setSearch: setMileageFuelSentSearch,
+    sortColumn: mileageFuelSentSortColumn,
+    sortDir: mileageFuelSentSortDir,
+    handleSort: handleMileageFuelSentSort,
+    filterOptionsFor: mileageFuelFilterOptionsFor,
+    toggleFilterValue: mileageFuelToggleFilterValue,
+    clearColumnFilter: mileageFuelClearColumnFilter,
+    isColumnFiltered: mileageFuelIsColumnFiltered,
+    isValueChecked: mileageFuelIsValueChecked,
+    rows: sortedSentMileageFuelForms,
+  } = useSortableSearchTable<SignableDocument, MileageFuelSortColumn>(
+    sentMileageFuelForms,
+    (doc, q) => {
+      const data = doc.formData as Partial<MileageFuelFormData>;
+      const employeeName = (data.employeeName || doc.recipientName || "").toLowerCase();
+      const branch = (data.branch || "").toLowerCase();
+      return employeeName.includes(q) || branch.includes(q);
+    },
+    (doc, column) => {
+      const data = doc.formData as Partial<MileageFuelFormData>;
+      switch (column) {
+        case "employee": return (data.employeeName || doc.recipientName || "").toLowerCase();
+        case "branch": return (data.branch || "").toLowerCase();
+        case "sentBy": return (doc.createdByName ?? "").toLowerCase();
+        case "status": return mileageFuelStatusLabel(doc).toLowerCase();
+        case "sent": return new Date(doc.createdAt).getTime();
+      }
+    },
+    (doc, column) => {
+      const data = doc.formData as Partial<MileageFuelFormData>;
+      switch (column) {
+        case "branch": return data.branch || "—";
+        case "sentBy": return doc.createdByName ?? "—";
+        case "status": return mileageFuelStatusLabel(doc);
+        default: return "";
+      }
+    }
+  );
+
   const [mileageFuelRecipientId, setMileageFuelRecipientId] = useState("");
   const [mileageFuelRecipientSearch, setMileageFuelRecipientSearch] = useState("");
   const [mileageFuelRecipientDropdownOpen, setMileageFuelRecipientDropdownOpen] = useState(false);
@@ -5920,6 +6335,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     try {
       const recipient = employees.find((e) => e.id === mileageFuelRecipientId);
       if (!recipient) throw new Error("Select a recipient first.");
+
+      const alreadySent = await getExistingActiveDocumentTypes(recipient.id, ["mileage_fuel"]);
+      if (alreadySent.length > 0 && !window.confirm(`${recipient.name} already has a Mileage & Fuel Policy on file. Send another one anyway?`)) {
+        return;
+      }
 
       const doc = await createSignableDocument({
         documentType: "mileage_fuel",
@@ -6001,18 +6421,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const handleDownloadMileageFuelPdf = async (doc: SignableDocument) => {
     if (!doc.pdfUrl) return;
     const name = (doc.formData as Partial<MileageFuelFormData>).employeeName || doc.recipientName || "mileage-fuel";
-    try {
-      const res = await fetch(doc.pdfUrl);
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = `Personal Vehicle Mileage and Fuel Policy Agreement - ${name}.pdf`;
-      a.click();
-      URL.revokeObjectURL(blobUrl);
-    } catch {
-      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
-    }
+    await downloadSignableDocumentPdf(doc.pdfUrl, `Personal Vehicle Mileage and Fuel Policy Agreement - ${name}.pdf`);
   };
 
   const handleReopenMileageFuelEmployer = async (doc: SignableDocument) => {
@@ -6192,6 +6601,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       const recipient = employees.find((e) => e.id === flashTechnicianTravelRecipientId);
       if (!recipient) throw new Error("Select a recipient first.");
 
+      const alreadySent = await getExistingActiveDocumentTypes(recipient.id, ["flash_technician_travel"]);
+      if (alreadySent.length > 0 && !window.confirm(`${recipient.name} already has a Flash Technician Travel & Out-of-State Policy on file. Send another one anyway?`)) {
+        return;
+      }
+
       const doc = await createSignableDocument({
         documentType: "flash_technician_travel",
         formData: { employeeId: recipient.id, employeeName: recipient.name } as unknown as Record<string, any>,
@@ -6275,18 +6689,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const handleDownloadFlashTechnicianTravelPdf = async (doc: SignableDocument) => {
     if (!doc.pdfUrl) return;
     const name = (doc.formData as Partial<FlashTechnicianTravelFormData>).employeeName || doc.recipientName || "flash-technician-travel";
-    try {
-      const res = await fetch(doc.pdfUrl);
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = `Flash Technician Travel & Out-of-State Policy - ${name}.pdf`;
-      a.click();
-      URL.revokeObjectURL(blobUrl);
-    } catch {
-      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
-    }
+    await downloadSignableDocumentPdf(doc.pdfUrl, `Flash Technician Travel & Out-of-State Policy - ${name}.pdf`);
   };
 
   const handleReopenFlashTechnicianTravelEmployer = async (doc: SignableDocument) => {
@@ -6463,6 +6866,12 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     try {
       const recipient = employees.find((e) => e.id === contractorAddendumRecipientId);
       if (!recipient) throw new Error("Select a recipient first.");
+
+      const alreadySent = await getExistingActiveDocumentTypes(recipient.id, ["contractor_addendum"]);
+      if (alreadySent.length > 0 && !window.confirm(`${recipient.name} already has a Master Independent Contractor Subcontractor Agreement Addendum on file. Send another one anyway?`)) {
+        return;
+      }
+
       const doc = await createSignableDocument({
         documentType: "contractor_addendum",
         formData: { ...blankContractorAddendumData(), employeeId: recipient.id, signerNames: { ...CONTRACTOR_ADDENDUM_DEFAULT_SIGNER_NAMES, employee: recipient.name } } as unknown as Record<string, any>,
@@ -6541,17 +6950,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const handleDownloadContractorAddendumPdf = async (doc: SignableDocument) => {
     if (!doc.pdfUrl) return;
     const name = (doc.formData as ContractorAddendumFormData).signerNames?.employee || doc.recipientName || "contractor-addendum";
-    try {
-      const res = await fetch(doc.pdfUrl);
-      const blobUrl = URL.createObjectURL(await res.blob());
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = `Master Independent Contractor Subcontractor Agreement Addendum - ${name}.pdf`;
-      a.click();
-      URL.revokeObjectURL(blobUrl);
-    } catch {
-      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
-    }
+    await downloadSignableDocumentPdf(doc.pdfUrl, `Master Independent Contractor Subcontractor Agreement Addendum - ${name}.pdf`);
   };
 
   const handleDeleteContractorAddendum = async (doc: SignableDocument) => {
@@ -6759,6 +7158,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       const recipient = employees.find((e) => e.id === locationConsentRecipientId);
       if (!recipient) throw new Error("Select a recipient first.");
 
+      const alreadySent = await getExistingActiveDocumentTypes(recipient.id, ["location_consent"]);
+      if (alreadySent.length > 0 && !window.confirm(`${recipient.name} already has a Location Sharing Consent on file. Send another one anyway?`)) {
+        return;
+      }
+
       const doc = await createSignableDocument({
         documentType: "location_consent",
         formData: { employeeId: recipient.id, employeeName: recipient.name } as unknown as Record<string, any>,
@@ -6839,18 +7243,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const handleDownloadLocationConsentPdf = async (doc: SignableDocument) => {
     if (!doc.pdfUrl) return;
     const name = (doc.formData as Partial<LocationConsentFormData>).employeeName || doc.recipientName || "location-consent";
-    try {
-      const res = await fetch(doc.pdfUrl);
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = `Location Sharing Consent Agreement - ${name}.pdf`;
-      a.click();
-      URL.revokeObjectURL(blobUrl);
-    } catch {
-      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
-    }
+    await downloadSignableDocumentPdf(doc.pdfUrl, `Location Sharing Consent Agreement - ${name}.pdf`);
   };
 
   const handleReopenLocationConsentEmployer = async (doc: SignableDocument) => {
@@ -7034,6 +7427,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       const recipient = employees.find((e) => e.id === damageRecipientId);
       if (!recipient) throw new Error("Select a recipient first.");
 
+      const alreadySent = await getExistingActiveDocumentTypes(recipient.id, ["damage"]);
+      if (alreadySent.length > 0 && !window.confirm(`${recipient.name} already has a Damage Agreement on file. Send another one anyway?`)) {
+        return;
+      }
+
       const doc = await createSignableDocument({
         documentType: "damage",
         formData: { employeeId: recipient.id, employeeName: recipient.name } as unknown as Record<string, any>,
@@ -7114,18 +7512,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const handleDownloadDamagePdf = async (doc: SignableDocument) => {
     if (!doc.pdfUrl) return;
     const name = (doc.formData as Partial<DamageFormData>).employeeName || doc.recipientName || "damage";
-    try {
-      const res = await fetch(doc.pdfUrl);
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = `Damage Agreement - ${name}.pdf`;
-      a.click();
-      URL.revokeObjectURL(blobUrl);
-    } catch {
-      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
-    }
+    await downloadSignableDocumentPdf(doc.pdfUrl, `Damage Agreement - ${name}.pdf`);
   };
 
   const handleReopenDamageEmployer = async (doc: SignableDocument) => {
@@ -7325,6 +7712,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       const recipient = employees.find((e) => e.id === contractorDataRecipientId);
       if (!recipient) throw new Error("Select a recipient first.");
 
+      const alreadySent = await getExistingActiveDocumentTypes(recipient.id, ["contractor_data"]);
+      if (alreadySent.length > 0 && !window.confirm(`${recipient.name} already has an Employee Data form on file. Send another one anyway?`)) {
+        return;
+      }
+
       const doc = await createSignableDocument({
         documentType: "contractor_data",
         formData: { employeeId: recipient.id, employeeName: recipient.name } as unknown as Record<string, any>,
@@ -7405,18 +7797,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const handleDownloadContractorDataPdf = async (doc: SignableDocument) => {
     if (!doc.pdfUrl) return;
     const name = (doc.formData as Partial<ContractorDataFormData>).employeeName || doc.recipientName || "employee-data";
-    try {
-      const res = await fetch(doc.pdfUrl);
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = `Employee Data - ${name}.pdf`;
-      a.click();
-      URL.revokeObjectURL(blobUrl);
-    } catch {
-      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
-    }
+    await downloadSignableDocumentPdf(doc.pdfUrl, `Employee Data - ${name}.pdf`);
   };
 
   const handleDeleteContractorData = async (doc: SignableDocument) => {
@@ -7539,6 +7920,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       const recipient = employees.find((e) => e.id === contractorDataUsRecipientId);
       if (!recipient) throw new Error("Select a recipient first.");
 
+      const alreadySent = await getExistingActiveDocumentTypes(recipient.id, ["contractor_data_us"]);
+      if (alreadySent.length > 0 && !window.confirm(`${recipient.name} already has a Contractor Data (US) form on file. Send another one anyway?`)) {
+        return;
+      }
+
       const doc = await createSignableDocument({
         documentType: "contractor_data_us",
         formData: { employeeId: recipient.id, employeeName: recipient.name } as unknown as Record<string, any>,
@@ -7619,18 +8005,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const handleDownloadContractorDataUsPdf = async (doc: SignableDocument) => {
     if (!doc.pdfUrl) return;
     const name = (doc.formData as Partial<ContractorDataUsFormData>).employeeName || doc.recipientName || "contractor-data-us";
-    try {
-      const res = await fetch(doc.pdfUrl);
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = `Contractor Data (US) - ${name}.pdf`;
-      a.click();
-      URL.revokeObjectURL(blobUrl);
-    } catch {
-      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
-    }
+    await downloadSignableDocumentPdf(doc.pdfUrl, `Contractor Data (US) - ${name}.pdf`);
   };
 
   const handleDeleteContractorDataUs = async (doc: SignableDocument) => {
@@ -7729,6 +8104,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       const recipient = employees.find((e) => e.id === vehicleUseAgreementRecipientId);
       if (!recipient) throw new Error("Select a recipient first.");
 
+      const alreadySent = await getExistingActiveDocumentTypes(recipient.id, ["vehicle_use_agreement"]);
+      if (alreadySent.length > 0 && !window.confirm(`${recipient.name} already has a Vehicle Use Agreement on file. Send another one anyway?`)) {
+        return;
+      }
+
       const doc = await createSignableDocument({
         documentType: "vehicle_use_agreement",
         formData: { employeeId: recipient.id, employeeName: recipient.name } as unknown as Record<string, any>,
@@ -7809,18 +8189,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const handleDownloadVehicleUseAgreementPdf = async (doc: SignableDocument) => {
     if (!doc.pdfUrl) return;
     const name = (doc.formData as Partial<VehicleUseAgreementFormData>).employeeName || doc.recipientName || "vehicle-use-agreement";
-    try {
-      const res = await fetch(doc.pdfUrl);
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = `Vehicle Use Agreement - ${name}.pdf`;
-      a.click();
-      URL.revokeObjectURL(blobUrl);
-    } catch {
-      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
-    }
+    await downloadSignableDocumentPdf(doc.pdfUrl, `Vehicle Use Agreement - ${name}.pdf`);
   };
 
   const handleDeleteVehicleUseAgreement = async (doc: SignableDocument) => {
@@ -7926,6 +8295,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       const recipient = employees.find((e) => e.id === directDepositRecipientId);
       if (!recipient) throw new Error("Select a recipient first.");
 
+      const alreadySent = await getExistingActiveDocumentTypes(recipient.id, ["direct_deposit"]);
+      if (alreadySent.length > 0 && !window.confirm(`${recipient.name} already has a Direct Deposit Authorization on file. Send another one anyway?`)) {
+        return;
+      }
+
       const doc = await createSignableDocument({
         documentType: "direct_deposit",
         formData: { employeeId: recipient.id, employeeName: recipient.name } as unknown as Record<string, any>,
@@ -8006,18 +8380,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const handleDownloadDirectDepositPdf = async (doc: SignableDocument) => {
     if (!doc.pdfUrl) return;
     const name = (doc.formData as Partial<DirectDepositFormData>).employeeName || doc.recipientName || "direct-deposit";
-    try {
-      const res = await fetch(doc.pdfUrl);
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = `Direct Deposit Authorization - ${name}.pdf`;
-      a.click();
-      URL.revokeObjectURL(blobUrl);
-    } catch {
-      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
-    }
+    await downloadSignableDocumentPdf(doc.pdfUrl, `Direct Deposit Authorization - ${name}.pdf`);
   };
 
   const handleDeleteDirectDeposit = async (doc: SignableDocument) => {
@@ -8076,39 +8439,38 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       if (myProfileId) {
         const employeeName = (doc.formData as { employeeName?: string })?.employeeName || doc.recipientName || "an employee";
         const thread = await getOrCreateDmThread(myProfileId, recipient.id);
-        // Deep-links straight to the right Automated Forms tab (same
-        // ?tab= param VALID_HR_TABS/hrSearchParams already reads on load) —
-        // a real clickable link, not just an instruction to go find the
-        // tab manually.
-        const tabKey =
-          doc.documentType === "i9" ? "i9"
-          : doc.documentType === "meal_rest_break" ? "mealRestBreak"
-          : doc.documentType === "parts_responsibility" ? "partsResponsibility"
-          : doc.documentType === "mileage_fuel" ? "mileageFuel"
-          : doc.documentType === "location_consent" ? "locationConsent"
-          : doc.documentType === "damage" ? "damage"
-          : doc.documentType === "substance_screening" ? "substanceScreening"
-          : doc.documentType === "flash_technician_travel" ? "flashTechnicianTravel"
-          : "wageAck";
-        const tabLink = `${getAppUrl()}/m/hr/hr-dashboard?tab=${tabKey}`;
+        // Every type but i9 now links straight to sign-manager-review — a
+        // standalone page authorized by "are you this document's current
+        // recipient" rather than the HR Dashboard's ADMIN/HR-only role
+        // gate. The reassign target here is routinely a real line manager
+        // with neither role — confirmed live on 2026-09-10 for three
+        // Branch/Senior Branch Managers who couldn't open the old
+        // hr-dashboard link at all. i9's Section 2 needs real review
+        // fields (documents examined, first day employed, business info),
+        // not just a signature, so it isn't on that page yet and still
+        // deep-links into the HR Dashboard's Form I-9 tab.
+        const tabLink =
+          doc.documentType === "i9"
+            ? `${getAppUrl()}/m/hr/hr-dashboard?tab=i9`
+            : `${getAppUrl()}/sign-manager-review/${doc.id}`;
         const body =
           doc.documentType === "i9"
             ? `📋 Please complete Section 2 (document review + employer/AR signature) of Form I-9 for ${employeeName} — [open the Form I-9 tab](${tabLink}) in the HR Dashboard.`
             : doc.documentType === "meal_rest_break"
-            ? `📋 Please add the employer signature to the Employee Meal and Rest Break Policy Acknowledgment for ${employeeName} — [open the Meal & Rest Break Policy tab](${tabLink}) in the HR Dashboard.`
+            ? `📋 Please add the employer signature to the Employee Meal and Rest Break Policy Acknowledgment for ${employeeName}: ${tabLink}`
             : doc.documentType === "parts_responsibility"
-            ? `📋 Please add the manager/supervisor signature to the Parts Responsibility and Technician Floor Protection Acknowledgment Form for ${employeeName} — [open the Parts Responsibility and Technician Floor Protection Acknowledgment Form tab](${tabLink}) in the HR Dashboard.`
+            ? `📋 Please add the manager/supervisor signature to the Parts Responsibility and Technician Floor Protection Acknowledgment Form for ${employeeName}: ${tabLink}`
             : doc.documentType === "mileage_fuel"
-            ? `📋 Please add the employer/representative signature to the Personal Vehicle Mileage and Fuel Policy Agreement for ${employeeName} — [open the Mileage & Fuel Policy tab](${tabLink}) in the HR Dashboard.`
+            ? `📋 Please add the employer/representative signature to the Personal Vehicle Mileage and Fuel Policy Agreement for ${employeeName}: ${tabLink}`
             : doc.documentType === "location_consent"
-            ? `📋 Please add the employer/representative signature to the Employee Mobile App Location Sharing Consent Agreement for ${employeeName} — [open the Location Sharing Consent tab](${tabLink}) in the HR Dashboard.`
+            ? `📋 Please add the employer/representative signature to the Employee Mobile App Location Sharing Consent Agreement for ${employeeName}: ${tabLink}`
             : doc.documentType === "damage"
-            ? `📋 Please add the employer/representative signature to the Damage, Part Loss, and Tool Penalty Commission Deduction Agreement for ${employeeName} — [open the Damage Agreement tab](${tabLink}) in the HR Dashboard.`
+            ? `📋 Please add the employer/representative signature to the Damage, Part Loss, and Tool Penalty Commission Deduction Agreement for ${employeeName}: ${tabLink}`
             : doc.documentType === "substance_screening"
-            ? `📋 Please add the company representative signature to the Substance Screening & Conduct Agreement for ${employeeName} — [open the Substance Screening & Conduct Agreement tab](${tabLink}) in the HR Dashboard.`
+            ? `📋 Please add the company representative signature to the Substance Screening & Conduct Agreement for ${employeeName}: ${tabLink}`
             : doc.documentType === "flash_technician_travel"
-            ? `📋 Please add the employer/representative signature to the Flash Technician Travel & Out-of-State Policy for ${employeeName} — [open the Flash Technician Travel tab](${tabLink}) in the HR Dashboard.`
-            : `📋 Please add the employer/representative signature to the Acknowledgment of Wage & Compensation Structure for ${employeeName} — [open the Acknowledgment of Wage tab](${tabLink}) in the HR Dashboard.`;
+            ? `📋 Please add the employer/representative signature to the Flash Technician Travel & Out-of-State Policy for ${employeeName}: ${tabLink}`
+            : `📋 Please add the employer/representative signature to the Acknowledgment of Wage & Compensation Structure for ${employeeName}: ${tabLink}`;
         await sendMessage({
           dmThreadId: thread.id,
           senderId: myProfileId,
@@ -8207,23 +8569,48 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     return { label: "Awaiting Completion", className: "bg-yellow-500/20 text-yellow-300" };
   };
 
+  // Click a column header to sort by it; click the same one again to flip
+  // direction. Defaults to the same newest-first order signedFormRows
+  // itself is already built in, so "no sort chosen yet" looks identical to
+  // today's behavior.
+  type SignedFormsSortColumn = "name" | "form" | "sentBy" | "status" | "sent";
+  const [signedFormsSortColumn, setSignedFormsSortColumn] = useState<SignedFormsSortColumn | null>(null);
+  const [signedFormsSortDir, setSignedFormsSortDir] = useState<"asc" | "desc">("asc");
+  const handleSignedFormsSort = (column: SignedFormsSortColumn) => {
+    if (signedFormsSortColumn === column) {
+      setSignedFormsSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSignedFormsSortColumn(column);
+      setSignedFormsSortDir("asc");
+    }
+  };
+  const sortedSignedFormRows = useMemo(() => {
+    if (!signedFormsSortColumn) return filteredSignedFormRows;
+    const key = (row: { doc: SignableDocument; formLabel: string }): string | number => {
+      switch (signedFormsSortColumn) {
+        case "name": return signedFormNameOf(row.doc).toLowerCase();
+        case "form": return row.formLabel.toLowerCase();
+        case "sentBy": return (row.doc.createdByName ?? "").toLowerCase();
+        case "status": return signedFormStatusLabel(row).label.toLowerCase();
+        case "sent": return new Date(row.doc.createdAt).getTime();
+      }
+    };
+    const dir = signedFormsSortDir === "asc" ? 1 : -1;
+    return [...filteredSignedFormRows].sort((a, b) => {
+      const ka = key(a), kb = key(b);
+      if (ka < kb) return -1 * dir;
+      if (ka > kb) return 1 * dir;
+      return 0;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filteredSignedFormRows, signedFormsSortColumn, signedFormsSortDir]);
+
   const [signedFormPreview, setSignedFormPreview] = useState<{ doc: SignableDocument; formLabel: string } | null>(null);
 
   const handleDownloadSignedForm = async (row: { doc: SignableDocument; formLabel: string }) => {
     if (!row.doc.pdfUrl) return;
     const name = signedFormNameOf(row.doc);
-    try {
-      const res = await fetch(row.doc.pdfUrl);
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = `${row.formLabel} - ${name}.pdf`;
-      a.click();
-      URL.revokeObjectURL(blobUrl);
-    } catch {
-      window.open(row.doc.pdfUrl, "_blank", "noopener,noreferrer");
-    }
+    await downloadSignableDocumentPdf(row.doc.pdfUrl, `${row.formLabel} - ${name}.pdf`);
   };
 
   // ── Combine Forms — pick a technician, check off which of the acknowledgment/
@@ -8244,6 +8631,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     { type: "w4", label: "Form W-4" },
   ];
   const TECHNICIAN_FORM_TYPES: { type: SignableDocumentType; label: string }[] = [
+    { type: "master_w2_agreement", label: "Master W-2 Technician Agreement" },
     { type: "wage_ack", label: "Acknowledgment of Wage" },
     { type: "car_iq_agreement", label: "Car IQ Technician Agreement" },
     { type: "vehicle_agreement", label: "Company Vehicle Use Agreement" },
@@ -8348,6 +8736,24 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     setCombineFormsSentNotice(null);
     setCombineFormsCopyLink(null);
     try {
+      // Nothing else stops the same packet from being generated twice for
+      // the same person (e.g. re-clicking after navigating away and back) —
+      // this is exactly how a batch of real duplicate hr_signable_documents
+      // rows got created in production. Only checked for a real AHS
+      // recipient — an external/no-login recipient has no stable identifier
+      // to match duplicates against.
+      if (recipient) {
+        const alreadySent = await getExistingActiveDocumentTypes(recipient.id, Array.from(selectedFormTypes));
+        if (alreadySent.length > 0) {
+          const labelByType = new Map(
+            [...GENERAL_FORM_TYPES, ...TECHNICIAN_FORM_TYPES, ...MANAGEMENT_FORM_TYPES].map((f) => [f.type, f.label])
+          );
+          const names = alreadySent.map((t) => labelByType.get(t) ?? t).join(", ");
+          if (!window.confirm(`${recipient.name} already has these forms on file: ${names}.\n\nSend them again anyway?`)) {
+            return;
+          }
+        }
+      }
       const docs = await Promise.all(
         Array.from(selectedFormTypes).map((type) =>
           createSignableDocument(
@@ -8429,18 +8835,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const handleDownloadI9Pdf = async (doc: SignableDocument) => {
     if (!doc.pdfUrl) return;
     const employeeName = (doc.formData as Partial<I9FormData>).employeeName || "i9-form";
-    try {
-      const res = await fetch(doc.pdfUrl);
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = `Form I-9 - ${employeeName}.pdf`;
-      a.click();
-      URL.revokeObjectURL(blobUrl);
-    } catch {
-      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
-    }
+    await downloadSignableDocumentPdf(doc.pdfUrl, `Form I-9 - ${employeeName}.pdf`);
   };
 
   const handleDeleteI9 = async (doc: SignableDocument) => {
@@ -8452,6 +8847,25 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       await loadSentI9Forms();
     } catch (err) {
       setI9ActionError(err instanceof Error ? err.message : "Failed to delete.");
+    } finally {
+      setI9ActionBusyId(null);
+    }
+  };
+
+  // Re-opens Section 2 for a redo — keeps the employee's Section 1 signature
+  // and formData untouched, same "reassign back to pending_signature/
+  // hr_staff" primitive every other document type's own Re-sign uses. Once
+  // reopened, the row's status/recipientSlot match isAwaitingEmployerStep
+  // again, so "Complete Section 2 →" reappears on its own.
+  const handleReopenI9Section2 = async (doc: SignableDocument) => {
+    if (!window.confirm("Re-open Section 2 for a redo? The employee's Section 1 signature stays as-is.")) return;
+    setI9ActionBusyId(doc.id);
+    setI9ActionError(null);
+    try {
+      await reopenEmployerSignature(doc.id);
+      await loadSentI9Forms();
+    } catch (err) {
+      setI9ActionError(err instanceof Error ? err.message : "Failed to reopen for re-signing.");
     } finally {
       setI9ActionBusyId(null);
     }
@@ -8979,18 +9393,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const handleDownloadPromoFormPdf = async (doc: SignableDocument) => {
     if (!doc.pdfUrl) return;
     const employeeName = (doc.formData as unknown as PromotionFormData).employeeName || "promotion-form";
-    try {
-      const res = await fetch(doc.pdfUrl);
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = `Employee Promotion Form - ${employeeName}.pdf`;
-      a.click();
-      URL.revokeObjectURL(blobUrl);
-    } catch {
-      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
-    }
+    await downloadSignableDocumentPdf(doc.pdfUrl, `Employee Promotion Form - ${employeeName}.pdf`);
   };
 
   const handleCopyPromotionFormLink = async (doc: SignableDocument) => {
@@ -9392,18 +9795,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const handleDownloadActionPlanFormPdf = async (doc: SignableDocument) => {
     if (!doc.pdfUrl) return;
     const employeeName = (doc.formData as unknown as ActionPlanFormData).employeeName || "action-plan-form";
-    try {
-      const res = await fetch(doc.pdfUrl);
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = `Manager Action Plan Form - ${employeeName}.pdf`;
-      a.click();
-      URL.revokeObjectURL(blobUrl);
-    } catch {
-      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
-    }
+    await downloadSignableDocumentPdf(doc.pdfUrl, `Manager Action Plan Form - ${employeeName}.pdf`);
   };
 
   const handleCopyActionPlanFormLink = async (doc: SignableDocument) => {
@@ -9776,18 +10168,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const handleDownloadTerminationFormPdf = async (doc: SignableDocument) => {
     if (!doc.pdfUrl) return;
     const employeeName = (doc.formData as unknown as TerminationFormData).employeeName || "termination-form";
-    try {
-      const res = await fetch(doc.pdfUrl);
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = `Termination Notice - ${employeeName}.pdf`;
-      a.click();
-      URL.revokeObjectURL(blobUrl);
-    } catch {
-      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
-    }
+    await downloadSignableDocumentPdf(doc.pdfUrl, `Termination Notice - ${employeeName}.pdf`);
   };
 
   const handleCopyTerminationFormLink = async (doc: SignableDocument) => {
@@ -10770,7 +11151,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   };
 
   // Candidate Notes — three independent slots (HR/Interviewer/Screening,
-  // see 0234_hr_candidates_screening_interviewer_notes.sql) stacked in one
+  // see 0241_hr_candidates_screening_interviewer_notes.sql) stacked in one
   // Note column cell, each its own inline pencil-edit, same click-to-edit
   // pattern used elsewhere in this file (e.g. Estimate Time on Payroll
   // Detail). One shared draft/editing-cell state, keyed by which of the
@@ -11351,16 +11732,53 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
   // YES/NO on the checklist grid reflects whether a real document has
   // actually been filed (uploaded, linked, or dragged in from Jotform) for
-  // that applicant + category in onboarding_documents — not a manually
-  // toggled flag — so the grid can never claim "YES" for a document nobody
-  // attached. Re-fetched whenever the currently-visible employee list
-  // changes (group/search), keyed by profile id.
+  // that applicant + category in onboarding_documents, OR — for the columns
+  // ONBOARDING_COLUMN_TO_DOCUMENT_TYPE maps to a real SignableDocumentType —
+  // whether they've already completed that form through the e-signature
+  // flow. Either way this is never a manually toggled flag, so the grid can
+  // never claim "YES" for a document nobody actually attached/signed.
+  // Re-fetched whenever the currently-visible employee list changes
+  // (group/search), keyed by profile id.
   const [onboardingDocCategoriesByProfile, setOnboardingDocCategoriesByProfile] = useState<Map<string, Set<string>>>(new Map());
+  // Subset of the above that came from an e-signature completion rather than
+  // an actual onboarding_documents file — so the grid can tell HR which is
+  // which (clicking through to the file-attachment modal would otherwise
+  // show "nothing here" for a document that's really just signed, not
+  // uploaded, which reads as a bug if the tooltip doesn't say so upfront).
+  const [onboardingSignedLabelsByProfile, setOnboardingSignedLabelsByProfile] = useState<Map<string, Set<string>>>(new Map());
   useEffect(() => {
     if (activeTab !== "onboarding" || onboardingEmployees.length === 0) return;
     let cancelled = false;
-    getOnboardingDocumentCategoriesByProfileIds(onboardingEmployees.map((e) => e.id))
-      .then((map) => { if (!cancelled) setOnboardingDocCategoriesByProfile(map); })
+    const employeeIds = onboardingEmployees.map((e) => e.id);
+    const mappedTypes = Array.from(new Set(Object.values(ONBOARDING_COLUMN_TO_DOCUMENT_TYPE)));
+    const labelsByType = new Map<SignableDocumentType, string[]>();
+    for (const [label, type] of Object.entries(ONBOARDING_COLUMN_TO_DOCUMENT_TYPE)) {
+      const arr = labelsByType.get(type) ?? [];
+      arr.push(label);
+      labelsByType.set(type, arr);
+    }
+    Promise.all([
+      getOnboardingDocumentCategoriesByProfileIds(employeeIds),
+      getCompletedDocumentTypesByRecipientIds(employeeIds, mappedTypes),
+    ])
+      .then(([fileMap, signedMap]) => {
+        if (cancelled) return;
+        const signedLabelMap = new Map<string, Set<string>>();
+        for (const [profileId, types] of signedMap) {
+          const fileSet = fileMap.get(profileId) ?? new Set<string>();
+          const signedSet = new Set<string>();
+          for (const type of types) {
+            for (const label of labelsByType.get(type) ?? []) {
+              fileSet.add(label);
+              signedSet.add(label);
+            }
+          }
+          fileMap.set(profileId, fileSet);
+          signedLabelMap.set(profileId, signedSet);
+        }
+        setOnboardingDocCategoriesByProfile(fileMap);
+        setOnboardingSignedLabelsByProfile(signedLabelMap);
+      })
       .catch((err) => console.error("Failed to load onboarding document status:", err));
     return () => { cancelled = true; };
   }, [activeTab, onboardingEmployees]);
@@ -12110,6 +12528,15 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     { key: "w8ben", label: "W-8 / W-9 / W-4 / W-4R Forms", count: 0, icon: Landmark },
   ] as const;
 
+  // "New Automation Forms"' own General column — the same first 7 of
+  // automatedFormsGeneralTabs above, minus Form I-9/Manager's Action Plan
+  // Form/Termination Notice Form/W-8ben — those 4 live directly under New
+  // Technician Forms instead (see newAutomationFormsTechnicianTabs below),
+  // so listing them here too would just be a duplicate.
+  const newAutomationFormsGeneralTabs = automatedFormsGeneralTabs.filter(
+    (t) => !["i9", "actionPlanForm", "terminationForm", "w8ben"].includes(t.key)
+  );
+
   const automatedFormsTechnicianTabs = [
     { key: "wageAck", label: "Acknowledgment of Wage", count: sentWageAckAwaitingEmployerCount, icon: FileCheck },
     { key: "carIqAgreement", label: "Car IQ Technician Agreement", count: 0, icon: FileCheck },
@@ -12125,6 +12552,20 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     { key: "partsResponsibility", label: "Parts Responsibility and Technician Floor Protection Acknowledgment Form", count: sentPartsResponsibilityAwaitingManagerCount, icon: FileCheck },
     { key: "ptoAck", label: "PTO & Sick Leave Policy", count: 0, icon: FileCheck },
     { key: "substanceScreening", label: "Substance Screening & Conduct Agreement", count: 0, icon: FileCheck },
+  ] as const;
+
+  // "New Automation Forms" — a separate sidebar group, sibling to
+  // "Automated Forms" rather than a 4th column inside it, for the new
+  // consolidated form types (starting with Master W-2 Technician
+  // Agreement) as they're built. General is the exact same
+  // automatedFormsGeneralTabs list as the old group — same tab keys, so
+  // clicking either copy lands on the identical tab — just reachable from
+  // both places per the explicit ask to keep General available here too.
+  const newAutomationFormsTechnicianTabs = [
+    { key: "masterW2Agreement", label: "Master W-2 Technician Agreement", count: sentMasterW2AgreementAwaitingEmployerCount, icon: FileCheck },
+    { key: "w8ben", label: "W-8 / W-9 / W-4 / W-4R Forms", count: 0, icon: Landmark },
+    { key: "i9", label: "Form I-9 (Employment Eligibility)", count: sentI9AwaitingSection2Count, icon: FileCheck },
+    { key: "directDeposit", label: "Direct Deposit Authorization", count: 0, icon: FileCheck },
   ] as const;
 
   // Management-tier forms (Branch Manager / Senior Branch Manager /
@@ -12160,6 +12601,22 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         { label: "General", tabs: automatedFormsGeneralTabs },
         { label: "Technician Forms", tabs: automatedFormsTechnicianTabs },
         { label: "BM, SBS, Tech Director, Tech Assistant Director", tabs: automatedFormsManagementTabs },
+      ],
+    }] : []),
+    // New Automation Forms — a separate sidebar group (not a 4th column
+    // inside "Automated Forms" above) for new consolidated form types as
+    // they're built, starting with Master W-2 Technician Agreement. General
+    // here is trimmed (newAutomationFormsGeneralTabs) — I-9/Action Plan/
+    // Termination/W-8ben deliberately excluded since I-9 and W-8ben already
+    // live directly under New Technician Forms, and Action Plan/Termination
+    // aren't part of this group at all.
+    ...(paperworksOnly && companyId === "COMP001" ? [{
+      group: "New Automation Forms",
+      icon: Paperclip,
+      tabs: [...newAutomationFormsGeneralTabs, ...newAutomationFormsTechnicianTabs],
+      columns: [
+        { label: "General", tabs: newAutomationFormsGeneralTabs },
+        { label: "New Technician Forms", tabs: newAutomationFormsTechnicianTabs },
       ],
     }] : []),
     ...(!paperworksOnly ? [
@@ -14261,19 +14718,37 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-white/10 bg-white/5">
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Name</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Form</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent By</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Status</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent</th>
+                {([
+                  ["name", "Name"],
+                  ["form", "Form"],
+                  ["sentBy", "Sent By"],
+                  ["status", "Status"],
+                  ["sent", "Sent"],
+                ] as [SignedFormsSortColumn, string][]).map(([column, label]) => (
+                  <th
+                    key={column}
+                    onClick={() => handleSignedFormsSort(column)}
+                    title={`Sort by ${label}`}
+                    className="px-4 py-3 text-left text-xs text-muted-foreground uppercase cursor-pointer select-none hover:text-foreground"
+                  >
+                    <span className="inline-flex items-center gap-1">
+                      {label}
+                      {signedFormsSortColumn === column ? (
+                        signedFormsSortDir === "asc" ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />
+                      ) : (
+                        <ChevronDown className="h-3 w-3 opacity-20" />
+                      )}
+                    </span>
+                  </th>
+                ))}
                 <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Document</th>
               </tr>
             </thead>
             <tbody>
-              {filteredSignedFormRows.length === 0 ? (
+              {sortedSignedFormRows.length === 0 ? (
                 <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">{signedFormRows.length === 0 ? "No signed forms sent yet." : "No forms match these filters."}</td></tr>
               ) : (
-                filteredSignedFormRows.map((row) => {
+                sortedSignedFormRows.map((row) => {
                   const status = signedFormStatusLabel(row);
                   return (
                     <tr key={row.doc.id} className="border-b border-white/5 hover:bg-white/5">
@@ -15175,11 +15650,18 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                     </td>
                     {onboardingDocColumns.map((doc) => {
                       const done = !!onboardingDocCategoriesByProfile.get(employee.id)?.has(doc);
+                      const viaSignature = !!onboardingSignedLabelsByProfile.get(employee.id)?.has(doc);
                       return (
                         <td key={doc} className="px-0.5 py-0.5 text-center">
                           <button
                             type="button"
-                            title={done ? `${doc} is filed — click to view` : `${doc} is missing — click to upload or link it`}
+                            title={
+                              viaSignature
+                                ? `${doc} — already e-signed through the app; click to file a copy too if you have one`
+                                : done
+                                ? `${doc} is filed — click to view`
+                                : `${doc} is missing — click to upload or link it`
+                            }
                             onClick={() => setOnboardingSelectedEmployee({ id: employee.id, name: employee.name, docList: getOnboardingDocListForEmployee(employee) })}
                             className={`w-full px-1 py-1.5 rounded text-[9px] font-bold transition-colors ${done ? "bg-green-500/20 text-green-300 hover:bg-green-500/30" : "bg-red-500/20 text-red-300 hover:bg-red-500/30"}`}
                           >
@@ -17242,7 +17724,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       <div className="panel p-0 overflow-hidden mt-4">
         <div className="px-4 py-4 border-b border-white/10">
           <h2 className="font-semibold text-sm">W-4 Sent History</h2>
-          <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status.</p>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status. "Submitted" means the employee signed — fill in the employer fields to finalize.</p>
         </div>
         {w4ActionError && (
           <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{w4ActionError}</p>
@@ -17281,11 +17763,12 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                       <td className="px-4 py-3 text-muted-foreground">{doc.createdByName ?? "—"}</td>
                       <td className="px-4 py-3">
                         <span className={`px-2 py-1 rounded text-xs font-semibold ${
-                          doc.status === "signed" ? "bg-green-500/20 text-green-300"
+                          doc.status === "confirmed" ? "bg-green-500/20 text-green-300"
+                          : doc.status === "signed" ? "bg-blue-500/20 text-blue-300"
                           : doc.status === "cancelled" ? "bg-slate-500/20 text-slate-400"
                           : "bg-yellow-500/20 text-yellow-300"
                         }`}>
-                          {doc.status === "signed" ? "Submitted" : doc.status === "cancelled" ? "Cancelled" : "Awaiting Completion"}
+                          {doc.status === "confirmed" ? "Completed" : doc.status === "signed" ? "Submitted" : doc.status === "cancelled" ? "Cancelled" : "Awaiting Completion"}
                         </span>
                       </td>
                       <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{new Date(doc.createdAt).toLocaleDateString()}</td>
@@ -17302,8 +17785,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                             </button>
                           )}
                           {doc.status === "signed" && (
-                            <button type="button" onClick={() => handleOpenW4EmployerDialog(doc)} className="btn text-[10px] px-2 py-1">
-                              Fill Employer Info
+                            <button type="button" onClick={() => handleOpenW4EmployerDialog(doc)} className="btn text-[10px] px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white">
+                              Fill Employer Info →
                             </button>
                           )}
                           <button
@@ -17925,6 +18408,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           {doc.pdfUrl && (
                             <button type="button" onClick={() => handleDownloadI9Pdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
                               Download PDF
+                            </button>
+                          )}
+                          {doc.status === "confirmed" && (
+                            <button type="button" onClick={() => handleReopenI9Section2(doc)} className="btn text-[10px] px-2 py-1" title="Redo Section 2 — keeps the employee's Section 1 signature">
+                              Re-sign
                             </button>
                           )}
                           <button
@@ -19176,6 +19664,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                               Download PDF
                             </button>
                           )}
+                          {doc.status === "confirmed" && (
+                            <button type="button" onClick={() => handleReopenSubstanceScreeningEmployer(doc)} className="btn text-[10px] px-2 py-1" title="Redo the employer signature — keeps the employee's original signature">
+                              Re-sign
+                            </button>
+                          )}
                           <button
                             type="button"
                             disabled={busy}
@@ -19968,6 +20461,24 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <h2 className="font-semibold text-sm">Sent Mileage & Fuel Policy Agreement Forms</h2>
           <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status. "Awaiting Employer Signature" means the employee finished — add your signature to finalize.</p>
         </div>
+        <div className="px-4 py-3 border-b border-white/10 bg-white/5 flex flex-wrap items-end gap-3">
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+            <input
+              type="text"
+              value={mileageFuelSentSearch}
+              onChange={(e) => setMileageFuelSentSearch(e.target.value)}
+              placeholder="Name or branch…"
+              className="glass-input text-sm py-1.5 pl-8 pr-3 rounded-md w-56"
+            />
+          </div>
+          {mileageFuelSentSearch && (
+            <button onClick={() => setMileageFuelSentSearch("")} className="btn text-sm px-3 py-1.5">Clear</button>
+          )}
+          <span className="text-xs text-muted-foreground mb-1.5 ml-auto">
+            {sortedSentMileageFuelForms.length}{mileageFuelSentSearch ? ` of ${sentMileageFuelForms.length}` : ""} forms
+          </span>
+        </div>
         {mileageFuelActionError && (
           <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{mileageFuelActionError}</p>
         )}
@@ -19975,19 +20486,43 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-white/10 bg-white/5">
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Employee</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Branch</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent By</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Status</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent</th>
+                <SortableTh column="employee" label="Employee" sortColumn={mileageFuelSentSortColumn} sortDir={mileageFuelSentSortDir} onSort={handleMileageFuelSentSort} />
+                <FilterableTh
+                  column="branch" label="Branch"
+                  sortColumn={mileageFuelSentSortColumn} sortDir={mileageFuelSentSortDir} onSort={handleMileageFuelSentSort}
+                  options={mileageFuelFilterOptionsFor("branch")}
+                  isChecked={(v) => mileageFuelIsValueChecked("branch", v)}
+                  onToggleValue={(v) => mileageFuelToggleFilterValue("branch", v)}
+                  onClear={() => mileageFuelClearColumnFilter("branch")}
+                  isFiltered={mileageFuelIsColumnFiltered("branch")}
+                />
+                <FilterableTh
+                  column="sentBy" label="Sent By"
+                  sortColumn={mileageFuelSentSortColumn} sortDir={mileageFuelSentSortDir} onSort={handleMileageFuelSentSort}
+                  options={mileageFuelFilterOptionsFor("sentBy")}
+                  isChecked={(v) => mileageFuelIsValueChecked("sentBy", v)}
+                  onToggleValue={(v) => mileageFuelToggleFilterValue("sentBy", v)}
+                  onClear={() => mileageFuelClearColumnFilter("sentBy")}
+                  isFiltered={mileageFuelIsColumnFiltered("sentBy")}
+                />
+                <FilterableTh
+                  column="status" label="Status"
+                  sortColumn={mileageFuelSentSortColumn} sortDir={mileageFuelSentSortDir} onSort={handleMileageFuelSentSort}
+                  options={mileageFuelFilterOptionsFor("status")}
+                  isChecked={(v) => mileageFuelIsValueChecked("status", v)}
+                  onToggleValue={(v) => mileageFuelToggleFilterValue("status", v)}
+                  onClear={() => mileageFuelClearColumnFilter("status")}
+                  isFiltered={mileageFuelIsColumnFiltered("status")}
+                />
+                <SortableTh column="sent" label="Sent" sortColumn={mileageFuelSentSortColumn} sortDir={mileageFuelSentSortDir} onSort={handleMileageFuelSentSort} />
                 <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {sentMileageFuelForms.length === 0 ? (
-                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">No requests sent yet.</td></tr>
+              {sortedSentMileageFuelForms.length === 0 ? (
+                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">{sentMileageFuelForms.length === 0 ? "No requests sent yet." : "No forms match this search/filter."}</td></tr>
               ) : (
-                sentMileageFuelForms.map((doc) => {
+                sortedSentMileageFuelForms.map((doc) => {
                   const data = doc.formData as Partial<MileageFuelFormData>;
                   const recipient = employees.find((e) => e.id === doc.recipientId);
                   const busy = mileageFuelActionBusyId === doc.id;
@@ -20012,7 +20547,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           : doc.status === "cancelled" ? "bg-slate-500/20 text-slate-400"
                           : "bg-yellow-500/20 text-yellow-300"
                         }`}>
-                          {doc.status === "confirmed" ? "Completed" : awaitingEmployer ? "Awaiting Employer Signature" : doc.status === "cancelled" ? "Cancelled" : "Awaiting Employee"}
+                          {mileageFuelStatusLabel(doc)}
                         </span>
                       </td>
                       <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{new Date(doc.createdAt).toLocaleDateString()}</td>
@@ -20063,6 +20598,318 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         </div>
       </div>
       </>
+      )}
+
+      {activeTab === "masterW2Agreement" && (
+      <>
+      <div className="panel p-0 overflow-visible mt-4 relative z-20">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">Send Master W-2 Technician Agreement Request</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Pick a teammate — they'll get a link to fill in their info, upload a license/SSN card photo, and sign. Once they submit, it lands back here for HR to add the employer signature. Covers wage, breaks, location consent, mileage/fuel, Car IQ, vehicle use, damage/parts, PTO, confidentiality, and substance screening in one document.</p>
+        </div>
+        <div className="p-4 flex flex-col md:flex-row gap-6">
+          <div className="flex flex-col gap-3 w-full md:max-w-sm md:shrink-0">
+            <div className="flex flex-col gap-1 relative">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient (AHS teammate)</label>
+              <input
+                type="text"
+                value={masterW2AgreementRecipientSearch}
+                onChange={(e) => { setMasterW2AgreementRecipientSearch(e.target.value); setMasterW2AgreementRecipientId(""); setMasterW2AgreementRecipientDropdownOpen(true); }}
+                onFocus={() => setMasterW2AgreementRecipientDropdownOpen(true)}
+                onBlur={() => setTimeout(() => setMasterW2AgreementRecipientDropdownOpen(false), 150)}
+                placeholder="Search a teammate…"
+                className="glass-input text-sm py-1.5 px-3 rounded-md"
+              />
+              {masterW2AgreementRecipientDropdownOpen && (
+                <div className="absolute z-50 top-full mt-1 w-full max-h-96 overflow-y-auto rounded-md border border-white/15 bg-slate-900 shadow-2xl">
+                  {filteredMasterW2AgreementRecipients.length === 0 ? (
+                    <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+                  ) : (
+                    filteredMasterW2AgreementRecipients.map((e) => (
+                      <button
+                        key={e.id}
+                        type="button"
+                        onMouseDown={(ev) => ev.preventDefault()}
+                        onClick={() => {
+                          setMasterW2AgreementRecipientId(e.id);
+                          setMasterW2AgreementRecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`);
+                          setMasterW2AgreementRecipientDropdownOpen(false);
+                        }}
+                        className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${masterW2AgreementRecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                      >
+                        {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+
+            {masterW2AgreementSendError && (
+              <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{masterW2AgreementSendError}</p>
+            )}
+            <div className="flex items-center gap-2">
+              <button
+                onClick={toggleMasterW2AgreementPreview}
+                className="btn text-sm px-4 py-2 flex items-center gap-1.5"
+              >
+                Preview <ChevronDown className={`h-3.5 w-3.5 transition-transform ${masterW2AgreementPreviewExpanded ? "rotate-180" : ""}`} />
+              </button>
+              <button
+                onClick={handleSendMasterW2Agreement}
+                disabled={!masterW2AgreementRecipientId || masterW2AgreementSending}
+                className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+              >
+                {masterW2AgreementSending ? "Sending…" : "Send Request"}
+              </button>
+            </div>
+          </div>
+
+          <div className="flex-1 min-w-0">
+            {masterW2AgreementPreviewExpanded ? (
+              <div className="border border-white/10 rounded-md overflow-hidden bg-white/5 h-full" style={{ minHeight: 560 }}>
+                {masterW2AgreementPreviewLoading || !masterW2AgreementPreviewPdfUrl ? (
+                  <div className="h-full flex items-center justify-center text-sm text-muted-foreground" style={{ minHeight: 560 }}>Loading preview…</div>
+                ) : (
+                  <iframe src={masterW2AgreementPreviewPdfUrl} title="Master W-2 Technician Agreement Preview" className="w-full border-0" style={{ height: 560 }} />
+                )}
+              </div>
+            ) : (
+              <div className="border border-dashed border-white/15 rounded-md flex items-center justify-center text-sm text-muted-foreground" style={{ minHeight: 560 }}>
+                Click "Preview" to see the document here.
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="panel p-0 overflow-hidden mt-4">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">Sent Master W-2 Technician Agreement Forms</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status. "Awaiting Employer Signature" means the employee finished — add your signature to finalize.</p>
+        </div>
+        <div className="px-4 py-3 border-b border-white/10 bg-white/5 flex flex-wrap items-end gap-3">
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+            <input
+              type="text"
+              value={masterW2AgreementSentSearch}
+              onChange={(e) => setMasterW2AgreementSentSearch(e.target.value)}
+              placeholder="Name or branch…"
+              className="glass-input text-sm py-1.5 pl-8 pr-3 rounded-md w-56"
+            />
+          </div>
+          {masterW2AgreementSentSearch && (
+            <button onClick={() => setMasterW2AgreementSentSearch("")} className="btn text-sm px-3 py-1.5">Clear</button>
+          )}
+          <span className="text-xs text-muted-foreground mb-1.5 ml-auto">
+            {sortedSentMasterW2AgreementForms.length}{masterW2AgreementSentSearch ? ` of ${sentMasterW2AgreementForms.length}` : ""} forms
+          </span>
+        </div>
+        {masterW2AgreementActionError && (
+          <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{masterW2AgreementActionError}</p>
+        )}
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-white/10 bg-white/5">
+                <SortableTh column="employee" label="Employee" sortColumn={masterW2AgreementSentSortColumn} sortDir={masterW2AgreementSentSortDir} onSort={handleMasterW2AgreementSentSort} />
+                <FilterableTh
+                  column="branch" label="Branch"
+                  sortColumn={masterW2AgreementSentSortColumn} sortDir={masterW2AgreementSentSortDir} onSort={handleMasterW2AgreementSentSort}
+                  options={masterW2AgreementFilterOptionsFor("branch")}
+                  isChecked={(v) => masterW2AgreementIsValueChecked("branch", v)}
+                  onToggleValue={(v) => masterW2AgreementToggleFilterValue("branch", v)}
+                  onClear={() => masterW2AgreementClearColumnFilter("branch")}
+                  isFiltered={masterW2AgreementIsColumnFiltered("branch")}
+                />
+                <FilterableTh
+                  column="sentBy" label="Sent By"
+                  sortColumn={masterW2AgreementSentSortColumn} sortDir={masterW2AgreementSentSortDir} onSort={handleMasterW2AgreementSentSort}
+                  options={masterW2AgreementFilterOptionsFor("sentBy")}
+                  isChecked={(v) => masterW2AgreementIsValueChecked("sentBy", v)}
+                  onToggleValue={(v) => masterW2AgreementToggleFilterValue("sentBy", v)}
+                  onClear={() => masterW2AgreementClearColumnFilter("sentBy")}
+                  isFiltered={masterW2AgreementIsColumnFiltered("sentBy")}
+                />
+                <FilterableTh
+                  column="status" label="Status"
+                  sortColumn={masterW2AgreementSentSortColumn} sortDir={masterW2AgreementSentSortDir} onSort={handleMasterW2AgreementSentSort}
+                  options={masterW2AgreementFilterOptionsFor("status")}
+                  isChecked={(v) => masterW2AgreementIsValueChecked("status", v)}
+                  onToggleValue={(v) => masterW2AgreementToggleFilterValue("status", v)}
+                  onClear={() => masterW2AgreementClearColumnFilter("status")}
+                  isFiltered={masterW2AgreementIsColumnFiltered("status")}
+                />
+                <SortableTh column="sent" label="Sent" sortColumn={masterW2AgreementSentSortColumn} sortDir={masterW2AgreementSentSortDir} onSort={handleMasterW2AgreementSentSort} />
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">ID Documents</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sortedSentMasterW2AgreementForms.length === 0 ? (
+                <tr><td colSpan={7} className="px-4 py-8 text-center text-muted-foreground text-sm">{sentMasterW2AgreementForms.length === 0 ? "No requests sent yet." : "No forms match this search/filter."}</td></tr>
+              ) : (
+                sortedSentMasterW2AgreementForms.map((doc) => {
+                  const data = doc.formData as Partial<MasterW2AgreementFormData>;
+                  const recipient = employees.find((e) => e.id === doc.recipientId);
+                  const busy = masterW2AgreementActionBusyId === doc.id;
+                  const awaitingEmployer = isAwaitingEmployerStep(doc);
+                  return (
+                    <tr key={doc.id} className="border-b border-white/5 hover:bg-white/5">
+                      <td className="px-4 py-3 font-medium">
+                        {doc.pdfUrl ? (
+                          <button type="button" onClick={() => setMasterW2AgreementDocPreview(doc)} className="text-blue-300 hover:text-blue-200 hover:underline text-left">
+                            {data.employeeName || recipient?.name || doc.recipientName || "—"}
+                          </button>
+                        ) : (
+                          data.employeeName || recipient?.name || doc.recipientName || "—"
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-muted-foreground">{data.branch || "—"}</td>
+                      <td className="px-4 py-3 text-muted-foreground">{doc.createdByName ?? "—"}</td>
+                      <td className="px-4 py-3">
+                        <span className={`px-2 py-1 rounded text-xs font-semibold ${
+                          doc.status === "confirmed" ? "bg-green-500/20 text-green-300"
+                          : awaitingEmployer ? "bg-orange-500/20 text-orange-300"
+                          : doc.status === "cancelled" ? "bg-slate-500/20 text-slate-400"
+                          : "bg-yellow-500/20 text-yellow-300"
+                        }`}>
+                          {masterW2AgreementStatusLabel(doc)}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{new Date(doc.createdAt).toLocaleDateString()}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {data.licensePhotoPath && (
+                            <button
+                              type="button"
+                              onClick={() => getTechnicianIdDocumentUrl(data.licensePhotoPath!).then((url) => window.open(url, "_blank", "noopener,noreferrer")).catch((err) => setMasterW2AgreementActionError(err instanceof Error ? err.message : "Failed to open license photo."))}
+                              className="text-blue-300 hover:text-blue-200 underline text-xs"
+                            >
+                              License
+                            </button>
+                          )}
+                          {data.ssnCardPhotoPath && (
+                            <button
+                              type="button"
+                              onClick={() => getTechnicianIdDocumentUrl(data.ssnCardPhotoPath!).then((url) => window.open(url, "_blank", "noopener,noreferrer")).catch((err) => setMasterW2AgreementActionError(err instanceof Error ? err.message : "Failed to open SSN card photo."))}
+                              className="text-blue-300 hover:text-blue-200 underline text-xs"
+                            >
+                              SSN Card
+                            </button>
+                          )}
+                          {!data.licensePhotoPath && !data.ssnCardPhotoPath && <span className="text-muted-foreground text-xs">—</span>}
+                        </div>
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {doc.status === "pending_signature" && doc.recipientSlot === "employee" && (
+                            <button type="button" onClick={() => handleCopyMasterW2AgreementLink(doc)} className="btn text-[10px] px-2 py-1">
+                              Copy Link
+                            </button>
+                          )}
+                          {awaitingEmployer && (
+                            <>
+                              <button type="button" onClick={() => handleOpenMasterW2AgreementEmployerDialog(doc)} className="btn text-[10px] px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white">
+                                Add Employer Signature →
+                              </button>
+                              <button type="button" onClick={() => handleOpenEmployerReassign(doc)} className="btn text-[10px] px-2 py-1">
+                                Send to Employer
+                              </button>
+                            </>
+                          )}
+                          {doc.pdfUrl && (
+                            <button type="button" onClick={() => handleDownloadMasterW2AgreementPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
+                              Download PDF
+                            </button>
+                          )}
+                          {doc.status === "confirmed" && (
+                            <button type="button" onClick={() => handleReopenMasterW2AgreementEmployer(doc)} className="btn text-[10px] px-2 py-1" title="Redo the employer signature — keeps the employee's original signature">
+                              Re-sign
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => handleDeleteMasterW2Agreement(doc)}
+                            title="Permanently delete this request"
+                            className="text-muted-foreground hover:text-red-300 disabled:opacity-50"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      </>
+      )}
+
+      {masterW2AgreementEmployerDialog && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-800 border border-white/10 rounded-lg p-6 max-w-sm w-full">
+            <h3 className="text-lg font-bold mb-2">Add Employer Signature</h3>
+            <p className="text-sm text-muted-foreground mb-4">
+              Employer representative signature for{" "}
+              <span className="font-semibold text-white">{(masterW2AgreementEmployerDialog.formData as Partial<MasterW2AgreementFormData>).employeeName || "—"}</span>'s
+              Master W-2 Technician Comprehensive Policy, Consent &amp; Agreement.
+            </p>
+
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2 block">Add your signature</label>
+            <canvas
+              {...masterW2AgreementEmployerSigPad.canvasProps}
+              className={`bg-white rounded-md border border-white/15 w-full ${masterW2AgreementEmployerSigPad.canvasProps.className}`}
+            />
+            <div className="flex justify-center mt-2">
+              <SignaturePadControls pad={masterW2AgreementEmployerSigPad} />
+            </div>
+
+            {masterW2AgreementEmployerError && (
+              <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2 mt-3">{masterW2AgreementEmployerError}</p>
+            )}
+            <div className="flex gap-2 justify-end mt-4">
+              <button onClick={() => setMasterW2AgreementEmployerDialog(null)} className="btn text-sm px-4 py-2">Cancel</button>
+              <button
+                onClick={handleSaveMasterW2AgreementEmployerSignature}
+                disabled={masterW2AgreementEmployerSaving}
+                className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+              >
+                {masterW2AgreementEmployerSaving ? "Saving…" : "Complete & Sign"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Master W-2 Technician Agreement Sent History PDF preview — same inline-frame pattern used for the other Sent History tables */}
+      {masterW2AgreementDocPreview && (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => setMasterW2AgreementDocPreview(null)}>
+          <div className="bg-slate-900 border border-white/10 rounded-lg shadow-2xl w-full max-w-6xl h-[92vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold">{(masterW2AgreementDocPreview.formData as Partial<MasterW2AgreementFormData>).employeeName || "—"}</p>
+                <p className="text-[10px] text-muted-foreground">
+                  {masterW2AgreementDocPreview.status === "confirmed" ? "Completed" : "Submitted"} {new Date(masterW2AgreementDocPreview.signedAt ?? masterW2AgreementDocPreview.createdAt).toLocaleString()}
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                {masterW2AgreementDocPreview.pdfUrl && (
+                  <a href={masterW2AgreementDocPreview.pdfUrl} target="_blank" rel="noopener noreferrer" className="btn text-xs px-2.5 py-1.5 flex items-center gap-1"><Download className="h-3 w-3" /> Download</a>
+                )}
+                <button type="button" onClick={() => setMasterW2AgreementDocPreview(null)} className="btn text-xs px-2.5 py-1.5">Close</button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-hidden bg-slate-950">
+              {masterW2AgreementDocPreview.pdfUrl && <iframe src={masterW2AgreementDocPreview.pdfUrl} title="Master W-2 Technician Agreement" className="w-full h-full min-h-[70vh] border-0" />}
+            </div>
+          </div>
+        </div>
       )}
 
       {activeTab === "flashTechnicianTravel" && (

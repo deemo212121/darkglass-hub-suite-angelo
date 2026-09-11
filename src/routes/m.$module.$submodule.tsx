@@ -77,7 +77,7 @@ import { LocationManagementPage } from "@/components/LocationManagementPage";
 import { TechnicianWhereaboutsPage } from "@/components/TechnicianWhereaboutsPage";
 import { AddBranchPage } from "@/components/AddBranchPage";
 import { canAccessUserManagement, getUserManagementRecord, canAccessAdminModule } from "@/lib/user-management";
-import { isSubmoduleAllowed, isSubmoduleAllowedForTrainee, isCompanySuperAdminRole, isCsrRestrictedRole } from "@/lib/roleLabels";
+import { isSubmoduleAllowed, isSubmoduleAllowedForTrainee, isSubmoduleAllowedForFrozen, isCompanySuperAdminRole, isCsrRestrictedRole } from "@/lib/roleLabels";
 import { CompanySettingsPage } from "@/components/CompanySettingsPage";
 import { getDashboardRoleGate, hasDashboardAccess } from "@/lib/dashboardAccess";
 import { getModuleRoleGate } from "@/lib/moduleAccess";
@@ -93,6 +93,7 @@ import { ROLE_LABELS } from "@/lib/roleLabels";
 import { useEffect, useState } from "react";
 import { ReportHRDaily } from "@/components/ReportHRDaily";
 import { HrOnboardingChecklistPage } from "@/components/HrOnboardingChecklistPage";
+import { TechnicianFormChecklistPage } from "@/components/TechnicianFormChecklistPage";
 import { AbsentListPage } from "@/components/AbsentListPage";
 import { StaffListPage } from "@/components/StaffListPage";
 import { ReportHR } from "@/components/ReportHR";
@@ -160,7 +161,7 @@ export const Route = createFileRoute("/m/$module/$submodule")({
 });
 
 function SubModule() {
-  const { ready, email, companyId, role, uid, isTrainee } = useAuth();
+  const { ready, email, companyId, role, uid, isTrainee, isFrozen } = useAuth();
   // Route.useLoaderData()'s type resolves to `undefined` for this route in
   // the current @tanstack/react-router version — a known inference gap for
   // parent routes with children, not a real runtime issue (the loader
@@ -242,6 +243,38 @@ function SubModule() {
               <p className="mt-2 text-sm text-slate-400">
                 Current sign-in: {email}
               </p>
+            </div>
+          </div>
+        </main>
+        <Footer />
+      </>
+    );
+  }
+
+  // Frozen accounts only see Messages — same absolute, override-proof
+  // restriction shape as the Trainee block above, just a narrower
+  // allow-list and independent of it (see roleLabels.ts's
+  // isSubmoduleAllowedForFrozen). Server-side, a frozen technician's own
+  // timecard punch and any ticket write are also blocked by DB triggers
+  // (migration 0223) — this only covers page-level access.
+  if (!isSubmoduleAllowedForFrozen(isFrozen, mod.slug, sub.slug)) {
+    return (
+      <>
+        <AppHeader />
+        <main className="flex-1 bg-slate-950 py-6">
+          <div className="max-w-4xl mx-auto px-6">
+            <div className="rounded-xl border border-white/15 bg-white/8 p-6 text-white backdrop-blur-md">
+              <h1 className="text-2xl font-bold">Account frozen</h1>
+              <p className="mt-2 text-sm text-slate-300">
+                Your account has been frozen — you can still open Messages to complete any pending forms, but nothing else is available right now. Contact HR if you have questions.
+              </p>
+              <Link
+                to="/m/$module/$submodule"
+                params={{ module: "admin", submodule: "internal-message-support" }}
+                className="btn btn-primary mt-4 inline-flex"
+              >
+                Go to Messages
+              </Link>
             </div>
           </div>
         </main>
@@ -643,6 +676,8 @@ function SubModule() {
         ? <ReportHRDaily mod={mod} sub={sub} />
         : (sub as any).custom === "hr-todo-list"
         ? <HrOnboardingChecklistPage />
+        : (sub as any).custom === "technician-form-checklist"
+        ? <TechnicianFormChecklistPage />
         : (sub as any).custom === "absent-list"
         ? <AbsentListPage mod={mod} sub={sub} />
         : sub.custom === "staff-list"

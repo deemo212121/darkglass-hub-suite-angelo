@@ -96,16 +96,26 @@ export interface MileageEntry {
   deletedByName: string | null;
   deleteReason: string | null;
   /** This ticket's OWN leg of the day's route — distance from the previous
-   *  stop (or the branch, for the day's first stop) to this one, with the
-   *  final "way home" leg folded into the day's LAST stop. Purely a display
-   *  breakdown of totalMileage/mileageEffectiveTotal (which stays the
-   *  shared day total payroll reads, unaffected by this) — summing every
-   *  entry's legMileage for one day reconstructs that same day total. Null
+   *  stop (or the branch, for the day's first stop) to this one, and ONLY
+   *  that leg (see homeLegMileage below, migration 0237, for the day's final
+   *  drive home — never folded in here). Purely a display breakdown of
+   *  totalMileage/mileageEffectiveTotal (which stays the shared day total
+   *  payroll reads, unaffected by this) — summing every entry's legMileage
+   *  PLUS homeLegMileage for one day reconstructs that same day total. Null
    *  for manual entries (no route/stop-order concept), a stop that failed
    *  to geocode, or a row not yet recalculated since migration 0211.
    *  Computed in syncMileageFromTickets/recalculateMileageDayRoute via
    *  computeDailyRouteMiles's legMiles (mapEngine.ts). */
   legMileage: number | null;
+  /** The day's final "drive home" (or back-to-branch) distance — set ONLY
+   *  on the day's actual last stop's row, null on every earlier stop.
+   *  Migration 0237: previously this was silently folded into that last
+   *  stop's own legMileage, which made a ticket that just happened to be
+   *  scheduled last read as an inflated/wrong leg (confirmed live: a real
+   *  7.5 mi leg showing as 43.6 mi with a 36.1 mi commute home baked in).
+   *  Kept separate so a ticket's own Mileage column always means just its
+   *  own drive there. */
+  homeLegMileage: number | null;
   /** Free-text, admin-editable, no formula/source feeds it — Ticket
    *  Attendance's "Estimate Time" column (migration 0213). Not derived
    *  from anything else in the app; set via setMileageEstimateTime. */
@@ -160,12 +170,13 @@ function mapRow(r: any): MileageEntry {
     deletedByName: r.deleted_by_name ?? null,
     deleteReason: r.delete_reason ?? null,
     legMileage: r.leg_mileage != null ? Number(r.leg_mileage) : null,
+    homeLegMileage: r.home_leg_mileage != null ? Number(r.home_leg_mileage) : null,
     estimateTime: r.estimate_time ?? null,
   };
 }
 
 const ENTRY_COLUMNS =
-  "id, profile_id, technician_name, branch, work_date, address, contact_number, email, total_mileage, google_map_link, created_by_name, created_at, ticket_id, ticket_no, ticket_status, source, payroll_excluded, payroll_excluded_at, payroll_excluded_by_name, payroll_hold_reason, route_order, route_return_to, mileage_override, mileage_adjustment, adjustment_note, adjusted_by_name, adjusted_at, payroll_released_at, deleted_at, deleted_by_name, delete_reason, leg_mileage, estimate_time";
+  "id, profile_id, technician_name, branch, work_date, address, contact_number, email, total_mileage, google_map_link, created_by_name, created_at, ticket_id, ticket_no, ticket_status, source, payroll_excluded, payroll_excluded_at, payroll_excluded_by_name, payroll_hold_reason, route_order, route_return_to, mileage_override, mileage_adjustment, adjustment_note, adjusted_by_name, adjusted_at, payroll_released_at, deleted_at, deleted_by_name, delete_reason, leg_mileage, home_leg_mileage, estimate_time";
 
 // Supabase caps an unbounded select at 1000 rows — mileage_entries is
 // queried all-time, no date range. Page through in chunks of 1000 instead.
@@ -342,6 +353,36 @@ export async function setMileageLegMileage(id: string, value: number | null): Pr
 }
 
 /**
+ * Invalidates this one ticket's route-order confirmation so the NEXT mileage
+ * sync re-examines its whole day, instead of skipping it as already settled.
+ * Call this whenever a ticket's onsite_arrived_at/onsite_done_at changes
+ * through a path other than the mobile check-in buttons themselves (which
+ * feed syncMileageFromTickets/getTechCompletedRepairCounts fine on their
+ * own) — right now that's exactly one caller: approving a Ticket Time
+ * Dispute (AccountingDashboard.tsx's handleTicketTimeDisputeAction), which
+ * writes a corrected arrived/done time straight onto the ticket without
+ * anything else telling the mileage side its day changed.
+ *
+ * Without this, hasUnconfirmedArrivalOrder (syncMileageFromTickets) never
+ * re-fires for that day once route_order is already set from an earlier
+ * sync — the dispute's corrected time would sit there forever with the
+ * day's stop order/drive-home leg still chained against the OLD (wrong or
+ * missing) timestamp. Nulling route_order here is exactly what makes that
+ * check pick the day back up.
+ *
+ * A no-op if this ticket has no auto-synced mileage_entries row yet (its
+ * very first sync will compute a fresh, already-correct order anyway).
+ */
+export async function resetMileageRouteConfirmation(ticketNo: string): Promise<void> {
+  const { error } = await supabase
+    .from("mileage_entries")
+    .update({ route_order: null, home_leg_mileage: null })
+    .eq("ticket_no", ticketNo)
+    .eq("source", "auto");
+  if (error) throw new Error(error.message);
+}
+
+/**
  * Coarse visit-order heuristic, shared by syncMileageFromTickets (below)
  * and the Day Route view: a time_slot's own leading number as its start
  * hour (e.g. "8-12" -> 8, "1-5" -> 1) — AM/PM isn't recorded, but this is
@@ -361,11 +402,40 @@ export function timeSlotStartHour(slot: unknown): number {
   return m ? Number(m[1]) : Number.MAX_SAFE_INTEGER;
 }
 
-/** Orders tickets by timeSlotStartHour, breaking ties with created_at. */
-export function sortStopsByHeuristic<T extends { time_slot?: unknown; created_at: string }>(tickets: T[]): T[] {
+/**
+ * Orders a day's stops by the technician's REAL visit order when it's known
+ * — the on-site check-in "Arrived" timestamp (mobile app, migration 0202),
+ * the same signal EmployeePayrollDetailModal's per-day ticket breakdown
+ * sorts by. Falls back to timeSlotStartHour + created_at (the original
+ * heuristic — ticket row creation order, NOT visit order) for any stop with
+ * no arrival stamp yet, e.g. a day synced before the technician actually
+ * drove it. Without this, a cluster of same-time-slot stops (very common —
+ * most tickets just say "AM"/"PM" or a broad "12-5" window) fell back
+ * entirely to created_at, an order with no relationship to the technician's
+ * actual route; leg_mileage then chained stop N to whichever stop happened
+ * to sync into the database first, not whichever stop N-1 actually was —
+ * confirmed live on a Columbus, GA day where stop 5's leg came out ~2.5x the
+ * real Google Maps distance from its true previous stop.
+ *
+ * An arrived stop sorts by its real clock time; an unarrived one sorts by
+ * its nominal slot start hour on its own schedule_date, so the two scales
+ * line up sensibly side by side instead of every heuristic-only stop
+ * collapsing to before/after every real arrival regardless of time of day.
+ */
+export function sortStopsByHeuristic<
+  T extends { time_slot?: unknown; created_at: string; onsite_arrived_at?: string | null; schedule_date?: string | null }
+>(tickets: T[]): T[] {
+  const sortKey = (t: T): number => {
+    const arrived = t.onsite_arrived_at ? new Date(t.onsite_arrived_at).getTime() : NaN;
+    if (Number.isFinite(arrived)) return arrived;
+    const dayMs = t.schedule_date ? new Date(`${t.schedule_date}T00:00:00`).getTime() : NaN;
+    const hour = timeSlotStartHour(t.time_slot);
+    if (Number.isFinite(dayMs) && hour !== Number.MAX_SAFE_INTEGER) return dayMs + hour * 3600_000;
+    return Number.MAX_SAFE_INTEGER; // no day/slot to anchor on either — push to the end, tie-broken by created_at below.
+  };
   return [...tickets].sort((a, b) => {
-    const slotDiff = timeSlotStartHour(a.time_slot) - timeSlotStartHour(b.time_slot);
-    if (slotDiff !== 0) return slotDiff;
+    const diff = sortKey(a) - sortKey(b);
+    if (diff !== 0) return diff;
     return String(a.created_at).localeCompare(String(b.created_at));
   });
 }
@@ -395,7 +465,7 @@ export async function getMileageDayRouteStops(
   if (ticketIds.length === 0) return [];
   const { data, error } = await supabase
     .from("tickets")
-    .select("id, ticket_no, status, time_slot, created_at, customer:customers ( address, city, state, zip )")
+    .select("id, ticket_no, status, time_slot, created_at, schedule_date, onsite_arrived_at, customer:customers ( address, city, state, zip )")
     .in("id", ticketIds);
   if (error) throw new Error(error.message);
   const rows = (data ?? []) as any[];
@@ -596,7 +666,7 @@ async function syncMileageFromTicketsInner(
       for (let from = 0; ; from += PAGE_SIZE) {
         const { data, error } = await supabase
           .from("tickets")
-          .select("id, ticket_no, technician, status, schedule_date, time_slot, created_at, location, account, customer:customers ( address, address2, city, state, zip, phone, email )")
+          .select("id, ticket_no, technician, status, schedule_date, time_slot, created_at, onsite_arrived_at, location, account, customer:customers ( address, address2, city, state, zip, phone, email )")
           .not("technician", "is", null)
           .range(from, from + PAGE_SIZE - 1);
         if (error) return { data: null, error };
@@ -617,7 +687,7 @@ async function syncMileageFromTicketsInner(
       for (let from = 0; ; from += PAGE_SIZE) {
         const { data, error } = await supabase
           .from("mileage_entries")
-          .select("id, ticket_id, total_mileage, leg_mileage, google_map_link, work_date, profile_id, technician_name, deleted_at")
+          .select("id, ticket_id, total_mileage, leg_mileage, google_map_link, work_date, profile_id, technician_name, deleted_at, route_order, home_leg_mileage")
           .eq("source", "auto")
           .not("ticket_id", "is", null)
           .range(from, from + PAGE_SIZE - 1);
@@ -686,6 +756,8 @@ async function syncMileageFromTicketsInner(
         workDate: r.work_date as string,
         identity: r.profile_id ? `id:${r.profile_id}` : `name:${String(r.technician_name || "").trim().toLowerCase()}`,
         deletedAt: r.deleted_at as string | null,
+        routeOrder: r.route_order as number | null,
+        homeLegMileage: r.home_leg_mileage != null ? Number(r.home_leg_mileage) : null,
       },
     ])
   );
@@ -789,7 +861,32 @@ async function syncMileageFromTicketsInner(
       // since nothing about the day's tickets ever actually changes.
       const hasMissingLegMileage = tickets.some((t) => !existingByTicketId.get(t.id)?.hasLegMileage);
       const hasStaleMapLink = tickets.some((t) => !existingByTicketId.get(t.id)?.hasOriginInMapLink);
-      return hasNewOrMovedInTicket || keysThatLostATicket.has(key) || hasMissingLegMileage || hasStaleMapLink;
+      // One-time self-heal for the pre-arrival-order mileage bug (see
+      // sortStopsByHeuristic's header comment): a day with AT LEAST ONE real
+      // on-site Arrived stamp to sort by, whose stored rows were never
+      // confirmed against arrival data at all (route_order still null —
+      // either never synced with any arrival data available, or synced back
+      // when the old created_at/time-slot heuristic was the only option).
+      // Deliberately `.some`, not `.every` — a single never-visited ticket
+      // mixed into an otherwise fully-checked-in day (cancelled, rescheduled
+      // elsewhere, genuinely never gone to) must not block fixing the rest
+      // of that day's real, wrong-chained mileage.
+      const hasUnconfirmedArrivalOrder =
+        tickets.some((t: any) => t.onsite_arrived_at) &&
+        tickets.some((t) => (existingByTicketId.get(t.id)?.routeOrder ?? null) == null);
+      // One-time backfill for migration 0237 (home_leg_mileage): a day
+      // that's already order-confirmed (so hasUnconfirmedArrivalOrder above
+      // won't catch it again) but has never had its drive-home distance
+      // split out of leg_mileage — every existing row's home_leg_mileage is
+      // still null. Reprocessing sets it on the day's actual last stop,
+      // which then satisfies this check going forward (a day with no
+      // resolvable home/branch address at all would keep matching here
+      // forever, but that's the same rare edge case hasStaleMapLink already
+      // accepts for a similar reason).
+      const hasMissingHomeLeg =
+        tickets.some((t) => (existingByTicketId.get(t.id)?.routeOrder ?? null) != null) &&
+        !tickets.some((t) => (existingByTicketId.get(t.id)?.homeLegMileage ?? null) != null);
+      return hasNewOrMovedInTicket || keysThatLostATicket.has(key) || hasMissingLegMileage || hasStaleMapLink || hasUnconfirmedArrivalOrder || hasMissingHomeLeg;
     })
     .map(([, tickets]) => tickets);
   const untouchedTicketCount = allAssignedTickets.length - groupsToProcess.reduce((s, g) => s + g.length, 0);
@@ -803,121 +900,259 @@ async function syncMileageFromTicketsInner(
       result.recalculatedDays = groupIdx; // only what actually got processed before stopping
       break;
     }
-    // finally, not just an end-of-body call — every early `continue` below
-    // (route lookup failed/threw) still needs to advance the progress
-    // count, or it visibly stalls instead of just moving past a skipped day.
+    // finally, not just an end-of-body call — an early return inside
+    // processMileageDayGroup (route lookup failed/threw) still needs to
+    // advance the progress count, or it visibly stalls instead of just
+    // moving past a skipped day.
     try {
-    const groupTickets = groupsToProcess[groupIdx];
-    const orderedTickets = sortStopsByHeuristic(groupTickets);
-
-    const rawName = String(orderedTickets[0].technician).trim();
-    const technician = techByNormalizedName.get(rawName.toLowerCase()) ?? null;
-    const branch = orderedTickets[0].location || technician?.branch || "Unassigned";
-    const routeStops: MileageTicketInput[] = orderedTickets.map((t) => {
-      const customer = t.customer ?? {};
-      return { location: t.location, city: customer.city, address: customer.address, state: customer.state, zip: customer.zip, account: t.account };
-    });
-
-    let routeResult: DailyRouteMilesResult | null = null;
-    try {
-      routeResult = await computeDailyRouteMiles(branch, routeStops[0], routeStops, technician?.homeAddress, mapProvider);
-    } catch (err) {
-      result.errors.push(`${orderedTickets[0].schedule_date} (${rawName}): ${err instanceof Error ? err.message : "route lookup failed"}`);
-      continue;
-    }
-    if (routeResult === null) {
-      result.errors.push(`${orderedTickets[0].schedule_date} (${rawName}): no route found — skipped.`);
-      continue;
-    }
-    const roundedMiles = Math.round(routeResult.totalMiles * 10) / 10;
-    // legMiles is index-aligned with orderedTickets/routeStops — this
-    // ticket's own leg (previous stop -> this stop, home leg folded into
-    // the day's last stop), null if it couldn't be geocoded. Purely a
-    // display breakdown; roundedMiles (the day total) is still what
-    // payroll reads, unaffected by this.
-    const legMileageAt = (idx: number): number | null => {
-      const m = routeResult!.legMiles[idx];
-      return m != null ? Math.round(m * 10) / 10 : null;
-    };
-
-    // Refresh every already-synced ticket in this group — a new stop
-    // joined, so the whole day's route (and therefore every existing
-    // row's total) is potentially stale, even if this particular round
-    // happens to land on the same number as before. Also clears
-    // route_order: a human-set stop order no longer describes this day
-    // now that its stop list has changed, so it resets to the automatic
-    // heuristic (used above) rather than silently keeping a sequence that
-    // doesn't include the new stop. work_date/profile_id/technician_name/
-    // branch are re-set to this group's own values too — a no-op for a
-    // ticket that was already here, but for one that just got rescheduled
-    // or reassigned, this is what actually MOVES its row onto the new day
-    // / new technician rather than leaving it stale under the old ones.
-    for (let idx = 0; idx < orderedTickets.length; idx++) {
-      const t = orderedTickets[idx];
-      const existing = existingByTicketId.get(t.id);
-      if (existing) {
-        const prevStopAddress = idx > 0 ? ticketSiteAddress(orderedTickets[idx - 1]) : null;
-        const { error: updateErr } = await supabase
-          .from("mileage_entries")
-          .update({
-            total_mileage: roundedMiles,
-            leg_mileage: legMileageAt(idx),
-            route_order: null,
-            route_return_to: null,
-            work_date: t.schedule_date,
-            profile_id: technician?.profileId ?? null,
-            technician_name: technician ? null : rawName,
-            branch,
-            google_map_link: buildGoogleMapLink(branch, t, prevStopAddress) || null,
-          })
-          .eq("id", existing.id);
-        if (updateErr) result.errors.push(`Ticket ${t.ticket_no}: failed to refresh mileage — ${updateErr.message}`);
-      }
-    }
-
-    const newTickets = orderedTickets.filter((t) => !existingByTicketId.has(t.id));
-    for (const ticket of newTickets) {
-      const stopIdx = orderedTickets.indexOf(ticket);
-      const prevStopAddress = stopIdx > 0 ? ticketSiteAddress(orderedTickets[stopIdx - 1]) : null;
-      const googleMapLink = buildGoogleMapLink(branch, ticket, prevStopAddress);
-
-      const { error: insertErr } = await supabase.from("mileage_entries").insert({
-        profile_id: technician?.profileId ?? null,
-        technician_name: technician ? null : rawName,
-        branch,
-        work_date: ticket.schedule_date,
-        // The technician's OWN contact info, not the customer's — Address/
-        // Contact Number/Email here answer "who drove and how do we reach
-        // them," which the customer's job-site details never were. Google
-        // Map Link below still points at the customer's site (for driving
-        // directions there), unaffected by this.
-        address: technician?.homeAddress || "(no address on file)",
-        contact_number: technician?.phone || null,
-        email: technician?.email || null,
-        total_mileage: roundedMiles,
-        leg_mileage: legMileageAt(orderedTickets.indexOf(ticket)),
-        google_map_link: googleMapLink || null,
-        created_by_name: "Auto-sync",
-        ticket_id: ticket.id,
-        ticket_no: ticket.ticket_no,
-        ticket_status: ticket.status,
-        source: "auto",
-      });
-      if (insertErr) {
-        // Unique-violation on ticket_id means another sync run already logged
-        // it a moment ago (race) — treat as skipped, not a real failure.
-        if (insertErr.code === "23505") result.skipped++;
-        else result.errors.push(`Ticket ${ticket.ticket_no}: ${insertErr.message}`);
-        continue;
-      }
-      result.created++;
-    }
+      await processMileageDayGroup(groupsToProcess[groupIdx], existingByTicketId, techByNormalizedName, mapProvider, result, "Auto-sync");
     } finally {
       input.onProgress?.(groupIdx + 1, groupsToProcess.length);
     }
   }
 
   return result;
+}
+
+/**
+ * The actual per-technician-per-day route computation + mileage_entries
+ * write, shared by both the full-company batch scan above
+ * (syncMileageFromTicketsInner) and the event-driven single-day recompute
+ * below (syncMileageForTicketDay) — one place computes the route and
+ * writes it, however the recompute got triggered. `existingByTicketId` only
+ * needs each ticket's existing row id (untyped/`any` here since the batch
+ * caller's map carries several other fields this function never reads).
+ */
+async function processMileageDayGroup(
+  groupTickets: any[],
+  existingByTicketId: Map<string, any>,
+  techByNormalizedName: Map<string, { profileId: string; fullName: string; branch: string; phone?: string; email?: string; homeAddress?: string }>,
+  mapProvider: Awaited<ReturnType<typeof getCompanyMapProvider>>,
+  result: MileageSyncResult,
+  createdByLabel: string
+): Promise<void> {
+  const orderedTickets = sortStopsByHeuristic(groupTickets);
+
+  const rawName = String(orderedTickets[0].technician).trim();
+  const technician = techByNormalizedName.get(rawName.toLowerCase()) ?? null;
+  const branch = orderedTickets[0].location || technician?.branch || "Unassigned";
+  const routeStops: MileageTicketInput[] = orderedTickets.map((t) => {
+    const customer = t.customer ?? {};
+    return { location: t.location, city: customer.city, address: customer.address, state: customer.state, zip: customer.zip, account: t.account };
+  });
+
+  let routeResult: DailyRouteMilesResult | null = null;
+  try {
+    routeResult = await computeDailyRouteMiles(branch, routeStops[0], routeStops, technician?.homeAddress, mapProvider);
+  } catch (err) {
+    result.errors.push(`${orderedTickets[0].schedule_date} (${rawName}): ${err instanceof Error ? err.message : "route lookup failed"}`);
+    return;
+  }
+  if (routeResult === null) {
+    result.errors.push(`${orderedTickets[0].schedule_date} (${rawName}): no route found — skipped.`);
+    return;
+  }
+  const roundedMiles = Math.round(routeResult.totalMiles * 10) / 10;
+  // legMiles is index-aligned with orderedTickets/routeStops — ONLY this
+  // ticket's own leg (previous stop -> this stop), null if it couldn't be
+  // geocoded. The day's final drive-home distance is kept separate (see
+  // homeLegMileage below, migration 0237) rather than folded into
+  // whichever stop happens to be last. Purely a display breakdown;
+  // roundedMiles (the day total) is still what payroll reads, unaffected
+  // by either of these.
+  const legMileageAt = (idx: number): number | null => {
+    const m = routeResult!.legMiles[idx];
+    return m != null ? Math.round(m * 10) / 10 : null;
+  };
+  // Only the day's actual LAST stop carries the drive-home distance, on
+  // its own column — every earlier stop's home_leg_mileage stays null.
+  const homeLegMileageAt = (idx: number): number | null => {
+    if (idx !== orderedTickets.length - 1) return null;
+    const m = routeResult!.homeLegMiles;
+    return m != null ? Math.round(m * 10) / 10 : null;
+  };
+  // At least one stop in this group has a real Arrived stamp, so
+  // orderedTickets used it (sortStopsByHeuristic prefers a real stamp
+  // whenever one exists) rather than relying purely on the time-slot/
+  // created_at guess — persist it as route_order so it reads as settled
+  // (same as a human's manual sequencing) and this day's
+  // hasUnconfirmedArrivalOrder check above never re-flags it. Matches that
+  // check's own `.some`, not `.every`: a day with one permanently
+  // never-visited stop mixed in (cancelled, rescheduled elsewhere) would
+  // otherwise never lock in and get needlessly recomputed on every future
+  // sync forever. A day with NO arrival data at all yet keeps writing
+  // route_order: null, unchanged, so it stays free to reorder itself once
+  // real stamps start coming in.
+  const confirmedByArrival = orderedTickets.some((t: any) => t.onsite_arrived_at);
+
+  // Refresh every already-synced ticket in this group — a new stop
+  // joined, so the whole day's route (and therefore every existing
+  // row's total) is potentially stale, even if this particular round
+  // happens to land on the same number as before. work_date/profile_id/
+  // technician_name/branch are re-set to this group's own values too —
+  // a no-op for a ticket that was already here, but for one that just
+  // got rescheduled or reassigned, this is what actually MOVES its row
+  // onto the new day/new technician rather than leaving it stale under
+  // the old ones.
+  for (let idx = 0; idx < orderedTickets.length; idx++) {
+    const t = orderedTickets[idx];
+    const existing = existingByTicketId.get(t.id);
+    if (existing) {
+      const prevStopAddress = idx > 0 ? ticketSiteAddress(orderedTickets[idx - 1]) : null;
+      const { error: updateErr } = await supabase
+        .from("mileage_entries")
+        .update({
+          total_mileage: roundedMiles,
+          leg_mileage: legMileageAt(idx),
+          home_leg_mileage: homeLegMileageAt(idx),
+          route_order: confirmedByArrival ? idx : null,
+          route_return_to: null,
+          work_date: t.schedule_date,
+          profile_id: technician?.profileId ?? null,
+          technician_name: technician ? null : rawName,
+          branch,
+          google_map_link: buildGoogleMapLink(branch, t, prevStopAddress) || null,
+        })
+        .eq("id", existing.id);
+      if (updateErr) result.errors.push(`Ticket ${t.ticket_no}: failed to refresh mileage — ${updateErr.message}`);
+    }
+  }
+
+  const newTickets = orderedTickets.filter((t) => !existingByTicketId.has(t.id));
+  for (const ticket of newTickets) {
+    const stopIdx = orderedTickets.indexOf(ticket);
+    const prevStopAddress = stopIdx > 0 ? ticketSiteAddress(orderedTickets[stopIdx - 1]) : null;
+    const googleMapLink = buildGoogleMapLink(branch, ticket, prevStopAddress);
+
+    const { error: insertErr } = await supabase.from("mileage_entries").insert({
+      profile_id: technician?.profileId ?? null,
+      technician_name: technician ? null : rawName,
+      branch,
+      work_date: ticket.schedule_date,
+      // The technician's OWN contact info, not the customer's — Address/
+      // Contact Number/Email here answer "who drove and how do we reach
+      // them," which the customer's job-site details never were. Google
+      // Map Link below still points at the customer's site (for driving
+      // directions there), unaffected by this.
+      address: technician?.homeAddress || "(no address on file)",
+      contact_number: technician?.phone || null,
+      email: technician?.email || null,
+      total_mileage: roundedMiles,
+      leg_mileage: legMileageAt(orderedTickets.indexOf(ticket)),
+      home_leg_mileage: homeLegMileageAt(orderedTickets.indexOf(ticket)),
+      route_order: confirmedByArrival ? orderedTickets.indexOf(ticket) : null,
+      google_map_link: googleMapLink || null,
+      created_by_name: createdByLabel,
+      ticket_id: ticket.id,
+      ticket_no: ticket.ticket_no,
+      ticket_status: ticket.status,
+      source: "auto",
+    });
+    if (insertErr) {
+      // Unique-violation on ticket_id means another sync run already logged
+      // it a moment ago (race) — treat as skipped, not a real failure.
+      if (insertErr.code === "23505") result.skipped++;
+      else result.errors.push(`Ticket ${ticket.ticket_no}: ${insertErr.message}`);
+      continue;
+    }
+    result.created++;
+  }
+}
+
+/**
+ * Event-driven counterpart to syncMileageFromTickets — recomputes ONE
+ * technician's ONE day (every ticket they're assigned to on that date, not
+ * the whole company's entire history) right after a real On-Site Check-In
+ * event. Wired into tickets.ts's setTicketOnsiteCheckIn (both "arrived" and
+ * "done", and the Ticket Time Dispute approval path via
+ * resetMileageRouteConfirmation), so mileage/route order reflects a
+ * check-in immediately instead of waiting for someone to open the Mileage
+ * tab and run — and wait out — a full all-technician/all-time scan.
+ *
+ * Deliberately silent on failure (logs, never throws): a failed live
+ * recompute must not block or surface an error on the check-in write it's
+ * riding along with. The next manual "Sync from Tickets" run (kept as a
+ * safety net, no longer auto-triggered on tab open — see
+ * AccountingDashboard.tsx) still catches anything this misses.
+ *
+ * Does not take the module-level `syncInFlight` lock — this call is small
+ * (one technician, one day) and shouldn't have to wait behind a full
+ * company scan. If both happen to touch the same day at once, the results
+ * converge to the same computed numbers either way, and a colliding INSERT
+ * is already handled as a skip (23505) above.
+ */
+export async function syncMileageForTicketDay(rawTechnicianName: string, scheduleDate: string): Promise<void> {
+  try {
+    const trimmedName = rawTechnicianName.trim();
+    if (!trimmedName || !scheduleDate) return;
+
+    const [{ data: dayTickets, error: ticketsErr }, { data: rescheduleRows, error: rescheduleErr }, mapProvider] = await Promise.all([
+      supabase
+        .from("tickets")
+        .select("id, ticket_no, technician, status, schedule_date, time_slot, created_at, onsite_arrived_at, location, account, customer:customers ( address, address2, city, state, zip, phone, email )")
+        .eq("schedule_date", scheduleDate)
+        .not("technician", "is", null),
+      supabase.from("ticket_reschedules").select("ticket_id").eq("work_date", scheduleDate),
+      getCompanyMapProvider(),
+    ]);
+    if (ticketsErr) {
+      console.error("syncMileageForTicketDay: failed to load tickets:", ticketsErr.message);
+      return;
+    }
+    if (rescheduleErr) console.error("syncMileageForTicketDay: failed to load reschedules:", rescheduleErr.message);
+
+    const rescheduledTicketIds = new Set((rescheduleRows ?? []).map((r: any) => r.ticket_id as string));
+    const groupTickets = (dayTickets ?? []).filter(
+      (t: any) => String(t.technician || "").trim().toLowerCase() === trimmedName.toLowerCase() && !rescheduledTicketIds.has(t.id)
+    );
+    if (groupTickets.length === 0) return;
+
+    const { data: existingRows, error: existingErr } = await supabase
+      .from("mileage_entries")
+      .select("id, ticket_id")
+      .eq("source", "auto")
+      .in(
+        "ticket_id",
+        groupTickets.map((t: any) => t.id)
+      );
+    if (existingErr) {
+      console.error("syncMileageForTicketDay: failed to load existing entries:", existingErr.message);
+      return;
+    }
+    const existingByTicketId = new Map((existingRows ?? []).map((r: any) => [r.ticket_id as string, { id: r.id as string }]));
+
+    // Matches AccountingDashboard's own full_name fallback chain
+    // (display_name || username || id) so this resolves to the same
+    // technician a full sync would have.
+    const { data: profileRows, error: profileErr } = await supabase
+      .from("profiles")
+      .select("id, display_name, username, assigned_branch, phone_number, email, employee_info")
+      .eq("is_active", true);
+    if (profileErr) console.error("syncMileageForTicketDay: failed to load profiles:", profileErr.message);
+    const techByNormalizedName = new Map<string, { profileId: string; fullName: string; branch: string; phone?: string; email?: string; homeAddress?: string }>();
+    for (const p of (profileRows ?? []) as any[]) {
+      const fullName = String(p.display_name || p.username || p.id);
+      if (!fullName.trim()) continue;
+      const info = (p.employee_info && typeof p.employee_info === "object" ? p.employee_info : {}) as Record<string, any>;
+      const homeAddress = [info.address1, info.address2, [info.city, info.state].filter(Boolean).join(", "), info.zipCode]
+        .filter((part) => part && String(part).trim())
+        .join(", ");
+      techByNormalizedName.set(fullName.trim().toLowerCase(), {
+        profileId: p.id,
+        fullName,
+        branch: p.assigned_branch || "Unassigned",
+        phone: p.phone_number || undefined,
+        email: p.email || undefined,
+        homeAddress: homeAddress || undefined,
+      });
+    }
+
+    const result: MileageSyncResult = { created: 0, skipped: 0, errors: [], unmatchedTechnicians: [], recalculatedDays: 0, stopped: false };
+    await processMileageDayGroup(groupTickets, existingByTicketId, techByNormalizedName, mapProvider, result, "Auto-sync (check-in)");
+    if (result.errors.length > 0) console.error("syncMileageForTicketDay:", result.errors.join("; "));
+  } catch (err) {
+    console.error("syncMileageForTicketDay failed:", err instanceof Error ? err.message : err);
+  }
 }
 
 /**
@@ -962,15 +1197,21 @@ export async function recalculateMileageDayRoute(input: {
   if (routeResult === null) throw new Error("No route found for this stop order.");
   const roundedMiles = Math.round(routeResult.totalMiles * 10) / 10;
 
+  const lastIdx = input.orderedTicketIds.length - 1;
   const orderIndexByTicketId = new Map(input.orderedTicketIds.map((id, idx) => [id, idx]));
   for (const entry of input.entries) {
     const idx = orderIndexByTicketId.get(entry.ticketId);
     const legMiles = idx != null ? routeResult.legMiles[idx] : null;
+    // Only the day's actual last stop carries the drive-home distance, on
+    // its own column — see homeLegMiles (migration 0237). Never folded into
+    // leg_mileage, here or anywhere else it's computed.
+    const homeLegMiles = idx === lastIdx ? routeResult.homeLegMiles : null;
     const { error } = await supabase
       .from("mileage_entries")
       .update({
         total_mileage: roundedMiles,
         leg_mileage: legMiles != null ? Math.round(legMiles * 10) / 10 : null,
+        home_leg_mileage: homeLegMiles != null ? Math.round(homeLegMiles * 10) / 10 : null,
         route_order: idx ?? null,
         route_return_to: input.returnTo,
       })

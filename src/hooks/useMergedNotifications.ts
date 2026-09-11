@@ -319,7 +319,7 @@ const SUBJECT_BY_SUBMODULE_TAB: Record<string, string> = {
   "hr-dashboard:mileageFuel": "Mileage & Fuel",
   "hr-dashboard:locationConsent": "Location Consent",
   "hr-dashboard:damage": "Damage Agreement",
-  "hr-dashboard:contractorData": "Contractor Data",
+  "hr-dashboard:contractorData": "Employee Data",
   "hr-dashboard:directDeposit": "Direct Deposit",
   "attendance-monitoring:corrections": "Timecard Corrections",
   "attendance-monitoring:pto-management": "PTO & Sick Leave",

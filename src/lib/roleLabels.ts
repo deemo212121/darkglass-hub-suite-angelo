@@ -135,6 +135,47 @@ export function isTraineeApprovalEligible(role: string | null | undefined, extra
   return anyHeldRoleIn(TECHNICIAN_PAY_ROLES, role, extraRoles);
 }
 
+/**
+ * True if this person holds a technician-tier role either as their primary
+ * role OR as a secondary one — e.g. a CSR who also picks up Technician
+ * shifts. Same "pile up" semantics as isTraineeApprovalEligible above (in
+ * fact the identical check, just named for its own call site instead of
+ * reusing a trainee-specific name). Used by TechnicianFormChecklistPage.tsx
+ * so someone technician-tier only via extra_roles still shows up on the
+ * checklist instead of being silently dropped by a primary-role-only check.
+ */
+export function hasAnyTechnicianPayRole(role: string | null | undefined, extraRoles?: string[] | null): boolean {
+  return anyHeldRoleIn(TECHNICIAN_PAY_ROLES, role, extraRoles);
+}
+
+/**
+ * Primary roles that can plausibly be doing field-technician work — the
+ * Technician tier itself, plus Branch Manager/Senior Branch Manager (who
+ * often still run routes). Deliberately does NOT include ADMIN, SUPERADMIN,
+ * IT, PARTS_MANAGER, BIZOPS_*, TRIAGE_*, FINANCE, HR, or CSR — those roles
+ * sometimes carry TECHNICIAN in extra_roles purely as a system-access grant
+ * (e.g. so an admin can be assigned to a ticket in a pinch), not because
+ * the person is an actual field technician who needs onboarding forms
+ * tracked. Confirmed against the real roster: every Branch/Senior Branch
+ * Manager holding a Technician-tier extra role was on the printed
+ * technician sheet; every ADMIN/SUPERADMIN/IT/PARTS_MANAGER account with
+ * TECHNICIAN in extra_roles was not.
+ */
+const FIELD_TECHNICIAN_PRIMARY_ROLES = new Set([...TECHNICIAN_PAY_ROLES, "BRANCH_MANAGER", "SENIOR_BRANCH_MANAGER"]);
+
+/**
+ * True for TechnicianFormChecklistPage.tsx's roster: a technician-tier
+ * primary role, or a Branch/Senior Branch Manager who also holds a
+ * technician-tier role in extra_roles (still doing field work) — but never
+ * an office/admin-tier account that merely has Technician tacked onto
+ * extra_roles for unrelated system-access reasons. See
+ * FIELD_TECHNICIAN_PRIMARY_ROLES above for why the primary-role gate exists.
+ */
+export function isEligibleForTechnicianFormChecklist(role: string | null | undefined, extraRoles?: string[] | null): boolean {
+  if (!FIELD_TECHNICIAN_PRIMARY_ROLES.has(normalizeRole(role))) return false;
+  return hasAnyTechnicianPayRole(role, extraRoles);
+}
+
 /** Falls back to the flat ROLE_LABELS value for both fields if the role isn't in the breakdown map above. */
 export function getRoleDepartmentBreakdown(role: string | null | undefined): { department: string; roleLabel: string } {
   const code = normalizeRole(role);
@@ -266,6 +307,35 @@ export function isSubmoduleAllowedForTrainee(isTrainee: boolean, moduleSlug: str
   if (!isTrainee) return true;
   if (!isModuleAllowedForTrainee(isTrainee, moduleSlug)) return false;
   return TRAINEE_ALLOWED_DASHBOARD_SUBMODULES.has(submoduleSlug);
+}
+
+/**
+ * A frozen account (profiles.frozen — HR-initiated, e.g. from the HR
+ * module's Technician Form Checklist, migration 0223) sees only Messages,
+ * regardless of role. Same "restrict-to-allowlist" shape as the Trainee
+ * restriction above, just narrower (Messages only, not Employee
+ * Self-Service) and independent of it — a frozen trainee is still
+ * restricted to Messages, not Employee Self-Service, since both checks
+ * combine via AND wherever they're both applied. Role/extra_roles are
+ * never touched, so unfreezing restores full access on its own. Ticket
+ * access and self-service timecard punches are ALSO blocked server-side
+ * (ticket.$ticketNo.tsx's own guard, plus two DB triggers) — this pair
+ * only covers the module/submodule tile-and-route gating.
+ */
+const FROZEN_ALLOWED_MODULES = new Set(["admin"]);
+const FROZEN_ALLOWED_SUBMODULES = new Set(["internal-message-support"]);
+
+/** Whether a frozen account may open this module at all. Non-frozen accounts always pass. */
+export function isModuleAllowedForFrozen(isFrozen: boolean, moduleSlug: string): boolean {
+  if (!isFrozen) return true;
+  return FROZEN_ALLOWED_MODULES.has(moduleSlug);
+}
+
+/** Whether a frozen account may open this submodule. Non-frozen accounts always pass. */
+export function isSubmoduleAllowedForFrozen(isFrozen: boolean, moduleSlug: string, submoduleSlug: string): boolean {
+  if (!isFrozen) return true;
+  if (!isModuleAllowedForFrozen(isFrozen, moduleSlug)) return false;
+  return FROZEN_ALLOWED_SUBMODULES.has(submoduleSlug);
 }
 
 /**

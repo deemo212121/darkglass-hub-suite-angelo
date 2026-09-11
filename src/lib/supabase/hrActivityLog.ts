@@ -35,6 +35,9 @@ export const ACTIVITY_ACTION_LABELS: Record<string, string> = {
   wage_ack_sent: "Sent Acknowledgment of Wage",
   wage_ack_signed: "Signed Acknowledgment of Wage",
   wage_ack_employer_signed: "Completed Acknowledgment of Wage (employer signature)",
+  master_w2_agreement_sent: "Sent Master W-2 Technician Agreement",
+  master_w2_agreement_signed: "Signed Master W-2 Technician Agreement",
+  master_w2_agreement_employer_signed: "Completed Master W-2 Technician Agreement (employer signature)",
   car_iq_agreement_sent: "Sent Car IQ Technician Agreement",
   car_iq_agreement_signed: "Signed Car IQ Technician Agreement",
   vehicle_agreement_sent: "Sent Company Vehicle Use Agreement",
@@ -83,6 +86,8 @@ export const ACTIVITY_ACTION_LABELS: Record<string, string> = {
   part_daily_pickup_unmarked_picked_up: "Unmarked picked up",
   part_daily_collection_marked_collected: "Marked collected",
   part_daily_collection_unmarked_collected: "Unmarked collected",
+  technician_frozen: "Froze account",
+  technician_unfrozen: "Unfroze account",
 };
 
 export function activityActionLabel(action: string): string {

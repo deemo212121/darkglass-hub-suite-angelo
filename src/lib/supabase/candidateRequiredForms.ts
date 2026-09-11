@@ -3,7 +3,7 @@
  * per-candidate checklist HR sets from the Hiring table's "Forms" column
  * (ReportHRDaily.tsx), since there's no fixed "every new hire needs these
  * N forms" list anywhere in this app (it varies by position/branch). See
- * migration 0224_hr_candidate_required_forms.sql.
+ * migration 0228_hr_candidate_required_forms.sql.
  */
 import { supabase } from "./client";
 import type { SignableDocumentType } from "./signableDocuments";

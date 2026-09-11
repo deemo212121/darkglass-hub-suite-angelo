@@ -7,7 +7,7 @@
 -- on its own — same pragmatic choice as training_start_date/
 -- training_end_date already being plain `date` rather than timestamptz.
 --
--- Run once in the Supabase SQL Editor, after 0223_hr_candidates_training_end_date.sql.
+-- Run once in the Supabase SQL Editor, after 0227_hr_candidates_training_end_date.sql.
 
 alter table hr_candidates add column if not exists interview_time text;
 

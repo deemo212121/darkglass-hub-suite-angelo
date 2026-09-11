@@ -123,8 +123,16 @@ export function AnnouncementBanner({ onOpen, top = "5rem" }: AnnouncementBannerP
   // mechanisms in parallel:
   //   (a) Postgres realtime push — instant, but only fires when Supabase
   //       realtime is enabled on the `messages` table.
-  //   (b) Polling every 8s — guaranteed to find new announcements even if
-  //       realtime is off in the project settings.
+  //   (b) Polling every 20s — guaranteed to find new announcements even if
+  //       realtime is off in the project settings. Widened from an earlier
+  //       4s (kept the pattern too close to a genuine live-refresh interval
+  //       for what's meant to be an occasional-connectivity-gap fallback) —
+  //       this runs in EVERY open tab for EVERY logged-in user all day, and
+  //       was a real, measurable, always-on chunk of the app's background
+  //       Postgres load. Realtime is still the fast path in the normal
+  //       case; this only matters at all when realtime is down, where a
+  //       20s worst-case delay instead of 4s is an easy trade.
+  //
   // In both cases we filter against the user's `last_read_at` so previously
   // read announcements never re-pop.
   //
@@ -177,7 +185,7 @@ export function AnnouncementBanner({ onOpen, top = "5rem" }: AnnouncementBannerP
           .sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
         if (newest) handleRow(newest);
       } catch { /* ignore */ }
-    }, 4000);
+    }, 20000);
 
     // Also re-fetch the read pointer when something elsewhere in the app
     // marks announcements as read (Mark all read button, opening the channel,

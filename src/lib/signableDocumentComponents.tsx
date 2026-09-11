@@ -39,6 +39,7 @@ export const INTERNAL_SIGNABLE_DOCUMENT_COMPONENTS: Record<SignableDocumentType,
   nda_form: lazy(() => import("@/components/SignNdaFormPage").then((m) => ({ default: m.SignNdaFormPage }))),
   vehicle_use_agreement: lazy(() => import("@/components/FillVehicleUseAgreementPage").then((m) => ({ default: m.FillVehicleUseAgreementPage }))),
   contractor_addendum: lazy(() => import("@/components/FillContractorAddendumPage").then((m) => ({ default: m.FillContractorAddendumPage }))),
+  master_w2_agreement: lazy(() => import("@/components/FillMasterW2AgreementPage").then((m) => ({ default: m.FillMasterW2AgreementPage }))),
 };
 
 export const EXTERNAL_SIGNABLE_DOCUMENT_COMPONENTS: Record<SignableDocumentType, ReturnType<typeof lazy>> = {
@@ -69,4 +70,8 @@ export const EXTERNAL_SIGNABLE_DOCUMENT_COMPONENTS: Record<SignableDocumentType,
   nda_form: lazy(() => import("@/components/ExternalSignNdaFormPage").then((m) => ({ default: m.ExternalSignNdaFormPage }))),
   vehicle_use_agreement: lazy(() => import("@/components/ExternalFillVehicleUseAgreementPage").then((m) => ({ default: m.ExternalFillVehicleUseAgreementPage }))),
   contractor_addendum: lazy(() => import("@/components/ExternalFillContractorAddendumPage").then((m) => ({ default: m.ExternalFillContractorAddendumPage }))),
+  // No external (no-login) variant — see signableDocumentRegistry.ts's
+  // entry for why. Reuses the internal page, which just requires a login
+  // to actually load anything if ever reached from a no-login context.
+  master_w2_agreement: lazy(() => import("@/components/FillMasterW2AgreementPage").then((m) => ({ default: m.FillMasterW2AgreementPage }))),
 };

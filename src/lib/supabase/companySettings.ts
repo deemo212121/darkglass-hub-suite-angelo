@@ -1,6 +1,8 @@
 /**
- * Company-wide settings stored in companies.settings (jsonb) — currently
- * just the Ticket Map provider. See migration 0050.
+ * Company-wide settings stored in companies.settings (jsonb) — Ticket Map
+ * provider, COE body template, default technician, HR notification
+ * toggles, and the weekly forced password reset opt-out. See migrations
+ * 0053, 0063, 0067, 0090, and 0235.
  */
 
 import { supabase } from "./client";
@@ -145,6 +147,30 @@ export async function setNotifyAdminsTaxForms(enabled: boolean): Promise<void> {
   const { error } = await supabase.rpc("set_notify_admins_tax_forms", { p_enabled: enabled });
   if (error) {
     console.error("setNotifyAdminsTaxForms error:", error.message);
+    throw new Error(error.message);
+  }
+}
+
+/**
+ * Whether this company is enrolled in the automatic weekly forced password
+ * reset (see migration 0235 / passwordResetSchedule.ts). Defaults to true —
+ * absent means still enrolled, same as before this setting existed.
+ */
+export async function getCompanyWeeklyPasswordResetEnabled(): Promise<boolean> {
+  const { data, error } = await supabase.from("companies").select("settings").limit(1).maybeSingle();
+  if (error || !data) {
+    if (error) console.error("getCompanyWeeklyPasswordResetEnabled error:", error.message);
+    return true;
+  }
+  const value = (data.settings as Record<string, unknown> | null)?.weeklyPasswordResetEnabled;
+  return value !== false;
+}
+
+/** Admin/Superadmin only — enforced server-side by the set_company_weekly_password_reset RPC. */
+export async function setCompanyWeeklyPasswordResetEnabled(enabled: boolean): Promise<void> {
+  const { error } = await supabase.rpc("set_company_weekly_password_reset", { p_enabled: enabled });
+  if (error) {
+    console.error("setCompanyWeeklyPasswordResetEnabled error:", error.message);
     throw new Error(error.message);
   }
 }

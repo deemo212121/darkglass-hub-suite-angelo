@@ -88,6 +88,11 @@ type AuthState = {
    *  (roleLabels.ts's isSubmoduleAllowedForTrainee), regardless of role.
    *  False for the Firestore-fallback login path. */
   isTrainee: boolean;
+  /** HR-initiated freeze (migration 0223) — true means this account only
+   *  sees Messages (roleLabels.ts's isSubmoduleAllowedForFrozen),
+   *  independently of isTrainee/role. False for the Firestore-fallback
+   *  login path. */
+  isFrozen: boolean;
   uid: string | null;
   displayName: string | null;
   isActive: boolean;
@@ -246,6 +251,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // 0152) — false for the Firestore-fallback login path (no equivalent
   // concept there), same fail-open convention as extraRoles above.
   const [isTrainee, setIsTrainee] = useState<boolean>(false);
+  const [isFrozen, setIsFrozen] = useState<boolean>(false);
   const [uid, setUid] = useState<string | null>(null);
   const [displayName, setDisplayName] = useState<string | null>(null);
   const [isActive, setIsActive] = useState<boolean>(false);
@@ -440,6 +446,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                   setRole(sbProfile.role);
                   setExtraRoles(sbProfile.extraRoles);
                   setIsTrainee(sbProfile.isTrainee);
+                  setIsFrozen(sbProfile.isFrozen);
                   setDisplayName(sbProfile.displayName);
                   setIsActive(sbProfile.isActive);
                   setMustChangePasswordState(sbProfile.mustChangePassword);
@@ -519,6 +526,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                   setRole(userProfile.role);
                   setExtraRoles([]); // Firestore-fallback profiles have no extra_roles concept
                   setIsTrainee(false); // Firestore-fallback profiles have no employment_type concept
+                  setIsFrozen(false); // Firestore-fallback profiles have no frozen concept either
                   setDisplayName(userProfile.displayName);
                   setIsActive(userProfile.isActive);
                 } else {
@@ -732,6 +740,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       role,
       extraRoles,
       isTrainee,
+      isFrozen,
       uid,
       displayName,
       isActive,

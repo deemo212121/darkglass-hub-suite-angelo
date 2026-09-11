@@ -47,6 +47,8 @@ export const DASHBOARD_ROLE_GATES: Record<string, string[]> = {
   // checklist, migration 0220). Same audience as hr-dashboard; keyed by its
   // submodule slug since mod.slug === "hr" routes through getDashboardRoleGate.
   "todo-list": ["ADMIN", "HR"],
+  // HR module's Technician Form Checklist (custom: "technician-form-checklist") — same audience as hr-dashboard/todo-list.
+  "technician-form-checklist": ["ADMIN", "HR"],
   // Same sensitivity as hr-dashboard — personal emails, addresses, DOB-
   // adjacent contact info per branch.
   "staff-list": ["ADMIN", "HR"],

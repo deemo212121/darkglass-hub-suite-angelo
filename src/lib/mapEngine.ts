@@ -860,13 +860,23 @@ export interface DailyRouteMilesResult {
   /** The whole day's route distance — unchanged meaning from before this
    *  had a leg breakdown; still what payroll reimburses. */
   totalMiles: number;
-  /** One entry per input `stops`, same order/length — the distance from
-   *  the PREVIOUS stop (or the branch, for index 0) to that stop. `null`
-   *  when that stop failed to geocode (silently skipped, same as always).
-   *  The final "way home" leg is folded into the LAST resolved stop's own
-   *  value, so summing every non-null entry reconstructs `totalMiles`
-   *  exactly — callers (mileage.ts) persist this as leg_mileage per row. */
+  /** One entry per input `stops`, same order/length — ONLY the distance
+   *  from the PREVIOUS stop (or the branch, for index 0) to that stop, never
+   *  anything else folded in. `null` when that stop failed to geocode
+   *  (silently skipped, same as always). Migration 0237: this used to have
+   *  the day's final "way home" leg folded into the last resolved stop's
+   *  own value — moved out to `homeLegMiles` below so a ticket's own number
+   *  never silently includes an unrelated commute-home distance (confirmed
+   *  misleading live: a 7.5 mi leg read as 43.6 mi with a 36.1 mi home trip
+   *  baked in, no way to tell the two apart). Summing every non-null entry
+   *  PLUS homeLegMiles reconstructs `totalMiles` exactly. */
   legMiles: (number | null)[];
+  /** The day's final "drive home" (or back-to-branch) distance, kept
+   *  separate from every stop's own leg — see legMiles above. Null if it
+   *  couldn't be computed (no stop resolved to route home from). Callers
+   *  (mileage.ts) persist this on the day's LAST stop's row only, as its own
+   *  home_leg_mileage column — never merged into that row's leg_mileage. */
+  homeLegMiles: number | null;
 }
 
 async function distanceMatrixLeg(
@@ -952,7 +962,6 @@ async function computeDailyRouteMilesGoogle(
   let total = 0;
   let anyLegSucceeded = false;
   const legMiles: (number | null)[] = new Array(stopCandidates.length).fill(null);
-  let lastResolvedIndex = -1;
   for (let i = 0; i < stopCandidates.length; i++) {
     const leg =
       (await distanceMatrixLeg(service, maps, currentOrigin, stopCandidates[i])) ??
@@ -960,15 +969,15 @@ async function computeDailyRouteMilesGoogle(
     if (!leg) continue; // stop couldn't be resolved — skip it, keep the route going from the last good point
     total += leg.miles;
     legMiles[i] = leg.miles;
-    lastResolvedIndex = i;
     currentOrigin = leg.destination;
     anyLegSucceeded = true;
   }
   if (!anyLegSucceeded) return null;
 
   // Final leg home — or back to the starting point if no home address is on
-  // file. Folded into the last resolved stop's own leg mile figure so
-  // summing legMiles reconstructs `total` exactly.
+  // file. Kept separate from every stop's own legMiles entry (migration
+  // 0237) — still added into `total` (the day's real drive), just not
+  // merged into whichever stop happened to be last.
   const homeLeg = homeCandidates.length > 0 ? await distanceMatrixLeg(service, maps, currentOrigin, homeCandidates) : null;
   let homeMiles: number | null = null;
   if (homeLeg) {
@@ -985,11 +994,8 @@ async function computeDailyRouteMilesGoogle(
       );
     });
   }
-  if (homeMiles != null) {
-    total += homeMiles;
-    if (lastResolvedIndex >= 0) legMiles[lastResolvedIndex] = (legMiles[lastResolvedIndex] ?? 0) + homeMiles;
-  }
-  return { totalMiles: total, legMiles };
+  if (homeMiles != null) total += homeMiles;
+  return { totalMiles: total, legMiles, homeLegMiles: homeMiles };
 }
 
 async function computeDailyRouteMilesLeaflet(
@@ -1045,16 +1051,14 @@ async function computeDailyRouteMilesLeaflet(
     }
   }
 
-  // Fold the final (home) leg into the last resolved stop's own leg mile
-  // figure so summing legMiles reconstructs `total` exactly.
+  // Each resolved stop's own leg only — legMilesRaw[0..resolvedStopIndexes.length)
+  // are branch->stop1, stop1->stop2, ..., stopN-1->stopN; the final element
+  // (stopN->home) is kept out and returned separately as homeLegMiles
+  // (migration 0237), never folded into any one stop's own figure.
   const legMiles: (number | null)[] = new Array(stopCandidates.length).fill(null);
   resolvedStopIndexes.forEach((origIdx, i) => { legMiles[origIdx] = legMilesRaw[i]; });
-  const homeLegMiles = legMilesRaw[legMilesRaw.length - 1] ?? 0;
-  if (resolvedStopIndexes.length > 0) {
-    const lastOrigIdx = resolvedStopIndexes[resolvedStopIndexes.length - 1];
-    legMiles[lastOrigIdx] = (legMiles[lastOrigIdx] ?? 0) + homeLegMiles;
-  }
-  return { totalMiles: total, legMiles };
+  const homeLegMiles = resolvedStopIndexes.length > 0 ? legMilesRaw[legMilesRaw.length - 1] ?? null : null;
+  return { totalMiles: total, legMiles, homeLegMiles };
 }
 
 /**
@@ -1107,7 +1111,7 @@ export async function computeDailyRouteMiles(
 
   const legMiles: (number | null)[] = new Array(stops.length).fill(null);
   result.legMiles.forEach((m, filteredIdx) => { legMiles[origIndexByFilteredIndex[filteredIdx]] = m; });
-  return { totalMiles: result.totalMiles, legMiles };
+  return { totalMiles: result.totalMiles, legMiles, homeLegMiles: result.homeLegMiles };
 }
 
 // ─────────────────────────────────────────────────────────────────────────

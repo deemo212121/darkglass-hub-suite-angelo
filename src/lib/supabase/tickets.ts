@@ -13,6 +13,7 @@
 import { supabase } from "./client";
 import type { Ticket } from "@/lib/ticketData";
 import { mapSource, mapSourceFromTicketNumber } from "@/lib/mfgSource";
+import { syncMileageForTicketDay } from "./mileage";
 
 // ---- helpers ---------------------------------------------------------------
 
@@ -360,6 +361,141 @@ export async function getCompanyTickets(): Promise<Ticket[]> {
   return all;
 }
 
+/**
+ * One technician's own tickets (any status, any age) — same full shape as
+ * getCompanyTickets, just filtered server-side by `technician` instead of
+ * fetching the company's entire history. Built for MobileTechApp.tsx,
+ * whose own client-side match (`myTickets`) is a tolerant fuzzy filter
+ * (full name / last-name-only / email-local-part, substring either
+ * direction) needed because the same person can appear under slightly
+ * different strings across dispatch sources — see its comment. This
+ * mirrors that tolerance so it can't miss a ticket the old
+ * unbounded-fetch-then-filter-in-JS approach would have caught.
+ *
+ * `exact` candidates (a bare last name) are matched as a whole value only —
+ * NOT substring-matched — same reason myTickets' own comment gives: an
+ * ilike substring match on just "Smith" would pull in every Smith in the
+ * company, not this one technician. `fuzzy` candidates (full name,
+ * email-local-part — specific enough not to collide) ARE substring-matched
+ * either direction, same as myTickets. One request per candidate rather
+ * than a single combined `.or()` filter — a technician name containing a
+ * comma (the fuzzy-match comment gives "Koetsier, Jordan" as a real
+ * example) would otherwise collide with PostgREST's `.or()` separator
+ * syntax.
+ *
+ * Also pulls in tickets whose OWN `technician` field is blank/"Unassigned"
+ * but which have a `visits` row crediting this technician — MobileTechApp's
+ * getLatestVisitTechnicianByTicketIds overlay relies on exactly these
+ * showing up (a ticket assigned only via the Visit Log, not the ticket's
+ * own field); an `ilike` on `tickets.technician` alone would silently miss
+ * them since the name isn't on the ticket row at all until that overlay
+ * runs client-side afterward.
+ */
+export async function getTicketsForTechnicianCandidates(candidates: { exact: string[]; fuzzy: string[] }): Promise<Ticket[]> {
+  const exact = Array.from(new Set(candidates.exact.map((c) => c.trim()).filter(Boolean)));
+  const fuzzy = Array.from(new Set(candidates.fuzzy.map((c) => c.trim()).filter(Boolean)));
+  if (exact.length === 0 && fuzzy.length === 0) return [];
+  const [exactRows, fuzzyRows, viaVisits] = await Promise.all([
+    Promise.all(exact.map((c) => fetchAllTicketsMatchingTechnician(c, false))),
+    Promise.all(fuzzy.map((c) => fetchAllTicketsMatchingTechnician(c, true))),
+    fetchTicketsCreditedInVisitsOnly(exact, fuzzy),
+  ]);
+  // _id (the real Supabase row id) is a runtime-only field on Ticket, not
+  // part of its declared UI-facing type — see rowToTicket's own comment.
+  const byId = new Map<string, Ticket>();
+  for (const rows of [...exactRows, ...fuzzyRows]) for (const t of rows) byId.set((t as any)._id, t);
+  for (const t of viaVisits) byId.set((t as any)._id, t);
+  return Array.from(byId.values());
+}
+
+/** Tickets found only via a `visits` row crediting one of these technician candidates — see getTicketsForTechnicianCandidates' doc comment. */
+async function fetchTicketsCreditedInVisitsOnly(exact: string[], fuzzy: string[]): Promise<Ticket[]> {
+  const queryVisits = async (candidate: string, isFuzzy: boolean) => {
+    const escaped = candidate.replace(/[%_]/g, (m) => `\\${m}`);
+    const { data, error } = await supabase
+      .from("visits")
+      .select("ticket_id")
+      .ilike("technician", isFuzzy ? `%${escaped}%` : escaped);
+    if (error) {
+      console.error("fetchTicketsCreditedInVisitsOnly error:", error.message);
+      return [] as string[];
+    }
+    return ((data ?? []) as Array<{ ticket_id: string | null }>).map((r) => r.ticket_id).filter((id): id is string => !!id);
+  };
+  const perCandidate = await Promise.all([
+    ...exact.map((c) => queryVisits(c, false)),
+    ...fuzzy.map((c) => queryVisits(c, true)),
+  ]);
+  const ticketIds = Array.from(new Set(perCandidate.flat()));
+  if (ticketIds.length === 0) return [];
+  const all: Ticket[] = [];
+  for (let from = 0; from < ticketIds.length; from += PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from("tickets")
+      .select(SELECT)
+      .in("id", ticketIds.slice(from, from + PAGE_SIZE));
+    if (error) {
+      console.error("fetchTicketsCreditedInVisitsOnly (tickets) error:", error.message);
+      continue;
+    }
+    all.push(...(data ?? []).map(rowToTicket));
+  }
+  return all;
+}
+
+async function fetchAllTicketsMatchingTechnician(candidate: string, isFuzzy: boolean): Promise<Ticket[]> {
+  // Escape ilike's own wildcard characters so a candidate that happens to
+  // contain "%" or "_" (unlikely in a name, but not impossible) is matched
+  // literally rather than as a pattern.
+  const escaped = candidate.replace(/[%_]/g, (m) => `\\${m}`);
+  const all: Ticket[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from("tickets")
+      .select(SELECT)
+      .ilike("technician", isFuzzy ? `%${escaped}%` : escaped)
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false })
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) {
+      console.error("getTicketsForTechnicianCandidates error:", error.message);
+      throw new Error(error.message);
+    }
+    all.push(...(data ?? []).map(rowToTicket));
+    if (!data || data.length < PAGE_SIZE) break;
+  }
+  return all;
+}
+
+/**
+ * Every ticket assigned to any of the given branches — same full shape as
+ * getCompanyTickets, for a manager-tier mobile viewer's roster (their
+ * branch's technicians) instead of the whole company's. `branches` should
+ * already be the viewer's own allowedLocations (a SuperAdmin/Admin with
+ * allowedLocations === null still needs the unbounded getCompanyTickets).
+ */
+export async function getTicketsForBranches(branches: string[]): Promise<Ticket[]> {
+  const clean = Array.from(new Set(branches.map((b) => b.trim()).filter(Boolean)));
+  if (clean.length === 0) return [];
+  const all: Ticket[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from("tickets")
+      .select(SELECT)
+      .in("location", clean)
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false })
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) {
+      console.error("getTicketsForBranches error:", error.message);
+      throw new Error(error.message);
+    }
+    all.push(...(data ?? []).map(rowToTicket));
+    if (!data || data.length < PAGE_SIZE) break;
+  }
+  return all;
+}
+
 export interface ScheduledTicketRow {
   ticketNo: string;
   technician: string;
@@ -590,14 +726,17 @@ export async function setTicketOnsiteCheckIn(
   at: string
 ): Promise<void> {
   if (event === "done") {
-    const { error } = await supabase
+    const { data, error } = await supabase
       .from("tickets")
       .update({ onsite_done_at: at })
-      .eq("ticket_no", ticketNo);
+      .eq("ticket_no", ticketNo)
+      .select("technician, schedule_date")
+      .maybeSingle();
     if (error) {
       console.error("setTicketOnsiteCheckIn error:", error.message);
       throw new Error(error.message);
     }
+    triggerMileageRecompute(data);
     return;
   }
 
@@ -618,15 +757,37 @@ export async function setTicketOnsiteCheckIn(
   // longer-running tickets). The `.or` filter below only matches rows
   // where there's no arrival yet OR a previous visit was already closed
   // out, so a genuine callback (re-check-in AFTER done) still works.
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("tickets")
     .update({ onsite_arrived_at: at, onsite_done_at: null })
     .eq("ticket_no", ticketNo)
-    .or("onsite_arrived_at.is.null,onsite_done_at.not.is.null");
+    .or("onsite_arrived_at.is.null,onsite_done_at.not.is.null")
+    .select("technician, schedule_date")
+    .maybeSingle();
   if (error) {
     console.error("setTicketOnsiteCheckIn error:", error.message);
     throw new Error(error.message);
   }
+  triggerMileageRecompute(data);
+}
+
+/**
+ * Fires the event-driven, single-technician/single-day mileage recompute
+ * (see mileage.ts's syncMileageForTicketDay) right after a real check-in
+ * write — so mileage/route order reflects it immediately instead of
+ * waiting for the next full "Sync from Tickets" batch run. Deliberately
+ * NOT awaited: recompute failures are already swallowed/logged inside
+ * syncMileageForTicketDay itself, and a check-in write should never be
+ * held up waiting on a route/mileage lookup. `data` is null for a
+ * dev-only/nonexistent ticket_no (the update matches zero rows) or when
+ * the `.or` filter above skips a stale double-tap — either way, nothing to
+ * recompute.
+ */
+function triggerMileageRecompute(data: { technician: string | null; schedule_date: string | null } | null): void {
+  if (!data?.technician || !data.schedule_date) return;
+  syncMileageForTicketDay(data.technician, data.schedule_date).catch((err) =>
+    console.error("triggerMileageRecompute failed:", err)
+  );
 }
 
 /**
@@ -1893,7 +2054,7 @@ async function upsertTicketFromServicePowerImpl(
   // lookup throw — we just take the first row and update it.
   const { data: existingRows, error: findErr } = await supabase
     .from("tickets")
-    .select("id, customer_id, status, product_edited_by_user, source_edited_by_user, schedule_date, time_slot")
+    .select("id, customer_id, status, product_edited_by_user, source_edited_by_user, schedule_date, time_slot, technician")
     .eq("ticket_no", input.ticketNo)
     .order("created_at", { ascending: true })
     .limit(1);
@@ -1931,6 +2092,22 @@ async function upsertTicketFromServicePowerImpl(
     const existingPeriod = (existing as any).time_slot as string | null;
     if (!incomingPeriod && existingPeriod) {
       ticketPayload.time_slot = existingPeriod;
+    }
+    // A re-sync that actually moves the schedule date (the "trust SP" case
+    // above) or reassigns the technician invalidates any prior physical
+    // on-site check-in the same way a Daily Schedule drag-drop does — see
+    // updateTicketAssignment's identical rule and migration 0202. Without
+    // this, a technician's stamps from an earlier visit attempt (e.g. a
+    // callback ServicePower re-dispatched to a new date) stay attached to
+    // the ticket and get misread as a completion on whatever date the
+    // ticket now shows, including by getTechCompletedRepairCounts' on-site
+    // fallback in techPayroll.ts.
+    const finalSchedule = ticketPayload.schedule_date as string | null;
+    const finalTechnician = (ticketPayload.technician ?? null) as string | null;
+    const existingTechnician = ((existing as any).technician ?? null) as string | null;
+    if (finalSchedule !== existingSchedule || finalTechnician !== existingTechnician) {
+      ticketPayload.onsite_arrived_at = null;
+      ticketPayload.onsite_done_at = null;
     }
     // Honor the product-info lock flag: if a user edited Product Info via
     // the ticket detail page, SP must NOT overwrite their values. Drop every

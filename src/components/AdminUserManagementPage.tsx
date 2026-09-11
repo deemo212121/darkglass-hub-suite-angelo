@@ -15,6 +15,8 @@ import { useAllRoleOptions } from "@/lib/customRoles";
 import { auth as firebaseAuth } from "@/lib/firebase/config";
 import { ActivityLogPanel } from "@/components/ActivityLogPanel";
 import { logModuleActivity } from "@/lib/supabase/moduleActivityLog";
+import { getCompanyWeeklyPasswordResetEnabled, setCompanyWeeklyPasswordResetEnabled } from "@/lib/supabase/companySettings";
+import { Switch } from "@/components/ui/switch";
 import { seedOnboardingTasks } from "@/lib/supabase/employeeOnboarding";
 import { ManageWorkingHoursModal } from "@/components/ManageWorkingHoursModal";
 import { getBranchRoleSchedules, type BranchRoleScheduleRow } from "@/lib/supabase/branchSchedules";
@@ -756,6 +758,40 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
   useEffect(() => {
     getBranchRoleSchedules().then(setBranchSchedules).catch(() => {});
   }, []);
+  // Company-wide opt-out for the automatic weekly forced password reset
+  // (migrations 0235/0236) — shown next to the Activity Log button, on both
+  // /m/admin/user-management and /m/hr/user-management (same component).
+  // SUPERADMIN only, per the user's explicit call — hidden entirely (not
+  // just disabled) for everyone else, and enforced server-side too by
+  // set_company_weekly_password_reset so it can't be flipped by a raw
+  // request from someone who isn't SUPERADMIN either.
+  const canManagePasswordResetSetting = normalizeRole(auth.role) === "SUPERADMIN";
+  const [weeklyPasswordResetEnabled, setWeeklyPasswordResetEnabledState] = useState(true);
+  const [savingPasswordResetSetting, setSavingPasswordResetSetting] = useState(false);
+  useEffect(() => {
+    if (!canManagePasswordResetSetting) return;
+    getCompanyWeeklyPasswordResetEnabled().then(setWeeklyPasswordResetEnabledState).catch(() => {});
+  }, [canManagePasswordResetSetting]);
+  const handleToggleWeeklyPasswordReset = async (next: boolean) => {
+    if (!canManagePasswordResetSetting || savingPasswordResetSetting) return;
+    const prev = weeklyPasswordResetEnabled;
+    setWeeklyPasswordResetEnabledState(next);
+    setSavingPasswordResetSetting(true);
+    try {
+      await setCompanyWeeklyPasswordResetEnabled(next);
+      void logModuleActivity({
+        module: "user-management",
+        actorName: auth.displayName || auth.email || "Admin",
+        action: next ? "weekly_password_reset_enabled" : "weekly_password_reset_disabled",
+        targetType: "company",
+      });
+    } catch (err) {
+      console.error("Failed to update weekly password reset setting:", err);
+      setWeeklyPasswordResetEnabledState(prev);
+    } finally {
+      setSavingPasswordResetSetting(false);
+    }
+  };
   const [creatingUser, setCreatingUser] = useState(false);
   const [deactivateTarget, setDeactivateTarget] = useState<UserRow | null>(null);
   const [togglingActive, setTogglingActive] = useState(false);
@@ -1317,8 +1353,22 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
             </div>
           </div>
 
-          <div className="mt-4">
+          <div className="mt-4 flex flex-wrap items-center gap-3">
             <ActivityLogPanel module="user-management" title="User Management Activity Log" />
+            {canManagePasswordResetSetting && (
+              <div
+                className="flex items-center gap-2 rounded-lg border border-white/15 bg-slate-900/80 px-3 py-2 text-sm"
+                title="Every Monday, everyone is automatically forced to change their password on next login. Turn this off to stop that."
+              >
+                <KeyRound className="h-4 w-4 text-slate-400 shrink-0" />
+                <span className="text-slate-300 whitespace-nowrap">Weekly forced password change</span>
+                <Switch
+                  checked={weeklyPasswordResetEnabled}
+                  disabled={savingPasswordResetSetting}
+                  onCheckedChange={handleToggleWeeklyPasswordReset}
+                />
+              </div>
+            )}
           </div>
 
           <div className="mt-5 flex flex-wrap items-end gap-4">

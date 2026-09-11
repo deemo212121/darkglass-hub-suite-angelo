@@ -33,6 +33,7 @@ import {
   listChannels,
   markThreadRead,
   notifyChannelMention,
+  peekLatestThreadMessage,
   removeChannelMember,
   sendMessage as sendMessageRow,
   subscribeToMessages,
@@ -254,10 +255,31 @@ export function TeamMessenger({ mod, sub }: Props) {
     });
 
     // Polling fallback (2s) — covers tenants that don't have Supabase realtime
-    // turned on for the messages table. Cheap: it's just one indexed query per
-    // active thread, and only while the thread is open.
+    // turned on for the messages table. Peek-first: most ticks nothing has
+    // changed, so only pay for the single-row peekLatestThreadMessage query
+    // (same shape as AnnouncementBanner.tsx/MessagesMenu.tsx's own fallback
+    // polls) — the full getChannelMessages/getDmMessages (up to 200 rows,
+    // every column) only runs on the tick something actually moved. This
+    // used to run the full fetch every single tick regardless, which
+    // Supabase's own Query Performance report showed as the single biggest
+    // time sink in the whole project (top query by total time, ~68k calls)
+    // once enough staff had a thread open through the day.
+    let lastSeenMessageId: string | null | undefined = undefined; // undefined = baseline not established yet
     const pollId = window.setInterval(async () => {
       try {
+        const latest = await peekLatestThreadMessage(
+          active.kind === "channel" ? { channelId: active.id } : { dmThreadId: active.id }
+        );
+        if (cancelled) return;
+        const latestId = latest?.id ?? null;
+        if (lastSeenMessageId === undefined) {
+          // First tick just establishes the baseline — the initial loader
+          // above already populated `messages`, so there's nothing to fetch.
+          lastSeenMessageId = latestId;
+          return;
+        }
+        if (latestId === lastSeenMessageId) return;
+        lastSeenMessageId = latestId;
         const rows = active.kind === "channel"
           ? await getChannelMessages(active.id)
           : await getDmMessages(active.id);

@@ -21,24 +21,22 @@
  * This is a plain web app (no PWA/service worker, no native wrapper), so
  * tracking only works while this tab is open and foregrounded — there is
  * no true background-tracking capability here.
+ *
+ * Previously also auto-clocked a technician out (or, near the branch,
+ * queued a reviewed checkout proposal) the moment a GPS fix landed inside
+ * a small radius of their home/branch — removed per the user's explicit
+ * call: it fired on the FIRST fix of the shift with no check that the
+ * technician had ever left the radius first, so anyone who lives near the
+ * office (or simply clocks in from the branch lot, which is normal) got
+ * auto-clocked-out within moments of starting their day. The end-of-day
+ * safety net for a forgotten Time Out is still technicianForcedCheckout.ts
+ * (server-side, 11:59 PM local) — untouched by this removal.
  */
 import { useEffect, useRef, useState } from "react";
 import { useAuth } from "@/lib/auth";
-import { getMyProfileId, getMyFullProfile, getTechnicianContactInfoByIds } from "@/lib/supabase/users";
+import { getMyProfileId } from "@/lib/supabase/users";
 import { getEntryForDate } from "@/lib/supabase/timecards";
 import { hasConfirmedLocationConsent, upsertMyLocationPing, clearMyLocationPing } from "@/lib/supabase/technicianLocationPings";
-import { upsertMyCheckoutProposal, autoClockOutAtHome } from "@/lib/supabase/technicianCheckoutProposals";
-import { getMyLatestVisitUpdate } from "@/lib/supabase/tickets";
-import {
-  getOfficeCoordinates,
-  geocodeAddress,
-  haversineMiles,
-  CHECKOUT_PROPOSAL_RADIUS_MILES,
-  HOME_AUTO_CHECKOUT_RADIUS_MILES,
-  type LatLng,
-} from "@/lib/mapEngine";
-import { getServerNow, zonedTimeString, type ScheduleTimezone } from "@/lib/serverTime";
-import { getCompanyMapProvider } from "@/lib/supabase/companySettings";
 import { setLocationSharingStatus } from "@/lib/locationSharingStatus";
 import { useLiveLocation } from "@/lib/liveLocationContext";
 import { TECHNICIAN_PAY_ROLES, normalizeRole } from "@/lib/roleLabels";
@@ -75,13 +73,6 @@ export function TechnicianLocationTracker() {
 
   const watchIdRef = useRef<number | null>(null);
   const lastUploadRef = useRef(0);
-  // Resolved once per shift (branch office coords are a synchronous lookup;
-  // home needs a one-time geocode) so the geofence check on every position
-  // update is a cheap local haversine, not a network call each time.
-  const branchHomeRef = useRef<{ branch: LatLng | null; home: LatLng | null; tz: ScheduleTimezone } | null>(null);
-  // Guards the once-per-shift geofence action (home auto clock-out OR branch
-  // proposal). Reset to false on any failure so the next GPS fix retries.
-  const proposedCheckoutThisShiftRef = useRef(false);
   const promptHandledThisShiftRef = useRef(false);
   const loadedDateKeyRef = useRef<string>(todayKey());
   const wakeLockRef = useRef<{ release: () => Promise<void> } | null>(null);
@@ -153,33 +144,6 @@ export function TechnicianLocationTracker() {
     };
   }, [armed, profileId]);
 
-  // Resolve this technician's branch + home coordinates once per shift —
-  // feeds the auto-proposed-checkout geofence check inside startWatch's
-  // position callback below, without re-geocoding on every single ping.
-  useEffect(() => {
-    if (!armed || !clockedIn || !profileId || !uid || branchHomeRef.current) return;
-    let cancelled = false;
-    (async () => {
-      const [myProfile, contactInfo, mapProvider] = await Promise.all([
-        getMyFullProfile(uid),
-        getTechnicianContactInfoByIds([profileId]),
-        getCompanyMapProvider(),
-      ]);
-      if (cancelled) return;
-      const branch = myProfile?.assignedBranch ? getOfficeCoordinates(myProfile.assignedBranch) : null;
-      const homeAddress = contactInfo.get(profileId)?.address;
-      const homeHit = homeAddress ? await geocodeAddress(mapProvider, homeAddress) : null;
-      if (cancelled) return;
-      branchHomeRef.current = {
-        branch,
-        home: homeHit ? { lat: homeHit.lat, lng: homeHit.lng } : null,
-        tz: myProfile?.scheduleTimezone ?? "CST",
-      };
-    })().catch((err) => console.error("[TechnicianLocationTracker] resolving branch/home coords failed:", err));
-    return () => {
-      cancelled = true;
-    };
-  }, [armed, clockedIn, profileId, uid]);
 
   const stopWatch = () => {
     if (watchIdRef.current !== null) {
@@ -225,63 +189,6 @@ export function TechnicianLocationTracker() {
           pos.coords.accuracy ?? null,
           new Date(now).toISOString()
         ).catch((err) => console.error("[TechnicianLocationTracker] upsertMyLocationPing failed:", err));
-
-        // Geofence-triggered Time Out the moment this fix lands back inside
-        // a known circle. Two different behaviors, once per shift only
-        // (proposedCheckoutThisShiftRef, reset on failure to allow a retry):
-        //   - HOME (HOME_AUTO_CHECKOUT_RADIUS_MILES, a 1-mi diameter):
-        //     clock the technician straight out, no reviewer — the Time Out
-        //     recorded is the moment they crossed into the circle.
-        //   - BRANCH (CHECKOUT_PROPOSAL_RADIUS_MILES): still just a PROPOSED
-        //     Time Out for a SuperAdmin/Finance reviewer, since a tech can
-        //     legitimately be at the branch mid-day (parts, paperwork).
-        // Home wins if somehow inside both.
-        const coords = branchHomeRef.current;
-        if (coords && !proposedCheckoutThisShiftRef.current && (coords.branch || coords.home)) {
-          const here: LatLng = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-          const nearHome = coords.home ? haversineMiles(here, coords.home) <= HOME_AUTO_CHECKOUT_RADIUS_MILES : false;
-          const nearBranch = coords.branch ? haversineMiles(here, coords.branch) <= CHECKOUT_PROPOSAL_RADIUS_MILES : false;
-          if (nearHome || nearBranch) {
-            proposedCheckoutThisShiftRef.current = true;
-            const tz = coords.tz;
-            void (async () => {
-              try {
-                const lastVisit = await getMyLatestVisitUpdate(profileId).catch(() => null);
-                // A real punch — stamp it from the server clock in the
-                // technician's own schedule timezone, not the device clock
-                // (which they can freely change). Falls back to the device
-                // clock only if the server time call fails outright.
-                let stamp: string;
-                try {
-                  stamp = zonedTimeString(await getServerNow(), tz);
-                } catch {
-                  const at = new Date();
-                  stamp = `${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}:${String(at.getSeconds()).padStart(2, "0")}`;
-                }
-                if (nearHome) {
-                  await autoClockOutAtHome({
-                    profileId,
-                    workDate: todayKey(),
-                    checkOut: stamp,
-                    lastTicketNo: lastVisit?.ticketNo ?? null,
-                  });
-                } else {
-                  await upsertMyCheckoutProposal({
-                    profileId,
-                    workDate: todayKey(),
-                    proposedCheckOut: stamp,
-                    source: "branch",
-                    lastTicketNo: lastVisit?.ticketNo ?? null,
-                    lastTicketUpdatedAt: lastVisit?.updatedAt ?? null,
-                  });
-                }
-              } catch (err) {
-                console.error("[TechnicianLocationTracker] geofence checkout failed:", err);
-                proposedCheckoutThisShiftRef.current = false;
-              }
-            })();
-          }
-        }
       },
       (err) => {
         // Permission denied or unavailable — best-effort feature, never
@@ -349,8 +256,6 @@ export function TechnicianLocationTracker() {
     if (!armed) return;
     if (!clockedIn) {
       promptHandledThisShiftRef.current = false;
-      branchHomeRef.current = null;
-      proposedCheckoutThisShiftRef.current = false;
       setShowPrompt(false);
       stopWatch();
       if (profileId) clearMyLocationPing(profileId).catch(() => {});

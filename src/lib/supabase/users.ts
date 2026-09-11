@@ -82,6 +82,8 @@ export interface ProfileRow {
   work_plan: Record<string, any> | null;
   /** Trainee vs Regular — see migration 0152. Fetched separately/best-effort in getCompanyUsers (like working_hours/meal_minutes below), so it defaults to "regular" instead of breaking the whole roster if that migration hasn't been run yet. */
   employment_type: "trainee" | "regular";
+  /** HR-initiated freeze (migration 0223) — see roleLabels.ts's isSubmoduleAllowedForFrozen. Same best-effort fetch pattern as employment_type; defaults to false. */
+  frozen: boolean;
   is_active: boolean;
   /** Set by AdminUserManagementPage.tsx's Reset Password actions — see migration 0103. Forces a redirect to /profile until they change it (__root.tsx). */
   must_change_password: boolean;
@@ -126,12 +128,27 @@ export async function getProfileForLogin(firebaseUid: string): Promise<{
   mustChangePassword: boolean;
   /** Trainee vs Regular (Master List's Employment Status column, migration 0152) — drives the "trainee sees only Employee Self-Service" restriction, see roleLabels.ts's isSubmoduleAllowedForTrainee. */
   isTrainee: boolean;
+  /** HR-initiated freeze (migration 0223) — drives the narrower "frozen sees only Messages" restriction, see roleLabels.ts's isSubmoduleAllowedForFrozen. Independent of isTrainee/role. */
+  isFrozen: boolean;
 } | null> {
-  const { data, error } = await supabase
+  let { data, error } = await supabase
     .from("profiles")
-    .select("email, role, extra_roles, display_name, is_active, work_plan, branch_access, must_change_password, employment_type, companies:company_id (legacy_code, login_alias, is_active)")
+    .select("email, role, extra_roles, display_name, is_active, work_plan, branch_access, must_change_password, employment_type, frozen, companies:company_id (legacy_code, login_alias, is_active)")
     .eq("firebase_uid", firebaseUid)
     .maybeSingle();
+
+  // 42703 = "column frozen does not exist" — migration 0223 hasn't been run
+  // yet. This runs on every login, so falling back to the pre-0223 SELECT
+  // (frozen defaults to false) has to work, not just degrade — a broken
+  // login for the entire company is a much worse failure than one missing
+  // feature.
+  if (error?.code === "42703") {
+    ({ data, error } = await supabase
+      .from("profiles")
+      .select("email, role, extra_roles, display_name, is_active, work_plan, branch_access, must_change_password, employment_type, companies:company_id (legacy_code, login_alias, is_active)")
+      .eq("firebase_uid", firebaseUid)
+      .maybeSingle());
+  }
 
   if (error) {
     console.error("getProfileForLogin error:", error.message);
@@ -155,6 +172,7 @@ export async function getProfileForLogin(firebaseUid: string): Promise<{
     branchAccess: (data as any).branch_access ?? null,
     mustChangePassword: (data as any).must_change_password ?? false,
     isTrainee: (data as any).employment_type === "trainee",
+    isFrozen: (data as any).frozen === true,
   };
 }
 
@@ -167,6 +185,28 @@ export async function getProfileForLogin(firebaseUid: string): Promise<{
 export async function setMustChangePassword(profileIds: string[], value: boolean): Promise<void> {
   if (profileIds.length === 0) return;
   const { error } = await supabase.from("profiles").update({ must_change_password: value }).in("id", profileIds);
+  if (error) throw new Error(error.message);
+}
+
+/**
+ * Freezes (or unfreezes) a technician's account — see migration 0223.
+ * While frozen: desktop module gating restricts them to Messages only
+ * (roleLabels.ts's isSubmoduleAllowedForFrozen), the ticket detail route
+ * blocks entirely, and two DB triggers block their own timecard punch and
+ * any ticket write server-side, not just in the UI. Unfreezing just clears
+ * the flag; the stamped frozen_at/frozen_by/frozen_by_name are left as a
+ * historical record of the last freeze, overwritten the next time this is
+ * called with frozen=true.
+ */
+export async function setProfileFrozen(profileId: string, frozen: boolean, actorId: string, actorName: string): Promise<void> {
+  const { error } = await supabase
+    .from("profiles")
+    .update(
+      frozen
+        ? { frozen: true, frozen_at: new Date().toISOString(), frozen_by: actorId, frozen_by_name: actorName }
+        : { frozen: false }
+    )
+    .eq("id", profileId);
   if (error) throw new Error(error.message);
 }
 
@@ -516,6 +556,23 @@ async function fetchCompanyUsersUncached(): Promise<ProfileRow[]> {
       const empTypeById = new Map((empTypeRows ?? []).map((r: any) => [r.id, r.employment_type]));
       for (const row of rows) {
         row.employment_type = empTypeById.get(row.id) ?? "regular";
+      }
+    }
+  }
+
+  // Same best-effort pattern again — frozen (migration 0223) is newer/optional too.
+  for (const row of rows) row.frozen = false;
+  if (rows.length > 0) {
+    const { data: frozenRows, error: frozenError } = await supabase
+      .from("profiles")
+      .select("id, frozen")
+      .in("id", rows.map((r) => r.id));
+    if (frozenError) {
+      console.error("getCompanyUsers (frozen) error:", frozenError.message);
+    } else {
+      const frozenById = new Map((frozenRows ?? []).map((r: any) => [r.id, r.frozen]));
+      for (const row of rows) {
+        row.frozen = frozenById.get(row.id) === true;
       }
     }
   }

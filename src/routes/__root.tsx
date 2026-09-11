@@ -1,3 +1,4 @@
+import "@/lib/promiseTryPolyfill";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useEffect } from "react";
 import {
@@ -15,6 +16,7 @@ import { ThemeProvider } from "@/lib/theme";
 import { AnnouncementBanner } from "@/components/AnnouncementBanner";
 import { TraineeAttendanceReviewModal } from "@/components/TraineeAttendanceReviewModal";
 import { PasswordChangeReminder } from "@/components/PasswordChangeReminder";
+import { FrozenAccountModal } from "@/components/FrozenAccountModal";
 import { TicketSearchFab } from "@/components/TicketSearchFab";
 import { ModuleNavigator } from "@/components/ModuleNavigator";
 import { SessionKickedOutBanner } from "@/components/SessionKickedOutBanner";
@@ -165,6 +167,7 @@ function RootComponent() {
             {!hideChrome && <AnnouncementBanner />}
             {!hideChrome && <TraineeAttendanceReviewModal />}
             {!hideChrome && <PasswordChangeReminder />}
+            {!hideChrome && <FrozenAccountModal />}
             <Outlet />
             {!hideChrome && <TicketSearchFab />}
             {/* Floating module navigator — sits below the AppHeader on every

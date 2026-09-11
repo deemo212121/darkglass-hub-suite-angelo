@@ -4,7 +4,7 @@
 -- (ReportHRDaily.tsx). Without this, interview_time alone is ambiguous
 -- for a company spanning both zones.
 --
--- Run once in the Supabase SQL Editor, after 0228_hr_candidates_interview_time.sql.
+-- Run once in the Supabase SQL Editor, after 0232_hr_candidates_interview_time.sql.
 
 alter table hr_candidates add column if not exists interview_timezone text;
 
