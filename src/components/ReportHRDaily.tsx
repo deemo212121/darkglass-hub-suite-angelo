@@ -102,7 +102,7 @@ import { buildActionPlanFormDocxBlob } from "@/lib/actionPlanFormDocx";
 import { buildTerminationFormBodyMarkup, terminationFormStyles, type TerminationFormData, type TerminationSignatureSlot } from "@/lib/terminationFormTemplate";
 import { buildTerminationFormDocxBlob } from "@/lib/terminationFormDocx";
 import { buildContractorAddendumPdf } from "@/lib/contractorAddendumPdf";
-import { CONTRACTOR_ADDENDUM_SLOT_ORDER, CONTRACTOR_ADDENDUM_SLOT_LABEL, CONTRACTOR_ADDENDUM_DEFAULT_SIGNER_NAMES, blankContractorAddendumData, type ContractorAddendumFormData } from "@/lib/contractorAddendumFormTemplate";
+import { CONTRACTOR_ADDENDUM_SLOT_ORDER, CONTRACTOR_ADDENDUM_SLOT_LABEL, CONTRACTOR_ADDENDUM_DEFAULT_SIGNER_NAMES, CONTRACTOR_ADDENDUM_POSITION_LEVELS, blankContractorAddendumData, type ContractorAddendumFormData } from "@/lib/contractorAddendumFormTemplate";
 import type { W8benFormData, W8benAddress } from "@/lib/w8benFormTemplate";
 import { fillW8benPdf } from "@/lib/w8benPdfFill";
 import type { W4FormData } from "@/lib/w4FormTemplate";
@@ -7561,6 +7561,12 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [contractorAddendumActionBusyId, setContractorAddendumActionBusyId] = useState<string | null>(null);
   const [contractorAddendumActionError, setContractorAddendumActionError] = useState<string | null>(null);
   const [contractorAddendumExternalName, setContractorAddendumExternalName] = useState("");
+  // Position Level / Guaranteed Minimum Baseline Payout — compensation terms
+  // HR sets, not something the Contractor should be self-reporting. Shared
+  // by both the internal Send and External Link forms below (one send form,
+  // two delivery methods), and required before either button enables.
+  const [contractorAddendumPositionLevel, setContractorAddendumPositionLevel] = useState("");
+  const [contractorAddendumBaselinePayout, setContractorAddendumBaselinePayout] = useState("");
   const [contractorAddendumSentLink, setContractorAddendumSentLink] = useState<{ link: string; recipientName: string } | null>(null);
   const [contractorAddendumSentLinkCopied, setContractorAddendumSentLinkCopied] = useState(false);
   const [contractorAddendumPreviewExpanded, setContractorAddendumPreviewExpanded] = useState(false);
@@ -7612,6 +7618,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
   const handleSendContractorAddendum = async () => {
     if (!contractorAddendumRecipientId || !uid) return;
+    if (!contractorAddendumPositionLevel || !contractorAddendumBaselinePayout.trim()) {
+      setContractorAddendumSendError("Enter the Position Level and Guaranteed Minimum Baseline Payout before sending.");
+      return;
+    }
     setContractorAddendumSending(true);
     setContractorAddendumSendError(null);
     try {
@@ -7628,6 +7638,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         formData: {
           ...blankContractorAddendumData(),
           employeeId: recipient.id,
+          positionLevel: contractorAddendumPositionLevel,
+          baselinePayout: contractorAddendumBaselinePayout.trim(),
           signerNames: { ...CONTRACTOR_ADDENDUM_DEFAULT_SIGNER_NAMES, employee: recipient.name },
           ...(activeTab === "newContractorAddendum" ? { formSource: "new_automation" } : {}),
         } as unknown as Record<string, any>,
@@ -7648,6 +7660,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       void logActivity({ action: "contractor_addendum_sent", targetType: "employee", targetId: recipient.id, targetLabel: recipient.name });
       setContractorAddendumRecipientId("");
       setContractorAddendumRecipientSearch("");
+      setContractorAddendumPositionLevel("");
+      setContractorAddendumBaselinePayout("");
       await loadSentContractorAddendumForms();
     } catch (err) {
       setContractorAddendumSendError(err instanceof Error ? err.message : "Failed to send request.");
@@ -7657,6 +7671,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   };
 
   const handleGenerateExternalContractorAddendum = async () => {
+    if (!contractorAddendumPositionLevel || !contractorAddendumBaselinePayout.trim()) {
+      setContractorAddendumSendError("Enter the Position Level and Guaranteed Minimum Baseline Payout before sending.");
+      return;
+    }
     setContractorAddendumSending(true);
     setContractorAddendumSendError(null);
     try {
@@ -7665,6 +7683,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         documentType: "contractor_addendum",
         formData: {
           ...blankContractorAddendumData(),
+          positionLevel: contractorAddendumPositionLevel,
+          baselinePayout: contractorAddendumBaselinePayout.trim(),
           signerNames: { ...CONTRACTOR_ADDENDUM_DEFAULT_SIGNER_NAMES, employee: name },
           ...(activeTab === "newContractorAddendum" ? { formSource: "new_automation" } : {}),
         } as unknown as Record<string, any>,
@@ -7676,6 +7696,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       const externalOrigin = import.meta.env.DEV ? window.location.origin : getAppUrl();
       setContractorAddendumSentLink({ link: `${externalOrigin}/fill-contractor-addendum-external/${doc.id}`, recipientName: name });
       setContractorAddendumExternalName("");
+      setContractorAddendumPositionLevel("");
+      setContractorAddendumBaselinePayout("");
       await loadSentContractorAddendumForms();
     } catch (err) {
       setContractorAddendumSendError(err instanceof Error ? err.message : "Failed to generate link.");
@@ -23326,10 +23348,36 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       <div className="panel p-0 overflow-visible mt-4 relative z-20">
         <div className="px-4 py-4 border-b border-white/10">
           <h2 className="font-semibold text-sm">Send Master Independent Contractor Subcontractor Agreement Addendum</h2>
-          <p className="text-[10px] text-muted-foreground mt-0.5">The Contractor gets a link to fill in the Position Level, Guaranteed Minimum Baseline Payout, and their name, then sign. After they submit, use "Send to next signer" on the row below to route it to the Company HR Representative and the three managerial witnesses (Technical COO, Technical Director, CEO).</p>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Set the Position Level and Guaranteed Minimum Baseline Payout below before sending — these are compensation terms HR decides, not something the Contractor fills in themselves. The Contractor then gets a link to fill in just their name and sign. After they submit, use "Send to next signer" on the row below to route it to the Company HR Representative and the three managerial witnesses (Technical COO, Technical Director, CEO).</p>
         </div>
         <div className="p-4 flex flex-col md:flex-row gap-6">
           <div className="flex flex-col gap-3 w-full md:max-w-sm md:shrink-0">
+            <div className="flex flex-col gap-3 pb-3 border-b border-white/10">
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Position Level</label>
+                <select
+                  value={contractorAddendumPositionLevel}
+                  onChange={(e) => setContractorAddendumPositionLevel(e.target.value)}
+                  className="glass-input text-sm py-1.5 px-3 rounded-md"
+                >
+                  <option value="">Select a position level…</option>
+                  {CONTRACTOR_ADDENDUM_POSITION_LEVELS.map((level) => (
+                    <option key={level} value={level}>{level}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Guaranteed Minimum Baseline Payout ($/month)</label>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={contractorAddendumBaselinePayout}
+                  onChange={(e) => setContractorAddendumBaselinePayout(e.target.value)}
+                  placeholder="e.g. 4500"
+                  className="glass-input text-sm py-1.5 px-3 rounded-md"
+                />
+              </div>
+            </div>
             <div className="flex flex-col gap-1.5 pb-3 border-b border-white/10">
               <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">External Link (no login needed)</label>
               {contractorAddendumSentLink ? (
@@ -23353,7 +23401,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                       placeholder="Type their name (optional)…"
                       className="glass-input text-sm py-1.5 px-3 rounded-md flex-1"
                     />
-                    <button onClick={handleGenerateExternalContractorAddendum} disabled={contractorAddendumSending} className="btn text-sm px-3 py-1.5 disabled:opacity-50 shrink-0">
+                    <button onClick={handleGenerateExternalContractorAddendum} disabled={contractorAddendumSending || !contractorAddendumPositionLevel || !contractorAddendumBaselinePayout.trim()} className="btn text-sm px-3 py-1.5 disabled:opacity-50 shrink-0">
                       {contractorAddendumSending ? "Generating…" : "Generate Link"}
                     </button>
                   </div>
@@ -23407,7 +23455,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               </button>
               <button
                 onClick={handleSendContractorAddendum}
-                disabled={!contractorAddendumRecipientId || contractorAddendumSending}
+                disabled={!contractorAddendumRecipientId || !contractorAddendumPositionLevel || !contractorAddendumBaselinePayout.trim() || contractorAddendumSending}
                 className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
               >
                 {contractorAddendumSending ? "Sending…" : "Send Request"}
