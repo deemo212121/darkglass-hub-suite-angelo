@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect, useRef, Fragment } from "react";
+import { createPortal } from "react-dom";
 import { Link, useSearch, useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
 import { ChevronLeft, ChevronDown, ChevronUp, ChevronRight, Plus, Trash2, AlertTriangle, CheckCircle, XCircle, Paperclip, Users, Clock, UserCheck, UserX, UserMinus, Search, Bell, Download, Forward, History, FileText, ClipboardList, Landmark, GripVertical, FileCheck, Link2, Copy, Calendar, Check, Pencil, Filter, Columns3 } from "lucide-react";
@@ -19,6 +20,7 @@ import { LOCATIONS_DATA } from "@/lib/zipCoverage";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { normalizeRole, ROLE_LABELS, isJotformHrRole, getRoleDepartmentBreakdown } from "@/lib/roleLabels";
+import { useAllRoleOptions } from "@/lib/customRoles";
 import { getCompanyUsers, getProfileEmployeeInfo, getEmployeeInfoByProfileIds, saveProfileEmployeeInfo, updateCompanyUser, getMyProfileId, getAccountCreatorsByEmail, type EmployeeInfo } from "@/lib/supabase/users";
 import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
 import { subscribeNotifications, markNotificationRead, deleteNotification, type AppNotification } from "@/lib/firebase/notifications";
@@ -143,6 +145,7 @@ import { HrActivityLogPanel } from "@/components/HrActivityLogPage";
 import { InterviewCalendarTab, type InterviewCalendarCandidate } from "@/components/InterviewCalendarTab";
 import { subscribeTableChanges } from "@/lib/supabase/realtime";
 import { getCompanyPtoRequests, ptoYearWindow, ptoDaysUsed, sickYearWindow, sickDaysUsed, reviewPtoStage, canReviewPtoStage, type PtoRequestRow, type PtoType, type PtoStage } from "@/lib/supabase/pto";
+import { getAttendanceNotes, type AttendanceNoteRow } from "@/lib/supabase/attendanceNotes";
 import { getCompanyTimecardEntries, calcWorkedHours, hoursDiff, type CompanyTimecardEntry } from "@/lib/supabase/timecards";
 import { getCompanyTimecardCorrections, reviewCorrectionStage, canReviewCorrectionStage, type TimecardCorrectionRow, type CorrectionStage } from "@/lib/supabase/timecardCorrections";
 import { getCompanyEmployeeRequests, updateEmployeeRequestStatus, type EmployeeRequestRow, type EmployeeRequestStatus } from "@/lib/supabase/employeeRequests";
@@ -230,6 +233,19 @@ const PH_BRANCH_NAMES = new Set(LOCATIONS_DATA.filter(l => l.isPhilippines).map(
 const HR_ADMIN_ROLES = new Set(["HR", "ADMIN", "SUPERADMIN", "MANAGER", "SENIOR_MANAGER"]);
 const BRANCH_MANAGER_ROLES = new Set(["BRANCH_MANAGER", "SENIOR_BRANCH_MANAGER"]);
 
+// Mirrors HrCalendarTab.tsx's HR_STATUS_TO_PTO_TYPE — Absent List's HR
+// Status shares these 6 leave-type values with PtoType; the other 3
+// options (Unnoticed/Resigned/Terminated) aren't leave types and never
+// draw against a PTO/Sick balance.
+const HR_STATUS_TO_PTO_TYPE: Partial<Record<string, PtoType>> = {
+  Vacation: "vacation",
+  Sick: "sick",
+  Personal: "personal",
+  Holiday: "holiday",
+  Unpaid: "unpaid",
+  Bereavement: "bereavement",
+};
+
 const CANDIDATE_STATUS_LABEL: Record<CandidateStatus, string> = {
   applied: "Applied",
   phone_screening: "Phone Screening",
@@ -255,6 +271,13 @@ const CANDIDATE_STATUS_COLOR: Record<CandidateStatus, string> = {
 /** Just the text-color class from CANDIDATE_STATUS_COLOR (no background) — for status-tinted text that sits on the page's own panel, not inside the badge itself (e.g. the "Changed by" line under the Status dropdown). */
 function candidateStatusTextColor(status: CandidateStatus): string {
   return CANDIDATE_STATUS_COLOR[status].split(" ").find((c) => c.startsWith("text-")) ?? "text-muted-foreground";
+}
+/** "John Smith" -> "John.Smith" — this company's Login Name convention, used to pre-fill Add User's Login Name field from a candidate's name. Middle names are dropped (first + last token only); a single-word name is used as-is. */
+function deriveLoginName(fullName: string): string {
+  const parts = fullName.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "";
+  if (parts.length === 1) return parts[0];
+  return `${parts[0]}.${parts[parts.length - 1]}`;
 }
 /** "14:30" -> "2:30 PM" — interview_time is stored as plain 24h "HH:MM" text (0228), formatted for display wherever it's shown. */
 function formatHHMM(hhmm: string): string {
@@ -488,10 +511,9 @@ const CANDIDATE_SOURCE_OPTIONS = ["Indeed", "ZipRecruiter", "Other"];
 // own Columns picker already uses.
 const HIRING_COLUMNS = [
   { key: "position", label: "Position" },
-  { key: "branch", label: "Branch" },
-  { key: "branchManager", label: "Branch Manager" },
+  { key: "branch", label: "Branch / Manager" },
   { key: "assignedInterviewer", label: "Assigned Interviewer" },
-  { key: "department", label: "Department" },
+  { key: "department", label: "Applicant Department" },
   { key: "contact", label: "Contact" },
   { key: "outreach", label: "Texted / Called" },
   { key: "cv", label: "CV" },
@@ -1443,6 +1465,28 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
 
+  // Absent List's HR Status (attendance_notes.hr_note) draws against the
+  // same PTO/Sick balance below as a formal request would — see the Time
+  // Off Calendar tab (HrCalendarTab.tsx)'s identical hrPlottedDaysForBalance
+  // for the full reasoning; kept as a near-duplicate here (not a shared
+  // import) since the two tabs load their own employee/request data
+  // independently. Fixed ~14-month lookback plus a short forward buffer —
+  // bounded, not truly unbounded, since attendance_notes is much
+  // higher-volume than pto_requests.
+  const [hrBalanceNotes, setHrBalanceNotes] = useState<AttendanceNoteRow[]>([]);
+  const loadHrBalanceNotes = async () => {
+    try {
+      const start = new Date();
+      start.setMonth(start.getMonth() - 14, 1);
+      const end = new Date();
+      end.setMonth(end.getMonth() + 2, 0);
+      const fmt = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      setHrBalanceNotes(await getAttendanceNotes(fmt(start), fmt(end)));
+    } catch (err) {
+      console.error("Failed to load HR Status history for PTO/Sick balances:", err);
+    }
+  };
+
   // ── Employee Request Manager — all-in-one company-wide view of PTO
   // requests, Time Correction requests, Attendance Disputes, and Payroll
   // Inquiries, mirroring Employee Self-Service's "Manage Requests" tab (same
@@ -1577,7 +1621,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [candidatesLoading, setCandidatesLoading] = useState(true);
   const [showAddCandidate, setShowAddCandidate] = useState(false);
-  const [newCandidate, setNewCandidate] = useState({ name: "", phone: "", email: "", position: "", branch: "", department: "", branchManagerId: "", source: "", sourceOther: "" });
+  const [newCandidate, setNewCandidate] = useState({ name: "", phone: "", email: "", position: "", branch: "", department: "", branchManagerId: "", assignedInterviewerId: "", source: "", sourceOther: "" });
   const [cvFile, setCvFile] = useState<File | null>(null);
   const [savingCandidate, setSavingCandidate] = useState(false);
   const [hiringSearch, setHiringSearch] = useState("");
@@ -1733,6 +1777,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     loadCandidateForms();
     loadNotes();
     loadPtoRequests();
+    loadHrBalanceNotes();
     loadTodayTimecardEntries();
     loadRequestManagerData();
     if (uid) void getMyProfileId(uid).then(setMyProfileId);
@@ -1998,12 +2043,49 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     return map;
   }, [employees]);
 
-  // Real Branch Manager / Senior Branch Manager profiles, for the "Branch
-  // Manager" dropdown on Add Candidate and the Hiring table's manual
-  // override — lets HR pick a specific person instead of only ever relying
-  // on branchManagerByBranch's auto-derived one (which breaks down for a
+  // Any manager-tier profile (Branch Manager, Senior Branch Manager, CSR
+  // Manager, Parts Manager, BizOps Manager, etc. — any role/extra role whose
+  // name contains "MANAGER", same substring convention Forward Candidate's
+  // own managerRecipients list already uses), for the "Branch Manager"
+  // dropdown on Add Candidate and the Hiring table's manual override — lets
+  // HR pick a specific person instead of only ever relying on
+  // branchManagerByBranch's auto-derived one (which breaks down for a
   // branch with nobody on file yet, or two branches sharing one manager).
+  // Not limited to Branch/Senior Branch Manager: hiring now includes the
+  // Philippines office too, whose management tier is CSR Manager rather
+  // than a Branch Manager role, and they need to show up here as well.
   const branchManagerOptions = useMemo(
+    () =>
+      employees
+        .filter((e) => e.status === "active" && [e.position, ...e.extraRoles].some((r) => normalizeRole(r).includes("MANAGER")))
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    [employees]
+  );
+
+  // Same User Type list User Management's own Add User form offers (built-in
+  // roles + any custom roles this company has added) — the Hiring table's
+  // Position field picks from this instead of free text, so what a
+  // candidate is hired as always matches a real, assignable role.
+  const candidatePositionOptions = useAllRoleOptions();
+
+  // Real HR-role profiles, for the Hiring table's "Assigned Interviewer"
+  // dropdown — who on the HR team is actually running this candidate's
+  // interview process.
+  const hrPersonnelOptions = useMemo(
+    () =>
+      employees
+        .filter((e) => e.status === "active" && (normalizeRole(e.position) === "HR" || e.extraRoles.map(normalizeRole).includes("HR")))
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    [employees]
+  );
+
+  // Branch Managers can also run a candidate's interview for their own
+  // branch — a second group in the Assigned Interviewer dropdown alongside
+  // HR personnel above (see the two <optgroup>s wherever hrPersonnelOptions
+  // is used for that field). Same Branch Manager/Senior Branch Manager tier
+  // branchManagerOptions used before it was broadened to "any manager" for
+  // the Branch Manager field itself — kept narrow here on purpose.
+  const assignedInterviewerBranchManagerOptions = useMemo(
     () =>
       employees
         .filter(
@@ -2014,17 +2096,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               e.extraRoles.map(normalizeRole).includes("BRANCH_MANAGER") ||
               e.extraRoles.map(normalizeRole).includes("SENIOR_BRANCH_MANAGER"))
         )
-        .sort((a, b) => a.name.localeCompare(b.name)),
-    [employees]
-  );
-
-  // Real HR-role profiles, for the Hiring table's "Assigned Interviewer"
-  // dropdown — who on the HR team is actually running this candidate's
-  // interview process.
-  const hrPersonnelOptions = useMemo(
-    () =>
-      employees
-        .filter((e) => e.status === "active" && (normalizeRole(e.position) === "HR" || e.extraRoles.map(normalizeRole).includes("HR")))
         .sort((a, b) => a.name.localeCompare(b.name)),
     [employees]
   );
@@ -11701,7 +11772,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       // The candidate row is saved at this point — close the form and
       // refresh the list regardless of what happens next, so a CV upload
       // failure doesn't strand the UI on a stale, still-open form.
-      setNewCandidate({ name: "", phone: "", email: "", position: "", branch: "", department: "", branchManagerId: "", source: "", sourceOther: "" });
+      setNewCandidate({ name: "", phone: "", email: "", position: "", branch: "", department: "", branchManagerId: "", assignedInterviewerId: "", source: "", sourceOther: "" });
       setCvFile(null);
       setShowAddCandidate(false);
       await loadCandidates();
@@ -11924,8 +11995,35 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [editingCandidateCell, setEditingCandidateCell] = useState<{ id: string; field: CandidateEditField } | null>(null);
   const [candidateFieldDraft, setCandidateFieldDraft] = useState({ name: "", position: "", branch: "", phone: "", email: "", department: "", branchManagerId: "", assignedInterviewerId: "", source: "", sourceOther: "" });
   const [savingCandidateFieldId, setSavingCandidateFieldId] = useState<string | null>(null);
+  // Typeable Branch Manager picker for the Hiring table's inline cell —
+  // same search+select combobox pattern as the Training dialog's Trainer
+  // field, since branchManagerOptions can run long now that it covers any
+  // manager-tier role (not just literal Branch Managers) company-wide.
+  const [branchManagerCellSearch, setBranchManagerCellSearch] = useState("");
+  const [branchManagerCellDropdownOpen, setBranchManagerCellDropdownOpen] = useState(false);
+  // The Hiring table scrolls horizontally (overflow-x-auto), which clips an
+  // ordinary absolutely-positioned dropdown to that container's tiny
+  // visible band instead of letting it float over the page — portal the
+  // dropdown to document.body instead, positioned from the input's own
+  // on-screen rect, so it escapes the clip entirely.
+  const branchManagerCellInputRef = useRef<HTMLInputElement | null>(null);
+  const [branchManagerCellPos, setBranchManagerCellPos] = useState<{ top: number; left: number; width: number } | null>(null);
+  const openBranchManagerCellDropdown = () => {
+    const rect = branchManagerCellInputRef.current?.getBoundingClientRect();
+    if (rect) setBranchManagerCellPos({ top: rect.bottom + 4, left: rect.left, width: rect.width });
+    setBranchManagerCellDropdownOpen(true);
+  };
+  const filteredBranchManagerCellOptions = useMemo(() => {
+    const q = branchManagerCellSearch.trim().toLowerCase();
+    if (!q) return branchManagerOptions;
+    return branchManagerOptions.filter(
+      (m) => m.name.toLowerCase().includes(q) || (ROLE_LABELS[normalizeRole(m.position)] ?? m.position).toLowerCase().includes(q)
+    );
+  }, [branchManagerOptions, branchManagerCellSearch]);
   const startEditCandidateCell = (c: Candidate, field: CandidateEditField) => {
     setEditingCandidateCell({ id: c.id, field });
+    setBranchManagerCellSearch(field === "branchManager" ? branchManagerNameForCandidate(c) || "" : "");
+    setBranchManagerCellDropdownOpen(false);
     // A source matching one of the fixed options (Indeed/ZipRecruiter)
     // reselects that option; anything else on file (including from before
     // this dropdown existed) is treated as a custom "Other" value.
@@ -12653,6 +12751,30 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     return map;
   }, [ptoRequests]);
 
+  // profileId -> synthetic "requests" (one per HR-plotted day with no
+  // formal pto_requests entry covering that date, 8 hours = one day,
+  // always "approved" — HR recording it via Absent List already IS the
+  // approval) merged into the balance calculations below, so a day HR
+  // plotted there actually draws against the official PTO/Sick Leave
+  // numbers instead of silently not counting. Same feature as the Time Off
+  // Calendar tab's orange cells — see HrCalendarTab.tsx's
+  // hrPlottedDaysForBalance for the full reasoning.
+  const hrPlottedDaysForBalance = useMemo(() => {
+    const map = new Map<string, { ptoType: PtoType; status: "approved"; startDate: string; hoursRequested: number }[]>();
+    for (const n of hrBalanceNotes) {
+      const type = HR_STATUS_TO_PTO_TYPE[n.hrNote];
+      if (!type) continue;
+      const coveredByRealRequest = (ptoRequestsByProfile.get(n.profileId) ?? []).some(
+        (r) => (r.status === "approved" || r.status === "pending") && r.startDate <= n.noteDate && n.noteDate <= r.endDate
+      );
+      if (coveredByRealRequest) continue;
+      const arr = map.get(n.profileId) ?? [];
+      arr.push({ ptoType: type, status: "approved", startDate: n.noteDate, hoursRequested: 8 });
+      map.set(n.profileId, arr);
+    }
+    return map;
+  }, [hrBalanceNotes, ptoRequestsByProfile]);
+
   const remainingPtoByProfile = useMemo(() => {
     const map = new Map<string, { remaining: number; allowance: number } | null>();
     for (const e of employees) {
@@ -12661,11 +12783,12 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         map.set(e.id, null);
         continue;
       }
-      const used = ptoDaysUsed(ptoRequestsByProfile.get(e.id) ?? [], window);
+      const combined = [...(ptoRequestsByProfile.get(e.id) ?? []), ...(hrPlottedDaysForBalance.get(e.id) ?? [])];
+      const used = ptoDaysUsed(combined, window);
       map.set(e.id, { remaining: Math.max(0, window.allowance - used), allowance: window.allowance });
     }
     return map;
-  }, [employees, ptoRequestsByProfile]);
+  }, [employees, ptoRequestsByProfile, hrPlottedDaysForBalance]);
 
   // Remaining Sick Leave per employee — flat 5 days every tenure year
   // (never increments), available from day 1 (no 1-year wait, unlike
@@ -12682,11 +12805,12 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         map.set(e.id, null);
         continue;
       }
-      const used = sickDaysUsed(ptoRequestsByProfile.get(e.id) ?? [], window);
+      const combined = [...(ptoRequestsByProfile.get(e.id) ?? []), ...(hrPlottedDaysForBalance.get(e.id) ?? [])];
+      const used = sickDaysUsed(combined, window);
       map.set(e.id, { remaining: Math.max(0, window.allowance - used), allowance: window.allowance });
     }
     return map;
-  }, [employees, ptoRequestsByProfile]);
+  }, [employees, ptoRequestsByProfile, hrPlottedDaysForBalance]);
 
   // ── Master List — same staff roster as Employee Directory, but split
   // into sub-tabs by department instead of one flat table. Sub-tabs are
@@ -14062,7 +14186,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               <input type="email" placeholder="Email" value={newCandidate.email} onChange={(e) => setNewCandidate({ ...newCandidate, email: e.target.value })} className="glass-input text-sm py-1.5 px-3 rounded-md" />
             </div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
-              <input type="text" placeholder="Position" value={newCandidate.position} onChange={(e) => setNewCandidate({ ...newCandidate, position: e.target.value })} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+              <select value={newCandidate.position} onChange={(e) => setNewCandidate({ ...newCandidate, position: e.target.value })} className="glass-input text-sm py-1.5 px-3 rounded-md">
+                <option value="">Select Position</option>
+                {candidatePositionOptions.map((r) => <option key={r.value} value={r.label}>{r.label}</option>)}
+              </select>
               <select value={newCandidate.branch} onChange={(e) => setNewCandidate({ ...newCandidate, branch: e.target.value })} className="glass-input text-sm py-1.5 px-3 rounded-md"><option value="">Select Branch</option>{branchOptions.map((b) => <option key={b} value={b}>{b}</option>)}</select>
               <label className="glass-input text-sm py-1.5 px-3 rounded-md flex items-center gap-2 cursor-pointer text-muted-foreground">
                 <Paperclip className="h-3.5 w-3.5 shrink-0" />
@@ -14077,7 +14204,16 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               </select>
               <select value={newCandidate.branchManagerId} onChange={(e) => setNewCandidate({ ...newCandidate, branchManagerId: e.target.value })} className="glass-input text-sm py-1.5 px-3 rounded-md">
                 <option value="">Select Branch Manager</option>
-                {branchManagerOptions.map((m) => <option key={m.id} value={m.id}>{m.name}{m.branch ? ` — ${m.branch}` : ""}</option>)}
+                {branchManagerOptions.map((m) => <option key={m.id} value={m.id}>{m.name} — {ROLE_LABELS[normalizeRole(m.position)] ?? m.position}</option>)}
+              </select>
+              <select value={newCandidate.assignedInterviewerId} onChange={(e) => setNewCandidate({ ...newCandidate, assignedInterviewerId: e.target.value })} className="glass-input text-sm py-1.5 px-3 rounded-md">
+                <option value="">Select Assigned Interviewer (optional)</option>
+                <optgroup label="HR">
+                  {hrPersonnelOptions.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+                </optgroup>
+                <optgroup label="Branch Manager">
+                  {assignedInterviewerBranchManagerOptions.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+                </optgroup>
               </select>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
@@ -14216,12 +14352,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                 )}
                 {isHiringColVisible("branch") && (
                   <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase relative">
-                    {renderHiringMultiSelectHeader("branch", "Branch", hiringBranchOptions, hiringBranchFilter, setHiringBranchFilter)}
-                  </th>
-                )}
-                {isHiringColVisible("branchManager") && (
-                  <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase relative">
-                    {renderHiringMultiSelectHeader("branchManager", "Branch Manager", hiringBranchManagerOptions, hiringBranchManagerFilter, setHiringBranchManagerFilter)}
+                    <div className="flex items-center gap-3">
+                      {renderHiringMultiSelectHeader("branch", "Branch", hiringBranchOptions, hiringBranchFilter, setHiringBranchFilter)}
+                      {renderHiringMultiSelectHeader("branchManager", "Manager", hiringBranchManagerOptions, hiringBranchManagerFilter, setHiringBranchManagerFilter)}
+                    </div>
                   </th>
                 )}
                 {isHiringColVisible("assignedInterviewer") && (
@@ -14231,7 +14365,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                 )}
                 {isHiringColVisible("department") && (
                   <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase relative">
-                    {renderHiringMultiSelectHeader("department", "Department", hiringDepartmentOptions, hiringDepartmentFilter, setHiringDepartmentFilter)}
+                    {renderHiringMultiSelectHeader("department", "Applicant Department", hiringDepartmentOptions, hiringDepartmentFilter, setHiringDepartmentFilter)}
                   </th>
                 )}
                 {isHiringColVisible("contact") && <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Contact</th>}
@@ -14302,17 +14436,18 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                     <td className="px-4 py-3 text-sm text-muted-foreground">
                       {editingCandidateCell?.id === c.id && editingCandidateCell.field === "position" ? (
                         <div className="flex items-center gap-1">
-                          <input
+                          <select
                             autoFocus
-                            type="text"
                             value={candidateFieldDraft.position}
                             onChange={(e) => setCandidateFieldDraft({ ...candidateFieldDraft, position: e.target.value })}
                             onKeyDown={(e) => {
-                              if (e.key === "Enter") void handleSaveCandidateField(c.id, "position");
                               if (e.key === "Escape") setEditingCandidateCell(null);
                             }}
                             className="w-28 rounded border border-white/15 bg-slate-800 px-1.5 py-0.5 text-xs text-white"
-                          />
+                          >
+                            <option value="">Select Position</option>
+                            {candidatePositionOptions.map((r) => <option key={r.value} value={r.label}>{r.label}</option>)}
+                          </select>
                           <button onClick={() => void handleSaveCandidateField(c.id, "position")} disabled={savingCandidateFieldId === c.id} className="text-emerald-400 hover:text-emerald-300 disabled:opacity-40">
                             <Check className="h-3.5 w-3.5" />
                           </button>
@@ -14327,7 +14462,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                     </td>
                     )}
                     {isHiringColVisible("branch") && (
-                    <td className="px-4 py-3 text-sm text-muted-foreground">
+                    <td className="px-4 py-3 text-sm text-muted-foreground space-y-2">
+                      <div>
                       {editingCandidateCell?.id === c.id && editingCandidateCell.field === "branch" ? (
                         <div className="flex items-center gap-1">
                           <select
@@ -14350,21 +14486,67 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                         </button>
                       )}
                       {renderFieldChangedBy(c.id, "branch")}
-                    </td>
-                    )}
-                    {isHiringColVisible("branchManager") && (
-                    <td className="px-4 py-3 text-sm text-muted-foreground whitespace-nowrap">
+                      </div>
+                      <div className="pt-2 border-t border-white/5">
+                      <p className="text-[9px] font-semibold uppercase tracking-wide text-muted-foreground/70 mb-0.5">Manager</p>
                       {editingCandidateCell?.id === c.id && editingCandidateCell.field === "branchManager" ? (
                         <div className="flex items-center gap-1">
-                          <select
-                            autoFocus
-                            value={candidateFieldDraft.branchManagerId}
-                            onChange={(e) => setCandidateFieldDraft({ ...candidateFieldDraft, branchManagerId: e.target.value })}
-                            className="rounded border border-white/15 bg-slate-800 px-1.5 py-0.5 text-xs text-white"
-                          >
-                            <option value="">Auto (from Branch)</option>
-                            {branchManagerOptions.map((m) => <option key={m.id} value={m.id}>{m.name}{m.branch ? ` — ${m.branch}` : ""}</option>)}
-                          </select>
+                          <div className="relative w-48">
+                            <input
+                              ref={branchManagerCellInputRef}
+                              type="text"
+                              autoFocus
+                              value={branchManagerCellSearch}
+                              onChange={(e) => {
+                                setBranchManagerCellSearch(e.target.value);
+                                setCandidateFieldDraft({ ...candidateFieldDraft, branchManagerId: "" });
+                                openBranchManagerCellDropdown();
+                              }}
+                              onFocus={openBranchManagerCellDropdown}
+                              onBlur={() => setTimeout(() => setBranchManagerCellDropdownOpen(false), 150)}
+                              placeholder="Auto (from Branch)"
+                              className="w-full rounded border border-white/15 bg-slate-800 px-1.5 py-0.5 text-xs text-white"
+                            />
+                            {branchManagerCellDropdownOpen && branchManagerCellPos && createPortal(
+                              <div
+                                style={{ position: "fixed", top: branchManagerCellPos.top, left: branchManagerCellPos.left, width: branchManagerCellPos.width }}
+                                className="z-50 max-h-48 overflow-y-auto rounded-md border border-white/15 bg-slate-800 shadow-2xl normal-case"
+                              >
+                                <button
+                                  type="button"
+                                  onMouseDown={(e) => e.preventDefault()}
+                                  onClick={() => {
+                                    setCandidateFieldDraft({ ...candidateFieldDraft, branchManagerId: "" });
+                                    setBranchManagerCellSearch("");
+                                    setBranchManagerCellDropdownOpen(false);
+                                  }}
+                                  className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${!candidateFieldDraft.branchManagerId ? "bg-blue-500/20 text-blue-300" : ""}`}
+                                >
+                                  Auto (from Branch)
+                                </button>
+                                {filteredBranchManagerCellOptions.length === 0 ? (
+                                  <p className="px-3 py-2 text-xs text-muted-foreground">No matching managers.</p>
+                                ) : (
+                                  filteredBranchManagerCellOptions.map((m) => (
+                                    <button
+                                      key={m.id}
+                                      type="button"
+                                      onMouseDown={(e) => e.preventDefault()}
+                                      onClick={() => {
+                                        setCandidateFieldDraft({ ...candidateFieldDraft, branchManagerId: m.id });
+                                        setBranchManagerCellSearch(m.name);
+                                        setBranchManagerCellDropdownOpen(false);
+                                      }}
+                                      className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${candidateFieldDraft.branchManagerId === m.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                                    >
+                                      {m.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(m.position)] ?? m.position}</span>
+                                    </button>
+                                  ))
+                                )}
+                              </div>,
+                              document.body
+                            )}
+                          </div>
                           <button onClick={() => void handleSaveCandidateField(c.id, "branchManager")} disabled={savingCandidateFieldId === c.id} className="text-emerald-400 hover:text-emerald-300 disabled:opacity-40">
                             <Check className="h-3.5 w-3.5" />
                           </button>
@@ -14376,6 +14558,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                         </button>
                       )}
                       {renderFieldChangedBy(c.id, "branchManager")}
+                      </div>
                     </td>
                     )}
                     {isHiringColVisible("assignedInterviewer") && (
@@ -14389,7 +14572,12 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                             className="rounded border border-white/15 bg-slate-800 px-1.5 py-0.5 text-xs text-white"
                           >
                             <option value="">Unassigned</option>
-                            {hrPersonnelOptions.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+                            <optgroup label="HR">
+                              {hrPersonnelOptions.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+                            </optgroup>
+                            <optgroup label="Branch Manager">
+                              {assignedInterviewerBranchManagerOptions.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+                            </optgroup>
                           </select>
                           <button onClick={() => void handleSaveCandidateField(c.id, "assignedInterviewer")} disabled={savingCandidateFieldId === c.id} className="text-emerald-400 hover:text-emerald-300 disabled:opacity-40">
                             <Check className="h-3.5 w-3.5" />
@@ -14588,6 +14776,16 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           <Link
                             to="/m/$module/$submodule"
                             params={{ module: "hr", submodule: "user-management" }}
+                            search={{
+                              openAddUser: "1",
+                              prefillName: c.name || undefined,
+                              prefillEmail: c.email || undefined,
+                              prefillBranch: c.branch || undefined,
+                              prefillManager: branchManagerNameForCandidate(c) || undefined,
+                              prefillLoginName: deriveLoginName(c.name) || undefined,
+                              prefillUserType: candidatePositionOptions.find((r) => r.label === c.position)?.value || undefined,
+                            } as any}
+                            title="Add this person's user account, pre-filled from their candidate record"
                             className="text-[10px] text-blue-400 hover:text-blue-300 underline whitespace-nowrap"
                           >
                             Create Account
@@ -14614,7 +14812,16 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                         <Link
                           to="/m/$module/$submodule"
                           params={{ module: "hr", submodule: "user-management" }}
-                          title="Go to User Management to add this person"
+                          search={{
+                            openAddUser: "1",
+                            prefillName: c.name || undefined,
+                            prefillEmail: c.email || undefined,
+                            prefillBranch: c.branch || undefined,
+                            prefillManager: branchManagerNameForCandidate(c) || undefined,
+                            prefillLoginName: deriveLoginName(c.name) || undefined,
+                            prefillUserType: candidatePositionOptions.find((r) => r.label === c.position)?.value || undefined,
+                          } as any}
+                          title="Add this person's user account, pre-filled from their candidate record"
                           className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-red-500/20 text-red-300 hover:bg-red-500/30 hover:text-red-200 whitespace-nowrap"
                         >
                           Not Created

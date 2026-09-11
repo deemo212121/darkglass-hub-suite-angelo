@@ -254,6 +254,7 @@ export async function addCandidate(input: {
   branch?: string;
   department?: string;
   branchManagerId?: string;
+  assignedInterviewerId?: string;
   source?: string;
   notes?: string;
 }): Promise<Candidate> {
@@ -265,10 +266,16 @@ export async function addCandidate(input: {
     branch: input.branch?.trim() || null,
     notes: input.notes?.trim() || null,
   };
-  const insertPayloadNoSource = {
+  // Assigned Interviewer is optional — HR can leave it blank and set it
+  // later from the Hiring table's own inline edit, same as it always could.
+  const insertPayloadNoInterviewer = {
     ...basePayload,
     department: input.department?.trim() || null,
     branch_manager_id: input.branchManagerId || null,
+  };
+  const insertPayloadNoSource = {
+    ...insertPayloadNoInterviewer,
+    assigned_interviewer_id: input.assignedInterviewerId || null,
   };
   const insertPayload = {
     ...insertPayloadNoSource,
@@ -298,16 +305,17 @@ export async function addCandidate(input: {
     ({ data, error } = await supabase.from("hr_candidates").insert(insertPayloadNoSource).select(SELECT_V6).single());
   }
   if (isMissingColumnError(error)) {
-    // assigned_interviewer_id (0227) not applied yet — same story, the
-    // insert never referenced it, only the RETURNING select did.
-    ({ data, error } = await supabase.from("hr_candidates").insert(insertPayloadNoSource).select(SELECT_V5).single());
+    // assigned_interviewer_id (0227) not applied yet — the insert itself
+    // referenced it this time (it's now a real, optional Add Candidate
+    // input), so retry with it dropped from the payload too.
+    ({ data, error } = await supabase.from("hr_candidates").insert(insertPayloadNoInterviewer).select(SELECT_V5).single());
   }
   if (isMissingColumnError(error)) {
     // texted_am/texted_pm/called_am/called_pm (0226) not applied yet — the
     // insert itself never referenced them (they're DB-defaulted, not part
     // of Add Candidate), only the RETURNING select did, so retry with the
     // same insertPayload against one column fewer in the select.
-    ({ data, error } = await supabase.from("hr_candidates").insert(insertPayloadNoSource).select(SELECT_V4).single());
+    ({ data, error } = await supabase.from("hr_candidates").insert(insertPayloadNoInterviewer).select(SELECT_V4).single());
   }
   if (isMissingColumnError(error)) {
     // department/branch_manager_id (0225) not applied yet either — retry without them.

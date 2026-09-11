@@ -4,9 +4,11 @@
  * technician grouped by branch, columns = individual days spanning a couple
  * of months, colored cells mark time off). Cell color reflects approval
  * status — green once approved, yellow while still pending (denied/
- * cancelled requests never populate a cell at all, see cellsByProfile) —
- * with a single letter (V/S/P/H/U/B, see PTO_TYPE_LETTER) marking which
- * leave type it is.
+ * cancelled requests never populate a cell at all, see cellsByProfile),
+ * orange when HR set a matching HR Status on the Absent List page for that
+ * (person, day) but no formal pto_requests entry exists yet (see
+ * hrPlottedByProfile) — with a single letter (V/S/P/H/U/B, see
+ * PTO_TYPE_LETTER) marking which leave type it is.
  *
  * Editable directly from the grid: click any cell — an empty one opens an
  * "Add time off" form for that employee/date, a filled one opens a detail
@@ -41,6 +43,7 @@ import {
 } from "@/lib/supabase/pto";
 import { logModuleActivity } from "@/lib/supabase/moduleActivityLog";
 import { ROLE_LABELS, normalizeRole } from "@/lib/roleLabels";
+import { getAttendanceNotes, type AttendanceNoteRow } from "@/lib/supabase/attendanceNotes";
 
 export interface CalendarEmployee {
   id: string;
@@ -60,7 +63,23 @@ interface Props {
   myDisplayName: string | null;
 }
 
-type CellColor = "approved" | "pending";
+type CellColor = "approved" | "pending" | "hrPlotted";
+
+// Absent List's HR Status dropdown (AbsentListPage.tsx's HR_STATUS_OPTIONS)
+// shares these 6 leave-type values with PTO_TYPE_LABELS below — when HR
+// sets one of them for a (person, day) with no formal pto_requests entry
+// covering that date, it still shows up here as an orange cell (see
+// hrPlottedByProfile) so the two "who's out" tools never disagree. The
+// other 3 HR Status options (Unnoticed/Resigned/Terminated) aren't leave
+// types and never populate a cell.
+const HR_STATUS_TO_PTO_TYPE: Partial<Record<string, PtoType>> = {
+  Vacation: "vacation",
+  Sick: "sick",
+  Personal: "personal",
+  Holiday: "holiday",
+  Unpaid: "unpaid",
+  Bereavement: "bereavement",
+};
 
 // Thursday gets "Th" (not "T") so it's distinct from Tuesday in this narrow column header.
 const DOW_LABELS = ["S", "M", "T", "W", "Th", "F", "S"];
@@ -218,6 +237,90 @@ export function HrCalendarTab({ employees, myProfileId, myDisplayName }: Props) 
     return map;
   }, [requests, typeFilter]);
 
+  // Absent List's HR Status (attendance_notes.hr_note) for whichever
+  // (person, day) cells fall inside the visible 2-month window — the
+  // "orange = HR plotted this, no formal request on file" signal. Only
+  // fetches the visible range, not every attendance note ever, same reason
+  // requests above isn't range-scoped (that one needs the full history for
+  // the allowance badges; this one only ever needs what's on screen).
+  const [hrStatusNotes, setHrStatusNotes] = useState<AttendanceNoteRow[]>([]);
+  useEffect(() => {
+    if (days.length === 0) return;
+    let cancelled = false;
+    getAttendanceNotes(days[0].date, days[days.length - 1].date)
+      .then((rows) => { if (!cancelled) setHrStatusNotes(rows); })
+      .catch((err) => console.error("Failed to load HR Status for Time Off Calendar:", err));
+    return () => { cancelled = true; };
+  }, [days]);
+
+  // profileId -> Map<date, {type, addedBy}> — only cells with NO formal
+  // pto_requests entry get an orange fallback here; a real request (green/
+  // yellow) always wins if one exists for that date, so the two never
+  // visually conflict. addedBy (attendance_notes.created_by) drives the
+  // "Added by: {name}" line shown when opening one of these cells.
+  const hrPlottedByProfile = useMemo(() => {
+    const map = new Map<string, Map<string, { type: PtoType; addedBy: string | null }>>();
+    for (const n of hrStatusNotes) {
+      const type = HR_STATUS_TO_PTO_TYPE[n.hrNote];
+      if (!type) continue;
+      if (typeFilter !== "all" && type !== typeFilter) continue;
+      if (cellsByProfile.get(n.profileId)?.has(n.noteDate)) continue;
+      let byDate = map.get(n.profileId);
+      if (!byDate) {
+        byDate = new Map();
+        map.set(n.profileId, byDate);
+      }
+      byDate.set(n.noteDate, { type, addedBy: n.createdBy });
+    }
+    return map;
+  }, [hrStatusNotes, cellsByProfile, typeFilter]);
+
+  // Wider, separate fetch just for the PTO/Sick balance badges below — those
+  // need a full tenure-year's worth of HR-plotted days (an employee's
+  // allowance window can start anywhere in the past year, same reason
+  // requests below loads every request ever rather than just what's on
+  // screen), not just the visible 2-month grid hrStatusNotes covers. Fixed
+  // ~14-month lookback plus a short forward buffer — a bounded window
+  // rather than truly unbounded, since attendance_notes is a much
+  // higher-volume table than pto_requests.
+  const balanceNotesRange = useMemo(() => {
+    const start = addMonths(new Date(), -14);
+    const endBase = addMonths(new Date(), 1);
+    const endCount = daysInMonth(endBase.getFullYear(), endBase.getMonth());
+    return {
+      start: `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, "0")}-01`,
+      end: `${endBase.getFullYear()}-${String(endBase.getMonth() + 1).padStart(2, "0")}-${String(endCount).padStart(2, "0")}`,
+    };
+  }, []);
+  const [hrBalanceNotes, setHrBalanceNotes] = useState<AttendanceNoteRow[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    getAttendanceNotes(balanceNotesRange.start, balanceNotesRange.end)
+      .then((rows) => { if (!cancelled) setHrBalanceNotes(rows); })
+      .catch((err) => console.error("Failed to load HR Status history for PTO/Sick balances:", err));
+    return () => { cancelled = true; };
+  }, [balanceNotesRange]);
+
+  // profileId -> synthetic "requests" (one per HR-plotted day, 8 hours =
+  // one day, always "approved" — HR recording it already IS the approval)
+  // fed into ptoDaysUsed/sickDaysUsed below alongside the real requests, so
+  // a day HR marked via Absent List actually draws against the employee's
+  // official balance instead of silently not counting. Same real-request
+  // exclusion cellsByProfile-based dedup as hrPlottedByProfile above, so a
+  // date already covered by a formal request is never counted twice.
+  const hrPlottedDaysForBalance = useMemo(() => {
+    const map = new Map<string, { ptoType: PtoType; status: "approved"; startDate: string; hoursRequested: number }[]>();
+    for (const n of hrBalanceNotes) {
+      const type = HR_STATUS_TO_PTO_TYPE[n.hrNote];
+      if (!type) continue;
+      if (cellsByProfile.get(n.profileId)?.has(n.noteDate)) continue;
+      const arr = map.get(n.profileId) ?? [];
+      arr.push({ ptoType: type, status: "approved", startDate: n.noteDate, hoursRequested: 8 });
+      map.set(n.profileId, arr);
+    }
+    return map;
+  }, [hrBalanceNotes, cellsByProfile]);
+
   // Sick Leave / Vacation PTO badges next to each name — same
   // ptoYearWindow/sickYearWindow tenure math and remaining-vs-allowance
   // shape Master List's own Sick Leave/Vacation Leave columns use, so the
@@ -241,11 +344,12 @@ export function HrCalendarTab({ employees, myProfileId, myDisplayName }: Props) 
         map.set(e.id, null);
         continue;
       }
-      const used = ptoDaysUsed(requestsByProfile.get(e.id) ?? [], window);
+      const combined = [...(requestsByProfile.get(e.id) ?? []), ...(hrPlottedDaysForBalance.get(e.id) ?? [])];
+      const used = ptoDaysUsed(combined, window);
       map.set(e.id, { remaining: Math.max(0, window.allowance - used), allowance: window.allowance });
     }
     return map;
-  }, [employees, requestsByProfile]);
+  }, [employees, requestsByProfile, hrPlottedDaysForBalance]);
   const remainingSickByProfile = useMemo(() => {
     const map = new Map<string, { remaining: number; allowance: number } | null>();
     for (const e of employees) {
@@ -254,11 +358,12 @@ export function HrCalendarTab({ employees, myProfileId, myDisplayName }: Props) 
         map.set(e.id, null);
         continue;
       }
-      const used = sickDaysUsed(requestsByProfile.get(e.id) ?? [], window);
+      const combined = [...(requestsByProfile.get(e.id) ?? []), ...(hrPlottedDaysForBalance.get(e.id) ?? [])];
+      const used = sickDaysUsed(combined, window);
       map.set(e.id, { remaining: Math.max(0, window.allowance - used), allowance: window.allowance });
     }
     return map;
-  }, [employees, requestsByProfile]);
+  }, [employees, requestsByProfile, hrPlottedDaysForBalance]);
 
   const availableRoles = useMemo(() => {
     const set = new Set(employees.filter((e) => e.status === "active").map((e) => e.role));
@@ -299,7 +404,10 @@ export function HrCalendarTab({ employees, myProfileId, myDisplayName }: Props) 
     if (request) {
       setModal({ mode: "view", employee, date, request });
     } else {
-      setFormType("vacation");
+      // Pre-select the leave type HR already plotted via Absent List, if
+      // any, so formalizing an orange cell into a real request is one less
+      // click.
+      setFormType(hrPlottedByProfile.get(employee.id)?.get(date)?.type ?? "vacation");
       setFormStart(date);
       setFormEnd(date);
       setFormReason("");
@@ -535,6 +643,9 @@ export function HrCalendarTab({ employees, myProfileId, myDisplayName }: Props) 
         <span className="flex items-center gap-1.5">
           <span className="h-3 w-3 rounded-sm bg-yellow-400/80 inline-block" /> Pending approval
         </span>
+        <span className="flex items-center gap-1.5">
+          <span className="h-3 w-3 rounded-sm bg-orange-500/80 inline-block" /> Set by HR (Absent List), no formal request
+        </span>
         <span className="text-slate-600">•</span>
         {PTO_TYPES.map((t) => (
           <span key={t} className="flex items-center gap-1">
@@ -610,23 +721,33 @@ export function HrCalendarTab({ employees, myProfileId, myDisplayName }: Props) 
                       </td>
                       {days.map((d) => {
                         const request = cellsByProfile.get(e.id)?.get(d.date);
-                        const color = request ? colorForRequest(request) : undefined;
+                        const hrPlotted = !request ? hrPlottedByProfile.get(e.id)?.get(d.date) : undefined;
+                        const color: CellColor | undefined = request ? colorForRequest(request) : hrPlotted ? "hrPlotted" : undefined;
+                        const addedByName = hrPlotted?.addedBy ? employees.find((emp) => emp.id === hrPlotted.addedBy)?.name : undefined;
                         return (
                           <td
                             key={d.date}
                             onClick={() => openCell(e, d.date)}
-                            title={request ? `${PTO_TYPE_LABELS[request.ptoType]} (${request.status}) — click for details` : "Click to add time off"}
+                            title={
+                              request
+                                ? `${PTO_TYPE_LABELS[request.ptoType]} (${request.status}) — click for details`
+                                : hrPlotted
+                                ? `${PTO_TYPE_LABELS[hrPlotted.type]} — set by HR via Absent List${addedByName ? ` (added by ${addedByName})` : ""}, no formal request yet. Click to formalize.`
+                                : "Click to add time off"
+                            }
                             className={`border-b border-l border-white/5 h-6 w-7 cursor-pointer hover:ring-1 hover:ring-blue-400/60 hover:ring-inset text-center align-middle text-[10px] font-bold ${
                               color === "approved"
                                 ? "bg-green-500/80 text-green-950"
                                 : color === "pending"
                                 ? "bg-yellow-400/80 text-yellow-950"
+                                : color === "hrPlotted"
+                                ? "bg-orange-500/80 text-orange-950"
                                 : d.date === todayStr
                                 ? "bg-blue-500/10"
                                 : ""
                             }`}
                           >
-                            {request ? PTO_TYPE_LETTER[request.ptoType] : ""}
+                            {request ? PTO_TYPE_LETTER[request.ptoType] : hrPlotted ? PTO_TYPE_LETTER[hrPlotted.type] : ""}
                           </td>
                         );
                       })}
@@ -807,6 +928,17 @@ export function HrCalendarTab({ employees, myProfileId, myDisplayName }: Props) 
 
             {(modal.mode === "create" || modal.mode === "edit") && (
               <div className="space-y-2.5">
+                {modal.mode === "create" && (() => {
+                  const plotted = hrPlottedByProfile.get(modal.employee.id)?.get(modal.date);
+                  if (!plotted) return null;
+                  const addedByName = plotted.addedBy ? employees.find((emp) => emp.id === plotted.addedBy)?.name : null;
+                  return (
+                    <p className="text-[11px] text-orange-300 bg-orange-500/10 border border-orange-500/30 rounded-md px-2.5 py-2">
+                      Already marked {PTO_TYPE_LABELS[plotted.type]} via Absent List — no formal request yet.
+                      {addedByName ? ` Added by: ${addedByName}.` : ""} Saving below files a real request for it.
+                    </p>
+                  );
+                })()}
                 <div className="flex flex-col gap-1">
                   <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Type</label>
                   <select value={formType} onChange={(e) => setFormType(e.target.value as PtoType)} className={inputCls}>
