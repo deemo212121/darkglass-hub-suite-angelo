@@ -203,6 +203,31 @@ export async function getSignableDocuments(documentType: SignableDocumentType = 
   return all;
 }
 
+/**
+ * Every signable document company-wide across a SPECIFIC set of types, most
+ * recent first — TechnicianFormChecklistPage.tsx's per-tab load, so
+ * switching tabs (or the initial load) only ever pulls the handful of
+ * document types that tab's checklist actually tracks instead of every
+ * document type in the company (see getAllSignableDocuments below) every
+ * single time the page loads or refreshes.
+ */
+export async function getSignableDocumentsByTypes(documentTypes: SignableDocumentType[]): Promise<SignableDocument[]> {
+  if (documentTypes.length === 0) return [];
+  const all: SignableDocument[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from("hr_signable_documents")
+      .select(SELECT)
+      .in("document_type", documentTypes)
+      .order("created_at", { ascending: false })
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) throw new Error(error.message);
+    all.push(...(data ?? []).map(mapRow));
+    if (!data || data.length < PAGE_SIZE) break;
+  }
+  return all;
+}
+
 /** Every signable document company-wide, ANY type, most recent first —
  *  unlike getSignableDocuments (one type at a time, for a specific tracking
  *  table) this is for feeds that need to see every document type at once,

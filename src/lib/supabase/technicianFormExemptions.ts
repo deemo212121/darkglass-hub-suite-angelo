@@ -17,9 +17,17 @@ function key(profileId: string, documentType: string): string {
   return `${profileId}|${documentType}`;
 }
 
-/** Every exemption for the caller's company, as a Set of "{profileId}|{documentType}" keys for cheap lookup. */
-export async function getTechnicianFormExemptions(): Promise<Set<string>> {
-  const { data, error } = await supabase.from("technician_form_exemptions").select("profile_id, document_type");
+/**
+ * Every exemption for the caller's company, as a Set of
+ * "{profileId}|{documentType}" keys for cheap lookup. `documentTypes`, when
+ * given, narrows to just those types — TechnicianFormChecklistPage.tsx
+ * passes the active tab's own form-type set so a tab switch never pulls
+ * exemption rows for form types that tab doesn't even track.
+ */
+export async function getTechnicianFormExemptions(documentTypes?: string[]): Promise<Set<string>> {
+  let query = supabase.from("technician_form_exemptions").select("profile_id, document_type");
+  if (documentTypes && documentTypes.length > 0) query = query.in("document_type", documentTypes);
+  const { data, error } = await query;
   if (error) {
     // 42P01 = relation doesn't exist yet (0222 not applied) — treat as no exemptions rather than breaking the whole checklist.
     if (error.code === "42P01") return new Set();

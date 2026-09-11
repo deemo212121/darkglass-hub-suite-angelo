@@ -32,7 +32,7 @@ import { ChevronLeft, ClipboardCheck, Loader2, ChevronDown, ExternalLink, Refres
 import { useAuth } from "@/lib/auth";
 import { getCompanyUsers, getMyProfileId, setProfileFrozen, type ProfileRow } from "@/lib/supabase/users";
 import { isEligibleForTechnicianFormChecklist, isBmAndUpRole, getRoleDepartmentBreakdown } from "@/lib/roleLabels";
-import { getAllSignableDocuments, createSignableDocument, type SignableDocument, type SignableDocumentType } from "@/lib/supabase/signableDocuments";
+import { getSignableDocumentsByTypes, createSignableDocument, type SignableDocument, type SignableDocumentType } from "@/lib/supabase/signableDocuments";
 import { SIGNABLE_DOCUMENT_REGISTRY, TECHNICIAN_FORM_TYPES, getDocumentReviewStatus, isTechnicianExemptFromForm, exemptionRowValueForToggle, pickAuthoritativeDocument } from "@/lib/signableDocumentRegistry";
 import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
 import { getTechnicianFormExemptions, setTechnicianFormExemption } from "@/lib/supabase/technicianFormExemptions";
@@ -128,7 +128,6 @@ export function TechnicianFormChecklistPage() {
   const [allUsers, setAllUsers] = useState<ProfileRow[]>([]);
   const [latestByKey, setLatestByKey] = useState<Map<string, SignableDocument>>(new Map());
   const [exemptions, setExemptions] = useState<Set<string>>(new Set());
-  const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [hideComplete, setHideComplete] = useState(false);
   const [branchFilter, setBranchFilter] = useState("");
@@ -144,10 +143,33 @@ export function TechnicianFormChecklistPage() {
     getMyProfileId(uid).then(setMyProfileId).catch(() => setMyProfileId(null));
   }, [uid]);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  // The roster doesn't vary per tab — fetched once (and on manual Refresh),
+  // not re-pulled every time the active tab changes.
+  const [usersLoading, setUsersLoading] = useState(true);
+  const loadUsers = useCallback(async () => {
+    setUsersLoading(true);
     try {
-      const [users, docs, exemptionRows] = await Promise.all([getCompanyUsers(), getAllSignableDocuments(), getTechnicianFormExemptions()]);
+      const users = await getCompanyUsers();
+      setAllUsers((users as ProfileRow[]).filter((u) => u.is_active));
+    } catch (err) {
+      console.error("Staff form checklist: failed to load users:", err);
+    } finally {
+      setUsersLoading(false);
+    }
+  }, []);
+
+  // Scoped to the currently active tab's own form-type set (not every
+  // document type in the company) — re-runs whenever the tab changes, so
+  // switching tabs costs one small, targeted fetch instead of the page
+  // eagerly pulling the whole company's signable-document history up front.
+  const [docsLoading, setDocsLoading] = useState(true);
+  const loadDocsForActiveTab = useCallback(async () => {
+    setDocsLoading(true);
+    try {
+      const [docs, exemptionRows] = await Promise.all([
+        getSignableDocumentsByTypes(activeConfig.formTypes),
+        getTechnicianFormExemptions(activeConfig.formTypes),
+      ]);
 
       // Group every row per (person, documentType) — NOT just "keep the
       // newest" (that let a re-sent, still-pending duplicate hide an
@@ -179,19 +201,36 @@ export function TechnicianFormChecklistPage() {
         if (best) latest.set(key, best);
       }
 
-      setAllUsers((users as ProfileRow[]).filter((u) => u.is_active));
       setLatestByKey(latest);
       setExemptions(exemptionRows);
     } catch (err) {
-      console.error("Staff form checklist load failed:", err);
+      console.error("Staff form checklist: failed to load documents:", err);
     } finally {
-      setLoading(false);
+      setDocsLoading(false);
     }
-  }, []);
+  }, [activeConfig]);
+
+  const loading = usersLoading || docsLoading;
+
+  // Full reload — used by the "Refresh" button and by every action handler
+  // below that needs the freshest state after a write (a new roster member,
+  // a just-sent/just-signed form, a freeze toggle, etc.).
+  const load = useCallback(async () => {
+    await Promise.all([loadUsers(), loadDocsForActiveTab()]);
+  }, [loadUsers, loadDocsForActiveTab]);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    void loadUsers();
+    // Runs once on mount only — the roster doesn't depend on the active tab.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Re-fetches whenever `loadDocsForActiveTab` itself changes — which
+  // happens whenever activeConfig does, so switching tabs automatically
+  // (re)loads just that tab's own form types, without touching the roster.
+  useEffect(() => {
+    void loadDocsForActiveTab();
+  }, [loadDocsForActiveTab]);
 
   const rows: TechRow[] = useMemo(() => {
     return allUsers.filter(activeConfig.isEligible).map((u) => {
