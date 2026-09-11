@@ -846,7 +846,20 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
       prefillManager?: string;
       prefillLoginName?: string;
       prefillUserType?: string;
+      /** Deep-link from the Time Off Calendar's employee-name links
+       *  (HrCalendarTab.tsx) — arrives with ?q=<name> to pre-search this
+       *  page for that person so HR can jump straight to editing their
+       *  Day Off schedule. */
+      q?: string;
     }) ?? {};
+  // One-time restore of ?q= into the free-text search box — same snapshot-
+  // into-ref pattern as initialAddUserSearchRef below, so it only drives
+  // this initial value rather than fighting the user's own typing.
+  const initialSearchQueryRef = useRef(addUserSearchParams.q);
+  useEffect(() => {
+    if (initialSearchQueryRef.current) setSearch(initialSearchQueryRef.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const initialAddUserSearchRef = useRef(addUserSearchParams);
   useEffect(() => {
     const params = initialAddUserSearchRef.current;

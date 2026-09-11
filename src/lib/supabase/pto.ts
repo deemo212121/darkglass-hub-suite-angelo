@@ -15,6 +15,7 @@
 import { supabase } from "./client";
 import { createNotification } from "./notifications";
 import { getCompanyUsers } from "./users";
+import { uploadPtoRequestAttachment, deleteAttachmentByUrl } from "@/lib/firebase/storage";
 
 export type PtoType = "vacation" | "sick" | "personal" | "holiday" | "unpaid" | "bereavement";
 export type PtoStatus = "pending" | "approved" | "denied" | "cancelled";
@@ -227,14 +228,26 @@ export interface PtoRequestRow {
   reviewedAt: string | null;
   reviewNote: string | null;
   createdAt: string;
-  /** Storage path in the private "pto-attachments" bucket (e.g. a doctor's note for a sick day) — see uploadPtoAttachment/getPtoAttachmentUrl. */
+  /** Firebase Storage download URL for a file backing up this request (e.g. a doctor's note for a sick day) — see uploadPtoAttachment. */
   attachmentPath: string | null;
+  /** Who attached the current (or most recently removed) file, and when. See migration 0246. */
+  attachmentAddedBy: string | null;
+  attachmentAddedAt: string | null;
+  /** Set when a previously-attached file was removed; kept even after
+   *  attachmentPath goes back to null so "Removed by X" can still show. */
+  attachmentRemovedBy: string | null;
+  attachmentRemovedAt: string | null;
 }
 
 const SELECT_COLUMNS =
+  "id, profile_id, pto_type, start_date, end_date, hours_requested, reason, status, requested_by, manager_id, manager_status, manager_reviewed_by, manager_reviewed_at, hr_status, hr_reviewed_by, hr_reviewed_at, accounting_status, accounting_reviewed_by, accounting_reviewed_at, reviewed_by, reviewed_at, review_note, created_at, attachment_path, attachment_added_by, attachment_added_at, attachment_removed_by, attachment_removed_at";
+
+// Falls back to this if attachment_added_by/etc. don't exist yet — i.e.
+// 0246_attachment_added_removed_by.sql hasn't been run against this database.
+const SELECT_COLUMNS_NO_ATTACHMENT_META =
   "id, profile_id, pto_type, start_date, end_date, hours_requested, reason, status, requested_by, manager_id, manager_status, manager_reviewed_by, manager_reviewed_at, hr_status, hr_reviewed_by, hr_reviewed_at, accounting_status, accounting_reviewed_by, accounting_reviewed_at, reviewed_by, reviewed_at, review_note, created_at, attachment_path";
 
-// Falls back to this if attachment_path doesn't exist yet — i.e.
+// Falls back further to this if attachment_path doesn't exist either — i.e.
 // 0240_pto_requests_attachment.sql hasn't been run against this database.
 const SELECT_COLUMNS_NO_ATTACHMENT =
   "id, profile_id, pto_type, start_date, end_date, hours_requested, reason, status, requested_by, manager_id, manager_status, manager_reviewed_by, manager_reviewed_at, hr_status, hr_reviewed_by, hr_reviewed_at, accounting_status, accounting_reviewed_by, accounting_reviewed_at, reviewed_by, reviewed_at, review_note, created_at";
@@ -270,6 +283,10 @@ function mapRow(row: any): PtoRequestRow {
     reviewNote: row.review_note ?? null,
     createdAt: row.created_at,
     attachmentPath: row.attachment_path ?? null,
+    attachmentAddedBy: row.attachment_added_by ?? null,
+    attachmentAddedAt: row.attachment_added_at ?? null,
+    attachmentRemovedBy: row.attachment_removed_by ?? null,
+    attachmentRemovedAt: row.attachment_removed_at ?? null,
   };
 }
 
@@ -282,20 +299,21 @@ export async function getCompanyPtoRequests(): Promise<PtoRequestRow[]> {
   const all: PtoRequestRow[] = [];
   let select = SELECT_COLUMNS;
   for (let from = 0; ; from += PAGE_SIZE) {
-    let { data, error } = await supabase
-      .from("pto_requests")
-      .select(select)
-      .not("profile_id", "is", null)
-      .order("created_at", { ascending: false })
-      .range(from, from + PAGE_SIZE - 1);
-    if (isMissingColumnError(error) && select === SELECT_COLUMNS) {
-      select = SELECT_COLUMNS_NO_ATTACHMENT;
-      ({ data, error } = await supabase
+    const runQuery = (cols: string) =>
+      supabase
         .from("pto_requests")
-        .select(select)
+        .select(cols)
         .not("profile_id", "is", null)
         .order("created_at", { ascending: false })
-        .range(from, from + PAGE_SIZE - 1));
+        .range(from, from + PAGE_SIZE - 1);
+    let { data, error } = await runQuery(select);
+    if (isMissingColumnError(error) && select === SELECT_COLUMNS) {
+      select = SELECT_COLUMNS_NO_ATTACHMENT_META;
+      ({ data, error } = await runQuery(select));
+    }
+    if (isMissingColumnError(error) && select === SELECT_COLUMNS_NO_ATTACHMENT_META) {
+      select = SELECT_COLUMNS_NO_ATTACHMENT;
+      ({ data, error } = await runQuery(select));
     }
     if (error) {
       console.error("getCompanyPtoRequests error:", error.message);
@@ -307,21 +325,49 @@ export async function getCompanyPtoRequests(): Promise<PtoRequestRow[]> {
   return all;
 }
 
-/** Uploads a photo attachment for a PTO request (e.g. a doctor's note) and records its path — same private-bucket-plus-DB-column pattern as uploadCandidateCv. */
-export async function uploadPtoAttachment(requestId: string, companyId: string, file: File): Promise<void> {
-  const path = `${companyId}/${requestId}/${Date.now()}_${file.name}`;
-  const { error: uploadError } = await supabase.storage.from("pto-attachments").upload(path, file, { upsert: true });
-  if (uploadError) throw new Error(uploadError.message);
-
-  const { error } = await supabase.from("pto_requests").update({ attachment_path: path }).eq("id", requestId);
+/**
+ * Uploads a photo attachment for a PTO request (e.g. a doctor's note) and
+ * records its URL — Firebase Storage (same as every other ad hoc file
+ * upload in this app, see firebase/storage.ts's uploadPtoRequestAttachment),
+ * not Supabase Storage. `attachment_path` stores the download URL directly,
+ * so no separate "resolve a signed URL" step is needed to view it later.
+ * `addedBy` (the uploader's profile id) is stamped as attachment_added_by,
+ * and any prior removal record is cleared since this attachment supersedes it.
+ */
+export async function uploadPtoAttachment(requestId: string, companyId: string, file: File, addedBy?: string | null): Promise<void> {
+  const url = await uploadPtoRequestAttachment(companyId, requestId, file);
+  const { error } = await supabase
+    .from("pto_requests")
+    .update({
+      attachment_path: url,
+      attachment_added_by: addedBy ?? null,
+      attachment_added_at: new Date().toISOString(),
+      attachment_removed_by: null,
+      attachment_removed_at: null,
+    })
+    .eq("id", requestId);
   if (error) throw new Error(error.message);
 }
 
-/** Bucket is private — generate a short-lived signed URL on demand rather than caching one. */
-export async function getPtoAttachmentUrl(attachmentPath: string): Promise<string> {
-  const { data, error } = await supabase.storage.from("pto-attachments").createSignedUrl(attachmentPath, 3600);
+/**
+ * Removes a PTO request's attachment — deletes the Firebase Storage file and
+ * clears attachment_path. `removedBy` (the remover's profile id) is stamped
+ * as attachment_removed_by so "Removed by X" can still show even with no
+ * file left to view; attachment_added_by/at are left untouched as a record
+ * of who originally attached it.
+ */
+export async function removePtoAttachment(requestId: string, attachmentUrl: string, removedBy?: string | null): Promise<void> {
+  await deleteAttachmentByUrl(attachmentUrl).catch((err) => {
+    // Storage delete failing (already gone, permission hiccup, etc.) shouldn't
+    // block clearing the DB reference — an orphaned Storage object is a far
+    // smaller problem than a "Remove" button that silently does nothing.
+    console.warn("removePtoAttachment: Storage delete failed, clearing DB reference anyway:", err);
+  });
+  const { error } = await supabase
+    .from("pto_requests")
+    .update({ attachment_path: null, attachment_removed_by: removedBy ?? null, attachment_removed_at: new Date().toISOString() })
+    .eq("id", requestId);
   if (error) throw new Error(error.message);
-  return data.signedUrl;
 }
 
 /**
