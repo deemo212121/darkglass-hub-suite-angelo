@@ -61,11 +61,12 @@ import {
   type OnboardingDocumentColumn,
   type OnboardingGroupKey,
 } from "@/lib/supabase/onboardingDocumentColumns";
-import { uploadCoeCertificate, uploadWarningForm, uploadPromotionForm, uploadActionPlanForm, uploadTerminationForm, uploadW8benForm, uploadW4Form, uploadW4RForm, uploadI9Form, uploadWageAckForm, uploadCarIqAgreementForm, uploadVehicleAgreementForm, uploadEmployeeConfidentialityForm, uploadMealRestBreakForm, uploadPtoAckForm, uploadPartsResponsibilityForm, uploadMileageFuelForm, uploadLocationConsentForm, uploadDamageForm, uploadContractorDataForm, uploadDirectDepositForm, uploadSubstanceScreeningForm, uploadFlashTechnicianTravelForm, uploadContractorAddendumForm, uploadMasterW2AgreementForm, uploadSignableDocumentSignature, refreshStorageAuthToken } from "@/lib/firebase/storage";
+import { uploadCoeCertificate, uploadWarningForm, uploadPromotionForm, uploadActionPlanForm, uploadTerminationForm, uploadW8benForm, uploadW4Form, uploadW4RForm, uploadI9Form, uploadWageAckForm, uploadCarIqAgreementForm, uploadVehicleAgreementForm, uploadEmployeeConfidentialityForm, uploadMealRestBreakForm, uploadPtoAckForm, uploadPartsResponsibilityForm, uploadMileageFuelForm, uploadLocationConsentForm, uploadDamageForm, uploadContractorDataForm, uploadDirectDepositForm, uploadSubstanceScreeningForm, uploadFlashTechnicianTravelForm, uploadContractorAddendumForm, uploadMasterW2AgreementForm, uploadMasterW2OfficeAgreementForm, uploadSignableDocumentSignature, refreshStorageAuthToken } from "@/lib/firebase/storage";
 import { captureHtmlToPdfBlob, captureHtmlPagesToPdfBlob, loadAssetDataUrl as loadImageDataUrl } from "@/lib/pdfCapture";
 import { downloadSignableDocumentPdf } from "@/lib/downloadSignableDocumentPdf";
 import { useSortableSearchTable } from "@/hooks/useSortableSearchTable";
 import { masterW2AgreementStyles, buildMasterW2AgreementBodyMarkup, type MasterW2AgreementFormData } from "@/lib/masterW2AgreementFormTemplate";
+import { masterW2OfficeAgreementStyles, buildMasterW2OfficeAgreementBodyMarkup, type MasterW2OfficeAgreementFormData } from "@/lib/masterW2OfficeAgreementFormTemplate";
 import { getTechnicianIdDocumentUrl } from "@/lib/supabase/technicianIdDocuments";
 import {
   createSignableDocument,
@@ -922,7 +923,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // Reviews, the Approved log, the department trend chart, and the full
   // Employee Directory all on top of each other, forcing a long scroll to
   // reach anything below Hiring.
-  const [activeTab, setActiveTab] = useState<"hiring" | "warnings" | "masterList" | "leaders" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "promotionForm" | "actionPlanForm" | "terminationForm" | "employeeRequestManager" | "w8ben" | "i9" | "wageAck" | "carIqAgreement" | "vehicleAgreement" | "vehicleUseAgreement" | "employeeConfidentiality" | "mealRestBreak" | "ptoAck" | "partsResponsibility" | "mileageFuel" | "locationConsent" | "damage" | "contractorData" | "contractorDataUs" | "directDeposit" | "substanceScreening" | "flashTechnicianTravel" | "contractorAddendum" | "combineForms" | "employerQueue" | "ndaForm" | "calendar" | "interviewCalendar" | "masterW2Agreement" | "newW4">(paperworksOnly ? "combineForms" : "hiring");
+  const [activeTab, setActiveTab] = useState<"hiring" | "warnings" | "masterList" | "leaders" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "promotionForm" | "actionPlanForm" | "terminationForm" | "employeeRequestManager" | "w8ben" | "i9" | "wageAck" | "carIqAgreement" | "vehicleAgreement" | "vehicleUseAgreement" | "employeeConfidentiality" | "mealRestBreak" | "ptoAck" | "partsResponsibility" | "mileageFuel" | "locationConsent" | "damage" | "contractorData" | "contractorDataUs" | "directDeposit" | "substanceScreening" | "flashTechnicianTravel" | "contractorAddendum" | "combineForms" | "employerQueue" | "ndaForm" | "calendar" | "interviewCalendar" | "masterW2Agreement" | "newW4" | "masterW2OfficeAgreement">(paperworksOnly ? "combineForms" : "hiring");
   const [openCategory, setOpenCategory] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   // Which floating-sidebar section headers (Automated Forms/Generate
@@ -1884,6 +1885,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     vehicle_use_agreement: "vehicleUseAgreement",
     contractor_addendum: "contractorAddendum",
     master_w2_agreement: "masterW2Agreement",
+    master_w2_office_agreement: "masterW2OfficeAgreement",
   };
 
   // Forms popup — checkbox list of every SignableDocumentType, letting HR
@@ -4200,6 +4202,287 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       setMasterW2AgreementEmployerError(err instanceof Error ? err.message : "Failed to save signature.");
     } finally {
       setMasterW2AgreementEmployerSaving(false);
+    }
+  };
+
+  // ── Master W-2 Office Agreement — same two-party HTML-captured flow as
+  // Master W-2 Technician Agreement above, for office/logistics staff
+  // instead of field technicians (see masterW2OfficeAgreementFormTemplate.ts's
+  // header comment for how the document itself differs). No license/SSN
+  // photo capture — that's specific to the Technician version. ──
+  const [sentMasterW2OfficeAgreementForms, setSentMasterW2OfficeAgreementForms] = useState<SignableDocument[]>([]);
+  const loadSentMasterW2OfficeAgreementForms = async () => {
+    try {
+      setSentMasterW2OfficeAgreementForms(await getSignableDocuments("master_w2_office_agreement"));
+    } catch (err) {
+      console.error("Failed to load sent Master W-2 Office Agreement forms:", err);
+    }
+  };
+  useEffect(() => {
+    if (activeTab === "masterW2OfficeAgreement" || activeTab === "jotformDocuments" || activeTab === "combineForms" || activeTab === "employerQueue") void loadSentMasterW2OfficeAgreementForms();
+  }, [activeTab]);
+  const sentMasterW2OfficeAgreementAwaitingEmployerCount = useMemo(
+    () => sentMasterW2OfficeAgreementForms.filter(isAwaitingEmployerStep).length,
+    [sentMasterW2OfficeAgreementForms]
+  );
+
+  type MasterW2OfficeAgreementSortColumn = "employee" | "branch" | "sentBy" | "status" | "sent";
+  const masterW2OfficeAgreementStatusLabel = (doc: SignableDocument): string =>
+    doc.status === "confirmed" ? "Completed"
+      : isAwaitingEmployerStep(doc) ? "Awaiting Employer Signature"
+      : doc.status === "cancelled" ? "Cancelled"
+      : "Awaiting Employee";
+  const {
+    search: masterW2OfficeAgreementSentSearch,
+    setSearch: setMasterW2OfficeAgreementSentSearch,
+    sortColumn: masterW2OfficeAgreementSentSortColumn,
+    sortDir: masterW2OfficeAgreementSentSortDir,
+    handleSort: handleMasterW2OfficeAgreementSentSort,
+    filterOptionsFor: masterW2OfficeAgreementFilterOptionsFor,
+    toggleFilterValue: masterW2OfficeAgreementToggleFilterValue,
+    clearColumnFilter: masterW2OfficeAgreementClearColumnFilter,
+    isColumnFiltered: masterW2OfficeAgreementIsColumnFiltered,
+    isValueChecked: masterW2OfficeAgreementIsValueChecked,
+    rows: sortedSentMasterW2OfficeAgreementForms,
+  } = useSortableSearchTable<SignableDocument, MasterW2OfficeAgreementSortColumn>(
+    sentMasterW2OfficeAgreementForms,
+    (doc, q) => {
+      const data = doc.formData as Partial<MasterW2OfficeAgreementFormData>;
+      const employeeName = (data.employeeName || doc.recipientName || "").toLowerCase();
+      const branch = (data.branch || "").toLowerCase();
+      return employeeName.includes(q) || branch.includes(q);
+    },
+    (doc, column) => {
+      const data = doc.formData as Partial<MasterW2OfficeAgreementFormData>;
+      switch (column) {
+        case "employee": return (data.employeeName || doc.recipientName || "").toLowerCase();
+        case "branch": return (data.branch || "").toLowerCase();
+        case "sentBy": return (doc.createdByName ?? "").toLowerCase();
+        case "status": return masterW2OfficeAgreementStatusLabel(doc).toLowerCase();
+        case "sent": return new Date(doc.createdAt).getTime();
+      }
+    },
+    (doc, column) => {
+      const data = doc.formData as Partial<MasterW2OfficeAgreementFormData>;
+      switch (column) {
+        case "branch": return data.branch || "—";
+        case "sentBy": return doc.createdByName ?? "—";
+        case "status": return masterW2OfficeAgreementStatusLabel(doc);
+        default: return "";
+      }
+    }
+  );
+
+  const [masterW2OfficeAgreementRecipientId, setMasterW2OfficeAgreementRecipientId] = useState("");
+  const [masterW2OfficeAgreementRecipientSearch, setMasterW2OfficeAgreementRecipientSearch] = useState("");
+  const [masterW2OfficeAgreementRecipientDropdownOpen, setMasterW2OfficeAgreementRecipientDropdownOpen] = useState(false);
+  const [masterW2OfficeAgreementSending, setMasterW2OfficeAgreementSending] = useState(false);
+  const [masterW2OfficeAgreementSendError, setMasterW2OfficeAgreementSendError] = useState<string | null>(null);
+  const [masterW2OfficeAgreementActionBusyId, setMasterW2OfficeAgreementActionBusyId] = useState<string | null>(null);
+  const [masterW2OfficeAgreementActionError, setMasterW2OfficeAgreementActionError] = useState<string | null>(null);
+  const [masterW2OfficeAgreementDocPreview, setMasterW2OfficeAgreementDocPreview] = useState<SignableDocument | null>(null);
+  const [masterW2OfficeAgreementPreviewExpanded, setMasterW2OfficeAgreementPreviewExpanded] = useState(false);
+  const [masterW2OfficeAgreementPreviewPdfUrl, setMasterW2OfficeAgreementPreviewPdfUrl] = useState<string | null>(null);
+  const [masterW2OfficeAgreementPreviewLoading, setMasterW2OfficeAgreementPreviewLoading] = useState(false);
+  const filteredMasterW2OfficeAgreementRecipients = useMemo(
+    () => employees.filter((e) => e.status === "active" && e.name.toLowerCase().includes(masterW2OfficeAgreementRecipientSearch.toLowerCase())),
+    [employees, masterW2OfficeAgreementRecipientSearch]
+  );
+
+  const buildMasterW2OfficeAgreementPreviewData = (employeeName: string): MasterW2OfficeAgreementFormData => {
+    const [firstName = "", ...rest] = employeeName.trim().split(/\s+/).filter(Boolean);
+    const lastName = rest.length ? rest[rest.length - 1] : "";
+    const middleName = rest.length > 1 ? rest.slice(0, -1).join(" ") : "";
+    return {
+      employeeId: "",
+      employeeName,
+      firstName,
+      middleName,
+      lastName,
+      branch: "",
+      effectiveDate: "",
+      addressStreet: "",
+      addressCity: "",
+      addressState: "",
+      addressZip: "",
+      phone: "",
+      email: "",
+      employeeDateSigned: "",
+      employeeSignatureDataUrl: "",
+      employerDateSigned: "",
+      employerSignatureDataUrl: "",
+    };
+  };
+
+  /** Toggles the inline collapsible preview panel — collapsing just hides it (and revokes the blob URL); expanding (re)builds a fresh blank-filled sample from the currently-selected recipient's name. HTML-captured (not a pdf-lib fill like the other types' own preview), same technique as the document itself. */
+  const toggleMasterW2OfficeAgreementPreview = async () => {
+    if (masterW2OfficeAgreementPreviewExpanded) {
+      setMasterW2OfficeAgreementPreviewExpanded(false);
+      if (masterW2OfficeAgreementPreviewPdfUrl) URL.revokeObjectURL(masterW2OfficeAgreementPreviewPdfUrl);
+      setMasterW2OfficeAgreementPreviewPdfUrl(null);
+      return;
+    }
+    setMasterW2OfficeAgreementSendError(null);
+    setMasterW2OfficeAgreementPreviewExpanded(true);
+    setMasterW2OfficeAgreementPreviewLoading(true);
+    try {
+      const recipientName = employees.find((e) => e.id === masterW2OfficeAgreementRecipientId)?.name || "";
+      const logo = masterW2OfficeAgreementLogoDataUrl || (await loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png")));
+      const pdfBlob = await captureHtmlToPdfBlob(buildMasterW2OfficeAgreementBodyMarkup(buildMasterW2OfficeAgreementPreviewData(recipientName), logo), masterW2OfficeAgreementStyles);
+      const url = URL.createObjectURL(pdfBlob);
+      setMasterW2OfficeAgreementPreviewPdfUrl(url);
+    } catch (err) {
+      setMasterW2OfficeAgreementSendError(err instanceof Error ? err.message : "Failed to build preview.");
+    } finally {
+      setMasterW2OfficeAgreementPreviewLoading(false);
+    }
+  };
+
+  const handleSendMasterW2OfficeAgreement = async () => {
+    if (!masterW2OfficeAgreementRecipientId || !uid) return;
+    setMasterW2OfficeAgreementSending(true);
+    setMasterW2OfficeAgreementSendError(null);
+    try {
+      const recipient = employees.find((e) => e.id === masterW2OfficeAgreementRecipientId);
+      if (!recipient) throw new Error("Select a recipient first.");
+
+      const alreadySent = await getExistingActiveDocumentTypes(recipient.id, ["master_w2_office_agreement"]);
+      if (alreadySent.length > 0 && !window.confirm(`${recipient.name} already has a Master W-2 Office Agreement on file. Send another one anyway?`)) {
+        return;
+      }
+
+      const doc = await createSignableDocument({
+        documentType: "master_w2_office_agreement",
+        formData: { employeeId: recipient.id, employeeName: recipient.name } as unknown as Record<string, any>,
+        recipientId: masterW2OfficeAgreementRecipientId,
+        recipientSlot: "employee",
+        pdfUrl: "",
+      });
+
+      const myProfileId = await getMyProfileId(uid);
+      if (!myProfileId) throw new Error("Could not resolve your profile.");
+      const thread = await getOrCreateDmThread(myProfileId, masterW2OfficeAgreementRecipientId);
+      const fillLink = `${getAppUrl()}/fill-master-w2-office-agreement/${doc.id}`;
+      await sendMessage({
+        dmThreadId: thread.id,
+        senderId: myProfileId,
+        senderName: displayName || "HR",
+        body: `📋 Please complete the Master W-2 Office & Logistics Comprehensive Policy, Conduct & Agreement: ${fillLink}`,
+      });
+
+      void logActivity({ action: "master_w2_office_agreement_sent", targetType: "employee", targetId: recipient.id, targetLabel: recipient.name });
+
+      setMasterW2OfficeAgreementRecipientId("");
+      setMasterW2OfficeAgreementRecipientSearch("");
+      await loadSentMasterW2OfficeAgreementForms();
+    } catch (err) {
+      setMasterW2OfficeAgreementSendError(err instanceof Error ? err.message : "Failed to send request.");
+    } finally {
+      setMasterW2OfficeAgreementSending(false);
+    }
+  };
+
+  const handleCopyMasterW2OfficeAgreementLink = async (doc: SignableDocument) => {
+    try {
+      await navigator.clipboard.writeText(`${getAppUrl()}/fill-master-w2-office-agreement/${doc.id}`);
+    } catch (err) {
+      console.error("Failed to copy link:", err);
+    }
+  };
+
+  const handleDownloadMasterW2OfficeAgreementPdf = async (doc: SignableDocument) => {
+    if (!doc.pdfUrl) return;
+    const name = (doc.formData as Partial<MasterW2OfficeAgreementFormData>).employeeName || doc.recipientName || "master-w2-office-agreement";
+    await downloadSignableDocumentPdf(doc.pdfUrl, `Master W-2 Office Agreement - ${name}.pdf`);
+  };
+
+  const handleReopenMasterW2OfficeAgreementEmployer = async (doc: SignableDocument) => {
+    if (!window.confirm("Re-open this for a new employer signature? The employee's signature stays as-is.")) return;
+    setMasterW2OfficeAgreementActionBusyId(doc.id);
+    setMasterW2OfficeAgreementActionError(null);
+    try {
+      await reopenEmployerSignature(doc.id);
+      await loadSentMasterW2OfficeAgreementForms();
+    } catch (err) {
+      setMasterW2OfficeAgreementActionError(err instanceof Error ? err.message : "Failed to reopen for re-signing.");
+    } finally {
+      setMasterW2OfficeAgreementActionBusyId(null);
+    }
+  };
+
+  const handleDeleteMasterW2OfficeAgreement = async (doc: SignableDocument) => {
+    if (!window.confirm("Permanently delete this Master W-2 Office Agreement request?")) return;
+    setMasterW2OfficeAgreementActionBusyId(doc.id);
+    setMasterW2OfficeAgreementActionError(null);
+    try {
+      await deleteSignableDocument(doc.id);
+      await loadSentMasterW2OfficeAgreementForms();
+    } catch (err) {
+      setMasterW2OfficeAgreementActionError(err instanceof Error ? err.message : "Failed to delete.");
+    } finally {
+      setMasterW2OfficeAgreementActionBusyId(null);
+    }
+  };
+
+  // ── Complete Employer Signature — a plain signature pad (no fields to
+  // review), reassigns the document to the current HR user first so the
+  // RLS update policy allows it (same "claim" pattern Wage Ack's own dialog
+  // uses), then regenerates the whole PDF fresh with both signatures. ──
+  const [masterW2OfficeAgreementEmployerDialog, setMasterW2OfficeAgreementEmployerDialog] = useState<SignableDocument | null>(null);
+  const [masterW2OfficeAgreementEmployerSaving, setMasterW2OfficeAgreementEmployerSaving] = useState(false);
+  const [masterW2OfficeAgreementEmployerError, setMasterW2OfficeAgreementEmployerError] = useState<string | null>(null);
+  const masterW2OfficeAgreementEmployerSigPad = useSignaturePad({ width: 400, height: 120 });
+  const [masterW2OfficeAgreementLogoDataUrl, setMasterW2OfficeAgreementLogoDataUrl] = useState("");
+
+  const handleOpenMasterW2OfficeAgreementEmployerDialog = (doc: SignableDocument) => {
+    setMasterW2OfficeAgreementEmployerDialog(doc);
+    setMasterW2OfficeAgreementEmployerError(null);
+    if (!masterW2OfficeAgreementLogoDataUrl) {
+      loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png")).then(setMasterW2OfficeAgreementLogoDataUrl).catch(() => {});
+    }
+  };
+
+  const handleSaveMasterW2OfficeAgreementEmployerSignature = async () => {
+    if (!masterW2OfficeAgreementEmployerDialog || !uid) return;
+    if (!masterW2OfficeAgreementEmployerSigPad.hasContent()) {
+      setMasterW2OfficeAgreementEmployerError("Please add your signature.");
+      return;
+    }
+    setMasterW2OfficeAgreementEmployerSaving(true);
+    setMasterW2OfficeAgreementEmployerError(null);
+    try {
+      const myProfileId = await getMyProfileId(uid);
+      if (!myProfileId) throw new Error("Could not resolve your profile.");
+
+      await reassignSignableDocument(masterW2OfficeAgreementEmployerDialog.id, { recipientId: myProfileId, recipientName: displayName || "HR" }, "hr_staff");
+
+      const existing = masterW2OfficeAgreementEmployerDialog.formData as MasterW2OfficeAgreementFormData;
+      const dataUrl = masterW2OfficeAgreementEmployerSigPad.toDataURL();
+      if (!dataUrl) {
+        setMasterW2OfficeAgreementEmployerError("Please add your signature.");
+        return;
+      }
+      await refreshStorageAuthToken();
+      const signatureUrl = await uploadSignableDocumentSignature(masterW2OfficeAgreementEmployerDialog.companyId, masterW2OfficeAgreementEmployerDialog.id, "hr_staff", dataUrl);
+      const signedAt = new Date().toISOString();
+
+      const merged: MasterW2OfficeAgreementFormData = { ...existing, employerSignatureDataUrl: dataUrl, employerDateSigned: signedAt };
+
+      const logo = masterW2OfficeAgreementLogoDataUrl || (await loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png")));
+      const pdfBlob = await captureHtmlToPdfBlob(buildMasterW2OfficeAgreementBodyMarkup(merged, logo), masterW2OfficeAgreementStyles);
+      const pdfUrl = await uploadMasterW2OfficeAgreementForm(masterW2OfficeAgreementEmployerDialog.companyId, existing.employeeName || "master-w2-office-agreement", pdfBlob);
+
+      const entry = { name: displayName || "HR", url: signatureUrl, signedAt };
+      await signDocument(masterW2OfficeAgreementEmployerDialog.id, "hr_staff", entry, pdfUrl, merged as unknown as Record<string, any>);
+      await confirmSignableDocument(masterW2OfficeAgreementEmployerDialog.id, null);
+
+      void logActivity({ action: "master_w2_office_agreement_employer_signed", targetType: "employee", targetLabel: existing.employeeName || "" });
+      setMasterW2OfficeAgreementEmployerDialog(null);
+      await loadSentMasterW2OfficeAgreementForms();
+    } catch (err) {
+      setMasterW2OfficeAgreementEmployerError(err instanceof Error ? err.message : "Failed to save signature.");
+    } finally {
+      setMasterW2OfficeAgreementEmployerSaving(false);
     }
   };
 
@@ -12575,6 +12858,19 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     { key: "directDeposit", label: "Direct Deposit Authorization", count: 0, icon: FileCheck },
   ] as const;
 
+  // "New Office Forms (US)" — the office/logistics counterpart to New
+  // Technician Forms above: Master W-2 Office Agreement is its own document
+  // (different content — see masterW2OfficeAgreementFormTemplate.ts), while
+  // Form W-4/I-9/Direct Deposit are the exact same shared tab keys reused
+  // from New Technician Forms (there's only one W-4/I-9/Direct Deposit flow
+  // regardless of which column links to it).
+  const newAutomationFormsOfficeTabs = [
+    { key: "masterW2OfficeAgreement", label: "Master W-2 Office Agreement", count: sentMasterW2OfficeAgreementAwaitingEmployerCount, icon: FileCheck },
+    { key: "newW4", label: "Form W-4", count: 0, icon: Landmark },
+    { key: "i9", label: "Form I-9 (Employment Eligibility)", count: sentI9AwaitingSection2Count, icon: FileCheck },
+    { key: "directDeposit", label: "Direct Deposit Authorization", count: 0, icon: FileCheck },
+  ] as const;
+
   // Management-tier forms (Branch Manager / Senior Branch Manager /
   // Technical Director / Technical Assistant Director) — its own column,
   // separate from the rank-and-file Technician Forms and the HR/admin
@@ -12620,10 +12916,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     ...(paperworksOnly && companyId === "COMP001" ? [{
       group: "New Automation Forms",
       icon: Paperclip,
-      tabs: [...newAutomationFormsGeneralTabs, ...newAutomationFormsTechnicianTabs],
+      tabs: [...newAutomationFormsGeneralTabs, ...newAutomationFormsTechnicianTabs, ...newAutomationFormsOfficeTabs],
       columns: [
         { label: "General", tabs: newAutomationFormsGeneralTabs },
         { label: "New Technician Forms", tabs: newAutomationFormsTechnicianTabs },
+        { label: "New Office Forms (US)", tabs: newAutomationFormsOfficeTabs },
       ],
     }] : []),
     ...(!paperworksOnly ? [
@@ -20916,6 +21213,294 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             </div>
             <div className="flex-1 overflow-hidden bg-slate-950">
               {masterW2AgreementDocPreview.pdfUrl && <iframe src={masterW2AgreementDocPreview.pdfUrl} title="Master W-2 Technician Agreement" className="w-full h-full min-h-[70vh] border-0" />}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activeTab === "masterW2OfficeAgreement" && (
+      <>
+      <div className="panel p-0 overflow-visible mt-4 relative z-20">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">Send Master W-2 Office Agreement Request</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Pick a teammate — they'll get a link to fill in their info and sign. Once they submit, it lands back here for HR to add the employer signature. Covers wage/overtime, multi-state compliance, equipment & data security, conduct & substance screening, property damage, confidentiality, and at-will employment in one document.</p>
+        </div>
+        <div className="p-4 flex flex-col md:flex-row gap-6">
+          <div className="flex flex-col gap-3 w-full md:max-w-sm md:shrink-0">
+            <div className="flex flex-col gap-1 relative">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient (AHS teammate)</label>
+              <input
+                type="text"
+                value={masterW2OfficeAgreementRecipientSearch}
+                onChange={(e) => { setMasterW2OfficeAgreementRecipientSearch(e.target.value); setMasterW2OfficeAgreementRecipientId(""); setMasterW2OfficeAgreementRecipientDropdownOpen(true); }}
+                onFocus={() => setMasterW2OfficeAgreementRecipientDropdownOpen(true)}
+                onBlur={() => setTimeout(() => setMasterW2OfficeAgreementRecipientDropdownOpen(false), 150)}
+                placeholder="Search a teammate…"
+                className="glass-input text-sm py-1.5 px-3 rounded-md"
+              />
+              {masterW2OfficeAgreementRecipientDropdownOpen && (
+                <div className="absolute z-50 top-full mt-1 w-full max-h-96 overflow-y-auto rounded-md border border-white/15 bg-slate-900 shadow-2xl">
+                  {filteredMasterW2OfficeAgreementRecipients.length === 0 ? (
+                    <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+                  ) : (
+                    filteredMasterW2OfficeAgreementRecipients.map((e) => (
+                      <button
+                        key={e.id}
+                        type="button"
+                        onMouseDown={(ev) => ev.preventDefault()}
+                        onClick={() => {
+                          setMasterW2OfficeAgreementRecipientId(e.id);
+                          setMasterW2OfficeAgreementRecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`);
+                          setMasterW2OfficeAgreementRecipientDropdownOpen(false);
+                        }}
+                        className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${masterW2OfficeAgreementRecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                      >
+                        {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+
+            {masterW2OfficeAgreementSendError && (
+              <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{masterW2OfficeAgreementSendError}</p>
+            )}
+            <div className="flex items-center gap-2">
+              <button
+                onClick={toggleMasterW2OfficeAgreementPreview}
+                className="btn text-sm px-4 py-2 flex items-center gap-1.5"
+              >
+                Preview <ChevronDown className={`h-3.5 w-3.5 transition-transform ${masterW2OfficeAgreementPreviewExpanded ? "rotate-180" : ""}`} />
+              </button>
+              <button
+                onClick={handleSendMasterW2OfficeAgreement}
+                disabled={!masterW2OfficeAgreementRecipientId || masterW2OfficeAgreementSending}
+                className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+              >
+                {masterW2OfficeAgreementSending ? "Sending…" : "Send Request"}
+              </button>
+            </div>
+          </div>
+
+          <div className="flex-1 min-w-0">
+            {masterW2OfficeAgreementPreviewExpanded ? (
+              <div className="border border-white/10 rounded-md overflow-hidden bg-white/5 h-full" style={{ minHeight: 560 }}>
+                {masterW2OfficeAgreementPreviewLoading || !masterW2OfficeAgreementPreviewPdfUrl ? (
+                  <div className="h-full flex items-center justify-center text-sm text-muted-foreground" style={{ minHeight: 560 }}>Loading preview…</div>
+                ) : (
+                  <iframe src={masterW2OfficeAgreementPreviewPdfUrl} title="Master W-2 Office Agreement Preview" className="w-full border-0" style={{ height: 560 }} />
+                )}
+              </div>
+            ) : (
+              <div className="border border-dashed border-white/15 rounded-md flex items-center justify-center text-sm text-muted-foreground" style={{ minHeight: 560 }}>
+                Click "Preview" to see the document here.
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="panel p-0 overflow-hidden mt-4">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">Sent Master W-2 Office Agreement Forms</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status. "Awaiting Employer Signature" means the employee finished — add your signature to finalize.</p>
+        </div>
+        <div className="px-4 py-3 border-b border-white/10 bg-white/5 flex flex-wrap items-end gap-3">
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+            <input
+              type="text"
+              value={masterW2OfficeAgreementSentSearch}
+              onChange={(e) => setMasterW2OfficeAgreementSentSearch(e.target.value)}
+              placeholder="Name or branch…"
+              className="glass-input text-sm py-1.5 pl-8 pr-3 rounded-md w-56"
+            />
+          </div>
+          {masterW2OfficeAgreementSentSearch && (
+            <button onClick={() => setMasterW2OfficeAgreementSentSearch("")} className="btn text-sm px-3 py-1.5">Clear</button>
+          )}
+          <span className="text-xs text-muted-foreground mb-1.5 ml-auto">
+            {sortedSentMasterW2OfficeAgreementForms.length}{masterW2OfficeAgreementSentSearch ? ` of ${sentMasterW2OfficeAgreementForms.length}` : ""} forms
+          </span>
+        </div>
+        {masterW2OfficeAgreementActionError && (
+          <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{masterW2OfficeAgreementActionError}</p>
+        )}
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-white/10 bg-white/5">
+                <SortableTh column="employee" label="Employee" sortColumn={masterW2OfficeAgreementSentSortColumn} sortDir={masterW2OfficeAgreementSentSortDir} onSort={handleMasterW2OfficeAgreementSentSort} />
+                <FilterableTh
+                  column="branch" label="Branch"
+                  sortColumn={masterW2OfficeAgreementSentSortColumn} sortDir={masterW2OfficeAgreementSentSortDir} onSort={handleMasterW2OfficeAgreementSentSort}
+                  options={masterW2OfficeAgreementFilterOptionsFor("branch")}
+                  isChecked={(v) => masterW2OfficeAgreementIsValueChecked("branch", v)}
+                  onToggleValue={(v) => masterW2OfficeAgreementToggleFilterValue("branch", v)}
+                  onClear={() => masterW2OfficeAgreementClearColumnFilter("branch")}
+                  isFiltered={masterW2OfficeAgreementIsColumnFiltered("branch")}
+                />
+                <FilterableTh
+                  column="sentBy" label="Sent By"
+                  sortColumn={masterW2OfficeAgreementSentSortColumn} sortDir={masterW2OfficeAgreementSentSortDir} onSort={handleMasterW2OfficeAgreementSentSort}
+                  options={masterW2OfficeAgreementFilterOptionsFor("sentBy")}
+                  isChecked={(v) => masterW2OfficeAgreementIsValueChecked("sentBy", v)}
+                  onToggleValue={(v) => masterW2OfficeAgreementToggleFilterValue("sentBy", v)}
+                  onClear={() => masterW2OfficeAgreementClearColumnFilter("sentBy")}
+                  isFiltered={masterW2OfficeAgreementIsColumnFiltered("sentBy")}
+                />
+                <FilterableTh
+                  column="status" label="Status"
+                  sortColumn={masterW2OfficeAgreementSentSortColumn} sortDir={masterW2OfficeAgreementSentSortDir} onSort={handleMasterW2OfficeAgreementSentSort}
+                  options={masterW2OfficeAgreementFilterOptionsFor("status")}
+                  isChecked={(v) => masterW2OfficeAgreementIsValueChecked("status", v)}
+                  onToggleValue={(v) => masterW2OfficeAgreementToggleFilterValue("status", v)}
+                  onClear={() => masterW2OfficeAgreementClearColumnFilter("status")}
+                  isFiltered={masterW2OfficeAgreementIsColumnFiltered("status")}
+                />
+                <SortableTh column="sent" label="Sent" sortColumn={masterW2OfficeAgreementSentSortColumn} sortDir={masterW2OfficeAgreementSentSortDir} onSort={handleMasterW2OfficeAgreementSentSort} />
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sortedSentMasterW2OfficeAgreementForms.length === 0 ? (
+                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">{sentMasterW2OfficeAgreementForms.length === 0 ? "No requests sent yet." : "No forms match this search/filter."}</td></tr>
+              ) : (
+                sortedSentMasterW2OfficeAgreementForms.map((doc) => {
+                  const data = doc.formData as Partial<MasterW2OfficeAgreementFormData>;
+                  const recipient = employees.find((e) => e.id === doc.recipientId);
+                  const busy = masterW2OfficeAgreementActionBusyId === doc.id;
+                  const awaitingEmployer = isAwaitingEmployerStep(doc);
+                  return (
+                    <tr key={doc.id} className="border-b border-white/5 hover:bg-white/5">
+                      <td className="px-4 py-3 font-medium">
+                        {doc.pdfUrl ? (
+                          <button type="button" onClick={() => setMasterW2OfficeAgreementDocPreview(doc)} className="text-blue-300 hover:text-blue-200 hover:underline text-left">
+                            {data.employeeName || recipient?.name || doc.recipientName || "—"}
+                          </button>
+                        ) : (
+                          data.employeeName || recipient?.name || doc.recipientName || "—"
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-muted-foreground">{data.branch || "—"}</td>
+                      <td className="px-4 py-3 text-muted-foreground">{doc.createdByName ?? "—"}</td>
+                      <td className="px-4 py-3">
+                        <span className={`px-2 py-1 rounded text-xs font-semibold ${
+                          doc.status === "confirmed" ? "bg-green-500/20 text-green-300"
+                          : awaitingEmployer ? "bg-orange-500/20 text-orange-300"
+                          : doc.status === "cancelled" ? "bg-slate-500/20 text-slate-400"
+                          : "bg-yellow-500/20 text-yellow-300"
+                        }`}>
+                          {masterW2OfficeAgreementStatusLabel(doc)}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{new Date(doc.createdAt).toLocaleDateString()}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {doc.status === "pending_signature" && doc.recipientSlot === "employee" && (
+                            <button type="button" onClick={() => handleCopyMasterW2OfficeAgreementLink(doc)} className="btn text-[10px] px-2 py-1">
+                              Copy Link
+                            </button>
+                          )}
+                          {awaitingEmployer && (
+                            <>
+                              <button type="button" onClick={() => handleOpenMasterW2OfficeAgreementEmployerDialog(doc)} className="btn text-[10px] px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white">
+                                Add Employer Signature →
+                              </button>
+                              <button type="button" onClick={() => handleOpenEmployerReassign(doc)} className="btn text-[10px] px-2 py-1">
+                                Send to Employer
+                              </button>
+                            </>
+                          )}
+                          {doc.pdfUrl && (
+                            <button type="button" onClick={() => handleDownloadMasterW2OfficeAgreementPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
+                              Download PDF
+                            </button>
+                          )}
+                          {doc.status === "confirmed" && (
+                            <button type="button" onClick={() => handleReopenMasterW2OfficeAgreementEmployer(doc)} className="btn text-[10px] px-2 py-1" title="Redo the employer signature — keeps the employee's original signature">
+                              Re-sign
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => handleDeleteMasterW2OfficeAgreement(doc)}
+                            title="Permanently delete this request"
+                            className="text-muted-foreground hover:text-red-300 disabled:opacity-50"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      </>
+      )}
+
+      {masterW2OfficeAgreementEmployerDialog && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-800 border border-white/10 rounded-lg p-6 max-w-sm w-full">
+            <h3 className="text-lg font-bold mb-2">Add Employer Signature</h3>
+            <p className="text-sm text-muted-foreground mb-4">
+              Employer representative signature for{" "}
+              <span className="font-semibold text-white">{(masterW2OfficeAgreementEmployerDialog.formData as Partial<MasterW2OfficeAgreementFormData>).employeeName || "—"}</span>'s
+              Master W-2 Office &amp; Logistics Comprehensive Policy, Conduct &amp; Agreement.
+            </p>
+
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2 block">Add your signature</label>
+            <canvas
+              {...masterW2OfficeAgreementEmployerSigPad.canvasProps}
+              className={`bg-white rounded-md border border-white/15 w-full ${masterW2OfficeAgreementEmployerSigPad.canvasProps.className}`}
+            />
+            <div className="flex justify-center mt-2">
+              <SignaturePadControls pad={masterW2OfficeAgreementEmployerSigPad} />
+            </div>
+
+            {masterW2OfficeAgreementEmployerError && (
+              <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2 mt-3">{masterW2OfficeAgreementEmployerError}</p>
+            )}
+            <div className="flex gap-2 justify-end mt-4">
+              <button onClick={() => setMasterW2OfficeAgreementEmployerDialog(null)} className="btn text-sm px-4 py-2">Cancel</button>
+              <button
+                onClick={handleSaveMasterW2OfficeAgreementEmployerSignature}
+                disabled={masterW2OfficeAgreementEmployerSaving}
+                className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+              >
+                {masterW2OfficeAgreementEmployerSaving ? "Saving…" : "Complete & Sign"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Master W-2 Office Agreement Sent History PDF preview — same inline-frame pattern used for the other Sent History tables */}
+      {masterW2OfficeAgreementDocPreview && (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => setMasterW2OfficeAgreementDocPreview(null)}>
+          <div className="bg-slate-900 border border-white/10 rounded-lg shadow-2xl w-full max-w-6xl h-[92vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold">{(masterW2OfficeAgreementDocPreview.formData as Partial<MasterW2OfficeAgreementFormData>).employeeName || "—"}</p>
+                <p className="text-[10px] text-muted-foreground">
+                  {masterW2OfficeAgreementDocPreview.status === "confirmed" ? "Completed" : "Submitted"} {new Date(masterW2OfficeAgreementDocPreview.signedAt ?? masterW2OfficeAgreementDocPreview.createdAt).toLocaleString()}
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                {masterW2OfficeAgreementDocPreview.pdfUrl && (
+                  <a href={masterW2OfficeAgreementDocPreview.pdfUrl} target="_blank" rel="noopener noreferrer" className="btn text-xs px-2.5 py-1.5 flex items-center gap-1"><Download className="h-3 w-3" /> Download</a>
+                )}
+                <button type="button" onClick={() => setMasterW2OfficeAgreementDocPreview(null)} className="btn text-xs px-2.5 py-1.5">Close</button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-hidden bg-slate-950">
+              {masterW2OfficeAgreementDocPreview.pdfUrl && <iframe src={masterW2OfficeAgreementDocPreview.pdfUrl} title="Master W-2 Office Agreement" className="w-full h-full min-h-[70vh] border-0" />}
             </div>
           </div>
         </div>

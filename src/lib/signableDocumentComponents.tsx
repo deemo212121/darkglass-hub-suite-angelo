@@ -40,6 +40,7 @@ export const INTERNAL_SIGNABLE_DOCUMENT_COMPONENTS: Record<SignableDocumentType,
   vehicle_use_agreement: lazy(() => import("@/components/FillVehicleUseAgreementPage").then((m) => ({ default: m.FillVehicleUseAgreementPage }))),
   contractor_addendum: lazy(() => import("@/components/FillContractorAddendumPage").then((m) => ({ default: m.FillContractorAddendumPage }))),
   master_w2_agreement: lazy(() => import("@/components/FillMasterW2AgreementPage").then((m) => ({ default: m.FillMasterW2AgreementPage }))),
+  master_w2_office_agreement: lazy(() => import("@/components/FillMasterW2OfficeAgreementPage").then((m) => ({ default: m.FillMasterW2OfficeAgreementPage }))),
 };
 
 export const EXTERNAL_SIGNABLE_DOCUMENT_COMPONENTS: Record<SignableDocumentType, ReturnType<typeof lazy>> = {
@@ -74,4 +75,5 @@ export const EXTERNAL_SIGNABLE_DOCUMENT_COMPONENTS: Record<SignableDocumentType,
   // entry for why. Reuses the internal page, which just requires a login
   // to actually load anything if ever reached from a no-login context.
   master_w2_agreement: lazy(() => import("@/components/FillMasterW2AgreementPage").then((m) => ({ default: m.FillMasterW2AgreementPage }))),
+  master_w2_office_agreement: lazy(() => import("@/components/FillMasterW2OfficeAgreementPage").then((m) => ({ default: m.FillMasterW2OfficeAgreementPage }))),
 };
