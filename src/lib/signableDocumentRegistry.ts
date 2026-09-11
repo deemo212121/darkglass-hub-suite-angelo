@@ -126,6 +126,60 @@ export const DOCUMENT_TYPES_REQUIRING_EMPLOYER_SIGNATURE = new Set<SignableDocum
 ]);
 
 /**
+ * Form W-4/I-9/Direct Deposit Authorization/W-8BEN each have exactly one
+ * underlying document type and Sent History list, reused by BOTH the
+ * legacy "Automated Forms" group's own tab and the "New Automation Forms"
+ * group's tabs (New Technician/New Office/PH Staff) — rather than
+ * duplicating four already-working send/sign flows per group. Without a
+ * way to tell them apart, every send showed up in every group's Sent
+ * History table AND every checklist tab that tracks that type, which reads
+ * as "old forms leaking into new" (and vice versa) — the two are supposed
+ * to stay separate. `formSource` is stamped into formData at send time (see
+ * ReportHRDaily.tsx's handleSendW4/handleSendI9/handleSendDirectDeposit/
+ * handleSendW8ben, keyed off which tab the send happened from) and survives
+ * every later formData rewrite, since every fill page seeds its form state
+ * from the existing formData and spreads that whole state back out on
+ * submit (untyped extra keys ride along even though the page's own
+ * FormData type doesn't declare them) — see e.g. FillI9Page.tsx's
+ * `setForm((prev) => ({ ...prev, ...existing }))` / `finalData = { ...form, ... }`.
+ */
+export function isNewAutomationDoc(doc: { formData: Record<string, any> }): boolean {
+  return doc.formData?.formSource === "new_automation";
+}
+
+/**
+ * The subset of SignableDocumentType that TechnicianFormChecklistPage.tsx
+ * bucket-filters by formSource before counting a document as "this
+ * person's" for a given tab — every OTHER type (including w4/i9/
+ * direct_deposit — see below) counts ANY matching document regardless of
+ * which flow sent it.
+ *
+ * w4/i9/direct_deposit are deliberately NOT in this set even though
+ * ReportHRDaily.tsx's own Sent History tables (visibleW4Forms/visibleI9Forms/
+ * visibleDirectDepositForms) DO still separate them there — the user's
+ * explicit call: these 3 are the exact same form regardless of which column
+ * sent it (no content difference like the Master Agreements have), so
+ * someone who already has a real W-4/I-9/Direct Deposit on file from the
+ * OLD flow has genuinely satisfied the requirement and shouldn't show
+ * "Not sent" on the New Technician/Office Staff (US)/PH Staff/BM+
+ * checklist tabs just because it came from the old flow. The checklist
+ * answers "does this person have this on file"; the Sent History tables
+ * answer "what did THIS column send" — different questions, deliberately
+ * different answers here.
+ *
+ * w8ben/w9/contractor_addendum stay bucket-filtered (new-only) — the user
+ * scoped the "count old too" request to just w4/i9/direct_deposit. w9 and
+ * contractor_addendum joined bucket-filtering once they each got their own
+ * real "new" tab (newContractorAddendum/newW9) — before that, the BM/SBS/
+ * Tech Director/Tech Assistant Director column's Contractor Addendum/W-9
+ * rows reused the OLD group's shared tab/list outright with no way to tell
+ * a genuinely new submission from a years-old one, which is exactly what
+ * made a BM+ checklist row show "Awaiting employee signature" off a
+ * pre-New-Automation-Forms submission that had nothing to do with it.
+ */
+export const SHARED_OLD_NEW_AUTOMATION_TYPES = new Set<SignableDocumentType>(["w8ben", "w9", "contractor_addendum"]);
+
+/**
  * Where a signable document currently stands, from the "is this actually
  * finished" point of view — collapses the raw SignableDocumentStatus plus
  * "does this type even need an employer countersign" into one of four

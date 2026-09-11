@@ -1,10 +1,10 @@
 /**
  * HR module -> Staff Form Checklist. Per-person live status of every
  * signable form for 5 tiers, each its own tab — pulled straight from
- * hr_signable_documents via getAllSignableDocuments, not a separately-
- * tracked checklist. Unlike HrOnboardingChecklistPage (a manually-ticked
- * punch list), nothing here is editable: a form only shows complete once
- * it's actually been signed.
+ * hr_signable_documents via getSignableDocumentsByTypes, scoped to
+ * whichever tab is active, not a separately-tracked checklist. Unlike
+ * HrOnboardingChecklistPage (a manually-ticked punch list), nothing here is
+ * editable: a form only shows complete once it's actually been signed.
  *
  * Tabs (see CHECKLIST_TABS below):
  *  - Technician — the original 16-form checklist, unchanged.
@@ -18,9 +18,16 @@
  *    Deposit). Deliberately excluded from Office Staff (US) even though
  *    they're US-based, since they need this tier's forms tracked instead.
  *
- * One fetch (users/docs/exemptions) serves all 5 tabs — each tab's row list
- * is just a different filter+form-type-set derived from the same raw data,
- * recomputed via useMemo when the active tab or the raw data changes.
+ * W-4/I-9/Direct Deposit/W-8BEN are shared document types between an old
+ * tab and one or more new ones — each tab only counts submissions from its
+ * own formSourceBucket (see SHARED_OLD_NEW_AUTOMATION_TYPES/
+ * isNewAutomationDoc in signableDocumentRegistry.ts), so e.g. New
+ * Technician's W-4 row never shows "done" off an old-flow submission it
+ * never actually sent, and vice versa.
+ *
+ * The roster (loadUsers) is fetched once; documents+exemptions
+ * (loadDocsForActiveTab) are re-fetched, scoped to just that tab's own form
+ * types, whenever the active tab changes — see load()'s own comments.
  *
  * Dispatched from m.$module.$submodule.tsx for custom ===
  * "technician-form-checklist"; the route already renders <AppHeader />
@@ -28,17 +35,21 @@
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { ChevronLeft, ClipboardCheck, Loader2, ChevronDown, ExternalLink, RefreshCw, Send, Bell, Snowflake, Search } from "lucide-react";
+import { ChevronLeft, ClipboardCheck, Loader2, ChevronDown, ExternalLink, RefreshCw, Send, Bell, Snowflake, Search, X, PenLine } from "lucide-react";
 import { useAuth } from "@/lib/auth";
+import { ManagerReviewPage, SUPPORTED_TYPES as EMPLOYER_SIGN_SUPPORTED_TYPES } from "@/components/ManagerReviewPage";
 import { getCompanyUsers, getMyProfileId, setProfileFrozen, type ProfileRow } from "@/lib/supabase/users";
 import { isEligibleForTechnicianFormChecklist, isBmAndUpRole, getRoleDepartmentBreakdown } from "@/lib/roleLabels";
-import { getSignableDocumentsByTypes, createSignableDocument, type SignableDocument, type SignableDocumentType } from "@/lib/supabase/signableDocuments";
-import { SIGNABLE_DOCUMENT_REGISTRY, TECHNICIAN_FORM_TYPES, getDocumentReviewStatus, isTechnicianExemptFromForm, exemptionRowValueForToggle, pickAuthoritativeDocument } from "@/lib/signableDocumentRegistry";
+import { getSignableDocumentsByTypes, getExistingActiveDocumentTypes, createSignableDocument, updateSignableDocumentPdfUrl, confirmSignableDocument, type SignableDocument, type SignableDocumentType } from "@/lib/supabase/signableDocuments";
+import { SIGNABLE_DOCUMENT_REGISTRY, TECHNICIAN_FORM_TYPES, getDocumentReviewStatus, isTechnicianExemptFromForm, exemptionRowValueForToggle, pickAuthoritativeDocument, isNewAutomationDoc, SHARED_OLD_NEW_AUTOMATION_TYPES } from "@/lib/signableDocumentRegistry";
 import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
 import { getTechnicianFormExemptions, setTechnicianFormExemption } from "@/lib/supabase/technicianFormExemptions";
 import { logActivity } from "@/lib/supabase/hrActivityLog";
 import { getAppUrl } from "@/lib/appUrl";
 import { LOCATIONS_DATA } from "@/lib/zipCoverage";
+import { uploadW4Form } from "@/lib/firebase/storage";
+import { fillW4Pdf } from "@/lib/w4PdfFill";
+import type { W4FormData } from "@/lib/w4FormTemplate";
 
 // Same derivation ReportHRDaily.tsx's onboarding/attendance splits use for
 // "PH" vs "US" — there's no real country column, just branch membership in
@@ -60,6 +71,16 @@ interface ChecklistTabConfig {
   isEligible: (u: ProfileRow) => boolean;
   /** Plural noun used in "N technicians" / "No office staff found." messaging. */
   noun: string;
+  /**
+   * Which formSource bucket this tab's SHARED_OLD_NEW_AUTOMATION_TYPES
+   * (w4/i9/direct_deposit/w8ben) should count — "old" for the original
+   * Technician tab (only pre-New-Automation-Forms submissions), "new" for
+   * every other tab (only submissions sent through their own "New
+   * Automation Forms" flow). A form type NOT in SHARED_OLD_NEW_AUTOMATION_TYPES
+   * (the Master Agreements, Contractor Addendum, W-9) ignores this — there's
+   * no old/new split for those yet, so every submission counts regardless.
+   */
+  formSourceBucket: "old" | "new";
 }
 
 const CHECKLIST_TABS: ChecklistTabConfig[] = [
@@ -69,6 +90,7 @@ const CHECKLIST_TABS: ChecklistTabConfig[] = [
     formTypes: TECHNICIAN_FORM_TYPES,
     isEligible: (u) => isEligibleForTechnicianFormChecklist(u.role, u.extra_roles),
     noun: "technicians",
+    formSourceBucket: "old",
   },
   {
     key: "newTechnician",
@@ -76,6 +98,7 @@ const CHECKLIST_TABS: ChecklistTabConfig[] = [
     formTypes: NEW_TECHNICIAN_FORM_TYPES,
     isEligible: (u) => isEligibleForTechnicianFormChecklist(u.role, u.extra_roles),
     noun: "technicians",
+    formSourceBucket: "new",
   },
   {
     key: "officeStaffUs",
@@ -83,6 +106,7 @@ const CHECKLIST_TABS: ChecklistTabConfig[] = [
     formTypes: OFFICE_STAFF_US_FORM_TYPES,
     isEligible: (u) => !isPhBranch(u) && !isBmAndUpRole(u.role) && !isEligibleForTechnicianFormChecklist(u.role, u.extra_roles),
     noun: "office staff",
+    formSourceBucket: "new",
   },
   {
     key: "phStaff",
@@ -90,6 +114,7 @@ const CHECKLIST_TABS: ChecklistTabConfig[] = [
     formTypes: PH_STAFF_FORM_TYPES,
     isEligible: (u) => isPhBranch(u),
     noun: "PH staff",
+    formSourceBucket: "new",
   },
   {
     key: "bmAndUp",
@@ -97,6 +122,7 @@ const CHECKLIST_TABS: ChecklistTabConfig[] = [
     formTypes: BM_AND_UP_FORM_TYPES,
     isEligible: (u) => isBmAndUpRole(u.role),
     noun: "management staff",
+    formSourceBucket: "new",
   },
 ];
 
@@ -135,6 +161,65 @@ export function TechnicianFormChecklistPage() {
   const [sortMode, setSortMode] = useState<SortMode>("missing-desc");
   const [actionKey, setActionKey] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  // Set to open the "Review & Sign" popup for an "Awaiting HR review" row —
+  // shows the employee-signed PDF already on file plus an embedded
+  // ManagerReviewPage to add the employer countersignature, all without
+  // leaving this page. Only offered for types ManagerReviewPage actually
+  // supports (EMPLOYER_SIGN_SUPPORTED_TYPES) — i9's Section 2 needs real
+  // document-review fields, not just a signature, so it still points HR at
+  // Attendance Monitoring instead.
+  const [signDoc, setSignDoc] = useState<SignableDocument | null>(null);
+
+  // ── Form W-4's "Employers Only" step — no employer signature line on the
+  // form at all, just 3 text fields (name/address, first date of
+  // employment, EIN). Mirrors ReportHRDaily.tsx's handleOpenW4EmployerDialog/
+  // handleSaveW4EmployerInfo exactly (same fillW4Pdf/uploadW4Form/
+  // updateSignableDocumentPdfUrl/confirmSignableDocument calls), just
+  // reloading this tab's own documents afterward instead of
+  // loadSentW4Forms(). ──
+  const [w4EmployerDialog, setW4EmployerDialog] = useState<SignableDocument | null>(null);
+  const [w4EmployerNameAddress, setW4EmployerNameAddress] = useState("");
+  const [w4EmployerFirstDate, setW4EmployerFirstDate] = useState("");
+  const [w4EmployerEin, setW4EmployerEin] = useState("");
+  const [w4EmployerSaving, setW4EmployerSaving] = useState(false);
+  const [w4EmployerError, setW4EmployerError] = useState<string | null>(null);
+
+  const handleOpenW4EmployerDialog = (doc: SignableDocument) => {
+    setW4EmployerDialog(doc);
+    setW4EmployerNameAddress("");
+    setW4EmployerFirstDate("");
+    setW4EmployerEin("");
+    setW4EmployerError(null);
+  };
+
+  const handleSaveW4EmployerInfo = async () => {
+    if (!w4EmployerDialog) return;
+    setW4EmployerSaving(true);
+    setW4EmployerError(null);
+    try {
+      const data = w4EmployerDialog.formData as W4FormData;
+      const merged: W4FormData = {
+        ...data,
+        employerNameAndAddress: w4EmployerNameAddress,
+        employerFirstDateOfEmployment: w4EmployerFirstDate,
+        employerEin: w4EmployerEin,
+      };
+      const sigBytes = data.signatureDataUrl
+        ? new Uint8Array(await (await fetch(data.signatureDataUrl)).arrayBuffer())
+        : undefined;
+      const pdfBytes = await fillW4Pdf(merged, sigBytes);
+      const employeeName = `${data.firstNameMiddleInitial ?? ""} ${data.lastName ?? ""}`.trim();
+      const pdfUrl = await uploadW4Form(w4EmployerDialog.companyId, employeeName, new Blob([pdfBytes as unknown as BlobPart], { type: "application/pdf" }));
+      await updateSignableDocumentPdfUrl(w4EmployerDialog.id, pdfUrl, merged as unknown as Record<string, any>);
+      await confirmSignableDocument(w4EmployerDialog.id, null);
+      setW4EmployerDialog(null);
+      await loadDocsForActiveTab();
+    } catch (err) {
+      setW4EmployerError(err instanceof Error ? err.message : "Failed to save employer info.");
+    } finally {
+      setW4EmployerSaving(false);
+    }
+  };
 
   const activeConfig = useMemo(() => CHECKLIST_TABS.find((t) => t.key === activeChecklistTab) ?? CHECKLIST_TABS[0], [activeChecklistTab]);
 
@@ -190,6 +275,13 @@ export function TechnicianFormChecklistPage() {
       for (const d of docs) {
         const personId = (d.formData as Record<string, any> | undefined)?.employeeId || d.recipientId;
         if (!personId) continue;
+        // Only w4/i9/direct_deposit/w8ben are actually shared between an
+        // old and a new tab — see SHARED_OLD_NEW_AUTOMATION_TYPES's doc
+        // comment. A doc of one of those types that isn't from this tab's
+        // own bucket doesn't count toward this tab's checklist at all —
+        // without this, e.g. New Technician's W-4 row showed "done" off an
+        // old-flow W-4 submission it never actually sent.
+        if (SHARED_OLD_NEW_AUTOMATION_TYPES.has(d.documentType) && isNewAutomationDoc(d) !== (activeConfig.formSourceBucket === "new")) continue;
         const key = `${personId}|${d.documentType}`;
         const arr = byKey.get(key);
         if (arr) arr.push(d);
@@ -312,9 +404,36 @@ export function TechnicianFormChecklistPage() {
     setActionKey(key);
     setActionError(null);
     try {
+      // Guard against two HR sessions racing on the same stale "Not sent"
+      // row — e.g. one person sends this form from their own laptop right
+      // before another session (which hasn't refreshed since) clicks Send
+      // for the same person/form here too. `rows` is only as fresh as this
+      // session's last load, so re-check the LIVE database state right
+      // before creating anything rather than trusting the row that's
+      // currently on screen. Refuses rather than asking "send another
+      // anyway?" (unlike ReportHRDaily.tsx's own send handlers) — from this
+      // checklist, "Send" only ever means "this hasn't been sent yet", so a
+      // hit here means the screen was wrong, not that HR actually wants a
+      // second one.
+      const alreadySent = await getExistingActiveDocumentTypes(personId, [type]);
+      if (alreadySent.length > 0) {
+        setActionError(`${personName} already has a ${SIGNABLE_DOCUMENT_REGISTRY[type]?.label ?? type} on file (most likely just sent from another session) — refreshing to show its current status.`);
+        await loadDocsForActiveTab();
+        return;
+      }
+      // Tag with the active tab's own formSource bucket whenever it's
+      // "new" — matches ReportHRDaily.tsx's own send handlers (tag purely
+      // on which tab the send happened from, not on the type). This
+      // checklist itself only bucket-filters SHARED_OLD_NEW_AUTOMATION_TYPES
+      // types when deciding what counts as "done" (see loadDocsForActiveTab),
+      // but ReportHRDaily.tsx's own Sent History tables for w4/i9/
+      // direct_deposit still do — so a W-4 sent from here while on the New
+      // Technician tab needs the tag regardless, or it'd wrongly show up
+      // under the OLD w8ben tab's Sent History instead of newW4's.
+      const formSourceTag = activeConfig.formSourceBucket === "new" ? { formSource: "new_automation" } : {};
       const doc = await createSignableDocument({
         documentType: type,
-        formData: { employeeId: personId, employeeName: personName },
+        formData: { employeeId: personId, employeeName: personName, ...formSourceTag },
         recipientId: personId,
         recipientSlot: "employee",
         pdfUrl: "",
@@ -333,6 +452,116 @@ export function TechnicianFormChecklistPage() {
       await load();
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "Failed to send form.");
+    } finally {
+      setActionKey(null);
+    }
+  };
+
+  // "Send All Forms" — bundles every one of this tab's forms this person
+  // hasn't been sent yet (skipping N/A'd and already-sent/signed ones) into
+  // ONE /sign-bundle link and DMs it immediately — no detour through
+  // ReportHRDaily's Bulk Form Send picker for review first. Same mechanism
+  // Bulk Form Send itself uses (see handleGenerateCombinedForms there):
+  // each form still gets its own independent hr_signable_documents row
+  // created via the exact same createSignableDocument call handleSendForm
+  // above makes one at a time, so every form's status keeps tracking
+  // separately here — "the bundle" is nothing but their ids joined into one
+  // query string for delivery. load() afterward picks all of them up
+  // individually, same as any other send.
+  const handleSendAllForms = async (r: TechRow) => {
+    const outstanding = activeConfig.formTypes.filter(
+      (type) => !r.exempt.has(type) && getDocumentReviewStatus(type, r.docs.get(type)) === "not_sent"
+    );
+    if (outstanding.length === 0) return;
+    const key = `${r.profileId}|sendAll`;
+    setActionKey(key);
+    setActionError(null);
+    try {
+      // Same race guard as handleSendForm (see its own comment) — re-check
+      // the live database right before creating anything, in case another
+      // session already sent one or more of these since this session's
+      // last load.
+      const alreadyActive = await getExistingActiveDocumentTypes(r.profileId, outstanding);
+      const toCreate = outstanding.filter((type) => !alreadyActive.includes(type));
+      if (toCreate.length === 0) {
+        setActionError(`${r.name} already has all of these on file (most likely just sent from another session) — refreshing to show current status.`);
+        await loadDocsForActiveTab();
+        return;
+      }
+      // Same tag handleSendForm applies (see its own comment) — tags with
+      // the active tab's formSource bucket whenever it's "new", so a bundle
+      // sent from e.g. the New Technician tab still lands under newW4's/
+      // newW9's/etc. Sent History rather than the old shared tab's.
+      const formSourceTag = activeConfig.formSourceBucket === "new" ? { formSource: "new_automation" } : {};
+      const docs = await Promise.all(
+        toCreate.map((type) =>
+          createSignableDocument({
+            documentType: type,
+            formData: { employeeId: r.profileId, employeeName: r.name, ...formSourceTag },
+            recipientId: r.profileId,
+            recipientSlot: "employee",
+            pdfUrl: "",
+          })
+        )
+      );
+      if (myProfileId) {
+        const thread = await getOrCreateDmThread(myProfileId, r.profileId);
+        const bundleLink = `${getAppUrl()}/sign-bundle?ids=${docs.map((d) => d.id).join(",")}`;
+        await sendMessage({
+          dmThreadId: thread.id,
+          senderId: myProfileId,
+          senderName: displayName || "HR",
+          body: `📋 Please complete these ${docs.length} forms: ${bundleLink}`,
+        });
+      }
+      void logActivity({
+        action: "combined_forms_sent",
+        targetType: "employee",
+        targetId: r.profileId,
+        targetLabel: r.name,
+        details: { types: toCreate },
+      });
+      await load();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Failed to send forms.");
+    } finally {
+      setActionKey(null);
+    }
+  };
+
+  // "Remind All" — the bulk counterpart to handleRemindForm: every one of
+  // this tab's forms already sent and awaiting the employee's own signature
+  // (skipping N/A'd, not-yet-sent, and awaiting-HR/done ones) gets ONE DM
+  // with a single /sign-bundle link over their EXISTING document ids — no
+  // new hr_signable_documents rows created, same as an individual reminder
+  // just re-nudges the same doc rather than resending it.
+  const handleRemindAllForms = async (r: TechRow) => {
+    const pending = activeConfig.formTypes
+      .filter((type) => !r.exempt.has(type) && getDocumentReviewStatus(type, r.docs.get(type)) === "awaiting_employee")
+      .map((type) => r.docs.get(type))
+      .filter((doc): doc is SignableDocument => !!doc);
+    if (pending.length === 0 || !myProfileId) return;
+    const key = `${r.profileId}|remindAll`;
+    setActionKey(key);
+    setActionError(null);
+    try {
+      const thread = await getOrCreateDmThread(myProfileId, r.profileId);
+      const bundleLink = `${getAppUrl()}/sign-bundle?ids=${pending.map((d) => d.id).join(",")}`;
+      await sendMessage({
+        dmThreadId: thread.id,
+        senderId: myProfileId,
+        senderName: displayName || "HR",
+        body: `⏰ Reminder — please complete these ${pending.length} forms: ${bundleLink}`,
+      });
+      void logActivity({
+        action: "combined_forms_reminded",
+        targetType: "employee",
+        targetId: r.profileId,
+        targetLabel: r.name,
+        details: { types: pending.map((d) => d.documentType) },
+      });
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Failed to send reminder.");
     } finally {
       setActionKey(null);
     }
@@ -426,6 +655,7 @@ export function TechnicianFormChecklistPage() {
   };
 
   return (
+    <>
     <main className="max-w-[1000px] mx-auto px-6 py-8">
       <div className="flex items-center gap-3 mb-4">
         <button
@@ -595,6 +825,45 @@ export function TechnicianFormChecklistPage() {
 
                 {isOpen && (
                   <div className="border-t border-white/10 px-4 py-3">
+                    {(() => {
+                      const outstanding = activeConfig.formTypes.filter(
+                        (type) => !r.exempt.has(type) && getDocumentReviewStatus(type, r.docs.get(type)) === "not_sent"
+                      );
+                      const pending = activeConfig.formTypes.filter(
+                        (type) => !r.exempt.has(type) && getDocumentReviewStatus(type, r.docs.get(type)) === "awaiting_employee"
+                      );
+                      const remindAllBusy = actionKey === `${r.profileId}|remindAll`;
+                      const sendAllBusy = actionKey === `${r.profileId}|sendAll`;
+                      if (outstanding.length === 0 && pending.length === 0) return null;
+                      return (
+                        <div className="flex justify-end items-center gap-3 mb-2.5">
+                          {pending.length > 0 && (
+                            <button
+                              type="button"
+                              disabled={remindAllBusy}
+                              onClick={() => void handleRemindAllForms(r)}
+                              title={`Send one reminder for the ${pending.length} form${pending.length === 1 ? "" : "s"} awaiting their signature`}
+                              className="inline-flex shrink-0 items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-amber-400 hover:text-amber-300 disabled:opacity-40 disabled:cursor-not-allowed"
+                            >
+                              {remindAllBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Bell className="h-3.5 w-3.5" />}
+                              Remind All{pending.length > 0 ? ` (${pending.length})` : ""}
+                            </button>
+                          )}
+                          {outstanding.length > 0 && (
+                            <button
+                              type="button"
+                              disabled={sendAllBusy}
+                              onClick={() => void handleSendAllForms(r)}
+                              title={`Bundle the ${outstanding.length} unsent form${outstanding.length === 1 ? "" : "s"} into one link and send now`}
+                              className="inline-flex shrink-0 items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-red-400 hover:text-red-300 disabled:opacity-40 disabled:cursor-not-allowed"
+                            >
+                              {sendAllBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+                              Send All Forms ({outstanding.length})
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })()}
                     <ul className="space-y-2">
                       {activeConfig.formTypes.map((type) => {
                         const doc = r.docs.get(type);
@@ -662,9 +931,52 @@ export function TechnicianFormChecklistPage() {
                               </button>
                             )}
                             {!na && awaitingHr && (
-                              <span title="This person has signed — this form now needs HR's own review/countersignature in Attendance Monitoring." className="shrink-0 text-[10px] text-sky-400/80">
-                                Needs your review
-                              </span>
+                              type === "w4" && doc ? (
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenW4EmployerDialog(doc)}
+                                  title='Fill in the "Employers Only" box — no signature, just employer name/address, first date of employment, and EIN'
+                                  className="inline-flex shrink-0 items-center gap-1 text-xs text-sky-300 hover:text-sky-200"
+                                >
+                                  <PenLine className="h-3 w-3" /> Fill Info
+                                </button>
+                              ) : doc && EMPLOYER_SIGN_SUPPORTED_TYPES.has(type) ? (
+                                <button
+                                  type="button"
+                                  onClick={() => setSignDoc(doc)}
+                                  title="Review the signed document and add your signature here"
+                                  className="inline-flex shrink-0 items-center gap-1 text-xs text-sky-300 hover:text-sky-200"
+                                >
+                                  <PenLine className="h-3 w-3" /> Sign
+                                </button>
+                              ) : type === "i9" && doc ? (
+                                // Section 2 needs real document-review fields
+                                // (documents examined, first day employed,
+                                // business info) — not just a signature, so
+                                // there's no in-page popup for it here.
+                                // Deep-links straight to that person's
+                                // Section 2 dialog in HR Paperworks instead
+                                // of leaving HR to go find it manually — see
+                                // ReportHRDaily.tsx's restoredI9Section2Ref.
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    navigate({
+                                      to: "/m/$module/$submodule",
+                                      params: { module: "hr", submodule: "hr-paperworks" },
+                                      search: { tab: activeConfig.formSourceBucket === "new" ? "newI9" : "i9", docId: doc.id },
+                                    } as any)
+                                  }
+                                  title="Complete Section 2 in HR Paperworks"
+                                  className="inline-flex shrink-0 items-center gap-1 text-xs text-sky-300 hover:text-sky-200"
+                                >
+                                  <ExternalLink className="h-3 w-3" /> Complete Section 2
+                                </button>
+                              ) : (
+                                <span title="This person has signed — this form now needs HR's own review/countersignature in Attendance Monitoring." className="shrink-0 text-[10px] text-sky-400/80">
+                                  Needs your review
+                                </span>
+                              )
                             )}
                             {!na && reviewStatus === "not_sent" && (
                               <button
@@ -702,5 +1014,83 @@ export function TechnicianFormChecklistPage() {
         </div>
       )}
     </main>
+
+    {/* "Review & Sign" popup — the employee-signed PDF already on file
+        (same one the "view" link opens in a new tab) plus an embedded
+        ManagerReviewPage so HR can add the employer countersignature right
+        here, no navigation to Attendance Monitoring needed. */}
+    {signDoc && (
+      <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => { setSignDoc(null); void loadDocsForActiveTab(); }}>
+        <div className="bg-slate-900 border border-white/10 rounded-lg shadow-2xl w-full max-w-2xl max-h-[92vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+          <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between gap-3 shrink-0">
+            <p className="text-sm font-semibold flex items-center gap-1.5"><PenLine className="h-4 w-4" /> Review &amp; Sign</p>
+            <button
+              type="button"
+              onClick={() => { setSignDoc(null); void loadDocsForActiveTab(); }}
+              className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-white/5"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          <div className="flex-1 overflow-y-auto p-4">
+            {signDoc.pdfUrl && (
+              <div className="mb-4 rounded-md overflow-hidden border border-white/10 bg-white/5">
+                <iframe src={signDoc.pdfUrl} title="Document on file" className="w-full border-0" style={{ height: 380 }} />
+              </div>
+            )}
+            <ManagerReviewPage docId={signDoc.id} embedded onSigned={() => void loadDocsForActiveTab()} />
+          </div>
+        </div>
+      </div>
+    )}
+
+    {/* Form W-4 "Fill Employer Info" popup — no signature on this form,
+        just the 3 "Employers Only" text fields. Same fields/labels/flow as
+        ReportHRDaily.tsx's own w4EmployerDialog. */}
+    {w4EmployerDialog && (
+      <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+        <div className="bg-slate-800 border border-white/10 rounded-lg p-6 max-w-sm w-full">
+          <h3 className="text-lg font-bold mb-2">Fill Employer Info</h3>
+          <p className="text-sm text-muted-foreground mb-4">
+            Completes the "Employers Only" box on{" "}
+            <span className="font-semibold text-white">
+              {(() => {
+                const data = w4EmployerDialog.formData as Partial<W4FormData>;
+                return `${data.firstNameMiddleInitial ?? ""} ${data.lastName ?? ""}`.trim();
+              })()}
+            </span>
+            's submitted W-4.
+          </p>
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Employer's name and address</label>
+              <textarea value={w4EmployerNameAddress} onChange={(e) => setW4EmployerNameAddress(e.target.value)} rows={2} className="glass-input text-sm py-1.5 px-3 rounded-md resize-y" />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">First date of employment</label>
+              <input type="date" value={w4EmployerFirstDate} onChange={(e) => setW4EmployerFirstDate(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Employer identification number (EIN)</label>
+              <input type="text" placeholder="XX-XXXXXXX" value={w4EmployerEin} onChange={(e) => setW4EmployerEin(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+            </div>
+          </div>
+          {w4EmployerError && (
+            <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2 mt-3">{w4EmployerError}</p>
+          )}
+          <div className="flex gap-2 justify-end mt-4">
+            <button onClick={() => setW4EmployerDialog(null)} className="btn text-sm px-4 py-2">Cancel</button>
+            <button
+              onClick={handleSaveW4EmployerInfo}
+              disabled={w4EmployerSaving}
+              className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+            >
+              {w4EmployerSaving ? "Saving…" : "Save"}
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+    </>
   );
 }

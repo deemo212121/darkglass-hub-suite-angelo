@@ -310,16 +310,21 @@ export function isSubmoduleAllowed(role: string | null | undefined, moduleSlug: 
 /**
  * A trainee (profiles.employment_type = "trainee" — Master List's
  * Employment Status column, migration 0152) sees only their own Employee
- * Self-Service dashboard, regardless of their actual role. This is a pure
- * access restriction layered on top of whatever role/permissions they
- * already hold — role and extra_roles are never touched, so the moment HR
- * flips employment_type back to "regular" full access resumes on its own,
- * nothing to manually restore. Independent of (and combines via AND with)
- * the CSR restriction above — same "restrict-to-allowlist" shape, just a
- * narrower allow-list (one submodule, not a whole department's toolset).
+ * Self-Service dashboard plus Messages, regardless of their actual role.
+ * This is a pure access restriction layered on top of whatever role/
+ * permissions they already hold — role and extra_roles are never touched,
+ * so the moment HR flips employment_type back to "regular" full access
+ * resumes on its own, nothing to manually restore. Independent of (and
+ * combines via AND with) the CSR restriction above — same
+ * "restrict-to-allowlist" shape, just a narrower allow-list.
+ *
+ * Messages ("admin"/"internal-message-support") is in this allow-list so a
+ * trainee can actually open and sign a form sent to them there (HR's send
+ * flows DM the fill link) — without it, a trainee could never even see the
+ * DM containing a form they're required to sign, let alone open it.
  */
-const TRAINEE_ALLOWED_MODULES = new Set(["dashboard"]);
-const TRAINEE_ALLOWED_DASHBOARD_SUBMODULES = new Set(["employee-self-service"]);
+const TRAINEE_ALLOWED_MODULES = new Set(["dashboard", "admin"]);
+const TRAINEE_ALLOWED_SUBMODULES = new Set(["employee-self-service", "internal-message-support"]);
 
 /** Whether a trainee may open this module at all. Non-trainees always pass. */
 export function isModuleAllowedForTrainee(isTrainee: boolean, moduleSlug: string): boolean {
@@ -331,7 +336,7 @@ export function isModuleAllowedForTrainee(isTrainee: boolean, moduleSlug: string
 export function isSubmoduleAllowedForTrainee(isTrainee: boolean, moduleSlug: string, submoduleSlug: string): boolean {
   if (!isTrainee) return true;
   if (!isModuleAllowedForTrainee(isTrainee, moduleSlug)) return false;
-  return TRAINEE_ALLOWED_DASHBOARD_SUBMODULES.has(submoduleSlug);
+  return TRAINEE_ALLOWED_SUBMODULES.has(submoduleSlug);
 }
 
 /**

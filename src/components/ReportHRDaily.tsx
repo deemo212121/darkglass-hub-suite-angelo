@@ -89,7 +89,7 @@ import {
   type SignableDocumentType,
   type SignatureSlot as DocSignatureSlot,
 } from "@/lib/supabase/signableDocuments";
-import { SIGNABLE_DOCUMENT_REGISTRY } from "@/lib/signableDocumentRegistry";
+import { SIGNABLE_DOCUMENT_REGISTRY, isNewAutomationDoc } from "@/lib/signableDocumentRegistry";
 import { getCandidateRequiredFormTypes, setCandidateRequiredFormTypes } from "@/lib/supabase/candidateRequiredForms";
 import { buildWarningFormBodyMarkup, buildWarnNoteText, warningFormStyles, type WarningFormData, type SignatureSlot } from "@/lib/warningFormTemplate";
 import { buildNdaFormPages, ndaFormStyles, type NdaFormData } from "@/lib/ndaFormTemplate";
@@ -185,27 +185,10 @@ function isAwaitingEmployerStep(doc: { status: string; recipientSlot: string }):
   return (doc.status === "signed" && doc.recipientSlot === "employee") || (doc.status === "pending_signature" && doc.recipientSlot === "hr_staff");
 }
 
-/**
- * Form W-4/I-9/Direct Deposit Authorization/W-8BEN each have exactly one
- * underlying document type and Sent History list, reused by BOTH the
- * legacy "Automated Forms" group's own tab and the "New Automation Forms"
- * group's tabs (New Technician/New Office/PH Staff) — rather than
- * duplicating four already-working send/sign flows per group. Without a
- * way to tell them apart, every send showed up in every group's Sent
- * History table, which reads as "old forms leaking into new" (and vice
- * versa) — the two are supposed to stay separate lists. `formSource` is
- * stamped into formData at send time (see handleSendW4/handleSendI9/
- * handleSendDirectDeposit/handleSendW8ben's `activeTab === "new…"` check)
- * and survives every later formData rewrite, since every fill page seeds
- * its form state from the existing formData and spreads that whole state
- * back out on submit (untyped extra keys ride along even though the
- * page's own FormData type doesn't declare them) — see e.g.
- * FillI9Page.tsx's `setForm((prev) => ({ ...prev, ...existing }))` /
- * `finalData = { ...form, ... }`.
- */
-function isNewAutomationDoc(doc: { formData: Record<string, any> }): boolean {
-  return doc.formData?.formSource === "new_automation";
-}
+// isNewAutomationDoc now lives in signableDocumentRegistry.ts (imported
+// below) — TechnicianFormChecklistPage.tsx needs the same formSource-bucket
+// logic for its own new/old checklist tabs, so it moved to the shared
+// registry file instead of staying a local-only helper here.
 
 // Certificate of Employment's editable body — the prose paragraphs between
 // the greeting and the signature block (see companySettings.ts's
@@ -995,7 +978,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // Reviews, the Approved log, the department trend chart, and the full
   // Employee Directory all on top of each other, forcing a long scroll to
   // reach anything below Hiring.
-  const [activeTab, setActiveTab] = useState<"hiring" | "warnings" | "masterList" | "leaders" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "promotionForm" | "actionPlanForm" | "terminationForm" | "employeeRequestManager" | "w8ben" | "i9" | "wageAck" | "carIqAgreement" | "vehicleAgreement" | "vehicleUseAgreement" | "employeeConfidentiality" | "mealRestBreak" | "ptoAck" | "partsResponsibility" | "mileageFuel" | "locationConsent" | "damage" | "contractorData" | "contractorDataUs" | "directDeposit" | "substanceScreening" | "flashTechnicianTravel" | "contractorAddendum" | "combineForms" | "employerQueue" | "ndaForm" | "calendar" | "interviewCalendar" | "masterW2Agreement" | "newW4" | "masterW2OfficeAgreement" | "newW8ben" | "masterPhContractorAgreement" | "newI9" | "newDirectDeposit" | "newCombineForms" | "newOnboardingDocuments">(paperworksOnly ? "combineForms" : "hiring");
+  const [activeTab, setActiveTab] = useState<"hiring" | "warnings" | "masterList" | "leaders" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "promotionForm" | "actionPlanForm" | "terminationForm" | "employeeRequestManager" | "w8ben" | "i9" | "wageAck" | "carIqAgreement" | "vehicleAgreement" | "vehicleUseAgreement" | "employeeConfidentiality" | "mealRestBreak" | "ptoAck" | "partsResponsibility" | "mileageFuel" | "locationConsent" | "damage" | "contractorData" | "contractorDataUs" | "directDeposit" | "substanceScreening" | "flashTechnicianTravel" | "contractorAddendum" | "combineForms" | "employerQueue" | "ndaForm" | "calendar" | "interviewCalendar" | "masterW2Agreement" | "newW4" | "masterW2OfficeAgreement" | "newW8ben" | "masterPhContractorAgreement" | "newI9" | "newDirectDeposit" | "newCombineForms" | "newOnboardingDocuments" | "newW9" | "newContractorAddendum">(paperworksOnly ? "combineForms" : "hiring");
   const [openCategory, setOpenCategory] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   // Which floating-sidebar section headers (Automated Forms/Generate
@@ -1017,9 +1000,9 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // (initialHrSearchRef) — after that, this component's own state is the
   // source of truth and pushes into the URL, not the other way around. ──
   const navigate = useNavigate();
-  const hrSearchParams = (useSearch({ strict: false }) as { tab?: string; submissionId?: string; profileId?: string }) ?? {};
+  const hrSearchParams = (useSearch({ strict: false }) as { tab?: string; submissionId?: string; profileId?: string; docId?: string }) ?? {};
   const initialHrSearchRef = useRef(hrSearchParams);
-  const VALID_HR_TABS = ["hiring", "warnings", "masterList", "leaders", "jotform", "jotformDocuments", "customForms", "onboarding", "hiringReports", "report", "coe", "warningForm", "promotionForm", "actionPlanForm", "terminationForm", "employeeRequestManager", "w8ben", "i9", "wageAck", "carIqAgreement", "vehicleAgreement", "vehicleUseAgreement", "employeeConfidentiality", "mealRestBreak", "ptoAck", "partsResponsibility", "mileageFuel", "locationConsent", "damage", "contractorData", "contractorDataUs", "directDeposit", "substanceScreening", "flashTechnicianTravel", "combineForms", "employerQueue"] as const;
+  const VALID_HR_TABS = ["hiring", "warnings", "masterList", "leaders", "jotform", "jotformDocuments", "customForms", "onboarding", "hiringReports", "report", "coe", "warningForm", "promotionForm", "actionPlanForm", "terminationForm", "employeeRequestManager", "w8ben", "i9", "newI9", "wageAck", "carIqAgreement", "vehicleAgreement", "vehicleUseAgreement", "employeeConfidentiality", "mealRestBreak", "ptoAck", "partsResponsibility", "mileageFuel", "locationConsent", "damage", "contractorData", "contractorDataUs", "directDeposit", "substanceScreening", "flashTechnicianTravel", "combineForms", "newCombineForms", "employerQueue"] as const;
   useEffect(() => {
     const tab = initialHrSearchRef.current.tab;
     if (tab && (VALID_HR_TABS as readonly string[]).includes(tab)) setActiveTab(tab as typeof activeTab);
@@ -3208,6 +3191,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   useEffect(() => {
     if (activeTab === "newW4") setW8FormType("w4");
     if (activeTab === "newW8ben") setW8FormType("w8ben");
+    if (activeTab === "newW9") setW8FormType("w9");
   }, [activeTab]);
   const [sentW4Forms, setSentW4Forms] = useState<SignableDocument[]>([]);
   const loadSentW4Forms = async () => {
@@ -3449,8 +3433,14 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
   useEffect(() => {
-    if (activeTab === "w8ben" || activeTab === "jotformDocuments" || activeTab === "combineForms") void loadSentW9Forms();
+    if (activeTab === "w8ben" || activeTab === "newW9" || activeTab === "jotformDocuments" || activeTab === "combineForms") void loadSentW9Forms();
   }, [activeTab]);
+  // Which bucket of sentW9Forms the CURRENTLY OPEN tab should show — see
+  // isNewAutomationDoc's doc comment.
+  const visibleW9Forms = useMemo(
+    () => sentW9Forms.filter((d) => (activeTab === "newW9" ? isNewAutomationDoc(d) : !isNewAutomationDoc(d))),
+    [sentW9Forms, activeTab]
+  );
 
   const [w9RecipientId, setW9RecipientId] = useState("");
   const [w9RecipientSearch, setW9RecipientSearch] = useState("");
@@ -3532,7 +3522,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
       const doc = await createSignableDocument({
         documentType: "w9",
-        formData: { employeeId: recipient.id } as unknown as Record<string, any>,
+        formData: { employeeId: recipient.id, ...(activeTab === "newW9" ? { formSource: "new_automation" } : {}) } as unknown as Record<string, any>,
         recipientId: w9RecipientId,
         recipientSlot: "employee",
         pdfUrl: "",
@@ -3570,7 +3560,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       const name = w9ExternalName.trim() || "External Recipient";
       const doc = await createSignableDocument({
         documentType: "w9",
-        formData: { employeeId: "", name } as unknown as Record<string, any>,
+        formData: { employeeId: "", name, ...(activeTab === "newW9" ? { formSource: "new_automation" } : {}) } as unknown as Record<string, any>,
         recipientName: name,
         recipientSlot: "employee",
         pdfUrl: "",
@@ -7533,8 +7523,14 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
   useEffect(() => {
-    if (activeTab === "contractorAddendum") void loadSentContractorAddendumForms();
+    if (activeTab === "contractorAddendum" || activeTab === "newContractorAddendum") void loadSentContractorAddendumForms();
   }, [activeTab]);
+  // Which bucket of sentContractorAddendumForms the CURRENTLY OPEN tab
+  // should show — see isNewAutomationDoc's doc comment.
+  const visibleContractorAddendumForms = useMemo(
+    () => sentContractorAddendumForms.filter((d) => (activeTab === "newContractorAddendum" ? isNewAutomationDoc(d) : !isNewAutomationDoc(d))),
+    [sentContractorAddendumForms, activeTab]
+  );
 
   const [contractorAddendumRecipientId, setContractorAddendumRecipientId] = useState("");
   const [contractorAddendumRecipientSearch, setContractorAddendumRecipientSearch] = useState("");
@@ -7608,7 +7604,12 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
       const doc = await createSignableDocument({
         documentType: "contractor_addendum",
-        formData: { ...blankContractorAddendumData(), employeeId: recipient.id, signerNames: { ...CONTRACTOR_ADDENDUM_DEFAULT_SIGNER_NAMES, employee: recipient.name } } as unknown as Record<string, any>,
+        formData: {
+          ...blankContractorAddendumData(),
+          employeeId: recipient.id,
+          signerNames: { ...CONTRACTOR_ADDENDUM_DEFAULT_SIGNER_NAMES, employee: recipient.name },
+          ...(activeTab === "newContractorAddendum" ? { formSource: "new_automation" } : {}),
+        } as unknown as Record<string, any>,
         recipientId: contractorAddendumRecipientId,
         recipientSlot: "employee",
         pdfUrl: "",
@@ -7641,7 +7642,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       const name = contractorAddendumExternalName.trim() || "External Recipient";
       const doc = await createSignableDocument({
         documentType: "contractor_addendum",
-        formData: { ...blankContractorAddendumData(), signerNames: { ...CONTRACTOR_ADDENDUM_DEFAULT_SIGNER_NAMES, employee: name } } as unknown as Record<string, any>,
+        formData: {
+          ...blankContractorAddendumData(),
+          signerNames: { ...CONTRACTOR_ADDENDUM_DEFAULT_SIGNER_NAMES, employee: name },
+          ...(activeTab === "newContractorAddendum" ? { formSource: "new_automation" } : {}),
+        } as unknown as Record<string, any>,
         recipientName: name,
         recipientSlot: "employee",
         pdfUrl: "",
@@ -9680,6 +9685,27 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     setI9Section2Error(null);
     i9Section2SigPad.clear();
   };
+
+  // Restores a specific I-9's Section 2 dialog from the URL's ?docId= — how
+  // the Staff Form Checklist's "Complete Section 2" link lands HR directly
+  // on that one person's dialog instead of just the tab, since Section 2
+  // needs real document-review fields this page has and the checklist
+  // deliberately doesn't duplicate. Same once-only-after-data-loads guard
+  // as the onboarding-profile restore, gated on visibleI9Forms (the
+  // correctly old/new-bucketed list for whichever of "i9"/"newI9" the link
+  // also switched to) actually containing a match — an empty first fetch
+  // shouldn't permanently give up before the real list arrives.
+  const restoredI9Section2Ref = useRef(false);
+  useEffect(() => {
+    if (restoredI9Section2Ref.current) return;
+    const docId = initialHrSearchRef.current.docId;
+    if (!docId || visibleI9Forms.length === 0) return;
+    const match = visibleI9Forms.find((d) => d.id === docId);
+    if (!match) return;
+    restoredI9Section2Ref.current = true;
+    handleOpenI9Section2(match);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visibleI9Forms]);
 
   const handleSaveI9Section2 = async () => {
     if (!i9Section2Dialog || !uid) return;
@@ -12172,9 +12198,15 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
   // Branch Managers run the final interview and pick a candidate, but HR
   // finalizes the actual hire.
+  // "Phone Screening"/"Selected"/"Rejected" are no longer offered as
+  // choices per the user's explicit ask — a candidate already sitting in
+  // one of those statuses still shows it via the (!candidateStatusOptions.
+  // includes(c.status)) fallback option just below, so nothing existing
+  // silently loses its label; they just can't be picked again going
+  // forward.
   const candidateStatusOptions = (isHrOrAdmin
-    ? ["applied", "phone_screening", "interviewing", "selected", "training", "hired", "rejected", "withdrawn", "cancelled"]
-    : ["phone_screening", "interviewing", "selected", "training", "rejected", "withdrawn", "cancelled"]) as CandidateStatus[];
+    ? ["applied", "interviewing", "training", "hired", "withdrawn", "cancelled"]
+    : ["interviewing", "training", "withdrawn", "cancelled"]) as CandidateStatus[];
 
   // ── Employee status handlers (now real — persists to employee_info + is_active) ──
   const handleUpdateEmployeeStatus = (id: string, newStatus: EmploymentStatus) => {
@@ -13541,20 +13573,16 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
   // "New Automation Forms"'s management-tier column — Branch Manager/Senior
   // Branch Manager/Technical Director/Technical Assistant Director forms.
-  // Direct Deposit reuses "newDirectDeposit" (not the old group's plain
-  // "directDeposit") so it lands in the same new/old-separated bucket as
-  // every other New Automation Forms column — see isNewAutomationDoc's doc
-  // comment. Contractor Addendum reuses its one existing tab/Sent History
-  // list as-is (no new/old split for it yet — its multi-signer "Send to
-  // Next Signer" chain is a bigger change than this pass covers). "w9"
-  // isn't a real tab of its own — clicking it jumps straight into the
-  // combined W-8/9/4/4R tab with w8FormType pre-set to "w9" (see
-  // goToTab/renderSidebarTabButton/renderDropdownTabButton's special case
-  // below) so Form W-9 is reachable directly from here instead of only via
-  // that picker.
+  // All three reuse "new…"-prefixed keys distinct from the old group's own
+  // (plain "directDeposit"/"contractorAddendum"/the shared "w8ben" tab's W-9
+  // sub-picker) so each lands in the same new/old-separated bucket as every
+  // other New Automation Forms column — see isNewAutomationDoc's doc
+  // comment. "newW9" pins w8FormType to "w9" the same way "newW4"/"newW8ben"
+  // already pin their own sub-type (see the useEffect right after
+  // w8FormType's declaration) rather than needing its own full send flow.
   const newAutomationFormsManagementTabs = [
-    { key: "contractorAddendum", label: "Master Independent Contractor Subcontractor Agreement Addendum", count: 0, icon: FileText },
-    { key: "w9", label: "Form W-9", count: 0, icon: Landmark },
+    { key: "newContractorAddendum", label: "Master Independent Contractor Subcontractor Agreement Addendum", count: 0, icon: FileText },
+    { key: "newW9", label: "Form W-9", count: 0, icon: Landmark },
     { key: "newDirectDeposit", label: "Direct Deposit Authorization", count: 0, icon: FileCheck },
   ] as const;
 
@@ -13671,10 +13699,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const wideSidebarGroupExpanded = tabGroups.some((s) => s.columns && !collapsedSidebarGroups.has(s.group));
   const sidebarPanelWidthCls = wideSidebarGroupExpanded ? "w-[560px]" : "w-72";
 
-  // "w9" is a shortcut key, not a real tab — it jumps into the combined
-  // W-8/9/4/4R tab with that sub-picker pre-set to W-9, so Form W-9 is a
-  // one-click target from the "BM, SBS, Tech Director, Tech Assistant
-  // Director Forms" column instead of only reachable via the picker itself.
   const goToTab = (key: string) => {
     // Bulk Form Send's old/new tabs share one selectedFormTypes Set —
     // clear it on manual navigation into either so a hidden selection from
@@ -13683,16 +13707,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     // "Send All Selected" bridge, which sets its own preselection via
     // setActiveTab directly, not through this button.
     if (key === "combineForms" || key === "newCombineForms") setSelectedFormTypes(new Set());
-    if (key === "w9") {
-      setActiveTab("w8ben");
-      setW8FormType("w9");
-    } else {
-      setActiveTab(key as typeof activeTab);
-    }
+    setActiveTab(key as typeof activeTab);
   };
 
   const renderSidebarTabButton = (tab: NavTabDef) => {
-    const active = activeTab === tab.key || (tab.key === "w9" && activeTab === "w8ben" && w8FormType === "w9");
+    const active = activeTab === tab.key;
     const urgent = URGENT_AUTOMATED_FORM_TAB_KEYS.has(tab.key);
     return (
       <button
@@ -13721,7 +13740,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   };
 
   const renderDropdownTabButton = (tab: NavTabDef) => {
-    const active = activeTab === tab.key || (tab.key === "w9" && activeTab === "w8ben" && w8FormType === "w9");
+    const active = activeTab === tab.key;
     const urgent = URGENT_AUTOMATED_FORM_TAB_KEYS.has(tab.key);
     return (
       <button
@@ -13742,13 +13761,18 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
   return (
     <div className="min-h-screen flex flex-col">
-      {/* ── Floating sidebar nav — hover the left edge to open, same as the ticket page's "Sections" tab; no click needed ── */}
+      {/* ── Floating sidebar nav — hover the "Sections" tab itself to open
+          (not just the left edge generally), no click needed. onMouseEnter
+          lives on the tab pill alone so brushing past the edge elsewhere
+          doesn't trigger it; onMouseLeave stays on the outer container,
+          which already resizes to match the open panel's width, so moving
+          off the expanded panel is what closes it. ── */}
       <div
         className={`fixed left-0 top-0 bottom-0 z-40 transition-[width] duration-150 ${sidebarOpen ? sidebarPanelWidthCls : "w-8"}`}
-        onMouseEnter={() => setSidebarOpen(true)}
         onMouseLeave={() => setSidebarOpen(false)}
       >
         <div
+          onMouseEnter={() => setSidebarOpen(true)}
           className={`absolute left-1 top-1/2 -translate-y-1/2 flex items-center gap-0.5 rounded-md border border-blue-400/40 bg-blue-500/20 text-blue-200 px-1 py-2 shadow-md shadow-blue-900/30 select-none transition-opacity ${sidebarOpen ? "opacity-0 pointer-events-none" : "opacity-100"}`}
         >
           <ChevronRight className="h-3 w-3" />
@@ -13997,9 +14021,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       <div className="mb-4 border-b border-white/10 pb-3 relative z-30">
         <div className="flex flex-wrap gap-2">
           {tabGroups.map((section) => {
-            const activeInGroup = section.tabs.some(
-              (t) => t.key === activeTab || (t.key === "w9" && activeTab === "w8ben" && w8FormType === "w9")
-            );
+            const activeInGroup = section.tabs.some((t) => t.key === activeTab);
             const isOpen = openCategory === section.group;
             // A single-tab category (e.g. Generate Reports) has nothing to
             // expand into — it IS the tab, so clicking it navigates directly
@@ -18759,7 +18781,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       </>
       )}
 
-      {(activeTab === "w8ben" || activeTab === "newW4" || activeTab === "newW8ben") && (
+      {(activeTab === "w8ben" || activeTab === "newW4" || activeTab === "newW8ben" || activeTab === "newW9") && (
       <>
       {activeTab === "w8ben" && (
       <div className="flex gap-2 mt-4">
@@ -19328,10 +19350,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               </tr>
             </thead>
             <tbody>
-              {sentW9Forms.length === 0 ? (
+              {visibleW9Forms.length === 0 ? (
                 <tr><td colSpan={5} className="px-4 py-8 text-center text-muted-foreground text-sm">No W-9 requests sent yet.</td></tr>
               ) : (
-                sentW9Forms.map((doc) => {
+                visibleW9Forms.map((doc) => {
                   const data = doc.formData as Partial<W9FormData>;
                   const recipient = employees.find((e) => e.id === doc.recipientId);
                   const busy = w9ActionBusyId === doc.id;
@@ -23123,7 +23145,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       </>
       )}
 
-      {activeTab === "contractorAddendum" && (
+      {(activeTab === "contractorAddendum" || activeTab === "newContractorAddendum") && (
       <>
       <div className="panel p-0 overflow-visible mt-4 relative z-20">
         <div className="px-4 py-4 border-b border-white/10">
@@ -23255,10 +23277,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               </tr>
             </thead>
             <tbody>
-              {sentContractorAddendumForms.length === 0 ? (
+              {visibleContractorAddendumForms.length === 0 ? (
                 <tr><td colSpan={5} className="px-4 py-8 text-center text-muted-foreground text-sm">No requests sent yet.</td></tr>
               ) : (
-                sentContractorAddendumForms.map((doc) => {
+                visibleContractorAddendumForms.map((doc) => {
                   const fd = doc.formData as ContractorAddendumFormData;
                   const recipient = employees.find((e) => e.id === doc.recipientId);
                   const busy = contractorAddendumActionBusyId === doc.id;
