@@ -1378,6 +1378,33 @@ export async function getLatestVisitTechnicianByTicketIds(
 }
 
 /**
+ * Every (ticket_id, second_technician) pair on record company-wide — the
+ * "2 Man Job"/Two Tech assist relationship, which only ever exists as a
+ * Visit Log entry's second_technician field (there's no ticket-level
+ * second-technician column at all, unlike the primary `tickets.technician`).
+ * Raw, unmatched rows: the caller applies its own name-matching (e.g.
+ * MobileTechApp.tsx's tolerant technician-name matcher) to find which of
+ * these belong to a given technician, so a second technician's assigned
+ * ticket and route can include jobs they're only assisting on, not just
+ * ones where they're the primary tech.
+ */
+export async function getSecondTechnicianAssignments(): Promise<
+  { ticketId: string; secondTechnician: string }[]
+> {
+  const { data, error } = await supabase
+    .from("visits")
+    .select("ticket_id, second_technician")
+    .not("second_technician", "is", null);
+  if (error) {
+    console.error("getSecondTechnicianAssignments error:", error.message);
+    return [];
+  }
+  return (data ?? [])
+    .map((r: any) => ({ ticketId: r.ticket_id as string, secondTechnician: String(r.second_technician ?? "").trim() }))
+    .filter((r) => r.ticketId && r.secondTechnician);
+}
+
+/**
  * Bulk-fetch the latest Visit Log Triage Note for a set of tickets — used
  * by the Ticket List's Triage Notes column. Same shape/rationale as
  * `getLatestVisitTechnicianByTicketIds` right above: one query for the

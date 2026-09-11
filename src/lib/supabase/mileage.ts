@@ -251,6 +251,59 @@ export async function setMileageEntryPayrollExcluded(
     })
     .eq("id", id);
   if (error) throw new Error(error.message);
+  await reassignHomeLegForDay(id).catch((err) => console.error("reassignHomeLegForDay failed:", err));
+}
+
+/**
+ * Keeps a day's drive-home leg (migration 0221's home_leg_mileage) attributed
+ * to whichever ticket is currently the LAST non-excluded stop, called after
+ * every manual On Hold toggle (setMileageEntryPayrollExcluded above — NOT
+ * the automatic no-photos hold, which means "not yet verified," not "this
+ * wasn't really a stop"). A technician physically checking in/out on a
+ * ticket that Finance then decides not to pay for (e.g. it turned out to be
+ * a reschedule) shouldn't also get credited with driving home FROM there if
+ * a real, still-counted ticket comes right before it — the drive home
+ * belongs on whichever ticket Finance still recognizes as the actual last
+ * stop. Moves ONLY the home_leg_mileage value between rows — every ticket's
+ * own leg_mileage (including the excluded one's) stays exactly as computed,
+ * since the exclusion doesn't erase the drive itself, only Finance's
+ * willingness to pay for that one ticket. Self-correcting either direction:
+ * excluding the current holder moves the leg backward to the next real
+ * stop; releasing a hold can move it forward again if that ticket is once
+ * more the last non-excluded one. No-ops if this day's stop order was never
+ * confirmed (route_order still null) — nothing to reassign against without
+ * a real sequence.
+ */
+async function reassignHomeLegForDay(toggledEntryId: string): Promise<void> {
+  const { data: toggled, error: toggledErr } = await supabase
+    .from("mileage_entries")
+    .select("work_date, profile_id, technician_name")
+    .eq("id", toggledEntryId)
+    .maybeSingle();
+  if (toggledErr || !toggled?.work_date) return;
+
+  let query = supabase
+    .from("mileage_entries")
+    .select("id, route_order, home_leg_mileage, payroll_excluded")
+    .eq("source", "auto")
+    .eq("work_date", toggled.work_date)
+    .is("deleted_at", null);
+  query = toggled.profile_id ? query.eq("profile_id", toggled.profile_id) : query.eq("technician_name", toggled.technician_name);
+  const { data: dayRows, error: dayErr } = await query;
+  if (dayErr || !dayRows || dayRows.length === 0) return;
+
+  const ordered = dayRows.filter((r) => r.route_order != null).sort((a, b) => (a.route_order as number) - (b.route_order as number));
+  if (ordered.length === 0) return;
+
+  const currentHolder = dayRows.find((r) => r.home_leg_mileage != null);
+  const homeLegValue = currentHolder?.home_leg_mileage;
+  if (homeLegValue == null) return;
+
+  const newHolder = [...ordered].reverse().find((r) => !r.payroll_excluded);
+  if (!newHolder || newHolder.id === currentHolder?.id) return;
+
+  await supabase.from("mileage_entries").update({ home_leg_mileage: null }).eq("id", currentHolder!.id);
+  await supabase.from("mileage_entries").update({ home_leg_mileage: homeLegValue }).eq("id", newHolder.id);
 }
 
 /**
@@ -793,13 +846,45 @@ async function syncMileageFromTicketsInner(
     await softDeleteMileageEntry(existing.id, reschedule.reason, reschedule.profileId, reschedule.createdByName);
   }
 
+  // A ticket whose scheduled day has already fully passed with no real
+  // on-site Arrived stamp at all (see TicketAttendanceTab's identical
+  // dayHasPassed/didNotGo condition) — the tech never actually went, so
+  // (unlike an open/cancelled ticket still ahead of or on its scheduled
+  // day, which stays a normal route waypoint below) this involved NO real
+  // drive and must not become one either. Previously every assigned ticket
+  // was treated as a real stop regardless of status, which let a
+  // permanently-missed ticket get chained into that day's route — wrongly
+  // contributing its own leg distance (or, worse, absorbing the day's
+  // drive-home leg if it happened to land last) even though nobody ever
+  // drove there. Confirmed live: A'Dejaun Tyson's 2026-09-09 route.
+  const todayISO = new Date().toISOString().slice(0, 10);
+  const isPermanentlyMissed = (t: any): boolean => !t.onsite_arrived_at && t.schedule_date && t.schedule_date < todayISO;
+
   // Every ticket with a technician assigned and an actual date to log the
-  // drive under — status doesn't matter, an open/cancelled ticket still
-  // involved a real drive. Rescheduled tickets are dropped here, before any
-  // grouping/route math, so they never become a route waypoint.
+  // drive under — status doesn't matter otherwise, an open/cancelled ticket
+  // still involved a real drive. Rescheduled and permanently-missed tickets
+  // are dropped here, before any grouping/route math, so neither ever
+  // becomes a route waypoint.
   const allAssignedTickets = (ticketRows ?? []).filter(
-    (t: any) => String(t.technician || "").trim() && t.schedule_date && !rescheduledByKey.has(`${t.id}|${t.schedule_date}`)
+    (t: any) =>
+      String(t.technician || "").trim() &&
+      t.schedule_date &&
+      !rescheduledByKey.has(`${t.id}|${t.schedule_date}`) &&
+      !isPermanentlyMissed(t)
   );
+
+  // A permanently-missed ticket that already has a real (non-deleted)
+  // mileage_entries row from before this exclusion existed is now stale for
+  // the same reason a just-rescheduled ticket's row is (see the reschedule
+  // loop above) — soft-delete it too, attributed to whoever's system-wide
+  // "Auto-sync" already creates these rather than a specific person (there's
+  // no human action to attribute this one to).
+  for (const t of (ticketRows ?? []) as any[]) {
+    if (!isPermanentlyMissed(t)) continue;
+    const existing = existingByTicketId.get(t.id);
+    if (!existing || existing.deletedAt) continue;
+    await softDeleteMileageEntry(existing.id, "Never checked in — scheduled day passed with no on-site arrival.", null, "Auto-sync");
+  }
 
   // Anyone whose tickets carry a technician name that isn't a known
   // technician, even after trim/lowercase — still synced below (as an
@@ -1102,8 +1187,20 @@ export async function syncMileageForTicketDay(rawTechnicianName: string, schedul
     if (rescheduleErr) console.error("syncMileageForTicketDay: failed to load reschedules:", rescheduleErr.message);
 
     const rescheduledTicketIds = new Set((rescheduleRows ?? []).map((r: any) => r.ticket_id as string));
+    // Same permanently-missed exclusion as the batch scan (see
+    // syncMileageFromTicketsInner) — a sibling ticket in this technician's
+    // day that never got a real Arrived stamp and whose scheduled day has
+    // already passed involved no real drive, so it must not become a route
+    // waypoint here either. The ticket that actually triggered this call
+    // always has a fresh onsite_arrived_at (it just got checked into), so
+    // it's never excluded by this.
+    const todayISO = new Date().toISOString().slice(0, 10);
+    const isPermanentlyMissed = (t: any): boolean => !t.onsite_arrived_at && t.schedule_date && t.schedule_date < todayISO;
     const groupTickets = (dayTickets ?? []).filter(
-      (t: any) => String(t.technician || "").trim().toLowerCase() === trimmedName.toLowerCase() && !rescheduledTicketIds.has(t.id)
+      (t: any) =>
+        String(t.technician || "").trim().toLowerCase() === trimmedName.toLowerCase() &&
+        !rescheduledTicketIds.has(t.id) &&
+        !isPermanentlyMissed(t)
     );
     if (groupTickets.length === 0) return;
 
@@ -1120,6 +1217,24 @@ export async function syncMileageForTicketDay(rawTechnicianName: string, schedul
       return;
     }
     const existingByTicketId = new Map((existingRows ?? []).map((r: any) => [r.ticket_id as string, { id: r.id as string }]));
+
+    // Clean up any stale row left over from before this exclusion existed —
+    // same reasoning as the batch scan's equivalent soft-delete.
+    for (const t of (dayTickets ?? []) as any[]) {
+      if (String(t.technician || "").trim().toLowerCase() !== trimmedName.toLowerCase() || !isPermanentlyMissed(t)) continue;
+      const { data: staleRow } = await supabase
+        .from("mileage_entries")
+        .select("id")
+        .eq("source", "auto")
+        .eq("ticket_id", t.id)
+        .is("deleted_at", null)
+        .maybeSingle();
+      if (staleRow) {
+        await softDeleteMileageEntry(staleRow.id, "Never checked in — scheduled day passed with no on-site arrival.", null, "Auto-sync").catch((err) =>
+          console.error("syncMileageForTicketDay: failed to soft-delete stale entry:", err)
+        );
+      }
+    }
 
     // Matches AccountingDashboard's own full_name fallback chain
     // (display_name || username || id) so this resolves to the same

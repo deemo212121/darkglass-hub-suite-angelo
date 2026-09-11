@@ -80,11 +80,21 @@ export const directDepositStyles = `
   .ddep-label { color: #374151; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.2px; display: block; }
   .ddep-value { font-weight: 700; }
   .ddep-notice { margin-top: 22px; }
-  .ddep-sign-row { display: flex; gap: 24px; align-items: flex-end; border-bottom: 1px solid #9ca3af; padding: 10px 2px; margin-top: 20px; }
-  .ddep-sign-name { flex: 2; }
-  .ddep-sign-sig { flex: 1; display: flex; align-items: flex-end; }
+  .ddep-sign-row { display: flex; gap: 24px; align-items: flex-end; border-bottom: 1px solid #9ca3af; padding: 10px 2px; margin-top: 70px; }
+  .ddep-sign-name { flex: 2; display: flex; align-items: flex-end; gap: 5px; }
   .ddep-sign-date { flex: 1; }
-  .ddep-sig-img { max-height: 36px; max-width: 140px; object-fit: contain; }
+  .ddep-sig-label { white-space: nowrap; }
+  /* Its own flex item (not an inline-block hugging the name's own text
+     width) so it's a reliable containing block for the absolutely
+     positioned signature image — an inline-block sized to just the name
+     text drifted the image rightward once enlarged, because html2canvas
+     (the renderer captureHtmlToPdfBlob uses) miscomputes an inline-block's
+     shrink-to-fit width when it has an absolutely-positioned child, folding
+     that child's own size into the measurement. Flex items aren't
+     shrink-to-fit sized that way, so the image's containing block — and
+     therefore its left:0 anchor — stays put at any size. */
+  .ddep-sig-value-wrap { position: relative; }
+  .ddep-sig-img { position: absolute; left: -40px; bottom: 100%; margin-bottom: -16px; max-height: 60px; max-width: 260px; object-fit: contain; object-position: left bottom; }
 `;
 
 function field(label: string, value: string) {
@@ -126,8 +136,13 @@ export function buildDirectDepositBodyMarkup(data: DirectDepositFormData, logoDa
       <p class="ddep-notice">US In Home Services is hereby authorized to directly deposit my pay to the account listed above. This authorization will remain in effect until I modify or cancel it in writing.</p>
 
       <div class="ddep-sign-row">
-        <div class="ddep-sign-name">Contractor's Signature: <strong>${blank(data.employeeName)}</strong></div>
-        <div class="ddep-sign-sig">${signature ? `<img class="ddep-sig-img" src="${signature.url}" alt="Signature" />` : ""}</div>
+        <div class="ddep-sign-name">
+          <span class="ddep-sig-label">Contractor's Signature:</span>
+          <span class="ddep-sig-value-wrap">
+            ${signature ? `<img class="ddep-sig-img" src="${signature.url}" alt="Signature" />` : ""}
+            <strong>${blank(data.employeeName)}</strong>
+          </span>
+        </div>
         <div class="ddep-sign-date">Date: ${signature ? escapeHtml(fmtDate(signature.signedAt)) : ""}</div>
       </div>
     </div>

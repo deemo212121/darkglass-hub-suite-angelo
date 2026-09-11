@@ -8,6 +8,7 @@ import {
   getTechRedoTickets,
   getTechOnHoldTickets,
   getTechAssistedTickets,
+  getTechSecondTechTickets,
   getTechCustomPayItems,
   addTechCustomPayItem,
   updateTechCustomPayItem,
@@ -16,6 +17,7 @@ import {
   type TechRepairRate,
   type TechRedoTicket,
   type TechAssistedTicket,
+  type TechSecondTechTicket,
   type TechCustomPayItem,
 } from "@/lib/supabase/techPayroll";
 import { getCompanyEmployeeRequests, type EmployeeRequestRow } from "@/lib/supabase/employeeRequests";
@@ -99,6 +101,7 @@ export function TechActivityReportModal({
   const [redoTickets, setRedoTickets] = useState<TechRedoTicket[]>([]);
   const [onHoldTickets, setOnHoldTickets] = useState<TechRedoTicket[]>([]);
   const [assistedTickets, setAssistedTickets] = useState<TechAssistedTicket[]>([]);
+  const [secondTechTickets, setSecondTechTickets] = useState<TechSecondTechTicket[]>([]);
   const [customItems, setCustomItems] = useState<TechCustomPayItem[]>([]);
   const [loadingExtras, setLoadingExtras] = useState(true);
 
@@ -110,13 +113,15 @@ export function TechActivityReportModal({
       getTechRedoTickets(periodStart, periodEnd),
       getTechOnHoldTickets(periodStart, periodEnd),
       getTechAssistedTickets(periodStart, periodEnd),
+      getTechSecondTechTickets(periodStart, periodEnd),
       getTechCustomPayItems(employee.id, periodStart, periodEnd),
     ])
-      .then(([redoByTech, onHoldByTech, assistedByTech, custom]) => {
+      .then(([redoByTech, onHoldByTech, assistedByTech, secondTechByTech, custom]) => {
         if (cancelled) return;
         setRedoTickets(redoByTech.get(nameKey) ?? []);
         setOnHoldTickets(onHoldByTech.get(nameKey) ?? []);
         setAssistedTickets(assistedByTech.get(nameKey) ?? []);
+        setSecondTechTickets(secondTechByTech.get(nameKey) ?? []);
         setCustomItems(custom);
       })
       .catch((err) => console.error("Failed to load Tech Activity Report extras:", err))
@@ -623,6 +628,23 @@ export function TechActivityReportModal({
     {assistedTickets.map((t) => (
                       <Link key={t.ticketId} to="/ticket/$ticketNo" params={{ ticketNo: t.ticketNo }} target="_blank" className="text-xs text-blue-400 hover:text-blue-300 hover:underline">
                         {t.secondTechnician} · {t.ticketNo}
+                      </Link>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="bg-slate-800/50 border border-white/10 rounded-lg px-3 py-2.5">
+                <p className="text-[10px] text-slate-400 uppercase tracking-wide mb-1.5">2nd Tech (this tech assisted on)</p>
+                {loadingExtras ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin text-slate-400" />
+                ) : secondTechTickets.length === 0 ? (
+                  <p className="text-xs text-slate-500">None</p>
+                ) : (
+                  <div className="flex flex-col gap-1">
+                    {secondTechTickets.map((t) => (
+                      <Link key={t.ticketId} to="/ticket/$ticketNo" params={{ ticketNo: t.ticketNo }} target="_blank" className="text-xs text-blue-400 hover:text-blue-300 hover:underline">
+                        {t.primaryTechnician} · {t.ticketNo}
                       </Link>
                     ))}
                   </div>

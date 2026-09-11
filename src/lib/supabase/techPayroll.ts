@@ -22,11 +22,30 @@
  */
 
 import { supabase } from "./client";
-import { statusGroupOf } from "@/lib/ticketData";
 import { mileageEffectiveTotal } from "./mileage";
 
 /** repair_type value used as the fallback rate for a completed visit with no repair_type set. */
 export const DEFAULT_REPAIR_TYPE = "Default Amount";
+
+/**
+ * The single "is this ticket done, for pay purposes" gate used everywhere in
+ * this file — a ticket's own current status has actually reached CLAIMED or
+ * READY TO COMPLETE (RTC). Deliberately narrower than ticketData.ts's
+ * statusGroupOf (which also treats CL-Completed/Data-Closed as "completed"
+ * and buckets RTC under "open" for dashboard/filter purposes) — for payroll
+ * specifically, RTC is the point the technician's own part of the job is
+ * done, so it counts even before the back office finishes claims/data-close.
+ * Not a timestamp check: a ticket at one of these statuses counts as done
+ * whether or not the technician managed to stamp an on-site check-in. A
+ * technician who did the work but the status never got updated has to file
+ * a Ticket Time Dispute with photos instead of this silently falling back
+ * to raw timestamps, which is exactly the ambiguity a status-based ticket
+ * of record avoids.
+ */
+function isCompletedStatus(status: string): boolean {
+  const v = String(status || "").trim().toLowerCase();
+  return v === "cl-claimed" || v === "claimed" || v === "cl-ready to complete" || v === "ready to complete";
+}
 
 // Shared rate-table category lists — single source of truth for
 // TechPayrollSetup.tsx's rate editor and TechActivityReportModal.tsx's
@@ -183,8 +202,8 @@ interface TechCompletedCandidate {
   ticketId: string;
   ticketNo: string;
   technician: string;
-  /** From the Visit Log entry, when one exists — null for an on-site-timestamp-only candidate (counts as DEFAULT_REPAIR_TYPE). */
-  repairType: string | null;
+  /** From the ticket's latest Visit Log entry, when one exists — DEFAULT_REPAIR_TYPE otherwise. Categorization only; completion itself is isCompletedStatus(ticket.status), not this. */
+  repairType: string;
   /** The ticket's branch (tickets.location) — "" if unset. */
   location: string;
   redo: boolean;
@@ -193,25 +212,24 @@ interface TechCompletedCandidate {
 }
 
 /**
- * Every technician-ticket completion within a period, from either of:
- *  1. A Visit Log entry whose repair_status mirrors statusGroupOf's
- *     "completed" bucket (the same rule every other "is this ticket done"
- *     check in the app uses), checked against the VISIT's own repair_status
- *     (not the parent ticket's status, since a ticket can have several
- *     visits and only this one is the technician's own completed work). A
- *     ticket with more than one completed visit in the period yields one
- *     candidate per visit (each is its own paid repair) — NOT deduped here.
- *  2. Failing that (this exact ticket_id has no completed Visit Log row at
- *     all), the ticket's own on-site check-in timestamps (mobile "I'm Here"/
- *     "I'm Done", migration 0202) both being set — a technician who
- *     genuinely arrived and finished the job, just never had a Visit Log
- *     entry filed for it afterward. Yields exactly one DEFAULT_REPAIR_TYPE
- *     candidate. A ticket that was later rescheduled or reassigned never
- *     leaks in here: updateTicketAssignment() (and, as of the SP-sync fix,
- *     upsertTicketFromServicePower too) nulls both onsite timestamps on any
- *     such change, so this only ever sees a ticket that stayed on this
- *     technician/date the whole time — a ticket with neither timestamp set
- *     (never went / no-show) is excluded the same way.
+ * Every technician-ticket completion within a period — a ticket, currently
+ * assigned to that technician (tickets.technician/location/redo/status, the
+ * ticket of record, not a possibly-stale Visit Log copy), whose own status
+ * has reached CLAIMED or READY TO COMPLETE (see isCompletedStatus). Not a
+ * Visit Log repair_status check and not on-site check-in timestamps — a
+ * ticket only counts once, no matter how many visits were logged against it,
+ * since it can only hold one status at a time; that's also a behavior change
+ * from the old per-completed-visit counting, deliberately, since paying out
+ * for the same ticket twice because two visits each individually got marked
+ * complete was never actually two separate repairs.
+ *
+ * Visit Log entries are still consulted, but ONLY for repair_type
+ * categorization (Major Repair, Panel 60/80 Over, etc.) on the qualifying
+ * tickets found above — the LATEST visit per ticket by created_at, since a
+ * ticket can have an earlier diagnostic visit and a later one that's the
+ * real category. A qualifying ticket with no Visit Log entry at all still
+ * counts, just under DEFAULT_REPAIR_TYPE.
+ *
  * Dated by schedule_date — the day the work actually happened, same
  * convention getCsrVisitDatesByTicketIds uses.
  *
@@ -219,108 +237,62 @@ interface TechCompletedCandidate {
  * on hold for payroll — callers decide what to do with that: pay counts
  * exclude both, the Redo/On Hold lists surface exactly the ones excluded for
  * that reason so the exclusion is never an invisible gap in the totals.
- *
- * visits has no branch/redo/ticket_no of its own (only its parent ticket
- * does), so this does the same two-step "fetch, then join by ticket_id via a
- * Map" pattern as getLatestVisitTechnicianByTicketIds/getVisitsByTicketIds
- * instead of a PostgREST embed (no embed pattern is used anywhere else in
- * this file for visits->tickets).
  */
 async function getTechCompletedCandidates(startDate: string, endDate: string): Promise<TechCompletedCandidate[]> {
   if (!startDate || !endDate) return [];
-  const data: any[] = [];
-  for (let from = 0; ; from += PAGE_SIZE) {
-    const { data: page, error } = await supabase
-      .from("visits")
-      .select("ticket_id, technician, repair_type, repair_status")
-      .gte("schedule_date", startDate)
-      .lte("schedule_date", endDate)
-      .not("technician", "is", null)
-      .range(from, from + PAGE_SIZE - 1);
-    if (error) {
-      console.error("getTechCompletedCandidates (visits) error:", error.message);
-      return [];
-    }
-    data.push(...(page ?? []));
-    if (!page || page.length < PAGE_SIZE) break;
-  }
-  const completed = data.filter(
-    (r: any) => String(r.technician || "").trim() && statusGroupOf(r.repair_status || "") === "completed"
-  );
-
-  // Fallback set: on-site-checked-in tickets with no Visit Log entry to show
-  // for it at all — see point 2 in the header comment above.
-  const onsiteRows: any[] = [];
+  const ticketRows: any[] = [];
   for (let from = 0; ; from += PAGE_SIZE) {
     const { data: page, error } = await supabase
       .from("tickets")
-      .select("id, ticket_no, technician, location, redo")
+      .select("id, ticket_no, technician, location, redo, status")
       .gte("schedule_date", startDate)
       .lte("schedule_date", endDate)
       .not("technician", "is", null)
-      .not("onsite_arrived_at", "is", null)
-      .not("onsite_done_at", "is", null)
       .range(from, from + PAGE_SIZE - 1);
     if (error) {
-      console.error("getTechCompletedCandidates (on-site fallback) error:", error.message);
-      break;
+      console.error("getTechCompletedCandidates (tickets) error:", error.message);
+      return [];
     }
-    onsiteRows.push(...(page ?? []));
+    ticketRows.push(...(page ?? []));
     if (!page || page.length < PAGE_SIZE) break;
   }
+  const completedTickets = ticketRows.filter((t: any) => String(t.technician || "").trim() && isCompletedStatus(t.status));
+  if (completedTickets.length === 0) return [];
 
-  if (completed.length === 0 && onsiteRows.length === 0) return [];
-
-  const visitTicketIds = Array.from(new Set(completed.map((r: any) => r.ticket_id).filter(Boolean)));
-  const allTicketIds = Array.from(new Set([...visitTicketIds, ...onsiteRows.map((t: any) => t.id)]));
-  const [{ data: ticketRows, error: tErr }, { data: excludedRows, error: exErr }] = await Promise.all([
-    visitTicketIds.length
-      ? supabase.from("tickets").select("id, ticket_no, location, redo").in("id", visitTicketIds)
-      : Promise.resolve({ data: [] as any[], error: null }),
+  const ticketIds = completedTickets.map((t: any) => t.id);
+  const [{ data: visitRows, error: vErr }, { data: excludedRows, error: exErr }] = await Promise.all([
+    // Purely for repair_type categorization now — NOT for determining
+    // whether the ticket is complete (that's isCompletedStatus above).
+    supabase.from("visits").select("ticket_id, repair_type, created_at").in("ticket_id", ticketIds),
     // Tickets Finance has put on hold for payroll via the Mileage tab's On
     // Hold action (migration 0148) — while flagged, a ticket that's
     // genuinely completed still never counts toward pay, but it's
     // reversible. Same "skip this ticket_id" treatment as redo.
-    allTicketIds.length
-      ? supabase.from("mileage_entries").select("ticket_id").eq("payroll_excluded", true).in("ticket_id", allTicketIds)
-      : Promise.resolve({ data: [] as any[], error: null }),
+    supabase.from("mileage_entries").select("ticket_id").eq("payroll_excluded", true).in("ticket_id", ticketIds),
   ]);
-  if (tErr) console.error("getTechCompletedCandidates (ticket lookup) error:", tErr.message);
+  if (vErr) console.error("getTechCompletedCandidates (visit repair types) error:", vErr.message);
   if (exErr) console.error("getTechCompletedCandidates (payroll exclusions) error:", exErr.message);
-  const ticketById = new Map((ticketRows ?? []).map((t: any) => [t.id, t]));
+
+  const latestRepairTypeByTicketId = new Map<string, string>();
+  const latestCreatedAtByTicketId = new Map<string, string>();
+  for (const v of (visitRows ?? []) as any[]) {
+    const prevCreatedAt = latestCreatedAtByTicketId.get(v.ticket_id);
+    if (!prevCreatedAt || v.created_at > prevCreatedAt) {
+      latestCreatedAtByTicketId.set(v.ticket_id, v.created_at);
+      latestRepairTypeByTicketId.set(v.ticket_id, String(v.repair_type || "").trim());
+    }
+  }
   const excludedTicketIds = new Set((excludedRows ?? []).map((r: any) => r.ticket_id));
 
-  // Any ticket_id that shows up here at all (even once) already has a real
-  // Visit Log completion — the on-site fallback below must never also add
-  // it, however many completed visits it has.
-  const visitTicketIdSet = new Set(visitTicketIds);
-
-  const out: TechCompletedCandidate[] = [];
-  for (const r of completed as any[]) {
-    const ticket = ticketById.get(r.ticket_id);
-    out.push({
-      ticketId: r.ticket_id,
-      ticketNo: ticket?.ticket_no || "",
-      technician: String(r.technician).trim(),
-      repairType: String(r.repair_type || "").trim() || DEFAULT_REPAIR_TYPE,
-      location: ticket?.location || "",
-      redo: !!ticket?.redo,
-      onHold: excludedTicketIds.has(r.ticket_id),
-    });
-  }
-  for (const t of onsiteRows) {
-    if (visitTicketIdSet.has(t.id)) continue; // already has a real Visit Log completion
-    out.push({
-      ticketId: t.id,
-      ticketNo: t.ticket_no || "",
-      technician: String(t.technician).trim(),
-      repairType: null,
-      location: t.location || "",
-      redo: !!t.redo,
-      onHold: excludedTicketIds.has(t.id),
-    });
-  }
-  return out;
+  return completedTickets.map((t: any) => ({
+    ticketId: t.id,
+    ticketNo: t.ticket_no || "",
+    technician: String(t.technician).trim(),
+    repairType: latestRepairTypeByTicketId.get(t.id) || DEFAULT_REPAIR_TYPE,
+    location: t.location || "",
+    redo: !!t.redo,
+    onHold: excludedTicketIds.has(t.id),
+  }));
 }
 
 /**
@@ -428,7 +400,7 @@ export async function getTechSecondCounts(startDate: string, endDate: string): P
   for (let from = 0; ; from += PAGE_SIZE) {
     const { data: page, error } = await supabase
       .from("visits")
-      .select("ticket_id, second_technician, repair_status")
+      .select("ticket_id, second_technician")
       .gte("schedule_date", startDate)
       .lte("schedule_date", endDate)
       .not("second_technician", "is", null)
@@ -440,18 +412,20 @@ export async function getTechSecondCounts(startDate: string, endDate: string): P
     data.push(...(page ?? []));
     if (!page || page.length < PAGE_SIZE) break;
   }
-  const completed = (data ?? []).filter(
-    (r: any) => String(r.second_technician || "").trim() && statusGroupOf(r.repair_status || "") === "completed"
-  );
-  if (completed.length === 0) return counts;
+  const assisted = (data ?? []).filter((r: any) => String(r.second_technician || "").trim());
+  if (assisted.length === 0) return counts;
 
-  const ticketIds = Array.from(new Set(completed.map((r: any) => r.ticket_id).filter(Boolean)));
-  const { data: ticketRows, error: tErr } = await supabase.from("tickets").select("id, redo").in("id", ticketIds);
-  if (tErr) console.error("getTechSecondCounts (ticket redo) error:", tErr.message);
-  const redoByTicket = new Map((ticketRows ?? []).map((t: any) => [t.id, !!t.redo]));
+  // second_technician only ever exists on a Visit Log row (tickets have no
+  // second-technician column of their own) — but whether the JOB is done
+  // now follows the same ticket.status rule as everywhere else (isCompletedStatus).
+  const ticketIds = Array.from(new Set(assisted.map((r: any) => r.ticket_id).filter(Boolean)));
+  const { data: ticketRows, error: tErr } = await supabase.from("tickets").select("id, redo, status").in("id", ticketIds);
+  if (tErr) console.error("getTechSecondCounts (ticket lookup) error:", tErr.message);
+  const ticketById = new Map((ticketRows ?? []).map((t: any) => [t.id, t]));
 
-  for (const r of completed as any[]) {
-    if (redoByTicket.get(r.ticket_id)) continue;
+  for (const r of assisted as any[]) {
+    const ticket = ticketById.get(r.ticket_id);
+    if (!ticket || ticket.redo || !isCompletedStatus(ticket.status)) continue;
     const technician = String(r.second_technician).trim().toLowerCase();
     counts.set(technician, (counts.get(technician) ?? 0) + 1);
   }
@@ -479,7 +453,7 @@ export async function getTechAssistedTickets(startDate: string, endDate: string)
   for (let from = 0; ; from += PAGE_SIZE) {
     const { data: page, error } = await supabase
       .from("visits")
-      .select("ticket_id, technician, second_technician, repair_status")
+      .select("ticket_id, technician, second_technician")
       .gte("schedule_date", startDate)
       .lte("schedule_date", endDate)
       .not("technician", "is", null)
@@ -492,22 +466,77 @@ export async function getTechAssistedTickets(startDate: string, endDate: string)
     data.push(...(page ?? []));
     if (!page || page.length < PAGE_SIZE) break;
   }
-  const completed = (data ?? []).filter(
-    (r: any) => String(r.second_technician || "").trim() && statusGroupOf(r.repair_status || "") === "completed"
-  );
-  if (completed.length === 0) return out;
+  const assisted = (data ?? []).filter((r: any) => String(r.second_technician || "").trim());
+  if (assisted.length === 0) return out;
 
-  const ticketIds = Array.from(new Set(completed.map((r: any) => r.ticket_id).filter(Boolean)));
-  const { data: ticketRows, error: tErr } = await supabase.from("tickets").select("id, ticket_no, redo").in("id", ticketIds);
+  const ticketIds = Array.from(new Set(assisted.map((r: any) => r.ticket_id).filter(Boolean)));
+  const { data: ticketRows, error: tErr } = await supabase.from("tickets").select("id, ticket_no, redo, status").in("id", ticketIds);
   if (tErr) console.error("getTechAssistedTickets (ticket lookup) error:", tErr.message);
   const ticketById = new Map((ticketRows ?? []).map((t: any) => [t.id, t]));
 
-  for (const r of completed as any[]) {
+  for (const r of assisted as any[]) {
     const ticket = ticketById.get(r.ticket_id);
-    if (!ticket || ticket.redo) continue;
+    if (!ticket || ticket.redo || !isCompletedStatus(ticket.status)) continue;
     const technician = String(r.technician).trim().toLowerCase();
     const list = out.get(technician) ?? [];
     list.push({ ticketId: ticket.id, ticketNo: ticket.ticket_no || "", secondTechnician: String(r.second_technician).trim() });
+    out.set(technician, list);
+  }
+  return out;
+}
+
+/** One ticket where THIS technician was the assisting (second) technician — the reciprocal of TechAssistedTicket, for the assisting tech's own Tech Activity Report. */
+export interface TechSecondTechTicket {
+  ticketId: string;
+  ticketNo: string;
+  primaryTechnician: string;
+}
+
+/**
+ * For each ASSISTING (second) technician, the completed (redo-excluded)
+ * tickets within a period where they helped a primary technician — the
+ * mirror image of getTechAssistedTickets, which lists the same tickets from
+ * the PRIMARY technician's side. Before this existed, a shared/"2 Man Job"
+ * ticket was only ever visible ticket-by-ticket on the primary technician's
+ * own Tech Activity Report (the "2nd Tech (assisted this tech)" panel) — the
+ * assisting technician's report only ever showed a bare "Two Tech" count
+ * (getTechSecondCounts), with nothing to click through to see which tickets
+ * it came from.
+ */
+export async function getTechSecondTechTickets(startDate: string, endDate: string): Promise<Map<string, TechSecondTechTicket[]>> {
+  const out = new Map<string, TechSecondTechTicket[]>();
+  if (!startDate || !endDate) return out;
+  const data: any[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data: page, error } = await supabase
+      .from("visits")
+      .select("ticket_id, technician, second_technician")
+      .gte("schedule_date", startDate)
+      .lte("schedule_date", endDate)
+      .not("technician", "is", null)
+      .not("second_technician", "is", null)
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) {
+      console.error("getTechSecondTechTickets error:", error.message);
+      return out;
+    }
+    data.push(...(page ?? []));
+    if (!page || page.length < PAGE_SIZE) break;
+  }
+  const assisted = (data ?? []).filter((r: any) => String(r.second_technician || "").trim());
+  if (assisted.length === 0) return out;
+
+  const ticketIds = Array.from(new Set(assisted.map((r: any) => r.ticket_id).filter(Boolean)));
+  const { data: ticketRows, error: tErr } = await supabase.from("tickets").select("id, ticket_no, redo, status").in("id", ticketIds);
+  if (tErr) console.error("getTechSecondTechTickets (ticket lookup) error:", tErr.message);
+  const ticketById = new Map((ticketRows ?? []).map((t: any) => [t.id, t]));
+
+  for (const r of assisted as any[]) {
+    const ticket = ticketById.get(r.ticket_id);
+    if (!ticket || ticket.redo || !isCompletedStatus(ticket.status)) continue;
+    const technician = String(r.second_technician).trim().toLowerCase();
+    const list = out.get(technician) ?? [];
+    list.push({ ticketId: ticket.id, ticketNo: ticket.ticket_no || "", primaryTechnician: String(r.technician).trim() });
     out.set(technician, list);
   }
   return out;
