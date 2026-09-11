@@ -946,7 +946,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // Reviews, the Approved log, the department trend chart, and the full
   // Employee Directory all on top of each other, forcing a long scroll to
   // reach anything below Hiring.
-  const [activeTab, setActiveTab] = useState<"hiring" | "warnings" | "masterList" | "leaders" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "promotionForm" | "actionPlanForm" | "terminationForm" | "employeeRequestManager" | "w8ben" | "i9" | "wageAck" | "carIqAgreement" | "vehicleAgreement" | "vehicleUseAgreement" | "employeeConfidentiality" | "mealRestBreak" | "ptoAck" | "partsResponsibility" | "mileageFuel" | "locationConsent" | "damage" | "contractorData" | "contractorDataUs" | "directDeposit" | "substanceScreening" | "flashTechnicianTravel" | "contractorAddendum" | "combineForms" | "employerQueue" | "ndaForm" | "calendar" | "interviewCalendar" | "masterW2Agreement" | "newW4" | "masterW2OfficeAgreement" | "newW8ben" | "masterPhContractorAgreement" | "newI9" | "newDirectDeposit">(paperworksOnly ? "combineForms" : "hiring");
+  const [activeTab, setActiveTab] = useState<"hiring" | "warnings" | "masterList" | "leaders" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "promotionForm" | "actionPlanForm" | "terminationForm" | "employeeRequestManager" | "w8ben" | "i9" | "wageAck" | "carIqAgreement" | "vehicleAgreement" | "vehicleUseAgreement" | "employeeConfidentiality" | "mealRestBreak" | "ptoAck" | "partsResponsibility" | "mileageFuel" | "locationConsent" | "damage" | "contractorData" | "contractorDataUs" | "directDeposit" | "substanceScreening" | "flashTechnicianTravel" | "contractorAddendum" | "combineForms" | "employerQueue" | "ndaForm" | "calendar" | "interviewCalendar" | "masterW2Agreement" | "newW4" | "masterW2OfficeAgreement" | "newW8ben" | "masterPhContractorAgreement" | "newI9" | "newDirectDeposit" | "newCombineForms">(paperworksOnly ? "combineForms" : "hiring");
   const [openCategory, setOpenCategory] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   // Which floating-sidebar section headers (Automated Forms/Generate
@@ -9301,6 +9301,31 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     { type: "w9", label: "Form W-9" },
   ];
 
+  // "newCombineForms" (New Automation Forms' own Bulk Form Send) groups —
+  // mirrors the New Technician Forms/New Office Forms (US)/PH Staff
+  // columns exactly, instead of the old 20-item breakdown above. w4/i9/
+  // direct_deposit/w8ben are the same shared document types as their old
+  // counterparts — handleGenerateCombinedForms tags them formSource:
+  // "new_automation" when generated from this tab so they land in the
+  // right Sent History bucket (see isNewAutomationDoc's doc comment).
+  const NEW_TECHNICIAN_BULK_FORM_TYPES: { type: SignableDocumentType; label: string }[] = [
+    { type: "master_w2_agreement", label: "Master W-2 Technician Agreement" },
+    { type: "w4", label: "Form W-4" },
+    { type: "i9", label: "Form I-9 (Employment Eligibility)" },
+    { type: "direct_deposit", label: "Direct Deposit Authorization" },
+  ];
+  const NEW_OFFICE_BULK_FORM_TYPES: { type: SignableDocumentType; label: string }[] = [
+    { type: "master_w2_office_agreement", label: "Master W-2 Office Agreement" },
+    { type: "w4", label: "Form W-4" },
+    { type: "i9", label: "Form I-9 (Employment Eligibility)" },
+    { type: "direct_deposit", label: "Direct Deposit Authorization" },
+  ];
+  const NEW_PH_BULK_FORM_TYPES: { type: SignableDocumentType; label: string }[] = [
+    { type: "master_ph_contractor_agreement", label: "Master PH Contractor Agreement" },
+    { type: "w8ben", label: "Form W-8BEN" },
+    { type: "direct_deposit", label: "Direct Deposit Authorization" },
+  ];
+
   const [combineFormsRecipientId, setCombineFormsRecipientId] = useState("");
   const [combineFormsRecipientSearch, setCombineFormsRecipientSearch] = useState("");
   const [combineFormsRecipientDropdownOpen, setCombineFormsRecipientDropdownOpen] = useState(false);
@@ -9333,7 +9358,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const handleSendAllSelected = async () => {
     if (!formsDialog) return;
     const bulkSendableTypes = new Set<SignableDocumentType>(
-      [...GENERAL_FORM_TYPES, ...TECHNICIAN_FORM_TYPES, ...MANAGEMENT_FORM_TYPES].map((f) => f.type)
+      [...GENERAL_FORM_TYPES, ...TECHNICIAN_FORM_TYPES, ...MANAGEMENT_FORM_TYPES, ...NEW_TECHNICIAN_BULK_FORM_TYPES, ...NEW_OFFICE_BULK_FORM_TYPES, ...NEW_PH_BULK_FORM_TYPES].map((f) => f.type)
     );
     const toSend = Array.from(formsDialog.selected).filter((t) => bulkSendableTypes.has(t));
     if (toSend.length === 0) {
@@ -9388,7 +9413,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         const alreadySent = await getExistingActiveDocumentTypes(recipient.id, Array.from(selectedFormTypes));
         if (alreadySent.length > 0) {
           const labelByType = new Map(
-            [...GENERAL_FORM_TYPES, ...TECHNICIAN_FORM_TYPES, ...MANAGEMENT_FORM_TYPES].map((f) => [f.type, f.label])
+            [...GENERAL_FORM_TYPES, ...TECHNICIAN_FORM_TYPES, ...MANAGEMENT_FORM_TYPES, ...NEW_TECHNICIAN_BULK_FORM_TYPES, ...NEW_OFFICE_BULK_FORM_TYPES, ...NEW_PH_BULK_FORM_TYPES].map((f) => [f.type, f.label])
           );
           const names = alreadySent.map((t) => labelByType.get(t) ?? t).join(", ");
           if (!window.confirm(`${recipient.name} already has these forms on file: ${names}.\n\nSend them again anyway?`)) {
@@ -9396,20 +9421,26 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           }
         }
       }
+      // "newCombineForms" is New Automation Forms' own Bulk Form Send — see
+      // isNewAutomationDoc's doc comment for why w4/i9/direct_deposit/w8ben
+      // (shared document types with the old group) need this tag to land in
+      // the right Sent History bucket. Harmless on the other types here
+      // (master_w2_agreement etc.), which don't read formSource at all.
+      const formSourceTag = activeTab === "newCombineForms" ? { formSource: "new_automation" } : {};
       const docs = await Promise.all(
         Array.from(selectedFormTypes).map((type) =>
           createSignableDocument(
             recipient
               ? {
                   documentType: type,
-                  formData: { employeeId: recipient.id, employeeName: recipient.name } as unknown as Record<string, any>,
+                  formData: { employeeId: recipient.id, employeeName: recipient.name, ...formSourceTag } as unknown as Record<string, any>,
                   recipientId: recipient.id,
                   recipientSlot: "employee",
                   pdfUrl: "",
                 }
               : {
                   documentType: type,
-                  formData: { employeeId: "", employeeName: externalName } as unknown as Record<string, any>,
+                  formData: { employeeId: "", employeeName: externalName, ...formSourceTag } as unknown as Record<string, any>,
                   recipientName: externalName,
                   recipientSlot: "employee",
                   pdfUrl: "",
@@ -13175,9 +13206,17 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // Form/Termination Notice Form/W-8ben — those 4 live directly under New
   // Technician Forms instead (see newAutomationFormsTechnicianTabs below),
   // so listing them here too would just be a duplicate.
-  const newAutomationFormsGeneralTabs = automatedFormsGeneralTabs.filter(
-    (t) => !["i9", "actionPlanForm", "terminationForm", "w8ben"].includes(t.key)
-  );
+  // "combineForms" (Bulk Form Send) gets its own distinct tab here rather
+  // than being reused as-is — the old one's checkbox list is the legacy
+  // 20-item breakdown (11 individual technician forms, etc.); this one
+  // needs to show only the new consolidated form types (Master W-2
+  // Technician/Office Agreement, Master PH Contractor Agreement, W-4, I-9,
+  // Direct Deposit, W-8BEN), grouped by New Technician/New Office/PH Staff
+  // — see the "newCombineForms" render block below.
+  const newAutomationFormsGeneralTabs: NavTabDef[] = [
+    ...automatedFormsGeneralTabs.filter((t) => !["i9", "actionPlanForm", "terminationForm", "w8ben", "combineForms"].includes(t.key)),
+    { key: "newCombineForms", label: "Bulk Form Send", count: 0, icon: Link2 },
+  ];
 
   const automatedFormsTechnicianTabs = [
     { key: "wageAck", label: "Acknowledgment of Wage", count: sentWageAckAwaitingEmployerCount, icon: FileCheck },
@@ -13338,7 +13377,17 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       <button
         key={tab.key}
         type="button"
-        onClick={() => { setActiveTab(tab.key as typeof activeTab); setSidebarOpen(false); }}
+        onClick={() => {
+          // Bulk Form Send's old/new tabs share one selectedFormTypes Set —
+          // clear it on manual navigation into either so a hidden selection
+          // from the other tab's (differently-shaped) checkbox list can't
+          // silently ride along into a generated bundle. Doesn't touch the
+          // Forms popup's "Send All Selected" bridge, which sets its own
+          // preselection via setActiveTab directly, not through this button.
+          if (tab.key === "combineForms" || tab.key === "newCombineForms") setSelectedFormTypes(new Set());
+          setActiveTab(tab.key as typeof activeTab);
+          setSidebarOpen(false);
+        }}
         className={`w-full text-left pl-2.5 pr-2 py-2 rounded-lg text-sm flex items-center justify-between gap-2 transition-colors ${
           active
             ? "bg-primary/10 border border-primary/30 text-foreground font-semibold"
@@ -13367,7 +13416,12 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       <button
         key={tab.key}
         type="button"
-        onClick={() => { setActiveTab(tab.key as typeof activeTab); setOpenCategory(null); }}
+        onClick={() => {
+          // See renderSidebarTabButton's matching comment.
+          if (tab.key === "combineForms" || tab.key === "newCombineForms") setSelectedFormTypes(new Set());
+          setActiveTab(tab.key as typeof activeTab);
+          setOpenCategory(null);
+        }}
         className={`w-full text-left px-3.5 py-2 text-sm flex items-center justify-between gap-2 transition-colors ${
           active ? "text-primary bg-primary/10" : urgent ? "text-red-100 bg-red-500/20 hover:bg-red-500/30" : "text-muted-foreground hover:text-foreground hover:bg-white/5"
         }`}
@@ -13648,7 +13702,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                 <button
                   key={section.group}
                   type="button"
-                  onClick={() => setActiveTab(onlyTab.key)}
+                  onClick={() => setActiveTab(onlyTab.key as typeof activeTab)}
                   className={`px-3.5 py-2 text-sm font-medium rounded-md border flex items-center gap-2 transition-colors ${activeInGroup ? "border-primary/40 bg-primary/10 text-primary" : "border-white/10 text-muted-foreground hover:text-foreground hover:bg-white/5"}`}
                 >
                   <section.icon className="h-3.5 w-3.5" />
@@ -15517,7 +15571,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       )}
 
       {/* ── Combine Forms — pick a technician, check off which forms they need, and generate all of them at once behind one link that opens as a Next-through wizard with a completion timeline (SignBundlePage.tsx) ── */}
-      {activeTab === "combineForms" && (
+      {(activeTab === "combineForms" || activeTab === "newCombineForms") && (
       <div className="panel p-0 overflow-hidden">
         <div className="px-4 py-4 border-b border-white/10">
           <h2 className="font-semibold text-sm flex items-center gap-1.5"><Link2 className="h-4 w-4 text-blue-300" /> Bulk Form Send</h2>
@@ -15572,6 +15626,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <p className="text-[10px] text-muted-foreground">Optional — only used by "Copy Link Instead" below, which works even with no name at all.</p>
         </div>
 
+        {activeTab === "combineForms" && (
+        <>
         <div className="px-4 pt-4">
           <h3 className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">General</h3>
         </div>
@@ -15661,6 +15717,102 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             );
           })}
         </div>
+        </>
+        )}
+
+        {activeTab === "newCombineForms" && (
+        <>
+        <div className="px-4 pt-4">
+          <h3 className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">New Technician Forms</h3>
+        </div>
+        <div className="p-4 pt-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 border-b border-white/10">
+          {NEW_TECHNICIAN_BULK_FORM_TYPES.map(({ type, label }) => {
+            const checked = selectedFormTypes.has(type);
+            const urgent = ROUTE_REQUIRED_DOCUMENT_TYPES.includes(type);
+            return (
+              <label
+                key={type}
+                className={`flex items-start gap-2.5 rounded-lg border p-3 cursor-pointer transition-colors ${
+                  checked
+                    ? "border-primary/50 bg-primary/10"
+                    : urgent
+                    ? "border-red-500/40 bg-red-500/20 hover:bg-red-500/30"
+                    : "border-white/10 bg-white/5 hover:bg-white/10"
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={() => toggleFormTypeSelected(type)}
+                  className="mt-0.5 h-3.5 w-3.5 shrink-0"
+                />
+                <span className="text-sm font-medium">{label}</span>
+              </label>
+            );
+          })}
+        </div>
+
+        <div className="px-4 pt-4">
+          <h3 className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">New Office Forms (US)</h3>
+        </div>
+        <div className="p-4 pt-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 border-b border-white/10">
+          {NEW_OFFICE_BULK_FORM_TYPES.map(({ type, label }) => {
+            const checked = selectedFormTypes.has(type);
+            const urgent = ROUTE_REQUIRED_DOCUMENT_TYPES.includes(type);
+            return (
+              <label
+                key={type}
+                className={`flex items-start gap-2.5 rounded-lg border p-3 cursor-pointer transition-colors ${
+                  checked
+                    ? "border-primary/50 bg-primary/10"
+                    : urgent
+                    ? "border-red-500/40 bg-red-500/20 hover:bg-red-500/30"
+                    : "border-white/10 bg-white/5 hover:bg-white/10"
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={() => toggleFormTypeSelected(type)}
+                  className="mt-0.5 h-3.5 w-3.5 shrink-0"
+                />
+                <span className="text-sm font-medium">{label}</span>
+              </label>
+            );
+          })}
+        </div>
+
+        <div className="px-4 pt-4">
+          <h3 className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">PH Staff</h3>
+        </div>
+        <div className="p-4 pt-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          {NEW_PH_BULK_FORM_TYPES.map(({ type, label }) => {
+            const checked = selectedFormTypes.has(type);
+            const urgent = ROUTE_REQUIRED_DOCUMENT_TYPES.includes(type);
+            return (
+              <label
+                key={type}
+                className={`flex items-start gap-2.5 rounded-lg border p-3 cursor-pointer transition-colors ${
+                  checked
+                    ? "border-primary/50 bg-primary/10"
+                    : urgent
+                    ? "border-red-500/40 bg-red-500/20 hover:bg-red-500/30"
+                    : "border-white/10 bg-white/5 hover:bg-white/10"
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={() => toggleFormTypeSelected(type)}
+                  className="mt-0.5 h-3.5 w-3.5 shrink-0"
+                />
+                <span className="text-sm font-medium">{label}</span>
+              </label>
+            );
+          })}
+        </div>
+        </>
+        )}
 
         <div className="px-4 py-4 border-t border-white/10 flex flex-wrap items-center gap-3">
           <button
