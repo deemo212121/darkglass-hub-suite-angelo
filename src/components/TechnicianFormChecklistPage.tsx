@@ -922,6 +922,16 @@ export function TechnicianFormChecklistPage() {
                                 view <ExternalLink className="h-3 w-3" />
                               </button>
                             )}
+                            {!na && done && doc && doc.status === "confirmed" && EMPLOYER_SIGN_SUPPORTED_TYPES.has(type) && (
+                              <button
+                                type="button"
+                                onClick={() => setSignDoc(doc)}
+                                title="Not right? Redo just the employer signature — nothing else on the form changes"
+                                className="inline-flex shrink-0 items-center gap-0.5 text-xs text-amber-300 hover:text-amber-200"
+                              >
+                                <PenLine className="h-3 w-3" /> Re-sign
+                              </button>
+                            )}
                             {!na && awaitingEmployee && (
                               <button
                                 type="button"
