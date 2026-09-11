@@ -65,6 +65,7 @@ const HR_STATUS_OPTIONS = [
   "Bereavement",
   "Absent",
   "Present (No Clock-In)",
+  "Admin",
   "Unnoticed",
   "Resigned",
   "Terminated",
@@ -77,12 +78,15 @@ const HR_STATUS_OPTIONS = [
 // than blending in with Vacation/Sick/etc. "Present (No Clock-In)" is the
 // opposite correction — HR confirming the person WAS actually there that
 // day, just never clocked in (forgot, bad wifi, manual timecard later,
-// etc.) — a good-news override, not a leave type either, so it's excluded
-// from HR_STATUS_TO_PTO_TYPE the same way Unnoticed/Resigned/Terminated are
-// (see HrCalendarTab.tsx) and never plots on the Time Off Calendar.
+// etc.). "Admin" covers a day spent on administrative/office duty rather
+// than their usual clock-in work. Neither is a leave type either, so both
+// are excluded from HR_STATUS_TO_PTO_TYPE the same way Unnoticed/Resigned/
+// Terminated are (see HrCalendarTab.tsx) and never plot on the Time Off
+// Calendar.
 const HR_STATUS_COLOR: Record<string, string> = {
   Absent: "text-red-300",
   "Present (No Clock-In)": "text-cyan-300",
+  Admin: "text-sky-300",
   Unnoticed: "text-amber-300",
   Resigned: "text-red-300",
   Terminated: "text-red-300",
