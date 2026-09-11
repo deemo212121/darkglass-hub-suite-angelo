@@ -1,8 +1,11 @@
 import { supabase } from "./client";
 
-// Mirrors the three groups the Onboarding Documents checklist grid already
-// splits employees into (see ReportHRDaily.tsx's onboardingGroup state).
-export type OnboardingGroupKey = "TECHNICIAN" | "PARTS_MANAGER" | "PH";
+// Mirrors the groups the Onboarding Documents checklist grid splits
+// employees into (see ReportHRDaily.tsx's onboardingGroup state) — the
+// first 3 for the original tab. The other 4 are the New Onboarding
+// Documents tab's own, separate group-key space (newOnboardingGroup state)
+// so its custom columns never mix with the original tab's.
+export type OnboardingGroupKey = "TECHNICIAN" | "PARTS_MANAGER" | "PH" | "TECHNICIAN_STAFF" | "BRANCH_MANAGER_UP" | "OFFICE_STAFF_US" | "PHILIPPINES_STAFF";
 
 export interface OnboardingDocumentColumn {
   id: string;

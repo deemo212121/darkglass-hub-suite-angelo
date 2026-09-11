@@ -381,6 +381,33 @@ const PH_ONBOARDING_DOCS = [
   "W-8BEN",
 ];
 
+// "New Onboarding Documents" — the same paperwork tracker, but split into 4
+// audience groups instead of 3: Branch Manager and above (Branch Manager,
+// Senior Branch Manager, Technical Assistant Director, Technical Director)
+// is carved out of the old catch-all into its own group, Technician Staff
+// and Philippines Staff carry over unchanged, and Office Staff US is what's
+// left of the old catch-all. Kept as an entirely separate group-key space
+// (TECHNICIAN_STAFF/BRANCH_MANAGER_UP/OFFICE_STAFF_US/PHILIPPINES_STAFF vs
+// the original TECHNICIAN/PARTS_MANAGER/PH) so this tab's custom columns
+// never mix with the original Onboarding Documents tab's, even where the
+// audience overlaps. Unlike the original tab, none of these 4 groups start
+// with a hardcoded default document list — every column here is added from
+// scratch via "+ Add Column", per department, once HR defines it.
+const BRANCH_MANAGER_AND_UP_ROLES = new Set(["BRANCH_MANAGER", "SENIOR_BRANCH_MANAGER", "TECHNICAL_ASSISTANT_DIRECTOR", "TECHNICAL_DIRECTOR"]);
+
+// Display label per OnboardingGroupKey — covers both tabs' group keys, used
+// by the shared "Add Column" dialog so it reads correctly regardless of
+// which tab opened it.
+const ONBOARDING_GROUP_KEY_LABELS: Record<OnboardingGroupKey, string> = {
+  TECHNICIAN: "Technician",
+  PARTS_MANAGER: "Parts Manager",
+  PH: "Philippines",
+  TECHNICIAN_STAFF: "Technician Staff",
+  BRANCH_MANAGER_UP: "Branch Manager & Above",
+  OFFICE_STAFF_US: "Office Staff US",
+  PHILIPPINES_STAFF: "Philippines Staff",
+};
+
 /**
  * Onboarding Documents checklist columns that mean the exact same document
  * as a real SignableDocumentType — so a technician who's already e-signed
@@ -946,7 +973,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // Reviews, the Approved log, the department trend chart, and the full
   // Employee Directory all on top of each other, forcing a long scroll to
   // reach anything below Hiring.
-  const [activeTab, setActiveTab] = useState<"hiring" | "warnings" | "masterList" | "leaders" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "promotionForm" | "actionPlanForm" | "terminationForm" | "employeeRequestManager" | "w8ben" | "i9" | "wageAck" | "carIqAgreement" | "vehicleAgreement" | "vehicleUseAgreement" | "employeeConfidentiality" | "mealRestBreak" | "ptoAck" | "partsResponsibility" | "mileageFuel" | "locationConsent" | "damage" | "contractorData" | "contractorDataUs" | "directDeposit" | "substanceScreening" | "flashTechnicianTravel" | "contractorAddendum" | "combineForms" | "employerQueue" | "ndaForm" | "calendar" | "interviewCalendar" | "masterW2Agreement" | "newW4" | "masterW2OfficeAgreement" | "newW8ben" | "masterPhContractorAgreement" | "newI9" | "newDirectDeposit" | "newCombineForms">(paperworksOnly ? "combineForms" : "hiring");
+  const [activeTab, setActiveTab] = useState<"hiring" | "warnings" | "masterList" | "leaders" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "promotionForm" | "actionPlanForm" | "terminationForm" | "employeeRequestManager" | "w8ben" | "i9" | "wageAck" | "carIqAgreement" | "vehicleAgreement" | "vehicleUseAgreement" | "employeeConfidentiality" | "mealRestBreak" | "ptoAck" | "partsResponsibility" | "mileageFuel" | "locationConsent" | "damage" | "contractorData" | "contractorDataUs" | "directDeposit" | "substanceScreening" | "flashTechnicianTravel" | "contractorAddendum" | "combineForms" | "employerQueue" | "ndaForm" | "calendar" | "interviewCalendar" | "masterW2Agreement" | "newW4" | "masterW2OfficeAgreement" | "newW8ben" | "masterPhContractorAgreement" | "newI9" | "newDirectDeposit" | "newCombineForms" | "newOnboardingDocuments">(paperworksOnly ? "combineForms" : "hiring");
   const [openCategory, setOpenCategory] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   // Which floating-sidebar section headers (Automated Forms/Generate
@@ -12345,6 +12372,106 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     return q ? byGroup.filter((e) => e.name.toLowerCase().includes(q)) : byGroup;
   }, [employees, onboardingGroup, onboardingSearch]);
 
+  // ── New Onboarding Documents: same grid/drill-in mechanics as Onboarding
+  // Documents above, split into 4 audience groups instead of 3 — see
+  // BRANCH_MANAGER_AND_UP_ROLES above for why. Fully separate state from
+  // the original tab so the two evolve independently;
+  // customOnboardingColumns/addColumnGroup/handleAdd-/RemoveOnboardingColumn
+  // above are shared (same table, distinct group_key values — see
+  // OnboardingGroupKey). ──
+  type NewOnboardingGroupKey = "TECHNICIAN_STAFF" | "BRANCH_MANAGER_UP" | "OFFICE_STAFF_US" | "PHILIPPINES_STAFF";
+  const [newOnboardingGroup, setNewOnboardingGroup] = useState<NewOnboardingGroupKey>("TECHNICIAN_STAFF");
+  const [newOnboardingSearch, setNewOnboardingSearch] = useState("");
+  const [newOnboardingSelectedEmployee, setNewOnboardingSelectedEmployee] = useState<{ id: string; name: string; docList: string[] } | null>(null);
+
+  // No hardcoded defaults here (unlike the original Onboarding Documents
+  // tab) — every group starts with zero columns; HR adds each department's
+  // real document list from scratch via "+ Add Column" going forward.
+  const newOnboardingDocsForGroup = (groupKey: NewOnboardingGroupKey) =>
+    customOnboardingColumns.filter((c) => c.groupKey === groupKey).map((c) => c.label);
+
+  // Primary or extra role, same pile-up semantics isOnboardingTechnician
+  // above already uses. Checked BEFORE isOnboardingTechnician below — some
+  // employees hold both a management role (Branch Manager/Senior Branch
+  // Manager/Technical Director/Technical Assistant Director) AND Technician
+  // as extra roles, and the higher position wins for this grouping, unlike
+  // the original Onboarding Documents tab's Technician-first precedence.
+  const isBranchManagerAndUp = (employee: { position: string; extraRoles: string[] }) =>
+    [employee.position, ...employee.extraRoles].some((r) => BRANCH_MANAGER_AND_UP_ROLES.has(normalizeRole(r)));
+
+  // The "Role" column on the Branch Manager & Above panel — the specific
+  // qualifying role (Branch Manager vs Senior Branch Manager vs Technical
+  // Director vs Technical Assistant Director), not just `employee.position`,
+  // since someone can land in this group via an extra role while their
+  // primary position is something else (e.g. Technician).
+  const branchManagerRoleLabelForEmployee = (employee: { position: string; extraRoles: string[] }): string => {
+    const match = [employee.position, ...employee.extraRoles].find((r) => BRANCH_MANAGER_AND_UP_ROLES.has(normalizeRole(r)));
+    const role = match ?? employee.position;
+    return ROLE_LABELS[normalizeRole(role)] ?? role;
+  };
+
+  const getNewOnboardingDocListForEmployee = (employee: { country: string; position: string; extraRoles: string[] }) =>
+    newOnboardingDocsForGroup(
+      employee.country === "PH" ? "PHILIPPINES_STAFF"
+      : isBranchManagerAndUp(employee) ? "BRANCH_MANAGER_UP"
+      : isOnboardingTechnician(employee) ? "TECHNICIAN_STAFF"
+      : "OFFICE_STAFF_US"
+    );
+  const newOnboardingEmployees = useMemo(() => {
+    const activeOnly = employees.filter((e) => e.status === "active");
+    const byGroup =
+      newOnboardingGroup === "PHILIPPINES_STAFF" ? activeOnly.filter((e) => e.country === "PH")
+      : newOnboardingGroup === "BRANCH_MANAGER_UP" ? activeOnly.filter((e) => e.country === "US" && isBranchManagerAndUp(e))
+      : newOnboardingGroup === "TECHNICIAN_STAFF" ? activeOnly.filter((e) => e.country === "US" && !isBranchManagerAndUp(e) && isOnboardingTechnician(e))
+      : activeOnly.filter((e) => e.country === "US" && !isBranchManagerAndUp(e) && !isOnboardingTechnician(e));
+    const q = newOnboardingSearch.trim().toLowerCase();
+    return q ? byGroup.filter((e) => e.name.toLowerCase().includes(q)) : byGroup;
+  }, [employees, newOnboardingGroup, newOnboardingSearch]);
+
+  // Same "already e-signed" merge onboardingDocCategoriesByProfile/
+  // onboardingSignedLabelsByProfile do below for the original tab — kept as
+  // its own state/effect (rather than widening that one's guard) so a
+  // future divergence in either tab's document set doesn't require
+  // untangling a shared fetch.
+  const [newOnboardingDocCategoriesByProfile, setNewOnboardingDocCategoriesByProfile] = useState<Map<string, Set<string>>>(new Map());
+  const [newOnboardingSignedLabelsByProfile, setNewOnboardingSignedLabelsByProfile] = useState<Map<string, Set<string>>>(new Map());
+  useEffect(() => {
+    if (activeTab !== "newOnboardingDocuments" || newOnboardingEmployees.length === 0) return;
+    let cancelled = false;
+    const employeeIds = newOnboardingEmployees.map((e) => e.id);
+    const mappedTypes = Array.from(new Set(Object.values(ONBOARDING_COLUMN_TO_DOCUMENT_TYPE)));
+    const labelsByType = new Map<SignableDocumentType, string[]>();
+    for (const [label, type] of Object.entries(ONBOARDING_COLUMN_TO_DOCUMENT_TYPE)) {
+      const arr = labelsByType.get(type) ?? [];
+      arr.push(label);
+      labelsByType.set(type, arr);
+    }
+    Promise.all([
+      getOnboardingDocumentCategoriesByProfileIds(employeeIds),
+      getCompletedDocumentTypesByRecipientIds(employeeIds, mappedTypes),
+    ])
+      .then(([fileMap, signedMap]) => {
+        if (cancelled) return;
+        const signedLabelMap = new Map<string, Set<string>>();
+        for (const [profileId, types] of signedMap) {
+          const fileSet = fileMap.get(profileId) ?? new Set<string>();
+          const signedSet = new Set<string>();
+          for (const type of types) {
+            for (const label of labelsByType.get(type) ?? []) {
+              fileSet.add(label);
+              signedSet.add(label);
+            }
+          }
+          fileMap.set(profileId, fileSet);
+          signedLabelMap.set(profileId, signedSet);
+        }
+        setNewOnboardingDocCategoriesByProfile(fileMap);
+        setNewOnboardingSignedLabelsByProfile(signedLabelMap);
+      })
+      .catch((err) => console.error("Failed to load new onboarding document status:", err));
+    return () => { cancelled = true; };
+  }, [activeTab, newOnboardingEmployees]);
+
   // Restores which applicant's Onboarding Documents page was open (if any)
   // from the URL's ?profileId= — only once, as soon as employees has
   // loaded, using the same frozen initial search params as the tab restore
@@ -12393,10 +12520,12 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   ]);
 
   // Custom columns are company-wide (not filtered by the currently visible
-  // employee list), so just load them once when the tab is first opened.
+  // employee list), so just load them once when either tab is first opened
+  // — one fetch covers all 7 group keys (both tabs), since
+  // getOnboardingDocumentColumns() isn't filtered by group.
   const customOnboardingColumnsLoadedRef = useRef(false);
   useEffect(() => {
-    if (activeTab !== "onboarding" || customOnboardingColumnsLoadedRef.current) return;
+    if ((activeTab !== "onboarding" && activeTab !== "newOnboardingDocuments") || customOnboardingColumnsLoadedRef.current) return;
     customOnboardingColumnsLoadedRef.current = true;
     getOnboardingDocumentColumns()
       .then(setCustomOnboardingColumns)
@@ -13348,6 +13477,24 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         { label: "BM, SBS, Tech Director, Tech Assistant Director Forms", tabs: newAutomationFormsManagementTabs },
       ],
     }] : []),
+    // Onboarding Documents — moved here from HR & Recruitment Dashboard's
+    // own "People Operations" group, since it's the same "paperwork on
+    // file" concern as the rest of this module. "New Onboarding Documents"
+    // sits alongside it as an empty placeholder tab for a reworked version
+    // to be built out separately later — deliberately not wired to
+    // anything yet. Not restricted to companyId === "COMP001" like the two
+    // groups above (those forms are AH Solutions-specific) — Onboarding
+    // Documents was available to every company before this move, and stays
+    // that way, just relocated.
+    ...(paperworksOnly ? [{
+      group: "Onboarding",
+      icon: Paperclip,
+      tabs: [
+        { key: "onboarding", label: "Onboarding Documents", count: 0, icon: Paperclip },
+        { key: "newOnboardingDocuments", label: "New Onboarding Documents", count: 0, icon: Paperclip },
+      ] as const,
+      columns: undefined,
+    }] : []),
     ...(!paperworksOnly ? [
       {
         group: "Generate Reports",
@@ -13365,7 +13512,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           { key: "leaders", label: "Leaders", count: leadersRoster.length, icon: UserCheck },
           { key: "employeeRequestManager", label: "Employee Request Manager", count: requestManagerPendingCount, icon: ClipboardList },
           { key: "hiring", label: "Hiring", count: visibleCandidates.length, icon: Users },
-          { key: "onboarding", label: "Onboarding Documents", count: 0, icon: Paperclip },
           { key: "warnings", label: "Warnings & Mistakes", count: isHrOrAdmin ? pendingNotes.length : 0, icon: AlertTriangle },
         ] as const,
         columns: undefined,
@@ -16528,6 +16674,139 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       </div>
       )}
 
+      {/* ── New Onboarding Documents — same grid/drill-in as Onboarding Documents above, split into 4 audience groups instead of 3. ── */}
+      {activeTab === "newOnboardingDocuments" && newOnboardingSelectedEmployee && (
+        <OnboardingApplicantDocuments
+          companyId={companyId ?? ""}
+          profileId={newOnboardingSelectedEmployee.id}
+          profileName={newOnboardingSelectedEmployee.name}
+          categories={newOnboardingSelectedEmployee.docList}
+          onBack={() => setNewOnboardingSelectedEmployee(null)}
+        />
+      )}
+      {activeTab === "newOnboardingDocuments" && !newOnboardingSelectedEmployee && (
+      <div className="panel p-0 overflow-hidden">
+        <div className="px-4 py-4 border-b border-white/10 flex justify-between items-center">
+          <div>
+            <h2 className="font-semibold text-sm">New Onboarding Documents</h2>
+            <p className="text-[10px] text-muted-foreground mt-0.5">Click a cell to toggle whether that document has been collected.</p>
+          </div>
+          <div className="flex items-center gap-3">
+            <div className="flex rounded-md overflow-hidden border border-white/15 h-7.5">
+              <button type="button" onClick={() => setNewOnboardingGroup("TECHNICIAN_STAFF")} className={`px-4 text-xs font-medium transition-colors ${newOnboardingGroup === "TECHNICIAN_STAFF" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}>Technician Staff</button>
+              <button type="button" onClick={() => setNewOnboardingGroup("BRANCH_MANAGER_UP")} className={`px-4 text-xs font-medium transition-colors border-l border-white/15 ${newOnboardingGroup === "BRANCH_MANAGER_UP" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}>Branch Manager &amp; Above</button>
+              <button type="button" onClick={() => setNewOnboardingGroup("OFFICE_STAFF_US")} className={`px-4 text-xs font-medium transition-colors border-l border-white/15 ${newOnboardingGroup === "OFFICE_STAFF_US" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}>Office Staff US</button>
+              <button type="button" onClick={() => setNewOnboardingGroup("PHILIPPINES_STAFF")} className={`px-4 text-xs font-medium transition-colors border-l border-white/15 ${newOnboardingGroup === "PHILIPPINES_STAFF" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}>Philippines Staff</button>
+            </div>
+            <div className="relative">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+              <input
+                type="text"
+                value={newOnboardingSearch}
+                onChange={(e) => setNewOnboardingSearch(e.target.value)}
+                placeholder="Search name…"
+                className="glass-input text-xs py-1.5 pl-8 pr-3 rounded-md w-40 h-7.5"
+              />
+            </div>
+            <button
+              type="button"
+              onClick={() => { setAddColumnGroup(newOnboardingGroup); setNewColumnLabel(""); setAddColumnError(null); }}
+              className="btn text-xs px-3 py-1.5 h-7.5 flex items-center gap-1"
+            >
+              <Plus className="h-3.5 w-3.5" /> Add Column
+            </button>
+          </div>
+        </div>
+
+        <div>
+          <table className="w-full table-fixed text-xs">
+            <thead>
+              <tr className="border-b border-white/10 bg-white/5">
+                <th className="px-1.5 py-2 text-left text-[10px] text-muted-foreground uppercase w-[9%]">Name</th>
+                {newOnboardingGroup === "BRANCH_MANAGER_UP" && (
+                  <th className="px-1.5 py-2 text-left text-[10px] text-muted-foreground uppercase w-[9%]">Role</th>
+                )}
+                <th className="px-1.5 py-2 text-left text-[10px] text-muted-foreground uppercase w-[7%]">{newOnboardingGroup === "PHILIPPINES_STAFF" ? "Dept." : "Branch"}</th>
+                {newOnboardingDocsForGroup(newOnboardingGroup).map((doc) => {
+                  const customCol = customOnboardingColumns.find((c) => c.groupKey === newOnboardingGroup && c.label === doc);
+                  const urgent = URGENT_ONBOARDING_COLUMN_LABELS.has(doc);
+                  return (
+                    <th
+                      key={doc}
+                      className={`px-1 py-2 text-center text-[9px] leading-tight uppercase break-words ${
+                        urgent ? "bg-red-500/20 text-red-200" : "text-muted-foreground"
+                      }`}
+                    >
+                      {doc}
+                      {customCol && (
+                        <button
+                          type="button"
+                          onClick={() => void handleRemoveOnboardingColumn(customCol)}
+                          title="Remove this column"
+                          className="ml-1 text-muted-foreground hover:text-red-300 normal-case"
+                        >
+                          ×
+                        </button>
+                      )}
+                    </th>
+                  );
+                })}
+              </tr>
+            </thead>
+            <tbody>
+              {newOnboardingEmployees.length === 0 ? (
+                <tr><td colSpan={(newOnboardingGroup === "BRANCH_MANAGER_UP" ? 3 : 2) + newOnboardingDocsForGroup(newOnboardingGroup).length} className="px-3 py-6 text-center text-muted-foreground text-xs">{employeesLoading ? "Loading employees…" : `No ${newOnboardingGroup === "TECHNICIAN_STAFF" ? "Technician Staff" : newOnboardingGroup === "BRANCH_MANAGER_UP" ? "Branch Manager & Above" : newOnboardingGroup === "OFFICE_STAFF_US" ? "Office Staff US" : "Philippines Staff"} employees found.`}</td></tr>
+              ) : (
+                newOnboardingEmployees.map((employee) => (
+                  <tr key={employee.id} className="border-b border-white/5 hover:bg-white/5">
+                    <td className="px-1.5 py-1.5 font-medium truncate" title={employee.name}>
+                      <button
+                        type="button"
+                        onClick={() => setNewOnboardingSelectedEmployee({ id: employee.id, name: employee.name, docList: getNewOnboardingDocListForEmployee(employee) })}
+                        className="text-blue-300 hover:text-blue-200 hover:underline truncate text-left"
+                      >
+                        {employee.name}
+                      </button>
+                    </td>
+                    {newOnboardingGroup === "BRANCH_MANAGER_UP" && (
+                      <td className="px-1.5 py-1.5 text-muted-foreground truncate" title={branchManagerRoleLabelForEmployee(employee)}>
+                        {branchManagerRoleLabelForEmployee(employee)}
+                      </td>
+                    )}
+                    <td className="px-1.5 py-1.5 text-muted-foreground truncate" title={newOnboardingGroup === "PHILIPPINES_STAFF" ? (ROLE_LABELS[normalizeRole(employee.position)] ?? employee.position) : employee.branch}>
+                      {(newOnboardingGroup === "PHILIPPINES_STAFF" ? (ROLE_LABELS[normalizeRole(employee.position)] ?? employee.position) : employee.branch) || "—"}
+                    </td>
+                    {newOnboardingDocsForGroup(newOnboardingGroup).map((doc) => {
+                      const done = !!newOnboardingDocCategoriesByProfile.get(employee.id)?.has(doc);
+                      const viaSignature = !!newOnboardingSignedLabelsByProfile.get(employee.id)?.has(doc);
+                      return (
+                        <td key={doc} className="px-0.5 py-0.5 text-center">
+                          <button
+                            type="button"
+                            title={
+                              viaSignature
+                                ? `${doc} — already e-signed through the app; click to file a copy too if you have one`
+                                : done
+                                ? `${doc} is filed — click to view`
+                                : `${doc} is missing — click to upload or link it`
+                            }
+                            onClick={() => setNewOnboardingSelectedEmployee({ id: employee.id, name: employee.name, docList: getNewOnboardingDocListForEmployee(employee) })}
+                            className={`w-full px-1 py-1.5 rounded text-[9px] font-bold transition-colors ${done ? "bg-green-500/20 text-green-300 hover:bg-green-500/30" : "bg-red-500/20 text-red-300 hover:bg-red-500/30"}`}
+                          >
+                            {done ? "YES" : "NO"}
+                          </button>
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      )}
+
       {/* Add Column dialog — new document category for the group open when the button was clicked, works exactly like the built-in columns once saved (free-text category, matched the same way on the checklist grid and the per-employee Documents page). */}
       {addColumnGroup && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setAddColumnGroup(null)}>
@@ -16536,7 +16815,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             <p className="text-sm text-muted-foreground mb-4">
               New document column for{" "}
               <span className="font-semibold text-white">
-                {addColumnGroup === "PH" ? "Philippines" : addColumnGroup === "TECHNICIAN" ? "Technician" : "Parts Manager"}
+                {ONBOARDING_GROUP_KEY_LABELS[addColumnGroup]}
               </span>
               . It works exactly like the others — upload or link a file for it from each employee's Documents page.
             </p>
