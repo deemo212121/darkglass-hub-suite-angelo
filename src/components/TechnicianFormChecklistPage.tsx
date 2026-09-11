@@ -358,15 +358,16 @@ export function TechnicianFormChecklistPage() {
         await loadDocsForActiveTab();
         return;
       }
-      // Tag shared types (w4/i9/direct_deposit/w8ben) with the active tab's
-      // own formSource bucket — without this, sending a form from e.g. the
-      // New Technician tab created an UNTAGGED document, which this same
-      // tab's own bucket filter (loadDocsForActiveTab) would then never
-      // count as this person's, so the row it was just sent from wouldn't
-      // even reflect the send. See SHARED_OLD_NEW_AUTOMATION_TYPES's doc
-      // comment in signableDocumentRegistry.ts.
-      const formSourceTag =
-        SHARED_OLD_NEW_AUTOMATION_TYPES.has(type) && activeConfig.formSourceBucket === "new" ? { formSource: "new_automation" } : {};
+      // Tag with the active tab's own formSource bucket whenever it's
+      // "new" — matches ReportHRDaily.tsx's own send handlers (tag purely
+      // on which tab the send happened from, not on the type). This
+      // checklist itself only bucket-filters SHARED_OLD_NEW_AUTOMATION_TYPES
+      // types when deciding what counts as "done" (see loadDocsForActiveTab),
+      // but ReportHRDaily.tsx's own Sent History tables for w4/i9/
+      // direct_deposit still do — so a W-4 sent from here while on the New
+      // Technician tab needs the tag regardless, or it'd wrongly show up
+      // under the OLD w8ben tab's Sent History instead of newW4's.
+      const formSourceTag = activeConfig.formSourceBucket === "new" ? { formSource: "new_automation" } : {};
       const doc = await createSignableDocument({
         documentType: type,
         formData: { employeeId: personId, employeeName: personName, ...formSourceTag },

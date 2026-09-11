@@ -148,14 +148,28 @@ export function isNewAutomationDoc(doc: { formData: Record<string, any> }): bool
 }
 
 /**
- * The subset of SignableDocumentType that's genuinely shared between an old
- * and a new tab/checklist (see isNewAutomationDoc above) — every OTHER type
- * only ever exists under the new group (the Master Agreements), so there's
- * no old bucket to separate from. Used by TechnicianFormChecklistPage.tsx
- * to decide which of a tab's form types need bucket-filtering before
- * counting a document as this person's.
+ * The subset of SignableDocumentType that TechnicianFormChecklistPage.tsx
+ * bucket-filters by formSource before counting a document as "this
+ * person's" for a given tab — every OTHER type (including w4/i9/
+ * direct_deposit — see below) counts ANY matching document regardless of
+ * which flow sent it.
  *
- * contractor_addendum and w9 joined this set once they each got their own
+ * w4/i9/direct_deposit are deliberately NOT in this set even though
+ * ReportHRDaily.tsx's own Sent History tables (visibleW4Forms/visibleI9Forms/
+ * visibleDirectDepositForms) DO still separate them there — the user's
+ * explicit call: these 3 are the exact same form regardless of which column
+ * sent it (no content difference like the Master Agreements have), so
+ * someone who already has a real W-4/I-9/Direct Deposit on file from the
+ * OLD flow has genuinely satisfied the requirement and shouldn't show
+ * "Not sent" on the New Technician/Office Staff (US)/PH Staff/BM+
+ * checklist tabs just because it came from the old flow. The checklist
+ * answers "does this person have this on file"; the Sent History tables
+ * answer "what did THIS column send" — different questions, deliberately
+ * different answers here.
+ *
+ * w8ben/w9/contractor_addendum stay bucket-filtered (new-only) — the user
+ * scoped the "count old too" request to just w4/i9/direct_deposit. w9 and
+ * contractor_addendum joined bucket-filtering once they each got their own
  * real "new" tab (newContractorAddendum/newW9) — before that, the BM/SBS/
  * Tech Director/Tech Assistant Director column's Contractor Addendum/W-9
  * rows reused the OLD group's shared tab/list outright with no way to tell
@@ -163,7 +177,7 @@ export function isNewAutomationDoc(doc: { formData: Record<string, any> }): bool
  * made a BM+ checklist row show "Awaiting employee signature" off a
  * pre-New-Automation-Forms submission that had nothing to do with it.
  */
-export const SHARED_OLD_NEW_AUTOMATION_TYPES = new Set<SignableDocumentType>(["w4", "i9", "direct_deposit", "w8ben", "w9", "contractor_addendum"]);
+export const SHARED_OLD_NEW_AUTOMATION_TYPES = new Set<SignableDocumentType>(["w8ben", "w9", "contractor_addendum"]);
 
 /**
  * Where a signable document currently stands, from the "is this actually
