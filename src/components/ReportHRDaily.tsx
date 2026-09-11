@@ -9352,6 +9352,17 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     { type: "w8ben", label: "Form W-8BEN" },
     { type: "direct_deposit", label: "Direct Deposit Authorization" },
   ];
+  // Matches newAutomationFormsManagementTabs (BM, SBS, Tech Director, Tech
+  // Assistant Director Forms) — Contractor Addendum and W-9 don't have
+  // their own standalone "new" tab (w9 is a shortcut into the shared
+  // combined W-8/9/4/4R tab, Contractor Addendum reuses its one existing
+  // tab as-is), but both are still real SignableDocumentTypes the same way
+  // every other bulk-sendable type here is.
+  const NEW_MANAGEMENT_BULK_FORM_TYPES: { type: SignableDocumentType; label: string }[] = [
+    { type: "contractor_addendum", label: "Master Independent Contractor Subcontractor Agreement Addendum" },
+    { type: "w9", label: "Form W-9" },
+    { type: "direct_deposit", label: "Direct Deposit Authorization" },
+  ];
 
   const [combineFormsRecipientId, setCombineFormsRecipientId] = useState("");
   const [combineFormsRecipientSearch, setCombineFormsRecipientSearch] = useState("");
@@ -9385,7 +9396,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const handleSendAllSelected = async () => {
     if (!formsDialog) return;
     const bulkSendableTypes = new Set<SignableDocumentType>(
-      [...GENERAL_FORM_TYPES, ...TECHNICIAN_FORM_TYPES, ...MANAGEMENT_FORM_TYPES, ...NEW_TECHNICIAN_BULK_FORM_TYPES, ...NEW_OFFICE_BULK_FORM_TYPES, ...NEW_PH_BULK_FORM_TYPES].map((f) => f.type)
+      [...GENERAL_FORM_TYPES, ...TECHNICIAN_FORM_TYPES, ...MANAGEMENT_FORM_TYPES, ...NEW_TECHNICIAN_BULK_FORM_TYPES, ...NEW_OFFICE_BULK_FORM_TYPES, ...NEW_PH_BULK_FORM_TYPES, ...NEW_MANAGEMENT_BULK_FORM_TYPES].map((f) => f.type)
     );
     const toSend = Array.from(formsDialog.selected).filter((t) => bulkSendableTypes.has(t));
     if (toSend.length === 0) {
@@ -9440,7 +9451,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         const alreadySent = await getExistingActiveDocumentTypes(recipient.id, Array.from(selectedFormTypes));
         if (alreadySent.length > 0) {
           const labelByType = new Map(
-            [...GENERAL_FORM_TYPES, ...TECHNICIAN_FORM_TYPES, ...MANAGEMENT_FORM_TYPES, ...NEW_TECHNICIAN_BULK_FORM_TYPES, ...NEW_OFFICE_BULK_FORM_TYPES, ...NEW_PH_BULK_FORM_TYPES].map((f) => [f.type, f.label])
+            [...GENERAL_FORM_TYPES, ...TECHNICIAN_FORM_TYPES, ...MANAGEMENT_FORM_TYPES, ...NEW_TECHNICIAN_BULK_FORM_TYPES, ...NEW_OFFICE_BULK_FORM_TYPES, ...NEW_PH_BULK_FORM_TYPES, ...NEW_MANAGEMENT_BULK_FORM_TYPES].map((f) => [f.type, f.label])
           );
           const names = alreadySent.map((t) => labelByType.get(t) ?? t).join(", ");
           if (!window.confirm(`${recipient.name} already has these forms on file: ${names}.\n\nSend them again anyway?`)) {
@@ -15958,8 +15969,38 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         <div className="px-4 pt-4">
           <h3 className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">PH Staff</h3>
         </div>
-        <div className="p-4 pt-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        <div className="p-4 pt-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 border-b border-white/10">
           {NEW_PH_BULK_FORM_TYPES.map(({ type, label }) => {
+            const checked = selectedFormTypes.has(type);
+            const urgent = ROUTE_REQUIRED_DOCUMENT_TYPES.includes(type);
+            return (
+              <label
+                key={type}
+                className={`flex items-start gap-2.5 rounded-lg border p-3 cursor-pointer transition-colors ${
+                  checked
+                    ? "border-primary/50 bg-primary/10"
+                    : urgent
+                    ? "border-red-500/40 bg-red-500/20 hover:bg-red-500/30"
+                    : "border-white/10 bg-white/5 hover:bg-white/10"
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={() => toggleFormTypeSelected(type)}
+                  className="mt-0.5 h-3.5 w-3.5 shrink-0"
+                />
+                <span className="text-sm font-medium">{label}</span>
+              </label>
+            );
+          })}
+        </div>
+
+        <div className="px-4 pt-4">
+          <h3 className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">BM, SBS, Tech Director, Tech Assistant Director Forms</h3>
+        </div>
+        <div className="p-4 pt-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          {NEW_MANAGEMENT_BULK_FORM_TYPES.map(({ type, label }) => {
             const checked = selectedFormTypes.has(type);
             const urgent = ROUTE_REQUIRED_DOCUMENT_TYPES.includes(type);
             return (
