@@ -161,11 +161,14 @@ export function MessagesMenu() {
         };
       });
 
-      // Sort: unread threads first, then most recent activity.
+      // Sort by most recent activity only — sorting unread-count-first used
+      // to put an older thread with more unread messages above a genuinely
+      // newer one, which read as random/out-of-order rather than "latest
+      // first" (the badge already shows unread count, so it doesn't need
+      // to win the sort too).
       const all = [...channelPreviews, ...dmPreviews]
         .filter((p) => p.lastMessage || p.unread > 0 || p.kind === "channel")
         .sort((a, b) => {
-          if (a.unread !== b.unread) return b.unread - a.unread;
           const at = a.lastMessage?.created_at ?? "";
           const bt = b.lastMessage?.created_at ?? "";
           return bt.localeCompare(at);

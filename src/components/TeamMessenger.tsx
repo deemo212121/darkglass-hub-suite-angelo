@@ -31,11 +31,13 @@ import {
   getDmMessages,
   getOrCreateDmThread,
   listChannels,
+  listMyDmInbox,
   markThreadRead,
   notifyChannelMention,
   peekLatestThreadMessage,
   removeChannelMember,
   sendMessage as sendMessageRow,
+  subscribeToAllNewMessages,
   subscribeToMessages,
 } from "@/lib/supabase/messaging";
 import {
@@ -98,6 +100,25 @@ export function TeamMessenger({ mod, sub }: Props) {
   const { email, ready, uid, displayName, role, extraRoles } = useAuth();
   const [profileId, setProfileId] = useState<string | null>(null);
   const [channels, setChannels] = useState<ChannelRow[]>([]);
+  // Other participant's profile id -> their DM thread's last message
+  // timestamp with me, so the EMPLOYEES sidebar can show whoever I've most
+  // recently messaged first instead of a flat alphabetical list. Contacts
+  // with no DM history yet keep getCompanyUsers()'s own display_name order
+  // (see filteredContacts' sort below).
+  const [dmLastActivityByProfileId, setDmLastActivityByProfileId] = useState<Map<string, string>>(new Map());
+  const refreshDmInbox = async () => {
+    if (!profileId) return;
+    try {
+      const inbox = await listMyDmInbox(profileId);
+      // Excludes threads with no real message yet — listMyDmInbox falls
+      // back to the THREAD's own created_at (i.e. the moment it was
+      // opened, not messaged) when lastMessageSenderId is null, which
+      // would otherwise send someone straight to the top just for having
+      // been clicked on once.
+      const withRealMessages = inbox.filter((entry) => entry.lastMessageSenderId);
+      setDmLastActivityByProfileId(new Map(withRealMessages.map((entry) => [entry.otherProfileId, entry.lastMessageAt])));
+    } catch { /* non-critical — sidebar just keeps its current/alphabetical order */ }
+  };
   const [contacts, setContacts] = useState<ProfileRow[]>([]);
   const [active, setActive] = useState<ActiveThread | null>(null);
   const [messages, setMessages] = useState<MessageRow[]>([]);
@@ -158,6 +179,7 @@ export function TeamMessenger({ mod, sub }: Props) {
         // Hide myself from the contact list.
         const others = users.filter((u) => u.id !== profileId && u.is_active);
         setContacts(others);
+        void refreshDmInbox();
 
         // If the URL hash points to a specific thread (#channel=… or #dm=…)
         // open it; otherwise default to the first channel.
@@ -190,6 +212,26 @@ export function TeamMessenger({ mod, sub }: Props) {
       .catch((err) => { if (!cancelled) setError(err.message || String(err)); });
     return () => { cancelled = true; };
   }, [ready, profileId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Keep the EMPLOYEES sidebar's recency order live — any new message
+  // anywhere (not just in the currently-open thread) re-sorts it, debounced
+  // so a burst of messages only triggers one refetch. Same
+  // subscribeToAllNewMessages + debounce shape MessagesMenu.tsx already
+  // uses for its own live badge/preview refresh.
+  useEffect(() => {
+    if (!profileId) return;
+    let debounceTimer: number | undefined;
+    const debouncedRefresh = () => {
+      if (debounceTimer) window.clearTimeout(debounceTimer);
+      debounceTimer = window.setTimeout(() => { void refreshDmInbox(); }, 800);
+    };
+    const unsub = subscribeToAllNewMessages(() => debouncedRefresh());
+    return () => {
+      if (debounceTimer) window.clearTimeout(debounceTimer);
+      unsub();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profileId]);
 
   // Watch the URL hash so that clicking a thread from the header dropdown
   // (which already lives at this route) actually switches the open thread.
@@ -318,19 +360,33 @@ export function TeamMessenger({ mod, sub }: Props) {
 
   const filteredContacts = useMemo(() => {
     const term = search.trim().toLowerCase();
-    if (!term) return contacts;
-    return contacts.filter((r) => {
-      const haystack = [
-        r.display_name ?? "",
-        r.email,
-        r.username ?? "",
-        r.role,
-        r.assigned_branch ?? "",
-        r.department ?? "",
-      ].join(" ").toLowerCase();
-      return haystack.includes(term);
+    const matches = !term
+      ? contacts
+      : contacts.filter((r) => {
+          const haystack = [
+            r.display_name ?? "",
+            r.email,
+            r.username ?? "",
+            r.role,
+            r.assigned_branch ?? "",
+            r.department ?? "",
+          ].join(" ").toLowerCase();
+          return haystack.includes(term);
+        });
+    // Whoever I've most recently messaged floats to the top, like a normal
+    // chat app's contact list — contacts I've never DM'd stay in
+    // getCompanyUsers()'s own display_name order at the bottom (stable
+    // sort: two "no history" contacts return 0, so their relative order
+    // never moves).
+    return [...matches].sort((a, b) => {
+      const at = dmLastActivityByProfileId.get(a.id);
+      const bt = dmLastActivityByProfileId.get(b.id);
+      if (at && bt) return bt.localeCompare(at);
+      if (at) return -1;
+      if (bt) return 1;
+      return 0;
     });
-  }, [contacts, search]);
+  }, [contacts, search, dmLastActivityByProfileId]);
 
   // Every distinct department among company employees — narrows the long
   // employee-picker checkbox lists in Create Channel / Add Employee.
