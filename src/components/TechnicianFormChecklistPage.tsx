@@ -393,6 +393,70 @@ export function TechnicianFormChecklistPage() {
     }
   };
 
+  // "Send All Forms" — hands off to the real Bulk Form Send picker
+  // (ReportHRDaily.tsx's combineForms/newCombineForms tab) with this person
+  // and their outstanding (not yet sent, not N/A'd) forms already
+  // pre-selected, via the same ?recipientId=&types= URL hydration the
+  // onboarding "Send All Selected" bridge there uses — HR reviews/adjusts
+  // the checklist and clicks Generate/Copy Link themselves, rather than
+  // this page silently creating+sending documents on click. The
+  // "technician" tab uses the legacy TECHNICIAN_FORM_TYPES list, which
+  // combineForms's own checklist covers; every other tab's forms only live
+  // under newCombineForms.
+  const handleSendAllForms = (r: TechRow) => {
+    const outstanding = activeConfig.formTypes.filter(
+      (type) => !r.exempt.has(type) && getDocumentReviewStatus(type, r.docs.get(type)) === "not_sent"
+    );
+    if (outstanding.length === 0) return;
+    navigate({
+      to: "/m/$module/$submodule",
+      params: { module: "hr", submodule: "hr-paperworks" },
+      search: {
+        tab: activeChecklistTab === "technician" ? "combineForms" : "newCombineForms",
+        recipientId: r.profileId,
+        types: outstanding.join(","),
+      },
+    } as any);
+  };
+
+  // "Remind All" — the bulk counterpart to handleRemindForm: every one of
+  // this tab's forms already sent and awaiting the employee's own signature
+  // (skipping N/A'd, not-yet-sent, and awaiting-HR/done ones) gets ONE DM
+  // with a single /sign-bundle link over their EXISTING document ids — no
+  // new hr_signable_documents rows created, same as an individual reminder
+  // just re-nudges the same doc rather than resending it.
+  const handleRemindAllForms = async (r: TechRow) => {
+    const pending = activeConfig.formTypes
+      .filter((type) => !r.exempt.has(type) && getDocumentReviewStatus(type, r.docs.get(type)) === "awaiting_employee")
+      .map((type) => r.docs.get(type))
+      .filter((doc): doc is SignableDocument => !!doc);
+    if (pending.length === 0 || !myProfileId) return;
+    const key = `${r.profileId}|remindAll`;
+    setActionKey(key);
+    setActionError(null);
+    try {
+      const thread = await getOrCreateDmThread(myProfileId, r.profileId);
+      const bundleLink = `${getAppUrl()}/sign-bundle?ids=${pending.map((d) => d.id).join(",")}`;
+      await sendMessage({
+        dmThreadId: thread.id,
+        senderId: myProfileId,
+        senderName: displayName || "HR",
+        body: `⏰ Reminder — please complete these ${pending.length} forms: ${bundleLink}`,
+      });
+      void logActivity({
+        action: "combined_forms_reminded",
+        targetType: "employee",
+        targetId: r.profileId,
+        targetLabel: r.name,
+        details: { types: pending.map((d) => d.documentType) },
+      });
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Failed to send reminder.");
+    } finally {
+      setActionKey(null);
+    }
+  };
+
   // "Pending" — the document already exists (they just haven't signed it
   // yet); nudge with a DM to the SAME fill link rather than creating a
   // duplicate document.
@@ -650,6 +714,43 @@ export function TechnicianFormChecklistPage() {
 
                 {isOpen && (
                   <div className="border-t border-white/10 px-4 py-3">
+                    {(() => {
+                      const outstanding = activeConfig.formTypes.filter(
+                        (type) => !r.exempt.has(type) && getDocumentReviewStatus(type, r.docs.get(type)) === "not_sent"
+                      );
+                      const pending = activeConfig.formTypes.filter(
+                        (type) => !r.exempt.has(type) && getDocumentReviewStatus(type, r.docs.get(type)) === "awaiting_employee"
+                      );
+                      const remindAllBusy = actionKey === `${r.profileId}|remindAll`;
+                      if (outstanding.length === 0 && pending.length === 0) return null;
+                      return (
+                        <div className="flex justify-end items-center gap-3 mb-2.5">
+                          {pending.length > 0 && (
+                            <button
+                              type="button"
+                              disabled={remindAllBusy}
+                              onClick={() => void handleRemindAllForms(r)}
+                              title={`Send one reminder for the ${pending.length} form${pending.length === 1 ? "" : "s"} awaiting their signature`}
+                              className="inline-flex shrink-0 items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-amber-400 hover:text-amber-300 disabled:opacity-40 disabled:cursor-not-allowed"
+                            >
+                              {remindAllBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Bell className="h-3.5 w-3.5" />}
+                              Remind All{pending.length > 0 ? ` (${pending.length})` : ""}
+                            </button>
+                          )}
+                          {outstanding.length > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => handleSendAllForms(r)}
+                              title={`Review and send the ${outstanding.length} unsent form${outstanding.length === 1 ? "" : "s"} in Bulk Form Send`}
+                              className="inline-flex shrink-0 items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-red-400 hover:text-red-300"
+                            >
+                              <Send className="h-3.5 w-3.5" />
+                              Send All Forms ({outstanding.length})
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })()}
                     <ul className="space-y-2">
                       {activeConfig.formTypes.map((type) => {
                         const doc = r.docs.get(type);

@@ -978,9 +978,9 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // (initialHrSearchRef) — after that, this component's own state is the
   // source of truth and pushes into the URL, not the other way around. ──
   const navigate = useNavigate();
-  const hrSearchParams = (useSearch({ strict: false }) as { tab?: string; submissionId?: string; profileId?: string }) ?? {};
+  const hrSearchParams = (useSearch({ strict: false }) as { tab?: string; submissionId?: string; profileId?: string; recipientId?: string; types?: string }) ?? {};
   const initialHrSearchRef = useRef(hrSearchParams);
-  const VALID_HR_TABS = ["hiring", "warnings", "masterList", "leaders", "jotform", "jotformDocuments", "customForms", "onboarding", "hiringReports", "report", "coe", "warningForm", "promotionForm", "actionPlanForm", "terminationForm", "employeeRequestManager", "w8ben", "i9", "wageAck", "carIqAgreement", "vehicleAgreement", "vehicleUseAgreement", "employeeConfidentiality", "mealRestBreak", "ptoAck", "partsResponsibility", "mileageFuel", "locationConsent", "damage", "contractorData", "contractorDataUs", "directDeposit", "substanceScreening", "flashTechnicianTravel", "combineForms", "employerQueue"] as const;
+  const VALID_HR_TABS = ["hiring", "warnings", "masterList", "leaders", "jotform", "jotformDocuments", "customForms", "onboarding", "hiringReports", "report", "coe", "warningForm", "promotionForm", "actionPlanForm", "terminationForm", "employeeRequestManager", "w8ben", "i9", "wageAck", "carIqAgreement", "vehicleAgreement", "vehicleUseAgreement", "employeeConfidentiality", "mealRestBreak", "ptoAck", "partsResponsibility", "mileageFuel", "locationConsent", "damage", "contractorData", "contractorDataUs", "directDeposit", "substanceScreening", "flashTechnicianTravel", "combineForms", "newCombineForms", "employerQueue"] as const;
   useEffect(() => {
     const tab = initialHrSearchRef.current.tab;
     if (tab && (VALID_HR_TABS as readonly string[]).includes(tab)) setActiveTab(tab as typeof activeTab);
@@ -12503,6 +12503,31 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [employees]);
 
+  // Restores a Bulk Form Send pre-selection from the URL's ?recipientId=&
+  // types= — how the Staff Form Checklist's "Send All Forms" button lands
+  // HR here on the real combineForms/newCombineForms picker with the
+  // technician and their outstanding forms already checked off, instead of
+  // duplicating this picker's UI/generation logic on that page. Same
+  // once-only-after-employees-load guard as the onboarding-profile restore
+  // above, since resolving recipientId needs `employees` populated too.
+  const restoredCombineFormsRef = useRef(false);
+  useEffect(() => {
+    if (restoredCombineFormsRef.current || employees.length === 0) return;
+    restoredCombineFormsRef.current = true;
+    const { recipientId, types } = initialHrSearchRef.current;
+    if (!types) return;
+    const formTypes = types.split(",").filter(Boolean) as SignableDocumentType[];
+    if (formTypes.length === 0) return;
+    setSelectedFormTypes(new Set(formTypes));
+    const recipient = recipientId ? employees.find((e) => e.id === recipientId) : undefined;
+    if (recipient) {
+      setCombineFormsRecipientId(recipient.id);
+      setCombineFormsRecipientSearch(`${recipient.name} — ${ROLE_LABELS[normalizeRole(recipient.position)] ?? recipient.position}`);
+      setCombineFormsExternalName("");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [employees]);
+
   // Keeps the URL in sync with the current tab/applicant going forward, so
   // a refresh (or a bookmarked/shared link) lands back here — replace, not
   // push, so switching tabs doesn't spam the browser's back-button history.
@@ -13334,7 +13359,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // unscannable as a plain accordion).
   const automatedFormsGeneralTabs = [
     ...(canViewJotformTab ? [{ key: "jotformDocuments", label: "Applicant Documents", count: newJotformSubmissionsCount, icon: Forward }] as const : []),
-    { key: "combineForms", label: "Bulk Form Send", count: 0, icon: Link2 },
     { key: "employerQueue", label: "Bulk Sign", count: employerAwaitingRows.length, icon: CheckCircle },
     { key: "coe", label: "Certificate of Employment", count: 0, icon: CheckCircle },
     { key: "customForms", label: "Custom Forms", count: newCustomFormSubmissionsCount, icon: FileText },
@@ -13351,17 +13375,20 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // Form/Termination Notice Form/W-8ben — those 4 live directly under New
   // Technician Forms instead (see newAutomationFormsTechnicianTabs below),
   // so listing them here too would just be a duplicate.
-  // "combineForms" (Bulk Form Send) gets its own distinct tab here rather
-  // than being reused as-is — the old one's checkbox list is the legacy
-  // 20-item breakdown (11 individual technician forms, etc.); this one
-  // needs to show only the new consolidated form types (Master W-2
-  // Technician/Office Agreement, Master PH Contractor Agreement, W-4, I-9,
-  // Direct Deposit, W-8BEN), grouped by New Technician/New Office/PH Staff
-  // — see the "newCombineForms" render block below.
-  const newAutomationFormsGeneralTabs: NavTabDef[] = [
-    ...automatedFormsGeneralTabs.filter((t) => !["i9", "actionPlanForm", "terminationForm", "w8ben", "combineForms"].includes(t.key)),
-    { key: "newCombineForms", label: "Bulk Form Send", count: 0, icon: Link2 },
-  ];
+  //
+  // Neither this column nor automatedFormsGeneralTabs above lists a "Bulk
+  // Form Send" nav entry anymore — combineForms/newCombineForms themselves
+  // (the picker UI, handleGenerateCombinedForms, etc.) are untouched and
+  // still very much alive, just no longer reachable as a cold/empty start.
+  // The Staff Form Checklist's per-person "Send All Forms"/"Remind All"
+  // (TechnicianFormChecklistPage.tsx) is the one remaining entry point —
+  // it navigates here with ?recipientId=&types= already filled in (see
+  // restoredCombineFormsRef below), and the onboarding "Forms" popup's
+  // "Send All Selected" button (handleSendAllSelected) still jumps here
+  // the same way it always has.
+  const newAutomationFormsGeneralTabs: NavTabDef[] = automatedFormsGeneralTabs.filter(
+    (t) => !["i9", "actionPlanForm", "terminationForm", "w8ben"].includes(t.key)
+  );
 
   const automatedFormsTechnicianTabs = [
     { key: "wageAck", label: "Acknowledgment of Wage", count: sentWageAckAwaitingEmployerCount, icon: FileCheck },
