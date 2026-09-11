@@ -150,14 +150,20 @@ export function isNewAutomationDoc(doc: { formData: Record<string, any> }): bool
 /**
  * The subset of SignableDocumentType that's genuinely shared between an old
  * and a new tab/checklist (see isNewAutomationDoc above) — every OTHER type
- * either only ever exists under the new group (the Master Agreements) or
- * isn't split by formSource at all yet (e.g. contractor_addendum, still one
- * shared list on purpose — its multi-signer "Send to Next Signer" chain is
- * a bigger change than the formSource split covers). Used by
- * TechnicianFormChecklistPage.tsx to decide which of a tab's form types
- * need bucket-filtering before counting a document as this person's.
+ * only ever exists under the new group (the Master Agreements), so there's
+ * no old bucket to separate from. Used by TechnicianFormChecklistPage.tsx
+ * to decide which of a tab's form types need bucket-filtering before
+ * counting a document as this person's.
+ *
+ * contractor_addendum and w9 joined this set once they each got their own
+ * real "new" tab (newContractorAddendum/newW9) — before that, the BM/SBS/
+ * Tech Director/Tech Assistant Director column's Contractor Addendum/W-9
+ * rows reused the OLD group's shared tab/list outright with no way to tell
+ * a genuinely new submission from a years-old one, which is exactly what
+ * made a BM+ checklist row show "Awaiting employee signature" off a
+ * pre-New-Automation-Forms submission that had nothing to do with it.
  */
-export const SHARED_OLD_NEW_AUTOMATION_TYPES = new Set<SignableDocumentType>(["w4", "i9", "direct_deposit", "w8ben"]);
+export const SHARED_OLD_NEW_AUTOMATION_TYPES = new Set<SignableDocumentType>(["w4", "i9", "direct_deposit", "w8ben", "w9", "contractor_addendum"]);
 
 /**
  * Where a signable document currently stands, from the "is this actually
