@@ -138,6 +138,8 @@ interface TechRow {
   applicableTotal: number;
   /** Frozen accounts can still log in but are restricted to Messages only (see migration 0223) — clock in/out and ticket writes are also blocked server-side. */
   frozen: boolean;
+  /** profiles.employment_type === "trainee" (Master List) — shown as a badge next to their name; doesn't affect which tab/tier they land in, that's still purely role-based (isEligible above). */
+  isTrainee: boolean;
 }
 
 function isComplete(doc: SignableDocument | undefined, type: SignableDocumentType): boolean {
@@ -352,6 +354,7 @@ export function TechnicianFormChecklistPage() {
         doneCount,
         applicableTotal: activeConfig.formTypes.length - exempt.size,
         frozen: u.frozen === true,
+        isTrainee: u.employment_type === "trainee",
       };
     });
   }, [allUsers, latestByKey, exemptions, activeConfig]);
@@ -798,6 +801,7 @@ export function TechnicianFormChecklistPage() {
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-semibold text-white flex items-center gap-1.5">
                         {r.name}
+                        {r.isTrainee && <span className="shrink-0 rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber-300">Trainee</span>}
                         {r.frozen && <span className="shrink-0 rounded-full border border-sky-500/40 bg-sky-500/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-sky-300">Frozen</span>}
                       </p>
                       <p className="text-[11px] text-slate-400">{r.roleLabel} · {r.branch}</p>
