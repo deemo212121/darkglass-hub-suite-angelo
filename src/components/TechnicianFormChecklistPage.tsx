@@ -39,7 +39,7 @@ import { ChevronLeft, ClipboardCheck, Loader2, ChevronDown, ExternalLink, Refres
 import { useAuth } from "@/lib/auth";
 import { getCompanyUsers, getMyProfileId, setProfileFrozen, type ProfileRow } from "@/lib/supabase/users";
 import { isEligibleForTechnicianFormChecklist, isBmAndUpRole, getRoleDepartmentBreakdown } from "@/lib/roleLabels";
-import { getSignableDocumentsByTypes, createSignableDocument, type SignableDocument, type SignableDocumentType } from "@/lib/supabase/signableDocuments";
+import { getSignableDocumentsByTypes, getExistingActiveDocumentTypes, createSignableDocument, type SignableDocument, type SignableDocumentType } from "@/lib/supabase/signableDocuments";
 import { SIGNABLE_DOCUMENT_REGISTRY, TECHNICIAN_FORM_TYPES, getDocumentReviewStatus, isTechnicianExemptFromForm, exemptionRowValueForToggle, pickAuthoritativeDocument, isNewAutomationDoc, SHARED_OLD_NEW_AUTOMATION_TYPES } from "@/lib/signableDocumentRegistry";
 import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
 import { getTechnicianFormExemptions, setTechnicianFormExemption } from "@/lib/supabase/technicianFormExemptions";
@@ -341,6 +341,23 @@ export function TechnicianFormChecklistPage() {
     setActionKey(key);
     setActionError(null);
     try {
+      // Guard against two HR sessions racing on the same stale "Not sent"
+      // row — e.g. one person sends this form from their own laptop right
+      // before another session (which hasn't refreshed since) clicks Send
+      // for the same person/form here too. `rows` is only as fresh as this
+      // session's last load, so re-check the LIVE database state right
+      // before creating anything rather than trusting the row that's
+      // currently on screen. Refuses rather than asking "send another
+      // anyway?" (unlike ReportHRDaily.tsx's own send handlers) — from this
+      // checklist, "Send" only ever means "this hasn't been sent yet", so a
+      // hit here means the screen was wrong, not that HR actually wants a
+      // second one.
+      const alreadySent = await getExistingActiveDocumentTypes(personId, [type]);
+      if (alreadySent.length > 0) {
+        setActionError(`${personName} already has a ${SIGNABLE_DOCUMENT_REGISTRY[type]?.label ?? type} on file (most likely just sent from another session) — refreshing to show its current status.`);
+        await loadDocsForActiveTab();
+        return;
+      }
       // Tag shared types (w4/i9/direct_deposit/w8ben) with the active tab's
       // own formSource bucket — without this, sending a form from e.g. the
       // New Technician tab created an UNTAGGED document, which this same
