@@ -949,6 +949,29 @@ export function TechnicianFormChecklistPage() {
                                 >
                                   <PenLine className="h-3 w-3" /> Sign
                                 </button>
+                              ) : type === "i9" && doc ? (
+                                // Section 2 needs real document-review fields
+                                // (documents examined, first day employed,
+                                // business info) — not just a signature, so
+                                // there's no in-page popup for it here.
+                                // Deep-links straight to that person's
+                                // Section 2 dialog in HR Paperworks instead
+                                // of leaving HR to go find it manually — see
+                                // ReportHRDaily.tsx's restoredI9Section2Ref.
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    navigate({
+                                      to: "/m/$module/$submodule",
+                                      params: { module: "hr", submodule: "hr-paperworks" },
+                                      search: { tab: activeConfig.formSourceBucket === "new" ? "newI9" : "i9", docId: doc.id },
+                                    } as any)
+                                  }
+                                  title="Complete Section 2 in HR Paperworks"
+                                  className="inline-flex shrink-0 items-center gap-1 text-xs text-sky-300 hover:text-sky-200"
+                                >
+                                  <ExternalLink className="h-3 w-3" /> Complete Section 2
+                                </button>
                               ) : (
                                 <span title="This person has signed — this form now needs HR's own review/countersignature in Attendance Monitoring." className="shrink-0 text-[10px] text-sky-400/80">
                                   Needs your review

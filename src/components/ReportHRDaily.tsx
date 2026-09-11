@@ -978,9 +978,9 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // (initialHrSearchRef) — after that, this component's own state is the
   // source of truth and pushes into the URL, not the other way around. ──
   const navigate = useNavigate();
-  const hrSearchParams = (useSearch({ strict: false }) as { tab?: string; submissionId?: string; profileId?: string }) ?? {};
+  const hrSearchParams = (useSearch({ strict: false }) as { tab?: string; submissionId?: string; profileId?: string; docId?: string }) ?? {};
   const initialHrSearchRef = useRef(hrSearchParams);
-  const VALID_HR_TABS = ["hiring", "warnings", "masterList", "leaders", "jotform", "jotformDocuments", "customForms", "onboarding", "hiringReports", "report", "coe", "warningForm", "promotionForm", "actionPlanForm", "terminationForm", "employeeRequestManager", "w8ben", "i9", "wageAck", "carIqAgreement", "vehicleAgreement", "vehicleUseAgreement", "employeeConfidentiality", "mealRestBreak", "ptoAck", "partsResponsibility", "mileageFuel", "locationConsent", "damage", "contractorData", "contractorDataUs", "directDeposit", "substanceScreening", "flashTechnicianTravel", "combineForms", "newCombineForms", "employerQueue"] as const;
+  const VALID_HR_TABS = ["hiring", "warnings", "masterList", "leaders", "jotform", "jotformDocuments", "customForms", "onboarding", "hiringReports", "report", "coe", "warningForm", "promotionForm", "actionPlanForm", "terminationForm", "employeeRequestManager", "w8ben", "i9", "newI9", "wageAck", "carIqAgreement", "vehicleAgreement", "vehicleUseAgreement", "employeeConfidentiality", "mealRestBreak", "ptoAck", "partsResponsibility", "mileageFuel", "locationConsent", "damage", "contractorData", "contractorDataUs", "directDeposit", "substanceScreening", "flashTechnicianTravel", "combineForms", "newCombineForms", "employerQueue"] as const;
   useEffect(() => {
     const tab = initialHrSearchRef.current.tab;
     if (tab && (VALID_HR_TABS as readonly string[]).includes(tab)) setActiveTab(tab as typeof activeTab);
@@ -9614,6 +9614,27 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     setI9Section2Error(null);
     i9Section2SigPad.clear();
   };
+
+  // Restores a specific I-9's Section 2 dialog from the URL's ?docId= — how
+  // the Staff Form Checklist's "Complete Section 2" link lands HR directly
+  // on that one person's dialog instead of just the tab, since Section 2
+  // needs real document-review fields this page has and the checklist
+  // deliberately doesn't duplicate. Same once-only-after-data-loads guard
+  // as the onboarding-profile restore, gated on visibleI9Forms (the
+  // correctly old/new-bucketed list for whichever of "i9"/"newI9" the link
+  // also switched to) actually containing a match — an empty first fetch
+  // shouldn't permanently give up before the real list arrives.
+  const restoredI9Section2Ref = useRef(false);
+  useEffect(() => {
+    if (restoredI9Section2Ref.current) return;
+    const docId = initialHrSearchRef.current.docId;
+    if (!docId || visibleI9Forms.length === 0) return;
+    const match = visibleI9Forms.find((d) => d.id === docId);
+    if (!match) return;
+    restoredI9Section2Ref.current = true;
+    handleOpenI9Section2(match);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visibleI9Forms]);
 
   const handleSaveI9Section2 = async () => {
     if (!i9Section2Dialog || !uid) return;
