@@ -13275,6 +13275,25 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     { key: "newDirectDeposit", label: "Direct Deposit Authorization", count: 0, icon: FileCheck },
   ] as const;
 
+  // "New Automation Forms"'s management-tier column — Branch Manager/Senior
+  // Branch Manager/Technical Director/Technical Assistant Director forms.
+  // Direct Deposit reuses "newDirectDeposit" (not the old group's plain
+  // "directDeposit") so it lands in the same new/old-separated bucket as
+  // every other New Automation Forms column — see isNewAutomationDoc's doc
+  // comment. Contractor Addendum reuses its one existing tab/Sent History
+  // list as-is (no new/old split for it yet — its multi-signer "Send to
+  // Next Signer" chain is a bigger change than this pass covers). "w9"
+  // isn't a real tab of its own — clicking it jumps straight into the
+  // combined W-8/9/4/4R tab with w8FormType pre-set to "w9" (see
+  // goToTab/renderSidebarTabButton/renderDropdownTabButton's special case
+  // below) so Form W-9 is reachable directly from here instead of only via
+  // that picker.
+  const newAutomationFormsManagementTabs = [
+    { key: "contractorAddendum", label: "Master Independent Contractor Subcontractor Agreement Addendum", count: 0, icon: FileText },
+    { key: "w9", label: "Form W-9", count: 0, icon: Landmark },
+    { key: "newDirectDeposit", label: "Direct Deposit Authorization", count: 0, icon: FileCheck },
+  ] as const;
+
   // Management-tier forms (Branch Manager / Senior Branch Manager /
   // Technical Director / Technical Assistant Director) — its own column,
   // separate from the rank-and-file Technician Forms and the HR/admin
@@ -13320,12 +13339,13 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     ...(paperworksOnly && companyId === "COMP001" ? [{
       group: "New Automation Forms",
       icon: Paperclip,
-      tabs: [...newAutomationFormsGeneralTabs, ...newAutomationFormsTechnicianTabs, ...newAutomationFormsOfficeTabs, ...newAutomationFormsPhTabs],
+      tabs: [...newAutomationFormsGeneralTabs, ...newAutomationFormsTechnicianTabs, ...newAutomationFormsOfficeTabs, ...newAutomationFormsPhTabs, ...newAutomationFormsManagementTabs],
       columns: [
         { label: "General", tabs: newAutomationFormsGeneralTabs },
         { label: "New Technician Forms", tabs: newAutomationFormsTechnicianTabs },
         { label: "New Office Forms (US)", tabs: newAutomationFormsOfficeTabs },
         { label: "PH Staff", tabs: newAutomationFormsPhTabs },
+        { label: "BM, SBS, Tech Director, Tech Assistant Director Forms", tabs: newAutomationFormsManagementTabs },
       ],
     }] : []),
     ...(!paperworksOnly ? [
@@ -13370,24 +13390,34 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const wideSidebarGroupExpanded = tabGroups.some((s) => s.columns && !collapsedSidebarGroups.has(s.group));
   const sidebarPanelWidthCls = wideSidebarGroupExpanded ? "w-[560px]" : "w-72";
 
+  // "w9" is a shortcut key, not a real tab — it jumps into the combined
+  // W-8/9/4/4R tab with that sub-picker pre-set to W-9, so Form W-9 is a
+  // one-click target from the "BM, SBS, Tech Director, Tech Assistant
+  // Director Forms" column instead of only reachable via the picker itself.
+  const goToTab = (key: string) => {
+    // Bulk Form Send's old/new tabs share one selectedFormTypes Set —
+    // clear it on manual navigation into either so a hidden selection from
+    // the other tab's (differently-shaped) checkbox list can't silently
+    // ride along into a generated bundle. Doesn't touch the Forms popup's
+    // "Send All Selected" bridge, which sets its own preselection via
+    // setActiveTab directly, not through this button.
+    if (key === "combineForms" || key === "newCombineForms") setSelectedFormTypes(new Set());
+    if (key === "w9") {
+      setActiveTab("w8ben");
+      setW8FormType("w9");
+    } else {
+      setActiveTab(key as typeof activeTab);
+    }
+  };
+
   const renderSidebarTabButton = (tab: NavTabDef) => {
-    const active = activeTab === tab.key;
+    const active = activeTab === tab.key || (tab.key === "w9" && activeTab === "w8ben" && w8FormType === "w9");
     const urgent = URGENT_AUTOMATED_FORM_TAB_KEYS.has(tab.key);
     return (
       <button
         key={tab.key}
         type="button"
-        onClick={() => {
-          // Bulk Form Send's old/new tabs share one selectedFormTypes Set —
-          // clear it on manual navigation into either so a hidden selection
-          // from the other tab's (differently-shaped) checkbox list can't
-          // silently ride along into a generated bundle. Doesn't touch the
-          // Forms popup's "Send All Selected" bridge, which sets its own
-          // preselection via setActiveTab directly, not through this button.
-          if (tab.key === "combineForms" || tab.key === "newCombineForms") setSelectedFormTypes(new Set());
-          setActiveTab(tab.key as typeof activeTab);
-          setSidebarOpen(false);
-        }}
+        onClick={() => { goToTab(tab.key); setSidebarOpen(false); }}
         className={`w-full text-left pl-2.5 pr-2 py-2 rounded-lg text-sm flex items-center justify-between gap-2 transition-colors ${
           active
             ? "bg-primary/10 border border-primary/30 text-foreground font-semibold"
@@ -13410,18 +13440,13 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   };
 
   const renderDropdownTabButton = (tab: NavTabDef) => {
-    const active = activeTab === tab.key;
+    const active = activeTab === tab.key || (tab.key === "w9" && activeTab === "w8ben" && w8FormType === "w9");
     const urgent = URGENT_AUTOMATED_FORM_TAB_KEYS.has(tab.key);
     return (
       <button
         key={tab.key}
         type="button"
-        onClick={() => {
-          // See renderSidebarTabButton's matching comment.
-          if (tab.key === "combineForms" || tab.key === "newCombineForms") setSelectedFormTypes(new Set());
-          setActiveTab(tab.key as typeof activeTab);
-          setOpenCategory(null);
-        }}
+        onClick={() => { goToTab(tab.key); setOpenCategory(null); }}
         className={`w-full text-left px-3.5 py-2 text-sm flex items-center justify-between gap-2 transition-colors ${
           active ? "text-primary bg-primary/10" : urgent ? "text-red-100 bg-red-500/20 hover:bg-red-500/30" : "text-muted-foreground hover:text-foreground hover:bg-white/5"
         }`}
@@ -13468,7 +13493,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               </button>
               {!collapsed && (
                 section.columns ? (
-                  <div className={`grid ${section.columns.length >= 4 ? "grid-cols-4" : "grid-cols-3"} gap-x-4 gap-y-1 pl-2 border-l border-white/10 ml-4`}>
+                  <div className={`grid ${section.columns.length >= 5 ? "grid-cols-5" : section.columns.length === 4 ? "grid-cols-4" : "grid-cols-3"} gap-x-4 gap-y-1 pl-2 border-l border-white/10 ml-4`}>
                     {section.columns.map((col) => (
                       <div key={col.label} className="flex flex-col gap-0.5">
                         <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide px-2.5 pt-1 pb-0.5">{col.label}</p>
@@ -13691,7 +13716,9 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       <div className="mb-4 border-b border-white/10 pb-3 relative z-30">
         <div className="flex flex-wrap gap-2">
           {tabGroups.map((section) => {
-            const activeInGroup = section.tabs.some((t) => t.key === activeTab);
+            const activeInGroup = section.tabs.some(
+              (t) => t.key === activeTab || (t.key === "w9" && activeTab === "w8ben" && w8FormType === "w9")
+            );
             const isOpen = openCategory === section.group;
             // A single-tab category (e.g. Generate Reports) has nothing to
             // expand into — it IS the tab, so clicking it navigates directly
@@ -13702,7 +13729,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                 <button
                   key={section.group}
                   type="button"
-                  onClick={() => setActiveTab(onlyTab.key as typeof activeTab)}
+                  onClick={() => goToTab(onlyTab.key)}
                   className={`px-3.5 py-2 text-sm font-medium rounded-md border flex items-center gap-2 transition-colors ${activeInGroup ? "border-primary/40 bg-primary/10 text-primary" : "border-white/10 text-muted-foreground hover:text-foreground hover:bg-white/5"}`}
                 >
                   <section.icon className="h-3.5 w-3.5" />
@@ -13727,9 +13754,9 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                 {isOpen && (
                   <>
                     <div className="fixed inset-0 z-10" onClick={() => setOpenCategory(null)} />
-                    <div className={`absolute top-full left-0 mt-1 z-20 rounded-md border border-white/10 bg-slate-900 shadow-xl py-1 ${section.columns ? (section.columns.length >= 4 ? "w-[min(95vw,980px)]" : "w-[min(95vw,780px)]") : "min-w-[220px]"}`}>
+                    <div className={`absolute top-full left-0 mt-1 z-20 rounded-md border border-white/10 bg-slate-900 shadow-xl py-1 ${section.columns ? (section.columns.length >= 5 ? "w-[min(95vw,1180px)]" : section.columns.length === 4 ? "w-[min(95vw,980px)]" : "w-[min(95vw,780px)]") : "min-w-[220px]"}`}>
                       {section.columns ? (
-                        <div className={`grid ${section.columns.length >= 4 ? "grid-cols-4" : "grid-cols-3"} gap-x-1`}>
+                        <div className={`grid ${section.columns.length >= 5 ? "grid-cols-5" : section.columns.length === 4 ? "grid-cols-4" : "grid-cols-3"} gap-x-1`}>
                           {section.columns.map((col) => (
                             <div key={col.label} className="flex flex-col py-1">
                               <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide px-3.5 pt-1 pb-1">{col.label}</p>
