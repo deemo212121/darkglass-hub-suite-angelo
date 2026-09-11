@@ -5275,6 +5275,21 @@ function useOnSiteCheckIn(
     void handleImHere(t, `manual override — NOT GPS-verified (${measured})`);
   };
 
+  // A technician who tapped Work Start on one ticket but never tapped Work
+  // Done can't start another — reported after a tech left a job checked in
+  // with no close-out and moved straight to the next stop, leaving the
+  // first ticket's Work Done blank. Scoped to `tickets` (this hook's own
+  // list — just "Today" for the Today tab's own hook instance) and skips
+  // anything already rescheduled, since a rescheduled ticket has nothing
+  // left to close out.
+  const openTicket = useMemo(
+    () =>
+      tickets.find(
+        (ot) => !!arrivedAt[ot.ticketNo] && !doneAt[ot.ticketNo] && !reschedulesByTicketNo.has(`${ot.ticketNo}|${ot.schedule}`)
+      ) ?? null,
+    [tickets, arrivedAt, doneAt, reschedulesByTicketNo]
+  );
+
   const handleImDone = async (t: Ticket) => {
     const time = formatNow();
     const at = new Date().toISOString();
@@ -5308,7 +5323,7 @@ function useOnSiteCheckIn(
     ticketPos, distanceFor, checkinRadiusMiles, fixAccuracyM,
     consentConfirmed, clockedIn, permissionDenied, sharingActive, sharingReason,
     refiningFix, preciseFresh, stuckMode, devSimulate, setDevSimulate,
-    busy, checkinsLoaded, arrivedAt, doneAt,
+    busy, checkinsLoaded, arrivedAt, doneAt, openTicket,
     handleImHere, handleManualCheckIn, handleForceCheckIn, handleImDone,
     reschedulesByTicketNo, reschedulingTicketNo, setReschedulingTicketNo,
     rescheduleReason, setRescheduleReason, reschedulingSubmitting, submitReschedule,
@@ -5370,6 +5385,10 @@ function CheckInActionRow({ t, checkIn, uniform }: { t: Ticket; checkIn: OnSiteC
   const canForceCheckIn = pending && !locating && !canManual && geocoded && !approx;
   const reschedule = checkIn.reschedulesByTicketNo.get(`${t.ticketNo}|${t.schedule}`);
   const isReschedulingThis = checkIn.reschedulingTicketNo === t.ticketNo;
+  // Another ticket is checked in but never marked done — Work Start on
+  // THIS ticket is held until that one's closed out (Reschedule stays
+  // available; it doesn't require being on site).
+  const blockingTicket = checkIn.openTicket && checkIn.openTicket.ticketNo !== t.ticketNo ? checkIn.openTicket : null;
 
   // Rescheduled or fully done — nothing left to do with this ticket; each
   // consumer's own info line already shows the relevant read-only state
@@ -5421,20 +5440,25 @@ function CheckInActionRow({ t, checkIn, uniform }: { t: Ticket; checkIn: OnSiteC
   if (!hereAt) {
     return (
       <div className={actionsClass}>
+        {blockingTicket && (
+          <p className="mtech-home-onsite-blocked-notice">
+            Add Work Done to ticket {blockingTicket.ticketNo} before starting this one.
+          </p>
+        )}
         <button
           type="button"
           className={btnClass}
-          disabled={stateUnknown || !inRadius || isBusy || locating}
+          disabled={stateUnknown || !inRadius || isBusy || locating || !!blockingTicket}
           onClick={() => checkIn.handleImHere(t)}
         >
           {stateUnknown ? "Checking status…" : isBusy ? "…" : locating ? "Locating…" : "Work Start"}
         </button>
-        {canManual && (
+        {canManual && !blockingTicket && (
           <button type="button" className={manualClass} disabled={isBusy} onClick={() => checkIn.handleManualCheckIn(t, dist, approx)}>
             I'm here anyway
           </button>
         )}
-        {canForceCheckIn && (
+        {canForceCheckIn && !blockingTicket && (
           <button type="button" className={manualClass} disabled={isBusy} onClick={() => checkIn.handleForceCheckIn(t, dist)}>
             Work Start anyway
           </button>
