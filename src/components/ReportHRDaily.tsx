@@ -182,6 +182,28 @@ function isAwaitingEmployerStep(doc: { status: string; recipientSlot: string }):
   return (doc.status === "signed" && doc.recipientSlot === "employee") || (doc.status === "pending_signature" && doc.recipientSlot === "hr_staff");
 }
 
+/**
+ * Form W-4/I-9/Direct Deposit Authorization/W-8BEN each have exactly one
+ * underlying document type and Sent History list, reused by BOTH the
+ * legacy "Automated Forms" group's own tab and the "New Automation Forms"
+ * group's tabs (New Technician/New Office/PH Staff) — rather than
+ * duplicating four already-working send/sign flows per group. Without a
+ * way to tell them apart, every send showed up in every group's Sent
+ * History table, which reads as "old forms leaking into new" (and vice
+ * versa) — the two are supposed to stay separate lists. `formSource` is
+ * stamped into formData at send time (see handleSendW4/handleSendI9/
+ * handleSendDirectDeposit/handleSendW8ben's `activeTab === "new…"` check)
+ * and survives every later formData rewrite, since every fill page seeds
+ * its form state from the existing formData and spreads that whole state
+ * back out on submit (untyped extra keys ride along even though the
+ * page's own FormData type doesn't declare them) — see e.g.
+ * FillI9Page.tsx's `setForm((prev) => ({ ...prev, ...existing }))` /
+ * `finalData = { ...form, ... }`.
+ */
+function isNewAutomationDoc(doc: { formData: Record<string, any> }): boolean {
+  return doc.formData?.formSource === "new_automation";
+}
+
 // Certificate of Employment's editable body — the prose paragraphs between
 // the greeting and the signature block (see companySettings.ts's
 // getCompanyCoeBodyTemplate/setCompanyCoeBodyTemplate, migration 0063).
@@ -924,7 +946,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // Reviews, the Approved log, the department trend chart, and the full
   // Employee Directory all on top of each other, forcing a long scroll to
   // reach anything below Hiring.
-  const [activeTab, setActiveTab] = useState<"hiring" | "warnings" | "masterList" | "leaders" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "promotionForm" | "actionPlanForm" | "terminationForm" | "employeeRequestManager" | "w8ben" | "i9" | "wageAck" | "carIqAgreement" | "vehicleAgreement" | "vehicleUseAgreement" | "employeeConfidentiality" | "mealRestBreak" | "ptoAck" | "partsResponsibility" | "mileageFuel" | "locationConsent" | "damage" | "contractorData" | "contractorDataUs" | "directDeposit" | "substanceScreening" | "flashTechnicianTravel" | "contractorAddendum" | "combineForms" | "employerQueue" | "ndaForm" | "calendar" | "interviewCalendar" | "masterW2Agreement" | "newW4" | "masterW2OfficeAgreement" | "newW8ben" | "masterPhContractorAgreement">(paperworksOnly ? "combineForms" : "hiring");
+  const [activeTab, setActiveTab] = useState<"hiring" | "warnings" | "masterList" | "leaders" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "promotionForm" | "actionPlanForm" | "terminationForm" | "employeeRequestManager" | "w8ben" | "i9" | "wageAck" | "carIqAgreement" | "vehicleAgreement" | "vehicleUseAgreement" | "employeeConfidentiality" | "mealRestBreak" | "ptoAck" | "partsResponsibility" | "mileageFuel" | "locationConsent" | "damage" | "contractorData" | "contractorDataUs" | "directDeposit" | "substanceScreening" | "flashTechnicianTravel" | "contractorAddendum" | "combineForms" | "employerQueue" | "ndaForm" | "calendar" | "interviewCalendar" | "masterW2Agreement" | "newW4" | "masterW2OfficeAgreement" | "newW8ben" | "masterPhContractorAgreement" | "newI9" | "newDirectDeposit">(paperworksOnly ? "combineForms" : "hiring");
   const [openCategory, setOpenCategory] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   // Which floating-sidebar section headers (Automated Forms/Generate
@@ -2877,8 +2899,14 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
   useEffect(() => {
-    if (activeTab === "w8ben" || activeTab === "jotformDocuments" || activeTab === "combineForms") void loadSentW8benForms();
+    if (activeTab === "w8ben" || activeTab === "newW8ben" || activeTab === "jotformDocuments" || activeTab === "combineForms") void loadSentW8benForms();
   }, [activeTab]);
+  // Which bucket of sentW8benForms the CURRENTLY OPEN tab should show — see
+  // isNewAutomationDoc's doc comment.
+  const visibleW8benForms = useMemo(
+    () => sentW8benForms.filter((d) => (activeTab === "newW8ben" ? isNewAutomationDoc(d) : !isNewAutomationDoc(d))),
+    [sentW8benForms, activeTab]
+  );
 
   const [w8RecipientId, setW8RecipientId] = useState("");
   const [w8RecipientSearch, setW8RecipientSearch] = useState("");
@@ -2959,7 +2987,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
       const doc = await createSignableDocument({
         documentType: "w8ben",
-        formData: { employeeId: recipient.id, employeeName: recipient.name } as unknown as Record<string, any>,
+        formData: { employeeId: recipient.id, employeeName: recipient.name, ...(activeTab === "newW8ben" ? { formSource: "new_automation" } : {}) } as unknown as Record<string, any>,
         recipientId: w8RecipientId,
         recipientSlot: "employee",
         pdfUrl: "",
@@ -3001,7 +3029,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       const name = w8ExternalName.trim() || "External Recipient";
       const doc = await createSignableDocument({
         documentType: "w8ben",
-        formData: { employeeId: "", employeeName: name } as unknown as Record<string, any>,
+        formData: { employeeId: "", employeeName: name, ...(activeTab === "newW8ben" ? { formSource: "new_automation" } : {}) } as unknown as Record<string, any>,
         recipientName: name,
         recipientSlot: "employee",
         pdfUrl: "",
@@ -3092,8 +3120,14 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
   useEffect(() => {
-    if (activeTab === "w8ben" || activeTab === "jotformDocuments" || activeTab === "combineForms") void loadSentW4Forms();
+    if (activeTab === "w8ben" || activeTab === "newW4" || activeTab === "jotformDocuments" || activeTab === "combineForms") void loadSentW4Forms();
   }, [activeTab]);
+  // Which bucket of sentW4Forms the CURRENTLY OPEN tab should show — see
+  // isNewAutomationDoc's doc comment.
+  const visibleW4Forms = useMemo(
+    () => sentW4Forms.filter((d) => (activeTab === "newW4" ? isNewAutomationDoc(d) : !isNewAutomationDoc(d))),
+    [sentW4Forms, activeTab]
+  );
 
   const [w4RecipientId, setW4RecipientId] = useState("");
   const [w4RecipientSearch, setW4RecipientSearch] = useState("");
@@ -3207,7 +3241,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
       const doc = await createSignableDocument({
         documentType: "w4",
-        formData: { employeeId: recipient.id } as unknown as Record<string, any>,
+        formData: { employeeId: recipient.id, ...(activeTab === "newW4" ? { formSource: "new_automation" } : {}) } as unknown as Record<string, any>,
         recipientId: w4RecipientId,
         recipientSlot: "employee",
         pdfUrl: "",
@@ -3245,7 +3279,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       const name = w4ExternalName.trim() || "External Recipient";
       const doc = await createSignableDocument({
         documentType: "w4",
-        formData: { employeeId: "" } as unknown as Record<string, any>,
+        formData: { employeeId: "", ...(activeTab === "newW4" ? { formSource: "new_automation" } : {}) } as unknown as Record<string, any>,
         recipientName: name,
         recipientSlot: "employee",
         pdfUrl: "",
@@ -3745,12 +3779,26 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
   useEffect(() => {
-    if (activeTab === "i9" || activeTab === "jotformDocuments" || activeTab === "combineForms") void loadSentI9Forms();
+    if (activeTab === "i9" || activeTab === "newI9" || activeTab === "jotformDocuments" || activeTab === "combineForms") void loadSentI9Forms();
   }, [activeTab]);
   // Section 1 done, nobody has claimed Section 2 yet — feeds the "Form I-9" sidebar tab's count badge.
-  const sentI9AwaitingSection2Count = useMemo(
-    () => sentI9Forms.filter(isAwaitingEmployerStep).length,
+  // Split old (legacy Automated Forms) vs new (New Automation Forms) — see
+  // isNewAutomationDoc's doc comment for why sentI9Forms itself is one
+  // shared list but each group's badge must only count its own bucket.
+  const sentI9AwaitingSection2CountOld = useMemo(
+    () => sentI9Forms.filter((d) => !isNewAutomationDoc(d) && isAwaitingEmployerStep(d)).length,
     [sentI9Forms]
+  );
+  const sentI9AwaitingSection2CountNew = useMemo(
+    () => sentI9Forms.filter((d) => isNewAutomationDoc(d) && isAwaitingEmployerStep(d)).length,
+    [sentI9Forms]
+  );
+  // Which bucket of sentI9Forms the CURRENTLY OPEN tab should show — "i9"
+  // (legacy) sees only untagged docs, "newI9" sees only formSource
+  // "new_automation" docs.
+  const visibleI9Forms = useMemo(
+    () => sentI9Forms.filter((d) => (activeTab === "newI9" ? isNewAutomationDoc(d) : !isNewAutomationDoc(d))),
+    [sentI9Forms, activeTab]
   );
 
   const [i9RecipientId, setI9RecipientId] = useState("");
@@ -3852,7 +3900,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
       const doc = await createSignableDocument({
         documentType: "i9",
-        formData: { employeeId: recipient.id, employeeName: recipient.name } as unknown as Record<string, any>,
+        formData: { employeeId: recipient.id, employeeName: recipient.name, ...(activeTab === "newI9" ? { formSource: "new_automation" } : {}) } as unknown as Record<string, any>,
         recipientId: i9RecipientId,
         recipientSlot: "employee",
         pdfUrl: "",
@@ -3890,7 +3938,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       const name = i9ExternalName.trim() || "External Recipient";
       const doc = await createSignableDocument({
         documentType: "i9",
-        formData: { employeeId: "", employeeName: name } as unknown as Record<string, any>,
+        formData: { employeeId: "", employeeName: name, ...(activeTab === "newI9" ? { formSource: "new_automation" } : {}) } as unknown as Record<string, any>,
         recipientName: name,
         recipientSlot: "employee",
         pdfUrl: "",
@@ -8805,8 +8853,14 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
   useEffect(() => {
-    if (activeTab === "directDeposit" || activeTab === "jotformDocuments" || activeTab === "combineForms") void loadSentDirectDepositForms();
+    if (activeTab === "directDeposit" || activeTab === "newDirectDeposit" || activeTab === "jotformDocuments" || activeTab === "combineForms") void loadSentDirectDepositForms();
   }, [activeTab]);
+  // Which bucket of sentDirectDepositForms the CURRENTLY OPEN tab should
+  // show — see isNewAutomationDoc's doc comment.
+  const visibleDirectDepositForms = useMemo(
+    () => sentDirectDepositForms.filter((d) => (activeTab === "newDirectDeposit" ? isNewAutomationDoc(d) : !isNewAutomationDoc(d))),
+    [sentDirectDepositForms, activeTab]
+  );
 
   const [directDepositRecipientId, setDirectDepositRecipientId] = useState("");
   const [directDepositRecipientSearch, setDirectDepositRecipientSearch] = useState("");
@@ -8887,7 +8941,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
       const doc = await createSignableDocument({
         documentType: "direct_deposit",
-        formData: { employeeId: recipient.id, employeeName: recipient.name } as unknown as Record<string, any>,
+        formData: { employeeId: recipient.id, employeeName: recipient.name, ...(activeTab === "newDirectDeposit" ? { formSource: "new_automation" } : {}) } as unknown as Record<string, any>,
         recipientId: directDepositRecipientId,
         recipientSlot: "employee",
         pdfUrl: "",
@@ -8924,7 +8978,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       const name = directDepositExternalName.trim() || "External Recipient";
       const doc = await createSignableDocument({
         documentType: "direct_deposit",
-        formData: { employeeId: "", employeeName: name } as unknown as Record<string, any>,
+        formData: { employeeId: "", employeeName: name, ...(activeTab === "newDirectDeposit" ? { formSource: "new_automation" } : {}) } as unknown as Record<string, any>,
         recipientName: name,
         recipientSlot: "employee",
         pdfUrl: "",
@@ -13107,7 +13161,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     { key: "customForms", label: "Custom Forms", count: newCustomFormSubmissionsCount, icon: FileText },
     { key: "promotionForm", label: "Employee Promotion / Role Change", count: 0, icon: FileText },
     { key: "warningForm", label: "Employee Warning Form", count: 0, icon: FileText },
-    { key: "i9", label: "Form I-9 (Employment Eligibility)", count: sentI9AwaitingSection2Count, icon: FileCheck },
+    { key: "i9", label: "Form I-9 (Employment Eligibility)", count: sentI9AwaitingSection2CountOld, icon: FileCheck },
     { key: "actionPlanForm", label: "Manager's Action Plan Form", count: 0, icon: FileText },
     { key: "terminationForm", label: "Termination Notice Form", count: 0, icon: FileText },
     { key: "w8ben", label: "W-8 / W-9 / W-4 / W-4R Forms", count: 0, icon: Landmark },
@@ -13149,8 +13203,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const newAutomationFormsTechnicianTabs = [
     { key: "masterW2Agreement", label: "Master W-2 Technician Agreement", count: sentMasterW2AgreementAwaitingEmployerCount, icon: FileCheck },
     { key: "newW4", label: "Form W-4", count: 0, icon: Landmark },
-    { key: "i9", label: "Form I-9 (Employment Eligibility)", count: sentI9AwaitingSection2Count, icon: FileCheck },
-    { key: "directDeposit", label: "Direct Deposit Authorization", count: 0, icon: FileCheck },
+    { key: "newI9", label: "Form I-9 (Employment Eligibility)", count: sentI9AwaitingSection2CountNew, icon: FileCheck },
+    { key: "newDirectDeposit", label: "Direct Deposit Authorization", count: 0, icon: FileCheck },
   ] as const;
 
   // "New Office Forms (US)" — the office/logistics counterpart to New
@@ -13162,8 +13216,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const newAutomationFormsOfficeTabs = [
     { key: "masterW2OfficeAgreement", label: "Master W-2 Office Agreement", count: sentMasterW2OfficeAgreementAwaitingEmployerCount, icon: FileCheck },
     { key: "newW4", label: "Form W-4", count: 0, icon: Landmark },
-    { key: "i9", label: "Form I-9 (Employment Eligibility)", count: sentI9AwaitingSection2Count, icon: FileCheck },
-    { key: "directDeposit", label: "Direct Deposit Authorization", count: 0, icon: FileCheck },
+    { key: "newI9", label: "Form I-9 (Employment Eligibility)", count: sentI9AwaitingSection2CountNew, icon: FileCheck },
+    { key: "newDirectDeposit", label: "Direct Deposit Authorization", count: 0, icon: FileCheck },
   ] as const;
 
   // "PH Staff" — the Philippines-contractor counterpart to New Technician/
@@ -13176,7 +13230,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const newAutomationFormsPhTabs = [
     { key: "masterPhContractorAgreement", label: "Master PH Contractor Agreement", count: sentMasterPhContractorAgreementAwaitingEmployerCount, icon: FileCheck },
     { key: "newW8ben", label: "Form W-8BEN", count: 0, icon: Landmark },
-    { key: "directDeposit", label: "Direct Deposit Authorization", count: 0, icon: FileCheck },
+    { key: "newDirectDeposit", label: "Direct Deposit Authorization", count: 0, icon: FileCheck },
   ] as const;
 
   // Management-tier forms (Branch Manager / Senior Branch Manager /
@@ -18154,10 +18208,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               </tr>
             </thead>
             <tbody>
-              {sentW8benForms.length === 0 ? (
+              {visibleW8benForms.length === 0 ? (
                 <tr><td colSpan={5} className="px-4 py-8 text-center text-muted-foreground text-sm">No W-8BEN requests sent yet.</td></tr>
               ) : (
-                sentW8benForms.map((doc) => {
+                visibleW8benForms.map((doc) => {
                   const data = doc.formData as Partial<W8benFormData>;
                   const recipient = employees.find((e) => e.id === doc.recipientId);
                   const busy = w8ActionBusyId === doc.id;
@@ -18356,10 +18410,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               </tr>
             </thead>
             <tbody>
-              {sentW4Forms.length === 0 ? (
+              {visibleW4Forms.length === 0 ? (
                 <tr><td colSpan={5} className="px-4 py-8 text-center text-muted-foreground text-sm">No W-4 requests sent yet.</td></tr>
               ) : (
-                sentW4Forms.map((doc) => {
+                visibleW4Forms.map((doc) => {
                   const data = doc.formData as Partial<W4FormData>;
                   const recipient = employees.find((e) => e.id === doc.recipientId);
                   const employeeName = `${data.firstNameMiddleInitial ?? ""} ${data.lastName ?? ""}`.trim();
@@ -18833,7 +18887,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       </>
       )}
 
-      {activeTab === "i9" && (
+      {(activeTab === "i9" || activeTab === "newI9") && (
       <>
       <div className="panel p-0 overflow-visible mt-4 relative z-20">
         <div className="px-4 py-4 border-b border-white/10">
@@ -18972,10 +19026,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               </tr>
             </thead>
             <tbody>
-              {sentI9Forms.length === 0 ? (
+              {visibleI9Forms.length === 0 ? (
                 <tr><td colSpan={5} className="px-4 py-8 text-center text-muted-foreground text-sm">No I-9 requests sent yet.</td></tr>
               ) : (
-                sentI9Forms.map((doc) => {
+                visibleI9Forms.map((doc) => {
                   const data = doc.formData as Partial<I9FormData>;
                   const recipient = employees.find((e) => e.id === doc.recipientId);
                   const busy = i9ActionBusyId === doc.id;
@@ -23722,7 +23776,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       </>
       )}
 
-      {activeTab === "directDeposit" && (
+      {(activeTab === "directDeposit" || activeTab === "newDirectDeposit") && (
       <>
       <div className="panel p-0 overflow-visible mt-4 relative z-20">
         <div className="px-4 py-4 border-b border-white/10">
@@ -23862,10 +23916,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               </tr>
             </thead>
             <tbody>
-              {sentDirectDepositForms.length === 0 ? (
+              {visibleDirectDepositForms.length === 0 ? (
                 <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">No requests sent yet.</td></tr>
               ) : (
-                sentDirectDepositForms.map((doc) => {
+                visibleDirectDepositForms.map((doc) => {
                   const data = doc.formData as Partial<DirectDepositFormData>;
                   const recipient = employees.find((e) => e.id === doc.recipientId);
                   const busy = directDepositActionBusyId === doc.id;
