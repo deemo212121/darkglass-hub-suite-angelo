@@ -5,9 +5,12 @@
  * countersigns" shape and the same HTML-captured-to-PDF technique (no
  * source PDF to overlay — see that file's header comment for why), but a
  * different document: office/logistics employees aren't on the road, so
- * there's no mileage/Car IQ/parts/location-tracking content here, and no
- * license/SSN photo capture either (that requirement was specific to the
- * Technician agreement).
+ * there's no mileage/Car IQ/parts/location-tracking content here. Branch
+ * Manager and up in this track are 1099-classified, so — same as the
+ * Technician agreement — a driver's license photo and a Social Security
+ * card photo are collected alongside the typed fields (see
+ * technicianIdDocuments.ts). Deliberately no typed SSN field anywhere:
+ * the photo is the only record of it.
  *
  * Two-party, same shape as the Technician agreement: the employee fills in
  * their info and signs (FillMasterW2OfficeAgreementPage.tsx), then it comes
@@ -34,6 +37,9 @@ export interface MasterW2OfficeAgreementFormData {
   addressZip: string;
   phone: string;
   email: string;
+  /** Storage paths in the private "technician-id-documents" bucket — see technicianIdDocuments.ts. Not URLs (the bucket is private); resolve with getTechnicianIdDocumentUrl when displaying. */
+  licensePhotoPath: string;
+  ssnCardPhotoPath: string;
   employeeDateSigned: string;
   employeeSignatureDataUrl: string;
   employerDateSigned: string;

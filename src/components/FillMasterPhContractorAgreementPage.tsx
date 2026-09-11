@@ -10,8 +10,10 @@
  * Genuine two-party document: only the contractor half is filled here; the
  * employer/HR countersignature happens separately afterward
  * (ReportHRDaily.tsx's "Complete Employer Signature" dialog, or
- * ManagerReviewPage.tsx for a non-HR manager it's been reassigned to). No
- * license/SSN photo capture.
+ * ManagerReviewPage.tsx for a non-HR manager it's been reassigned to). PH
+ * contractors have neither a US driver's license nor a US SSN, so a single
+ * "license or passport / government-issued ID" photo is collected instead
+ * of the Technician/Office agreements' two-photo license+SSN-card capture.
  */
 import { useEffect, useState } from "react";
 import { Link } from "@tanstack/react-router";
@@ -21,6 +23,7 @@ import { useAuth } from "@/lib/auth";
 import { getMyProfileId } from "@/lib/supabase/users";
 import { getSignableDocument, signDocument, type SignableDocument } from "@/lib/supabase/signableDocuments";
 import { uploadSignableDocumentSignature, uploadMasterPhContractorAgreementForm, refreshStorageAuthToken } from "@/lib/firebase/storage";
+import { uploadTechnicianIdDocument } from "@/lib/supabase/technicianIdDocuments";
 import { captureHtmlToPdfBlob, loadAssetDataUrl } from "@/lib/pdfCapture";
 import {
   masterPhContractorAgreementStyles,
@@ -59,6 +62,7 @@ const BLANK_FORM: MasterPhContractorAgreementFormData = {
   maritalStatus: "",
   spouseName: "",
   spouseEmployer: "",
+  governmentIdPhotoPath: "",
   contractorDateSigned: "",
   contractorSignatureDataUrl: "",
   employerDateSigned: "",
@@ -76,6 +80,7 @@ export function FillMasterPhContractorAgreementPage({ docId }: Props) {
   const [logoDataUrl, setLogoDataUrl] = useState("");
 
   const [form, setForm] = useState<MasterPhContractorAgreementFormData>({ ...BLANK_FORM });
+  const [governmentIdFile, setGovernmentIdFile] = useState<File | null>(null);
 
   const sigPad = useSignaturePad({ width: 440, height: 100 });
 
@@ -124,6 +129,7 @@ export function FillMasterPhContractorAgreementPage({ docId }: Props) {
     if (!form.dateOfBirth) return "Enter your date of birth.";
     if (!form.startDate) return "Enter your start date.";
     if (!form.maritalStatus) return "Select your marital status.";
+    if (!governmentIdFile && !form.governmentIdPhotoPath) return "Upload a photo of your license, passport, or other government-issued ID.";
     if (!sigPad.hasContent()) return "Please add your signature.";
     return null;
   };
@@ -149,12 +155,17 @@ export function FillMasterPhContractorAgreementPage({ docId }: Props) {
       // it go stale between signing in and finally submitting).
       await refreshStorageAuthToken();
 
+      const governmentIdPath = governmentIdFile
+        ? await uploadTechnicianIdDocument(companyId, doc.id, "government_id", governmentIdFile)
+        : form.governmentIdPhotoPath;
+
       const employeeName = [form.firstName, form.middleName, form.lastName].filter(Boolean).join(" ");
       const signatureUrl = await uploadSignableDocumentSignature(companyId, doc.id, "employee", dataUrl);
       const signedAt = new Date().toISOString();
       const finalData: MasterPhContractorAgreementFormData = {
         ...form,
         employeeName,
+        governmentIdPhotoPath: governmentIdPath,
         contractorDateSigned: signedAt,
         contractorSignatureDataUrl: dataUrl,
       };
@@ -327,6 +338,12 @@ export function FillMasterPhContractorAgreementPage({ docId }: Props) {
                 <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1 block">Spouse's Employer</label>
                 <input className="glass-input text-sm py-1.5 px-3 rounded-md w-full" value={form.spouseEmployer} onChange={(e) => updateField("spouseEmployer", e.target.value)} />
               </div>
+            </div>
+
+            <div className="mb-4">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1 block">License, Passport, or Government-Issued ID Photo</label>
+              <input type="file" accept="image/*,.pdf" className="glass-input text-sm py-1.5 px-3 rounded-md w-full" onChange={(e) => setGovernmentIdFile(e.target.files?.[0] ?? null)} />
+              {form.governmentIdPhotoPath && !governmentIdFile && <p className="text-[10px] text-emerald-400 mt-1">Already uploaded — choose a file to replace it.</p>}
             </div>
 
             <p className="text-xs text-muted-foreground mb-2">Read the agreement below, then sign at the bottom.</p>

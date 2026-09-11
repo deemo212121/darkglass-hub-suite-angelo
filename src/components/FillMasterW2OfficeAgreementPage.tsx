@@ -10,9 +10,11 @@
  * Genuine two-party document: only the employee half is filled here; the
  * employer/HR countersignature happens separately afterward
  * (ReportHRDaily.tsx's "Complete Employer Signature" dialog, or
- * ManagerReviewPage.tsx for a non-HR manager it's been reassigned to). No
- * license/SSN photo capture here — that requirement is specific to the
- * Technician version (FillMasterW2AgreementPage.tsx).
+ * ManagerReviewPage.tsx for a non-HR manager it's been reassigned to).
+ * Branch Manager and up in this track are 1099-classified, so — same as
+ * the Technician version (FillMasterW2AgreementPage.tsx) — a driver's
+ * license photo and a Social Security card photo are collected alongside
+ * the typed fields.
  */
 import { useEffect, useState } from "react";
 import { Link } from "@tanstack/react-router";
@@ -22,6 +24,7 @@ import { useAuth } from "@/lib/auth";
 import { getMyProfileId } from "@/lib/supabase/users";
 import { getSignableDocument, signDocument, type SignableDocument } from "@/lib/supabase/signableDocuments";
 import { uploadSignableDocumentSignature, uploadMasterW2OfficeAgreementForm, refreshStorageAuthToken } from "@/lib/firebase/storage";
+import { uploadTechnicianIdDocument } from "@/lib/supabase/technicianIdDocuments";
 import { captureHtmlToPdfBlob, loadAssetDataUrl } from "@/lib/pdfCapture";
 import {
   MASTER_W2_OFFICE_AGREEMENT_BRANCHES,
@@ -54,6 +57,8 @@ const BLANK_FORM: MasterW2OfficeAgreementFormData = {
   addressZip: "",
   phone: "",
   email: "",
+  licensePhotoPath: "",
+  ssnCardPhotoPath: "",
   employeeDateSigned: "",
   employeeSignatureDataUrl: "",
   employerDateSigned: "",
@@ -71,6 +76,8 @@ export function FillMasterW2OfficeAgreementPage({ docId }: Props) {
   const [logoDataUrl, setLogoDataUrl] = useState("");
 
   const [form, setForm] = useState<MasterW2OfficeAgreementFormData>({ ...BLANK_FORM });
+  const [licenseFile, setLicenseFile] = useState<File | null>(null);
+  const [ssnCardFile, setSsnCardFile] = useState<File | null>(null);
 
   const sigPad = useSignaturePad({ width: 440, height: 100 });
 
@@ -116,6 +123,8 @@ export function FillMasterW2OfficeAgreementPage({ docId }: Props) {
     if (!form.addressStreet.trim() || !form.addressCity.trim() || !form.addressState.trim() || !form.addressZip.trim()) return "Fill in your complete home address.";
     if (!form.phone.trim()) return "Enter your phone number.";
     if (!form.email.trim()) return "Enter your email address.";
+    if (!licenseFile && !form.licensePhotoPath) return "Upload a photo of your driver's license.";
+    if (!ssnCardFile && !form.ssnCardPhotoPath) return "Upload a photo of your Social Security card.";
     if (!sigPad.hasContent()) return "Please add your signature.";
     return null;
   };
@@ -141,12 +150,19 @@ export function FillMasterW2OfficeAgreementPage({ docId }: Props) {
       // it go stale between signing in and finally submitting).
       await refreshStorageAuthToken();
 
+      const [licensePath, ssnCardPath] = await Promise.all([
+        licenseFile ? uploadTechnicianIdDocument(companyId, doc.id, "license", licenseFile) : Promise.resolve(form.licensePhotoPath),
+        ssnCardFile ? uploadTechnicianIdDocument(companyId, doc.id, "ssn_card", ssnCardFile) : Promise.resolve(form.ssnCardPhotoPath),
+      ]);
+
       const employeeName = [form.firstName, form.middleName, form.lastName].filter(Boolean).join(" ");
       const signatureUrl = await uploadSignableDocumentSignature(companyId, doc.id, "employee", dataUrl);
       const signedAt = new Date().toISOString();
       const finalData: MasterW2OfficeAgreementFormData = {
         ...form,
         employeeName,
+        licensePhotoPath: licensePath,
+        ssnCardPhotoPath: ssnCardPath,
         employeeDateSigned: signedAt,
         employeeSignatureDataUrl: dataUrl,
       };
@@ -278,6 +294,19 @@ export function FillMasterW2OfficeAgreementPage({ docId }: Props) {
               <div>
                 <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1 block">Email Address</label>
                 <input type="email" className="glass-input text-sm py-1.5 px-3 rounded-md w-full" value={form.email} onChange={(e) => updateField("email", e.target.value)} />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+              <div>
+                <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1 block">Driver's License Photo</label>
+                <input type="file" accept="image/*,.pdf" className="glass-input text-sm py-1.5 px-3 rounded-md w-full" onChange={(e) => setLicenseFile(e.target.files?.[0] ?? null)} />
+                {form.licensePhotoPath && !licenseFile && <p className="text-[10px] text-emerald-400 mt-1">Already uploaded — choose a file to replace it.</p>}
+              </div>
+              <div>
+                <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1 block">Social Security Card Photo</label>
+                <input type="file" accept="image/*,.pdf" className="glass-input text-sm py-1.5 px-3 rounded-md w-full" onChange={(e) => setSsnCardFile(e.target.files?.[0] ?? null)} />
+                {form.ssnCardPhotoPath && !ssnCardFile && <p className="text-[10px] text-emerald-400 mt-1">Already uploaded — choose a file to replace it.</p>}
               </div>
             </div>
 

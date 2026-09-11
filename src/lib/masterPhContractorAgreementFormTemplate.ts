@@ -11,7 +11,12 @@
  *
  * Same HTML-captured-to-PDF technique (no source PDF to overlay) and the
  * same two-party "contractor fills + signs, then employer countersigns"
- * shape as the other two Master agreements. No license/SSN photo capture.
+ * shape as the other two Master agreements. PH contractors have neither a
+ * US driver's license nor a US SSN, so instead of the Technician/Office
+ * agreements' two-photo license+SSN-card capture, this collects a single
+ * "license or passport / government-issued ID" photo — whichever the
+ * contractor actually has (see technicianIdDocuments.ts's "government_id"
+ * kind).
  */
 
 export interface MasterPhContractorAgreementFormData {
@@ -39,6 +44,8 @@ export interface MasterPhContractorAgreementFormData {
   maritalStatus: string;
   spouseName: string;
   spouseEmployer: string;
+  /** Storage path in the private "technician-id-documents" bucket — see technicianIdDocuments.ts. Not a URL (the bucket is private); resolve with getTechnicianIdDocumentUrl when displaying. */
+  governmentIdPhotoPath: string;
   contractorDateSigned: string;
   contractorSignatureDataUrl: string;
   employerDateSigned: string;

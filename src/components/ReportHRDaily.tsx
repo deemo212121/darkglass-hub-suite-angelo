@@ -4360,6 +4360,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       addressZip: "",
       phone: "",
       email: "",
+      licensePhotoPath: "",
+      ssnCardPhotoPath: "",
       employeeDateSigned: "",
       employeeSignatureDataUrl: "",
       employerDateSigned: "",
@@ -4650,6 +4652,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       maritalStatus: "",
       spouseName: "",
       spouseEmployer: "",
+      governmentIdPhotoPath: "",
       contractorDateSigned: "",
       contractorSignatureDataUrl: "",
       employerDateSigned: "",
@@ -21723,12 +21726,13 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                   isFiltered={masterW2OfficeAgreementIsColumnFiltered("status")}
                 />
                 <SortableTh column="sent" label="Sent" sortColumn={masterW2OfficeAgreementSentSortColumn} sortDir={masterW2OfficeAgreementSentSortDir} onSort={handleMasterW2OfficeAgreementSentSort} />
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">ID Documents</th>
                 <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Actions</th>
               </tr>
             </thead>
             <tbody>
               {sortedSentMasterW2OfficeAgreementForms.length === 0 ? (
-                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">{sentMasterW2OfficeAgreementForms.length === 0 ? "No requests sent yet." : "No forms match this search/filter."}</td></tr>
+                <tr><td colSpan={7} className="px-4 py-8 text-center text-muted-foreground text-sm">{sentMasterW2OfficeAgreementForms.length === 0 ? "No requests sent yet." : "No forms match this search/filter."}</td></tr>
               ) : (
                 sortedSentMasterW2OfficeAgreementForms.map((doc) => {
                   const data = doc.formData as Partial<MasterW2OfficeAgreementFormData>;
@@ -21759,6 +21763,29 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                         </span>
                       </td>
                       <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{new Date(doc.createdAt).toLocaleDateString()}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {data.licensePhotoPath && (
+                            <button
+                              type="button"
+                              onClick={() => getTechnicianIdDocumentUrl(data.licensePhotoPath!).then((url) => window.open(url, "_blank", "noopener,noreferrer")).catch((err) => setMasterW2OfficeAgreementActionError(err instanceof Error ? err.message : "Failed to open license photo."))}
+                              className="text-blue-300 hover:text-blue-200 underline text-xs"
+                            >
+                              License
+                            </button>
+                          )}
+                          {data.ssnCardPhotoPath && (
+                            <button
+                              type="button"
+                              onClick={() => getTechnicianIdDocumentUrl(data.ssnCardPhotoPath!).then((url) => window.open(url, "_blank", "noopener,noreferrer")).catch((err) => setMasterW2OfficeAgreementActionError(err instanceof Error ? err.message : "Failed to open SSN card photo."))}
+                              className="text-blue-300 hover:text-blue-200 underline text-xs"
+                            >
+                              SSN Card
+                            </button>
+                          )}
+                          {!data.licensePhotoPath && !data.ssnCardPhotoPath && <span className="text-muted-foreground text-xs">—</span>}
+                        </div>
+                      </td>
                       <td className="px-4 py-3">
                         <div className="flex flex-wrap items-center gap-1.5">
                           {doc.status === "pending_signature" && doc.recipientSlot === "employee" && (
@@ -22011,12 +22038,13 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                   isFiltered={masterPhContractorAgreementIsColumnFiltered("status")}
                 />
                 <SortableTh column="sent" label="Sent" sortColumn={masterPhContractorAgreementSentSortColumn} sortDir={masterPhContractorAgreementSentSortDir} onSort={handleMasterPhContractorAgreementSentSort} />
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">ID Document</th>
                 <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Actions</th>
               </tr>
             </thead>
             <tbody>
               {sortedSentMasterPhContractorAgreementForms.length === 0 ? (
-                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">{sentMasterPhContractorAgreementForms.length === 0 ? "No requests sent yet." : "No forms match this search/filter."}</td></tr>
+                <tr><td colSpan={7} className="px-4 py-8 text-center text-muted-foreground text-sm">{sentMasterPhContractorAgreementForms.length === 0 ? "No requests sent yet." : "No forms match this search/filter."}</td></tr>
               ) : (
                 sortedSentMasterPhContractorAgreementForms.map((doc) => {
                   const data = doc.formData as Partial<MasterPhContractorAgreementFormData>;
@@ -22047,6 +22075,19 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                         </span>
                       </td>
                       <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{new Date(doc.createdAt).toLocaleDateString()}</td>
+                      <td className="px-4 py-3">
+                        {data.governmentIdPhotoPath ? (
+                          <button
+                            type="button"
+                            onClick={() => getTechnicianIdDocumentUrl(data.governmentIdPhotoPath!).then((url) => window.open(url, "_blank", "noopener,noreferrer")).catch((err) => setMasterPhContractorAgreementActionError(err instanceof Error ? err.message : "Failed to open ID photo."))}
+                            className="text-blue-300 hover:text-blue-200 underline text-xs"
+                          >
+                            View ID
+                          </button>
+                        ) : (
+                          <span className="text-muted-foreground text-xs">—</span>
+                        )}
+                      </td>
                       <td className="px-4 py-3">
                         <div className="flex flex-wrap items-center gap-1.5">
                           {doc.status === "pending_signature" && doc.recipientSlot === "employee" && (
