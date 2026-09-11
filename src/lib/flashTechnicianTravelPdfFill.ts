@@ -56,12 +56,17 @@ export async function fillFlashTechnicianTravelPdf(
   // Employee's line has ~47pt of clear space above it before the
   // acknowledgment paragraph, so its signature can grow generously upward
   // from the baseline without touching anything. The Employer line right
-  // underneath is much tighter (only ~12.6pt to Employee's own baseline
-  // above it), so its box stays modest to avoid visually overlapping.
+  // underneath only has ~12.6pt of headroom up to Employee's own box
+  // bottom (y 716) before the two would visually overlap — capped the
+  // employer box's TOP edge there (699 + 17 = 716) and grew it DOWNWARD
+  // instead (699 vs the old 705), into the blank margin below the
+  // signature row and well above the footer line, so it's meaningfully
+  // bigger (11pt tall -> 17pt, ~55%) without touching Employee's own
+  // signature above it.
   if (employeeSigBytes) await drawSig(employeeSigBytes, 183, 716, 200, 26);
   drawDate(fmtSignedDate(data.employeeDateSigned), 424, 717.3);
 
-  if (employerSigBytes) await drawSig(employerSigBytes, 257, 705, 130, 11);
+  if (employerSigBytes) await drawSig(employerSigBytes, 257, 699, 150, 17);
   drawDate(fmtSignedDate(data.employerDateSigned), 425, 704.7);
 
   return pdfDoc.save();
