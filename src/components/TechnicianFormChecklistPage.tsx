@@ -394,30 +394,76 @@ export function TechnicianFormChecklistPage() {
     }
   };
 
-  // "Send All Forms" — hands off to the real Bulk Form Send picker
-  // (ReportHRDaily.tsx's combineForms/newCombineForms tab) with this person
-  // and their outstanding (not yet sent, not N/A'd) forms already
-  // pre-selected, via the same ?recipientId=&types= URL hydration the
-  // onboarding "Send All Selected" bridge there uses — HR reviews/adjusts
-  // the checklist and clicks Generate/Copy Link themselves, rather than
-  // this page silently creating+sending documents on click. The
-  // "technician" tab uses the legacy TECHNICIAN_FORM_TYPES list, which
-  // combineForms's own checklist covers; every other tab's forms only live
-  // under newCombineForms.
-  const handleSendAllForms = (r: TechRow) => {
+  // "Send All Forms" — bundles every one of this tab's forms this person
+  // hasn't been sent yet (skipping N/A'd and already-sent/signed ones) into
+  // ONE /sign-bundle link and DMs it immediately — no detour through
+  // ReportHRDaily's Bulk Form Send picker for review first. Same mechanism
+  // Bulk Form Send itself uses (see handleGenerateCombinedForms there):
+  // each form still gets its own independent hr_signable_documents row
+  // created via the exact same createSignableDocument call handleSendForm
+  // above makes one at a time, so every form's status keeps tracking
+  // separately here — "the bundle" is nothing but their ids joined into one
+  // query string for delivery. load() afterward picks all of them up
+  // individually, same as any other send.
+  const handleSendAllForms = async (r: TechRow) => {
     const outstanding = activeConfig.formTypes.filter(
       (type) => !r.exempt.has(type) && getDocumentReviewStatus(type, r.docs.get(type)) === "not_sent"
     );
     if (outstanding.length === 0) return;
-    navigate({
-      to: "/m/$module/$submodule",
-      params: { module: "hr", submodule: "hr-paperworks" },
-      search: {
-        tab: activeChecklistTab === "technician" ? "combineForms" : "newCombineForms",
-        recipientId: r.profileId,
-        types: outstanding.join(","),
-      },
-    } as any);
+    const key = `${r.profileId}|sendAll`;
+    setActionKey(key);
+    setActionError(null);
+    try {
+      // Same race guard as handleSendForm (see its own comment) — re-check
+      // the live database right before creating anything, in case another
+      // session already sent one or more of these since this session's
+      // last load.
+      const alreadyActive = await getExistingActiveDocumentTypes(r.profileId, outstanding);
+      const toCreate = outstanding.filter((type) => !alreadyActive.includes(type));
+      if (toCreate.length === 0) {
+        setActionError(`${r.name} already has all of these on file (most likely just sent from another session) — refreshing to show current status.`);
+        await loadDocsForActiveTab();
+        return;
+      }
+      // Same tag handleSendForm applies (see its own comment) — tags with
+      // the active tab's formSource bucket whenever it's "new", so a bundle
+      // sent from e.g. the New Technician tab still lands under newW4's/
+      // newW9's/etc. Sent History rather than the old shared tab's.
+      const formSourceTag = activeConfig.formSourceBucket === "new" ? { formSource: "new_automation" } : {};
+      const docs = await Promise.all(
+        toCreate.map((type) =>
+          createSignableDocument({
+            documentType: type,
+            formData: { employeeId: r.profileId, employeeName: r.name, ...formSourceTag },
+            recipientId: r.profileId,
+            recipientSlot: "employee",
+            pdfUrl: "",
+          })
+        )
+      );
+      if (myProfileId) {
+        const thread = await getOrCreateDmThread(myProfileId, r.profileId);
+        const bundleLink = `${getAppUrl()}/sign-bundle?ids=${docs.map((d) => d.id).join(",")}`;
+        await sendMessage({
+          dmThreadId: thread.id,
+          senderId: myProfileId,
+          senderName: displayName || "HR",
+          body: `📋 Please complete these ${docs.length} forms: ${bundleLink}`,
+        });
+      }
+      void logActivity({
+        action: "combined_forms_sent",
+        targetType: "employee",
+        targetId: r.profileId,
+        targetLabel: r.name,
+        details: { types: toCreate },
+      });
+      await load();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Failed to send forms.");
+    } finally {
+      setActionKey(null);
+    }
   };
 
   // "Remind All" — the bulk counterpart to handleRemindForm: every one of
@@ -723,6 +769,7 @@ export function TechnicianFormChecklistPage() {
                         (type) => !r.exempt.has(type) && getDocumentReviewStatus(type, r.docs.get(type)) === "awaiting_employee"
                       );
                       const remindAllBusy = actionKey === `${r.profileId}|remindAll`;
+                      const sendAllBusy = actionKey === `${r.profileId}|sendAll`;
                       if (outstanding.length === 0 && pending.length === 0) return null;
                       return (
                         <div className="flex justify-end items-center gap-3 mb-2.5">
@@ -741,11 +788,12 @@ export function TechnicianFormChecklistPage() {
                           {outstanding.length > 0 && (
                             <button
                               type="button"
-                              onClick={() => handleSendAllForms(r)}
-                              title={`Review and send the ${outstanding.length} unsent form${outstanding.length === 1 ? "" : "s"} in Bulk Form Send`}
-                              className="inline-flex shrink-0 items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-red-400 hover:text-red-300"
+                              disabled={sendAllBusy}
+                              onClick={() => void handleSendAllForms(r)}
+                              title={`Bundle the ${outstanding.length} unsent form${outstanding.length === 1 ? "" : "s"} into one link and send now`}
+                              className="inline-flex shrink-0 items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-red-400 hover:text-red-300 disabled:opacity-40 disabled:cursor-not-allowed"
                             >
-                              <Send className="h-3.5 w-3.5" />
+                              {sendAllBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
                               Send All Forms ({outstanding.length})
                             </button>
                           )}
