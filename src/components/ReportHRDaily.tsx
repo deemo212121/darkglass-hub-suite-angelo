@@ -13584,9 +13584,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
   // "New Automation Forms"' own General column — the same first 7 of
   // automatedFormsGeneralTabs above, minus Form I-9/Manager's Action Plan
-  // Form/Termination Notice Form/W-8ben — those 4 live directly under New
-  // Technician Forms instead (see newAutomationFormsTechnicianTabs below),
-  // so listing them here too would just be a duplicate.
+  // Form/W-8ben — those 3 live directly under New Technician Forms instead
+  // (see newAutomationFormsTechnicianTabs below), so listing them here too
+  // would just be a duplicate. Termination Notice Form IS included here —
+  // same "terminationForm" tab key as the old General column, just reachable
+  // from both places, same as every other tab this column reuses as-is.
   // "combineForms" (Bulk Form Send) gets its own distinct tab here rather
   // than being reused as-is — the old one's checkbox list is the legacy
   // 20-item breakdown (11 individual technician forms, etc.); this one
@@ -13595,7 +13597,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // Direct Deposit, W-8BEN), grouped by New Technician/New Office/PH Staff
   // — see the "newCombineForms" render block below.
   const newAutomationFormsGeneralTabs: NavTabDef[] = [
-    ...automatedFormsGeneralTabs.filter((t) => !["i9", "actionPlanForm", "terminationForm", "w8ben", "combineForms"].includes(t.key)),
+    ...automatedFormsGeneralTabs.filter((t) => !["i9", "actionPlanForm", "w8ben", "combineForms"].includes(t.key)),
     { key: "newCombineForms", label: "Bulk Form Send", count: 0, icon: Link2 },
   ];
 
@@ -13710,9 +13712,9 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     // inside "Automated Forms" above) for new consolidated form types as
     // they're built, starting with Master W-2 Technician Agreement. General
     // here is trimmed (newAutomationFormsGeneralTabs) — I-9/Action Plan/
-    // Termination/W-8ben deliberately excluded since I-9 and W-8ben already
-    // live directly under New Technician Forms, and Action Plan/Termination
-    // aren't part of this group at all.
+    // W-8ben deliberately excluded since I-9 and W-8ben already live
+    // directly under New Technician Forms, and Action Plan isn't part of
+    // this group at all. Termination Notice Form IS included.
     ...(paperworksOnly && companyId === "COMP001" ? [{
       group: "New Automation Forms",
       icon: Paperclip,
