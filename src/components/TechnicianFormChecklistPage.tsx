@@ -35,8 +35,9 @@
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { ChevronLeft, ClipboardCheck, Loader2, ChevronDown, ExternalLink, RefreshCw, Send, Bell, Snowflake, Search } from "lucide-react";
+import { ChevronLeft, ClipboardCheck, Loader2, ChevronDown, ExternalLink, RefreshCw, Send, Bell, Snowflake, Search, X, PenLine } from "lucide-react";
 import { useAuth } from "@/lib/auth";
+import { ManagerReviewPage, SUPPORTED_TYPES as EMPLOYER_SIGN_SUPPORTED_TYPES } from "@/components/ManagerReviewPage";
 import { getCompanyUsers, getMyProfileId, setProfileFrozen, type ProfileRow } from "@/lib/supabase/users";
 import { isEligibleForTechnicianFormChecklist, isBmAndUpRole, getRoleDepartmentBreakdown } from "@/lib/roleLabels";
 import { getSignableDocumentsByTypes, getExistingActiveDocumentTypes, createSignableDocument, type SignableDocument, type SignableDocumentType } from "@/lib/supabase/signableDocuments";
@@ -157,6 +158,14 @@ export function TechnicianFormChecklistPage() {
   const [sortMode, setSortMode] = useState<SortMode>("missing-desc");
   const [actionKey, setActionKey] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  // Set to open the "Review & Sign" popup for an "Awaiting HR review" row —
+  // shows the employee-signed PDF already on file plus an embedded
+  // ManagerReviewPage to add the employer countersignature, all without
+  // leaving this page. Only offered for types ManagerReviewPage actually
+  // supports (EMPLOYER_SIGN_SUPPORTED_TYPES) — i9's Section 2 needs real
+  // document-review fields, not just a signature, so it still points HR at
+  // Attendance Monitoring instead.
+  const [signDoc, setSignDoc] = useState<SignableDocument | null>(null);
 
   const activeConfig = useMemo(() => CHECKLIST_TABS.find((t) => t.key === activeChecklistTab) ?? CHECKLIST_TABS[0], [activeChecklistTab]);
 
@@ -592,6 +601,7 @@ export function TechnicianFormChecklistPage() {
   };
 
   return (
+    <>
     <main className="max-w-[1000px] mx-auto px-6 py-8">
       <div className="flex items-center gap-3 mb-4">
         <button
@@ -867,9 +877,20 @@ export function TechnicianFormChecklistPage() {
                               </button>
                             )}
                             {!na && awaitingHr && (
-                              <span title="This person has signed — this form now needs HR's own review/countersignature in Attendance Monitoring." className="shrink-0 text-[10px] text-sky-400/80">
-                                Needs your review
-                              </span>
+                              doc && EMPLOYER_SIGN_SUPPORTED_TYPES.has(type) ? (
+                                <button
+                                  type="button"
+                                  onClick={() => setSignDoc(doc)}
+                                  title="Review the signed document and add your signature here"
+                                  className="inline-flex shrink-0 items-center gap-1 text-xs text-sky-300 hover:text-sky-200"
+                                >
+                                  <PenLine className="h-3 w-3" /> Sign
+                                </button>
+                              ) : (
+                                <span title="This person has signed — this form now needs HR's own review/countersignature in Attendance Monitoring." className="shrink-0 text-[10px] text-sky-400/80">
+                                  Needs your review
+                                </span>
+                              )
                             )}
                             {!na && reviewStatus === "not_sent" && (
                               <button
@@ -907,5 +928,35 @@ export function TechnicianFormChecklistPage() {
         </div>
       )}
     </main>
+
+    {/* "Review & Sign" popup — the employee-signed PDF already on file
+        (same one the "view" link opens in a new tab) plus an embedded
+        ManagerReviewPage so HR can add the employer countersignature right
+        here, no navigation to Attendance Monitoring needed. */}
+    {signDoc && (
+      <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => { setSignDoc(null); void loadDocsForActiveTab(); }}>
+        <div className="bg-slate-900 border border-white/10 rounded-lg shadow-2xl w-full max-w-2xl max-h-[92vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+          <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between gap-3 shrink-0">
+            <p className="text-sm font-semibold flex items-center gap-1.5"><PenLine className="h-4 w-4" /> Review &amp; Sign</p>
+            <button
+              type="button"
+              onClick={() => { setSignDoc(null); void loadDocsForActiveTab(); }}
+              className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-white/5"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          <div className="flex-1 overflow-y-auto p-4">
+            {signDoc.pdfUrl && (
+              <div className="mb-4 rounded-md overflow-hidden border border-white/10 bg-white/5">
+                <iframe src={signDoc.pdfUrl} title="Document on file" className="w-full border-0" style={{ height: 380 }} />
+              </div>
+            )}
+            <ManagerReviewPage docId={signDoc.id} embedded onSigned={() => void loadDocsForActiveTab()} />
+          </div>
+        </div>
+      </div>
+    )}
+    </>
   );
 }
