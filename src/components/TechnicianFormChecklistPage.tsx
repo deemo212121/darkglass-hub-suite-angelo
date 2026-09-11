@@ -40,13 +40,16 @@ import { useAuth } from "@/lib/auth";
 import { ManagerReviewPage, SUPPORTED_TYPES as EMPLOYER_SIGN_SUPPORTED_TYPES } from "@/components/ManagerReviewPage";
 import { getCompanyUsers, getMyProfileId, setProfileFrozen, type ProfileRow } from "@/lib/supabase/users";
 import { isEligibleForTechnicianFormChecklist, isBmAndUpRole, getRoleDepartmentBreakdown } from "@/lib/roleLabels";
-import { getSignableDocumentsByTypes, getExistingActiveDocumentTypes, createSignableDocument, type SignableDocument, type SignableDocumentType } from "@/lib/supabase/signableDocuments";
+import { getSignableDocumentsByTypes, getExistingActiveDocumentTypes, createSignableDocument, updateSignableDocumentPdfUrl, confirmSignableDocument, type SignableDocument, type SignableDocumentType } from "@/lib/supabase/signableDocuments";
 import { SIGNABLE_DOCUMENT_REGISTRY, TECHNICIAN_FORM_TYPES, getDocumentReviewStatus, isTechnicianExemptFromForm, exemptionRowValueForToggle, pickAuthoritativeDocument, isNewAutomationDoc, SHARED_OLD_NEW_AUTOMATION_TYPES } from "@/lib/signableDocumentRegistry";
 import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
 import { getTechnicianFormExemptions, setTechnicianFormExemption } from "@/lib/supabase/technicianFormExemptions";
 import { logActivity } from "@/lib/supabase/hrActivityLog";
 import { getAppUrl } from "@/lib/appUrl";
 import { LOCATIONS_DATA } from "@/lib/zipCoverage";
+import { uploadW4Form } from "@/lib/firebase/storage";
+import { fillW4Pdf } from "@/lib/w4PdfFill";
+import type { W4FormData } from "@/lib/w4FormTemplate";
 
 // Same derivation ReportHRDaily.tsx's onboarding/attendance splits use for
 // "PH" vs "US" — there's no real country column, just branch membership in
@@ -166,6 +169,57 @@ export function TechnicianFormChecklistPage() {
   // document-review fields, not just a signature, so it still points HR at
   // Attendance Monitoring instead.
   const [signDoc, setSignDoc] = useState<SignableDocument | null>(null);
+
+  // ── Form W-4's "Employers Only" step — no employer signature line on the
+  // form at all, just 3 text fields (name/address, first date of
+  // employment, EIN). Mirrors ReportHRDaily.tsx's handleOpenW4EmployerDialog/
+  // handleSaveW4EmployerInfo exactly (same fillW4Pdf/uploadW4Form/
+  // updateSignableDocumentPdfUrl/confirmSignableDocument calls), just
+  // reloading this tab's own documents afterward instead of
+  // loadSentW4Forms(). ──
+  const [w4EmployerDialog, setW4EmployerDialog] = useState<SignableDocument | null>(null);
+  const [w4EmployerNameAddress, setW4EmployerNameAddress] = useState("");
+  const [w4EmployerFirstDate, setW4EmployerFirstDate] = useState("");
+  const [w4EmployerEin, setW4EmployerEin] = useState("");
+  const [w4EmployerSaving, setW4EmployerSaving] = useState(false);
+  const [w4EmployerError, setW4EmployerError] = useState<string | null>(null);
+
+  const handleOpenW4EmployerDialog = (doc: SignableDocument) => {
+    setW4EmployerDialog(doc);
+    setW4EmployerNameAddress("");
+    setW4EmployerFirstDate("");
+    setW4EmployerEin("");
+    setW4EmployerError(null);
+  };
+
+  const handleSaveW4EmployerInfo = async () => {
+    if (!w4EmployerDialog) return;
+    setW4EmployerSaving(true);
+    setW4EmployerError(null);
+    try {
+      const data = w4EmployerDialog.formData as W4FormData;
+      const merged: W4FormData = {
+        ...data,
+        employerNameAndAddress: w4EmployerNameAddress,
+        employerFirstDateOfEmployment: w4EmployerFirstDate,
+        employerEin: w4EmployerEin,
+      };
+      const sigBytes = data.signatureDataUrl
+        ? new Uint8Array(await (await fetch(data.signatureDataUrl)).arrayBuffer())
+        : undefined;
+      const pdfBytes = await fillW4Pdf(merged, sigBytes);
+      const employeeName = `${data.firstNameMiddleInitial ?? ""} ${data.lastName ?? ""}`.trim();
+      const pdfUrl = await uploadW4Form(w4EmployerDialog.companyId, employeeName, new Blob([pdfBytes as unknown as BlobPart], { type: "application/pdf" }));
+      await updateSignableDocumentPdfUrl(w4EmployerDialog.id, pdfUrl, merged as unknown as Record<string, any>);
+      await confirmSignableDocument(w4EmployerDialog.id, null);
+      setW4EmployerDialog(null);
+      await loadDocsForActiveTab();
+    } catch (err) {
+      setW4EmployerError(err instanceof Error ? err.message : "Failed to save employer info.");
+    } finally {
+      setW4EmployerSaving(false);
+    }
+  };
 
   const activeConfig = useMemo(() => CHECKLIST_TABS.find((t) => t.key === activeChecklistTab) ?? CHECKLIST_TABS[0], [activeChecklistTab]);
 
@@ -877,7 +931,16 @@ export function TechnicianFormChecklistPage() {
                               </button>
                             )}
                             {!na && awaitingHr && (
-                              doc && EMPLOYER_SIGN_SUPPORTED_TYPES.has(type) ? (
+                              type === "w4" && doc ? (
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenW4EmployerDialog(doc)}
+                                  title='Fill in the "Employers Only" box — no signature, just employer name/address, first date of employment, and EIN'
+                                  className="inline-flex shrink-0 items-center gap-1 text-xs text-sky-300 hover:text-sky-200"
+                                >
+                                  <PenLine className="h-3 w-3" /> Fill Info
+                                </button>
+                              ) : doc && EMPLOYER_SIGN_SUPPORTED_TYPES.has(type) ? (
                                 <button
                                   type="button"
                                   onClick={() => setSignDoc(doc)}
@@ -953,6 +1016,54 @@ export function TechnicianFormChecklistPage() {
               </div>
             )}
             <ManagerReviewPage docId={signDoc.id} embedded onSigned={() => void loadDocsForActiveTab()} />
+          </div>
+        </div>
+      </div>
+    )}
+
+    {/* Form W-4 "Fill Employer Info" popup — no signature on this form,
+        just the 3 "Employers Only" text fields. Same fields/labels/flow as
+        ReportHRDaily.tsx's own w4EmployerDialog. */}
+    {w4EmployerDialog && (
+      <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+        <div className="bg-slate-800 border border-white/10 rounded-lg p-6 max-w-sm w-full">
+          <h3 className="text-lg font-bold mb-2">Fill Employer Info</h3>
+          <p className="text-sm text-muted-foreground mb-4">
+            Completes the "Employers Only" box on{" "}
+            <span className="font-semibold text-white">
+              {(() => {
+                const data = w4EmployerDialog.formData as Partial<W4FormData>;
+                return `${data.firstNameMiddleInitial ?? ""} ${data.lastName ?? ""}`.trim();
+              })()}
+            </span>
+            's submitted W-4.
+          </p>
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Employer's name and address</label>
+              <textarea value={w4EmployerNameAddress} onChange={(e) => setW4EmployerNameAddress(e.target.value)} rows={2} className="glass-input text-sm py-1.5 px-3 rounded-md resize-y" />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">First date of employment</label>
+              <input type="date" value={w4EmployerFirstDate} onChange={(e) => setW4EmployerFirstDate(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Employer identification number (EIN)</label>
+              <input type="text" placeholder="XX-XXXXXXX" value={w4EmployerEin} onChange={(e) => setW4EmployerEin(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+            </div>
+          </div>
+          {w4EmployerError && (
+            <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2 mt-3">{w4EmployerError}</p>
+          )}
+          <div className="flex gap-2 justify-end mt-4">
+            <button onClick={() => setW4EmployerDialog(null)} className="btn text-sm px-4 py-2">Cancel</button>
+            <button
+              onClick={handleSaveW4EmployerInfo}
+              disabled={w4EmployerSaving}
+              className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+            >
+              {w4EmployerSaving ? "Saving…" : "Save"}
+            </button>
           </div>
         </div>
       </div>
