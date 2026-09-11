@@ -32,6 +32,7 @@ import {
   updateTicketVisit,
   updateTicketStatus,
   getLatestVisitTechnicianByTicketIds,
+  getSecondTechnicianAssignments,
   getTicketParts,
   updateTicketPart,
   setTicketOnsiteCheckIn,
@@ -690,6 +691,22 @@ export function MobileTechApp() {
     return () => { cancelled = true; };
   }, []);
 
+  // "2 Man Job"/Two Tech assist relationships — the only place a SECOND
+  // technician is ever recorded is a Visit Log entry's second_technician
+  // field (there's no ticket-level second-technician column). Raw
+  // (ticket_id, name) pairs, company-wide; myTickets below matches these
+  // against scopeTech with the same tolerant name matching it already uses
+  // for the primary technician field, so an assisting tech sees a shared
+  // job on their own "My Tickets" list and route too, not just the primary.
+  const [secondTechAssignments, setSecondTechAssignments] = useState<{ ticketId: string; secondTechnician: string }[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    getSecondTechnicianAssignments()
+      .then((rows) => { if (!cancelled) setSecondTechAssignments(rows); })
+      .catch((e) => console.error("Mobile: failed to load second-technician assignments", e));
+    return () => { cancelled = true; };
+  }, []);
+
   // This technician's own payroll run history — for On Hold Tickets' Dispute
   // sub-tab, to tell whether a released ticket's payroll period was already
   // generated before it got released (see disputeEligibleTickets below). A
@@ -887,16 +904,27 @@ export function MobileTechApp() {
     // "Percy Smith" too. A last-name-only ticket ("Koetsier") still matches
     // via the exact-set check below.
     const fuzzy = Array.from(candidates).filter((c) => c.includes(" ") || c.includes("@"));
-    return tickets.filter((t) => {
-      const tt = normalise(String(t.technician ?? ""));
-      if (!tt) return false;
-      if (candidates.has(tt)) return true;
+    const matchesScope = (name: string): boolean => {
+      const n = normalise(name);
+      if (!n) return false;
+      if (candidates.has(n)) return true;
       // Fuzzy contains so "Jordan Koetsier" still matches a ticket stored as
       // "Jordan Koetsier Jr" / "Koetsier, Jordan" — the planner uses the same
       // tolerance to bucket tickets to a tech.
-      return fuzzy.some((c) => tt.includes(c) || c.includes(tt));
-    });
-  }, [tickets, scopeTech]);
+      return fuzzy.some((c) => n.includes(c) || c.includes(n));
+    };
+    const primary = tickets.filter((t) => matchesScope(String(t.technician ?? "")));
+    // Union in tickets where this tech is only the SECOND (assisting)
+    // technician on a "2 Man Job" — a shared ticket must show up on both
+    // people's own assigned list and route, not just the primary's.
+    const assistedTicketIds = new Set(
+      secondTechAssignments.filter((a) => matchesScope(a.secondTechnician)).map((a) => a.ticketId)
+    );
+    if (assistedTicketIds.size === 0) return primary;
+    const primaryIds = new Set(primary.map((t: any) => String(t._id ?? "")));
+    const assisted = tickets.filter((t: any) => assistedTicketIds.has(String(t._id ?? "")) && !primaryIds.has(String(t._id ?? "")));
+    return assisted.length > 0 ? [...primary, ...assisted] : primary;
+  }, [tickets, scopeTech, secondTechAssignments]);
 
   // Seed arrivedAt/doneAt from what's actually persisted (onsite_arrived_at/
   // onsite_done_at). Scoped to myTickets (this technician's own tickets),

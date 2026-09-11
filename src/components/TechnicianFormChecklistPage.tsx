@@ -1,10 +1,26 @@
 /**
- * HR module -> Technician Form Checklist. Per-technician live status of
- * every Technician-tab signable form (Wage Ack, Car IQ Agreement, Vehicle
- * Use Agreement, ...) — pulled straight from hr_signable_documents via
- * getAllSignableDocuments, not a separately-tracked checklist. Unlike
- * HrOnboardingChecklistPage (a manually-ticked punch list), nothing here
- * is editable: a form only shows complete once it's actually been signed.
+ * HR module -> Staff Form Checklist. Per-person live status of every
+ * signable form for 5 tiers, each its own tab — pulled straight from
+ * hr_signable_documents via getAllSignableDocuments, not a separately-
+ * tracked checklist. Unlike HrOnboardingChecklistPage (a manually-ticked
+ * punch list), nothing here is editable: a form only shows complete once
+ * it's actually been signed.
+ *
+ * Tabs (see CHECKLIST_TABS below):
+ *  - Technician — the original 16-form checklist, unchanged.
+ *  - New Technician — same technician population, the new consolidated
+ *    forms (Master W-2 Technician Agreement, W-4, I-9, Direct Deposit).
+ *  - Office Staff (US) — everyone else in the US who isn't a field
+ *    technician or Branch Manager tier and up.
+ *  - PH Staff — anyone assigned to a Philippines branch, any role.
+ *  - BM, SBS, Tech Director, Tech Assistant Director — that specific
+ *    management tier's own new forms (Contractor Addendum, W-9, Direct
+ *    Deposit). Deliberately excluded from Office Staff (US) even though
+ *    they're US-based, since they need this tier's forms tracked instead.
+ *
+ * One fetch (users/docs/exemptions) serves all 5 tabs — each tab's row list
+ * is just a different filter+form-type-set derived from the same raw data,
+ * recomputed via useMemo when the active tab or the raw data changes.
  *
  * Dispatched from m.$module.$submodule.tsx for custom ===
  * "technician-form-checklist"; the route already renders <AppHeader />
@@ -15,19 +31,74 @@ import { useNavigate } from "@tanstack/react-router";
 import { ChevronLeft, ClipboardCheck, Loader2, ChevronDown, ExternalLink, RefreshCw, Send, Bell, Snowflake, Search } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { getCompanyUsers, getMyProfileId, setProfileFrozen, type ProfileRow } from "@/lib/supabase/users";
-import { isEligibleForTechnicianFormChecklist, getRoleDepartmentBreakdown } from "@/lib/roleLabels";
-import { getAllSignableDocuments, createSignableDocument, type SignableDocument, type SignableDocumentType } from "@/lib/supabase/signableDocuments";
+import { isEligibleForTechnicianFormChecklist, isBmAndUpRole, getRoleDepartmentBreakdown } from "@/lib/roleLabels";
+import { getSignableDocumentsByTypes, createSignableDocument, type SignableDocument, type SignableDocumentType } from "@/lib/supabase/signableDocuments";
 import { SIGNABLE_DOCUMENT_REGISTRY, TECHNICIAN_FORM_TYPES, getDocumentReviewStatus, isTechnicianExemptFromForm, exemptionRowValueForToggle, pickAuthoritativeDocument } from "@/lib/signableDocumentRegistry";
 import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
 import { getTechnicianFormExemptions, setTechnicianFormExemption } from "@/lib/supabase/technicianFormExemptions";
 import { logActivity } from "@/lib/supabase/hrActivityLog";
 import { getAppUrl } from "@/lib/appUrl";
+import { LOCATIONS_DATA } from "@/lib/zipCoverage";
 
-// TECH_FORM_TYPES now lives in signableDocumentRegistry.ts as
-// TECHNICIAN_FORM_TYPES, shared with the frozen-account "forms you still
-// need to sign" popup — kept as a local alias so nothing else in this file
-// needs to change.
-const TECH_FORM_TYPES = TECHNICIAN_FORM_TYPES;
+// Same derivation ReportHRDaily.tsx's onboarding/attendance splits use for
+// "PH" vs "US" — there's no real country column, just branch membership in
+// the Philippines subset of LOCATIONS_DATA.
+const PH_BRANCH_NAMES = new Set(LOCATIONS_DATA.filter((l) => l.isPhilippines).map((l) => l.location));
+const isPhBranch = (u: ProfileRow) => PH_BRANCH_NAMES.has(u.assigned_branch || "");
+
+const NEW_TECHNICIAN_FORM_TYPES: SignableDocumentType[] = ["master_w2_agreement", "w4", "i9", "direct_deposit"];
+const OFFICE_STAFF_US_FORM_TYPES: SignableDocumentType[] = ["master_w2_office_agreement", "w4", "i9", "direct_deposit"];
+const PH_STAFF_FORM_TYPES: SignableDocumentType[] = ["master_ph_contractor_agreement", "w8ben", "direct_deposit"];
+const BM_AND_UP_FORM_TYPES: SignableDocumentType[] = ["contractor_addendum", "w9", "direct_deposit"];
+
+type ChecklistTabKey = "technician" | "newTechnician" | "officeStaffUs" | "phStaff" | "bmAndUp";
+
+interface ChecklistTabConfig {
+  key: ChecklistTabKey;
+  label: string;
+  formTypes: SignableDocumentType[];
+  isEligible: (u: ProfileRow) => boolean;
+  /** Plural noun used in "N technicians" / "No office staff found." messaging. */
+  noun: string;
+}
+
+const CHECKLIST_TABS: ChecklistTabConfig[] = [
+  {
+    key: "technician",
+    label: "Technician",
+    formTypes: TECHNICIAN_FORM_TYPES,
+    isEligible: (u) => isEligibleForTechnicianFormChecklist(u.role, u.extra_roles),
+    noun: "technicians",
+  },
+  {
+    key: "newTechnician",
+    label: "New Technician",
+    formTypes: NEW_TECHNICIAN_FORM_TYPES,
+    isEligible: (u) => isEligibleForTechnicianFormChecklist(u.role, u.extra_roles),
+    noun: "technicians",
+  },
+  {
+    key: "officeStaffUs",
+    label: "Office Staff (US)",
+    formTypes: OFFICE_STAFF_US_FORM_TYPES,
+    isEligible: (u) => !isPhBranch(u) && !isBmAndUpRole(u.role) && !isEligibleForTechnicianFormChecklist(u.role, u.extra_roles),
+    noun: "office staff",
+  },
+  {
+    key: "phStaff",
+    label: "PH Staff",
+    formTypes: PH_STAFF_FORM_TYPES,
+    isEligible: (u) => isPhBranch(u),
+    noun: "PH staff",
+  },
+  {
+    key: "bmAndUp",
+    label: "BM, SBS, Tech Director, Tech Assistant Director",
+    formTypes: BM_AND_UP_FORM_TYPES,
+    isEligible: (u) => isBmAndUpRole(u.role),
+    noun: "management staff",
+  },
+];
 
 interface TechRow {
   profileId: string;
@@ -35,7 +106,7 @@ interface TechRow {
   roleLabel: string;
   branch: string;
   docs: Map<SignableDocumentType, SignableDocument | undefined>;
-  /** Forms marked Not Applicable for this technician — excluded from both doneCount and applicableTotal. */
+  /** Forms marked Not Applicable for this person — excluded from both doneCount and applicableTotal. */
   exempt: Set<SignableDocumentType>;
   doneCount: number;
   applicableTotal: number;
@@ -53,8 +124,10 @@ export function TechnicianFormChecklistPage() {
   const navigate = useNavigate();
   const { uid, displayName } = useAuth();
   const [myProfileId, setMyProfileId] = useState<string | null>(null);
-  const [rows, setRows] = useState<TechRow[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [activeChecklistTab, setActiveChecklistTab] = useState<ChecklistTabKey>("technician");
+  const [allUsers, setAllUsers] = useState<ProfileRow[]>([]);
+  const [latestByKey, setLatestByKey] = useState<Map<string, SignableDocument>>(new Map());
+  const [exemptions, setExemptions] = useState<Set<string>>(new Set());
   const [expanded, setExpanded] = useState<string | null>(null);
   const [hideComplete, setHideComplete] = useState(false);
   const [branchFilter, setBranchFilter] = useState("");
@@ -63,96 +136,144 @@ export function TechnicianFormChecklistPage() {
   const [actionKey, setActionKey] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
+  const activeConfig = useMemo(() => CHECKLIST_TABS.find((t) => t.key === activeChecklistTab) ?? CHECKLIST_TABS[0], [activeChecklistTab]);
+
   useEffect(() => {
     if (!uid) return;
     getMyProfileId(uid).then(setMyProfileId).catch(() => setMyProfileId(null));
   }, [uid]);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  // The roster doesn't vary per tab — fetched once (and on manual Refresh),
+  // not re-pulled every time the active tab changes.
+  const [usersLoading, setUsersLoading] = useState(true);
+  const loadUsers = useCallback(async () => {
+    setUsersLoading(true);
     try {
-      const [users, docs, exemptions] = await Promise.all([getCompanyUsers(), getAllSignableDocuments(), getTechnicianFormExemptions()]);
-      // isEligibleForTechnicianFormChecklist checks BOTH the primary role
-      // and extra_roles — a Branch/Senior Branch Manager who still does
-      // field work (Technician/Technician Manager in extra_roles) needs
-      // these forms tracked too — but skips office/admin-tier accounts that
-      // merely have Technician tacked onto extra_roles for unrelated
-      // system-access reasons (see its doc comment in roleLabels.ts).
-      const technicians = (users as ProfileRow[]).filter(
-        (u) => u.is_active && isEligibleForTechnicianFormChecklist(u.role, u.extra_roles)
-      );
-
-      // Group every row per (technician, documentType) — NOT just "keep
-      // the newest" (that let a re-sent, still-pending duplicate hide an
-      // earlier row the technician had genuinely already signed/confirmed,
-      // making a completed form show as "Not sent" again). pickAuthoritativeDocument
-      // picks whichever row actually represents the best status reached.
-      //
-      // "technician" here is formData.employeeId, NOT d.recipientId —
-      // recipientId is who currently needs to ACT on the document, and gets
-      // reassigned to whichever HR staffer completes the employer/
-      // countersign step (wage_ack, damage, i9, etc. — see the
-      // "*EmployerDialog" handlers in ReportHRDaily.tsx). A fully confirmed
-      // two-party form's recipientId permanently points at that HR staffer,
-      // not the technician, so grouping by recipientId made every one of
-      // these vanish from the checklist back to "Not sent" the moment it
-      // was actually finished — confirmed live on 2026-09-10 for a
-      // technician whose confirmed Wage Ack/Substance Screening/Location
-      // Consent each had a different HR staffer's id sitting in
-      // recipientId. formData.employeeId is set once at creation and never
-      // changes, so it's the stable "whose form is this" identity.
-      const byRecipientAndType = new Map<string, SignableDocument[]>();
-      for (const d of docs) {
-        const technicianId = (d.formData as Record<string, any> | undefined)?.employeeId || d.recipientId;
-        if (!technicianId) continue;
-        const key = `${technicianId}|${d.documentType}`;
-        const arr = byRecipientAndType.get(key);
-        if (arr) arr.push(d);
-        else byRecipientAndType.set(key, [d]);
-      }
-      const latestByRecipientAndType = new Map<string, SignableDocument>();
-      for (const [key, group] of byRecipientAndType) {
-        const best = pickAuthoritativeDocument(group);
-        if (best) latestByRecipientAndType.set(key, best);
-      }
-
-      const next: TechRow[] = technicians.map((u) => {
-        const docMap = new Map<SignableDocumentType, SignableDocument | undefined>();
-        const exempt = new Set<SignableDocumentType>();
-        let doneCount = 0;
-        for (const type of TECH_FORM_TYPES) {
-          const doc = latestByRecipientAndType.get(`${u.id}|${type}`);
-          docMap.set(type, doc);
-          if (isTechnicianExemptFromForm(type, !!doc, exemptions.has(`${u.id}|${type}`))) {
-            exempt.add(type);
-          } else if (isComplete(doc, type)) {
-            doneCount++;
-          }
-        }
-        return {
-          profileId: u.id,
-          name: u.display_name || u.username || u.email || "Unnamed",
-          roleLabel: getRoleDepartmentBreakdown(u.role || "").roleLabel,
-          branch: u.assigned_branch || "—",
-          docs: docMap,
-          exempt,
-          doneCount,
-          applicableTotal: TECH_FORM_TYPES.length - exempt.size,
-          frozen: u.frozen === true,
-        };
-      });
-      setRows(next);
-      setExpanded((cur) => (cur && next.some((r) => r.profileId === cur) ? cur : next[0]?.profileId ?? null));
+      const users = await getCompanyUsers();
+      setAllUsers((users as ProfileRow[]).filter((u) => u.is_active));
     } catch (err) {
-      console.error("Technician form checklist load failed:", err);
+      console.error("Staff form checklist: failed to load users:", err);
     } finally {
-      setLoading(false);
+      setUsersLoading(false);
     }
   }, []);
 
+  // Scoped to the currently active tab's own form-type set (not every
+  // document type in the company) — re-runs whenever the tab changes, so
+  // switching tabs costs one small, targeted fetch instead of the page
+  // eagerly pulling the whole company's signable-document history up front.
+  const [docsLoading, setDocsLoading] = useState(true);
+  const loadDocsForActiveTab = useCallback(async () => {
+    setDocsLoading(true);
+    try {
+      const [docs, exemptionRows] = await Promise.all([
+        getSignableDocumentsByTypes(activeConfig.formTypes),
+        getTechnicianFormExemptions(activeConfig.formTypes),
+      ]);
+
+      // Group every row per (person, documentType) — NOT just "keep the
+      // newest" (that let a re-sent, still-pending duplicate hide an
+      // earlier row the person had genuinely already signed/confirmed,
+      // making a completed form show as "Not sent" again). pickAuthoritativeDocument
+      // picks whichever row actually represents the best status reached.
+      //
+      // "person" here is formData.employeeId, NOT d.recipientId —
+      // recipientId is who currently needs to ACT on the document, and gets
+      // reassigned to whichever HR staffer completes the employer/
+      // countersign step. A fully confirmed two-party form's recipientId
+      // permanently points at that HR staffer, not the person, so grouping
+      // by recipientId made every one of these vanish from the checklist
+      // back to "Not sent" the moment it was actually finished.
+      // formData.employeeId is set once at creation and never changes, so
+      // it's the stable "whose form is this" identity.
+      const byKey = new Map<string, SignableDocument[]>();
+      for (const d of docs) {
+        const personId = (d.formData as Record<string, any> | undefined)?.employeeId || d.recipientId;
+        if (!personId) continue;
+        const key = `${personId}|${d.documentType}`;
+        const arr = byKey.get(key);
+        if (arr) arr.push(d);
+        else byKey.set(key, [d]);
+      }
+      const latest = new Map<string, SignableDocument>();
+      for (const [key, group] of byKey) {
+        const best = pickAuthoritativeDocument(group);
+        if (best) latest.set(key, best);
+      }
+
+      setLatestByKey(latest);
+      setExemptions(exemptionRows);
+    } catch (err) {
+      console.error("Staff form checklist: failed to load documents:", err);
+    } finally {
+      setDocsLoading(false);
+    }
+  }, [activeConfig]);
+
+  const loading = usersLoading || docsLoading;
+
+  // Full reload — used by the "Refresh" button and by every action handler
+  // below that needs the freshest state after a write (a new roster member,
+  // a just-sent/just-signed form, a freeze toggle, etc.).
+  const load = useCallback(async () => {
+    await Promise.all([loadUsers(), loadDocsForActiveTab()]);
+  }, [loadUsers, loadDocsForActiveTab]);
+
   useEffect(() => {
-    void load();
-  }, [load]);
+    void loadUsers();
+    // Runs once on mount only — the roster doesn't depend on the active tab.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Re-fetches whenever `loadDocsForActiveTab` itself changes — which
+  // happens whenever activeConfig does, so switching tabs automatically
+  // (re)loads just that tab's own form types, without touching the roster.
+  useEffect(() => {
+    void loadDocsForActiveTab();
+  }, [loadDocsForActiveTab]);
+
+  const rows: TechRow[] = useMemo(() => {
+    return allUsers.filter(activeConfig.isEligible).map((u) => {
+      const docMap = new Map<SignableDocumentType, SignableDocument | undefined>();
+      const exempt = new Set<SignableDocumentType>();
+      let doneCount = 0;
+      for (const type of activeConfig.formTypes) {
+        const doc = latestByKey.get(`${u.id}|${type}`);
+        docMap.set(type, doc);
+        if (isTechnicianExemptFromForm(type, !!doc, exemptions.has(`${u.id}|${type}`))) {
+          exempt.add(type);
+        } else if (isComplete(doc, type)) {
+          doneCount++;
+        }
+      }
+      return {
+        profileId: u.id,
+        name: u.display_name || u.username || u.email || "Unnamed",
+        roleLabel: getRoleDepartmentBreakdown(u.role || "").roleLabel,
+        branch: u.assigned_branch || "—",
+        docs: docMap,
+        exempt,
+        doneCount,
+        applicableTotal: activeConfig.formTypes.length - exempt.size,
+        frozen: u.frozen === true,
+      };
+    });
+  }, [allUsers, latestByKey, exemptions, activeConfig]);
+
+  // Auto-(re)select a row to expand whenever the underlying row list changes
+  // (data refresh OR switching tabs) — keeps the current selection if it's
+  // still present in the new list, otherwise falls back to the first row.
+  useEffect(() => {
+    setExpanded((cur) => (cur && rows.some((r) => r.profileId === cur) ? cur : rows[0]?.profileId ?? null));
+  }, [rows]);
+
+  const handleTabChange = (key: ChecklistTabKey) => {
+    setActiveChecklistTab(key);
+    setSearch("");
+    setBranchFilter("");
+    setSortMode("missing-desc");
+    setHideComplete(false);
+  };
 
   const branchOptions = useMemo(
     () => Array.from(new Set(rows.map((r) => r.branch))).sort((a, b) => a.localeCompare(b)),
@@ -186,20 +307,20 @@ export function TechnicianFormChecklistPage() {
   // every individual Send handler in ReportHRDaily.tsx uses: just the
   // recipient's id/name, the recipient fills in everything else
   // themselves) and DMs them the fill link.
-  const handleSendForm = async (technicianId: string, technicianName: string, type: SignableDocumentType) => {
-    const key = `${technicianId}|${type}`;
+  const handleSendForm = async (personId: string, personName: string, type: SignableDocumentType) => {
+    const key = `${personId}|${type}`;
     setActionKey(key);
     setActionError(null);
     try {
       const doc = await createSignableDocument({
         documentType: type,
-        formData: { employeeId: technicianId, employeeName: technicianName },
-        recipientId: technicianId,
+        formData: { employeeId: personId, employeeName: personName },
+        recipientId: personId,
         recipientSlot: "employee",
         pdfUrl: "",
       });
       if (myProfileId) {
-        const thread = await getOrCreateDmThread(myProfileId, technicianId);
+        const thread = await getOrCreateDmThread(myProfileId, personId);
         const fillLink = `${getAppUrl()}${SIGNABLE_DOCUMENT_REGISTRY[type].internalPath}/${doc.id}`;
         await sendMessage({
           dmThreadId: thread.id,
@@ -208,7 +329,7 @@ export function TechnicianFormChecklistPage() {
           body: `📋 Please complete the ${SIGNABLE_DOCUMENT_REGISTRY[type].label}: ${fillLink}`,
         });
       }
-      void logActivity({ action: `${type}_sent`, targetType: "employee", targetId: technicianId, targetLabel: technicianName });
+      void logActivity({ action: `${type}_sent`, targetType: "employee", targetId: personId, targetLabel: personName });
       await load();
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "Failed to send form.");
@@ -220,13 +341,13 @@ export function TechnicianFormChecklistPage() {
   // "Pending" — the document already exists (they just haven't signed it
   // yet); nudge with a DM to the SAME fill link rather than creating a
   // duplicate document.
-  const handleRemindForm = async (doc: SignableDocument, technicianId: string, type: SignableDocumentType) => {
-    const key = `${technicianId}|${type}`;
+  const handleRemindForm = async (doc: SignableDocument, personId: string, type: SignableDocumentType) => {
+    const key = `${personId}|${type}`;
     setActionKey(key);
     setActionError(null);
     try {
       if (myProfileId) {
-        const thread = await getOrCreateDmThread(myProfileId, technicianId);
+        const thread = await getOrCreateDmThread(myProfileId, personId);
         const fillLink = `${getAppUrl()}${SIGNABLE_DOCUMENT_REGISTRY[type].internalPath}/${doc.id}`;
         await sendMessage({
           dmThreadId: thread.id,
@@ -242,27 +363,28 @@ export function TechnicianFormChecklistPage() {
     }
   };
 
-  // "Not Applicable" — this technician doesn't need this form; excluded
-  // from doneCount/applicableTotal (see load()) rather than counted as
-  // either done or missing. Optimistic local update, then a background
-  // reload to pick up applicableTotal recomputed for real.
-  const handleToggleExempt = async (technicianId: string, type: SignableDocumentType, checked: boolean) => {
-    const key = `${technicianId}|${type}`;
+  // "Not Applicable" — this person doesn't need this form. `exemptions`
+  // tracks raw row-existence ("${personId}|${type}" has an exemption row at
+  // all), not the UI-level exempt/not-exempt meaning — that's derived per
+  // row in the `rows` memo above via isTechnicianExemptFromForm, same as
+  // isComplete. exemptionRowValueForToggle inverts for DEFAULT_EXEMPT_
+  // DOCUMENT_TYPES (a type that's N/A by default, like Flash Technician
+  // Travel), so "checked" doesn't always mean "create a row" — it means
+  // whatever value makes isTechnicianExemptFromForm agree with the checkbox
+  // the person just clicked.
+  const handleToggleExempt = async (personId: string, type: SignableDocumentType, checked: boolean) => {
+    const key = `${personId}|${type}`;
+    const willHaveRow = exemptionRowValueForToggle(type, checked);
     setActionKey(key);
     setActionError(null);
-    setRows((prev) =>
-      prev.map((r) => {
-        if (r.profileId !== technicianId) return r;
-        const exempt = new Set(r.exempt);
-        const wasComplete = isComplete(r.docs.get(type), type);
-        if (checked) exempt.add(type);
-        else exempt.delete(type);
-        const doneCount = r.doneCount + (checked ? (wasComplete ? -1 : 0) : (wasComplete ? 1 : 0));
-        return { ...r, exempt, doneCount, applicableTotal: TECH_FORM_TYPES.length - exempt.size };
-      })
-    );
+    setExemptions((prev) => {
+      const next = new Set(prev);
+      if (willHaveRow) next.add(key);
+      else next.delete(key);
+      return next;
+    });
     try {
-      await setTechnicianFormExemption(technicianId, type, exemptionRowValueForToggle(type, checked), displayName || "HR");
+      await setTechnicianFormExemption(personId, type, willHaveRow, displayName || "HR");
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "Failed to update.");
       await load();
@@ -271,29 +393,29 @@ export function TechnicianFormChecklistPage() {
     }
   };
 
-  // Freeze/unfreeze — a frozen technician can still log in but is
-  // restricted to Messages only (so they can still complete pending forms
-  // there), and is also blocked server-side from clock in/out and ticket
-  // writes (migration 0223's triggers). Optimistic local update since the
-  // whole point is to see the row flip immediately.
-  const handleToggleFreeze = async (technicianId: string, technicianName: string, currentlyFrozen: boolean) => {
+  // Freeze/unfreeze — a frozen person can still log in but is restricted to
+  // Messages only (so they can still complete pending forms there), and is
+  // also blocked server-side from clock in/out and ticket writes (migration
+  // 0223's triggers). Optimistic local update since the whole point is to
+  // see the row flip immediately.
+  const handleToggleFreeze = async (personId: string, personName: string, currentlyFrozen: boolean) => {
     if (!myProfileId) return;
     const verb = currentlyFrozen ? "unfreeze" : "freeze";
     const warning = currentlyFrozen
-      ? `Unfreeze ${technicianName}? They'll regain full access to the app.`
-      : `Freeze ${technicianName}'s account? They'll still be able to log in, but will only be able to open Messages — clock in/out and ticket access will be blocked until unfrozen.`;
+      ? `Unfreeze ${personName}? They'll regain full access to the app.`
+      : `Freeze ${personName}'s account? They'll still be able to log in, but will only be able to open Messages — clock in/out and ticket access will be blocked until unfrozen.`;
     if (!window.confirm(warning)) return;
-    const key = `${technicianId}|freeze`;
+    const key = `${personId}|freeze`;
     setActionKey(key);
     setActionError(null);
-    setRows((prev) => prev.map((r) => (r.profileId === technicianId ? { ...r, frozen: !currentlyFrozen } : r)));
+    setAllUsers((prev) => prev.map((u) => (u.id === personId ? { ...u, frozen: !currentlyFrozen } : u)));
     try {
-      await setProfileFrozen(technicianId, !currentlyFrozen, myProfileId, displayName || "HR");
+      await setProfileFrozen(personId, !currentlyFrozen, myProfileId, displayName || "HR");
       void logActivity({
         action: currentlyFrozen ? "technician_unfrozen" : "technician_frozen",
         targetType: "employee",
-        targetId: technicianId,
-        targetLabel: technicianName,
+        targetId: personId,
+        targetLabel: personName,
       });
     } catch (err) {
       setActionError(err instanceof Error ? err.message : `Failed to ${verb} account.`);
@@ -315,14 +437,14 @@ export function TechnicianFormChecklistPage() {
         </button>
         <div className="flex-1">
           <h1 className="flex items-center gap-2 text-xl font-bold text-white">
-            <ClipboardCheck className="h-5 w-5" /> Technician Form Checklist
+            <ClipboardCheck className="h-5 w-5" /> Staff Form Checklist
           </h1>
-          <p className="text-sm text-slate-400">Live signed/pending status for every Technician-tab form — nothing here is manually checked.</p>
+          <p className="text-sm text-slate-400">Live signed/pending status for every tracked form, per tier — nothing here is manually checked.</p>
         </div>
         <span className="shrink-0 rounded-full border border-white/15 bg-white/5 px-2.5 py-1 text-xs font-semibold text-slate-300">
           {visibleRows.length === rows.length
-            ? `${rows.length} technician${rows.length === 1 ? "" : "s"}`
-            : `${visibleRows.length} of ${rows.length} technicians`}
+            ? `${rows.length} ${activeConfig.noun}`
+            : `${visibleRows.length} of ${rows.length} ${activeConfig.noun}`}
         </span>
         <button
           type="button"
@@ -331,6 +453,23 @@ export function TechnicianFormChecklistPage() {
         >
           <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} /> Refresh
         </button>
+      </div>
+
+      <div className="flex flex-wrap gap-1.5 mb-5 border-b border-white/10 pb-3">
+        {CHECKLIST_TABS.map((tab) => (
+          <button
+            key={tab.key}
+            type="button"
+            onClick={() => handleTabChange(tab.key)}
+            className={`px-3 py-1.5 rounded-md text-xs font-semibold border transition-colors ${
+              activeChecklistTab === tab.key
+                ? "border-primary/50 bg-primary/10 text-foreground"
+                : "border-white/10 text-muted-foreground hover:text-foreground hover:bg-white/5"
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
       </div>
 
       <div className="flex flex-wrap items-center gap-3 mb-6">
@@ -342,7 +481,7 @@ export function TechnicianFormChecklistPage() {
               type="text"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Technician name…"
+              placeholder="Name…"
               className="w-44 rounded-lg border border-white/15 bg-slate-900/60 py-1.5 pl-8 pr-2.5 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-blue-500"
             />
           </div>
@@ -405,7 +544,7 @@ export function TechnicianFormChecklistPage() {
         <div className="rounded-xl border border-white/10 bg-slate-900/40 px-6 py-16 text-center">
           <ClipboardCheck className="mx-auto h-8 w-8 text-slate-600" />
           <p className="mt-3 text-sm text-slate-400">
-            {rows.length === 0 ? "No active technicians found." : search.trim() ? `No technician matches "${search.trim()}".` : "Every technician is fully signed up."}
+            {rows.length === 0 ? `No ${activeConfig.noun} found.` : search.trim() ? `No ${activeConfig.noun.slice(0, -1)} matches "${search.trim()}".` : `Every one of these ${activeConfig.noun} is fully signed up.`}
           </p>
         </div>
       ) : (
@@ -457,7 +596,7 @@ export function TechnicianFormChecklistPage() {
                 {isOpen && (
                   <div className="border-t border-white/10 px-4 py-3">
                     <ul className="space-y-2">
-                      {TECH_FORM_TYPES.map((type) => {
+                      {activeConfig.formTypes.map((type) => {
                         const doc = r.docs.get(type);
                         const na = r.exempt.has(type);
                         const reviewStatus = na ? null : getDocumentReviewStatus(type, doc);
@@ -523,7 +662,7 @@ export function TechnicianFormChecklistPage() {
                               </button>
                             )}
                             {!na && awaitingHr && (
-                              <span title="The employee has signed — this form now needs HR's own review/countersignature in Attendance Monitoring." className="shrink-0 text-[10px] text-sky-400/80">
+                              <span title="This person has signed — this form now needs HR's own review/countersignature in Attendance Monitoring." className="shrink-0 text-[10px] text-sky-400/80">
                                 Needs your review
                               </span>
                             )}
@@ -539,7 +678,7 @@ export function TechnicianFormChecklistPage() {
                               </button>
                             )}
                             <label
-                              title="This technician doesn't need this form"
+                              title="This person doesn't need this form"
                               className="inline-flex shrink-0 items-center gap-1 text-[10px] text-slate-500 hover:text-slate-300 cursor-pointer"
                             >
                               <input

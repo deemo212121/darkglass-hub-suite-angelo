@@ -10,7 +10,7 @@ import {
   pickAuthoritativeDocument,
 } from "@/lib/signableDocumentRegistry";
 
-export type SignableDocumentType = "warning_form" | "w8ben" | "w4" | "w9" | "w4r" | "i9" | "wage_ack" | "car_iq_agreement" | "vehicle_agreement" | "employee_confidentiality" | "meal_rest_break" | "pto_ack" | "parts_responsibility" | "mileage_fuel" | "location_consent" | "damage" | "contractor_data" | "contractor_data_us" | "direct_deposit" | "promotion_form" | "action_plan_form" | "termination_form" | "substance_screening" | "flash_technician_travel" | "nda_form" | "vehicle_use_agreement" | "contractor_addendum" | "master_w2_agreement";
+export type SignableDocumentType = "warning_form" | "w8ben" | "w4" | "w9" | "w4r" | "i9" | "wage_ack" | "car_iq_agreement" | "vehicle_agreement" | "employee_confidentiality" | "meal_rest_break" | "pto_ack" | "parts_responsibility" | "mileage_fuel" | "location_consent" | "damage" | "contractor_data" | "contractor_data_us" | "direct_deposit" | "promotion_form" | "action_plan_form" | "termination_form" | "substance_screening" | "flash_technician_travel" | "nda_form" | "vehicle_use_agreement" | "contractor_addendum" | "master_w2_agreement" | "master_w2_office_agreement" | "master_ph_contractor_agreement";
 /** "executive" only applies to promotion_form documents (see migration 0166) — every other document type just never uses that slot. */
 export type SignatureSlot = "employee" | "manager" | "senior_manager" | "hr_staff" | "executive";
 export type SignableDocumentStatus = "pending_signature" | "signed" | "confirmed" | "cancelled";
@@ -194,6 +194,31 @@ export async function getSignableDocuments(documentType: SignableDocumentType = 
       .from("hr_signable_documents")
       .select(SELECT)
       .eq("document_type", documentType)
+      .order("created_at", { ascending: false })
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) throw new Error(error.message);
+    all.push(...(data ?? []).map(mapRow));
+    if (!data || data.length < PAGE_SIZE) break;
+  }
+  return all;
+}
+
+/**
+ * Every signable document company-wide across a SPECIFIC set of types, most
+ * recent first — TechnicianFormChecklistPage.tsx's per-tab load, so
+ * switching tabs (or the initial load) only ever pulls the handful of
+ * document types that tab's checklist actually tracks instead of every
+ * document type in the company (see getAllSignableDocuments below) every
+ * single time the page loads or refreshes.
+ */
+export async function getSignableDocumentsByTypes(documentTypes: SignableDocumentType[]): Promise<SignableDocument[]> {
+  if (documentTypes.length === 0) return [];
+  const all: SignableDocument[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from("hr_signable_documents")
+      .select(SELECT)
+      .in("document_type", documentTypes)
       .order("created_at", { ascending: false })
       .range(from, from + PAGE_SIZE - 1);
     if (error) throw new Error(error.message);

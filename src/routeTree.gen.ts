@@ -67,7 +67,9 @@ import { Route as FillMileageFuelDocIdRouteImport } from './routes/fill-mileage-
 import { Route as FillMileageFuelExternalDocIdRouteImport } from './routes/fill-mileage-fuel-external.$docId'
 import { Route as FillMealRestBreakDocIdRouteImport } from './routes/fill-meal-rest-break.$docId'
 import { Route as FillMealRestBreakExternalDocIdRouteImport } from './routes/fill-meal-rest-break-external.$docId'
+import { Route as FillMasterW2OfficeAgreementDocIdRouteImport } from './routes/fill-master-w2-office-agreement.$docId'
 import { Route as FillMasterW2AgreementDocIdRouteImport } from './routes/fill-master-w2-agreement.$docId'
+import { Route as FillMasterPhContractorAgreementDocIdRouteImport } from './routes/fill-master-ph-contractor-agreement.$docId'
 import { Route as FillLocationConsentDocIdRouteImport } from './routes/fill-location-consent.$docId'
 import { Route as FillLocationConsentExternalDocIdRouteImport } from './routes/fill-location-consent-external.$docId'
 import { Route as FillI9DocIdRouteImport } from './routes/fill-i9.$docId'
@@ -404,10 +406,22 @@ const FillMealRestBreakExternalDocIdRoute =
     path: '/fill-meal-rest-break-external/$docId',
     getParentRoute: () => rootRouteImport,
   } as any)
+const FillMasterW2OfficeAgreementDocIdRoute =
+  FillMasterW2OfficeAgreementDocIdRouteImport.update({
+    id: '/fill-master-w2-office-agreement/$docId',
+    path: '/fill-master-w2-office-agreement/$docId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const FillMasterW2AgreementDocIdRoute =
   FillMasterW2AgreementDocIdRouteImport.update({
     id: '/fill-master-w2-agreement/$docId',
     path: '/fill-master-w2-agreement/$docId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const FillMasterPhContractorAgreementDocIdRoute =
+  FillMasterPhContractorAgreementDocIdRouteImport.update({
+    id: '/fill-master-ph-contractor-agreement/$docId',
+    path: '/fill-master-ph-contractor-agreement/$docId',
     getParentRoute: () => rootRouteImport,
   } as any)
 const FillLocationConsentDocIdRoute =
@@ -609,7 +623,9 @@ export interface FileRoutesByFullPath {
   '/fill-i9/$docId': typeof FillI9DocIdRoute
   '/fill-location-consent-external/$docId': typeof FillLocationConsentExternalDocIdRoute
   '/fill-location-consent/$docId': typeof FillLocationConsentDocIdRoute
+  '/fill-master-ph-contractor-agreement/$docId': typeof FillMasterPhContractorAgreementDocIdRoute
   '/fill-master-w2-agreement/$docId': typeof FillMasterW2AgreementDocIdRoute
+  '/fill-master-w2-office-agreement/$docId': typeof FillMasterW2OfficeAgreementDocIdRoute
   '/fill-meal-rest-break-external/$docId': typeof FillMealRestBreakExternalDocIdRoute
   '/fill-meal-rest-break/$docId': typeof FillMealRestBreakDocIdRoute
   '/fill-mileage-fuel-external/$docId': typeof FillMileageFuelExternalDocIdRoute
@@ -698,7 +714,9 @@ export interface FileRoutesByTo {
   '/fill-i9/$docId': typeof FillI9DocIdRoute
   '/fill-location-consent-external/$docId': typeof FillLocationConsentExternalDocIdRoute
   '/fill-location-consent/$docId': typeof FillLocationConsentDocIdRoute
+  '/fill-master-ph-contractor-agreement/$docId': typeof FillMasterPhContractorAgreementDocIdRoute
   '/fill-master-w2-agreement/$docId': typeof FillMasterW2AgreementDocIdRoute
+  '/fill-master-w2-office-agreement/$docId': typeof FillMasterW2OfficeAgreementDocIdRoute
   '/fill-meal-rest-break-external/$docId': typeof FillMealRestBreakExternalDocIdRoute
   '/fill-meal-rest-break/$docId': typeof FillMealRestBreakDocIdRoute
   '/fill-mileage-fuel-external/$docId': typeof FillMileageFuelExternalDocIdRoute
@@ -788,7 +806,9 @@ export interface FileRoutesById {
   '/fill-i9/$docId': typeof FillI9DocIdRoute
   '/fill-location-consent-external/$docId': typeof FillLocationConsentExternalDocIdRoute
   '/fill-location-consent/$docId': typeof FillLocationConsentDocIdRoute
+  '/fill-master-ph-contractor-agreement/$docId': typeof FillMasterPhContractorAgreementDocIdRoute
   '/fill-master-w2-agreement/$docId': typeof FillMasterW2AgreementDocIdRoute
+  '/fill-master-w2-office-agreement/$docId': typeof FillMasterW2OfficeAgreementDocIdRoute
   '/fill-meal-rest-break-external/$docId': typeof FillMealRestBreakExternalDocIdRoute
   '/fill-meal-rest-break/$docId': typeof FillMealRestBreakDocIdRoute
   '/fill-mileage-fuel-external/$docId': typeof FillMileageFuelExternalDocIdRoute
@@ -879,7 +899,9 @@ export interface FileRouteTypes {
     | '/fill-i9/$docId'
     | '/fill-location-consent-external/$docId'
     | '/fill-location-consent/$docId'
+    | '/fill-master-ph-contractor-agreement/$docId'
     | '/fill-master-w2-agreement/$docId'
+    | '/fill-master-w2-office-agreement/$docId'
     | '/fill-meal-rest-break-external/$docId'
     | '/fill-meal-rest-break/$docId'
     | '/fill-mileage-fuel-external/$docId'
@@ -968,7 +990,9 @@ export interface FileRouteTypes {
     | '/fill-i9/$docId'
     | '/fill-location-consent-external/$docId'
     | '/fill-location-consent/$docId'
+    | '/fill-master-ph-contractor-agreement/$docId'
     | '/fill-master-w2-agreement/$docId'
+    | '/fill-master-w2-office-agreement/$docId'
     | '/fill-meal-rest-break-external/$docId'
     | '/fill-meal-rest-break/$docId'
     | '/fill-mileage-fuel-external/$docId'
@@ -1057,7 +1081,9 @@ export interface FileRouteTypes {
     | '/fill-i9/$docId'
     | '/fill-location-consent-external/$docId'
     | '/fill-location-consent/$docId'
+    | '/fill-master-ph-contractor-agreement/$docId'
     | '/fill-master-w2-agreement/$docId'
+    | '/fill-master-w2-office-agreement/$docId'
     | '/fill-meal-rest-break-external/$docId'
     | '/fill-meal-rest-break/$docId'
     | '/fill-mileage-fuel-external/$docId'
@@ -1147,7 +1173,9 @@ export interface RootRouteChildren {
   FillI9DocIdRoute: typeof FillI9DocIdRoute
   FillLocationConsentExternalDocIdRoute: typeof FillLocationConsentExternalDocIdRoute
   FillLocationConsentDocIdRoute: typeof FillLocationConsentDocIdRoute
+  FillMasterPhContractorAgreementDocIdRoute: typeof FillMasterPhContractorAgreementDocIdRoute
   FillMasterW2AgreementDocIdRoute: typeof FillMasterW2AgreementDocIdRoute
+  FillMasterW2OfficeAgreementDocIdRoute: typeof FillMasterW2OfficeAgreementDocIdRoute
   FillMealRestBreakExternalDocIdRoute: typeof FillMealRestBreakExternalDocIdRoute
   FillMealRestBreakDocIdRoute: typeof FillMealRestBreakDocIdRoute
   FillMileageFuelExternalDocIdRoute: typeof FillMileageFuelExternalDocIdRoute
@@ -1598,11 +1626,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof FillMealRestBreakExternalDocIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/fill-master-w2-office-agreement/$docId': {
+      id: '/fill-master-w2-office-agreement/$docId'
+      path: '/fill-master-w2-office-agreement/$docId'
+      fullPath: '/fill-master-w2-office-agreement/$docId'
+      preLoaderRoute: typeof FillMasterW2OfficeAgreementDocIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/fill-master-w2-agreement/$docId': {
       id: '/fill-master-w2-agreement/$docId'
       path: '/fill-master-w2-agreement/$docId'
       fullPath: '/fill-master-w2-agreement/$docId'
       preLoaderRoute: typeof FillMasterW2AgreementDocIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/fill-master-ph-contractor-agreement/$docId': {
+      id: '/fill-master-ph-contractor-agreement/$docId'
+      path: '/fill-master-ph-contractor-agreement/$docId'
+      fullPath: '/fill-master-ph-contractor-agreement/$docId'
+      preLoaderRoute: typeof FillMasterPhContractorAgreementDocIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/fill-location-consent/$docId': {
@@ -1886,7 +1928,10 @@ const rootRouteChildren: RootRouteChildren = {
   FillI9DocIdRoute: FillI9DocIdRoute,
   FillLocationConsentExternalDocIdRoute: FillLocationConsentExternalDocIdRoute,
   FillLocationConsentDocIdRoute: FillLocationConsentDocIdRoute,
+  FillMasterPhContractorAgreementDocIdRoute:
+    FillMasterPhContractorAgreementDocIdRoute,
   FillMasterW2AgreementDocIdRoute: FillMasterW2AgreementDocIdRoute,
+  FillMasterW2OfficeAgreementDocIdRoute: FillMasterW2OfficeAgreementDocIdRoute,
   FillMealRestBreakExternalDocIdRoute: FillMealRestBreakExternalDocIdRoute,
   FillMealRestBreakDocIdRoute: FillMealRestBreakDocIdRoute,
   FillMileageFuelExternalDocIdRoute: FillMileageFuelExternalDocIdRoute,

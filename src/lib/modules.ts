@@ -392,8 +392,8 @@ const hrMod: ModuleDef = {
     },
     {
       slug: "technician-form-checklist",
-      title: "Technician Form Checklist",
-      description: "Live signed/pending status of every Technician-tab form, per technician.",
+      title: "Staff Form Checklist",
+      description: "Live signed/pending status of every Technician/New Technician/Office Staff/PH Staff/Management-tier form, per person.",
       custom: "technician-form-checklist" as any,
       fields: [],
       count: 0,

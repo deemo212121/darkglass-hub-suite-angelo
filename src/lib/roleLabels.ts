@@ -176,6 +176,31 @@ export function isEligibleForTechnicianFormChecklist(role: string | null | undef
   return hasAnyTechnicianPayRole(role, extraRoles);
 }
 
+/**
+ * Branch Manager, Senior Branch Manager, Technical Director, Technical
+ * Assistant Director — the management tier the user explicitly called out
+ * as its own group for the "New Automation Forms" BM/SBS/Tech Director/Tech
+ * Assistant Director column (Contractor Addendum, W-9, Direct Deposit) and
+ * TechnicianFormChecklistPage.tsx's matching tab (displayed as "Staff Form
+ * Checklist"). Deliberately NOT the same split as
+ * ROLE_DEPARTMENT_BREAKDOWN's payroll-oriented grouping, which files
+ * Technical Director/Technical Assistant Director under "Technician" (they
+ * still get technician-tier pay) — this is about which forms a person's
+ * actual job title needs, a different axis than how they're paid.
+ */
+export const BM_AND_UP_ROLES = new Set(["BRANCH_MANAGER", "SENIOR_BRANCH_MANAGER", "TECHNICAL_DIRECTOR", "TECHNICAL_ASSISTANT_DIRECTOR"]);
+
+/**
+ * Primary role only (not "pile up" like isEligibleForTechnicianFormChecklist)
+ * — this tier is about someone's actual job title, not an incidental extra
+ * role grant (e.g. a Technician with BRANCH_MANAGER tacked onto extra_roles
+ * for some unrelated access reason shouldn't suddenly need Contractor
+ * Addendum/W-9 tracked).
+ */
+export function isBmAndUpRole(role: string | null | undefined): boolean {
+  return BM_AND_UP_ROLES.has(normalizeRole(role));
+}
+
 /** Falls back to the flat ROLE_LABELS value for both fields if the role isn't in the breakdown map above. */
 export function getRoleDepartmentBreakdown(role: string | null | undefined): { department: string; roleLabel: string } {
   const code = normalizeRole(role);
