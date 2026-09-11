@@ -813,7 +813,7 @@ export async function createCompanyUser(input: {
   workingHours?: number;
   mealMinutes?: number;
   employmentType?: "trainee" | "regular";
-}): Promise<string> {
+}): Promise<{ uid: string; profileId: string }> {
   // --- 1. Create the Firebase Auth credential on a SECONDARY app ---
   const primaryApp = getApps()[0];
   if (!primaryApp) throw new Error("Firebase not initialized");
@@ -879,13 +879,14 @@ export async function createCompanyUser(input: {
     meal_minutes: input.mealMinutes ?? null,
     is_active: true,
   };
-  let { error: insertErr } = await supabase
+  let { data: insertedRows, error: insertErr } = await supabase
     .from("profiles")
-    .insert({ ...basePayload, employment_type: input.employmentType ?? "regular" });
+    .insert({ ...basePayload, employment_type: input.employmentType ?? "regular" })
+    .select("id");
   if (insertErr?.code === "42703") {
     // employment_type (migration 0152) not applied yet — retry without it,
     // same best-effort treatment getCompanyUsers already gives that column.
-    ({ error: insertErr } = await supabase.from("profiles").insert(basePayload));
+    ({ data: insertedRows, error: insertErr } = await supabase.from("profiles").insert(basePayload).select("id"));
   }
 
   if (insertErr) {
@@ -894,7 +895,11 @@ export async function createCompanyUser(input: {
   }
 
   invalidateCompanyUsersCache();
-  return newUid;
+  // profiles.id (a real Postgres UUID) is a different value from the
+  // Firebase uid — callers that need to reference this new row from another
+  // table with a uuid FK (e.g. seedOnboardingTasks's employee_onboarding_tasks.profile_id)
+  // need this, not the Firebase uid.
+  return { uid: newUid, profileId: insertedRows?.[0]?.id as string };
 }
 
 /**

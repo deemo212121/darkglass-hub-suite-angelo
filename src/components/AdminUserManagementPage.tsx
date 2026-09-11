@@ -1286,7 +1286,7 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
       const extraRoles = newUserForm.userTypes.slice(1);
 
       // Create user: Firebase Auth credential + Supabase profile (company-scoped)
-      const newUid = await createCompanyUser({
+      const { uid: newUid, profileId: newProfileId } = await createCompanyUser({
         email: newUserForm.email,
         password: "Welcome2024!", // Default password
         displayName: newUserForm.userName,
@@ -1323,7 +1323,7 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
       // profile detail, off-days, pay rate, onboarding docs, ...) — surfaced
       // on the HR module's To-Do List page. Best-effort; a failure here
       // never blocks the account that was just created.
-      void seedOnboardingTasks(newUid, {
+      void seedOnboardingTasks(newProfileId, {
         role: primaryRole,
         extraRoles,
         assignedBranch: newUserForm.assignedBranch,
