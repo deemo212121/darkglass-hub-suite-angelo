@@ -12079,9 +12079,15 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
   // Branch Managers run the final interview and pick a candidate, but HR
   // finalizes the actual hire.
+  // "Phone Screening"/"Selected"/"Rejected" are no longer offered as
+  // choices per the user's explicit ask — a candidate already sitting in
+  // one of those statuses still shows it via the (!candidateStatusOptions.
+  // includes(c.status)) fallback option just below, so nothing existing
+  // silently loses its label; they just can't be picked again going
+  // forward.
   const candidateStatusOptions = (isHrOrAdmin
-    ? ["applied", "phone_screening", "interviewing", "selected", "training", "hired", "rejected", "withdrawn", "cancelled"]
-    : ["phone_screening", "interviewing", "selected", "training", "rejected", "withdrawn", "cancelled"]) as CandidateStatus[];
+    ? ["applied", "interviewing", "training", "hired", "withdrawn", "cancelled"]
+    : ["interviewing", "training", "withdrawn", "cancelled"]) as CandidateStatus[];
 
   // ── Employee status handlers (now real — persists to employee_info + is_active) ──
   const handleUpdateEmployeeStatus = (id: string, newStatus: EmploymentStatus) => {
