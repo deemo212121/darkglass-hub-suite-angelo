@@ -169,6 +169,10 @@ export function TechnicianFormChecklistPage() {
   // document-review fields, not just a signature, so it still points HR at
   // Attendance Monitoring instead.
   const [signDoc, setSignDoc] = useState<SignableDocument | null>(null);
+  // Set to open a plain read-only "view" popup for any row's PDF — no
+  // signing, just the document with a close button, instead of opening a
+  // new browser tab.
+  const [viewDoc, setViewDoc] = useState<{ doc: SignableDocument; label: string } | null>(null);
 
   // ── Form W-4's "Employers Only" step — no employer signature line on the
   // form at all, just 3 text fields (name/address, first date of
@@ -910,14 +914,13 @@ export function TechnicianFormChecklistPage() {
                               {statusText}
                             </span>
                             {!na && doc?.pdfUrl && (
-                              <a
-                                href={doc.pdfUrl}
-                                target="_blank"
-                                rel="noreferrer noopener"
+                              <button
+                                type="button"
+                                onClick={() => setViewDoc({ doc: doc!, label })}
                                 className="inline-flex shrink-0 items-center gap-0.5 text-xs text-blue-400 hover:text-blue-300"
                               >
                                 view <ExternalLink className="h-3 w-3" />
-                              </a>
+                              </button>
                             )}
                             {!na && awaitingEmployee && (
                               <button
@@ -1015,8 +1018,31 @@ export function TechnicianFormChecklistPage() {
       )}
     </main>
 
+    {/* Plain read-only "view" popup — just the PDF and a close button, no
+        signing. Opened from the "view" link/button on any row that has a
+        pdfUrl, regardless of status. */}
+    {viewDoc && (
+      <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => setViewDoc(null)}>
+        <div className="bg-slate-900 border border-white/10 rounded-lg shadow-2xl w-full max-w-2xl max-h-[92vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+          <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between gap-3 shrink-0">
+            <p className="text-sm font-semibold truncate">{viewDoc.label}</p>
+            <button
+              type="button"
+              onClick={() => setViewDoc(null)}
+              className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-white/5"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          <div className="flex-1 overflow-hidden bg-slate-950">
+            {viewDoc.doc.pdfUrl && <iframe src={viewDoc.doc.pdfUrl} title={viewDoc.label} className="w-full h-full min-h-[70vh] border-0" />}
+          </div>
+        </div>
+      </div>
+    )}
+
     {/* "Review & Sign" popup — the employee-signed PDF already on file
-        (same one the "view" link opens in a new tab) plus an embedded
+        (same one the "view" popup above shows) plus an embedded
         ManagerReviewPage so HR can add the employer countersignature right
         here, no navigation to Attendance Monitoring needed. */}
     {signDoc && (
