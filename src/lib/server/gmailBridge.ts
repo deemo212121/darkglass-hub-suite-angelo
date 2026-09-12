@@ -359,7 +359,7 @@ export async function handleGmailRequest(request: Request, env?: Record<string, 
   // it would produce an invalid double-"?" URL.
   const returnUrlFor = (origin: string, region: Region, extraParams: Record<string, string>) => {
     const path =
-      region === "ATTENDANCE" ? "/m/dashboard/attendance-monitoring" : region === "HR_HIRING" ? "/m/hr/hr-dashboard" : "/m/dashboard/accounting-dashboard";
+      region === "ATTENDANCE" ? "/m/dashboard/attendance-monitoring" : region === "HR_HIRING" ? "/m/hr/hr-dashboard" : "/m/accounting/accounting-dashboard";
     const u = new URL(path, origin);
     if (region === "ATTENDANCE") u.searchParams.set("tab", "settings");
     if (region === "HR_HIRING") u.searchParams.set("tab", "hiring");

@@ -3,11 +3,11 @@ import { getModuleRoleGate } from "./moduleAccess";
 
 /**
  * Role gates for the Dashboard module's submodules (mod.slug === "dashboard"),
- * plus hr-dashboard even though it now lives in its own HR module (see
- * modules.ts and getDashboardRoleGate below) — moving modules didn't change
- * who's allowed to open it. Keyed by submodule slug. A submodule with no
- * entry here is open to every signed-in user (e.g. the Employee Self-Service
- * Portal).
+ * plus hr-dashboard and accounting-dashboard even though they now live in
+ * their own HR/Accounting modules (see modules.ts and getDashboardRoleGate
+ * below) — moving modules didn't change who's allowed to open them. Keyed
+ * by submodule slug. A submodule with no entry here is open to every
+ * signed-in user (e.g. the Employee Self-Service Portal).
  *
  * SUPERADMIN always passes regardless of this list — same convention as the
  * admin-module gate in m.$module.$submodule.tsx.
@@ -73,13 +73,15 @@ export const DASHBOARD_ROLE_GATES: Record<string, string[]> = {
  * customized list once auth.tsx's hydration resolves.
  */
 export function getDashboardRoleGate(subSlug: string): string[] | null {
-  // hr-dashboard moved from the Dashboard module into its own HR module
-  // (see modules.ts) — its per-company override now lives under the "hr"
-  // namespace (migration 0219_hr_module_role_gate_rename.sql moved the
-  // existing rows), matching what AccessibilityManagementPage.tsx's
-  // gateRows now reports as its module. Every other submodule here still
-  // queries "dashboard" as before.
-  const overrideModuleSlug = subSlug === "hr-dashboard" ? "hr" : "dashboard";
+  // hr-dashboard and accounting-dashboard each moved from the Dashboard
+  // module into their own HR/Accounting module (see modules.ts) — their
+  // per-company overrides now live under the "hr"/"accounting" namespace
+  // (migrations 0219_hr_module_role_gate_rename.sql and
+  // 0244_accounting_module_role_gate_rename.sql moved the existing rows),
+  // matching what AccessibilityManagementPage.tsx's gateRows now reports as
+  // their module. Every other submodule here still queries "dashboard" as
+  // before.
+  const overrideModuleSlug = subSlug === "hr-dashboard" ? "hr" : subSlug === "accounting-dashboard" ? "accounting" : "dashboard";
   return getModuleRoleGate(overrideModuleSlug, subSlug) ?? DASHBOARD_ROLE_GATES[subSlug] ?? null;
 }
 

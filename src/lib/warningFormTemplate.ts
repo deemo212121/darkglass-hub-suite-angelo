@@ -9,7 +9,7 @@
  * drift into rendering visually different documents.
  */
 
-export type SignatureSlot = "employee" | "manager" | "senior_manager" | "hr_staff";
+export type SignatureSlot = "employee" | "manager" | "senior_manager" | "hr_staff" | "executive";
 
 export interface WarningFormReasons {
   absence: boolean;
@@ -196,6 +196,7 @@ export function buildWarningFormBodyMarkup(data: WarningFormData, logoDataUrl: s
       ${signRow("Manager Name", resolvedSignerName(data, "manager", signatures), signatures.manager)}
       ${signRow("Senior Manager Name", resolvedSignerName(data, "senior_manager", signatures), signatures.senior_manager)}
       ${signRow("HR Staff Name", resolvedSignerName(data, "hr_staff", signatures), signatures.hr_staff)}
+      ${signRow("Executive Name", resolvedSignerName(data, "executive", signatures), signatures.executive)}
     </div>
   `;
 }

@@ -67,12 +67,20 @@ export function canSignContractorAddendumSlot(slot: SignatureSlot, role: string 
   return false;
 }
 
+/** The 4 valid Position Level values (matches the note printed under the field on the document itself). HR picks one at send time — see the "should be filled by HR before sending" rationale on positionLevel/baselinePayout below. */
+export const CONTRACTOR_ADDENDUM_POSITION_LEVELS = [
+  "Branch Manager",
+  "Senior Branch Manager (SBM)",
+  "Technical Assistant Director",
+  "Technical Director",
+] as const;
+
 export interface ContractorAddendumFormData {
   /** The Contractor's profile id when sent to an AHS teammate; "" for an external recipient. Not printed. */
   employeeId: string;
-  /** Fillable field at the top of page 1. */
+  /** One of CONTRACTOR_ADDENDUM_POSITION_LEVELS — HR sets this at send time (a compensation/title term, not the Contractor's to self-report), see createSignableDocument callers in ReportHRDaily.tsx/TechnicianFormChecklistPage.tsx. */
   positionLevel: string;
-  /** Fillable field at the top of page 1 — dollars per calendar month, digits only. */
+  /** Dollars per calendar month, digits only — HR sets this at send time, same reasoning as positionLevel above. */
   baselinePayout: string;
   /** Printed name on each signature block, keyed by slot (the Contractor's is entered on the fill page; the rest default to each signer's display name). */
   signerNames: Partial<Record<SignatureSlot, string>>;

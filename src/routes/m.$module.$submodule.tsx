@@ -195,7 +195,15 @@ function SubModule() {
   // system existed. This is purely additive on top of the admin-module/
   // user-management/company-settings gates below — it can only narrow
   // access further there, never grant access past one of those.
-  const moduleAllowedRoles = (mod.slug === "dashboard" || mod.slug === "hr") ? getDashboardRoleGate(sub.slug) : explicitModuleOverride;
+  //
+  // "accounting" is included alongside "dashboard"/"hr" here because
+  // accounting-dashboard's hardcoded ADMIN/FINANCE default
+  // (DASHBOARD_ROLE_GATES) lives in this same map even though it moved out
+  // of the Dashboard module into its own Accounting module (see modules.ts)
+  // — without this, a company with no explicit override configured would
+  // fall through to explicitModuleOverride's null and open the page to
+  // every signed-in role.
+  const moduleAllowedRoles = (mod.slug === "dashboard" || mod.slug === "hr" || mod.slug === "accounting") ? getDashboardRoleGate(sub.slug) : explicitModuleOverride;
   const roleGrantsQuick = !moduleAllowedRoles || hasDashboardAccess(moduleAllowedRoles, role, []);
   const adminGrantsQuick = mod.slug !== "admin" || hasDashboardAccess(ADMIN_MODULE_ROLES, role, []);
   const userMgmtGrantsQuick = sub.custom !== "user-management" || hasDashboardAccess(USER_MANAGEMENT_ROLES, role, []);

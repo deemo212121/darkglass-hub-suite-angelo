@@ -16,6 +16,7 @@
  */
 
 import { perCutoffSalary } from "./supabase/salary";
+import type { TechActivityBreakdown } from "./supabase/techPayroll";
 
 export interface PayslipDailyRow {
   date: string;
@@ -60,6 +61,15 @@ export interface EmployeePayslipData {
   extraPay: number;
   /** Finance-entered note for this specific payslip — see migration 0111. */
   notes: string;
+  /**
+   * True when a technician's Tech Activity Report breakdown is being
+   * rendered as a second PDF page (see renderTechActivitySummaryPageHtml
+   * and captureHtmlPagesToPdfBlob) — changes the daily table's footer label
+   * from "Total" to "Hourly Pay Total" so it doesn't read as if the daily
+   * rows alone summed to the full grossPay below (they don't; the
+   * piece-rate/bonus difference is broken out on page 2).
+   */
+  hasTechActivityPage?: boolean;
   /** US employees (assigned_branch !== "Philippines") have a 13% tax withheld; PH employees don't show a Tax line at all. */
   isUS: boolean;
 }
@@ -414,12 +424,17 @@ export function renderPayslipBodyHtml(employee: EmployeePayslipData): string {
         </tbody>
         <tfoot>
           <tr style="font-weight: 700; background: #f3f4f6;">
-            <td colspan="7">Total</td>
-            <td class="amount">$${employee.grossPay.toFixed(2)}</td>
+            <td colspan="7">${employee.hasTechActivityPage ? "Hourly Pay Total" : "Total"}</td>
+            <td class="amount">$${(employee.hasTechActivityPage ? employee.dailyRows.reduce((s, r) => s + r.amount, 0) : employee.grossPay).toFixed(2)}</td>
           </tr>
         </tfoot>
       </table>
 
+      ${employee.hasTechActivityPage ? `
+      <div style="margin: 8px 0; padding: 8px 10px; background: #fffbeb; border: 1px solid #fde68a; border-radius: 4px; font-size: 12px; color: #92400e;">
+        This page covers hourly time tracking only. See the Tech Activity Report on the next page for the full pay breakdown and grand total.
+      </div>
+      ` : `
       <div class="summary-row gross" style="border: none; grid-template-columns: 2fr 1fr;">
         <div>Total</div>
         <div class="amount">$${employee.grossPay.toFixed(2)}</div>
@@ -441,6 +456,7 @@ export function renderPayslipBodyHtml(employee: EmployeePayslipData): string {
         <div>GRAND TOTAL</div>
         <div class="amount">$${grandTotal.toFixed(2)}</div>
       </div>
+      `}
     </div>
 
     ${employee.notes ? `
@@ -452,6 +468,100 @@ export function renderPayslipBodyHtml(employee: EmployeePayslipData): string {
 
     <div class="footer">
       <p style="margin: 0; margin-bottom: 10px;">This is an electronically generated payslip. No signature is required.</p>
+      <p style="margin: 0;">© ${new Date().getFullYear()} Admin Hub Solutions. All rights reserved.</p>
+    </div>
+  </div>
+  `;
+}
+
+/**
+ * A technician's Tech Activity Report as its own PDF page — the same
+ * Payment Item / Value / Pay Rate / Payment breakdown Finance sees on the
+ * modal before hitting Send, rendered read-only for the emailed payslip.
+ * Pass this as the second entry to captureHtmlPagesToPdfBlob (see
+ * AccountingDashboard.tsx's buildPayslipPdfBase64) — page 1 stays the
+ * ordinary payslipTemplate body, this becomes a real second PDF page rather
+ * than a same-page section, since a piece-rate breakdown can run long
+ * enough (every repair category, every custom line) to not fit under an
+ * already-full attendance table.
+ */
+export function renderTechActivitySummaryPageHtml(
+  employeeName: string,
+  period: string,
+  branch: string,
+  breakdown: TechActivityBreakdown,
+  isUS: boolean,
+  extraPay: number
+): string {
+  // Same 13%-US-only tax rule as page 1's own summary — this page carries
+  // the real grand total now, since Total Payment here (piece-rate + bonus
+  // + hourly, all of it) is the technician's actual gross for the period.
+  const tax = isUS ? breakdown.totalPayment * 0.13 : 0;
+  const grandTotal = breakdown.totalPayment - tax + extraPay;
+  return `
+  <div class="container">
+    <div class="header">
+      <div style="text-align: center; width: 100%;">
+        <h1>TECH ACTIVITY REPORT</h1>
+      </div>
+    </div>
+    <div class="payslip-info" style="margin-bottom: 10px;">
+      <div class="info-section">
+        <label>Employee Name</label>
+        <span>${employeeName}</span>
+      </div>
+      <div class="info-section">
+        <label>Period</label>
+        <span>${period}${branch ? ` · ${branch}` : ""}</span>
+      </div>
+    </div>
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Payment Item</th>
+          <th style="text-align: right;">Value</th>
+          <th style="text-align: right;">Pay Rate</th>
+          <th style="text-align: right;">Payment</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${breakdown.lineItems.map((item) => `
+        <tr>
+          <td>${item.label}</td>
+          <td class="amount">${item.value}</td>
+          <td class="amount">${item.rate == null ? "—" : `$${item.rate.toFixed(2)}`}</td>
+          <td class="amount">${item.paymentDisplay ?? `$${item.payment.toFixed(2)}`}</td>
+        </tr>
+        `).join('')}
+      </tbody>
+      <tfoot>
+        <tr style="font-weight: 700; background: #f3f4f6;">
+          <td colspan="3">Total Payment</td>
+          <td class="amount">$${breakdown.totalPayment.toFixed(2)}</td>
+        </tr>
+      </tfoot>
+    </table>
+
+    <div class="summary-section" style="margin-top: 0;">
+      ${isUS ? `
+      <div class="summary-row" style="border: none; grid-template-columns: 2fr 1fr;">
+        <div>Tax (13%)</div>
+        <div class="amount">-$${tax.toFixed(2)}</div>
+      </div>
+      ` : ''}
+
+      <div class="summary-row" style="border: none; grid-template-columns: 2fr 1fr;">
+        <div>Extra</div>
+        <div class="amount">$${extraPay.toFixed(2)}</div>
+      </div>
+
+      <div class="summary-row total" style="border: none; grid-template-columns: 2fr 1fr;">
+        <div>GRAND TOTAL</div>
+        <div class="amount">$${grandTotal.toFixed(2)}</div>
+      </div>
+    </div>
+
+    <div class="footer">
       <p style="margin: 0;">© ${new Date().getFullYear()} Admin Hub Solutions. All rights reserved.</p>
     </div>
   </div>

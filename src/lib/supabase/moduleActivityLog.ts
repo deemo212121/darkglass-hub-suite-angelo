@@ -17,6 +17,7 @@ export const MODULE_ACTIVITY_ACTION_LABELS: Record<string, string> = {
   gmail_disconnected: "Disconnected Gmail",
   mileage_ticket_payroll_hold: "Put ticket on hold for payroll",
   mileage_ticket_payroll_unhold: "Took ticket off hold for payroll",
+  branch_rate_saved: "Saved branch rate",
   payroll_csv_exported: "Exported payroll CSV",
   pto_request_approved: "Approved PTO request",
   pto_request_rejected: "Rejected PTO request",

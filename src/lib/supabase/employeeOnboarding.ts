@@ -49,7 +49,7 @@ interface OnboardingContext {
 }
 
 const HR_DASHBOARD_LINK = { to: "/m/$module/$submodule", params: { module: "hr", submodule: "hr-dashboard" } };
-const ACCOUNTING_LINK = { to: "/m/$module/$submodule", params: { module: "dashboard", submodule: "accounting-dashboard" } };
+const ACCOUNTING_LINK = { to: "/m/$module/$submodule", params: { module: "accounting", submodule: "accounting-dashboard" } };
 const CSR_DASHBOARD_LINK = { to: "/m/$module/$submodule", params: { module: "dashboard", submodule: "csr-dashboard" } };
 const USER_MGMT_LINK = { to: "/m/$module/$submodule", params: { module: "admin", submodule: "user-management" } };
 

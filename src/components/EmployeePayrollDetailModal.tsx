@@ -1,7 +1,8 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { X, Plus, Pencil, Check, Loader2, ExternalLink, ChevronDown, ChevronRight, Trash2 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
-import { getAttendanceForRange, saveEntry, getProfileIdByFirebaseUid, type AttendanceRow } from "@/lib/supabase/timecards";
+import { getAttendanceForRange, saveEntry, getProfileIdByFirebaseUid, computeScheduledDutyHours, startOfWeekSunday, splitRegularOvertimeWeekly, CSR_WEEKLY_OVERTIME_THRESHOLD, type AttendanceRow } from "@/lib/supabase/timecards";
+import { isCsrRestrictedRole } from "@/lib/roleLabels";
 import { getCompanyHolidaysInRange } from "@/lib/supabase/companyHolidays";
 import { getPendingCorrectionsInRange, type TimecardCorrectionRow } from "@/lib/supabase/timecardCorrections";
 import { PendingItemDetailModal, type PendingItem } from "@/components/PendingItemDetailModal";
@@ -26,6 +27,9 @@ interface Props {
   profileId: string;
   employeeName: string;
   department?: string;
+  /** Used only to decide the CSR flat-40-hrs/week overtime exception (isCsrRestrictedRole) — see dailyHoursSplitByDate below. */
+  role?: string;
+  extraRoles?: string[] | null;
   requiredCheckIn?: string;
   requiredCheckOut?: string;
   workingHours?: number | null;
@@ -49,6 +53,12 @@ interface Props {
   onNext?: () => void;
 }
 
+function addDaysISO(dateStr: string, days: number): string {
+  const d = new Date(`${dateStr}T00:00:00`);
+  d.setDate(d.getDate() + days);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
 function currentMonthBounds(): { start: string; end: string } {
   const now = new Date();
   const y = now.getFullYear();
@@ -59,11 +69,11 @@ function currentMonthBounds(): { start: string; end: string } {
   return { start, end };
 }
 
-// Same per-day threshold AccountingDashboard.tsx's computeHoursMap already
-// uses to split regular vs. overtime for the real payroll totals (8
-// hours/day, not a weekly-rolling threshold) — kept in sync with that
-// value here so this table's per-day breakdown matches what actually gets
-// paid, not a different invented rule.
+// Fallback only, when an employee has no configured schedule to derive
+// duty hours from (see dailyHoursSplitByDate below, and
+// AccountingDashboard.tsx's computeHoursMap, which this table's per-day
+// breakdown is kept in sync with) — otherwise regular vs. overtime is split
+// at the PERIOD level against total duty hours, not a flat per-day cap.
 const REGULAR_HOURS_PER_DAY = 8;
 const OVERTIME_MULTIPLIER = 1.5;
 
@@ -99,6 +109,8 @@ export function EmployeePayrollDetailModal({
   profileId,
   employeeName,
   department,
+  role,
+  extraRoles,
   requiredCheckIn,
   requiredCheckOut,
   workingHours,
@@ -111,7 +123,11 @@ export function EmployeePayrollDetailModal({
   onRateChanged,
   onNext,
 }: Props) {
-  const { uid, displayName, email, role, extraRoles } = useAuth();
+  // Named myRole/myExtraRoles (not role/extraRoles) — those names are
+  // already taken by this component's own props above, which describe the
+  // EMPLOYEE BEING VIEWED (used for the CSR overtime check below), not the
+  // currently logged-in viewer these describe.
+  const { uid, displayName, email, role: myRole, extraRoles: myExtraRoles } = useAuth();
   const actorName = displayName || email || "Unknown";
   const todayISO = useMemo(() => new Date().toISOString().slice(0, 10), []);
   const [myProfileId, setMyProfileId] = useState<string | null>(null);
@@ -120,6 +136,12 @@ export function EmployeePayrollDetailModal({
   const [rangeEnd, setRangeEnd] = useState(initialEnd || fallbackMonth.end);
   const [loading, setLoading] = useState(true);
   const [attendance, setAttendance] = useState<AttendanceRow[]>([]);
+  // Only the partial calendar week BEFORE rangeStart (empty when rangeStart
+  // is already a Sunday) — kept separate from `attendance` so nothing else
+  // here (the displayed table, totalHours, warnings) sees a widened range;
+  // it exists solely to seed the weekly overtime carry-over below for a
+  // sub-range that happens to start mid-week. See splitRegularOvertimeWeekly.
+  const [seedAttendance, setSeedAttendance] = useState<AttendanceRow[]>([]);
   // Full pending-correction rows for THIS employee, keyed by date — kept
   // around (not just the plain date strings AttendanceRow.status needs) so
   // clicking a "Pending Time Correction Request" status can show the actual
@@ -185,8 +207,14 @@ export function EmployeePayrollDetailModal({
     setLoading(true);
     setRateEdits({});
     try {
-      const [holidays, pendingCorrections, hist, myTicketRows] = await Promise.all([
+      const seedStart = startOfWeekSunday(rangeStart);
+      const seedEnd = addDaysISO(rangeStart, -1);
+      const needsSeed = seedStart <= seedEnd;
+      const [holidays, seedRows, pendingCorrections, hist, myTicketRows] = await Promise.all([
         getCompanyHolidaysInRange(rangeStart, rangeEnd).catch(() => []),
+        needsSeed
+          ? getAttendanceForRange(profileId, seedStart, seedEnd, { requiredCheckIn, requiredCheckOut, workingHours, mealMinutes, daysOff: offDays, graceMinutes })
+          : Promise.resolve([]),
         getPendingCorrectionsInRange(rangeStart, rangeEnd).catch(() => []),
         getSalaryHistory(profileId),
         getTicketAttendanceForTechnician(employeeName, rangeStart, rangeEnd),
@@ -203,6 +231,7 @@ export function EmployeePayrollDetailModal({
       });
       if (cancelledRef.current) return;
       setAttendance(attRows);
+      setSeedAttendance(seedRows);
       setPendingCorrectionByDate(new Map(pendingCorrections.filter((c) => c.profileId === profileId).map((c) => [c.workDate, c])));
       setHistory(hist);
       setTicketRows(myTicketRows);
@@ -348,14 +377,50 @@ export function EmployeePayrollDetailModal({
   // to show the right numbers for whichever it is.
   const currentEntry = useMemo(() => entryEffectiveOn(history, rangeEnd), [history, rangeEnd]);
   const isCurrentlyFixed = currentEntry?.compensationType === "fixed";
+
+  // Regular vs overtime per day, reset every calendar week (Sunday-Saturday)
+  // and capped at THAT week's own scheduled/duty hours
+  // (splitRegularOvertimeWeekly) — same weekly rule AccountingDashboard.tsx's
+  // computeHoursMap uses for the real payroll totals, not each day capped at
+  // 8 hours independently, and not one flat cap pooled across the whole
+  // viewed range either. seedAttendance supplies the partial week before
+  // rangeStart (if any) purely so this week's carry-over is seeded correctly
+  // even when the Start/End pickers are narrowed to a sub-range that starts
+  // mid-week — e.g. Thu-Sat after the week's regular quota was already used
+  // up Sun-Wed shows 0 new regular for those days, all overtime. Falls back
+  // to the flat per-day 8-hour cap only when there's no configured schedule
+  // to derive duty hours from.
+  // CSR shift start/end times vary person to person and aren't reliably
+  // captured in requiredCheckIn/requiredCheckOut, so the scheduled-duty-
+  // hours cap doesn't apply cleanly to them — they use a flat 40 hrs/week
+  // (standard FLSA overtime) instead, same as AccountingDashboard.tsx's
+  // computeHoursMap and PayrollCalculationPage.tsx. See
+  // CSR_WEEKLY_OVERTIME_THRESHOLD.
+  const isCsr = isCsrRestrictedRole(role, extraRoles);
+  const dailyHoursSplitByDate = useMemo(() => {
+    const dutyHours = isCsr
+      ? CSR_WEEKLY_OVERTIME_THRESHOLD
+      : computeScheduledDutyHours(requiredCheckIn || "", requiredCheckOut || "", workingHours, mealMinutes, offDays, rangeStart, rangeEnd);
+    if (dutyHours <= 0) {
+      const map = new Map<string, { regular: number; overtime: number }>();
+      for (const row of attendance) {
+        const hours = row.hoursWorked;
+        map.set(row.date, { regular: Math.min(hours, REGULAR_HOURS_PER_DAY), overtime: Math.max(0, hours - REGULAR_HOURS_PER_DAY) });
+      }
+      return map;
+    }
+    const days = [...seedAttendance, ...attendance].map((row) => ({ date: row.date, rawHours: row.hoursWorked }));
+    return splitRegularOvertimeWeekly(days, { requiredCheckIn, requiredCheckOut, workingHours, mealMinutes, offDays }, 8, isCsr ? CSR_WEEKLY_OVERTIME_THRESHOLD : undefined);
+  }, [attendance, seedAttendance, requiredCheckIn, requiredCheckOut, workingHours, mealMinutes, offDays, rangeStart, rangeEnd, isCsr]);
+
   // Fixed-salary pay doesn't depend on hours worked at all (see migration
   // 0118) — shows the monthly amount for this calendar-month estimate.
   // Hourly pay is still each day's hours at whichever rate was effective ON
   // that day, so a mid-month raise/promotion is handled automatically
   // instead of needing one flat rate for the whole period. Same per-day
   // regular/overtime split as the Attendance table's own Payment column
-  // below (and AccountingDashboard.tsx's computeHoursMap) — kept in sync
-  // so this tile's total always matches summing that column by hand.
+  // below (both read dailyHoursSplitByDate) — kept in sync so this tile's
+  // total always matches summing that column by hand.
   const computedPay = useMemo(() => {
     if (isCurrentlyFixed && currentEntry?.annualSalary) {
       const fixed = monthlySalary(currentEntry.annualSalary);
@@ -364,15 +429,14 @@ export function EmployeePayrollDetailModal({
     return attendance.reduce(
       (acc, r) => {
         const rate = rateEffectiveOn(history, r.date);
-        const regular = Math.min(r.hoursWorked, REGULAR_HOURS_PER_DAY);
-        const overtime = Math.max(0, r.hoursWorked - REGULAR_HOURS_PER_DAY);
+        const { regular, overtime } = dailyHoursSplitByDate.get(r.date) ?? { regular: 0, overtime: 0 };
         const regularPay = regular * rate;
         const overtimePay = overtime * rate * OVERTIME_MULTIPLIER;
         return { regularPay: acc.regularPay + regularPay, overtimePay: acc.overtimePay + overtimePay, total: acc.total + regularPay + overtimePay };
       },
       { regularPay: 0, overtimePay: 0, total: 0 }
     );
-  }, [attendance, history, isCurrentlyFixed, currentEntry]);
+  }, [attendance, history, isCurrentlyFixed, currentEntry, dailyHoursSplitByDate]);
   const rateNow = useMemo(() => currentRate(history), [history]);
 
   const submitRateChange = async () => {
@@ -791,8 +855,7 @@ export function EmployeePayrollDetailModal({
                       const dayIsFixed = entryEffectiveOn(history, row.date)?.compensationType === "fixed";
                       const edit = attendanceEdits[row.date];
                       const isRestDay = row.status === "day-off" || row.status === "holiday";
-                      const regularHours = Math.min(row.hoursWorked, REGULAR_HOURS_PER_DAY);
-                      const overtimeHours = Math.max(0, row.hoursWorked - REGULAR_HOURS_PER_DAY);
+                      const { regular: regularHours, overtime: overtimeHours } = dailyHoursSplitByDate.get(row.date) ?? { regular: 0, overtime: 0 };
                       const dayRate = rateEffectiveOn(history, row.date);
                       const dayPayment = regularHours * dayRate + overtimeHours * dayRate * OVERTIME_MULTIPLIER;
                       const ticketStats = ticketStatsByDate.get(row.date);
@@ -1142,8 +1205,8 @@ export function EmployeePayrollDetailModal({
           item={pendingDetailModal.item}
           profiles={[]}
           myProfileId={myProfileId}
-          myRole={role}
-          myExtraRoles={extraRoles}
+          myRole={myRole}
+          myExtraRoles={myExtraRoles ?? []}
           myDisplayName={displayName}
           onClose={() => setPendingDetailModal(null)}
           onReviewed={() => {

@@ -91,8 +91,13 @@ export const ROLE_DEPARTMENT_BREAKDOWN: Record<string, { department: string; rol
   CSR_AGENT: { department: "CSR", roleLabel: "Associate" },
   CSR_TEAM_LEADER: { department: "CSR", roleLabel: "Team Leader" },
   CSR_MANAGER: { department: "CSR", roleLabel: "Manager" },
-  BRANCH_MANAGER: { department: "Branch Manager", roleLabel: "Manager" },
-  SENIOR_BRANCH_MANAGER: { department: "Branch Manager", roleLabel: "Senior Manager" },
+  // Branch Manager/Senior Branch Manager are still working field techs (they
+  // do real repair tickets, not just management) — filed under "Technician"
+  // so TECHNICIAN_PAY_ROLES below picks them up automatically for piece-rate
+  // ticket pay, tech hourly, and the payslip's Tech Activity Report page,
+  // same as a plain Technician or Tech Manager/Director.
+  BRANCH_MANAGER: { department: "Technician", roleLabel: "Branch Manager" },
+  SENIOR_BRANCH_MANAGER: { department: "Technician", roleLabel: "Senior Branch Manager" },
   CLAIMS_MANAGER: { department: "Claims", roleLabel: "Manager" },
   CLAIMS_TEAM_LEADER: { department: "Claims", roleLabel: "Team Leader" },
   PARTS_MANAGER: { department: "Parts", roleLabel: "Manager" },

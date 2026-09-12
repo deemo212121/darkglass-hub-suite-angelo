@@ -88,7 +88,7 @@ export function TechActivityReportModal({
   onDone,
   doneBusy,
 }: Props) {
-  const { employee, techManual, techCategoryCounts, ticketsAssigned, ticketsCompleted, workingDays, twoTechCount, hoursWorked, overtimeHours, hourlyRate, techHourlyPay } = row;
+  const { employee, techManual, techCategoryCounts, techCarryover, ticketsAssigned, ticketsCompleted, workingDays, twoTechCount, hoursWorked, overtimeHours, hourlyRate, techHourlyPay } = row;
   const branch = employee.assigned_branch || "";
 
   const techRateFor = (category: string): number => {
@@ -219,6 +219,13 @@ export function TechActivityReportModal({
   const twoTechRate = techRateFor("Two Tech");
   const twoTechPayment = twoTechCount * twoTechRate;
   const customLinesTotal = customItems.reduce((s, i) => s + i.value * i.rate, 0);
+  // Confirmed late ticket completions (see late_ticket_completions /
+  // LateTicketCompletionModal.tsx) not yet paid out — already folded into
+  // ticketsCompleted above (so MCA/Completed Tickets treat them like any
+  // other completed ticket), priced here at today's rate and shown as their
+  // own rows below so it's obvious these came from an earlier, already-
+  // closed period rather than this one's own work.
+  const carryoverTotal = techCarryover.reduce((s, co) => s + co.count * techRateFor(co.repairType), 0);
 
   // ticketsCompleted (from the parent row) is already net of both redo and
   // on-hold exclusions (getTechCompletedRepairCounts excludes redo'd and
@@ -239,7 +246,7 @@ export function TechActivityReportModal({
   const subtotal =
     categoryPayments.reduce((s, c) => s + c.payment, 0) +
     techManual.ldtPay + techManual.mileagePay + techManual.trainingPay +
-    twoTechPayment + mcaPayment + completedTicketsPayment + redoReductionPayment + customLinesTotal + row.techHourlyPay;
+    twoTechPayment + mcaPayment + completedTicketsPayment + redoReductionPayment + customLinesTotal + carryoverTotal + row.techHourlyPay;
   const owIncentivePay = (techManual.owIncentivePct / 100) * subtotal;
   const totalPayment = subtotal + owIncentivePay;
 
@@ -247,7 +254,10 @@ export function TechActivityReportModal({
   const avgDailyCompletion = ticketsCompleted / Math.max(1, workingDays);
   const avgDailyMiles = techManual.mileage / Math.max(1, workingDays);
 
-  const rateCellClass = "w-20 bg-slate-800/50 border border-white/10 rounded px-1.5 py-1 text-right text-xs text-white focus:border-blue-500 focus:outline-none disabled:opacity-50";
+  // [appearance:textfield] + the two ::-webkit-*-spin-button rules hide the
+  // native up/down increment/decrement arrows every type="number" input here
+  // otherwise shows — purely cosmetic, doesn't affect typing/blur-to-save.
+  const rateCellClass = "w-20 bg-slate-800/50 border border-white/10 rounded px-1.5 py-1 text-right text-xs text-white focus:border-blue-500 focus:outline-none disabled:opacity-50 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none";
 
   return (
     <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={onClose}>
@@ -412,6 +422,21 @@ export function TechActivityReportModal({
                     );
                   })}
 
+                  {techCarryover.map((co, idx) => {
+                    const rate = techRateFor(co.repairType);
+                    const label = co.repairType === DEFAULT_REPAIR_TYPE ? "Completed Ticket" : co.repairType;
+                    return (
+                      <tr key={`carryover-${idx}`} title={`Confirmed by Claims — originally scheduled ${co.periodStart} – ${co.periodEnd}, but only reached Claimed/Completed after that week ended. Priced at today's rate; not part of this period's own ${label} count.`}>
+                        <td className="px-3 py-2 text-amber-300">
+                          {label} <span className="text-[10px] text-amber-400/70">(carried over from {co.periodStart} – {co.periodEnd})</span>
+                        </td>
+                        <td className="px-3 py-2 text-right text-slate-300">{co.count}</td>
+                        <td className="px-3 py-2 text-right text-slate-300">{fmt(rate)}</td>
+                        <td className="px-3 py-2 text-right text-slate-200">{fmt(co.count * rate)}</td>
+                      </tr>
+                    );
+                  })}
+
                   <tr title="Completed visits this period where this technician was the assisting (2nd) technician on someone else's ticket.">
                     <td className="px-3 py-2 text-slate-300">Two Tech</td>
                     <td className="px-3 py-2 text-right">
@@ -456,7 +481,7 @@ export function TechActivityReportModal({
                           placeholder="0"
                           disabled={savingRateKey === "MCA Threshold"}
                           onBlur={(e) => handleRateBlur("MCA Threshold", e.target.value)}
-                          className="w-14 bg-slate-800/50 border border-white/10 rounded px-1.5 py-1 text-right text-xs text-white focus:border-blue-500 focus:outline-none disabled:opacity-50"
+                          className="w-14 bg-slate-800/50 border border-white/10 rounded px-1.5 py-1 text-right text-xs text-white focus:border-blue-500 focus:outline-none disabled:opacity-50 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                         />
                         <span>req.</span>
                       </div>
@@ -550,7 +575,7 @@ export function TechActivityReportModal({
                           placeholder="0"
                           disabled={savingManualKey === `${employee.id}:owIncentivePct`}
                           onBlur={(e) => onManualPayBlur(row, "owIncentivePct", e.target.value)}
-                          className="w-16 bg-slate-800/50 border border-white/10 rounded px-1.5 py-1 text-right text-xs text-white focus:border-blue-500 focus:outline-none disabled:opacity-50"
+                          className="w-16 bg-slate-800/50 border border-white/10 rounded px-1.5 py-1 text-right text-xs text-white focus:border-blue-500 focus:outline-none disabled:opacity-50 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                         />
                         <span className="text-xs text-slate-400">%</span>
                       </div>

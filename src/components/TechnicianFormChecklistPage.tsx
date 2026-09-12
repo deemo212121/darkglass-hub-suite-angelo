@@ -50,6 +50,7 @@ import { LOCATIONS_DATA } from "@/lib/zipCoverage";
 import { uploadW4Form } from "@/lib/firebase/storage";
 import { fillW4Pdf } from "@/lib/w4PdfFill";
 import type { W4FormData } from "@/lib/w4FormTemplate";
+import { CONTRACTOR_ADDENDUM_POSITION_LEVELS } from "@/lib/contractorAddendumFormTemplate";
 
 // Same derivation ReportHRDaily.tsx's onboarding/attendance splits use for
 // "PH" vs "US" — there's no real country column, just branch membership in
@@ -138,6 +139,8 @@ interface TechRow {
   applicableTotal: number;
   /** Frozen accounts can still log in but are restricted to Messages only (see migration 0223) — clock in/out and ticket writes are also blocked server-side. */
   frozen: boolean;
+  /** profiles.employment_type === "trainee" (Master List) — shown as a badge next to their name; doesn't affect which tab/tier they land in, that's still purely role-based (isEligible above). */
+  isTrainee: boolean;
 }
 
 function isComplete(doc: SignableDocument | undefined, type: SignableDocumentType): boolean {
@@ -169,6 +172,35 @@ export function TechnicianFormChecklistPage() {
   // document-review fields, not just a signature, so it still points HR at
   // Attendance Monitoring instead.
   const [signDoc, setSignDoc] = useState<SignableDocument | null>(null);
+  // Set to open a plain read-only "view" popup for any row's PDF — no
+  // signing, just the document with a close button, instead of opening a
+  // new browser tab.
+  const [viewDoc, setViewDoc] = useState<{ doc: SignableDocument; label: string } | null>(null);
+
+  // ── Contractor Addendum's "Send" step needs Position Level + Guaranteed
+  // Minimum Baseline Payout up front — these are compensation/title terms
+  // HR sets, not the Contractor's to self-report (matches ReportHRDaily.tsx's
+  // own Contractor Addendum send form). Opened in place of an immediate send
+  // whenever the row/bundle Send button touches a "contractor_addendum" —
+  // see handleSendForm/handleSendAllForms's contractorAddendumInfo param. ──
+  const [contractorAddendumSendDialog, setContractorAddendumSendDialog] = useState<
+    { kind: "single"; personId: string; personName: string } | { kind: "all"; row: TechRow } | null
+  >(null);
+  const [contractorAddendumDialogPositionLevel, setContractorAddendumDialogPositionLevel] = useState("");
+  const [contractorAddendumDialogBaselinePayout, setContractorAddendumDialogBaselinePayout] = useState("");
+
+  const handleConfirmContractorAddendumSend = () => {
+    if (!contractorAddendumSendDialog || !contractorAddendumDialogPositionLevel || !contractorAddendumDialogBaselinePayout.trim()) return;
+    const info = { positionLevel: contractorAddendumDialogPositionLevel, baselinePayout: contractorAddendumDialogBaselinePayout.trim() };
+    if (contractorAddendumSendDialog.kind === "single") {
+      void handleSendForm(contractorAddendumSendDialog.personId, contractorAddendumSendDialog.personName, "contractor_addendum", info);
+    } else {
+      void handleSendAllForms(contractorAddendumSendDialog.row, info);
+    }
+    setContractorAddendumSendDialog(null);
+    setContractorAddendumDialogPositionLevel("");
+    setContractorAddendumDialogBaselinePayout("");
+  };
 
   // ── Form W-4's "Employers Only" step — no employer signature line on the
   // form at all, just 3 text fields (name/address, first date of
@@ -348,6 +380,7 @@ export function TechnicianFormChecklistPage() {
         doneCount,
         applicableTotal: activeConfig.formTypes.length - exempt.size,
         frozen: u.frozen === true,
+        isTrainee: u.employment_type === "trainee",
       };
     });
   }, [allUsers, latestByKey, exemptions, activeConfig]);
@@ -399,7 +432,12 @@ export function TechnicianFormChecklistPage() {
   // every individual Send handler in ReportHRDaily.tsx uses: just the
   // recipient's id/name, the recipient fills in everything else
   // themselves) and DMs them the fill link.
-  const handleSendForm = async (personId: string, personName: string, type: SignableDocumentType) => {
+  const handleSendForm = async (
+    personId: string,
+    personName: string,
+    type: SignableDocumentType,
+    contractorAddendumInfo?: { positionLevel: string; baselinePayout: string }
+  ) => {
     const key = `${personId}|${type}`;
     setActionKey(key);
     setActionError(null);
@@ -431,9 +469,16 @@ export function TechnicianFormChecklistPage() {
       // Technician tab needs the tag regardless, or it'd wrongly show up
       // under the OLD w8ben tab's Sent History instead of newW4's.
       const formSourceTag = activeConfig.formSourceBucket === "new" ? { formSource: "new_automation" } : {};
+      // Position Level / Guaranteed Minimum Baseline Payout are compensation
+      // terms HR sets, not the Contractor's to self-report — see
+      // contractorAddendumSendDialog below, which collects these before this
+      // function ever runs for a contractor_addendum send.
+      const contractorAddendumFields = type === "contractor_addendum" && contractorAddendumInfo
+        ? { positionLevel: contractorAddendumInfo.positionLevel, baselinePayout: contractorAddendumInfo.baselinePayout }
+        : {};
       const doc = await createSignableDocument({
         documentType: type,
-        formData: { employeeId: personId, employeeName: personName, ...formSourceTag },
+        formData: { employeeId: personId, employeeName: personName, ...formSourceTag, ...contractorAddendumFields },
         recipientId: personId,
         recipientSlot: "employee",
         pdfUrl: "",
@@ -468,7 +513,7 @@ export function TechnicianFormChecklistPage() {
   // separately here — "the bundle" is nothing but their ids joined into one
   // query string for delivery. load() afterward picks all of them up
   // individually, same as any other send.
-  const handleSendAllForms = async (r: TechRow) => {
+  const handleSendAllForms = async (r: TechRow, contractorAddendumInfo?: { positionLevel: string; baselinePayout: string }) => {
     const outstanding = activeConfig.formTypes.filter(
       (type) => !r.exempt.has(type) && getDocumentReviewStatus(type, r.docs.get(type)) === "not_sent"
     );
@@ -497,7 +542,16 @@ export function TechnicianFormChecklistPage() {
         toCreate.map((type) =>
           createSignableDocument({
             documentType: type,
-            formData: { employeeId: r.profileId, employeeName: r.name, ...formSourceTag },
+            formData: {
+              employeeId: r.profileId,
+              employeeName: r.name,
+              ...formSourceTag,
+              // Same reasoning as handleSendForm above — only applies to the
+              // contractor_addendum entry in this bundle, if present.
+              ...(type === "contractor_addendum" && contractorAddendumInfo
+                ? { positionLevel: contractorAddendumInfo.positionLevel, baselinePayout: contractorAddendumInfo.baselinePayout }
+                : {}),
+            },
             recipientId: r.profileId,
             recipientSlot: "employee",
             pdfUrl: "",
@@ -794,6 +848,7 @@ export function TechnicianFormChecklistPage() {
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-semibold text-white flex items-center gap-1.5">
                         {r.name}
+                        {r.isTrainee && <span className="shrink-0 rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber-300">Trainee</span>}
                         {r.frozen && <span className="shrink-0 rounded-full border border-sky-500/40 bg-sky-500/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-sky-300">Frozen</span>}
                       </p>
                       <p className="text-[11px] text-slate-400">{r.roleLabel} · {r.branch}</p>
@@ -853,7 +908,11 @@ export function TechnicianFormChecklistPage() {
                             <button
                               type="button"
                               disabled={sendAllBusy}
-                              onClick={() => void handleSendAllForms(r)}
+                              onClick={() =>
+                                outstanding.includes("contractor_addendum")
+                                  ? setContractorAddendumSendDialog({ kind: "all", row: r })
+                                  : void handleSendAllForms(r)
+                              }
                               title={`Bundle the ${outstanding.length} unsent form${outstanding.length === 1 ? "" : "s"} into one link and send now`}
                               className="inline-flex shrink-0 items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-red-400 hover:text-red-300 disabled:opacity-40 disabled:cursor-not-allowed"
                             >
@@ -910,14 +969,23 @@ export function TechnicianFormChecklistPage() {
                               {statusText}
                             </span>
                             {!na && doc?.pdfUrl && (
-                              <a
-                                href={doc.pdfUrl}
-                                target="_blank"
-                                rel="noreferrer noopener"
+                              <button
+                                type="button"
+                                onClick={() => setViewDoc({ doc: doc!, label })}
                                 className="inline-flex shrink-0 items-center gap-0.5 text-xs text-blue-400 hover:text-blue-300"
                               >
                                 view <ExternalLink className="h-3 w-3" />
-                              </a>
+                              </button>
+                            )}
+                            {!na && done && doc && doc.status === "confirmed" && EMPLOYER_SIGN_SUPPORTED_TYPES.has(type) && (
+                              <button
+                                type="button"
+                                onClick={() => setSignDoc(doc)}
+                                title="Not right? Redo just the employer signature — nothing else on the form changes"
+                                className="inline-flex shrink-0 items-center gap-0.5 text-xs text-amber-300 hover:text-amber-200"
+                              >
+                                <PenLine className="h-3 w-3" /> Re-sign
+                              </button>
                             )}
                             {!na && awaitingEmployee && (
                               <button
@@ -982,7 +1050,11 @@ export function TechnicianFormChecklistPage() {
                               <button
                                 type="button"
                                 disabled={busy}
-                                onClick={() => void handleSendForm(r.profileId, r.name, type)}
+                                onClick={() =>
+                                  type === "contractor_addendum"
+                                    ? setContractorAddendumSendDialog({ kind: "single", personId: r.profileId, personName: r.name })
+                                    : void handleSendForm(r.profileId, r.name, type)
+                                }
                                 title="Create and send this form"
                                 className="inline-flex shrink-0 items-center gap-1 text-xs text-blue-400 hover:text-blue-300 disabled:opacity-40"
                               >
@@ -1015,8 +1087,31 @@ export function TechnicianFormChecklistPage() {
       )}
     </main>
 
+    {/* Plain read-only "view" popup — just the PDF and a close button, no
+        signing. Opened from the "view" link/button on any row that has a
+        pdfUrl, regardless of status. */}
+    {viewDoc && (
+      <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => setViewDoc(null)}>
+        <div className="bg-slate-900 border border-white/10 rounded-lg shadow-2xl w-full max-w-2xl max-h-[92vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+          <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between gap-3 shrink-0">
+            <p className="text-sm font-semibold truncate">{viewDoc.label}</p>
+            <button
+              type="button"
+              onClick={() => setViewDoc(null)}
+              className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-white/5"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          <div className="flex-1 overflow-hidden bg-slate-950">
+            {viewDoc.doc.pdfUrl && <iframe src={viewDoc.doc.pdfUrl} title={viewDoc.label} className="w-full h-full min-h-[70vh] border-0" />}
+          </div>
+        </div>
+      </div>
+    )}
+
     {/* "Review & Sign" popup — the employee-signed PDF already on file
-        (same one the "view" link opens in a new tab) plus an embedded
+        (same one the "view" popup above shows) plus an embedded
         ManagerReviewPage so HR can add the employer countersignature right
         here, no navigation to Attendance Monitoring needed. */}
     {signDoc && (
@@ -1086,6 +1181,61 @@ export function TechnicianFormChecklistPage() {
               className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
             >
               {w4EmployerSaving ? "Saving…" : "Save"}
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {/* Contractor Addendum "Send" — collects Position Level + Guaranteed
+        Minimum Baseline Payout up front, same rationale as ReportHRDaily.tsx's
+        own send form: these are compensation/title terms HR decides, not the
+        Contractor's to self-report. */}
+    {contractorAddendumSendDialog && (
+      <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+        <div className="bg-slate-800 border border-white/10 rounded-lg p-6 max-w-sm w-full">
+          <h3 className="text-lg font-bold mb-2">Send Master Independent Contractor Subcontractor Agreement Addendum</h3>
+          <p className="text-sm text-muted-foreground mb-4">
+            Set these before sending to{" "}
+            <span className="font-semibold text-white">
+              {contractorAddendumSendDialog.kind === "single" ? contractorAddendumSendDialog.personName : contractorAddendumSendDialog.row.name}
+            </span>
+            . The Contractor then only fills in their name and signs.
+          </p>
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Position Level</label>
+              <select
+                value={contractorAddendumDialogPositionLevel}
+                onChange={(e) => setContractorAddendumDialogPositionLevel(e.target.value)}
+                className="glass-input text-sm py-1.5 px-3 rounded-md"
+              >
+                <option value="">Select a position level…</option>
+                {CONTRACTOR_ADDENDUM_POSITION_LEVELS.map((level) => (
+                  <option key={level} value={level}>{level}</option>
+                ))}
+              </select>
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Guaranteed Minimum Baseline Payout ($/month)</label>
+              <input
+                type="text"
+                inputMode="decimal"
+                value={contractorAddendumDialogBaselinePayout}
+                onChange={(e) => setContractorAddendumDialogBaselinePayout(e.target.value)}
+                placeholder="e.g. 4500"
+                className="glass-input text-sm py-1.5 px-3 rounded-md"
+              />
+            </div>
+          </div>
+          <div className="flex gap-2 justify-end mt-4">
+            <button onClick={() => setContractorAddendumSendDialog(null)} className="btn text-sm px-4 py-2">Cancel</button>
+            <button
+              onClick={handleConfirmContractorAddendumSend}
+              disabled={!contractorAddendumDialogPositionLevel || !contractorAddendumDialogBaselinePayout.trim()}
+              className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+            >
+              Send
             </button>
           </div>
         </div>

@@ -29,22 +29,19 @@ export const DEFAULT_REPAIR_TYPE = "Default Amount";
 
 /**
  * The single "is this ticket done, for pay purposes" gate used everywhere in
- * this file — a ticket's own current status has actually reached CLAIMED or
- * READY TO COMPLETE (RTC). Deliberately narrower than ticketData.ts's
- * statusGroupOf (which also treats CL-Completed/Data-Closed as "completed"
- * and buckets RTC under "open" for dashboard/filter purposes) — for payroll
- * specifically, RTC is the point the technician's own part of the job is
- * done, so it counts even before the back office finishes claims/data-close.
- * Not a timestamp check: a ticket at one of these statuses counts as done
- * whether or not the technician managed to stamp an on-site check-in. A
- * technician who did the work but the status never got updated has to file
- * a Ticket Time Dispute with photos instead of this silently falling back
- * to raw timestamps, which is exactly the ambiguity a status-based ticket
- * of record avoids.
+ * this file — a ticket's own current status has actually reached CL-Claimed
+ * or CL-Completed. Ready to Complete (RTC) no longer counts on its own: the
+ * technician's part being done isn't enough for pay until the status is
+ * actually claimed or completed. Not a timestamp check: a ticket at one of
+ * these statuses counts as done whether or not the technician managed to
+ * stamp an on-site check-in. A technician who did the work but the status
+ * never got updated has to file a Ticket Time Dispute with photos instead of
+ * this silently falling back to raw timestamps, which is exactly the
+ * ambiguity a status-based ticket of record avoids.
  */
 function isCompletedStatus(status: string): boolean {
   const v = String(status || "").trim().toLowerCase();
-  return v === "cl-claimed" || v === "claimed" || v === "cl-ready to complete" || v === "ready to complete";
+  return v === "cl-claimed" || v === "cl-completed";
 }
 
 // Shared rate-table category lists — single source of truth for
@@ -323,6 +320,87 @@ export async function getTechCompletedRepairCounts(
     const prev = counts.get(key);
     if (prev) prev.count += 1;
     else counts.set(key, { technician: c.technician, repairType, branch: c.location, count: 1 });
+  }
+  return Array.from(counts.values());
+}
+
+/**
+ * A repair-type group of confirmed, not-yet-paid late ticket completions
+ * (see late_ticket_completions / lateTicketCompletions.ts) for one
+ * technician — a ticket whose status only reached CL-Claimed/CL-Completed
+ * after the week it was scheduled in had already ended, and that Claims has
+ * since confirmed. Sibling to TechRepairCount, kept separate (not merged
+ * into getTechCompletedRepairCounts' result) so a payroll consumer can price
+ * these at the CURRENT repair-type rate while still showing "(carried over
+ * from <period>)" wherever they're displayed — see buildTechActivityBreakdown
+ * and TechActivityReportModal.tsx, both of which render these as their own
+ * distinctly-labeled lines rather than folding them into a category's normal
+ * count. Not scoped to any date range — this always returns every
+ * confirmed-but-unpaid row company-wide, however old, since a carried-over
+ * ticket only ever gets consumed once (markCarryoversConsumed) the next time
+ * ANY payroll run is generated for that technician.
+ */
+export interface TechCarryoverRepairCount extends TechRepairCount {
+  periodStart: string;
+  periodEnd: string;
+  /** late_ticket_completions row ids rolled into this group — pass to markCarryoversConsumed once a run actually pays them. */
+  lateTicketCompletionIds: string[];
+}
+
+export async function getCarryoverRepairCounts(): Promise<TechCarryoverRepairCount[]> {
+  const { data: rows, error } = await supabase
+    .from("late_ticket_completions")
+    .select("id, ticket_id, technician_name, period_start, period_end")
+    .eq("status", "confirmed")
+    .is("carryover_payroll_run_id", null);
+  if (error) {
+    console.error("getCarryoverRepairCounts error:", error.message);
+    return [];
+  }
+  const carryovers = (rows ?? []).filter((r: any) => String(r.technician_name || "").trim());
+  if (carryovers.length === 0) return [];
+
+  const ticketIds = carryovers.map((r: any) => r.ticket_id);
+  const [{ data: ticketRows, error: tErr }, { data: visitRows, error: vErr }, { data: excludedRows, error: exErr }] = await Promise.all([
+    supabase.from("tickets").select("id, location, redo").in("id", ticketIds),
+    supabase.from("visits").select("ticket_id, repair_type, created_at").in("ticket_id", ticketIds),
+    supabase.from("mileage_entries").select("ticket_id").eq("payroll_excluded", true).in("ticket_id", ticketIds),
+  ]);
+  if (tErr) console.error("getCarryoverRepairCounts (tickets) error:", tErr.message);
+  if (vErr) console.error("getCarryoverRepairCounts (visits) error:", vErr.message);
+  if (exErr) console.error("getCarryoverRepairCounts (exclusions) error:", exErr.message);
+
+  const ticketById = new Map((ticketRows ?? []).map((t: any) => [t.id, t]));
+  const latestRepairTypeByTicketId = new Map<string, string>();
+  const latestCreatedAtByTicketId = new Map<string, string>();
+  for (const v of (visitRows ?? []) as any[]) {
+    const prevCreatedAt = latestCreatedAtByTicketId.get(v.ticket_id);
+    if (!prevCreatedAt || v.created_at > prevCreatedAt) {
+      latestCreatedAtByTicketId.set(v.ticket_id, v.created_at);
+      latestRepairTypeByTicketId.set(v.ticket_id, String(v.repair_type || "").trim());
+    }
+  }
+  const excludedTicketIds = new Set((excludedRows ?? []).map((r: any) => r.ticket_id));
+
+  const counts = new Map<string, TechCarryoverRepairCount>();
+  for (const row of carryovers as any[]) {
+    const ticket = ticketById.get(row.ticket_id);
+    if (!ticket || ticket.redo || excludedTicketIds.has(row.ticket_id)) continue;
+    const technician = String(row.technician_name).trim();
+    const repairType = latestRepairTypeByTicketId.get(row.ticket_id) || DEFAULT_REPAIR_TYPE;
+    const branch = ticket.location || "";
+    const key = `${technician.toLowerCase()}|${repairType}|${branch}|${row.period_start}|${row.period_end}`;
+    const prev = counts.get(key);
+    if (prev) {
+      prev.count += 1;
+      prev.lateTicketCompletionIds.push(row.id);
+    } else {
+      counts.set(key, {
+        technician, repairType, branch, count: 1,
+        periodStart: row.period_start, periodEnd: row.period_end,
+        lateTicketCompletionIds: [row.id],
+      });
+    }
   }
   return Array.from(counts.values());
 }
@@ -1024,4 +1102,133 @@ export async function getTechPayrollBreakdown(
     completedTicketsPay,
     grossPay,
   };
+}
+
+/** One row of the Tech Activity Report's Payment Item / Value / Pay Rate / Payment table. */
+export interface TechActivityLineItem {
+  label: string;
+  /** Display string, e.g. "3", "24.0 + 5.0 OT", or "12 − 2 = 10" (Completed Tickets). */
+  value: string;
+  rate: number | null;
+  payment: number;
+  /** Overrides the Payment cell's display (e.g. "Not met", "—") when the raw dollar amount alone isn't meaningful — MCA with no threshold configured, or not yet met. */
+  paymentDisplay?: string;
+}
+
+export interface TechActivityBreakdown {
+  lineItems: TechActivityLineItem[];
+  totalPayment: number;
+}
+
+/**
+ * The exact same Payment Item rows (every one, including zero-value
+ * categories — same as the modal always showing every category so Finance
+ * can enter a count/rate into an empty one) and Total Payment arithmetic as
+ * TechActivityReportModal.tsx — pulled out here (read-only, no editable
+ * inputs) so the payslip PDF's technician summary page can render a real,
+ * fully faithful copy of that report instead of duplicating this arithmetic
+ * a second time and risking the two silently drifting apart. If you change
+ * how a payment item is computed in the modal, mirror the change here too
+ * (and vice versa).
+ */
+export function buildTechActivityBreakdown(
+  row: {
+    employee: { assigned_branch?: string | null };
+    techCategoryCounts: Record<string, number>;
+    techManual: { ldtCount: number; ldtPay: number; mileage: number; mileagePay: number; trainingValue: number; trainingPay: number; owIncentivePct: number };
+    ticketsCompleted: number;
+    twoTechCount: number;
+    hoursWorked: number;
+    overtimeHours: number;
+    hourlyRate: number;
+    techHourlyPay: number;
+  },
+  techRepairRates: TechRepairRate[],
+  redoCount: number,
+  onHoldCount: number,
+  customItems: TechCustomPayItem[],
+  carryover: TechCarryoverRepairCount[] = []
+): TechActivityBreakdown {
+  const branch = row.employee.assigned_branch || "";
+  const rateFor = (category: string) => techRateFor(techRepairRates, category, branch);
+  const lineItems: TechActivityLineItem[] = [];
+
+  const redoReductionRate = rateFor("Redo Reduction");
+  const redoReductionPayment = redoCount * redoReductionRate;
+  lineItems.push({ label: "Redo Reduction", value: String(redoCount), rate: redoReductionRate, payment: redoReductionPayment });
+
+  const completedBeforeHold = row.ticketsCompleted + onHoldCount;
+  const completedTicketsRate = rateFor("Completed Tickets");
+  const completedTicketsPayment = row.ticketsCompleted * completedTicketsRate;
+  lineItems.push({
+    label: "Completed Tickets",
+    value: `${completedBeforeHold} − ${onHoldCount} = ${row.ticketsCompleted}`,
+    rate: completedTicketsRate,
+    payment: completedTicketsPayment,
+  });
+
+  lineItems.push({
+    label: "Hourly Pay",
+    value: `${row.hoursWorked.toFixed(1)}${row.overtimeHours > 0 ? ` + ${row.overtimeHours.toFixed(1)} OT` : ""}`,
+    rate: row.hourlyRate,
+    payment: row.techHourlyPay,
+  });
+
+  const manualFields: Array<["ldtCount" | "mileage" | "trainingValue", string, "LDT" | "Mileage" | "Training Paid", number]> = [
+    ["ldtCount", "LDT", "LDT", row.techManual.ldtPay],
+    ["mileage", "Mileage", "Mileage", row.techManual.mileagePay],
+    ["trainingValue", "Training Paid", "Training Paid", row.techManual.trainingPay],
+  ];
+  for (const [field, label, rateKey, pay] of manualFields) {
+    lineItems.push({ label, value: String(row.techManual[field]), rate: rateFor(rateKey), payment: pay });
+  }
+
+  for (const type of REPAIR_TYPES) {
+    if (type === DEFAULT_REPAIR_TYPE) continue;
+    const count = row.techCategoryCounts[type] ?? 0;
+    const rate = rateFor(type);
+    lineItems.push({ label: type, value: String(count), rate, payment: count * rate });
+  }
+
+  // Confirmed late completions (see late_ticket_completions) not yet folded
+  // into any payroll run — priced at today's rate for their repair type,
+  // shown as their own line (never merged into the REPAIR_TYPES rows above)
+  // so it's always visible that these came from an earlier, already-closed
+  // period rather than this one's own work.
+  const carryoverTotal = carryover.reduce((s, co) => s + co.count * rateFor(co.repairType), 0);
+  for (const co of carryover) {
+    const rate = rateFor(co.repairType);
+    const label = `${co.repairType === DEFAULT_REPAIR_TYPE ? "Completed Ticket" : co.repairType} (carried over from ${co.periodStart} – ${co.periodEnd})`;
+    lineItems.push({ label, value: String(co.count), rate, payment: co.count * rate });
+  }
+
+  const twoTechRate = rateFor("Two Tech");
+  const twoTechPayment = row.twoTechCount * twoTechRate;
+  lineItems.push({ label: "Two Tech", value: String(row.twoTechCount), rate: twoTechRate, payment: twoTechPayment });
+
+  const mcaThreshold = rateFor("MCA Threshold");
+  const mcaBonusRate = rateFor("MCA Bonus");
+  const mcaMet = mcaThreshold > 0 && row.ticketsCompleted >= mcaThreshold;
+  const mcaPayment = mcaMet ? mcaBonusRate : 0;
+  lineItems.push({
+    label: "MCA (Min. Complete Achievement)",
+    value: `${mcaThreshold} req.`,
+    rate: mcaBonusRate,
+    payment: mcaPayment,
+    paymentDisplay: mcaThreshold > 0 ? (mcaMet ? undefined : "Not met") : "—",
+  });
+
+  const customLinesTotal = customItems.reduce((s, i) => s + i.value * i.rate, 0);
+  for (const item of customItems) {
+    lineItems.push({ label: item.label || "(custom program)", value: String(item.value), rate: item.rate, payment: item.value * item.rate });
+  }
+
+  const subtotal =
+    REPAIR_TYPES.reduce((s, type) => s + (row.techCategoryCounts[type] ?? 0) * rateFor(type), 0) +
+    row.techManual.ldtPay + row.techManual.mileagePay + row.techManual.trainingPay +
+    twoTechPayment + mcaPayment + completedTicketsPayment + redoReductionPayment + customLinesTotal + carryoverTotal + row.techHourlyPay;
+  const owIncentivePay = (row.techManual.owIncentivePct / 100) * subtotal;
+  lineItems.push({ label: "OW Incentive", value: `${row.techManual.owIncentivePct}%`, rate: null, payment: owIncentivePay, paymentDisplay: row.techManual.owIncentivePct > 0 ? undefined : "—" });
+
+  return { lineItems, totalPayment: subtotal + owIncentivePay };
 }

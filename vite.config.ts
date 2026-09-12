@@ -8,6 +8,7 @@
 import { defineConfig } from "@lovable.dev/vite-tanstack-config";
 import { readFileSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
+import { execSync } from "node:child_process";
 
 // Windows-only build race: @cloudflare/vite-plugin's client-build phase
 // spawns a local workerd instance that doesn't reliably exit before the
@@ -58,6 +59,30 @@ function readDotEnv(): Record<string, string> {
   }
   return out;
 }
+
+// App version + short commit hash for the Footer (src/components/Footer.tsx)
+// — baked in as compile-time constants so they always reflect exactly what
+// was actually built/deployed, no runtime lookup needed. Not secrets, so
+// (unlike SERVER_DEFINE below) these are fine to land in the client bundle.
+function readAppVersion(): string {
+  try {
+    const pkg = JSON.parse(readFileSync(resolve(process.cwd(), "package.json"), "utf8"));
+    return typeof pkg.version === "string" ? pkg.version : "0.0.0";
+  } catch {
+    return "0.0.0";
+  }
+}
+function readGitSha(): string {
+  try {
+    return execSync("git rev-parse --short HEAD", { cwd: process.cwd() }).toString().trim();
+  } catch {
+    return "unknown";
+  }
+}
+const APP_DEFINE = {
+  "globalThis.__APP_VERSION__": JSON.stringify(readAppVersion()),
+  "globalThis.__GIT_SHA__": JSON.stringify(readGitSha()),
+};
 
 const rootEnv = { ...readDotEnv(), ...process.env } as Record<string, string | undefined>;
 const SERVER_DEFINE = {
@@ -743,7 +768,7 @@ export default defineConfig({
   // the build output in the first place.
   cloudflare: { viteEnvironment: { name: "ssr" }, persistState: false },
   vite: {
-    define: SERVER_DEFINE,
+    define: { ...SERVER_DEFINE, ...APP_DEFINE },
     // Vite's default asset list doesn't include .pdf — needed so the blank
     // W-8BEN template (src/assets/w8ben-blank.pdf) resolves to a URL via a
     // plain `import` the same way the logo/ribbon/footer PNGs already do.
