@@ -78,6 +78,8 @@ interface DailyRecord {
   checkOut: string;
   alerts: string[];
   isOffDay: boolean;
+  /** There's an unresolved (pending) timecard correction filed for this person/date — see hasPendingCorrectionFor. Suppresses the "Absent"/"No Clock In" alert tags in favor of "Pending Time Correction Request" and excludes the row from the Absent counters/alert lists. */
+  hasPendingCorrection: boolean;
   /** Display name of whoever clocked this person in, if it wasn't themselves (a manager's proxy clock-in). */
   clockedInBy: string | null;
   /** Scheduled shift times ("HH:MM", possibly "") — shown in the name popover, see requiredTimePopoverId. */
@@ -160,7 +162,8 @@ function computeAlerts(
   isOffDay: boolean,
   nowHHMM: string | null,
   graceMinutes: number = ATTENDANCE_GRACE_MINUTES,
-  workingHours?: number | null
+  workingHours?: number | null,
+  hasPendingCorrection: boolean = false
 ): string[] {
   if (isOffDay) return [];
 
@@ -170,7 +173,8 @@ function computeAlerts(
   const pastOutGrace = !graceOut || nowHHMM === null || nowHHMM > graceOut;
 
   if (!checkIn && !checkOut) {
-    return pastInGrace ? ["Absent", "No Clock In"] : [];
+    if (!pastInGrace) return [];
+    return hasPendingCorrection ? ["Pending Time Correction Request"] : ["Absent", "No Clock In"];
   }
   const alerts: string[] = [];
   if (!checkIn) {
@@ -791,6 +795,22 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   const holidayDateSet = useMemo(() => new Set(companyHolidays.map((h) => h.date)), [companyHolidays]);
   const isCompanyHolidayFor = useCallback((dateISO: string): boolean => holidayDateSet.has(dateISO), [holidayDateSet]);
 
+  // Pending Timecard Corrections — `corrections` (above) is already the full
+  // company list for the Corrections tab, so just filter it down instead of
+  // firing a second query. A "pending" correction hasn't cleared every
+  // approval stage yet, so it hasn't touched timecard_entries — this lets
+  // the Daily Attendance view show "Pending Time Correction Request" instead
+  // of a flat "Absent" for a day someone already flagged and is waiting on
+  // review for.
+  const pendingCorrectionSet = useMemo(
+    () => new Set(corrections.filter((c) => c.status === "pending").map((c) => `${c.profileId}|${c.workDate}`)),
+    [corrections]
+  );
+  const hasPendingCorrectionFor = useCallback(
+    (profileId: string, dateISO: string): boolean => pendingCorrectionSet.has(`${profileId}|${dateISO}`),
+    [pendingCorrectionSet]
+  );
+
   // Shared by the single-day tracker and the date-range filter below — same
   // per-employee-per-date computation either way, just called once per date
   // in range mode instead of once for `dailyDate`.
@@ -812,7 +832,8 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
       const rowNowHHMM = isToday ? (nowByTimezone[branchTz] ?? nowInTimezone(branchTz).hhmm) : null;
       const country = p.assigned_branch === "Philippines" ? "PH" : "US";
       const graceMinutes = payGraceMinutesFor(country);
-      const alerts = computeAlerts(checkIn, checkOut, mealIn, mealOut, p.required_check_in || "", p.required_check_out || "", isOffDay, rowNowHHMM, graceMinutes, p.working_hours);
+      const hasPendingCorrection = hasPendingCorrectionFor(p.id, dateISO);
+      const alerts = computeAlerts(checkIn, checkOut, mealIn, mealOut, p.required_check_in || "", p.required_check_out || "", isOffDay, rowNowHHMM, graceMinutes, p.working_hours, hasPendingCorrection);
       const clockedInByName = entry?.clockedInBy ? allProfileById.get(entry.clockedInBy)?.display_name || null : null;
       return {
         profileId: p.id,
@@ -827,6 +848,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
         mealIn: mealIn || "—",
         mealOut: mealOut || "—",
         checkOut: checkOut || "—",
+        hasPendingCorrection,
         alerts,
         isOffDay,
         clockedInBy: clockedInByName,
@@ -837,7 +859,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
         tickets: ticketsByNameAndDate.get(`${(p.display_name || p.email || "").trim().toLowerCase()}|${dateISO}`) ?? [],
       };
     },
-    [nowByTimezone, allProfileById, checkoutProposalsByKey, lastTicketUpdateByProfile, ticketsByNameAndDate, isCompanyHolidayFor]
+    [nowByTimezone, allProfileById, checkoutProposalsByKey, lastTicketUpdateByProfile, ticketsByNameAndDate, isCompanyHolidayFor, hasPendingCorrectionFor]
   );
 
   const dailyRecords: DailyRecord[] = useMemo(
@@ -868,7 +890,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
 
   const totalEmployees = visibleProfiles.length;
   const presentToday = dailyRecords.filter((r) => r.checkIn !== "—").length;
-  const absentToday = dailyRecords.filter((r) => r.checkIn === "—" && !r.isOffDay).length;
+  const absentToday = dailyRecords.filter((r) => r.checkIn === "—" && !r.isOffDay && !r.hasPendingCorrection).length;
   const lateToday = dailyRecords.filter((r) => r.alerts.some(isPenalizedLateAlert)).length;
   const ptoPendingApproval = visiblePtoRequests.filter((r) => r.status === "pending").length;
 
@@ -876,7 +898,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   // for whichever alert is open, before the Department/Location filters
   // below narrow it down.
   const alertBaseRecords = useMemo(() => {
-    if (selectedAlertType === "missing-clockin") return dailyRecords.filter((r) => r.checkIn === "—" && !r.isOffDay);
+    if (selectedAlertType === "missing-clockin") return dailyRecords.filter((r) => r.checkIn === "—" && !r.isOffDay && !r.hasPendingCorrection);
     if (selectedAlertType === "missing-clockout") return dailyRecords.filter((r) => r.checkOut === "—" && r.checkIn !== "—");
     if (selectedAlertType === "late-arrival") return dailyRecords.filter((r) => r.alerts.some(isPenalizedLateAlert));
     return [];
@@ -1145,7 +1167,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     // excluded (matches the Absent KPI card's own definition).
     const absentRecords = (dateRangeActive ? rangeRecords : dailyRecords)
       .filter((record) => {
-        if (record.checkIn !== "—" || record.isOffDay) return false;
+        if (record.checkIn !== "—" || record.isOffDay || record.hasPendingCorrection) return false;
         if (searchEmployee && !record.name.toLowerCase().includes(searchEmployee.toLowerCase())) return false;
         if (filterDepartments.length > 0 && !filterDepartments.includes(record.department)) return false;
         if (filterLocations.length > 0 && !filterLocations.includes(record.location)) return false;
@@ -1703,7 +1725,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                         <p className="text-xs font-semibold text-red-300 truncate">Missing Clock In</p>
                         <div className="flex items-center gap-1">
                           <span className="inline-block w-1.5 h-1.5 rounded-full bg-red-500"></span>
-                          <span className="text-xs font-bold text-red-300">{dailyRecords.filter(r => r.checkIn === "—" && !r.isOffDay).length}</span>
+                          <span className="text-xs font-bold text-red-300">{dailyRecords.filter(r => r.checkIn === "—" && !r.isOffDay && !r.hasPendingCorrection).length}</span>
                         </div>
                       </div>
                     </div>
