@@ -231,6 +231,7 @@ export async function getUniversalActivityLog(opts: GetUniversalActivityLogOptio
     "attendance-monitoring": "admin",
     "user-management": "admin",
     "it-tickets": "it",
+    "absent-list": "hr",
   };
   moduleNames.forEach((moduleName, i) => {
     for (const r of moduleLogs[i]) {

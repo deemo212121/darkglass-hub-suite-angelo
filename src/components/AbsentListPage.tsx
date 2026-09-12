@@ -389,7 +389,7 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
       setEditingId(null);
       const employee = profiles.find((p) => p.id === profileId);
       void logModuleActivity({
-        module: "attendance-monitoring",
+        module: "absent-list",
         actorName: displayName || "HR",
         action: "attendance_note_saved",
         targetType: "profile",
@@ -417,7 +417,7 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
       });
       const employee = profiles.find((p) => p.id === profileId);
       void logModuleActivity({
-        module: "attendance-monitoring",
+        module: "absent-list",
         actorName: displayName || "HR",
         action: "hr_status_saved",
         targetType: "profile",
@@ -472,7 +472,7 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
       });
       const employee = profiles.find((p) => p.id === profileId);
       void logModuleActivity({
-        module: "attendance-monitoring",
+        module: "absent-list",
         actorName: displayName || "HR",
         action: "attendance_note_attachment_added",
         targetType: "profile",
@@ -503,7 +503,7 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
       );
       const employee = profiles.find((p) => p.id === profileId);
       void logModuleActivity({
-        module: "attendance-monitoring",
+        module: "absent-list",
         actorName: displayName || "HR",
         action: "attendance_note_attachment_removed",
         targetType: "profile",
@@ -815,7 +815,6 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
           >
             <Flag className="h-3.5 w-3.5" /> Holiday Calendar
           </button>
-          <ActivityLogPanel module="attendance-monitoring" title="Activity Log" />
         </div>
 
         {view === "calendar" && (
@@ -866,6 +865,7 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
                 className="glass-input"
               />
             </div>
+            <ActivityLogPanel module="absent-list" title="Activity Log" />
             <div className="ml-auto text-right text-sm text-slate-400">
               {loading ? (
                 "Loading…"

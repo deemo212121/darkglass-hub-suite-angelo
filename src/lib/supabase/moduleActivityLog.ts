@@ -6,7 +6,7 @@
  */
 import { supabase } from "./client";
 
-export type ActivityLogModule = "accounting" | "payroll" | "attendance-monitoring" | "it-tickets" | "user-management";
+export type ActivityLogModule = "accounting" | "payroll" | "attendance-monitoring" | "it-tickets" | "user-management" | "absent-list";
 
 /** Human-readable label for each action code — new codes just show as-is (title-cased) if not listed here. */
 export const MODULE_ACTIVITY_ACTION_LABELS: Record<string, string> = {
