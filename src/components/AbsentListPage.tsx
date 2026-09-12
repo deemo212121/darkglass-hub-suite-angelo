@@ -73,6 +73,7 @@ const HR_STATUS_OPTIONS = [
   "Unnoticed",
   "Resigned",
   "Terminated",
+  "Not yet Started",
 ];
 // Resigned/Terminated end employment entirely and Unnoticed flags a no-call/
 // no-show — meaningfully different severity from an ordinary leave type, so
@@ -96,6 +97,7 @@ const HR_STATUS_COLOR: Record<string, string> = {
   Unnoticed: "text-amber-300",
   Resigned: "text-red-300",
   Terminated: "text-red-300",
+  "Not yet Started": "text-violet-300",
 };
 
 interface AbsentRow {
