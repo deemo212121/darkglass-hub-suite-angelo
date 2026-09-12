@@ -285,6 +285,14 @@ function addDaysISO(dateStr: string, days: number): string {
  * ignores/discards result entries for dates before its own display start.
  * Returns a map of every input date to that day's {regular, overtime} split.
  */
+/**
+ * Standard FLSA weekly overtime threshold — used for CSR instead of the
+ * scheduled-duty-hours cap above, since CSR shift start/end times vary
+ * person to person and aren't reliably captured in
+ * requiredCheckIn/requiredCheckOut. See splitRegularOvertimeWeekly's
+ * flatWeeklyThreshold param.
+ */
+export const CSR_WEEKLY_OVERTIME_THRESHOLD = 40;
 export function splitRegularOvertimeWeekly(
   days: { date: string; rawHours: number }[],
   schedule: {
@@ -294,7 +302,18 @@ export function splitRegularOvertimeWeekly(
     mealMinutes?: number | null;
     offDays?: number[] | null;
   },
-  fallbackRegularHoursPerDay = 8
+  fallbackRegularHoursPerDay = 8,
+  /**
+   * Overrides the per-week cap with a flat number of hours (e.g. 40) instead
+   * of deriving it from requiredCheckIn/requiredCheckOut/workingHours — for
+   * CSR, whose duty schedule varies person-to-person and isn't reliably
+   * captured in those fields, standard FLSA weekly overtime (over 40 hrs/wk)
+   * doesn't depend on a configured schedule being accurate. `schedule` is
+   * ignored entirely when this is set. See callers (PayrollCalculationPage.tsx,
+   * AccountingDashboard.tsx, EmployeePayrollDetailModal.tsx) for the
+   * isCsrRestrictedRole check that decides when to pass this.
+   */
+  flatWeeklyThreshold?: number
 ): Map<string, { regular: number; overtime: number }> {
   const result = new Map<string, { regular: number; overtime: number }>();
   const sorted = [...days].sort((a, b) => a.date.localeCompare(b.date));
@@ -305,15 +324,17 @@ export function splitRegularOvertimeWeekly(
     const weekStart = startOfWeekSunday(date);
     if (weekStart !== currentWeekStart) {
       currentWeekStart = weekStart;
-      weekDuty = computeScheduledDutyHours(
-        schedule.requiredCheckIn || "",
-        schedule.requiredCheckOut || "",
-        schedule.workingHours,
-        schedule.mealMinutes,
-        schedule.offDays,
-        weekStart,
-        addDaysISO(weekStart, 6)
-      );
+      weekDuty = flatWeeklyThreshold != null
+        ? flatWeeklyThreshold
+        : computeScheduledDutyHours(
+            schedule.requiredCheckIn || "",
+            schedule.requiredCheckOut || "",
+            schedule.workingHours,
+            schedule.mealMinutes,
+            schedule.offDays,
+            weekStart,
+            addDaysISO(weekStart, 6)
+          );
       cumulativeRaw = 0;
     }
     let regular: number;

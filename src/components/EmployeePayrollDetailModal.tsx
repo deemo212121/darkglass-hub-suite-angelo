@@ -1,7 +1,8 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { X, Plus, Pencil, Check, Loader2, ExternalLink, ChevronDown, ChevronRight, Trash2 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
-import { getAttendanceForRange, saveEntry, getProfileIdByFirebaseUid, computeScheduledDutyHours, startOfWeekSunday, splitRegularOvertimeWeekly, type AttendanceRow } from "@/lib/supabase/timecards";
+import { getAttendanceForRange, saveEntry, getProfileIdByFirebaseUid, computeScheduledDutyHours, startOfWeekSunday, splitRegularOvertimeWeekly, CSR_WEEKLY_OVERTIME_THRESHOLD, type AttendanceRow } from "@/lib/supabase/timecards";
+import { isCsrRestrictedRole } from "@/lib/roleLabels";
 import { getTicketAttendanceForTechnician, slotSortKey, type TicketAttendanceRow } from "@/lib/supabase/technicianWhereabouts";
 import { getCompanyEmployeeRequests } from "@/lib/supabase/employeeRequests";
 import { getVisitDiagnosisByTicketIds } from "@/lib/supabase/tickets";
@@ -23,6 +24,9 @@ interface Props {
   profileId: string;
   employeeName: string;
   department?: string;
+  /** Used only to decide the CSR flat-40-hrs/week overtime exception (isCsrRestrictedRole) — see dailyHoursSplitByDate below. */
+  role?: string;
+  extraRoles?: string[] | null;
   requiredCheckIn?: string;
   requiredCheckOut?: string;
   workingHours?: number | null;
@@ -98,6 +102,8 @@ export function EmployeePayrollDetailModal({
   profileId,
   employeeName,
   department,
+  role,
+  extraRoles,
   requiredCheckIn,
   requiredCheckOut,
   workingHours,
@@ -355,8 +361,17 @@ export function EmployeePayrollDetailModal({
   // up Sun-Wed shows 0 new regular for those days, all overtime. Falls back
   // to the flat per-day 8-hour cap only when there's no configured schedule
   // to derive duty hours from.
+  // CSR shift start/end times vary person to person and aren't reliably
+  // captured in requiredCheckIn/requiredCheckOut, so the scheduled-duty-
+  // hours cap doesn't apply cleanly to them — they use a flat 40 hrs/week
+  // (standard FLSA overtime) instead, same as AccountingDashboard.tsx's
+  // computeHoursMap and PayrollCalculationPage.tsx. See
+  // CSR_WEEKLY_OVERTIME_THRESHOLD.
+  const isCsr = isCsrRestrictedRole(role, extraRoles);
   const dailyHoursSplitByDate = useMemo(() => {
-    const dutyHours = computeScheduledDutyHours(requiredCheckIn || "", requiredCheckOut || "", workingHours, mealMinutes, offDays, rangeStart, rangeEnd);
+    const dutyHours = isCsr
+      ? CSR_WEEKLY_OVERTIME_THRESHOLD
+      : computeScheduledDutyHours(requiredCheckIn || "", requiredCheckOut || "", workingHours, mealMinutes, offDays, rangeStart, rangeEnd);
     if (dutyHours <= 0) {
       const map = new Map<string, { regular: number; overtime: number }>();
       for (const row of attendance) {
@@ -366,8 +381,8 @@ export function EmployeePayrollDetailModal({
       return map;
     }
     const days = [...seedAttendance, ...attendance].map((row) => ({ date: row.date, rawHours: row.hoursWorked }));
-    return splitRegularOvertimeWeekly(days, { requiredCheckIn, requiredCheckOut, workingHours, mealMinutes, offDays });
-  }, [attendance, seedAttendance, requiredCheckIn, requiredCheckOut, workingHours, mealMinutes, offDays, rangeStart, rangeEnd]);
+    return splitRegularOvertimeWeekly(days, { requiredCheckIn, requiredCheckOut, workingHours, mealMinutes, offDays }, 8, isCsr ? CSR_WEEKLY_OVERTIME_THRESHOLD : undefined);
+  }, [attendance, seedAttendance, requiredCheckIn, requiredCheckOut, workingHours, mealMinutes, offDays, rangeStart, rangeEnd, isCsr]);
 
   // Fixed-salary pay doesn't depend on hours worked at all (see migration
   // 0118) — shows the monthly amount for this calendar-month estimate.
