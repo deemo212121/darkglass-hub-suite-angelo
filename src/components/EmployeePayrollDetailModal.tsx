@@ -3,6 +3,7 @@ import { X, Plus, Pencil, Check, Loader2, ExternalLink, ChevronDown, ChevronRigh
 import { useAuth } from "@/lib/auth";
 import { getAttendanceForRange, saveEntry, getProfileIdByFirebaseUid, computeScheduledDutyHours, startOfWeekSunday, splitRegularOvertimeWeekly, CSR_WEEKLY_OVERTIME_THRESHOLD, type AttendanceRow } from "@/lib/supabase/timecards";
 import { isCsrRestrictedRole } from "@/lib/roleLabels";
+import { getCompanyHolidaysInRange } from "@/lib/supabase/companyHolidays";
 import { getTicketAttendanceForTechnician, slotSortKey, type TicketAttendanceRow } from "@/lib/supabase/technicianWhereabouts";
 import { getCompanyEmployeeRequests } from "@/lib/supabase/employeeRequests";
 import { getVisitDiagnosisByTicketIds } from "@/lib/supabase/tickets";
@@ -88,6 +89,7 @@ const STATUS_LABEL: Record<AttendanceRow["status"], string> = {
   "missing-out": "Missing Clock Out",
   "missing-meal": "Meal Not Taken",
   "day-off": "Rest Day",
+  holiday: "Holiday",
 };
 const STATUS_COLOR: Record<AttendanceRow["status"], string> = {
   present: "text-green-300",
@@ -96,6 +98,7 @@ const STATUS_COLOR: Record<AttendanceRow["status"], string> = {
   "missing-out": "text-yellow-300",
   "missing-meal": "text-orange-300",
   "day-off": "text-slate-400",
+  holiday: "text-purple-300",
 };
 
 export function EmployeePayrollDetailModal({
@@ -193,14 +196,23 @@ export function EmployeePayrollDetailModal({
       const seedStart = startOfWeekSunday(rangeStart);
       const seedEnd = addDaysISO(rangeStart, -1);
       const needsSeed = seedStart <= seedEnd;
-      const [attRows, seedRows, hist, myTicketRows] = await Promise.all([
-        getAttendanceForRange(profileId, rangeStart, rangeEnd, { requiredCheckIn, requiredCheckOut, workingHours, mealMinutes, daysOff: offDays, graceMinutes }),
+      const [holidays, seedRows, hist, myTicketRows] = await Promise.all([
+        getCompanyHolidaysInRange(rangeStart, rangeEnd).catch(() => []),
         needsSeed
           ? getAttendanceForRange(profileId, seedStart, seedEnd, { requiredCheckIn, requiredCheckOut, workingHours, mealMinutes, daysOff: offDays, graceMinutes })
           : Promise.resolve([]),
         getSalaryHistory(profileId),
         getTicketAttendanceForTechnician(employeeName, rangeStart, rangeEnd),
       ]);
+      const attRows = await getAttendanceForRange(profileId, rangeStart, rangeEnd, {
+        requiredCheckIn,
+        requiredCheckOut,
+        workingHours,
+        mealMinutes,
+        daysOff: offDays,
+        graceMinutes,
+        holidayDates: holidays.map((h) => h.date),
+      });
       if (cancelledRef.current) return;
       setAttendance(attRows);
       setSeedAttendance(seedRows);
@@ -825,7 +837,7 @@ export function EmployeePayrollDetailModal({
                     {attendance.map((row) => {
                       const dayIsFixed = entryEffectiveOn(history, row.date)?.compensationType === "fixed";
                       const edit = attendanceEdits[row.date];
-                      const isRestDay = row.status === "day-off";
+                      const isRestDay = row.status === "day-off" || row.status === "holiday";
                       const { regular: regularHours, overtime: overtimeHours } = dailyHoursSplitByDate.get(row.date) ?? { regular: 0, overtime: 0 };
                       const dayRate = rateEffectiveOn(history, row.date);
                       const dayPayment = regularHours * dayRate + overtimeHours * dayRate * OVERTIME_MULTIPLIER;

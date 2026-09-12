@@ -22,6 +22,7 @@ import {
   type CompanyTimecardEntry,
 } from "@/lib/supabase/timecards";
 import { getAttendanceNotes, upsertAttendanceNote } from "@/lib/supabase/attendanceNotes";
+import { getCompanyHolidaysInRange, type CompanyHolidayRow } from "@/lib/supabase/companyHolidays";
 import { getBranchRoles, type BranchRoles } from "@/lib/supabase/generalInfo";
 import { ActivityLogPanel } from "@/components/ActivityLogPanel";
 import { logModuleActivity } from "@/lib/supabase/moduleActivityLog";
@@ -324,6 +325,12 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   const [csrComposition, setCsrComposition] = useState<CsrTeamComposition | null>(null);
   const [entries, setEntries] = useState<CompanyTimecardEntry[]>([]);
   const [checkoutProposals, setCheckoutProposals] = useState<CheckoutProposal[]>([]);
+  // Company Holidays (Absent List's Holiday Calendar tab) — treated exactly
+  // like a scheduled off-day for alert purposes (no "missing clock-in"
+  // warning on a company holiday). Same US/PH signal as gmailBridge.ts's
+  // resolveEmployeeRegion. Covers [rangeStart, rangeEnd]; the "custom" range
+  // view (which can extend past rangeEnd) re-fetches its own slice below.
+  const [companyHolidays, setCompanyHolidays] = useState<CompanyHolidayRow[]>([]);
   const [approvingProposalId, setApprovingProposalId] = useState<string | null>(null);
   const [lastTicketUpdateByProfile, setLastTicketUpdateByProfile] = useState<Map<string, LatestVisitUpdate>>(new Map());
   const [ptoRequests, setPtoRequests] = useState<PtoRequestRow[]>([]);
@@ -460,7 +467,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     }
     setLoading(true);
     try {
-      const [profileId, profileRows, csrCompositionResult, entryRows, noteRows, ptoRows, correctionRows, historyRows, conductNoteRows, employeeRequestRows, checkoutProposalRows, branchRoleRows] = await Promise.all([
+      const [profileId, profileRows, csrCompositionResult, entryRows, noteRows, ptoRows, correctionRows, historyRows, conductNoteRows, employeeRequestRows, checkoutProposalRows, branchRoleRows, holidayRows] = await Promise.all([
         getProfileIdByFirebaseUid(uid),
         getCompanyUsers(),
         getCsrTeamComposition().catch(() => null),
@@ -473,6 +480,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
         getCompanyEmployeeRequests().catch(() => []),
         getPendingCheckoutProposals().catch(() => []),
         getBranchRoles().catch(() => []),
+        getCompanyHolidaysInRange(rangeStart, rangeEnd).catch(() => []),
       ]);
       setMyProfileId(profileId);
       setProfiles(profileRows);
@@ -480,6 +488,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
       setEntries(entryRows);
       setCheckoutProposals(checkoutProposalRows);
       setBranchRoles(branchRoleRows);
+      setCompanyHolidays(holidayRows);
       const noteMap: Record<string, { content: string; notifyIndividual: boolean; notifyTeamLead: boolean; createdBy: string | null }> = {};
       noteRows.forEach((n) => {
         noteMap[n.profileId] = { content: n.content, notifyIndividual: n.notifyIndividual, notifyTeamLead: n.notifyTeamLead, createdBy: n.createdBy };
@@ -774,6 +783,14 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     return map;
   }, [checkoutProposals]);
 
+  // Company Holidays — one shared calendar for everyone, US and
+  // Philippines staff alike (per HR's explicit call). Covers [rangeStart,
+  // rangeEnd] (today + the current week/month-to-date) — the custom
+  // date-range summary view doesn't get holiday suppression yet, since it
+  // can reach further back than what's fetched here.
+  const holidayDateSet = useMemo(() => new Set(companyHolidays.map((h) => h.date)), [companyHolidays]);
+  const isCompanyHolidayFor = useCallback((dateISO: string): boolean => holidayDateSet.has(dateISO), [holidayDateSet]);
+
   // Shared by the single-day tracker and the date-range filter below — same
   // per-employee-per-date computation either way, just called once per date
   // in range mode instead of once for `dailyDate`.
@@ -781,7 +798,9 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     (p: ProfileRow, dateISO: string, entry: CompanyTimecardEntry | undefined, isToday: boolean): DailyRecord => {
       const dow = new Date(dateISO + "T00:00:00").getDay();
       const offDays = new Set<number>(p.off_days ?? []);
-      const isOffDay = offDays.has(dow);
+      // A company holiday suppresses "missing clock-in"/etc. alerts exactly
+      // like a scheduled rest day — see isCompanyHolidayFor above.
+      const isOffDay = offDays.has(dow) || isCompanyHolidayFor(dateISO);
       const checkIn = entry?.checkIn || "";
       const checkOut = entry?.checkOut || "";
       const mealIn = entry?.mealStart || "";
@@ -818,7 +837,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
         tickets: ticketsByNameAndDate.get(`${(p.display_name || p.email || "").trim().toLowerCase()}|${dateISO}`) ?? [],
       };
     },
-    [nowByTimezone, allProfileById, checkoutProposalsByKey, lastTicketUpdateByProfile, ticketsByNameAndDate]
+    [nowByTimezone, allProfileById, checkoutProposalsByKey, lastTicketUpdateByProfile, ticketsByNameAndDate, isCompanyHolidayFor]
   );
 
   const dailyRecords: DailyRecord[] = useMemo(

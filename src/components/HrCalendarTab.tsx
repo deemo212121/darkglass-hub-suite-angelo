@@ -45,6 +45,7 @@ import {
 import { logModuleActivity } from "@/lib/supabase/moduleActivityLog";
 import { ROLE_LABELS, normalizeRole } from "@/lib/roleLabels";
 import { getAttendanceNotes, uploadAttendanceNoteAttachment, removeAttendanceNoteAttachment, type AttendanceNoteRow } from "@/lib/supabase/attendanceNotes";
+import { getCompanyHolidaysInRange, type CompanyHolidayRow } from "@/lib/supabase/companyHolidays";
 import { AttachmentPreviewModal } from "@/components/AttachmentPreviewModal";
 
 export interface CalendarEmployee {
@@ -241,6 +242,20 @@ export function HrCalendarTab({ employees, myProfileId, myDisplayName }: Props) 
     }
     return out;
   }, [months]);
+
+  // Company Holidays (Absent List's Holiday Calendar tab) — one shared
+  // calendar for everyone, US and Philippines staff alike (per HR's
+  // explicit call — Philippines follows the same U.S. holiday list rather
+  // than its own).
+  const [companyHolidays, setCompanyHolidays] = useState<CompanyHolidayRow[]>([]);
+  useEffect(() => {
+    if (days.length === 0) return;
+    getCompanyHolidaysInRange(days[0].date, days[days.length - 1].date)
+      .then(setCompanyHolidays)
+      .catch((err) => console.error("Failed to load company holidays:", err));
+  }, [days]);
+  const holidayNameByDate = useMemo(() => new Map(companyHolidays.map((h) => [h.date, h.name])), [companyHolidays]);
+  const companyHolidayNameFor = (date: string): string | undefined => holidayNameByDate.get(date);
 
   // profileId -> Map<date, request> — only requests matching the active
   // type filter are included, so a filtered-out request behaves like an
@@ -769,13 +784,16 @@ export function HrCalendarTab({ employees, myProfileId, myDisplayName }: Props) 
           <span className="h-3 w-3 rounded-sm bg-yellow-400/80 inline-block" /> Pending approval
         </span>
         <span className="flex items-center gap-1.5">
-          <span className="h-3 w-3 rounded-sm bg-orange-500/80 inline-block" /> Set by HR (Absent List), no formal request
+          <span className="h-3 w-3 rounded-sm bg-cyan-500/80 inline-block" /> Set by HR (Absent List), no formal request
         </span>
         <span className="flex items-center gap-1.5">
-          <span className="h-3 w-3 rounded-sm bg-red-500/80 inline-block" /> Absent (Absent List default)
+          <span className="h-3 w-3 rounded-sm bg-red-500/80 inline-block" /> Marked Absent (Absent List)
         </span>
         <span className="flex items-center gap-1.5">
           <span className="h-3 w-3 rounded-sm bg-slate-600/50 inline-block" /> Rest day
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="h-3 w-3 rounded-sm bg-purple-500/70 inline-block" /> Company Holiday
         </span>
         <span className="text-slate-600">•</span>
         {PTO_TYPES.map((t) => (
@@ -788,6 +806,9 @@ export function HrCalendarTab({ employees, myProfileId, myDisplayName }: Props) 
         </span>
         <span className="flex items-center gap-1">
           <span className="font-bold text-slate-300">R</span> = Rest day
+        </span>
+        <span className="flex items-center gap-1">
+          <span className="font-bold text-slate-300">HD</span> = Company Holiday
         </span>
       </div>
 
@@ -869,11 +890,20 @@ export function HrCalendarTab({ employees, myProfileId, myDisplayName }: Props) 
                         const hrPlotted = !request ? hrPlottedByProfile.get(e.id)?.get(d.date) : undefined;
                         const color: CellColor | undefined = request ? colorForRequest(request) : hrPlotted ? "hrPlotted" : undefined;
                         const addedByName = hrPlotted?.addedBy ? employees.find((emp) => emp.id === hrPlotted.addedBy)?.name : undefined;
-                        // Scheduled rest day (profiles.off_days) — only shown
-                        // when nothing else is plotted for the cell; a real
-                        // request/HR status always wins (e.g. an approved
-                        // leave day that happens to fall on a rest day).
-                        const isRestDay = !color && (e.offDays ?? []).includes(d.dowIndex);
+                        // Company Holiday (Holiday Calendar tab) — wins over
+                        // an HR-plotted status (Absent List's own "Absent"
+                        // default or a manually-set HR Status): nobody was
+                        // expected to clock in on a declared holiday, so an
+                        // informal "Absent"/etc. next to it just reads as
+                        // wrong. A real FORMAL request (approved/pending,
+                        // an actual pto_requests row) still wins over the
+                        // holiday, since that's a distinct record someone
+                        // deliberately filed.
+                        const holidayName = !request ? companyHolidayNameFor(d.date) : undefined;
+                        // Scheduled rest day (profiles.off_days) — lowest
+                        // priority of all; shown only when nothing else
+                        // (request, HR status, or holiday) applies.
+                        const isRestDay = !color && !holidayName && (e.offDays ?? []).includes(d.dowIndex);
                         return (
                           <td
                             key={d.date}
@@ -881,6 +911,8 @@ export function HrCalendarTab({ employees, myProfileId, myDisplayName }: Props) 
                             title={
                               request
                                 ? `${PTO_TYPE_LABELS[request.ptoType]} (${request.status}) — click for details`
+                                : holidayName
+                                ? `Holiday: ${holidayName}`
                                 : hrPlotted
                                 ? hrPlotted.type === "absent"
                                   ? `Absent — no clock-in, via Absent List${addedByName ? ` (added by ${addedByName})` : ""}. Click to file a leave request instead.`
@@ -894,10 +926,12 @@ export function HrCalendarTab({ employees, myProfileId, myDisplayName }: Props) 
                                 ? "bg-green-500/80 text-green-950"
                                 : color === "pending"
                                 ? "bg-yellow-400/80 text-yellow-950"
+                                : holidayName
+                                ? "bg-purple-500/70 text-purple-950"
                                 : color === "hrPlotted"
                                 ? hrPlotted?.type === "absent"
                                   ? "bg-red-500/80 text-red-950"
-                                  : "bg-orange-500/80 text-orange-950"
+                                  : "bg-cyan-500/80 text-cyan-950"
                                 : isRestDay
                                 ? "bg-slate-600/50 text-slate-400"
                                 : d.date === todayStr
@@ -905,7 +939,7 @@ export function HrCalendarTab({ employees, myProfileId, myDisplayName }: Props) 
                                 : ""
                             }`}
                           >
-                            {request ? PTO_TYPE_LETTER[request.ptoType] : hrPlotted ? plottedTypeLetter(hrPlotted.type) : isRestDay ? "R" : ""}
+                            {request ? PTO_TYPE_LETTER[request.ptoType] : holidayName ? "HD" : hrPlotted ? plottedTypeLetter(hrPlotted.type) : isRestDay ? "R" : ""}
                           </td>
                         );
                       })}
@@ -1108,7 +1142,7 @@ export function HrCalendarTab({ employees, myProfileId, myDisplayName }: Props) 
                   const isAbsent = plotted.type === "absent";
                   return (
                     <div
-                      className={`text-[11px] ${isAbsent ? "text-red-300 bg-red-500/10 border-red-500/30" : "text-orange-300 bg-orange-500/10 border-orange-500/30"} border rounded-md px-2.5 py-2 space-y-1`}
+                      className={`text-[11px] ${isAbsent ? "text-red-300 bg-red-500/10 border-red-500/30" : "text-cyan-300 bg-cyan-500/10 border-cyan-500/30"} border rounded-md px-2.5 py-2 space-y-1`}
                     >
                       <p>
                         {isAbsent ? "Marked Absent via Absent List (no clock-in)." : `Already marked ${plottedTypeLabel(plotted.type)} via Absent List — no formal request yet.`}
@@ -1156,7 +1190,7 @@ export function HrCalendarTab({ employees, myProfileId, myDisplayName }: Props) 
                         const attRemovedByName = !plotted.attachmentPath && plotted.attachmentRemovedBy ? employees.find((e) => e.id === plotted.attachmentRemovedBy)?.name : null;
                         if (!attAddedByName && !attRemovedByName) return null;
                         return (
-                          <p className="text-[10px] text-orange-300/70">
+                          <p className="text-[10px] text-slate-400">
                             {plotted.attachmentPath && attAddedByName && `Attachment added by: ${attAddedByName}`}
                             {attRemovedByName && `Attachment removed by: ${attRemovedByName}`}
                           </p>

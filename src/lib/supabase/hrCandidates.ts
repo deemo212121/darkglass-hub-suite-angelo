@@ -30,7 +30,7 @@ export interface Candidate {
   department: string | null;
   branchManagerId: string | null;  // manually-assigned override for the Hiring table's auto-derived Branch Manager column
   assignedInterviewerId: string | null;  // HR person running this candidate's interview process
-  assignedManagerId: string | null;  // manager acting as interviewer — separate from branchManagerId; defaults to displaying the branch manager when unset (see assignedManagerNameForCandidate in ReportHRDaily.tsx) but independently overridable. See migration 0248.
+  assignedManagerId: string | null;  // manager acting as interviewer — separate from branchManagerId, no auto-default; HR picks explicitly (see assignedManagerNameForCandidate in ReportHRDaily.tsx). See migration 0248.
   trainerId: string | null;  // who's training this candidate, set from the Training status dialog
   source: string | null;  // where the applicant was found — "Indeed" / "ZipRecruiter" / free text for "Other"
   textedAm: boolean;
@@ -46,6 +46,7 @@ export interface Candidate {
   trainingEndDate: string | null;    // optional, settable alongside trainingStartDate
   withdrawnDate: string | null;      // required when status = "withdrawn"
   screeningDate: string | null;      // manual, independent of the phone_screening status — see updateCandidateScreeningDate. See migration 0247.
+  documentVerified: boolean;         // manual check/X toggle for now — see updateCandidateDocumentVerified. See migration 0251.
   notes: string | null;              // "HR Note" in the UI
   interviewerNote: string | null;
   createdBy: string | null;
@@ -57,9 +58,13 @@ export interface Candidate {
 // `full_name` is the real column (the table predates this feature — see
 // 0001_init.sql / 0030_hr_candidates.sql); mapped to `name` here so the
 // rest of the app's Candidate type reads naturally.
-const SELECT = "id, company_id, full_name, phone, email, position, branch, department, branch_manager_id, assigned_interviewer_id, assigned_manager_id, trainer_id, source, texted_am, texted_pm, called_am, called_pm, cv_path, status, interview_date, interview_time, interview_timezone, training_start_date, training_end_date, withdrawn_date, screening_date, notes, interviewer_note, created_by, created_at, updated_at, author:created_by (display_name, username)";
-// Falls back to this if assigned_manager_id doesn't exist yet — i.e.
-// 0248_hr_candidates_assigned_manager.sql hasn't been run against this
+const SELECT = "id, company_id, full_name, phone, email, position, branch, department, branch_manager_id, assigned_interviewer_id, assigned_manager_id, trainer_id, source, texted_am, texted_pm, called_am, called_pm, cv_path, status, interview_date, interview_time, interview_timezone, training_start_date, training_end_date, withdrawn_date, screening_date, document_verified, notes, interviewer_note, created_by, created_at, updated_at, author:created_by (display_name, username)";
+// Falls back to this if document_verified doesn't exist yet — i.e.
+// 0251_hr_candidates_document_check.sql hasn't been run against this
+// database, but 0248_hr_candidates_assigned_manager.sql has.
+const SELECT_V13 = "id, company_id, full_name, phone, email, position, branch, department, branch_manager_id, assigned_interviewer_id, assigned_manager_id, trainer_id, source, texted_am, texted_pm, called_am, called_pm, cv_path, status, interview_date, interview_time, interview_timezone, training_start_date, training_end_date, withdrawn_date, screening_date, notes, interviewer_note, created_by, created_at, updated_at, author:created_by (display_name, username)";
+// Falls back further to this if assigned_manager_id doesn't exist yet —
+// i.e. 0248_hr_candidates_assigned_manager.sql hasn't been run against this
 // database, but 0247_hr_candidates_screening_date.sql has.
 const SELECT_V12 = "id, company_id, full_name, phone, email, position, branch, department, branch_manager_id, assigned_interviewer_id, trainer_id, source, texted_am, texted_pm, called_am, called_pm, cv_path, status, interview_date, interview_time, interview_timezone, training_start_date, training_end_date, withdrawn_date, screening_date, notes, interviewer_note, created_by, created_at, updated_at, author:created_by (display_name, username)";
 // Falls back further to this if screening_date doesn't exist yet — i.e.
@@ -140,6 +145,7 @@ function fromRow(r: any): Candidate {
     trainingEndDate: r.training_end_date ?? null,
     withdrawnDate: r.withdrawn_date ?? null,
     screeningDate: r.screening_date ?? null,
+    documentVerified: r.document_verified ?? false,
     notes: r.notes,
     interviewerNote: r.interviewer_note ?? null,
     createdBy: r.created_by,
@@ -165,6 +171,14 @@ export async function getCandidates(): Promise<Candidate[]> {
       .order("created_at", { ascending: false })
       .range(from, from + CANDIDATES_PAGE_SIZE - 1);
     if (isMissingColumnError(error) && select === SELECT) {
+      select = SELECT_V13;
+      ({ data, error } = await supabase
+        .from("hr_candidates")
+        .select(select)
+        .order("created_at", { ascending: false })
+        .range(from, from + CANDIDATES_PAGE_SIZE - 1));
+    }
+    if (isMissingColumnError(error) && select === SELECT_V13) {
       select = SELECT_V12;
       ({ data, error } = await supabase
         .from("hr_candidates")
@@ -311,6 +325,11 @@ export async function addCandidate(input: {
     source: input.source?.trim() || null,
   };
   let { data, error }: { data: any; error: any } = await supabase.from("hr_candidates").insert(insertPayload).select(SELECT).single();
+  if (isMissingColumnError(error)) {
+    // document_verified (0251) not applied yet — never an Add Candidate
+    // input (set later from the Hiring table), only the RETURNING select did.
+    ({ data, error } = await supabase.from("hr_candidates").insert(insertPayload).select(SELECT_V13).single());
+  }
   if (isMissingColumnError(error)) {
     // assigned_manager_id (0248) not applied yet — never an Add Candidate
     // input (set later from the Hiring table), only the RETURNING select did.
@@ -474,6 +493,12 @@ export async function updateCandidateStatus(
 /** Sets the manual Screening Date — independent of the phone_screening status (no required-date dialog like Interview Date has). See migration 0247. */
 export async function updateCandidateScreeningDate(id: string, date: string): Promise<void> {
   const { error } = await supabase.from("hr_candidates").update({ screening_date: date || null }).eq("id", id);
+  if (error) throw new Error(error.message);
+}
+
+/** Manual check/X toggle on the Hiring table — no detection logic wired up yet, just a plain click-to-flip until HR specifies which document this should verify. See migration 0251. */
+export async function updateCandidateDocumentVerified(id: string, verified: boolean): Promise<void> {
+  const { error } = await supabase.from("hr_candidates").update({ document_verified: verified }).eq("id", id);
   if (error) throw new Error(error.message);
 }
 
