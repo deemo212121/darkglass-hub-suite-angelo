@@ -407,6 +407,9 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
   const [savingHrNoteId, setSavingHrNoteId] = useState<string | null>(null);
   const handleSaveHrStatus = async (profileId: string, noteDate: string, hrNote: string) => {
     const key = `${profileId}|${noteDate}`;
+    // Captured before the save so the activity log can show the actual
+    // transition (e.g. "Absent → Sick"), not just the new value in isolation.
+    const previousHrNote = notes.find((n) => n.profileId === profileId && n.noteDate === noteDate)?.hrNote || "";
     setSavingHrNoteId(key);
     try {
       await upsertAttendanceHrNote(profileId, noteDate, hrNote, myProfileId, companyId);
@@ -423,7 +426,12 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
         targetType: "profile",
         targetId: profileId,
         targetLabel: employee?.display_name || employee?.email || undefined,
-        details: { hrStatus: hrNote || "(cleared)", noteDate },
+        details: {
+          hrStatus: hrNote || "(cleared)",
+          previousHrStatus: previousHrNote || null,
+          note: `${previousHrNote || "Not set"} → ${hrNote || "Cleared"}`,
+          noteDate,
+        },
       });
     } catch (err) {
       alert(`Failed to save HR status: ${err instanceof Error ? err.message : "Unknown error"}`);
