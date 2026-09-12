@@ -254,7 +254,10 @@ export function TechActivityReportModal({
   const avgDailyCompletion = ticketsCompleted / Math.max(1, workingDays);
   const avgDailyMiles = techManual.mileage / Math.max(1, workingDays);
 
-  const rateCellClass = "w-20 bg-slate-800/50 border border-white/10 rounded px-1.5 py-1 text-right text-xs text-white focus:border-blue-500 focus:outline-none disabled:opacity-50";
+  // [appearance:textfield] + the two ::-webkit-*-spin-button rules hide the
+  // native up/down increment/decrement arrows every type="number" input here
+  // otherwise shows — purely cosmetic, doesn't affect typing/blur-to-save.
+  const rateCellClass = "w-20 bg-slate-800/50 border border-white/10 rounded px-1.5 py-1 text-right text-xs text-white focus:border-blue-500 focus:outline-none disabled:opacity-50 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none";
 
   return (
     <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={onClose}>
@@ -478,7 +481,7 @@ export function TechActivityReportModal({
                           placeholder="0"
                           disabled={savingRateKey === "MCA Threshold"}
                           onBlur={(e) => handleRateBlur("MCA Threshold", e.target.value)}
-                          className="w-14 bg-slate-800/50 border border-white/10 rounded px-1.5 py-1 text-right text-xs text-white focus:border-blue-500 focus:outline-none disabled:opacity-50"
+                          className="w-14 bg-slate-800/50 border border-white/10 rounded px-1.5 py-1 text-right text-xs text-white focus:border-blue-500 focus:outline-none disabled:opacity-50 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                         />
                         <span>req.</span>
                       </div>
@@ -572,7 +575,7 @@ export function TechActivityReportModal({
                           placeholder="0"
                           disabled={savingManualKey === `${employee.id}:owIncentivePct`}
                           onBlur={(e) => onManualPayBlur(row, "owIncentivePct", e.target.value)}
-                          className="w-16 bg-slate-800/50 border border-white/10 rounded px-1.5 py-1 text-right text-xs text-white focus:border-blue-500 focus:outline-none disabled:opacity-50"
+                          className="w-16 bg-slate-800/50 border border-white/10 rounded px-1.5 py-1 text-right text-xs text-white focus:border-blue-500 focus:outline-none disabled:opacity-50 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                         />
                         <span className="text-xs text-slate-400">%</span>
                       </div>
