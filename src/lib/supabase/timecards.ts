@@ -259,7 +259,7 @@ export function startOfWeekSunday(dateStr: string): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
-function addDaysISO(dateStr: string, days: number): string {
+export function addDaysISO(dateStr: string, days: number): string {
   const d = new Date(`${dateStr}T00:00:00`);
   d.setDate(d.getDate() + days);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;

@@ -43,8 +43,8 @@ import { getBranchRates, upsertBranchRate, type BranchRate } from "@/lib/supabas
 import { EmployeePayrollDetailModal } from "@/components/EmployeePayrollDetailModal";
 import { getRepairStatuses, type RepairStatus } from "@/lib/supabase/repairStatuses";
 import { TicketColumnFilter } from "@/components/TicketColumnFilter";
-import { getRoleDepartmentBreakdown, normalizeRole, TECHNICIAN_PAY_ROLES, isCsrRestrictedRole } from "@/lib/roleLabels";
-import { calcWorkedHours, getMyProfileSchedule, resolveScheduledNetHours, computeScheduledDutyHours, getAttendanceForRange, startOfWeekSunday, splitRegularOvertimeWeekly, CSR_WEEKLY_OVERTIME_THRESHOLD } from "@/lib/supabase/timecards";
+import { getRoleDepartmentBreakdown, normalizeRole, ROLE_LABELS, TECHNICIAN_PAY_ROLES, isCsrRestrictedRole } from "@/lib/roleLabels";
+import { calcWorkedHours, getMyProfileSchedule, resolveScheduledNetHours, computeScheduledDutyHours, getAttendanceForRange, startOfWeekSunday, splitRegularOvertimeWeekly, addDaysISO, CSR_WEEKLY_OVERTIME_THRESHOLD } from "@/lib/supabase/timecards";
 import { payGraceMinutesFor, applyGraceToCheckIn, roundCheckOutToSchedule } from "@/lib/attendanceGrace";
 import { updatePayrollLineItemExtra, updatePayrollLineItemPaid } from "@/lib/supabase/payslips";
 import { getEmployeeInfoByProfileIds, getCompanyUsers, getTechnicianContactInfoByIds, type EmployeeInfo } from "@/lib/supabase/users";
@@ -69,6 +69,9 @@ import {
   addTechCustomPayItem,
   updateTechCustomPayItem,
   deleteTechCustomPayItem,
+  getTechRedoTickets,
+  getTechOnHoldTickets,
+  buildTechActivityBreakdown,
   type TechRepairRate,
   type TechRepairCount,
   type TechManualPayItem,
@@ -90,8 +93,8 @@ import { useAuth } from "@/lib/auth";
 import { getGmailConnectionStatus, disconnectGmail, sendPayslipEmail, type GmailConnectionStatus, type GmailRegion } from "@/lib/supabase/gmailConnection";
 import { auth as firebaseAuth } from "@/lib/firebase/config";
 import { listTicketPhotos, hasTicketPhotos, type TicketPhoto } from "@/lib/firebase/storage";
-import { captureHtmlToPdfBlob, blobToBase64 } from "@/lib/pdfCapture";
-import { renderPayslipBodyHtml, PAYSLIP_STYLES, formatClockTime, offDaysInRange, ptoDaysInRange, type PayslipDailyRow, type EmployeePayslipData } from "@/lib/payslipTemplate";
+import { captureHtmlToPdfBlob, captureHtmlPagesToPdfBlob, blobToBase64 } from "@/lib/pdfCapture";
+import { renderPayslipBodyHtml, renderTechActivitySummaryPageHtml, PAYSLIP_STYLES, formatClockTime, offDaysInRange, ptoDaysInRange, type PayslipDailyRow, type EmployeePayslipData } from "@/lib/payslipTemplate";
 import { ActivityLogPanel } from "@/components/ActivityLogPanel";
 import { logModuleActivity, getModuleActivityLog, moduleActivityActionLabel, type ModuleActivityLogEntry } from "@/lib/supabase/moduleActivityLog";
 
@@ -2513,19 +2516,37 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     const dailyRows: PayslipDailyRow[] = row.compensationType === "fixed" ? [] : await (async () => {
       const emp = row.employee;
       const graceMinutes = payGraceMinutesFor(emp.country);
-      const attendanceRows = await getAttendanceForRange(emp.id, genStart, genEnd, {
+      const scheduled = {
         requiredCheckIn: emp.requiredCheckIn,
         requiredCheckOut: emp.requiredCheckOut,
         workingHours: emp.workingHours,
         mealMinutes: emp.mealMinutes,
         graceMinutes,
-      });
+      };
+      // Same weekly-reset regular/overtime rule as computeHoursMap /
+      // EmployeePayrollDetailModal's dailyHoursSplitByDate — a flat per-day
+      // 8-hour cap would show a long day as inflated overtime pay even
+      // while the technician is still under the week's total duty hours
+      // (see the payslip report this replaced a naive per-day cap for).
+      // The seed week (before genStart) is fetched only to correctly seed
+      // that weekly carry-over when genStart happens to fall mid-week —
+      // never rendered as its own row.
+      const seedStart = startOfWeekSunday(genStart);
+      const seedEnd = addDaysISO(genStart, -1);
+      const needsSeed = seedStart <= seedEnd;
+      const [attendanceRows, seedRows] = await Promise.all([
+        getAttendanceForRange(emp.id, genStart, genEnd, scheduled),
+        needsSeed ? getAttendanceForRange(emp.id, seedStart, seedEnd, scheduled) : Promise.resolve([]),
+      ]);
+      const split = splitRegularOvertimeWeekly(
+        [...seedRows, ...attendanceRows].map((r) => ({ date: r.date, rawHours: r.hoursWorked })),
+        { requiredCheckIn: emp.requiredCheckIn, requiredCheckOut: emp.requiredCheckOut, workingHours: emp.workingHours, mealMinutes: emp.mealMinutes, offDays: emp.offDays }
+      );
       const rate = row.hourlyRateUSD;
       return attendanceRows
         .filter((r) => r.hoursWorked > 0)
         .map((r) => {
-          const regular = Math.min(r.hoursWorked, 8);
-          const overtime = Math.max(0, r.hoursWorked - 8);
+          const { regular, overtime } = split.get(r.date) ?? { regular: r.hoursWorked, overtime: 0 };
           return {
             date: r.date,
             clockIn: r.clockIn,
@@ -2583,6 +2604,37 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       // Same US/PH split already derived onto SupabaseEmployee.country.
       isUS: row.employee.country !== "PH",
     };
+
+    // Technicians get a real 2nd PDF page — page 1 stays hourly time
+    // tracking only, page 2 is the full Tech Activity Report (see
+    // buildTechActivityBreakdown), which is also where the real Tax/Extra/
+    // Grand Total now live, since Total Payment there (piece-rate + bonus +
+    // hourly combined) is the technician's actual gross for the period, not
+    // page 1's hourly-only figure.
+    if (row.isTechPortion) {
+      const [redoByTech, onHoldByTech, customItems] = await Promise.all([
+        getTechRedoTickets(genStart, genEnd),
+        getTechOnHoldTickets(genStart, genEnd),
+        getTechCustomPayItems(row.employee.id, genStart, genEnd),
+      ]);
+      const nameKey = row.employee.full_name.trim().toLowerCase();
+      const breakdown = buildTechActivityBreakdown(
+        row,
+        techRepairRates,
+        (redoByTech.get(nameKey) ?? []).length,
+        (onHoldByTech.get(nameKey) ?? []).length,
+        customItems
+      );
+      payslipData.hasTechActivityPage = true;
+      const pdfBlob = await captureHtmlPagesToPdfBlob(
+        [
+          renderPayslipBodyHtml(payslipData),
+          renderTechActivitySummaryPageHtml(row.employee.full_name, payslipData.period, row.employee.assigned_branch || "", breakdown, payslipData.isUS, payslipData.extraPay),
+        ],
+        PAYSLIP_STYLES
+      );
+      return blobToBase64(pdfBlob);
+    }
     const pdfBlob = await captureHtmlToPdfBlob(renderPayslipBodyHtml(payslipData), PAYSLIP_STYLES);
     return blobToBase64(pdfBlob);
   };
@@ -2721,6 +2773,15 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // renders as an inline badge in the Name cell, not its own column.
   const payrollColCount = 6 + (effectiveCurrency === "USD" ? 1 : 0) + 5;
 
+  // The Role column/filter uses each person's actual user type (e.g. "Tech
+  // Manager", "CSR Manager", "Branch Manager") rather than employee.roleLabel,
+  // which is the coarse department-tier label (e.g. just "Manager") used for
+  // the Department+Role two-column pairing elsewhere — that tier label
+  // collapses many distinct role codes into one option, so "Tech Manager"
+  // could never be filtered separately from "CSR Manager"/"Claims Manager".
+  const roleTypeLabel = (emp: SupabaseEmployee): string =>
+    ROLE_LABELS[normalizeRole(emp.role)] || emp.roleLabel || "—";
+
   // Excel-autofilter convention (matches TicketColumnFilter/TicketList): a
   // column's own option list reflects every OTHER active filter, so opening
   // Department still shows every department present among rows that already
@@ -2730,7 +2791,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     opts: { excludeDept?: boolean; excludeRole?: boolean; excludeRegHours?: boolean; excludeRate?: boolean }
   ) => {
     if (!opts.excludeDept && departmentFilter.size > 0 && !departmentFilter.has(row.employee.department || "")) return false;
-    if (!opts.excludeRole && roleFilter.size > 0 && !roleFilter.has(row.employee.roleLabel || "")) return false;
+    if (!opts.excludeRole && roleFilter.size > 0 && !roleFilter.has(roleTypeLabel(row.employee))) return false;
     if (!opts.excludeRegHours && regHoursFilter.size > 0 && !regHoursFilter.has(row.hoursWorked.toFixed(1))) return false;
     if (!opts.excludeRate && rateFilter.size > 0 && !rateFilter.has(rateLabel(row))) return false;
     if (employeeSearch && !row.employee.full_name.toLowerCase().includes(employeeSearch.toLowerCase())) return false;
@@ -2741,7 +2802,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     new Set(displayRows.filter((r) => matchesRowFilters(r, { excludeDept: true })).map((r) => r.employee.department || ""))
   );
   const roleOptions = Array.from(
-    new Set(displayRows.filter((r) => matchesRowFilters(r, { excludeRole: true })).map((r) => r.employee.roleLabel || ""))
+    new Set(displayRows.filter((r) => matchesRowFilters(r, { excludeRole: true })).map((r) => roleTypeLabel(r.employee)))
   );
   const regHoursOptions = Array.from(
     new Set(displayRows.filter((r) => matchesRowFilters(r, { excludeRegHours: true })).map((r) => r.hoursWorked.toFixed(1)))
@@ -3833,7 +3894,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                                 {row.employee.department || "—"}
                               </td>
                               <td className="px-4 py-3 text-slate-300">
-                                {row.employee.roleLabel || "—"}
+                                {roleTypeLabel(row.employee)}
                               </td>
                               <td className="px-4 py-3 text-center text-slate-300">
                                 {row.hoursWorked.toFixed(1)}
