@@ -2,6 +2,7 @@ import { Fragment, useEffect, useMemo, useState } from "react";
 import { X, Plus, Pencil, Check, Loader2, ExternalLink, ChevronDown, ChevronRight, Trash2 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { getAttendanceForRange, saveEntry, getProfileIdByFirebaseUid, type AttendanceRow } from "@/lib/supabase/timecards";
+import { getCompanyHolidaysInRange } from "@/lib/supabase/companyHolidays";
 import { getTicketAttendanceForTechnician, slotSortKey, type TicketAttendanceRow } from "@/lib/supabase/technicianWhereabouts";
 import { getCompanyEmployeeRequests } from "@/lib/supabase/employeeRequests";
 import { getVisitDiagnosisByTicketIds } from "@/lib/supabase/tickets";
@@ -78,6 +79,7 @@ const STATUS_LABEL: Record<AttendanceRow["status"], string> = {
   "missing-out": "Missing Clock Out",
   "missing-meal": "Meal Not Taken",
   "day-off": "Rest Day",
+  holiday: "Holiday",
 };
 const STATUS_COLOR: Record<AttendanceRow["status"], string> = {
   present: "text-green-300",
@@ -86,6 +88,7 @@ const STATUS_COLOR: Record<AttendanceRow["status"], string> = {
   "missing-out": "text-yellow-300",
   "missing-meal": "text-orange-300",
   "day-off": "text-slate-400",
+  holiday: "text-purple-300",
 };
 
 export function EmployeePayrollDetailModal({
@@ -172,11 +175,20 @@ export function EmployeePayrollDetailModal({
     setLoading(true);
     setRateEdits({});
     try {
-      const [attRows, hist, myTicketRows] = await Promise.all([
-        getAttendanceForRange(profileId, rangeStart, rangeEnd, { requiredCheckIn, requiredCheckOut, workingHours, mealMinutes, daysOff: offDays, graceMinutes }),
+      const [holidays, hist, myTicketRows] = await Promise.all([
+        getCompanyHolidaysInRange(rangeStart, rangeEnd).catch(() => []),
         getSalaryHistory(profileId),
         getTicketAttendanceForTechnician(employeeName, rangeStart, rangeEnd),
       ]);
+      const attRows = await getAttendanceForRange(profileId, rangeStart, rangeEnd, {
+        requiredCheckIn,
+        requiredCheckOut,
+        workingHours,
+        mealMinutes,
+        daysOff: offDays,
+        graceMinutes,
+        holidayDates: holidays.map((h) => h.date),
+      });
       if (cancelledRef.current) return;
       setAttendance(attRows);
       setHistory(hist);
@@ -765,7 +777,7 @@ export function EmployeePayrollDetailModal({
                     {attendance.map((row) => {
                       const dayIsFixed = entryEffectiveOn(history, row.date)?.compensationType === "fixed";
                       const edit = attendanceEdits[row.date];
-                      const isRestDay = row.status === "day-off";
+                      const isRestDay = row.status === "day-off" || row.status === "holiday";
                       const regularHours = Math.min(row.hoursWorked, REGULAR_HOURS_PER_DAY);
                       const overtimeHours = Math.max(0, row.hoursWorked - REGULAR_HOURS_PER_DAY);
                       const dayRate = rateEffectiveOn(history, row.date);

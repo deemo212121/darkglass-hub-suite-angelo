@@ -1227,3 +1227,19 @@ export async function migrateFirestoreUsersToSupabase(
 
   return { migrated, skipped, failed, details };
 }
+
+/**
+ * Just enough of a profile to preview the "Send Credentials" email
+ * (ReportHRDaily.tsx's Forward Candidate dialog) before actually sending it
+ * — plain profile fields already readable under normal RLS, never the
+ * password/token itself (the default password is a fixed app-wide
+ * constant, not stored per-user; see gmailBridge.ts's send-hiring-credentials).
+ */
+export async function getProfileCredentialsPreview(profileId: string): Promise<{ username: string | null; technicianId: string | null; email: string | null; name: string | null } | null> {
+  const { data, error } = await supabase.from("profiles").select("username, technician_id, email, display_name").eq("id", profileId).single();
+  if (error) {
+    console.error("getProfileCredentialsPreview error:", error.message);
+    return null;
+  }
+  return { username: data.username ?? null, technicianId: data.technician_id ?? null, email: data.email ?? null, name: data.display_name ?? null };
+}

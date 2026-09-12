@@ -18,10 +18,10 @@
  * buttons up top — both pages answer "who's out and why", so they live
  * together now instead of in two different modules.
  */
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
-import { ChevronLeft, Pencil, Check, Loader2, Filter, CalendarDays, ListChecks, ClipboardList, Paperclip } from "lucide-react";
+import { ChevronLeft, Pencil, Check, Loader2, Filter, CalendarDays, ListChecks, ClipboardList, Paperclip, Flag } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { ROLE_LABELS } from "@/lib/roleLabels";
@@ -31,7 +31,9 @@ import { getAttendanceNotes, upsertAttendanceNote, upsertAttendanceHrNote, uploa
 import { getCompanyPtoRequests, type PtoRequestRow } from "@/lib/supabase/pto";
 import { HrCalendarTab } from "@/components/HrCalendarTab";
 import { TicketAttendanceTab } from "@/components/TicketAttendanceTab";
+import { HolidayCalendarTab } from "@/components/HolidayCalendarTab";
 import { AttachmentPreviewModal } from "@/components/AttachmentPreviewModal";
+import { getCompanyHolidaysInRange, type CompanyHolidayRow } from "@/lib/supabase/companyHolidays";
 
 function todayISO(): string {
   return new Date().toISOString().slice(0, 10);
@@ -72,17 +74,19 @@ const HR_STATUS_OPTIONS = [
 ];
 // Resigned/Terminated end employment entirely and Unnoticed flags a no-call/
 // no-show — meaningfully different severity from an ordinary leave type, so
-// they get their own color instead of blending into the rest. Absent is the
-// default for every row on this page (see absentRows above) — plain,
-// unexcused absence, not a leave type, so it also gets its own color rather
-// than blending in with Vacation/Sick/etc. "Present (No Clock-In)" is the
-// opposite correction — HR confirming the person WAS actually there that
-// day, just never clocked in (forgot, bad wifi, manual timecard later,
-// etc.). "Admin" covers a day spent on administrative/office duty rather
-// than their usual clock-in work. Neither is a leave type either, so both
-// are excluded from HR_STATUS_TO_PTO_TYPE the same way Unnoticed/Resigned/
-// Terminated are (see HrCalendarTab.tsx) and never plot on the Time Off
-// Calendar.
+// they get their own color instead of blending into the rest. "Absent" is a
+// deliberate HR call (never assumed/auto-set — see absentRows above, which
+// only lists candidates for review, not confirmed absences), so it also
+// gets its own color rather than blending in with Vacation/Sick/etc.
+// "Present (No Clock-In)" is the opposite correction — HR confirming the
+// person WAS actually there that day, just never clocked in (forgot, bad
+// wifi, manual timecard later, etc.) — the common case for anyone whose
+// attendance isn't tracked by the time clock at all (HR/office/admin
+// roles), who would otherwise show up on this page every workday. "Admin"
+// covers a day spent on administrative/office duty rather than their usual
+// clock-in work. None of these three are a leave type, so all are excluded
+// from HR_STATUS_TO_PTO_TYPE the same way Unnoticed/Resigned/Terminated are
+// (see HrCalendarTab.tsx) and never plot on the Time Off Calendar.
 const HR_STATUS_COLOR: Record<string, string> = {
   Absent: "text-red-300",
   "Present (No Clock-In)": "text-cyan-300",
@@ -111,7 +115,7 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
   // Monitoring already mount (TicketAttendanceTab.tsx takes no props and
   // fetches its own data), added as a third view so HR can check on-site
   // check-ins without leaving this page.
-  const [view, setView] = useState<"list" | "calendar" | "ticketAttendance">("list");
+  const [view, setView] = useState<"list" | "calendar" | "ticketAttendance" | "holidays">("list");
   const [dateFrom, setDateFrom] = useState(todayISO());
   const [dateTo, setDateTo] = useState(todayISO());
   const [search, setSearch] = useState("");
@@ -160,13 +164,15 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
       .catch((err) => console.error("Failed to load PTO requests for Absent List:", err));
   }, []);
 
+  const [holidays, setHolidays] = useState<CompanyHolidayRow[]>([]);
   const load = () => {
     if (dateTo < dateFrom) return; // invalid range mid-edit (e.g. only "From" typed so far) — wait for a valid one
     setLoading(true);
-    Promise.all([getCompanyTimecardEntries(dateFrom, dateTo), getAttendanceNotes(dateFrom, dateTo)])
-      .then(([tc, n]) => {
+    Promise.all([getCompanyTimecardEntries(dateFrom, dateTo), getAttendanceNotes(dateFrom, dateTo), getCompanyHolidaysInRange(dateFrom, dateTo)])
+      .then(([tc, n, hol]) => {
         setEntries(tc);
         setNotes(n);
+        setHolidays(hol);
       })
       .catch((err) => console.error("Failed to load Absent List:", err))
       .finally(() => setLoading(false));
@@ -188,6 +194,12 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
   // absent (it's scheduled and already reviewed), just excluded outright.
   const isOnLeave = (profileId: string, d: string) =>
     ptoRequests.some((r) => r.profileId === profileId && r.status === "approved" && r.startDate <= d && d <= r.endDate);
+
+  // Company Holidays (Holiday Calendar tab) — one shared calendar for
+  // everyone, US and Philippines staff alike (per HR's explicit call —
+  // Philippines follows the same U.S. holiday list rather than its own).
+  const holidayDates = useMemo(() => new Set(holidays.map((h) => h.date)), [holidays]);
+  const isCompanyHoliday = (d: string): boolean => holidayDates.has(d);
 
   // Every date in the selected range, oldest first.
   const rangeDates = useMemo(() => (dateTo >= dateFrom ? enumerateDates(dateFrom, dateTo) : []), [dateFrom, dateTo]);
@@ -228,16 +240,20 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
       for (const p of activeFilteredProfiles) {
         if ((p.off_days ?? []).includes(dow)) continue; // scheduled rest day
         if (isOnLeave(p.id, d)) continue; // approved PTO/leave
+        if (isCompanyHoliday(d)) continue; // company holiday
         if (checkedInSet.has(`${p.id}|${d}`)) continue; // checked in that day
         const entry = noteByKey.get(`${p.id}|${d}`);
         const note = entry?.content || "";
-        // Every row here is, by definition, absent that day — default to
-        // "Absent" instead of leaving it blank. The auto-fill effect below
-        // persists this to attendance_notes.hr_note in the background (so
-        // the Time Off Calendar's hrPlottedByProfile picks it up too); this
-        // default just means the dropdown shows the right value immediately
-        // instead of flashing blank until that write lands.
-        const hrNote = entry?.hrNote || "Absent";
+        // Being on this list (no clock-in on file, not on leave, not a rest
+        // day) does NOT mean the person was actually absent — someone whose
+        // presence just isn't tracked by the time clock (HR/office/admin
+        // roles) would show up here every single workday. So this is left
+        // blank until HR explicitly confirms what actually happened that
+        // day; "Absent" is still a pickable option, it's just no longer
+        // assumed. (A previous version of this page auto-defaulted and
+        // auto-saved "Absent" here — that produced false absences for
+        // exactly that reason and was reverted.)
+        const hrNote = entry?.hrNote || "";
         if (notesColFilter !== "all" && (notesColFilter === "has" ? !note : !!note)) continue;
         if (hrStatusFilter.size > 0 && !hrStatusFilter.has(hrNote)) continue;
         rows.push({ profile: p, date: d, note, hrNote });
@@ -247,72 +263,7 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
       (a, b) => a.date.localeCompare(b.date) || (a.profile.display_name || a.profile.email).localeCompare(b.profile.display_name || b.profile.email)
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rangeDates, activeFilteredProfiles, checkedInSet, noteByKey, notesColFilter, hrStatusFilter, ptoRequests]);
-
-  // Same absence conditions as absentRows above, but WITHOUT the
-  // notesColFilter/hrStatusFilter narrowing — those filter the on-screen
-  // list by the very column this effect exists to auto-fill, so using the
-  // filtered list here would mean rows hidden by an active HR Status filter
-  // never get defaulted.
-  const rawAbsentKeys = useMemo(() => {
-    const keys: { profileId: string; date: string }[] = [];
-    for (const d of rangeDates) {
-      const dow = new Date(d + "T00:00:00").getDay();
-      for (const p of activeFilteredProfiles) {
-        if ((p.off_days ?? []).includes(dow)) continue;
-        if (isOnLeave(p.id, d)) continue;
-        if (checkedInSet.has(`${p.id}|${d}`)) continue;
-        keys.push({ profileId: p.id, date: d });
-      }
-    }
-    return keys;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rangeDates, activeFilteredProfiles, checkedInSet, ptoRequests]);
-
-  // Persists the "Absent" default (see absentRows above) to
-  // attendance_notes.hr_note for every row that has no explicit status yet —
-  // without this, the default is only a display trick and the Time Off
-  // Calendar (which reads hr_note straight from the DB, not this page's
-  // derived state) would never see these absences. No createdBy is stamped
-  // (unlike a manual HR selection) since nobody actually chose this — it's
-  // a system default, and an explicit override still attributes normally
-  // via handleSaveHrStatus.
-  const autoAbsentInFlight = useRef<Set<string>>(new Set());
-  useEffect(() => {
-    if (!companyId || loading) return;
-    for (const { profileId, date } of rawAbsentKeys) {
-      const key = `${profileId}|${date}`;
-      if (noteByKey.get(key)?.hrNote) continue; // already has a real status
-      if (autoAbsentInFlight.current.has(key)) continue;
-      autoAbsentInFlight.current.add(key);
-      upsertAttendanceHrNote(profileId, date, "Absent", null, companyId)
-        .then(() => {
-          setNotes((prev) => {
-            const existing = prev.find((n) => n.profileId === profileId && n.noteDate === date);
-            if (existing) return prev.map((n) => (n.profileId === profileId && n.noteDate === date ? { ...n, hrNote: "Absent" } : n));
-            return [
-              ...prev,
-              {
-                profileId,
-                noteDate: date,
-                content: "",
-                hrNote: "Absent",
-                notifyIndividual: false,
-                notifyTeamLead: false,
-                createdBy: null,
-                attachmentPath: null,
-                attachmentAddedBy: null,
-                attachmentAddedAt: null,
-                attachmentRemovedBy: null,
-                attachmentRemovedAt: null,
-              },
-            ];
-          });
-        })
-        .catch((err) => console.error(`Failed to auto-default HR Status to Absent for ${key}:`, err))
-        .finally(() => autoAbsentInFlight.current.delete(key));
-    }
-  }, [rawAbsentKeys, noteByKey, companyId, loading]);
+  }, [rangeDates, activeFilteredProfiles, checkedInSet, noteByKey, notesColFilter, hrStatusFilter, ptoRequests, holidayDates]);
 
   const onLeaveCount = useMemo(() => {
     let count = 0;
@@ -761,6 +712,13 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
           >
             <ClipboardList className="h-3.5 w-3.5" /> Ticket Attendance
           </button>
+          <button
+            type="button"
+            onClick={() => setView("holidays")}
+            className={`btn text-sm px-3 py-1.5 inline-flex items-center gap-1.5 ${view === "holidays" ? "bg-primary/20 text-primary" : ""}`}
+          >
+            <Flag className="h-3.5 w-3.5" /> Holiday Calendar
+          </button>
         </div>
 
         {view === "calendar" && (
@@ -768,6 +726,8 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
         )}
 
         {view === "ticketAttendance" && <TicketAttendanceTab />}
+
+        {view === "holidays" && <HolidayCalendarTab myProfileId={myProfileId} />}
 
         {view === "list" && (
         <div className="panel">

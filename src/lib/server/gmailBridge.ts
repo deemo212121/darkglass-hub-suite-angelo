@@ -46,7 +46,17 @@ export interface EnvBag {
   firebaseProjectId: string;
   googleClientId: string;
   googleClientSecret: string;
+  /** The app's real public domain — for links sent in emails (e.g. the
+   *  hiring credentials email's login link). Optional: falls back to the
+   *  production domain below rather than failing every action if unset,
+   *  since it's not needed by most of this file's actions. */
+  appUrl: string;
 }
+
+// Fallback when VITE_APP_URL isn't set in this environment — this app's
+// actual production domain, same one src/lib/appUrl.ts's client-side
+// getAppUrl() points at via that env var.
+const DEFAULT_APP_URL = "https://adminhubsolution.com";
 
 export function readEnv(env?: Record<string, string | undefined>): EnvBag | { error: string } {
   const getEnv = (k: string): string | undefined => env?.[k] ?? (typeof process !== "undefined" ? process.env?.[k] : undefined);
@@ -56,13 +66,14 @@ export function readEnv(env?: Record<string, string | undefined>): EnvBag | { er
   const firebaseProjectId = (g.__FIREBASE_PROJECT_ID__ && g.__FIREBASE_PROJECT_ID__ !== "" ? g.__FIREBASE_PROJECT_ID__ : undefined) ?? getEnv("VITE_FIREBASE_PROJECT_ID");
   const googleClientId = getEnv("GOOGLE_DRIVE_CLIENT_ID");
   const googleClientSecret = getEnv("GOOGLE_DRIVE_CLIENT_SECRET");
+  const appUrl = (getEnv("VITE_APP_URL") || DEFAULT_APP_URL).replace(/\/+$/, "");
 
   if (!supabaseUrl) return { error: "Server missing VITE_SUPABASE_URL" };
   if (!supabaseServiceKey) return { error: "Server missing SUPABASE_SERVICE_KEY" };
   if (!firebaseProjectId) return { error: "Server missing VITE_FIREBASE_PROJECT_ID" };
   if (!googleClientId) return { error: "Server missing GOOGLE_DRIVE_CLIENT_ID" };
   if (!googleClientSecret) return { error: "Server missing GOOGLE_DRIVE_CLIENT_SECRET" };
-  return { supabaseUrl, supabaseServiceKey, firebaseProjectId, googleClientId, googleClientSecret };
+  return { supabaseUrl, supabaseServiceKey, firebaseProjectId, googleClientId, googleClientSecret, appUrl };
 }
 
 // "PARTS" isn't a real geographic region — it's the ticket page's Part
@@ -73,8 +84,11 @@ export function readEnv(env?: Record<string, string | undefined>): EnvBag | { er
 // (migration 0217) is the grace-period warning emails slot — see
 // attendanceAlerts.ts, which sends through it directly (not via an
 // action= branch in this file, since that job already runs server-side).
-export type Region = "US" | "PH" | "PARTS" | "IT_1" | "IT_2" | "IT_3" | "ATTENDANCE";
-const VALID_REGIONS = new Set<Region>(["US", "PH", "PARTS", "IT_1", "IT_2", "IT_3", "ATTENDANCE"]);
+// "HR_HIRING" (migration 0249) is the Hiring panel's own connect-only slot —
+// connected ahead of an actual candidate-emailing feature, so there's no
+// send action for it here yet, just connect/disconnect/status.
+export type Region = "US" | "PH" | "PARTS" | "IT_1" | "IT_2" | "IT_3" | "ATTENDANCE" | "HR_HIRING";
+const VALID_REGIONS = new Set<Region>(["US", "PH", "PARTS", "IT_1", "IT_2", "IT_3", "ATTENDANCE", "HR_HIRING"]);
 function parseRegion(value: string | null | undefined): Region | null {
   const upper = String(value ?? "").toUpperCase();
   return VALID_REGIONS.has(upper as Region) ? (upper as Region) : null;
@@ -82,6 +96,14 @@ function parseRegion(value: string | null | undefined): Region | null {
 /** Same rule as AccountingDashboard.tsx's country derivation — assigned_branch === "Philippines" is the only PH signal. */
 function resolveEmployeeRegion(assignedBranch: string | null): Region {
   return assignedBranch === "Philippines" ? "PH" : "US";
+}
+
+/** "John Smith" -> "John.Smith" — same convention ReportHRDaily.tsx's own deriveLoginName uses for the Add User deep-link prefill; kept in sync manually since this file can't import a component. */
+function deriveLoginName(fullName: string): string {
+  const parts = fullName.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "";
+  if (parts.length === 1) return parts[0];
+  return `${parts[0]}.${parts[parts.length - 1]}`;
 }
 
 // email+profile (not just gmail.send) so the connect step can look up and
@@ -113,6 +135,11 @@ const DROPSHIP_SENDER_ROLES = new Set([
 // that page) — sending an IT ticket email is no more sensitive than that.
 const IT_TICKET_SENDER_ROLES = new Set(["IT", "ADMIN", "SUPERADMIN"]);
 
+// Same audience as the Hiring panel itself (HR_ADMIN_ROLES in ReportHRDaily.tsx) —
+// sending a new hire their login credentials is gated no tighter than being
+// able to see the Hiring table at all.
+const HIRING_CREDENTIALS_SENDER_ROLES = new Set(["HR", "ADMIN", "SUPERADMIN"]);
+
 function b64urlEncode(input: string): string {
   return btoa(unescape(encodeURIComponent(input))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
@@ -137,14 +164,14 @@ export async function fetchProfileByFirebaseUid(
 async function fetchProfileById(
   env: EnvBag,
   profileId: string
-): Promise<{ id: string; companyId: string; name: string; email: string; assignedBranch: string | null } | null> {
-  const url = `${env.supabaseUrl}/rest/v1/profiles?select=id,company_id,display_name,username,email,assigned_branch&id=eq.${encodeURIComponent(profileId)}&limit=1`;
+): Promise<{ id: string; companyId: string; name: string; email: string; assignedBranch: string | null; username: string | null; technicianId: string | null } | null> {
+  const url = `${env.supabaseUrl}/rest/v1/profiles?select=id,company_id,display_name,username,email,assigned_branch,technician_id&id=eq.${encodeURIComponent(profileId)}&limit=1`;
   const res = await fetch(url, { headers: { apikey: env.supabaseServiceKey, Authorization: `Bearer ${env.supabaseServiceKey}` } });
   if (!res.ok) throw new Error(`Supabase profile lookup failed (${res.status}): ${await res.text()}`);
-  const rows = (await res.json()) as Array<{ id: string; company_id: string; display_name: string | null; username: string | null; email: string; assigned_branch: string | null }>;
+  const rows = (await res.json()) as Array<{ id: string; company_id: string; display_name: string | null; username: string | null; email: string; assigned_branch: string | null; technician_id: string | null }>;
   const r = rows[0];
   if (!r) return null;
-  return { id: r.id, companyId: r.company_id, name: r.display_name || r.username || r.email, email: r.email, assignedBranch: r.assigned_branch };
+  return { id: r.id, companyId: r.company_id, name: r.display_name || r.username || r.email, email: r.email, assignedBranch: r.assigned_branch, username: r.username, technicianId: r.technician_id };
 }
 
 export async function fetchGmailConnection(env: EnvBag, companyId: string, region: Region): Promise<{ refreshToken: string; connectedEmail: string | null } | null> {
@@ -323,17 +350,19 @@ export async function handleGmailRequest(request: Request, env?: Record<string, 
   // Google's own redirect back to us — registered as this OAuth client's
   // (additional) redirect_uri.
   // Every region's connect button lives on Accounting Dashboard except
-  // ATTENDANCE, whose Settings tab lives on Attendance Monitoring instead —
-  // this is the only thing that decides where the OAuth round-trip lands
-  // the user back.
+  // ATTENDANCE (Attendance Monitoring's Settings tab) and HR_HIRING (the
+  // Hiring tab on hr-dashboard) — this is the only thing that decides
+  // where the OAuth round-trip lands the user back.
   // Builds the redirect via URL/URLSearchParams (not string concatenation)
-  // since ATTENDANCE's return page already carries its own ?tab=settings
-  // query string — naively appending "?gmailConnected=..." after it would
-  // produce an invalid double-"?" URL.
+  // since ATTENDANCE/HR_HIRING's return pages already carry their own
+  // ?tab=... query string — naively appending "?gmailConnected=..." after
+  // it would produce an invalid double-"?" URL.
   const returnUrlFor = (origin: string, region: Region, extraParams: Record<string, string>) => {
-    const path = region === "ATTENDANCE" ? "/m/dashboard/attendance-monitoring" : "/m/dashboard/accounting-dashboard";
+    const path =
+      region === "ATTENDANCE" ? "/m/dashboard/attendance-monitoring" : region === "HR_HIRING" ? "/m/hr/hr-dashboard" : "/m/dashboard/accounting-dashboard";
     const u = new URL(path, origin);
     if (region === "ATTENDANCE") u.searchParams.set("tab", "settings");
+    if (region === "HR_HIRING") u.searchParams.set("tab", "hiring");
     for (const [k, v] of Object.entries(extraParams)) u.searchParams.set(k, v);
     return u.toString();
   };
@@ -634,6 +663,79 @@ export async function handleGmailRequest(request: Request, env?: Record<string, 
       return json({ ok: true, sentTo: to, sentFrom: fromEmail });
     } catch (err) {
       console.error("[gmail] send-it-ticket-email error:", err);
+      return json({ error: err instanceof Error ? err.message : "Send failed" }, 500);
+    }
+  }
+
+  // Hiring panel's "Send Credentials" — emails a just-created employee
+  // their derived login username, the app-wide default password
+  // ("Welcome2024!", same one AdminUserManagementPage.tsx shows when
+  // creating a user — they must change it on first login), and the fixed
+  // company Unique ID ("USIHS") — all 3 are fixed/derived, not read from
+  // the profile's own stored fields (a saved username can be inconsistent
+  // with the Firstname.Lastname login convention; Unique ID is a constant
+  // for every employee, not a per-person value). Always the single fixed
+  // HR_HIRING slot, no per-employee region resolution like send-payslip needs.
+  if (url.searchParams.get("action") === "send-hiring-credentials") {
+    if (request.method !== "POST") return json({ error: "Method not allowed" }, 405);
+    try {
+      const payload = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+      const idToken = typeof payload.idToken === "string" ? payload.idToken : "";
+      const profileId = typeof payload.profileId === "string" ? payload.profileId : "";
+      if (!idToken) return json({ error: "Missing idToken" }, 400);
+      if (!profileId) return json({ error: "Missing profileId" }, 400);
+
+      const claims = await verifyFirebaseToken(idToken, envBag.firebaseProjectId);
+      const caller = await fetchProfileByFirebaseUid(envBag, claims.sub);
+      if (!caller) return json({ error: "Profile not found" }, 403);
+      if (!caller.role || !HIRING_CREDENTIALS_SENDER_ROLES.has(caller.role.toUpperCase())) {
+        return json({ error: "Not authorized to send hiring credential emails" }, 403);
+      }
+
+      const target = await fetchProfileById(envBag, profileId);
+      if (!target || target.companyId !== caller.companyId) return json({ error: "Employee not found" }, 404);
+      if (!target.email) return json({ error: `${target.name} has no email on file` }, 400);
+
+      const connection = await fetchGmailConnection(envBag, caller.companyId, "HR_HIRING");
+      if (!connection) return json({ error: "Gmail is not connected for the Hiring panel yet. Connect it above first." }, 409);
+
+      let accessToken: string;
+      try {
+        accessToken = await refreshAccessToken(envBag, connection.refreshToken);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes("invalid_grant")) {
+          return json({
+            error: `The Hiring Gmail connection has expired or was revoked. Click "Connect Gmail" above to reconnect, then try again.`,
+            reauthRequired: true,
+            region: "HR_HIRING",
+          }, 409);
+        }
+        throw err;
+      }
+      const fromEmail = connection.connectedEmail || "me";
+      const subject = "Your AHS account details";
+      const body = [
+        `Hi ${target.name},`,
+        "",
+        "Here are your account details for AHS:",
+        "",
+        `Username: ${deriveLoginName(target.name)}`,
+        `Default password: Welcome2024!`,
+        `Unique ID: USIHS`,
+        "",
+        `Log in here: ${envBag.appUrl}`,
+        "",
+        "You'll be required to set a new password the first time you log in.",
+        "If anything here looks incorrect, please contact HR.",
+      ]
+        .filter((line): line is string => line !== null)
+        .join("\n");
+      await sendGmailMessage(accessToken, fromEmail, target.email, subject, body);
+
+      return json({ ok: true, sentTo: target.email });
+    } catch (err) {
+      console.error("[gmail] send-hiring-credentials error:", err);
       return json({ error: err instanceof Error ? err.message : "Send failed" }, 500);
     }
   }

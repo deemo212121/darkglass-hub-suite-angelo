@@ -2,10 +2,11 @@ import { useState, useMemo, useEffect, useRef, Fragment } from "react";
 import { createPortal } from "react-dom";
 import { Link, useSearch, useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
-import { ChevronLeft, ChevronDown, ChevronUp, ChevronRight, Plus, Trash2, AlertTriangle, CheckCircle, XCircle, Paperclip, Users, Clock, UserCheck, UserX, UserMinus, Search, Bell, Download, Forward, History, FileText, ClipboardList, Landmark, GripVertical, FileCheck, Link2, Copy, Calendar, Check, Pencil, Filter, Columns3 } from "lucide-react";
+import { ChevronLeft, ChevronDown, ChevronUp, ChevronRight, Plus, Trash2, AlertTriangle, CheckCircle, XCircle, Paperclip, Users, Clock, UserCheck, UserX, UserMinus, Search, Bell, Download, Forward, History, FileText, ClipboardList, Landmark, GripVertical, FileCheck, Link2, Copy, Calendar, Check, Pencil, Filter, Columns3, Mail } from "lucide-react";
 import { useSignaturePad } from "@/hooks/useSignaturePad";
 import { SignaturePadControls } from "@/components/SignaturePad";
 import { StickyHorizontalScrollbar } from "@/components/StickyHorizontalScrollbar";
+import { getGmailConnectionStatus, disconnectGmail, sendHiringCredentialsEmail, type GmailConnectionStatus } from "@/lib/supabase/gmailConnection";
 
 /** Shared shape for a sidebar/header-dropdown nav tab entry — broad enough to structurally match every tabGroups[].tabs literal (they all share this key/label/count/icon shape, just with different literal `key`/`label` string types per group), so renderSidebarTabButton/renderDropdownTabButton can be called with tabs from any group. */
 type NavTabDef = { key: string; label: string; count: number; icon: typeof FileCheck };
@@ -20,9 +21,9 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } fro
 import { LOCATIONS_DATA } from "@/lib/zipCoverage";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
-import { normalizeRole, ROLE_LABELS, isJotformHrRole, getRoleDepartmentBreakdown, BM_AND_UP_ROLES } from "@/lib/roleLabels";
+import { normalizeRole, ROLE_LABELS, isJotformHrRole, getRoleDepartmentBreakdown } from "@/lib/roleLabels";
 import { useAllRoleOptions } from "@/lib/customRoles";
-import { getCompanyUsers, getProfileEmployeeInfo, getEmployeeInfoByProfileIds, saveProfileEmployeeInfo, updateCompanyUser, getMyProfileId, getAccountCreatorsByEmail, type EmployeeInfo } from "@/lib/supabase/users";
+import { getCompanyUsers, getProfileEmployeeInfo, getEmployeeInfoByProfileIds, saveProfileEmployeeInfo, updateCompanyUser, getMyProfileId, getAccountCreatorsByEmail, getProfileCredentialsPreview, type EmployeeInfo } from "@/lib/supabase/users";
 import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
 import { subscribeNotifications, markNotificationRead, deleteNotification, type AppNotification } from "@/lib/firebase/notifications";
 import {
@@ -38,6 +39,7 @@ import {
   updateCandidateNotes,
   updateCandidateInterviewerNote,
   updateCandidateScreeningDate,
+  updateCandidateDocumentVerified,
   updateCandidateFields,
   setCandidateOutreach,
   uploadCandidateCv,
@@ -517,6 +519,7 @@ const HIRING_COLUMNS = [
   { key: "contact", label: "Contact" },
   { key: "outreach", label: "Texted / Called" },
   { key: "cv", label: "CV" },
+  { key: "documentVerified", label: "Plus One" },
   { key: "status", label: "Status" },
   { key: "screeningDate", label: "Screening Date" },
   { key: "interviewDate", label: "Interview Date" },
@@ -1010,6 +1013,88 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     if (tab && (VALID_HR_TABS as readonly string[]).includes(tab)) setActiveTab(tab as typeof activeTab);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // ── Connect Gmail (Hiring panel) — connect-only for now, ahead of an
+  // actual candidate-emailing feature ("we need to send email at some
+  // point so add it first"). Same HR_HIRING region/connect-flow
+  // AccountingDashboard.tsx's US/PH Payroll connection uses, just this
+  // panel's own slot (see gmailConnection.ts's header comment). ──
+  const canConnectHiringGmail = normalizedMyRole === "ADMIN" || normalizedMyRole === "SUPERADMIN";
+  const [hiringGmailStatus, setHiringGmailStatus] = useState<GmailConnectionStatus | null>(null);
+  const [connectingHiringGmail, setConnectingHiringGmail] = useState(false);
+  const [disconnectingHiringGmail, setDisconnectingHiringGmail] = useState(false);
+  const loadHiringGmailStatus = () => {
+    getGmailConnectionStatus("HR_HIRING")
+      .then(setHiringGmailStatus)
+      .catch((err) => console.error("Failed to load Hiring Gmail connection status:", err));
+  };
+  useEffect(() => {
+    loadHiringGmailStatus();
+  }, []);
+  // Google redirects back here with ?gmailConnected=1|0 after the consent
+  // screen (see gmailBridge.ts) — show the result once, then strip the
+  // param so refreshing the page doesn't re-show it.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const result = params.get("gmailConnected");
+    if (result === null) return;
+    setError(result === "1" ? null : "Couldn't connect Gmail — please try again.");
+    if (result === "1") loadHiringGmailStatus();
+    params.delete("gmailConnected");
+    const next = `${window.location.pathname}${params.toString() ? `?${params}` : ""}`;
+    window.history.replaceState(null, "", next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const handleConnectHiringGmail = async () => {
+    setConnectingHiringGmail(true);
+    try {
+      const idToken = await firebaseAuth?.currentUser?.getIdToken(false);
+      if (!idToken) { setError("You need to be logged in to connect Gmail."); return; }
+      // A real navigation (not fetch) — Google's consent screen has to run in the top-level window.
+      window.location.href = `/api/gmail?action=connect&region=HR_HIRING&idToken=${encodeURIComponent(idToken)}`;
+    } finally {
+      setConnectingHiringGmail(false);
+    }
+  };
+  const handleDisconnectHiringGmail = async () => {
+    if (!confirm("Disconnect Gmail from the Hiring panel?")) return;
+    setDisconnectingHiringGmail(true);
+    try {
+      await disconnectGmail("HR_HIRING");
+      loadHiringGmailStatus();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to disconnect Gmail.");
+    } finally {
+      setDisconnectingHiringGmail(false);
+    }
+  };
+
+  // "Send Credentials" — lives inside the Forward Candidate dialog
+  // (alongside forwarding to a manager), shown once the candidate has a
+  // created account. Fetches a live preview (username/Technician ID) so
+  // HR can see the actual email before sending it, rather than a blind
+  // confirm() — see gmailConnection.ts's sendHiringCredentialsEmail and
+  // users.ts's getProfileCredentialsPreview.
+  const [sendingCredentialsId, setSendingCredentialsId] = useState<string | null>(null);
+  const [credentialsPreview, setCredentialsPreview] = useState<{ username: string | null; technicianId: string | null; email: string | null; name: string | null } | null>(null);
+  const [credentialsPreviewLoading, setCredentialsPreviewLoading] = useState(false);
+  const [credentialsSentTo, setCredentialsSentTo] = useState<string | null>(null);
+  const handleSendCredentials = async (profileId: string) => {
+    if (!hiringGmailStatus?.connected) {
+      setError("Connect Gmail above first before sending credentials.");
+      return;
+    }
+    setSendingCredentialsId(profileId);
+    setCredentialsSentTo(null);
+    try {
+      const { sentTo } = await sendHiringCredentialsEmail(profileId);
+      setCredentialsSentTo(sentTo);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to send credentials email.");
+    } finally {
+      setSendingCredentialsId(null);
+    }
+  };
 
   // ── Jotform Submissions (live) — same Firestore notifications/{uid}/items
   // the bell icon reads (kind: "jotform_submission"), just filtered into its
@@ -1633,7 +1718,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // tri-state (All/Has/None). Same pattern Ticket Attendance and Absent
   // List's own header filters already use.
   type HiringTriState = "all" | "has" | "none";
-  type HiringFilterMenuKey = "position" | "branch" | "branchManager" | "assignedInterviewer" | "outreach" | "status" | "cv" | "accountStatus" | "note";
+  type HiringFilterMenuKey = "position" | "branch" | "branchManager" | "assignedInterviewer" | "outreach" | "status" | "cv" | "accountStatus" | "note" | "contact" | "documentVerified" | "screeningDate" | "interviewDate";
   const [hiringFilterMenu, setHiringFilterMenu] = useState<HiringFilterMenuKey | null>(null);
   const [hiringPositionFilter, setHiringPositionFilter] = useState<Set<string>>(new Set());
   const [hiringBranchFilter, setHiringBranchFilter] = useState<Set<string>>(new Set());
@@ -1645,6 +1730,12 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [hiringCvFilter, setHiringCvFilter] = useState<HiringTriState>("all");
   const [hiringAccountStatusFilter, setHiringAccountStatusFilter] = useState<HiringTriState>("all");
   const [hiringNoteFilter, setHiringNoteFilter] = useState<HiringTriState>("all");
+  const [hiringContactFilter, setHiringContactFilter] = useState<HiringTriState>("all");
+  // "has" = ✓ (checked/verified), "none" = ✗ (not verified) — see
+  // documentVerified's own manual check/X toggle in the table body.
+  const [hiringDocumentVerifiedFilter, setHiringDocumentVerifiedFilter] = useState<HiringTriState>("all");
+  const [hiringScreeningDateFilter, setHiringScreeningDateFilter] = useState<HiringTriState>("all");
+  const [hiringInterviewDateFilter, setHiringInterviewDateFilter] = useState<HiringTriState>("all");
 
   // Column visibility (persisted) — Candidate/Actions always show; the rest
   // toggle from the "Columns" button in the toolbar.
@@ -2105,20 +2196,26 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // manager acting as INTERVIEWER, separate from branchManagerId (the
   // branch's actual day-to-day manager) even though it defaults to showing
   // the same person when unset (see assignedManagerNameForCandidate below).
-  // Branch Manager/Senior Branch Manager/Technical Director/Technical
-  // Assistant Director (BM_AND_UP_ROLES), plus Yujung Chris Yong explicitly
-  // by name — not in one of those roles but still needs to be pickable here
-  // per HR's direction.
+  // A curated allowlist, not a role-based filter — HR named these people
+  // specifically ("those only"), not "everyone with a manager/director
+  // role" (which would also pull in people not meant to be pickable here).
+  // Matched by exact name since that's all that's on file for some of them
+  // (e.g. Yujung Chris Yong is role "Admin", not a manager/director role at
+  // all) — two different people can share a name (e.g. two "Matt Simmons"
+  // accounts), and both are intentionally included when that happens.
+  const INTERVIEW_MANAGER_ALLOWLIST = new Set([
+    "yujung chris yong",
+    "matt simmons",
+    "daven hodge",
+    "alexxis henry",
+    "brye'shawn butler",
+    "lashamus dowell",
+    "danny thornton",
+  ]);
   const interviewManagerOptions = useMemo(
     () =>
       employees
-        .filter(
-          (e) =>
-            e.status === "active" &&
-            (BM_AND_UP_ROLES.has(normalizeRole(e.position)) ||
-              e.extraRoles.map(normalizeRole).some((r) => BM_AND_UP_ROLES.has(r)) ||
-              e.name.trim().toLowerCase().includes("yujung"))
-        )
+        .filter((e) => e.status === "active" && INTERVIEW_MANAGER_ALLOWLIST.has(e.name.trim().toLowerCase()))
         .sort((a, b) => a.name.localeCompare(b.name)),
     [employees]
   );
@@ -2141,17 +2238,18 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     null;
   const assignedInterviewerNameForCandidate = (c: Candidate): string | null =>
     (c.assignedInterviewerId && employees.find((e) => e.id === c.assignedInterviewerId)?.name) || null;
-  // Falls back to the branch manager when no override is set — auto-filled
-  // display, but assignedManagerId (once picked) always wins.
+  // No longer auto-falls back to the Branch Manager — HR must explicitly
+  // pick someone (per HR's explicit call to remove the "Auto" behavior).
   const assignedManagerNameForCandidate = (c: Candidate): string | null =>
-    (c.assignedManagerId && employees.find((e) => e.id === c.assignedManagerId)?.name) || branchManagerNameForCandidate(c);
+    (c.assignedManagerId && employees.find((e) => e.id === c.assignedManagerId)?.name) || null;
   const trainerNameForCandidate = (c: Candidate): string | null =>
     (c.trainerId && employees.find((e) => e.id === c.trainerId)?.name) || null;
 
-  // Forward Candidate's recipient prefill — both the Assigned Interviewer
-  // (running this candidate's process) AND the Branch Manager (manual
-  // override, else auto-derived from branch) are pre-selected when either
-  // is on file, since a candidate's forward usually needs to reach both.
+  // Forward Candidate's recipient prefill — ALWAYS both people shown in the
+  // Assigned Interviewer column: the manager acting as interviewer (top
+  // line — assignedManagerId override, else the Branch Manager, else
+  // auto-derived from branch, same resolution assignedManagerNameForCandidate
+  // uses) and the HR interviewer (bottom line, assignedInterviewerId).
   // Deduped in case one person holds both roles. Still just a starting
   // point: recipients can be added/removed freely in the dialog.
   const defaultForwardRecipientsForCandidate = (c: Candidate): { id: string; name: string }[] => {
@@ -2163,9 +2261,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         out.push(e);
       }
     };
-    if (c.assignedInterviewerId) add(employees.find((emp) => emp.id === c.assignedInterviewerId && emp.status === "active"));
-    if (c.branchManagerId) add(employees.find((emp) => emp.id === c.branchManagerId && emp.status === "active"));
+    if (c.assignedManagerId) add(employees.find((emp) => emp.id === c.assignedManagerId && emp.status === "active"));
+    else if (c.branchManagerId) add(employees.find((emp) => emp.id === c.branchManagerId && emp.status === "active"));
     else if (c.branch) add(branchManagerOptions.find((m) => m.branch === c.branch));
+    if (c.assignedInterviewerId) add(employees.find((emp) => emp.id === c.assignedInterviewerId && emp.status === "active"));
     return out;
   };
 
@@ -2242,6 +2341,21 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       result = result.filter((c) => (hiringAccountStatusFilter === "has" ? candidateHasAccount(c) : !candidateHasAccount(c)));
     }
     if (hiringNoteFilter !== "all") result = result.filter((c) => (hiringNoteFilter === "has" ? !!c.notes : !c.notes));
+    if (hiringContactFilter !== "all") {
+      result = result.filter((c) => {
+        const hasContact = !!(c.phone || c.email || c.source);
+        return hiringContactFilter === "has" ? hasContact : !hasContact;
+      });
+    }
+    if (hiringDocumentVerifiedFilter !== "all") {
+      result = result.filter((c) => (hiringDocumentVerifiedFilter === "has" ? c.documentVerified : !c.documentVerified));
+    }
+    if (hiringScreeningDateFilter !== "all") {
+      result = result.filter((c) => (hiringScreeningDateFilter === "has" ? !!c.screeningDate : !c.screeningDate));
+    }
+    if (hiringInterviewDateFilter !== "all") {
+      result = result.filter((c) => (hiringInterviewDateFilter === "has" ? !!c.interviewDate : !c.interviewDate));
+    }
     return result;
   }, [
     visibleCandidates,
@@ -2255,6 +2369,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     hiringCvFilter,
     hiringAccountStatusFilter,
     hiringNoteFilter,
+    hiringContactFilter,
+    hiringDocumentVerifiedFilter,
+    hiringScreeningDateFilter,
+    hiringInterviewDateFilter,
     employeeEmailSet,
   ]);
 
@@ -12071,40 +12189,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       (m) => m.name.toLowerCase().includes(q) || (ROLE_LABELS[normalizeRole(m.position)] ?? m.position).toLowerCase().includes(q)
     );
   }, [branchManagerOptions, branchManagerCellSearch]);
-  // Same typeable-combobox pattern as Branch Manager above, for the
-  // Assigned Interviewer column's own "manager" slot (interviewManagerOptions).
-  const [interviewManagerCellSearch, setInterviewManagerCellSearch] = useState("");
-  const [interviewManagerCellDropdownOpen, setInterviewManagerCellDropdownOpen] = useState(false);
-  const interviewManagerCellInputRef = useRef<HTMLInputElement | null>(null);
-  const [interviewManagerCellPos, setInterviewManagerCellPos] = useState<{ top: number; left: number; width: number } | null>(null);
-  const openInterviewManagerCellDropdown = () => {
-    const rect = interviewManagerCellInputRef.current?.getBoundingClientRect();
-    if (rect) setInterviewManagerCellPos({ top: rect.bottom + 4, left: rect.left, width: rect.width });
-    setInterviewManagerCellDropdownOpen(true);
-  };
-  const filteredInterviewManagerCellOptions = useMemo(() => {
-    const q = interviewManagerCellSearch.trim().toLowerCase();
-    if (!q) return interviewManagerOptions;
-    return interviewManagerOptions.filter(
-      (m) => m.name.toLowerCase().includes(q) || (ROLE_LABELS[normalizeRole(m.position)] ?? m.position).toLowerCase().includes(q)
-    );
-  }, [interviewManagerOptions, interviewManagerCellSearch]);
-  // HR Staff can also be picked here as the interviewing "manager" (a
-  // second, labeled group below Branch Manager and above) — same
-  // hrPersonnelOptions the Assigned Interviewer (HR) field below uses.
-  const filteredInterviewManagerHrOptions = useMemo(() => {
-    const q = interviewManagerCellSearch.trim().toLowerCase();
-    if (!q) return hrPersonnelOptions;
-    return hrPersonnelOptions.filter(
-      (m) => m.name.toLowerCase().includes(q) || (ROLE_LABELS[normalizeRole(m.position)] ?? m.position).toLowerCase().includes(q)
-    );
-  }, [hrPersonnelOptions, interviewManagerCellSearch]);
   const startEditCandidateCell = (c: Candidate, field: CandidateEditField) => {
     setEditingCandidateCell({ id: c.id, field });
     setBranchManagerCellSearch(field === "branchManager" ? branchManagerNameForCandidate(c) || "" : "");
     setBranchManagerCellDropdownOpen(false);
-    setInterviewManagerCellSearch(field === "assignedManager" ? (c.assignedManagerId ? assignedManagerNameForCandidate(c) || "" : "") : "");
-    setInterviewManagerCellDropdownOpen(false);
     // A source matching one of the fixed options (Indeed/ZipRecruiter)
     // reselects that option; anything else on file (including from before
     // this dropdown existed) is treated as a custom "Other" value.
@@ -12185,6 +12273,24 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
 
+  // "Document" column — plain manual check/X toggle for now (see
+  // updateCandidateDocumentVerified's comment); no auto-detection yet.
+  const [savingDocumentVerifiedId, setSavingDocumentVerifiedId] = useState<string | null>(null);
+  const handleToggleDocumentVerified = async (c: Candidate) => {
+    const next = !c.documentVerified;
+    setSavingDocumentVerifiedId(c.id);
+    setCandidates((prev) => prev.map((row) => (row.id === c.id ? { ...row, documentVerified: next } : row)));
+    try {
+      await updateCandidateDocumentVerified(c.id, next);
+      logFieldEditOptimistic(c.id, "documentVerified");
+    } catch (err) {
+      setCandidates((prev) => prev.map((row) => (row.id === c.id ? { ...row, documentVerified: !next } : row)));
+      setError(err instanceof Error ? err.message : "Failed to save.");
+    } finally {
+      setSavingDocumentVerifiedId(null);
+    }
+  };
+
   // ── Forward CV to a manager via the internal messenger ──
   // "Manager" = any role containing "MANAGER" (Branch Manager, Parts
   // Manager, CSR Manager, Technician Manager, etc.) — matches the same
@@ -12220,6 +12326,22 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       .filter((m) => !forwardRecipientIds.has(m.id))
       .filter((m) => !q || m.name.toLowerCase().includes(q) || (ROLE_LABELS[normalizeRole(m.position)] ?? m.position).toLowerCase().includes(q));
   }, [managerRecipients, forwardRecipientSearch, forwardRecipientIds]);
+
+  // Only set once the candidate has a created account — powers the "Send
+  // Credentials" section inside the same Forward Candidate dialog.
+  const forwardDialogProfileId = forwardCvDialog?.email ? profileIdByEmail.get(forwardCvDialog.email.trim().toLowerCase()) : undefined;
+  useEffect(() => {
+    setCredentialsSentTo(null);
+    if (!forwardDialogProfileId) {
+      setCredentialsPreview(null);
+      return;
+    }
+    setCredentialsPreviewLoading(true);
+    getProfileCredentialsPreview(forwardDialogProfileId)
+      .then(setCredentialsPreview)
+      .catch((err) => console.error("Failed to load credentials preview:", err))
+      .finally(() => setCredentialsPreviewLoading(false));
+  }, [forwardDialogProfileId]);
 
   const handleForwardCv = async () => {
     if (!forwardCvDialog || forwardRecipientIds.size === 0 || !uid) return;
@@ -14194,6 +14316,44 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           </button>
         </div>
 
+        {/* Connect Gmail — connect-only for now (no send action yet); lets
+            HR link an account ahead of a candidate-emailing feature. */}
+        <div className="px-4 py-2.5 border-b border-white/10 bg-white/5">
+          <div className="flex items-center gap-2 px-3 py-2 bg-slate-900/50 border border-white/10 rounded-lg text-sm w-fit">
+            <Mail className={`h-4 w-4 shrink-0 ${hiringGmailStatus?.connected ? "text-green-400" : "text-slate-500"}`} />
+            <span className="text-xs text-slate-400 uppercase font-semibold">Hiring Gmail:</span>
+            {hiringGmailStatus?.connected ? (
+              <>
+                <span className="text-slate-200" title={hiringGmailStatus.connectedByName ? `Connected by ${hiringGmailStatus.connectedByName}` : undefined}>
+                  {hiringGmailStatus.connectedAccountName || "Unknown"}
+                  {hiringGmailStatus.connectedEmail && <span className="text-slate-500"> ({hiringGmailStatus.connectedEmail})</span>}
+                </span>
+                {canConnectHiringGmail && (
+                  <button
+                    type="button"
+                    onClick={() => void handleDisconnectHiringGmail()}
+                    disabled={disconnectingHiringGmail}
+                    className="text-red-300 hover:text-red-200 disabled:opacity-40 disabled:no-underline text-xs underline ml-1"
+                  >
+                    {disconnectingHiringGmail ? "Disconnecting…" : "Disconnect"}
+                  </button>
+                )}
+              </>
+            ) : canConnectHiringGmail ? (
+              <button
+                type="button"
+                onClick={() => void handleConnectHiringGmail()}
+                disabled={connectingHiringGmail}
+                className="text-blue-300 hover:text-blue-200 text-xs underline disabled:opacity-50"
+              >
+                {connectingHiringGmail ? "Connecting…" : "Connect Gmail"}
+              </button>
+            ) : (
+              <span className="text-slate-500 text-xs">Not connected — ask an Admin</span>
+            )}
+          </div>
+        </div>
+
         {/* Hiring Filters */}
         <div className="px-4 py-3 border-b border-white/10 bg-white/5">
           <div className="flex flex-wrap items-end gap-3">
@@ -14204,7 +14364,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                 <input value={hiringSearch} onChange={(e) => setHiringSearch(e.target.value)} placeholder="Name, position, or branch…" className="glass-input text-sm py-1.5 pl-8 pr-3 rounded-md w-56" />
               </div>
             </div>
-            {(hiringSearch || hiringStatusFilter.size > 0 || hiringPositionFilter.size > 0 || hiringBranchFilter.size > 0 || hiringBranchManagerFilter.size > 0 || hiringAssignedInterviewerFilter.size > 0 || hiringOutreachFilter.size > 0 || hiringCvFilter !== "all" || hiringAccountStatusFilter !== "all" || hiringNoteFilter !== "all") && (
+            {(hiringSearch || hiringStatusFilter.size > 0 || hiringPositionFilter.size > 0 || hiringBranchFilter.size > 0 || hiringBranchManagerFilter.size > 0 || hiringAssignedInterviewerFilter.size > 0 || hiringOutreachFilter.size > 0 || hiringCvFilter !== "all" || hiringAccountStatusFilter !== "all" || hiringNoteFilter !== "all" || hiringContactFilter !== "all" || hiringDocumentVerifiedFilter !== "all" || hiringScreeningDateFilter !== "all" || hiringInterviewDateFilter !== "all") && (
               <button
                 onClick={() => {
                   setHiringSearch("");
@@ -14217,6 +14377,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                   setHiringCvFilter("all");
                   setHiringAccountStatusFilter("all");
                   setHiringNoteFilter("all");
+                  setHiringContactFilter("all");
+                  setHiringDocumentVerifiedFilter("all");
+                  setHiringScreeningDateFilter("all");
+                  setHiringInterviewDateFilter("all");
                 }}
                 className="btn text-sm px-3 mb-0.5"
               >
@@ -14457,7 +14621,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                     {renderHiringMultiSelectHeader("assignedInterviewer", "Assigned Interviewer", hiringAssignedInterviewerOptions, hiringAssignedInterviewerFilter, setHiringAssignedInterviewerFilter)}
                   </th>
                 )}
-                {isHiringColVisible("contact") && <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Contact</th>}
+                {isHiringColVisible("contact") && (
+                  <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase relative">
+                    {renderHiringTriStateHeader("contact", "Contact", hiringContactFilter, setHiringContactFilter, "Has contact info", "No contact info")}
+                  </th>
+                )}
                 {isHiringColVisible("outreach") && (
                   <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase relative">
                     {renderHiringMultiSelectHeader("outreach", "Texted / Called", [...HIRING_OUTREACH_OPTIONS], hiringOutreachFilter, setHiringOutreachFilter)}
@@ -14468,16 +14636,25 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                     {renderHiringTriStateHeader("cv", "CV", hiringCvFilter, setHiringCvFilter, "Has CV", "No CV")}
                   </th>
                 )}
+                {isHiringColVisible("documentVerified") && (
+                  <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase relative whitespace-nowrap" title="Manual for now — will detect a specific document once HR specifies which one">
+                    {renderHiringTriStateHeader("documentVerified", "Plus One", hiringDocumentVerifiedFilter, setHiringDocumentVerifiedFilter, "✓ Checked", "✗ Not checked")}
+                  </th>
+                )}
                 {isHiringColVisible("status") && (
                   <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase relative">
                     {renderHiringMultiSelectHeader("status", "Status", hiringStatusOptions, hiringStatusFilter, setHiringStatusFilter)}
                   </th>
                 )}
                 {isHiringColVisible("screeningDate") && (
-                  <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase whitespace-nowrap">Screening Date</th>
+                  <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase relative whitespace-nowrap">
+                    {renderHiringTriStateHeader("screeningDate", "Screening Date", hiringScreeningDateFilter, setHiringScreeningDateFilter, "Has date", "No date")}
+                  </th>
                 )}
                 {isHiringColVisible("interviewDate") && (
-                  <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase whitespace-nowrap">Interview Date</th>
+                  <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase relative whitespace-nowrap">
+                    {renderHiringTriStateHeader("interviewDate", "Interview Date", hiringInterviewDateFilter, setHiringInterviewDateFilter, "Has date", "No date")}
+                  </th>
                 )}
                 {isHiringColVisible("accountStatus") && (
                   <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase relative">
@@ -14659,98 +14836,31 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                     {isHiringColVisible("assignedInterviewer") && (
                     <td className="px-4 py-3 text-sm text-slate-200 whitespace-nowrap">
                       <div className="mb-1 pb-1 border-b border-white/5">
+                        <p className="text-[9px] font-semibold uppercase tracking-wide text-muted-foreground/70 mb-0.5">Technical Team Member</p>
                         {editingCandidateCell?.id === c.id && editingCandidateCell.field === "assignedManager" ? (
                           <div className="flex items-center gap-1">
-                            <div className="relative w-40">
-                              <input
-                                ref={interviewManagerCellInputRef}
-                                type="text"
-                                autoFocus
-                                value={interviewManagerCellSearch}
-                                onChange={(e) => {
-                                  setInterviewManagerCellSearch(e.target.value);
-                                  setCandidateFieldDraft({ ...candidateFieldDraft, assignedManagerId: "" });
-                                  openInterviewManagerCellDropdown();
-                                }}
-                                onFocus={openInterviewManagerCellDropdown}
-                                onBlur={() => setTimeout(() => setInterviewManagerCellDropdownOpen(false), 150)}
-                                placeholder="Auto (from Branch)"
-                                className="w-full rounded border border-white/15 bg-slate-800 px-1.5 py-0.5 text-xs text-white"
-                              />
-                              {interviewManagerCellDropdownOpen && interviewManagerCellPos && createPortal(
-                                <div
-                                  style={{ position: "fixed", top: interviewManagerCellPos.top, left: interviewManagerCellPos.left, width: interviewManagerCellPos.width }}
-                                  className="z-50 max-h-48 overflow-y-auto rounded-md border border-white/15 bg-slate-800 shadow-2xl normal-case"
-                                >
-                                  <button
-                                    type="button"
-                                    onMouseDown={(e) => e.preventDefault()}
-                                    onClick={() => {
-                                      setCandidateFieldDraft({ ...candidateFieldDraft, assignedManagerId: "" });
-                                      setInterviewManagerCellSearch("");
-                                      setInterviewManagerCellDropdownOpen(false);
-                                    }}
-                                    className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${!candidateFieldDraft.assignedManagerId ? "bg-blue-500/20 text-blue-300" : ""}`}
-                                  >
-                                    Auto (from Branch)
-                                  </button>
-                                  <p className="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">Branch Manager and above</p>
-                                  {filteredInterviewManagerCellOptions.length === 0 ? (
-                                    <p className="px-3 py-2 text-xs text-muted-foreground">No matching managers.</p>
-                                  ) : (
-                                    filteredInterviewManagerCellOptions.map((m) => (
-                                      <button
-                                        key={m.id}
-                                        type="button"
-                                        onMouseDown={(e) => e.preventDefault()}
-                                        onClick={() => {
-                                          setCandidateFieldDraft({ ...candidateFieldDraft, assignedManagerId: m.id });
-                                          setInterviewManagerCellSearch(m.name);
-                                          setInterviewManagerCellDropdownOpen(false);
-                                        }}
-                                        className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${candidateFieldDraft.assignedManagerId === m.id ? "bg-blue-500/20 text-blue-300" : ""}`}
-                                      >
-                                        {m.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(m.position)] ?? m.position}</span>
-                                      </button>
-                                    ))
-                                  )}
-                                  <div className="border-t border-white/10 mt-1" />
-                                  <p className="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">HR Staff</p>
-                                  {filteredInterviewManagerHrOptions.length === 0 ? (
-                                    <p className="px-3 py-2 text-xs text-muted-foreground">No matching HR staff.</p>
-                                  ) : (
-                                    filteredInterviewManagerHrOptions.map((m) => (
-                                      <button
-                                        key={m.id}
-                                        type="button"
-                                        onMouseDown={(e) => e.preventDefault()}
-                                        onClick={() => {
-                                          setCandidateFieldDraft({ ...candidateFieldDraft, assignedManagerId: m.id });
-                                          setInterviewManagerCellSearch(m.name);
-                                          setInterviewManagerCellDropdownOpen(false);
-                                        }}
-                                        className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${candidateFieldDraft.assignedManagerId === m.id ? "bg-blue-500/20 text-blue-300" : ""}`}
-                                      >
-                                        {m.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(m.position)] ?? m.position}</span>
-                                      </button>
-                                    ))
-                                  )}
-                                </div>,
-                                document.body
-                              )}
-                            </div>
+                            <select
+                              autoFocus
+                              value={candidateFieldDraft.assignedManagerId}
+                              onChange={(e) => setCandidateFieldDraft({ ...candidateFieldDraft, assignedManagerId: e.target.value })}
+                              className="rounded border border-white/15 bg-slate-800 px-1.5 py-0.5 text-xs text-white"
+                            >
+                              <option value="">Unassigned</option>
+                              {interviewManagerOptions.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+                            </select>
                             <button onClick={() => void handleSaveCandidateField(c.id, "assignedManager")} disabled={savingCandidateFieldId === c.id} className="text-emerald-400 hover:text-emerald-300 disabled:opacity-40">
                               <Check className="h-3.5 w-3.5" />
                             </button>
                           </div>
                         ) : (
-                          <button onClick={() => startEditCandidateCell(c, "assignedManager")} className="flex items-center gap-1 text-left hover:text-blue-300" title="Manager acting as interviewer — defaults to the Branch Manager, but changeable">
+                          <button onClick={() => startEditCandidateCell(c, "assignedManager")} className="flex items-center gap-1 text-left hover:text-blue-300" title="Manager acting as interviewer — Branch Manager and above only">
                             {assignedManagerNameForCandidate(c) || <span className="text-muted-foreground">—</span>}
                             <Pencil className="h-2.5 w-2.5 text-muted-foreground shrink-0" />
                           </button>
                         )}
                         {renderFieldChangedBy(c.id, "assignedManager")}
                       </div>
+                      <p className="text-[9px] font-semibold uppercase tracking-wide text-muted-foreground/70 mb-0.5">HR Staff</p>
                       {editingCandidateCell?.id === c.id && editingCandidateCell.field === "assignedInterviewer" ? (
                         <div className="flex items-center gap-1">
                           <select
@@ -14760,19 +14870,14 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                             className="rounded border border-white/15 bg-slate-800 px-1.5 py-0.5 text-xs text-white"
                           >
                             <option value="">Unassigned</option>
-                            <optgroup label="HR">
-                              {hrPersonnelOptions.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
-                            </optgroup>
-                            <optgroup label="Branch Manager">
-                              {assignedInterviewerBranchManagerOptions.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
-                            </optgroup>
+                            {hrPersonnelOptions.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
                           </select>
                           <button onClick={() => void handleSaveCandidateField(c.id, "assignedInterviewer")} disabled={savingCandidateFieldId === c.id} className="text-emerald-400 hover:text-emerald-300 disabled:opacity-40">
                             <Check className="h-3.5 w-3.5" />
                           </button>
                         </div>
                       ) : (
-                        <button onClick={() => startEditCandidateCell(c, "assignedInterviewer")} className="flex items-center gap-1 text-left hover:text-blue-300">
+                        <button onClick={() => startEditCandidateCell(c, "assignedInterviewer")} className="flex items-center gap-1 text-left hover:text-blue-300" title="HR staff only">
                           {assignedInterviewerNameForCandidate(c) || <span className="text-muted-foreground">—</span>}
                           <Pencil className="h-2.5 w-2.5 text-muted-foreground shrink-0" />
                         </button>
@@ -14884,6 +14989,23 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                       {c.cvPath ? (
                         <button onClick={() => handleViewCv(c.cvPath!)} className="text-blue-400 hover:text-blue-300 text-xs underline">View CV</button>
                       ) : <span className="text-muted-foreground text-xs">—</span>}
+                    </td>
+                    )}
+                    {isHiringColVisible("documentVerified") && (
+                    <td className="px-4 py-3 text-center">
+                      <button
+                        type="button"
+                        onClick={() => void handleToggleDocumentVerified(c)}
+                        disabled={savingDocumentVerifiedId === c.id}
+                        title={c.documentVerified ? "Click to mark as not verified" : "Click to mark as verified"}
+                        className="disabled:opacity-40"
+                      >
+                        {c.documentVerified ? (
+                          <CheckCircle className="h-4 w-4 text-green-400" />
+                        ) : (
+                          <XCircle className="h-4 w-4 text-red-400" />
+                        )}
+                      </button>
                     </td>
                     )}
                     {isHiringColVisible("status") && (
@@ -27558,7 +27680,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       {/* Forward candidate details to a manager — sends name/position/branch/contact/status (plus the CV link, if one's on file) via the internal messenger (Team Messenger) */}
       {forwardCvDialog && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-slate-800 border border-white/10 rounded-lg p-6 max-w-sm w-full">
+          <div className="bg-slate-800 border border-white/10 rounded-lg p-6 max-w-md w-full max-h-[85vh] overflow-y-auto">
             <h3 className="text-lg font-bold mb-2">Forward Candidate</h3>
             <p className="text-sm text-muted-foreground mb-4">
               Send <span className="font-semibold text-white">{forwardCvDialog.name}</span>'s details{forwardCvDialog.cvPath ? " and CV" : ""} to one or more managers via the internal messenger.
@@ -27630,6 +27752,54 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                 {forwardSending ? "Sending…" : "Send"}
               </button>
             </div>
+
+            {/* Send Credentials — only once this candidate has a created
+                account (forwardDialogProfileId resolved). Shows the actual
+                email content before sending, instead of a blind confirm(). */}
+            {forwardDialogProfileId && (
+              <div className="mt-5 pt-4 border-t border-white/10">
+                <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Send Login Credentials</label>
+                <p className="text-xs text-muted-foreground mt-1 mb-2">
+                  Email {forwardCvDialog.name} their username, default password, and Unique ID.
+                </p>
+                {credentialsPreviewLoading ? (
+                  <p className="text-xs text-muted-foreground">Loading preview…</p>
+                ) : credentialsPreview ? (
+                  <div className="rounded-md border border-white/10 bg-slate-900/60 p-3 text-xs font-mono space-y-0.5">
+                    <p className="text-muted-foreground font-sans mb-1.5">Subject: Your AHS account details</p>
+                    <p>Hi {credentialsPreview.name || forwardCvDialog.name},</p>
+                    <p>&nbsp;</p>
+                    <p>Here are your account details for AHS:</p>
+                    <p>&nbsp;</p>
+                    <p>Username: <span className="text-slate-200">{deriveLoginName(credentialsPreview.name || forwardCvDialog.name)}</span></p>
+                    <p>Default password: <span className="text-slate-200">Welcome2024!</span></p>
+                    <p>Unique ID: <span className="text-slate-200">USIHS</span></p>
+                    <p>&nbsp;</p>
+                    <p>Log in here: <span className="text-blue-300">{getAppUrl()}</span></p>
+                    <p>&nbsp;</p>
+                    <p className="font-sans text-muted-foreground">Sent to: {credentialsPreview.email || "—"}</p>
+                  </div>
+                ) : (
+                  <p className="text-xs text-red-300">Couldn't load this account's details.</p>
+                )}
+                {!hiringGmailStatus?.connected && (
+                  <p className="text-[11px] text-amber-300 mt-2">Connect Gmail on the Hiring panel first before sending.</p>
+                )}
+                {credentialsSentTo && (
+                  <p className="text-[11px] text-green-300 mt-2">Sent to {credentialsSentTo}.</p>
+                )}
+                <div className="flex justify-end mt-2">
+                  <button
+                    type="button"
+                    onClick={() => void handleSendCredentials(forwardDialogProfileId)}
+                    disabled={!credentialsPreview?.email || sendingCredentialsId === forwardDialogProfileId || !hiringGmailStatus?.connected}
+                    className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+                  >
+                    {sendingCredentialsId === forwardDialogProfileId ? "Sending…" : credentialsSentTo ? "Send Again" : "Send Credentials"}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

@@ -505,8 +505,13 @@ export interface AttendanceRow {
    * "day-off": no punch on a day in the person's off_days (weekend/RDO) —
    * a distinct status from "absent" so it reads as an expected rest day,
    * not a missed shift.
+   * "holiday": no punch on a company holiday (see companyHolidays.ts) —
+   * same idea as "day-off": nobody was expected to clock in, so this
+   * shouldn't read as a missed shift either. If they DID clock in, status
+   * is "present" as normal — a holiday doesn't change pay calculation,
+   * only whether a no-punch day counts as a miss.
    */
-  status: "present" | "absent" | "missing-in" | "missing-out" | "missing-meal" | "day-off";
+  status: "present" | "absent" | "missing-in" | "missing-out" | "missing-meal" | "day-off" | "holiday";
 }
 
 /**
@@ -526,6 +531,8 @@ export async function getAttendanceForRange(
     daysOff?: number[];
     /** Opt-in — omitted/0 means hoursWorked is the literal punch, unchanged from today. Pay-facing callers pass payGraceMinutesFor(...) (see attendanceGrace.ts) so hoursWorked reflects paid hours, not just the raw clock-in. */
     graceMinutes?: number;
+    /** "YYYY-MM-DD" company holiday dates (see companyHolidays.ts) — a no-punch day here reads as "holiday", not "absent", same as daysOff. */
+    holidayDates?: string[];
   } = {}
 ): Promise<AttendanceRow[]> {
   const { data, error } = await supabase
@@ -545,6 +552,7 @@ export async function getAttendanceForRange(
   const start = new Date(startDate + "T00:00:00");
   const end = new Date(endDate + "T00:00:00");
   const daysOff = new Set((scheduled.daysOff ?? []).map((n) => n));
+  const holidayDates = new Set(scheduled.holidayDates ?? []);
   // Same rule as the timecard punch flows (TimeClockMenu.tsx / routes/timecard.tsx):
   // a scheduled shift over 6 hours is meal-eligible. Punching no longer BLOCKS
   // timing out without a meal — this is just where that gets recorded instead.
@@ -557,12 +565,14 @@ export async function getAttendanceForRange(
     const key = `${yyyy}-${mm}-${dd}`;
     const dow = d.getDay();
     const isOffDay = daysOff.has(dow);
+    const isHoliday = holidayDates.has(key);
     const row = byDate.get(key);
     if (!row) {
       // No timecard entry. Future days are skipped entirely (nothing to
-      // report yet). A day off still gets its own row — status "day-off"
-      // instead of "absent" — so it reads as an expected rest day rather
-      // than a gap that looks like missing data, or a missed shift.
+      // report yet). A day off (or company holiday) still gets its own row
+      // — status "day-off"/"holiday" instead of "absent" — so it reads as
+      // an expected rest day rather than a gap that looks like missing
+      // data, or a missed shift.
       const isFuture = key > new Date().toISOString().slice(0, 10);
       if (!isFuture) {
         rows.push({
@@ -572,7 +582,7 @@ export async function getAttendanceForRange(
           mealStart: "",
           mealEnd: "",
           hoursWorked: 0,
-          status: isOffDay ? "day-off" : "absent",
+          status: isOffDay ? "day-off" : isHoliday ? "holiday" : "absent",
         });
       }
       continue;
