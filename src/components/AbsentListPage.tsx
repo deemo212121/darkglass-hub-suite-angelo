@@ -36,6 +36,8 @@ import { AttachmentPreviewModal } from "@/components/AttachmentPreviewModal";
 import { getCompanyHolidaysInRange, type CompanyHolidayRow } from "@/lib/supabase/companyHolidays";
 import { getPendingCorrectionsInRange, type TimecardCorrectionRow } from "@/lib/supabase/timecardCorrections";
 import { PendingItemDetailModal, type PendingItem } from "@/components/PendingItemDetailModal";
+import { ActivityLogPanel } from "@/components/ActivityLogPanel";
+import { logModuleActivity } from "@/lib/supabase/moduleActivityLog";
 
 function todayISO(): string {
   return new Date().toISOString().slice(0, 10);
@@ -385,6 +387,16 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
         ];
       });
       setEditingId(null);
+      const employee = profiles.find((p) => p.id === profileId);
+      void logModuleActivity({
+        module: "attendance-monitoring",
+        actorName: displayName || "HR",
+        action: "attendance_note_saved",
+        targetType: "profile",
+        targetId: profileId,
+        targetLabel: employee?.display_name || employee?.email || undefined,
+        details: { note: content.trim(), noteDate },
+      });
     } catch (err) {
       alert(`Failed to save note: ${err instanceof Error ? err.message : "Unknown error"}`);
     } finally {
@@ -402,6 +414,16 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
         const existing = prev.find((n) => n.profileId === profileId && n.noteDate === noteDate);
         if (existing) return prev.map((n) => (n.profileId === profileId && n.noteDate === noteDate ? { ...n, hrNote, createdBy: myProfileId ?? n.createdBy } : n));
         return [...prev, { profileId, noteDate, content: "", hrNote, notifyIndividual: false, notifyTeamLead: false, createdBy: myProfileId, attachmentPath: null, attachmentAddedBy: null, attachmentAddedAt: null, attachmentRemovedBy: null, attachmentRemovedAt: null }];
+      });
+      const employee = profiles.find((p) => p.id === profileId);
+      void logModuleActivity({
+        module: "attendance-monitoring",
+        actorName: displayName || "HR",
+        action: "hr_status_saved",
+        targetType: "profile",
+        targetId: profileId,
+        targetLabel: employee?.display_name || employee?.email || undefined,
+        details: { hrStatus: hrNote || "(cleared)", noteDate },
       });
     } catch (err) {
       alert(`Failed to save HR status: ${err instanceof Error ? err.message : "Unknown error"}`);
@@ -448,6 +470,16 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
           },
         ];
       });
+      const employee = profiles.find((p) => p.id === profileId);
+      void logModuleActivity({
+        module: "attendance-monitoring",
+        actorName: displayName || "HR",
+        action: "attendance_note_attachment_added",
+        targetType: "profile",
+        targetId: profileId,
+        targetLabel: employee?.display_name || employee?.email || undefined,
+        details: { fileName: file.name, noteDate },
+      });
     } catch (err) {
       alert(`Failed to attach file: ${err instanceof Error ? err.message : "Unknown error"}`);
     } finally {
@@ -469,6 +501,16 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
       setNotes((prev) =>
         prev.map((n) => (n.profileId === profileId && n.noteDate === noteDate ? { ...n, attachmentPath: null, attachmentRemovedBy: myProfileId, attachmentRemovedAt: now } : n))
       );
+      const employee = profiles.find((p) => p.id === profileId);
+      void logModuleActivity({
+        module: "attendance-monitoring",
+        actorName: displayName || "HR",
+        action: "attendance_note_attachment_removed",
+        targetType: "profile",
+        targetId: profileId,
+        targetLabel: employee?.display_name || employee?.email || undefined,
+        details: { noteDate },
+      });
     } catch (err) {
       alert(`Failed to remove attachment: ${err instanceof Error ? err.message : "Unknown error"}`);
     } finally {
@@ -773,6 +815,7 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
           >
             <Flag className="h-3.5 w-3.5" /> Holiday Calendar
           </button>
+          <ActivityLogPanel module="attendance-monitoring" title="Activity Log" />
         </div>
 
         {view === "calendar" && (
