@@ -147,6 +147,27 @@ export async function getCompanyTimecardCorrectionHistory(): Promise<TimecardCor
   return all;
 }
 
+/** Range query for consumers that need to know WHERE a correction is pending
+ * (profileId + date) — mirrors getCompanyHolidaysInRange's shape in
+ * companyHolidays.ts. "pending" here is the trigger-derived overall status:
+ * not yet reviewed, or manager-approved but still awaiting HR/Accounting.
+ * Returns full rows (not just profileId/workDate) so callers that want to
+ * show the actual requested correction (reason, corrected times, per-stage
+ * status) — e.g. a detail popup — don't need a second fetch. */
+export async function getPendingCorrectionsInRange(startDate: string, endDate: string): Promise<TimecardCorrectionRow[]> {
+  const { data, error } = await supabase
+    .from("timecard_corrections")
+    .select(SELECT_COLUMNS)
+    .eq("status", "pending")
+    .gte("work_date", startDate)
+    .lte("work_date", endDate);
+  if (error) {
+    console.error("getPendingCorrectionsInRange error:", error.message);
+    return [];
+  }
+  return (data ?? []).map(mapRow);
+}
+
 /**
  * Can `viewerProfileId` (with `viewerRole`) act on the given approval stage?
  * The manager stage is for the specific resolved direct manager (or anyone

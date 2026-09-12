@@ -46,6 +46,7 @@ import { logModuleActivity } from "@/lib/supabase/moduleActivityLog";
 import { ROLE_LABELS, normalizeRole } from "@/lib/roleLabels";
 import { getAttendanceNotes, uploadAttendanceNoteAttachment, removeAttendanceNoteAttachment, type AttendanceNoteRow } from "@/lib/supabase/attendanceNotes";
 import { getCompanyHolidaysInRange, type CompanyHolidayRow } from "@/lib/supabase/companyHolidays";
+import { getPendingCorrectionsInRange, type TimecardCorrectionRow } from "@/lib/supabase/timecardCorrections";
 import { AttachmentPreviewModal } from "@/components/AttachmentPreviewModal";
 
 export interface CalendarEmployee {
@@ -256,6 +257,24 @@ export function HrCalendarTab({ employees, myProfileId, myDisplayName }: Props) 
   }, [days]);
   const holidayNameByDate = useMemo(() => new Map(companyHolidays.map((h) => [h.date, h.name])), [companyHolidays]);
   const companyHolidayNameFor = (date: string): string | undefined => holidayNameByDate.get(date);
+
+  // Pending Timecard Corrections (Attendance Monitoring's "Corrections" tab)
+  // — someone already flagged a missing/incorrect punch for this day and
+  // it's awaiting manager/HR/Accounting review, so it shouldn't sit there
+  // looking like a plain unexplained absence. Only matters for a cell that
+  // would otherwise render as "Marked Absent" (hrPlotted.type === "absent")
+  // — see the cell logic below — a real formal PTO request or an actual
+  // company holiday still wins outright, and any OTHER HR-plotted leave type
+  // (already explained) is left alone too.
+  const [pendingCorrections, setPendingCorrections] = useState<TimecardCorrectionRow[]>([]);
+  useEffect(() => {
+    if (days.length === 0) return;
+    getPendingCorrectionsInRange(days[0].date, days[days.length - 1].date)
+      .then(setPendingCorrections)
+      .catch((err) => console.error("Failed to load pending timecard corrections:", err));
+  }, [days]);
+  const pendingCorrectionKeys = useMemo(() => new Set(pendingCorrections.map((c) => `${c.profileId}|${c.workDate}`)), [pendingCorrections]);
+  const hasPendingCorrectionFor = (profileId: string, date: string): boolean => pendingCorrectionKeys.has(`${profileId}|${date}`);
 
   // profileId -> Map<date, request> — only requests matching the active
   // type filter are included, so a filtered-out request behaves like an
@@ -795,6 +814,9 @@ export function HrCalendarTab({ employees, myProfileId, myDisplayName }: Props) 
         <span className="flex items-center gap-1.5">
           <span className="h-3 w-3 rounded-sm bg-purple-500/70 inline-block" /> Company Holiday
         </span>
+        <span className="flex items-center gap-1.5">
+          <span className="h-3 w-3 rounded-sm bg-amber-500/70 inline-block" /> Pending Time Correction Request
+        </span>
         <span className="text-slate-600">•</span>
         {PTO_TYPES.map((t) => (
           <span key={t} className="flex items-center gap-1">
@@ -809,6 +831,9 @@ export function HrCalendarTab({ employees, myProfileId, myDisplayName }: Props) 
         </span>
         <span className="flex items-center gap-1">
           <span className="font-bold text-slate-300">HD</span> = Company Holiday
+        </span>
+        <span className="flex items-center gap-1">
+          <span className="font-bold text-slate-300">PC</span> = Pending Time Correction Request
         </span>
       </div>
 
@@ -900,10 +925,22 @@ export function HrCalendarTab({ employees, myProfileId, myDisplayName }: Props) 
                         // holiday, since that's a distinct record someone
                         // deliberately filed.
                         const holidayName = !request ? companyHolidayNameFor(d.date) : undefined;
+                        // Pending Timecard Correction — only relevant for a
+                        // cell that would otherwise read as an unexplained
+                        // "Marked Absent" (or nothing at all): someone
+                        // already flagged this day and it's awaiting review,
+                        // so it shouldn't look like a plain no-show. A real
+                        // formal PTO request or an actual company holiday
+                        // still wins outright (checked above); any OTHER
+                        // HR-plotted leave type is already explained and is
+                        // left alone too.
+                        const hasPendingCorrection =
+                          !request && !holidayName && (!hrPlotted || hrPlotted.type === "absent") && hasPendingCorrectionFor(e.id, d.date);
                         // Scheduled rest day (profiles.off_days) — lowest
                         // priority of all; shown only when nothing else
-                        // (request, HR status, or holiday) applies.
-                        const isRestDay = !color && !holidayName && (e.offDays ?? []).includes(d.dowIndex);
+                        // (request, HR status, holiday, or pending
+                        // correction) applies.
+                        const isRestDay = !color && !holidayName && !hasPendingCorrection && (e.offDays ?? []).includes(d.dowIndex);
                         return (
                           <td
                             key={d.date}
@@ -913,6 +950,8 @@ export function HrCalendarTab({ employees, myProfileId, myDisplayName }: Props) 
                                 ? `${PTO_TYPE_LABELS[request.ptoType]} (${request.status}) — click for details`
                                 : holidayName
                                 ? `Holiday: ${holidayName}`
+                                : hasPendingCorrection
+                                ? "Pending Time Correction Request — awaiting manager/HR/Accounting approval. See the Corrections tab in Attendance Monitoring for details."
                                 : hrPlotted
                                 ? hrPlotted.type === "absent"
                                   ? `Absent — no clock-in, via Absent List${addedByName ? ` (added by ${addedByName})` : ""}. Click to file a leave request instead.`
@@ -928,6 +967,8 @@ export function HrCalendarTab({ employees, myProfileId, myDisplayName }: Props) 
                                 ? "bg-yellow-400/80 text-yellow-950"
                                 : holidayName
                                 ? "bg-purple-500/70 text-purple-950"
+                                : hasPendingCorrection
+                                ? "bg-amber-500/70 text-amber-950"
                                 : color === "hrPlotted"
                                 ? hrPlotted?.type === "absent"
                                   ? "bg-red-500/80 text-red-950"
@@ -939,7 +980,7 @@ export function HrCalendarTab({ employees, myProfileId, myDisplayName }: Props) 
                                 : ""
                             }`}
                           >
-                            {request ? PTO_TYPE_LETTER[request.ptoType] : holidayName ? "HD" : hrPlotted ? plottedTypeLetter(hrPlotted.type) : isRestDay ? "R" : ""}
+                            {request ? PTO_TYPE_LETTER[request.ptoType] : holidayName ? "HD" : hasPendingCorrection ? "PC" : hrPlotted ? plottedTypeLetter(hrPlotted.type) : isRestDay ? "R" : ""}
                           </td>
                         );
                       })}

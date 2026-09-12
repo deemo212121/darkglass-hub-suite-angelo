@@ -510,8 +510,16 @@ export interface AttendanceRow {
    * shouldn't read as a missed shift either. If they DID clock in, status
    * is "present" as normal — a holiday doesn't change pay calculation,
    * only whether a no-punch day counts as a miss.
+   * "pending-correction": there's an unresolved timecard correction
+   * (timecardCorrections.ts) filed for this date — the employee already
+   * flagged the missing/incorrect punch and it's awaiting manager/HR/
+   * Accounting approval, so this shouldn't read as a flat unexplained
+   * "absent"/"missing-*" until that review actually resolves it. Once
+   * approved, the correction upserts the real punch into timecard_entries
+   * and this reverts to "present" on the next fetch; if rejected, the
+   * underlying absent/missing status stands.
    */
-  status: "present" | "absent" | "missing-in" | "missing-out" | "missing-meal" | "day-off" | "holiday";
+  status: "present" | "absent" | "missing-in" | "missing-out" | "missing-meal" | "day-off" | "holiday" | "pending-correction";
 }
 
 /**
@@ -533,6 +541,8 @@ export async function getAttendanceForRange(
     graceMinutes?: number;
     /** "YYYY-MM-DD" company holiday dates (see companyHolidays.ts) — a no-punch day here reads as "holiday", not "absent", same as daysOff. */
     holidayDates?: string[];
+    /** "YYYY-MM-DD" dates with an unresolved timecard correction for this profile (see timecardCorrections.ts) — an absent/missing day here reads as "pending-correction" instead. */
+    pendingCorrectionDates?: string[];
   } = {}
 ): Promise<AttendanceRow[]> {
   const { data, error } = await supabase
@@ -553,6 +563,7 @@ export async function getAttendanceForRange(
   const end = new Date(endDate + "T00:00:00");
   const daysOff = new Set((scheduled.daysOff ?? []).map((n) => n));
   const holidayDates = new Set(scheduled.holidayDates ?? []);
+  const pendingCorrectionDates = new Set(scheduled.pendingCorrectionDates ?? []);
   // Same rule as the timecard punch flows (TimeClockMenu.tsx / routes/timecard.tsx):
   // a scheduled shift over 6 hours is meal-eligible. Punching no longer BLOCKS
   // timing out without a meal — this is just where that gets recorded instead.
@@ -582,7 +593,7 @@ export async function getAttendanceForRange(
           mealStart: "",
           mealEnd: "",
           hoursWorked: 0,
-          status: isOffDay ? "day-off" : isHoliday ? "holiday" : "absent",
+          status: isOffDay ? "day-off" : isHoliday ? "holiday" : pendingCorrectionDates.has(key) ? "pending-correction" : "absent",
         });
       }
       continue;
@@ -598,6 +609,7 @@ export async function getAttendanceForRange(
     if (entry.checkIn && !entry.checkOut) status = "missing-out";
     else if (!entry.checkIn && entry.checkOut) status = "missing-in";
     else if (entry.checkIn && entry.checkOut && mealEligible && !(entry.mealStart && entry.mealEnd)) status = "missing-meal";
+    if (status !== "present" && pendingCorrectionDates.has(key)) status = "pending-correction";
     // hoursWorked reflects PAID hours (grace-adjusted check-in/rounded
     // check-out, when opted in via graceMinutes being explicitly passed —
     // even 0, e.g. Technicians, still gets the clock-precision rounding) —

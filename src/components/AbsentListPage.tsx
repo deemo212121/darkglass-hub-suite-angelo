@@ -34,6 +34,8 @@ import { TicketAttendanceTab } from "@/components/TicketAttendanceTab";
 import { HolidayCalendarTab } from "@/components/HolidayCalendarTab";
 import { AttachmentPreviewModal } from "@/components/AttachmentPreviewModal";
 import { getCompanyHolidaysInRange, type CompanyHolidayRow } from "@/lib/supabase/companyHolidays";
+import { getPendingCorrectionsInRange, type TimecardCorrectionRow } from "@/lib/supabase/timecardCorrections";
+import { PendingItemDetailModal, type PendingItem } from "@/components/PendingItemDetailModal";
 
 function todayISO(): string {
   return new Date().toISOString().slice(0, 10);
@@ -101,12 +103,13 @@ interface AbsentRow {
   date: string;
   note: string;
   hrNote: string;
+  pendingItem: PendingItem | null;
 }
 
 export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
   const navigate = useNavigate();
   const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
-  const { uid, displayName, companyId } = useAuth();
+  const { uid, displayName, companyId, role, extraRoles } = useAuth();
   const [myProfileId, setMyProfileId] = useState<string | null>(null);
   // Time Off Calendar moved in here from HR & Recruitment Dashboard's own
   // sidebar — they're both "who's out and why" tools, so it's a toggle on
@@ -128,13 +131,15 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
   // multi-select (empty set = no restriction), Note is tri-state (All/Has
   // note/No note). Same pattern Ticket Attendance's own header filters use.
   type TriState = "all" | "has" | "none";
-  type FilterMenuKey = "role" | "branch" | "manager" | "notes" | "hrNote";
+  type FilterMenuKey = "name" | "role" | "branch" | "manager" | "notes" | "hrNote" | "correction";
   const [openFilterMenu, setOpenFilterMenu] = useState<FilterMenuKey | null>(null);
+  const [nameFilter, setNameFilter] = useState<Set<string>>(new Set());
   const [roleFilter, setRoleFilter] = useState<Set<string>>(new Set());
   const [branchFilter, setBranchFilter] = useState<Set<string>>(new Set());
   const [managerFilter, setManagerFilter] = useState<Set<string>>(new Set());
   const [notesColFilter, setNotesColFilter] = useState<TriState>("all");
   const [hrStatusFilter, setHrStatusFilter] = useState<Set<string>>(new Set());
+  const [correctionFilter, setCorrectionFilter] = useState<TriState>("all");
 
   useEffect(() => {
     if (!uid) return;
@@ -165,14 +170,21 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
   }, []);
 
   const [holidays, setHolidays] = useState<CompanyHolidayRow[]>([]);
+  const [pendingCorrections, setPendingCorrections] = useState<TimecardCorrectionRow[]>([]);
   const load = () => {
     if (dateTo < dateFrom) return; // invalid range mid-edit (e.g. only "From" typed so far) — wait for a valid one
     setLoading(true);
-    Promise.all([getCompanyTimecardEntries(dateFrom, dateTo), getAttendanceNotes(dateFrom, dateTo), getCompanyHolidaysInRange(dateFrom, dateTo)])
-      .then(([tc, n, hol]) => {
+    Promise.all([
+      getCompanyTimecardEntries(dateFrom, dateTo),
+      getAttendanceNotes(dateFrom, dateTo),
+      getCompanyHolidaysInRange(dateFrom, dateTo),
+      getPendingCorrectionsInRange(dateFrom, dateTo),
+    ])
+      .then(([tc, n, hol, pending]) => {
         setEntries(tc);
         setNotes(n);
         setHolidays(hol);
+        setPendingCorrections(pending);
       })
       .catch((err) => console.error("Failed to load Absent List:", err))
       .finally(() => setLoading(false));
@@ -201,12 +213,34 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
   const holidayDates = useMemo(() => new Set(holidays.map((h) => h.date)), [holidays]);
   const isCompanyHoliday = (d: string): boolean => holidayDates.has(d);
 
+  // Pending Timecard Corrections or PTO requests — someone already filed
+  // something for this day that's awaiting manager/HR/Accounting review, so
+  // this isn't a plain unexplained absence. Unlike holidays/approved leave,
+  // these rows stay on the list (see the Correction column below) rather
+  // than being excluded outright — this page's whole point is HR review, and
+  // a pending request is still an open item worth seeing, just distinctly
+  // marked (and, on click, identified as a correction vs. a PTO request)
+  // from a genuine no-show.
+  const pendingCorrectionByKey = useMemo(() => new Map(pendingCorrections.map((c) => [`${c.profileId}|${c.workDate}`, c])), [pendingCorrections]);
+  const pendingPtoRequests = useMemo(() => ptoRequests.filter((r) => r.status === "pending"), [ptoRequests]);
+  const pendingItemFor = (profileId: string, d: string): PendingItem | null => {
+    const correction = pendingCorrectionByKey.get(`${profileId}|${d}`);
+    if (correction) return { type: "correction", data: correction };
+    const pto = pendingPtoRequests.find((r) => r.profileId === profileId && r.startDate <= d && d <= r.endDate);
+    if (pto) return { type: "pto", data: pto };
+    return null;
+  };
+
   // Every date in the selected range, oldest first.
   const rangeDates = useMemo(() => (dateTo >= dateFrom ? enumerateDates(dateFrom, dateTo) : []), [dateFrom, dateTo]);
 
   // Filter-menu option lists — sourced from the full active roster (not
   // just today's absent rows) so the checklists stay stable regardless of
   // what's currently filtered.
+  const nameOptions = useMemo(
+    () => Array.from(new Set(profiles.filter((p) => p.is_active).map((p) => p.display_name || p.email))).sort(),
+    [profiles]
+  );
   const roleOptions = useMemo(
     () => Array.from(new Set(profiles.filter((p) => p.is_active).map((p) => p.role))).sort((a, b) => (ROLE_LABELS[a] || a).localeCompare(ROLE_LABELS[b] || b)),
     [profiles]
@@ -228,10 +262,11 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
     return profiles
       .filter((p) => p.is_active)
       .filter((p) => !q || (p.display_name || p.email).toLowerCase().includes(q))
+      .filter((p) => nameFilter.size === 0 || nameFilter.has(p.display_name || p.email))
       .filter((p) => roleFilter.size === 0 || roleFilter.has(p.role))
       .filter((p) => branchFilter.size === 0 || (p.assigned_branch && branchFilter.has(p.assigned_branch)))
       .filter((p) => managerFilter.size === 0 || (p.manager_name && managerFilter.has(p.manager_name)));
-  }, [profiles, search, roleFilter, branchFilter, managerFilter]);
+  }, [profiles, search, nameFilter, roleFilter, branchFilter, managerFilter]);
 
   const absentRows: AbsentRow[] = useMemo(() => {
     const rows: AbsentRow[] = [];
@@ -256,14 +291,16 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
         const hrNote = entry?.hrNote || "";
         if (notesColFilter !== "all" && (notesColFilter === "has" ? !note : !!note)) continue;
         if (hrStatusFilter.size > 0 && !hrStatusFilter.has(hrNote)) continue;
-        rows.push({ profile: p, date: d, note, hrNote });
+        const pendingItem = pendingItemFor(p.id, d);
+        if (correctionFilter !== "all" && (correctionFilter === "has" ? !pendingItem : !!pendingItem)) continue;
+        rows.push({ profile: p, date: d, note, hrNote, pendingItem });
       }
     }
     return rows.sort(
       (a, b) => a.date.localeCompare(b.date) || (a.profile.display_name || a.profile.email).localeCompare(b.profile.display_name || b.profile.email)
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rangeDates, activeFilteredProfiles, checkedInSet, noteByKey, notesColFilter, hrStatusFilter, ptoRequests, holidayDates]);
+  }, [rangeDates, activeFilteredProfiles, checkedInSet, noteByKey, notesColFilter, hrStatusFilter, correctionFilter, ptoRequests, holidayDates, pendingCorrectionByKey, pendingPtoRequests]);
 
   const onLeaveCount = useMemo(() => {
     let count = 0;
@@ -416,6 +453,7 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
     }
   };
   const [previewAttachmentUrl, setPreviewAttachmentUrl] = useState<string | null>(null);
+  const [pendingDetailModal, setPendingDetailModal] = useState<{ profileName: string; date: string; item: PendingItem } | null>(null);
   const handleViewAttachment = (attachmentPath: string) => {
     setPreviewAttachmentUrl(attachmentPath);
   };
@@ -539,7 +577,7 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
     </>
   );
 
-  const renderAbsentRow = ({ profile: p, date: rowDate, note, hrNote }: AbsentRow) => {
+  const renderAbsentRow = ({ profile: p, date: rowDate, note, hrNote, pendingItem }: AbsentRow) => {
     const key = `${p.id}|${rowDate}`;
     const isEditing = editingId === key;
     return (
@@ -611,6 +649,20 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
             const addedByName = profiles.find((pr) => pr.id === addedById)?.display_name || profiles.find((pr) => pr.id === addedById)?.email;
             return addedByName ? <p className="mt-1 text-[10px] text-slate-500">Added by: {addedByName}</p> : null;
           })()}
+        </td>
+        <td className="py-2 pr-3">
+          {pendingItem ? (
+            <button
+              type="button"
+              onClick={() => setPendingDetailModal({ profileName: p.display_name || p.email, date: rowDate, item: pendingItem })}
+              className="inline-block rounded px-1.5 py-0.5 text-[11px] font-semibold bg-amber-500/20 text-amber-300 hover:bg-amber-500/30 transition"
+              title={pendingItem.type === "correction" ? "Time correction submitted — click for details" : "PTO request submitted — click for details"}
+            >
+              {pendingItem.type === "correction" ? "Time Correction" : "PTO"}
+            </button>
+          ) : (
+            <span className="text-slate-600">—</span>
+          )}
         </td>
         <td className="py-2">
           <div className="flex items-center gap-1.5">
@@ -792,7 +844,9 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
               <table className="w-full text-sm">
                 <thead>
                   <tr className="text-slate-400 border-b border-white/10 text-left">
-                    <th className="py-2 pr-3">Name</th>
+                    <th className="py-2 pr-3 relative">
+                      {renderMultiSelectFilterHeader("name", "Name", nameOptions, nameFilter, setNameFilter)}
+                    </th>
                     <th className="py-2 pr-3 relative">
                       {renderMultiSelectFilterHeader("role", "Role", roleOptions, roleFilter, setRoleFilter, (v) => ROLE_LABELS[v] || v)}
                     </th>
@@ -807,6 +861,9 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
                     </th>
                     <th className="py-2 pr-3 relative">
                       {renderMultiSelectFilterHeader("hrNote", "HR Status", HR_STATUS_OPTIONS, hrStatusFilter, setHrStatusFilter)}
+                    </th>
+                    <th className="py-2 pr-3 relative">
+                      {renderTriStateFilterHeader("correction", "Request", correctionFilter, setCorrectionFilter, "Pending", "None")}
                     </th>
                     <th className="py-2">Attachment</th>
                   </tr>
@@ -834,6 +891,24 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
       {previewAttachmentUrl && (
         <AttachmentPreviewModal url={previewAttachmentUrl} title="HR Status attachment" onClose={() => setPreviewAttachmentUrl(null)} />
       )}
+      {pendingDetailModal && (
+        <PendingItemDetailModal
+          profileName={pendingDetailModal.profileName}
+          date={pendingDetailModal.date}
+          item={pendingDetailModal.item}
+          profiles={profiles}
+          myProfileId={myProfileId}
+          myRole={role}
+          myExtraRoles={extraRoles}
+          myDisplayName={displayName}
+          onClose={() => setPendingDetailModal(null)}
+          onReviewed={() => {
+            setPendingDetailModal(null);
+            load();
+          }}
+        />
+      )}
     </main>
   );
 }
+
