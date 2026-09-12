@@ -511,7 +511,17 @@ function SubModule() {
 
   // Module/submodule role gate resolution (extra_roles fetch already
   // awaited above, alongside the admin/user-management gates).
-  const moduleAccessOk = !moduleAllowedRoles || roleGrantsQuick || hasDashboardAccess(moduleAllowedRoles, role, extraRoles);
+  // internal-message-support stays exempt here too, not just from the
+  // "admin module" gate above (ALL_ROLES_ADMIN_SUBMODULES) — otherwise a
+  // company configuring ANY role-gate override for it via Accessibility
+  // Management (which doesn't know this submodule is meant to be
+  // unrestrictable) would silently lock most roles out of the company-wide
+  // Team Messenger, defeating the whole point of that carve-out.
+  const moduleAccessOk =
+    !moduleAllowedRoles ||
+    roleGrantsQuick ||
+    (mod.slug === "admin" && ALL_ROLES_ADMIN_SUBMODULES.has(sub.slug)) ||
+    hasDashboardAccess(moduleAllowedRoles, role, extraRoles);
 
   if (moduleAllowedRoles && !moduleAccessOk) {
     const allowedLabels = moduleAllowedRoles.map((r) => ROLE_LABELS[r] || r).join(", ");
