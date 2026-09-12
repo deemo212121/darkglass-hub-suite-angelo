@@ -71,13 +71,16 @@ import {
   deleteTechCustomPayItem,
   getTechRedoTickets,
   getTechOnHoldTickets,
+  getCarryoverRepairCounts,
   buildTechActivityBreakdown,
   type TechRepairRate,
   type TechRepairCount,
+  type TechCarryoverRepairCount,
   type TechManualPayItem,
   type TechCustomPayItem,
   type TechCategoryOverride,
 } from "@/lib/supabase/techPayroll";
+import { markCarryoversConsumed } from "@/lib/supabase/lateTicketCompletions";
 import { TechActivityReportModal } from "@/components/TechActivityReportModal";
 import { getMileageEntries, softDeleteMileageEntry, restoreMileageEntry, syncMileageFromTickets, setMileageEntryPayrollExcluded, reconcileMileageNoPhotoHolds, mileageEffectiveTotal, resetMileageRouteConfirmation, type MileageEntry } from "@/lib/supabase/mileage";
 import { MileageDayRouteModal } from "@/components/MileageDayRouteModal";
@@ -259,6 +262,17 @@ export interface EmployeePayrollRow {
   techCategoryPay: { twoManJob: number; backTub: number; sealedSystem: number; sealedSystemR600: number };
   /** Tech Payroll only — completed (redo-excluded) count per repair_type, every configured category, for the Tech Activity Report modal's full breakdown. */
   techCategoryCounts: Record<string, number>;
+  /**
+   * Tech Payroll only — confirmed late ticket completions (see
+   * late_ticket_completions) not yet paid out, priced at today's rate.
+   * Already folded into ticketsCompleted/grossPay below (so MCA/Completed
+   * Tickets flat-rate treat them like any other completed ticket this
+   * period) — kept here separately, per repair-type + originating period,
+   * purely so TechActivityReportModal.tsx/buildTechActivityBreakdown can
+   * render them as their own "(carried over from ...)" lines instead of
+   * silently merging into this period's own category counts.
+   */
+  techCarryover: TechCarryoverRepairCount[];
   /** Distinct days this employee clocked in during the period — Avg. Comp.'s denominator. */
   workingDays: number;
   /** Tech Payroll only — completed visits this period where this employee was the assisting (2nd) technician. */
@@ -997,6 +1011,14 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   const [timecardCorrections, setTimecardCorrections] = useState<TimecardCorrectionRow[]>([]);
   const [techRepairRates, setTechRepairRates] = useState<TechRepairRate[]>([]);
   const [techRepairCounts, setTechRepairCounts] = useState<TechRepairCount[]>([]);
+  // Confirmed late ticket completions (see late_ticket_completions /
+  // LateTicketCompletionModal.tsx) nobody has been paid for yet — NOT
+  // scoped to genStart/genEnd like techRepairCounts above, since a
+  // carried-over ticket attaches to whichever period gets generated next,
+  // not the period it was originally scheduled in. Refetched on the same
+  // nonce as techCustomPayItemsAll so consuming a batch on Generate Payroll
+  // is reflected immediately.
+  const [carryoverRepairCounts, setCarryoverRepairCounts] = useState<TechCarryoverRepairCount[]>([]);
   // Assigned (not just completed) visit counts, and Finance's manually
   // entered LDT/Mileage/Training values — both for the same genStart/genEnd
   // period as techRepairCounts above. See the effect below.
@@ -1450,6 +1472,21 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     }
   }, [genStart, genEnd]);
 
+  // Not period-scoped (see carryoverRepairCounts' own comment) — loaded once
+  // on mount and re-run after Generate Payroll consumes a batch, so a row
+  // that just got stamped with a carryover_payroll_run_id stops showing up
+  // as still-owed on the very next render.
+  const refreshCarryoverRepairCounts = useCallback(async () => {
+    try {
+      setCarryoverRepairCounts(await getCarryoverRepairCounts());
+    } catch (err) {
+      console.error("Failed to refresh carryover repair counts:", err);
+    }
+  }, []);
+  useEffect(() => {
+    refreshCarryoverRepairCounts();
+  }, [refreshCarryoverRepairCounts]);
+
   useEffect(() => {
     if (!uid) return;
     let cancelled = false;
@@ -1899,6 +1936,27 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       categoryCounts: { ...prev.categoryCounts, [ov.category]: ov.count },
     });
   }
+
+  // Confirmed late ticket completions (see carryoverRepairCounts' own
+  // comment) — priced at today's rate and folded into ticketsCompleted/
+  // grossPay exactly like any other completed ticket this period (so MCA and
+  // the flat Completed Tickets rate see them too), but kept in their own map
+  // (not merged into techGrossByProfile.categoryCounts) so techRow below can
+  // still show them as distinctly-labeled "(carried over)" lines.
+  const techCarryoverByProfile = new Map<string, { count: number; grossPay: number; groups: TechCarryoverRepairCount[] }>();
+  for (const co of carryoverRepairCounts) {
+    const emp = employeeByName.get(co.technician.trim().toLowerCase());
+    if (!emp) continue;
+    const rate = techRateFor(co.repairType, co.branch || emp.assigned_branch || "");
+    const amount = rate * co.count;
+    const prev = techCarryoverByProfile.get(emp.id) ?? { count: 0, grossPay: 0, groups: [] };
+    techCarryoverByProfile.set(emp.id, {
+      count: prev.count + co.count,
+      grossPay: prev.grossPay + amount,
+      groups: [...prev.groups, co],
+    });
+  }
+
   // "Two Tech" isn't part of techGrossByProfile (no repair_type row backs it),
   // so its override is looked up separately wherever twoTechCount/twoTechPay
   // get computed below.
@@ -1977,6 +2035,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
 
     const includeTech = getsTechPortion(emp);
     const tech = includeTech ? techGrossByProfile.get(emp.id) : undefined;
+    const carryover = includeTech ? techCarryoverByProfile.get(emp.id) : undefined;
     const manual = includeTech ? techManualByProfile.get(emp.id) : undefined;
     // "Two Tech" (auto-counted from visits.second_technician) and MCA Bonus
     // (flat bonus for meeting a minimum completed-ticket threshold) are both
@@ -1996,13 +2055,19 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     const manualTotal = (manual?.ldtPay ?? 0) + effectiveMileagePay + (manual?.trainingPay ?? 0);
     const twoTechCountForEmp = twoTechOverrideByProfile.get(emp.id) ?? techSecondCounts.get(emp.full_name.trim().toLowerCase()) ?? 0;
     const twoTechPay = includeTech ? twoTechCountForEmp * techRateFor("Two Tech", techBranch) : 0;
+    // Confirmed late completions count toward MCA/Completed Tickets exactly
+    // like any other completed ticket this period — they ARE completed
+    // tickets, just paid a period late; only their repair-type $ amount
+    // (carryover.grossPay, folded into techGrossPay below) and their own
+    // labeled line items stay visibly separate from this period's own work.
+    const ticketsCompletedForEmp = (tech?.ticketsCompleted ?? 0) + (carryover?.count ?? 0);
     const mcaThreshold = includeTech ? techRateFor("MCA Threshold", techBranch) : 0;
-    const mcaBonus = includeTech && mcaThreshold > 0 && (tech?.ticketsCompleted ?? 0) >= mcaThreshold
+    const mcaBonus = includeTech && mcaThreshold > 0 && ticketsCompletedForEmp >= mcaThreshold
       ? techRateFor("MCA Bonus", techBranch)
       : 0;
     // Flat per-ticket rate paid on every completed (redo-excluded) ticket,
     // on top of that ticket's own repair-type rate already in tech.grossPay.
-    const completedTicketsPay = includeTech ? (tech?.ticketsCompleted ?? 0) * techRateFor("Completed Tickets", techBranch) : 0;
+    const completedTicketsPay = includeTech ? ticketsCompletedForEmp * techRateFor("Completed Tickets", techBranch) : 0;
     const customPay = includeTech ? techCustomTotalByProfile.get(emp.id) ?? 0 : 0;
     // Technicians are piece-rate by default, but can now ALSO earn hourly
     // pay on top of it once Finance sets a rate for them (same
@@ -2023,7 +2088,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     // for them) can still have real pay owed via manual LDT/Mileage/
     // Training, a custom line, or an approved Payroll Dispute; the old
     // `tech ? ... : 0` gate silently dropped all of that to $0 for them.
-    const techGrossPay = includeTech ? (tech?.grossPay ?? 0) + manualTotal + twoTechPay + mcaBonus + completedTicketsPay + customPay + techHourlyPay : 0;
+    const techGrossPay = includeTech ? (tech?.grossPay ?? 0) + (carryover?.grossPay ?? 0) + manualTotal + twoTechPay + mcaBonus + completedTicketsPay + customPay + techHourlyPay : 0;
 
     const techRow: EmployeePayrollRow | null =
       includeTech && (isTechRole(emp) || techGrossPay > 0)
@@ -2035,7 +2100,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
             annualSalary,
             hoursWorked: hours.regular,
             overtimeHours: hours.overtime,
-            ticketsCompleted: tech?.ticketsCompleted ?? 0,
+            ticketsCompleted: ticketsCompletedForEmp,
             ticketsAssigned: techAssignedCounts.get(emp.full_name.trim().toLowerCase()) ?? 0,
             techCategoryPay: {
               twoManJob: tech?.twoManJob ?? 0,
@@ -2044,6 +2109,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
               sealedSystemR600: tech?.sealedSystemR600 ?? 0,
             },
             techCategoryCounts: tech?.categoryCounts ?? {},
+            techCarryover: carryover?.groups ?? [],
             workingDays,
             twoTechCount: twoTechCountForEmp,
             techManual: {
@@ -2082,6 +2148,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       ticketsAssigned: 0,
       techCategoryPay: { twoManJob: 0, backTub: 0, sealedSystem: 0, sealedSystemR600: 0 },
       techCategoryCounts: {},
+      techCarryover: [],
       workingDays,
       twoTechCount: 0,
       techManual: { ldtCount: 0, ldtPay: 0, mileage: 0, mileagePay: 0, trainingValue: 0, trainingPay: 0, owIncentivePct: 0 },
@@ -2369,6 +2436,18 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       const { error: lineErr } = await supabase.from("payroll_line_items").insert(lineItems);
       if (lineErr) throw new Error(lineErr.message);
 
+      // Every carried-over late ticket completion just paid out as part of
+      // this run — stamp it consumed so it's never picked up by a future
+      // run's carryoverRepairCounts fetch. Not gated on nationHasExistingLineItems:
+      // a regenerate re-pays the same technicians, so re-stamping (already
+      // consumed) is a harmless no-op.
+      const consumedCarryoverIds = nationIncludedPayrollRows.flatMap((r) => r.techCarryover.flatMap((c) => c.lateTicketCompletionIds));
+      if (consumedCarryoverIds.length > 0) {
+        markCarryoversConsumed(consumedCarryoverIds, runId)
+          .then(refreshCarryoverRepairCounts)
+          .catch((err) => console.error("Failed to mark carryovers consumed:", err));
+      }
+
       const nationTotalUSD = nationIncludedPayrollRows.reduce((s, r) => s + r.grossPayUSD, 0);
       const nationLabel = effectiveCurrency === "USD" ? "US" : "PH";
 
@@ -2623,7 +2702,8 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         techRepairRates,
         (redoByTech.get(nameKey) ?? []).length,
         (onHoldByTech.get(nameKey) ?? []).length,
-        customItems
+        customItems,
+        row.techCarryover
       );
       payslipData.hasTechActivityPage = true;
       const pdfBlob = await captureHtmlPagesToPdfBlob(

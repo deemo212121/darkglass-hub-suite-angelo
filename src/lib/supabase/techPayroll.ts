@@ -324,6 +324,87 @@ export async function getTechCompletedRepairCounts(
   return Array.from(counts.values());
 }
 
+/**
+ * A repair-type group of confirmed, not-yet-paid late ticket completions
+ * (see late_ticket_completions / lateTicketCompletions.ts) for one
+ * technician — a ticket whose status only reached CL-Claimed/CL-Completed
+ * after the week it was scheduled in had already ended, and that Claims has
+ * since confirmed. Sibling to TechRepairCount, kept separate (not merged
+ * into getTechCompletedRepairCounts' result) so a payroll consumer can price
+ * these at the CURRENT repair-type rate while still showing "(carried over
+ * from <period>)" wherever they're displayed — see buildTechActivityBreakdown
+ * and TechActivityReportModal.tsx, both of which render these as their own
+ * distinctly-labeled lines rather than folding them into a category's normal
+ * count. Not scoped to any date range — this always returns every
+ * confirmed-but-unpaid row company-wide, however old, since a carried-over
+ * ticket only ever gets consumed once (markCarryoversConsumed) the next time
+ * ANY payroll run is generated for that technician.
+ */
+export interface TechCarryoverRepairCount extends TechRepairCount {
+  periodStart: string;
+  periodEnd: string;
+  /** late_ticket_completions row ids rolled into this group — pass to markCarryoversConsumed once a run actually pays them. */
+  lateTicketCompletionIds: string[];
+}
+
+export async function getCarryoverRepairCounts(): Promise<TechCarryoverRepairCount[]> {
+  const { data: rows, error } = await supabase
+    .from("late_ticket_completions")
+    .select("id, ticket_id, technician_name, period_start, period_end")
+    .eq("status", "confirmed")
+    .is("carryover_payroll_run_id", null);
+  if (error) {
+    console.error("getCarryoverRepairCounts error:", error.message);
+    return [];
+  }
+  const carryovers = (rows ?? []).filter((r: any) => String(r.technician_name || "").trim());
+  if (carryovers.length === 0) return [];
+
+  const ticketIds = carryovers.map((r: any) => r.ticket_id);
+  const [{ data: ticketRows, error: tErr }, { data: visitRows, error: vErr }, { data: excludedRows, error: exErr }] = await Promise.all([
+    supabase.from("tickets").select("id, location, redo").in("id", ticketIds),
+    supabase.from("visits").select("ticket_id, repair_type, created_at").in("ticket_id", ticketIds),
+    supabase.from("mileage_entries").select("ticket_id").eq("payroll_excluded", true).in("ticket_id", ticketIds),
+  ]);
+  if (tErr) console.error("getCarryoverRepairCounts (tickets) error:", tErr.message);
+  if (vErr) console.error("getCarryoverRepairCounts (visits) error:", vErr.message);
+  if (exErr) console.error("getCarryoverRepairCounts (exclusions) error:", exErr.message);
+
+  const ticketById = new Map((ticketRows ?? []).map((t: any) => [t.id, t]));
+  const latestRepairTypeByTicketId = new Map<string, string>();
+  const latestCreatedAtByTicketId = new Map<string, string>();
+  for (const v of (visitRows ?? []) as any[]) {
+    const prevCreatedAt = latestCreatedAtByTicketId.get(v.ticket_id);
+    if (!prevCreatedAt || v.created_at > prevCreatedAt) {
+      latestCreatedAtByTicketId.set(v.ticket_id, v.created_at);
+      latestRepairTypeByTicketId.set(v.ticket_id, String(v.repair_type || "").trim());
+    }
+  }
+  const excludedTicketIds = new Set((excludedRows ?? []).map((r: any) => r.ticket_id));
+
+  const counts = new Map<string, TechCarryoverRepairCount>();
+  for (const row of carryovers as any[]) {
+    const ticket = ticketById.get(row.ticket_id);
+    if (!ticket || ticket.redo || excludedTicketIds.has(row.ticket_id)) continue;
+    const technician = String(row.technician_name).trim();
+    const repairType = latestRepairTypeByTicketId.get(row.ticket_id) || DEFAULT_REPAIR_TYPE;
+    const branch = ticket.location || "";
+    const key = `${technician.toLowerCase()}|${repairType}|${branch}|${row.period_start}|${row.period_end}`;
+    const prev = counts.get(key);
+    if (prev) {
+      prev.count += 1;
+      prev.lateTicketCompletionIds.push(row.id);
+    } else {
+      counts.set(key, {
+        technician, repairType, branch, count: 1,
+        periodStart: row.period_start, periodEnd: row.period_end,
+        lateTicketCompletionIds: [row.id],
+      });
+    }
+  }
+  return Array.from(counts.values());
+}
+
 /** One ticket a technician's completion was excluded for — Tech Activity Report's Redo / On Hold lists. */
 export interface TechRedoTicket {
   ticketId: string;
@@ -1065,7 +1146,8 @@ export function buildTechActivityBreakdown(
   techRepairRates: TechRepairRate[],
   redoCount: number,
   onHoldCount: number,
-  customItems: TechCustomPayItem[]
+  customItems: TechCustomPayItem[],
+  carryover: TechCarryoverRepairCount[] = []
 ): TechActivityBreakdown {
   const branch = row.employee.assigned_branch || "";
   const rateFor = (category: string) => techRateFor(techRepairRates, category, branch);
@@ -1108,6 +1190,18 @@ export function buildTechActivityBreakdown(
     lineItems.push({ label: type, value: String(count), rate, payment: count * rate });
   }
 
+  // Confirmed late completions (see late_ticket_completions) not yet folded
+  // into any payroll run — priced at today's rate for their repair type,
+  // shown as their own line (never merged into the REPAIR_TYPES rows above)
+  // so it's always visible that these came from an earlier, already-closed
+  // period rather than this one's own work.
+  const carryoverTotal = carryover.reduce((s, co) => s + co.count * rateFor(co.repairType), 0);
+  for (const co of carryover) {
+    const rate = rateFor(co.repairType);
+    const label = `${co.repairType === DEFAULT_REPAIR_TYPE ? "Completed Ticket" : co.repairType} (carried over from ${co.periodStart} – ${co.periodEnd})`;
+    lineItems.push({ label, value: String(co.count), rate, payment: co.count * rate });
+  }
+
   const twoTechRate = rateFor("Two Tech");
   const twoTechPayment = row.twoTechCount * twoTechRate;
   lineItems.push({ label: "Two Tech", value: String(row.twoTechCount), rate: twoTechRate, payment: twoTechPayment });
@@ -1132,7 +1226,7 @@ export function buildTechActivityBreakdown(
   const subtotal =
     REPAIR_TYPES.reduce((s, type) => s + (row.techCategoryCounts[type] ?? 0) * rateFor(type), 0) +
     row.techManual.ldtPay + row.techManual.mileagePay + row.techManual.trainingPay +
-    twoTechPayment + mcaPayment + completedTicketsPayment + redoReductionPayment + customLinesTotal + row.techHourlyPay;
+    twoTechPayment + mcaPayment + completedTicketsPayment + redoReductionPayment + customLinesTotal + carryoverTotal + row.techHourlyPay;
   const owIncentivePay = (row.techManual.owIncentivePct / 100) * subtotal;
   lineItems.push({ label: "OW Incentive", value: `${row.techManual.owIncentivePct}%`, rate: null, payment: owIncentivePay, paymentDisplay: row.techManual.owIncentivePct > 0 ? undefined : "—" });
 
