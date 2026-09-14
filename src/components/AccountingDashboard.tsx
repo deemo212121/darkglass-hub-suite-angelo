@@ -43,8 +43,8 @@ import { getBranchRates, upsertBranchRate, type BranchRate } from "@/lib/supabas
 import { EmployeePayrollDetailModal } from "@/components/EmployeePayrollDetailModal";
 import { getRepairStatuses, type RepairStatus } from "@/lib/supabase/repairStatuses";
 import { TicketColumnFilter } from "@/components/TicketColumnFilter";
-import { getRoleDepartmentBreakdown, normalizeRole, ROLE_LABELS, TECHNICIAN_PAY_ROLES } from "@/lib/roleLabels";
-import { calcWorkedHours, getMyProfileSchedule, resolveScheduledNetHours, computeScheduledDutyHours, getAttendanceForRange, startOfWeekSunday, splitRegularOvertimeWeekly, addDaysISO } from "@/lib/supabase/timecards";
+import { getRoleDepartmentBreakdown, normalizeRole, ROLE_LABELS, TECHNICIAN_PAY_ROLES, isCsrRestrictedRole } from "@/lib/roleLabels";
+import { calcWorkedHours, getMyProfileSchedule, resolveScheduledNetHours, computeScheduledDutyHours, getAttendanceForRange, startOfWeekSunday, splitRegularOvertimeWeekly, addDaysISO, CSR_WEEKLY_OVERTIME_THRESHOLD } from "@/lib/supabase/timecards";
 import { payGraceMinutesFor, applyGraceToCheckIn, roundCheckOutToSchedule } from "@/lib/attendanceGrace";
 import { updatePayrollLineItemExtra, updatePayrollLineItemPaid } from "@/lib/supabase/payslips";
 import { getEmployeeInfoByProfileIds, getCompanyUsers, getTechnicianContactInfoByIds, type EmployeeInfo } from "@/lib/supabase/users";
@@ -436,20 +436,30 @@ function computeHoursMap(
   // another week the way a single flat period-wide cap used to (see the
   // user reports this fix was made for).
   for (const [key, byDate] of rawByEmployeeDate) {
-    const duty = dutyHoursByEmployeeId.get(key) ?? 0;
+    const emp = employeeById.get(key);
+    // CSR shift start/end times vary person to person and aren't reliably
+    // captured in requiredCheckIn/requiredCheckOut, so the scheduled-duty-
+    // hours cap doesn't apply cleanly to them — they use a flat 40 hrs/week
+    // (standard FLSA overtime) instead. See CSR_WEEKLY_OVERTIME_THRESHOLD.
+    const isCsr = isCsrRestrictedRole(emp?.role, emp?.extraRoles);
+    const duty = isCsr ? CSR_WEEKLY_OVERTIME_THRESHOLD : dutyHoursByEmployeeId.get(key) ?? 0;
     if (duty <= 0) {
       hoursMap.set(key, legacyDailyCapByEmployee.get(key) ?? { regular: 0, overtime: 0 });
       continue;
     }
-    const emp = employeeById.get(key);
     const days = [...byDate.entries()].map(([date, rawHours]) => ({ date, rawHours }));
-    const split = splitRegularOvertimeWeekly(days, {
-      requiredCheckIn: emp?.requiredCheckIn,
-      requiredCheckOut: emp?.requiredCheckOut,
-      workingHours: emp?.workingHours,
-      mealMinutes: emp?.mealMinutes,
-      offDays: emp?.offDays,
-    });
+    const split = splitRegularOvertimeWeekly(
+      days,
+      {
+        requiredCheckIn: emp?.requiredCheckIn,
+        requiredCheckOut: emp?.requiredCheckOut,
+        workingHours: emp?.workingHours,
+        mealMinutes: emp?.mealMinutes,
+        offDays: emp?.offDays,
+      },
+      8,
+      isCsr ? CSR_WEEKLY_OVERTIME_THRESHOLD : undefined
+    );
     let regular = 0;
     let overtime = 0;
     for (const [date, hrs] of split) {
@@ -2014,6 +2024,12 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     const hourlyRate = isFixed ? 0 : comp?.hourly_rate ?? emp.hourly_rate ?? 0;
     const annualSalary = isFixed ? comp?.annual_salary ?? 0 : null;
     const hours = hoursMap.get(emp.id) ?? { regular: 0, overtime: 0 };
+    // NOTE: for CSR, computeHoursMap above already splits regular/overtime
+    // against a flat 40 hrs/WEEK (not this schedule-derived, whole-period
+    // number) — see its own isCsrRestrictedRole check. This dutyHours value
+    // stays schedule-derived (and 0 for CSR with no configured schedule)
+    // since it's an informational whole-period total, not safe to just
+    // multiply the weekly 40 out by week count here.
     const dutyHours = dutyHoursByEmployeeId.get(emp.id) ?? 0;
     const workingDays = workingDaysCountByProfile.get(emp.id) ?? 0;
 
@@ -5262,6 +5278,8 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
           profileId={detailEmployee.id}
           employeeName={detailEmployee.full_name}
           department={detailEmployee.department ?? undefined}
+          role={detailEmployee.role}
+          extraRoles={detailEmployee.extraRoles}
           requiredCheckIn={detailEmployee.requiredCheckIn}
           requiredCheckOut={detailEmployee.requiredCheckOut}
           workingHours={detailEmployee.workingHours}

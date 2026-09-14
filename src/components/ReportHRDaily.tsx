@@ -1,9 +1,12 @@
 import { useState, useMemo, useEffect, useRef, Fragment } from "react";
+import { createPortal } from "react-dom";
 import { Link, useSearch, useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
-import { ChevronLeft, ChevronDown, ChevronUp, ChevronRight, Plus, Trash2, AlertTriangle, CheckCircle, XCircle, Paperclip, Users, Clock, UserCheck, UserX, UserMinus, Search, Bell, Download, Forward, History, FileText, ClipboardList, Landmark, GripVertical, FileCheck, Link2, Copy, Calendar, Check, Pencil, Filter, Columns3 } from "lucide-react";
+import { ChevronLeft, ChevronDown, ChevronUp, ChevronRight, Plus, Trash2, AlertTriangle, CheckCircle, XCircle, Paperclip, Users, Clock, UserCheck, UserX, UserMinus, Search, Bell, Download, Forward, History, FileText, ClipboardList, Landmark, GripVertical, FileCheck, Link2, Copy, Calendar, Check, Pencil, Filter, Columns3, Mail, PenLine, X, ExternalLink, Loader2, Send } from "lucide-react";
 import { useSignaturePad } from "@/hooks/useSignaturePad";
 import { SignaturePadControls } from "@/components/SignaturePad";
+import { StickyHorizontalScrollbar } from "@/components/StickyHorizontalScrollbar";
+import { getGmailConnectionStatus, disconnectGmail, sendHiringCredentialsEmail, type GmailConnectionStatus } from "@/lib/supabase/gmailConnection";
 
 /** Shared shape for a sidebar/header-dropdown nav tab entry — broad enough to structurally match every tabGroups[].tabs literal (they all share this key/label/count/icon shape, just with different literal `key`/`label` string types per group), so renderSidebarTabButton/renderDropdownTabButton can be called with tabs from any group. */
 type NavTabDef = { key: string; label: string; count: number; icon: typeof FileCheck };
@@ -19,7 +22,8 @@ import { LOCATIONS_DATA } from "@/lib/zipCoverage";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { normalizeRole, ROLE_LABELS, isJotformHrRole, getRoleDepartmentBreakdown } from "@/lib/roleLabels";
-import { getCompanyUsers, getProfileEmployeeInfo, getEmployeeInfoByProfileIds, saveProfileEmployeeInfo, updateCompanyUser, getMyProfileId, getAccountCreatorsByEmail, type EmployeeInfo } from "@/lib/supabase/users";
+import { useAllRoleOptions } from "@/lib/customRoles";
+import { getCompanyUsers, getProfileEmployeeInfo, getEmployeeInfoByProfileIds, saveProfileEmployeeInfo, updateCompanyUser, getMyProfileId, getAccountCreatorsByEmail, getProfileCredentialsPreview, type EmployeeInfo } from "@/lib/supabase/users";
 import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
 import { subscribeNotifications, markNotificationRead, deleteNotification, type AppNotification } from "@/lib/firebase/notifications";
 import {
@@ -33,8 +37,9 @@ import {
   getLatestFieldEdits,
   updateCandidateStatus,
   updateCandidateNotes,
-  updateCandidateScreeningNote,
   updateCandidateInterviewerNote,
+  updateCandidateScreeningDate,
+  updateCandidateDocumentVerified,
   updateCandidateFields,
   setCandidateOutreach,
   uploadCandidateCv,
@@ -87,7 +92,16 @@ import {
   type SignableDocumentType,
   type SignatureSlot as DocSignatureSlot,
 } from "@/lib/supabase/signableDocuments";
-import { SIGNABLE_DOCUMENT_REGISTRY, isNewAutomationDoc } from "@/lib/signableDocumentRegistry";
+import {
+  SIGNABLE_DOCUMENT_REGISTRY,
+  isNewAutomationDoc,
+  STAFF_FORM_TIERS,
+  getDocumentReviewStatus,
+  pickAuthoritativeDocument,
+  DOCUMENT_TYPES_REQUIRING_EMPLOYER_SIGNATURE,
+  SHARED_OLD_NEW_AUTOMATION_TYPES,
+} from "@/lib/signableDocumentRegistry";
+import { ManagerReviewPage } from "@/components/ManagerReviewPage";
 import { getCandidateRequiredFormTypes, setCandidateRequiredFormTypes } from "@/lib/supabase/candidateRequiredForms";
 import { buildWarningFormBodyMarkup, buildWarnNoteText, warningFormStyles, type WarningFormData, type SignatureSlot } from "@/lib/warningFormTemplate";
 import { buildNdaFormPages, ndaFormStyles, type NdaFormData } from "@/lib/ndaFormTemplate";
@@ -99,7 +113,7 @@ import { buildActionPlanFormDocxBlob } from "@/lib/actionPlanFormDocx";
 import { buildTerminationFormBodyMarkup, terminationFormStyles, type TerminationFormData, type TerminationSignatureSlot } from "@/lib/terminationFormTemplate";
 import { buildTerminationFormDocxBlob } from "@/lib/terminationFormDocx";
 import { buildContractorAddendumPdf } from "@/lib/contractorAddendumPdf";
-import { CONTRACTOR_ADDENDUM_SLOT_ORDER, CONTRACTOR_ADDENDUM_SLOT_LABEL, CONTRACTOR_ADDENDUM_DEFAULT_SIGNER_NAMES, blankContractorAddendumData, type ContractorAddendumFormData } from "@/lib/contractorAddendumFormTemplate";
+import { CONTRACTOR_ADDENDUM_SLOT_ORDER, CONTRACTOR_ADDENDUM_SLOT_LABEL, CONTRACTOR_ADDENDUM_DEFAULT_SIGNER_NAMES, CONTRACTOR_ADDENDUM_POSITION_LEVELS, blankContractorAddendumData, type ContractorAddendumFormData } from "@/lib/contractorAddendumFormTemplate";
 import type { W8benFormData, W8benAddress } from "@/lib/w8benFormTemplate";
 import { fillW8benPdf } from "@/lib/w8benPdfFill";
 import type { W4FormData } from "@/lib/w4FormTemplate";
@@ -143,6 +157,7 @@ import { HrActivityLogPanel } from "@/components/HrActivityLogPage";
 import { InterviewCalendarTab, type InterviewCalendarCandidate } from "@/components/InterviewCalendarTab";
 import { subscribeTableChanges } from "@/lib/supabase/realtime";
 import { getCompanyPtoRequests, ptoYearWindow, ptoDaysUsed, sickYearWindow, sickDaysUsed, reviewPtoStage, canReviewPtoStage, type PtoRequestRow, type PtoType, type PtoStage } from "@/lib/supabase/pto";
+import { getAttendanceNotes, type AttendanceNoteRow } from "@/lib/supabase/attendanceNotes";
 import { getCompanyTimecardEntries, calcWorkedHours, hoursDiff, type CompanyTimecardEntry } from "@/lib/supabase/timecards";
 import { getCompanyTimecardCorrections, reviewCorrectionStage, canReviewCorrectionStage, type TimecardCorrectionRow, type CorrectionStage } from "@/lib/supabase/timecardCorrections";
 import { getCompanyEmployeeRequests, updateEmployeeRequestStatus, type EmployeeRequestRow, type EmployeeRequestStatus } from "@/lib/supabase/employeeRequests";
@@ -230,6 +245,19 @@ const PH_BRANCH_NAMES = new Set(LOCATIONS_DATA.filter(l => l.isPhilippines).map(
 const HR_ADMIN_ROLES = new Set(["HR", "ADMIN", "SUPERADMIN", "MANAGER", "SENIOR_MANAGER"]);
 const BRANCH_MANAGER_ROLES = new Set(["BRANCH_MANAGER", "SENIOR_BRANCH_MANAGER"]);
 
+// Mirrors HrCalendarTab.tsx's HR_STATUS_TO_PTO_TYPE — Absent List's HR
+// Status shares these 6 leave-type values with PtoType; the other 3
+// options (Unnoticed/Resigned/Terminated) aren't leave types and never
+// draw against a PTO/Sick balance.
+const HR_STATUS_TO_PTO_TYPE: Partial<Record<string, PtoType>> = {
+  Vacation: "vacation",
+  Sick: "sick",
+  Personal: "personal",
+  Holiday: "holiday",
+  Unpaid: "unpaid",
+  Bereavement: "bereavement",
+};
+
 const CANDIDATE_STATUS_LABEL: Record<CandidateStatus, string> = {
   applied: "Applied",
   phone_screening: "Phone Screening",
@@ -255,6 +283,13 @@ const CANDIDATE_STATUS_COLOR: Record<CandidateStatus, string> = {
 /** Just the text-color class from CANDIDATE_STATUS_COLOR (no background) — for status-tinted text that sits on the page's own panel, not inside the badge itself (e.g. the "Changed by" line under the Status dropdown). */
 function candidateStatusTextColor(status: CandidateStatus): string {
   return CANDIDATE_STATUS_COLOR[status].split(" ").find((c) => c.startsWith("text-")) ?? "text-muted-foreground";
+}
+/** "John Smith" -> "John.Smith" — this company's Login Name convention, used to pre-fill Add User's Login Name field from a candidate's name. Middle names are dropped (first + last token only); a single-word name is used as-is. */
+function deriveLoginName(fullName: string): string {
+  const parts = fullName.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "";
+  if (parts.length === 1) return parts[0];
+  return `${parts[0]}.${parts[parts.length - 1]}`;
 }
 /** "14:30" -> "2:30 PM" — interview_time is stored as plain 24h "HH:MM" text (0228), formatted for display wherever it's shown. */
 function formatHHMM(hhmm: string): string {
@@ -488,14 +523,15 @@ const CANDIDATE_SOURCE_OPTIONS = ["Indeed", "ZipRecruiter", "Other"];
 // own Columns picker already uses.
 const HIRING_COLUMNS = [
   { key: "position", label: "Position" },
-  { key: "branch", label: "Branch" },
-  { key: "branchManager", label: "Branch Manager" },
+  { key: "branch", label: "Branch / Manager" },
   { key: "assignedInterviewer", label: "Assigned Interviewer" },
-  { key: "department", label: "Department" },
   { key: "contact", label: "Contact" },
   { key: "outreach", label: "Texted / Called" },
   { key: "cv", label: "CV" },
+  { key: "documentVerified", label: "Plus One" },
   { key: "status", label: "Status" },
+  { key: "screeningDate", label: "Screening Date" },
+  { key: "interviewDate", label: "Interview Date" },
   { key: "accountStatus", label: "Account Status" },
   { key: "forms", label: "Forms" },
   { key: "note", label: "Notes" },
@@ -978,14 +1014,96 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // (initialHrSearchRef) — after that, this component's own state is the
   // source of truth and pushes into the URL, not the other way around. ──
   const navigate = useNavigate();
-  const hrSearchParams = (useSearch({ strict: false }) as { tab?: string; submissionId?: string; profileId?: string }) ?? {};
+  const hrSearchParams = (useSearch({ strict: false }) as { tab?: string; submissionId?: string; profileId?: string; docId?: string }) ?? {};
   const initialHrSearchRef = useRef(hrSearchParams);
-  const VALID_HR_TABS = ["hiring", "warnings", "masterList", "leaders", "jotform", "jotformDocuments", "customForms", "onboarding", "hiringReports", "report", "coe", "warningForm", "promotionForm", "actionPlanForm", "terminationForm", "employeeRequestManager", "w8ben", "i9", "wageAck", "carIqAgreement", "vehicleAgreement", "vehicleUseAgreement", "employeeConfidentiality", "mealRestBreak", "ptoAck", "partsResponsibility", "mileageFuel", "locationConsent", "damage", "contractorData", "contractorDataUs", "directDeposit", "substanceScreening", "flashTechnicianTravel", "combineForms", "newCombineForms", "employerQueue"] as const;
+  const VALID_HR_TABS = ["hiring", "warnings", "masterList", "leaders", "jotform", "jotformDocuments", "customForms", "onboarding", "hiringReports", "report", "coe", "warningForm", "promotionForm", "actionPlanForm", "terminationForm", "employeeRequestManager", "w8ben", "i9", "newI9", "wageAck", "carIqAgreement", "vehicleAgreement", "vehicleUseAgreement", "employeeConfidentiality", "mealRestBreak", "ptoAck", "partsResponsibility", "mileageFuel", "locationConsent", "damage", "contractorData", "contractorDataUs", "directDeposit", "substanceScreening", "flashTechnicianTravel", "combineForms", "newCombineForms", "employerQueue"] as const;
   useEffect(() => {
     const tab = initialHrSearchRef.current.tab;
     if (tab && (VALID_HR_TABS as readonly string[]).includes(tab)) setActiveTab(tab as typeof activeTab);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // ── Connect Gmail (Hiring panel) — connect-only for now, ahead of an
+  // actual candidate-emailing feature ("we need to send email at some
+  // point so add it first"). Same HR_HIRING region/connect-flow
+  // AccountingDashboard.tsx's US/PH Payroll connection uses, just this
+  // panel's own slot (see gmailConnection.ts's header comment). ──
+  const canConnectHiringGmail = normalizedMyRole === "ADMIN" || normalizedMyRole === "SUPERADMIN";
+  const [hiringGmailStatus, setHiringGmailStatus] = useState<GmailConnectionStatus | null>(null);
+  const [connectingHiringGmail, setConnectingHiringGmail] = useState(false);
+  const [disconnectingHiringGmail, setDisconnectingHiringGmail] = useState(false);
+  const loadHiringGmailStatus = () => {
+    getGmailConnectionStatus("HR_HIRING")
+      .then(setHiringGmailStatus)
+      .catch((err) => console.error("Failed to load Hiring Gmail connection status:", err));
+  };
+  useEffect(() => {
+    loadHiringGmailStatus();
+  }, []);
+  // Google redirects back here with ?gmailConnected=1|0 after the consent
+  // screen (see gmailBridge.ts) — show the result once, then strip the
+  // param so refreshing the page doesn't re-show it.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const result = params.get("gmailConnected");
+    if (result === null) return;
+    setError(result === "1" ? null : "Couldn't connect Gmail — please try again.");
+    if (result === "1") loadHiringGmailStatus();
+    params.delete("gmailConnected");
+    const next = `${window.location.pathname}${params.toString() ? `?${params}` : ""}`;
+    window.history.replaceState(null, "", next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const handleConnectHiringGmail = async () => {
+    setConnectingHiringGmail(true);
+    try {
+      const idToken = await firebaseAuth?.currentUser?.getIdToken(false);
+      if (!idToken) { setError("You need to be logged in to connect Gmail."); return; }
+      // A real navigation (not fetch) — Google's consent screen has to run in the top-level window.
+      window.location.href = `/api/gmail?action=connect&region=HR_HIRING&idToken=${encodeURIComponent(idToken)}`;
+    } finally {
+      setConnectingHiringGmail(false);
+    }
+  };
+  const handleDisconnectHiringGmail = async () => {
+    if (!confirm("Disconnect Gmail from the Hiring panel?")) return;
+    setDisconnectingHiringGmail(true);
+    try {
+      await disconnectGmail("HR_HIRING");
+      loadHiringGmailStatus();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to disconnect Gmail.");
+    } finally {
+      setDisconnectingHiringGmail(false);
+    }
+  };
+
+  // "Send Credentials" — lives inside the Forward Candidate dialog
+  // (alongside forwarding to a manager), shown once the candidate has a
+  // created account. Fetches a live preview (username/Technician ID) so
+  // HR can see the actual email before sending it, rather than a blind
+  // confirm() — see gmailConnection.ts's sendHiringCredentialsEmail and
+  // users.ts's getProfileCredentialsPreview.
+  const [sendingCredentialsId, setSendingCredentialsId] = useState<string | null>(null);
+  const [credentialsPreview, setCredentialsPreview] = useState<{ username: string | null; technicianId: string | null; email: string | null; name: string | null } | null>(null);
+  const [credentialsPreviewLoading, setCredentialsPreviewLoading] = useState(false);
+  const [credentialsSentTo, setCredentialsSentTo] = useState<string | null>(null);
+  const handleSendCredentials = async (profileId: string) => {
+    if (!hiringGmailStatus?.connected) {
+      setError("Connect Gmail above first before sending credentials.");
+      return;
+    }
+    setSendingCredentialsId(profileId);
+    setCredentialsSentTo(null);
+    try {
+      const { sentTo } = await sendHiringCredentialsEmail(profileId);
+      setCredentialsSentTo(sentTo);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to send credentials email.");
+    } finally {
+      setSendingCredentialsId(null);
+    }
+  };
 
   // ── Jotform Submissions (live) — same Firestore notifications/{uid}/items
   // the bell icon reads (kind: "jotform_submission"), just filtered into its
@@ -1443,6 +1561,28 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
 
+  // Absent List's HR Status (attendance_notes.hr_note) draws against the
+  // same PTO/Sick balance below as a formal request would — see the Time
+  // Off Calendar tab (HrCalendarTab.tsx)'s identical hrPlottedDaysForBalance
+  // for the full reasoning; kept as a near-duplicate here (not a shared
+  // import) since the two tabs load their own employee/request data
+  // independently. Fixed ~14-month lookback plus a short forward buffer —
+  // bounded, not truly unbounded, since attendance_notes is much
+  // higher-volume than pto_requests.
+  const [hrBalanceNotes, setHrBalanceNotes] = useState<AttendanceNoteRow[]>([]);
+  const loadHrBalanceNotes = async () => {
+    try {
+      const start = new Date();
+      start.setMonth(start.getMonth() - 14, 1);
+      const end = new Date();
+      end.setMonth(end.getMonth() + 2, 0);
+      const fmt = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      setHrBalanceNotes(await getAttendanceNotes(fmt(start), fmt(end)));
+    } catch (err) {
+      console.error("Failed to load HR Status history for PTO/Sick balances:", err);
+    }
+  };
+
   // ── Employee Request Manager — all-in-one company-wide view of PTO
   // requests, Time Correction requests, Attendance Disputes, and Payroll
   // Inquiries, mirroring Employee Self-Service's "Manage Requests" tab (same
@@ -1577,7 +1717,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [candidatesLoading, setCandidatesLoading] = useState(true);
   const [showAddCandidate, setShowAddCandidate] = useState(false);
-  const [newCandidate, setNewCandidate] = useState({ name: "", phone: "", email: "", position: "", branch: "", department: "", branchManagerId: "", source: "", sourceOther: "" });
+  const [newCandidate, setNewCandidate] = useState({ name: "", phone: "", email: "", position: "", branch: "", department: "", branchManagerId: "", assignedInterviewerId: "", source: "", sourceOther: "" });
   const [cvFile, setCvFile] = useState<File | null>(null);
   const [savingCandidate, setSavingCandidate] = useState(false);
   const [hiringSearch, setHiringSearch] = useState("");
@@ -1587,19 +1727,24 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // tri-state (All/Has/None). Same pattern Ticket Attendance and Absent
   // List's own header filters already use.
   type HiringTriState = "all" | "has" | "none";
-  type HiringFilterMenuKey = "position" | "branch" | "branchManager" | "assignedInterviewer" | "department" | "outreach" | "status" | "cv" | "accountStatus" | "note";
+  type HiringFilterMenuKey = "position" | "branch" | "branchManager" | "assignedInterviewer" | "outreach" | "status" | "cv" | "accountStatus" | "note" | "contact" | "documentVerified" | "screeningDate" | "interviewDate";
   const [hiringFilterMenu, setHiringFilterMenu] = useState<HiringFilterMenuKey | null>(null);
   const [hiringPositionFilter, setHiringPositionFilter] = useState<Set<string>>(new Set());
   const [hiringBranchFilter, setHiringBranchFilter] = useState<Set<string>>(new Set());
   const [hiringBranchManagerFilter, setHiringBranchManagerFilter] = useState<Set<string>>(new Set());
   const [hiringAssignedInterviewerFilter, setHiringAssignedInterviewerFilter] = useState<Set<string>>(new Set());
-  const [hiringDepartmentFilter, setHiringDepartmentFilter] = useState<Set<string>>(new Set());
   // Any-of (OR) match — e.g. checking "Text AM" + "Call PM" shows anyone
   // with EITHER done, not only candidates with both.
   const [hiringOutreachFilter, setHiringOutreachFilter] = useState<Set<string>>(new Set());
   const [hiringCvFilter, setHiringCvFilter] = useState<HiringTriState>("all");
   const [hiringAccountStatusFilter, setHiringAccountStatusFilter] = useState<HiringTriState>("all");
   const [hiringNoteFilter, setHiringNoteFilter] = useState<HiringTriState>("all");
+  const [hiringContactFilter, setHiringContactFilter] = useState<HiringTriState>("all");
+  // "has" = ✓ (checked/verified), "none" = ✗ (not verified) — see
+  // documentVerified's own manual check/X toggle in the table body.
+  const [hiringDocumentVerifiedFilter, setHiringDocumentVerifiedFilter] = useState<HiringTriState>("all");
+  const [hiringScreeningDateFilter, setHiringScreeningDateFilter] = useState<HiringTriState>("all");
+  const [hiringInterviewDateFilter, setHiringInterviewDateFilter] = useState<HiringTriState>("all");
 
   // Column visibility (persisted) — Candidate/Actions always show; the rest
   // toggle from the "Columns" button in the toolbar.
@@ -1733,6 +1878,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     loadCandidateForms();
     loadNotes();
     loadPtoRequests();
+    loadHrBalanceNotes();
     loadTodayTimecardEntries();
     loadRequestManagerData();
     if (uid) void getMyProfileId(uid).then(setMyProfileId);
@@ -1841,44 +1987,199 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     () => new Map(employees.filter((e) => e.email).map((e) => [e.email.trim().toLowerCase(), e.id])),
     [employees]
   );
-  // Which document TYPES are complete (signed or confirmed — same
-  // "complete" definition getTechnicianIdsMissingRouteDocuments already
-  // uses) for a given profile, across every signable document ever sent to
-  // them — a candidate whose account existed under an old email that later
-  // changed would still show correctly once employeeEmailSet reflects the
-  // current one.
-  const completeDocTypesByProfileId = useMemo(() => {
+  // One authoritative SignableDocument per (person, type), same grouping
+  // TechnicianFormChecklistPage.tsx uses (byKey/latestByKey, lines ~299-336
+  // there) — feeds the Required Forms popup's real 4-bucket status
+  // (getDocumentReviewStatus) instead of the plain signed/pending booleans
+  // above. Grouped by formData.employeeId (falling back to recipientId),
+  // NOT recipientId alone — recipientId gets reassigned to whichever HR
+  // staffer completes the employer/countersign step, so grouping by it made
+  // a fully-confirmed two-party form vanish back to "Not sent" once it
+  // changed owners. w4/i9/direct_deposit/w8ben are shared with the legacy
+  // Automated Forms flow (SHARED_OLD_NEW_AUTOMATION_TYPES) — Hiring
+  // candidates only ever go through the New Automation Forms flow, so only
+  // "new"-tagged submissions of those 4 types count here, same as every
+  // "New Technician"/"Office Staff (US)"/"PH Staff"/"BM+" checklist tab.
+  const latestDocByPersonType = useMemo(() => {
+    const byKey = new Map<string, SignableDocument[]>();
+    for (const d of allSignableDocs) {
+      const personId = (d.formData as Record<string, any> | undefined)?.employeeId || d.recipientId;
+      if (!personId) continue;
+      if (SHARED_OLD_NEW_AUTOMATION_TYPES.has(d.documentType) && !isNewAutomationDoc(d)) continue;
+      const key = `${personId}|${d.documentType}`;
+      const arr = byKey.get(key);
+      if (arr) arr.push(d);
+      else byKey.set(key, [d]);
+    }
+    const latest = new Map<string, SignableDocument>();
+    for (const [key, group] of byKey) {
+      const best = pickAuthoritativeDocument(group);
+      if (best) latest.set(key, best);
+    }
+    return latest;
+  }, [allSignableDocs]);
+  // Embedded "Review & Sign" popup for whichever form type ManagerReviewPage
+  // itself supports (see DOCUMENT_TYPES_REQUIRING_EMPLOYER_SIGNATURE vs.
+  // ManagerReviewPage's own SUPPORTED_TYPES) — w4/i9 dispatch to their own
+  // existing dialogs (handleOpenW4EmployerDialog/handleOpenI9Section2)
+  // instead, same split TechnicianFormChecklistPage.tsx's own "Sign" button
+  // makes.
+  const [managerReviewDoc, setManagerReviewDoc] = useState<SignableDocument | null>(null);
+  const handleSignAsHr = (type: SignableDocumentType, doc: SignableDocument) => {
+    if (type === "w4") handleOpenW4EmployerDialog(doc);
+    else if (type === "i9") handleOpenI9Section2(doc);
+    else setManagerReviewDoc(doc);
+  };
+  // Which form types already have a real NEW-AUTOMATION document on file
+  // for a profile — built in one pass over allSignableDocs (not
+  // per-candidate) so scanning every candidate against every document stays
+  // cheap. A shared type (w4/i9/direct_deposit/w8ben — see
+  // SHARED_OLD_NEW_AUTOMATION_TYPES) only counts here if it's actually
+  // tagged new_automation; otherwise an old-flow "Technician" tab W-4 from
+  // years ago would count toward a candidate's NEW Technician tier and
+  // inflate the inferred set with unrelated history (this is exactly what
+  // produced "0/18" instead of "0/4" — the very first version of this
+  // fallback counted every document type this profile ever had, old-flow
+  // Technician checklist included, not just the current tier's 4).
+  const sentTypesByProfileId = useMemo(() => {
     const map = new Map<string, Set<SignableDocumentType>>();
-    for (const doc of allSignableDocs) {
-      if (!doc.recipientId || (doc.status !== "signed" && doc.status !== "confirmed")) continue;
-      const set = map.get(doc.recipientId) ?? new Set<SignableDocumentType>();
-      set.add(doc.documentType);
-      map.set(doc.recipientId, set);
+    for (const d of allSignableDocs) {
+      if (d.status === "cancelled" || !d.recipientId) continue;
+      if (SHARED_OLD_NEW_AUTOMATION_TYPES.has(d.documentType) && !isNewAutomationDoc(d)) continue;
+      const set = map.get(d.recipientId) ?? new Set<SignableDocumentType>();
+      set.add(d.documentType);
+      map.set(d.recipientId, set);
     }
     return map;
   }, [allSignableDocs]);
-  // Which document TYPES are sent but still awaiting a signature, per
-  // profile — lets the Forms popup show "Sent" (vs. "Signed") so HR can
-  // tell a Send actually went out instead of wondering if it worked.
-  const pendingDocTypesByProfileId = useMemo(() => {
+  // Same, for a no-account external send — keyed by the exact name it was
+  // sent under (recipientName, or formData.employeeName for older rows),
+  // same fallback identity getCandidateFormStatus uses below.
+  const sentTypesByExternalName = useMemo(() => {
     const map = new Map<string, Set<SignableDocumentType>>();
-    for (const doc of allSignableDocs) {
-      if (!doc.recipientId || doc.status !== "pending_signature") continue;
-      const set = map.get(doc.recipientId) ?? new Set<SignableDocumentType>();
-      set.add(doc.documentType);
-      map.set(doc.recipientId, set);
+    for (const d of allSignableDocs) {
+      if (d.status === "cancelled" || d.recipientId) continue;
+      if (SHARED_OLD_NEW_AUTOMATION_TYPES.has(d.documentType) && !isNewAutomationDoc(d)) continue;
+      const name = d.recipientName || (d.formData as Record<string, any> | undefined)?.employeeName;
+      if (!name) continue;
+      const set = map.get(name) ?? new Set<SignableDocumentType>();
+      set.add(d.documentType);
+      map.set(name, set);
     }
     return map;
   }, [allSignableDocs]);
-  // null = HR hasn't picked which forms apply to this candidate yet (no
-  // "X/Y" to show at all, distinct from "0/Y" which means forms ARE
-  // configured but none are complete).
-  const candidateFormProgress = (c: Candidate): { complete: number; total: number } | null => {
-    const required = requiredFormsByCandidateId.get(c.id);
-    if (!required || required.length === 0) return null;
+  // Whatever's ACTUALLY been sent to this candidate already (via Staff Form
+  // Checklist, an Automated Forms tab, etc.) — used as a fallback "required"
+  // set for a candidate HR never ran through this dialog's own tier
+  // buttons/checkboxes, so the "X/Y" badge and this popup's pre-checked
+  // state stay synced with reality instead of showing blank/"Select forms"
+  // (and 0 real progress) for someone who already has documents in flight.
+  //
+  // Returns exactly ONE tier's fixed form set (whichever tier has the most
+  // overlap with what's actually been sent) — NOT the raw union of every
+  // type ever sent. An open-ended union picks up anything this profile has
+  // ever touched across every flow/tab this company has ever used (old
+  // Technician-tab forms, one-off HR action forms, etc.), which is how a
+  // candidate with exactly 4 real New Technician documents on file ended up
+  // showing "0/18". Staff Form Checklist itself only ever tracks progress
+  // per fixed tier, so this mirrors that instead of inventing a new,
+  // unbounded definition of "required".
+  const sentFormTypesForCandidate = (c: Candidate): SignableDocumentType[] => {
     const profileId = c.email ? profileIdByEmail.get(c.email.trim().toLowerCase()) : undefined;
-    const complete = profileId ? completeDocTypesByProfileId.get(profileId) : undefined;
-    return { complete: complete ? required.filter((t) => complete.has(t)).length : 0, total: required.length };
+    const sentSet = profileId ? sentTypesByProfileId.get(profileId) : sentTypesByExternalName.get(c.name);
+    if (!sentSet || sentSet.size === 0) return [];
+    let best: SignableDocumentType[] = [];
+    let bestOverlap = 0;
+    for (const tier of STAFF_FORM_TIERS) {
+      const overlap = tier.formTypes.filter((t) => sentSet.has(t)).length;
+      if (overlap > bestOverlap) {
+        best = tier.formTypes;
+        bestOverlap = overlap;
+      }
+    }
+    return best;
+  };
+  // Shared by the Required Forms checklist view AND its "send" step's own
+  // status summary — same real 4-bucket status (getDocumentReviewStatus),
+  // computed once here so the two views can never show different things for
+  // the same form. `candidateId` resolves to a profile the same way the
+  // checklist view already does (via profileIdByEmail); returns "not_sent"
+  // (no doc) for a candidate with no matched account yet.
+  const getCandidateFormStatus = (candidateId: string, type: SignableDocumentType) => {
+    const candidate = candidates.find((c) => c.id === candidateId);
+    const profileId = candidate?.email ? profileIdByEmail.get(candidate.email.trim().toLowerCase()) : undefined;
+    let doc = profileId ? latestDocByPersonType.get(`${profileId}|${type}`) : undefined;
+    // No AHS account yet — an external send (Copy Link Instead's
+    // no-account path) never gets a recipientId or formData.employeeId
+    // (both blank/null by design, see handleGenerateCombinedForms), so
+    // latestDocByPersonType's grouping skips it entirely and this would
+    // otherwise read "Not sent" forever even after the candidate actually
+    // signs via the copied link. Fall back to matching by the exact name
+    // their forms were sent under (recipientName, or formData.employeeName
+    // for older rows) — imperfect (two different external candidates with
+    // the same typed name would collide) but far better than never
+    // reflecting a real signature.
+    if (!doc && candidate) {
+      const nameMatches = allSignableDocs.filter(
+        (d) => d.documentType === type && !d.recipientId && (d.recipientName === candidate.name || (d.formData as Record<string, any> | undefined)?.employeeName === candidate.name)
+      );
+      doc = pickAuthoritativeDocument(nameMatches);
+    }
+    const reviewStatus = getDocumentReviewStatus(type, doc);
+    const statusText =
+      reviewStatus === "done" ? "Signed" : reviewStatus === "awaiting_hr" ? "Awaiting HR review" : reviewStatus === "awaiting_employee" ? "Awaiting employee signature" : "Not sent";
+    const statusColor =
+      reviewStatus === "done" ? "text-emerald-400" : reviewStatus === "awaiting_hr" ? "text-sky-400" : reviewStatus === "awaiting_employee" ? "text-amber-400" : "text-slate-600";
+    return { doc, profileId, reviewStatus, statusText, statusColor };
+  };
+  // "Awaiting employee signature" — nudge with a DM to the same fill link,
+  // same behavior/wording as TechnicianFormChecklistPage.tsx's own Remind
+  // button, just not sharing its actionKey/actionError state (this dialog
+  // only ever reminds about one form at a time).
+  const [remindingFormType, setRemindingFormType] = useState<SignableDocumentType | null>(null);
+  const handleRemindFormDialog = async (doc: SignableDocument, personId: string, type: SignableDocumentType) => {
+    setRemindingFormType(type);
+    try {
+      if (myProfileId) {
+        const thread = await getOrCreateDmThread(myProfileId, personId);
+        const fillLink = `${getAppUrl()}${SIGNABLE_DOCUMENT_REGISTRY[type].internalPath}/${doc.id}`;
+        await sendMessage({
+          dmThreadId: thread.id,
+          senderId: myProfileId,
+          senderName: displayName || "HR",
+          body: `⏰ Reminder — please complete the ${SIGNABLE_DOCUMENT_REGISTRY[type].label}: ${fillLink}`,
+        });
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to send reminder.");
+    } finally {
+      setRemindingFormType(null);
+    }
+  };
+  // null = nothing to show (no forms explicitly required AND nothing's
+  // actually been sent yet), distinct from "0/Y" which means there IS a
+  // real set of forms (explicit or inferred) but none are complete yet.
+  const candidateFormProgress = (c: Candidate): { complete: number; total: number } | null => {
+    // Falls back to whatever's actually been sent (sentFormTypesForCandidate)
+    // when HR never explicitly picked forms for this candidate via this
+    // dialog's own checkboxes/tier buttons — e.g. someone sent straight
+    // through Staff Form Checklist's own tier tabs instead. Without this,
+    // the badge stayed blank ("Select forms") for a candidate who already
+    // has real documents in flight, which read as out of sync with what
+    // Staff Form Checklist itself shows for the same person.
+    const explicit = requiredFormsByCandidateId.get(c.id);
+    const required = explicit && explicit.length > 0 ? explicit : sentFormTypesForCandidate(c);
+    if (!required || required.length === 0) return null;
+    // Same "done" the Required Forms popup's own status list uses
+    // (getCandidateFormStatus/getDocumentReviewStatus) — this used to read
+    // completeDocTypesByProfileId directly, which only ever matches a
+    // candidate with a real AHS account, so anyone sent forms via "Copy
+    // Link Instead" (no account) stayed stuck at "0/Y" here forever even
+    // after actually signing, while the popup's own list (already fixed to
+    // fall back to name-matching) correctly showed them as done — the two
+    // disagreeing is exactly what was reported.
+    const complete = required.filter((t) => getCandidateFormStatus(c.id, t).reviewStatus === "done").length;
+    return { complete, total: required.length };
   };
 
   // Which Automated Forms tab (activeTab, ~line 719) sends each document
@@ -1929,10 +2230,42 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [formsDialog, setFormsDialog] = useState<{ candidateId: string; candidateName: string; selected: Set<SignableDocumentType> } | null>(null);
   const [savingFormsDialog, setSavingFormsDialog] = useState(false);
   const [formsDialogSearch, setFormsDialogSearch] = useState("");
+  // "Send All Selected via Bulk Form Send" used to jump to the Bulk Form
+  // Send tab (setActiveTab("combineForms")), which reads as "it navigated
+  // away" — the user's explicit call was to keep this inline instead. This
+  // flips the SAME dialog into a "send" step (recipient/external name +
+  // Generate Link/Copy Link) rather than closing it and switching tabs.
+  const [formsDialogSending, setFormsDialogSending] = useState(false);
+  // Whether THIS candidate had a matching AHS account at the moment "Send
+  // All Selected" was clicked — "Generate Link for Selected Forms" (Send
+  // via Message) needs a real recipient profile to DM; "Copy Link Instead"
+  // works either way. Captured once here (not re-derived from whatever's
+  // currently typed in the recipient search box) so the warning reflects
+  // this candidate's real state, not just "is the search box empty".
+  const [formsDialogCandidateHasAccount, setFormsDialogCandidateHasAccount] = useState(true);
+  const closeFormsDialog = () => {
+    setFormsDialog(null);
+    setFormsDialogSending(false);
+  };
   const openFormsDialog = (c: Candidate) => {
-    const existing = requiredFormsByCandidateId.get(c.id) ?? [];
-    setFormsDialog({ candidateId: c.id, candidateName: c.name, selected: new Set(existing) });
+    // Same fallback candidateFormProgress uses — if HR never explicitly
+    // picked forms for this candidate here, but real documents already
+    // exist for them (sent via Staff Form Checklist directly, say), start
+    // the checklist pre-checked to match what's actually out there instead
+    // of opening blank.
+    const explicit = requiredFormsByCandidateId.get(c.id) ?? [];
+    const existing = explicit.length > 0 ? explicit : sentFormTypesForCandidate(c);
+    const dialog = { candidateId: c.id, candidateName: c.name, selected: new Set(existing) };
+    setFormsDialog(dialog);
     setFormsDialogSearch("");
+    // Forms already picked for this candidate (the "X/Y" badge, not the
+    // plain "Select forms" placeholder) — jump straight to the send/
+    // copy-link step instead of the checklist, since the useful next move
+    // at that point is getting the link, not re-picking which forms apply.
+    // The user's explicit complaint: reopening the badge kept dropping back
+    // to the checklist with no quick way back to the link they'd already
+    // generated. Still one click back to the checklist from there.
+    setFormsDialogSending(existing.length > 0 && prepareSendState(dialog));
   };
   // Returns the freshly-saved types (so handleSendType can navigate right
   // after saving without waiting on a state re-render to read them back).
@@ -1951,7 +2284,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     setSavingFormsDialog(true);
     try {
       await saveFormsDialog(formsDialog);
-      setFormsDialog(null);
+      closeFormsDialog();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save required forms.");
     } finally {
@@ -1998,12 +2331,49 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     return map;
   }, [employees]);
 
-  // Real Branch Manager / Senior Branch Manager profiles, for the "Branch
-  // Manager" dropdown on Add Candidate and the Hiring table's manual
-  // override — lets HR pick a specific person instead of only ever relying
-  // on branchManagerByBranch's auto-derived one (which breaks down for a
+  // Any manager-tier profile (Branch Manager, Senior Branch Manager, CSR
+  // Manager, Parts Manager, BizOps Manager, etc. — any role/extra role whose
+  // name contains "MANAGER", same substring convention Forward Candidate's
+  // own managerRecipients list already uses), for the "Branch Manager"
+  // dropdown on Add Candidate and the Hiring table's manual override — lets
+  // HR pick a specific person instead of only ever relying on
+  // branchManagerByBranch's auto-derived one (which breaks down for a
   // branch with nobody on file yet, or two branches sharing one manager).
+  // Not limited to Branch/Senior Branch Manager: hiring now includes the
+  // Philippines office too, whose management tier is CSR Manager rather
+  // than a Branch Manager role, and they need to show up here as well.
   const branchManagerOptions = useMemo(
+    () =>
+      employees
+        .filter((e) => e.status === "active" && [e.position, ...e.extraRoles].some((r) => normalizeRole(r).includes("MANAGER")))
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    [employees]
+  );
+
+  // Same User Type list User Management's own Add User form offers (built-in
+  // roles + any custom roles this company has added) — the Hiring table's
+  // Position field picks from this instead of free text, so what a
+  // candidate is hired as always matches a real, assignable role.
+  const candidatePositionOptions = useAllRoleOptions();
+
+  // Real HR-role profiles, for the Hiring table's "Assigned Interviewer"
+  // dropdown — who on the HR team is actually running this candidate's
+  // interview process.
+  const hrPersonnelOptions = useMemo(
+    () =>
+      employees
+        .filter((e) => e.status === "active" && (normalizeRole(e.position) === "HR" || e.extraRoles.map(normalizeRole).includes("HR")))
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    [employees]
+  );
+
+  // Branch Managers can also run a candidate's interview for their own
+  // branch — a second group in the Assigned Interviewer dropdown alongside
+  // HR personnel above (see the two <optgroup>s wherever hrPersonnelOptions
+  // is used for that field). Same Branch Manager/Senior Branch Manager tier
+  // branchManagerOptions used before it was broadened to "any manager" for
+  // the Branch Manager field itself — kept narrow here on purpose.
+  const assignedInterviewerBranchManagerOptions = useMemo(
     () =>
       employees
         .filter(
@@ -2018,13 +2388,30 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     [employees]
   );
 
-  // Real HR-role profiles, for the Hiring table's "Assigned Interviewer"
-  // dropdown — who on the HR team is actually running this candidate's
-  // interview process.
-  const hrPersonnelOptions = useMemo(
+  // The Assigned Interviewer column's own "manager" slot (top line) — a
+  // manager acting as INTERVIEWER, separate from branchManagerId (the
+  // branch's actual day-to-day manager) even though it defaults to showing
+  // the same person when unset (see assignedManagerNameForCandidate below).
+  // A curated allowlist, not a role-based filter — HR named these people
+  // specifically ("those only"), not "everyone with a manager/director
+  // role" (which would also pull in people not meant to be pickable here).
+  // Matched by exact name since that's all that's on file for some of them
+  // (e.g. Yujung Chris Yong is role "Admin", not a manager/director role at
+  // all) — two different people can share a name (e.g. two "Matt Simmons"
+  // accounts), and both are intentionally included when that happens.
+  const INTERVIEW_MANAGER_ALLOWLIST = new Set([
+    "yujung chris yong",
+    "matt simmons",
+    "daven hodge",
+    "alexxis henry",
+    "brye'shawn butler",
+    "lashamus dowell",
+    "danny thornton",
+  ]);
+  const interviewManagerOptions = useMemo(
     () =>
       employees
-        .filter((e) => e.status === "active" && (normalizeRole(e.position) === "HR" || e.extraRoles.map(normalizeRole).includes("HR")))
+        .filter((e) => e.status === "active" && INTERVIEW_MANAGER_ALLOWLIST.has(e.name.trim().toLowerCase()))
         .sort((a, b) => a.name.localeCompare(b.name)),
     [employees]
   );
@@ -2047,13 +2434,18 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     null;
   const assignedInterviewerNameForCandidate = (c: Candidate): string | null =>
     (c.assignedInterviewerId && employees.find((e) => e.id === c.assignedInterviewerId)?.name) || null;
+  // No longer auto-falls back to the Branch Manager — HR must explicitly
+  // pick someone (per HR's explicit call to remove the "Auto" behavior).
+  const assignedManagerNameForCandidate = (c: Candidate): string | null =>
+    (c.assignedManagerId && employees.find((e) => e.id === c.assignedManagerId)?.name) || null;
   const trainerNameForCandidate = (c: Candidate): string | null =>
     (c.trainerId && employees.find((e) => e.id === c.trainerId)?.name) || null;
 
-  // Forward Candidate's recipient prefill — both the Assigned Interviewer
-  // (running this candidate's process) AND the Branch Manager (manual
-  // override, else auto-derived from branch) are pre-selected when either
-  // is on file, since a candidate's forward usually needs to reach both.
+  // Forward Candidate's recipient prefill — ALWAYS both people shown in the
+  // Assigned Interviewer column: the manager acting as interviewer (top
+  // line — assignedManagerId override, else the Branch Manager, else
+  // auto-derived from branch, same resolution assignedManagerNameForCandidate
+  // uses) and the HR interviewer (bottom line, assignedInterviewerId).
   // Deduped in case one person holds both roles. Still just a starting
   // point: recipients can be added/removed freely in the dialog.
   const defaultForwardRecipientsForCandidate = (c: Candidate): { id: string; name: string }[] => {
@@ -2065,9 +2457,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         out.push(e);
       }
     };
-    if (c.assignedInterviewerId) add(employees.find((emp) => emp.id === c.assignedInterviewerId && emp.status === "active"));
-    if (c.branchManagerId) add(employees.find((emp) => emp.id === c.branchManagerId && emp.status === "active"));
+    if (c.assignedManagerId) add(employees.find((emp) => emp.id === c.assignedManagerId && emp.status === "active"));
+    else if (c.branchManagerId) add(employees.find((emp) => emp.id === c.branchManagerId && emp.status === "active"));
     else if (c.branch) add(branchManagerOptions.find((m) => m.branch === c.branch));
+    if (c.assignedInterviewerId) add(employees.find((emp) => emp.id === c.assignedInterviewerId && emp.status === "active"));
     return out;
   };
 
@@ -2092,10 +2485,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   );
   const hiringAssignedInterviewerOptions = useMemo(
     () => Array.from(new Set(visibleCandidates.map(assignedInterviewerNameForCandidate).filter((n): n is string => !!n))).sort(),
-    [visibleCandidates]
-  );
-  const hiringDepartmentOptions = useMemo(
-    () => Array.from(new Set(visibleCandidates.map((c) => c.department).filter((d): d is string => !!d))).sort(),
     [visibleCandidates]
   );
   const HIRING_OUTREACH_OPTIONS = ["Text AM", "Text PM", "Call AM", "Call PM"] as const;
@@ -2134,7 +2523,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         return !!name && hiringAssignedInterviewerFilter.has(name);
       });
     }
-    if (hiringDepartmentFilter.size > 0) result = result.filter((c) => c.department && hiringDepartmentFilter.has(c.department));
     if (hiringOutreachFilter.size > 0) {
       result = result.filter(
         (c) =>
@@ -2149,6 +2537,21 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       result = result.filter((c) => (hiringAccountStatusFilter === "has" ? candidateHasAccount(c) : !candidateHasAccount(c)));
     }
     if (hiringNoteFilter !== "all") result = result.filter((c) => (hiringNoteFilter === "has" ? !!c.notes : !c.notes));
+    if (hiringContactFilter !== "all") {
+      result = result.filter((c) => {
+        const hasContact = !!(c.phone || c.email || c.source);
+        return hiringContactFilter === "has" ? hasContact : !hasContact;
+      });
+    }
+    if (hiringDocumentVerifiedFilter !== "all") {
+      result = result.filter((c) => (hiringDocumentVerifiedFilter === "has" ? c.documentVerified : !c.documentVerified));
+    }
+    if (hiringScreeningDateFilter !== "all") {
+      result = result.filter((c) => (hiringScreeningDateFilter === "has" ? !!c.screeningDate : !c.screeningDate));
+    }
+    if (hiringInterviewDateFilter !== "all") {
+      result = result.filter((c) => (hiringInterviewDateFilter === "has" ? !!c.interviewDate : !c.interviewDate));
+    }
     return result;
   }, [
     visibleCandidates,
@@ -2158,11 +2561,14 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     hiringBranchFilter,
     hiringBranchManagerFilter,
     hiringAssignedInterviewerFilter,
-    hiringDepartmentFilter,
     hiringOutreachFilter,
     hiringCvFilter,
     hiringAccountStatusFilter,
     hiringNoteFilter,
+    hiringContactFilter,
+    hiringDocumentVerifiedFilter,
+    hiringScreeningDateFilter,
+    hiringInterviewDateFilter,
     employeeEmailSet,
   ]);
 
@@ -7469,6 +7875,12 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [contractorAddendumActionBusyId, setContractorAddendumActionBusyId] = useState<string | null>(null);
   const [contractorAddendumActionError, setContractorAddendumActionError] = useState<string | null>(null);
   const [contractorAddendumExternalName, setContractorAddendumExternalName] = useState("");
+  // Position Level / Guaranteed Minimum Baseline Payout — compensation terms
+  // HR sets, not something the Contractor should be self-reporting. Shared
+  // by both the internal Send and External Link forms below (one send form,
+  // two delivery methods), and required before either button enables.
+  const [contractorAddendumPositionLevel, setContractorAddendumPositionLevel] = useState("");
+  const [contractorAddendumBaselinePayout, setContractorAddendumBaselinePayout] = useState("");
   const [contractorAddendumSentLink, setContractorAddendumSentLink] = useState<{ link: string; recipientName: string } | null>(null);
   const [contractorAddendumSentLinkCopied, setContractorAddendumSentLinkCopied] = useState(false);
   const [contractorAddendumPreviewExpanded, setContractorAddendumPreviewExpanded] = useState(false);
@@ -7520,6 +7932,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
   const handleSendContractorAddendum = async () => {
     if (!contractorAddendumRecipientId || !uid) return;
+    if (!contractorAddendumPositionLevel || !contractorAddendumBaselinePayout.trim()) {
+      setContractorAddendumSendError("Enter the Position Level and Guaranteed Minimum Baseline Payout before sending.");
+      return;
+    }
     setContractorAddendumSending(true);
     setContractorAddendumSendError(null);
     try {
@@ -7536,6 +7952,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         formData: {
           ...blankContractorAddendumData(),
           employeeId: recipient.id,
+          positionLevel: contractorAddendumPositionLevel,
+          baselinePayout: contractorAddendumBaselinePayout.trim(),
           signerNames: { ...CONTRACTOR_ADDENDUM_DEFAULT_SIGNER_NAMES, employee: recipient.name },
           ...(activeTab === "newContractorAddendum" ? { formSource: "new_automation" } : {}),
         } as unknown as Record<string, any>,
@@ -7556,6 +7974,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       void logActivity({ action: "contractor_addendum_sent", targetType: "employee", targetId: recipient.id, targetLabel: recipient.name });
       setContractorAddendumRecipientId("");
       setContractorAddendumRecipientSearch("");
+      setContractorAddendumPositionLevel("");
+      setContractorAddendumBaselinePayout("");
       await loadSentContractorAddendumForms();
     } catch (err) {
       setContractorAddendumSendError(err instanceof Error ? err.message : "Failed to send request.");
@@ -7565,6 +7985,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   };
 
   const handleGenerateExternalContractorAddendum = async () => {
+    if (!contractorAddendumPositionLevel || !contractorAddendumBaselinePayout.trim()) {
+      setContractorAddendumSendError("Enter the Position Level and Guaranteed Minimum Baseline Payout before sending.");
+      return;
+    }
     setContractorAddendumSending(true);
     setContractorAddendumSendError(null);
     try {
@@ -7573,6 +7997,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         documentType: "contractor_addendum",
         formData: {
           ...blankContractorAddendumData(),
+          positionLevel: contractorAddendumPositionLevel,
+          baselinePayout: contractorAddendumBaselinePayout.trim(),
           signerNames: { ...CONTRACTOR_ADDENDUM_DEFAULT_SIGNER_NAMES, employee: name },
           ...(activeTab === "newContractorAddendum" ? { formSource: "new_automation" } : {}),
         } as unknown as Record<string, any>,
@@ -7584,6 +8010,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       const externalOrigin = import.meta.env.DEV ? window.location.origin : getAppUrl();
       setContractorAddendumSentLink({ link: `${externalOrigin}/fill-contractor-addendum-external/${doc.id}`, recipientName: name });
       setContractorAddendumExternalName("");
+      setContractorAddendumPositionLevel("");
+      setContractorAddendumBaselinePayout("");
       await loadSentContractorAddendumForms();
     } catch (err) {
       setContractorAddendumSendError(err instanceof Error ? err.message : "Failed to generate link.");
@@ -9391,41 +9819,59 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [combineFormsSentNotice, setCombineFormsSentNotice] = useState<string | null>(null);
   const [combineFormsCopyLink, setCombineFormsCopyLink] = useState<string | null>(null);
 
-  // "Send All Selected" on the Forms popup (~line 1606) — saves the
-  // candidate's picks, then jumps to Bulk Form Send with those picks and
-  // the candidate (or their name, if they have no AHS account yet)
-  // preselected, instead of making HR re-check the same boxes there. Only
-  // the types Bulk Form Send actually supports get preselected — it covers
-  // onboarding paperwork, not the HR action forms (warning/promotion/
-  // termination), which stay reachable only via each row's own "Send →".
-  const handleSendAllSelected = async () => {
-    if (!formsDialog) return;
+  // Populates selectedFormTypes/combineFormsRecipientId/etc. (the same
+  // state Bulk Form Send's own tab reads) for the given candidate's forms
+  // dialog, WITHOUT saving or touching formsDialogSending itself — shared by
+  // handleSendAllSelected (after a fresh Save) and openFormsDialog (when
+  // reopening a candidate who already has required forms picked, so the
+  // send/copy-link step is one click away instead of buried behind "Send
+  // All Selected" again every time). Returns false if nothing here is
+  // actually bulk-sendable (only the HR action forms are selected).
+  const prepareSendState = (dialog: { candidateId: string; candidateName: string; selected: Set<SignableDocumentType> }): boolean => {
     const bulkSendableTypes = new Set<SignableDocumentType>(
       [...GENERAL_FORM_TYPES, ...TECHNICIAN_FORM_TYPES, ...MANAGEMENT_FORM_TYPES, ...NEW_TECHNICIAN_BULK_FORM_TYPES, ...NEW_OFFICE_BULK_FORM_TYPES, ...NEW_PH_BULK_FORM_TYPES, ...NEW_MANAGEMENT_BULK_FORM_TYPES].map((f) => f.type)
     );
-    const toSend = Array.from(formsDialog.selected).filter((t) => bulkSendableTypes.has(t));
-    if (toSend.length === 0) {
-      setError('None of the selected forms can be sent as a bundle — use "Send →" next to each one instead.');
+    const toSend = Array.from(dialog.selected).filter((t) => bulkSendableTypes.has(t));
+    if (toSend.length === 0) return false;
+    const candidate = candidates.find((c) => c.id === dialog.candidateId);
+    const profileId = candidate?.email ? profileIdByEmail.get(candidate.email.trim().toLowerCase()) : undefined;
+    const recipient = profileId ? employees.find((e) => e.id === profileId) : undefined;
+    setSelectedFormTypes(new Set(toSend));
+    setFormsDialogCandidateHasAccount(!!recipient);
+    if (recipient) {
+      setCombineFormsRecipientId(recipient.id);
+      setCombineFormsRecipientSearch(`${recipient.name} — ${ROLE_LABELS[normalizeRole(recipient.position)] ?? recipient.position}`);
+      setCombineFormsExternalName("");
+    } else {
+      setCombineFormsRecipientId("");
+      setCombineFormsRecipientSearch("");
+      setCombineFormsExternalName(dialog.candidateName);
+    }
+    setCombineFormsError(null);
+    setCombineFormsSentNotice(null);
+    setCombineFormsCopyLink(null);
+    return true;
+  };
+
+  // "Send All Selected" on the Forms popup (~line 1606) — saves the
+  // candidate's picks, preselects the recipient (or their typed name, if
+  // they have no AHS account yet) via prepareSendState, then flips this
+  // same dialog into its "send" step (formsDialogSending) instead of
+  // closing it and navigating to the Bulk Form Send tab — the user's
+  // explicit call was to keep this inline on Hiring, not jump pages. Only
+  // the types Bulk Form Send actually supports get preselected — it covers
+  // onboarding paperwork, not the HR action forms (warning/promotion/
+  // termination), which stay reachable only via each row's own "Send".
+  const handleSendAllSelected = async () => {
+    if (!formsDialog) return;
+    if (!prepareSendState(formsDialog)) {
+      setError('None of the selected forms can be sent as a bundle — use "Send" next to each one instead.');
       return;
     }
     setSavingFormsDialog(true);
     try {
       await saveFormsDialog(formsDialog);
-      const candidate = candidates.find((c) => c.id === formsDialog.candidateId);
-      const profileId = candidate?.email ? profileIdByEmail.get(candidate.email.trim().toLowerCase()) : undefined;
-      const recipient = profileId ? employees.find((e) => e.id === profileId) : undefined;
-      setSelectedFormTypes(new Set(toSend));
-      if (recipient) {
-        setCombineFormsRecipientId(recipient.id);
-        setCombineFormsRecipientSearch(`${recipient.name} — ${ROLE_LABELS[normalizeRole(recipient.position)] ?? recipient.position}`);
-        setCombineFormsExternalName("");
-      } else {
-        setCombineFormsRecipientId("");
-        setCombineFormsRecipientSearch("");
-        setCombineFormsExternalName(formsDialog.candidateName);
-      }
-      setFormsDialog(null);
-      setActiveTab("combineForms");
+      setFormsDialogSending(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save required forms.");
     } finally {
@@ -9453,7 +9899,15 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       // recipient — an external/no-login recipient has no stable identifier
       // to match duplicates against.
       if (recipient) {
-        const alreadySent = await getExistingActiveDocumentTypes(recipient.id, Array.from(selectedFormTypes));
+        // A type whose existing doc is still pending_signature gets reused
+        // below (see docs/existing further down) rather than duplicated —
+        // drop those from the warning so re-copying a link for something
+        // still awaiting signature doesn't read as "this will duplicate it"
+        // when it won't. Only an already-signed/confirmed (or otherwise not
+        // reusable) existing doc is a genuine resend worth confirming.
+        const alreadySent = (await getExistingActiveDocumentTypes(recipient.id, Array.from(selectedFormTypes))).filter(
+          (type) => latestDocByPersonType.get(`${recipient.id}|${type}`)?.status !== "pending_signature"
+        );
         if (alreadySent.length > 0) {
           const labelByType = new Map(
             [...GENERAL_FORM_TYPES, ...TECHNICIAN_FORM_TYPES, ...MANAGEMENT_FORM_TYPES, ...NEW_TECHNICIAN_BULK_FORM_TYPES, ...NEW_OFFICE_BULK_FORM_TYPES, ...NEW_PH_BULK_FORM_TYPES, ...NEW_MANAGEMENT_BULK_FORM_TYPES].map((f) => [f.type, f.label])
@@ -9469,10 +9923,32 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       // (shared document types with the old group) need this tag to land in
       // the right Sent History bucket. Harmless on the other types here
       // (master_w2_agreement etc.), which don't read formSource at all.
-      const formSourceTag = activeTab === "newCombineForms" ? { formSource: "new_automation" } : {};
+      // formsDialogSending (the Hiring "Required Forms" popup's inline send
+      // step) also counts — it never touches activeTab (stays on Hiring, no
+      // tab switch), but everything it sends is always New Automation Forms
+      // (see STAFF_FORM_TIERS) so it needs the same tag or these documents
+      // would be invisible to the New Technician/Office Staff (US)/PH
+      // Staff/BM+ checklist tiers, which only count "new"-tagged submissions
+      // of these shared types.
+      const formSourceTag = activeTab === "newCombineForms" || formsDialogSending ? { formSource: "new_automation" } : {};
+      // Reuse an existing STILL-PENDING document for a type instead of
+      // always creating a new one — the user's explicit complaint: a
+      // generated link is only ever held in local React state
+      // (combineFormsCopyLink), so a page reload loses it, and clicking
+      // "Copy Link Instead" again used to create a genuinely NEW set of
+      // hr_signable_documents rows (a different link than whatever was
+      // already shared) — exactly the "duplicate real rows" issue flagged
+      // in the comment below. Only meaningful for a real AHS recipient
+      // (external/no-account sends have no stable identifier to match
+      // against, same limitation the "already sent" check above already
+      // has) and only when that existing doc is still pending_signature —
+      // an already-signed/confirmed one is a genuine resend, not a "give me
+      // the same link back" case.
       const docs = await Promise.all(
-        Array.from(selectedFormTypes).map((type) =>
-          createSignableDocument(
+        Array.from(selectedFormTypes).map((type) => {
+          const existing = recipient ? latestDocByPersonType.get(`${recipient.id}|${type}`) : undefined;
+          if (existing && existing.status === "pending_signature") return existing;
+          return createSignableDocument(
             recipient
               ? {
                   documentType: type,
@@ -9488,8 +9964,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                   recipientSlot: "employee",
                   pdfUrl: "",
                 }
-          )
-        )
+          );
+        })
       );
 
       // Local dev only: point the bundle link at this dev server instead of
@@ -9525,7 +10001,13 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       setCombineFormsRecipientSearch("");
       setCombineFormsExternalName("");
       // Refresh each type's own "Sent X Forms" tracking table too, so these newly-generated documents show up there right away.
+      // Also refresh allSignableDocs (loadCandidateForms) so latestDocByPersonType
+      // picks up whatever just got created/reused — without this, clicking
+      // "Copy Link Instead" again in the SAME session (no reload needed)
+      // wouldn't see the doc it just made and would create a genuine
+      // duplicate instead of reusing it.
       await Promise.all([
+        loadCandidateForms(),
         loadSentW8benForms(), loadSentW4Forms(), loadSentW9Forms(), loadSentW4RForms(), loadSentI9Forms(),
         loadSentWageAckForms(), loadSentCarIqAgreementForms(), loadSentVehicleAgreementForms(), loadSentDamageForms(),
         loadSentDirectDepositForms(), loadSentEmployeeConfidentialityForms(), loadSentContractorDataForms(),
@@ -9614,6 +10096,27 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     setI9Section2Error(null);
     i9Section2SigPad.clear();
   };
+
+  // Restores a specific I-9's Section 2 dialog from the URL's ?docId= — how
+  // the Staff Form Checklist's "Complete Section 2" link lands HR directly
+  // on that one person's dialog instead of just the tab, since Section 2
+  // needs real document-review fields this page has and the checklist
+  // deliberately doesn't duplicate. Same once-only-after-data-loads guard
+  // as the onboarding-profile restore, gated on visibleI9Forms (the
+  // correctly old/new-bucketed list for whichever of "i9"/"newI9" the link
+  // also switched to) actually containing a match — an empty first fetch
+  // shouldn't permanently give up before the real list arrives.
+  const restoredI9Section2Ref = useRef(false);
+  useEffect(() => {
+    if (restoredI9Section2Ref.current) return;
+    const docId = initialHrSearchRef.current.docId;
+    if (!docId || visibleI9Forms.length === 0) return;
+    const match = visibleI9Forms.find((d) => d.id === docId);
+    if (!match) return;
+    restoredI9Section2Ref.current = true;
+    handleOpenI9Section2(match);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visibleI9Forms]);
 
   const handleSaveI9Section2 = async () => {
     if (!i9Section2Dialog || !uid) return;
@@ -11668,8 +12171,34 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     win.onafterprint = () => win.close();
   };
 
+  // Shared by the live inline warning below the Add Candidate form and the
+  // submit-time confirm in handleAddCandidate — a real duplicate
+  // application is common (reapplying, HR re-entering the same person
+  // under a new row), but so is a shared family phone or a genuine
+  // coincidence, so this only warns rather than hard-blocking.
+  const findCandidateDuplicates = (email: string, phone: string) => {
+    const normalizedEmail = email.trim().toLowerCase();
+    const normalizedPhone = phone.replace(/\D/g, "");
+    const emailMatch = normalizedEmail ? candidates.find((c) => (c.email || "").trim().toLowerCase() === normalizedEmail) : undefined;
+    const phoneMatch = normalizedPhone ? candidates.find((c) => (c.phone || "").replace(/\D/g, "") === normalizedPhone) : undefined;
+    return { emailMatch, phoneMatch };
+  };
+  const newCandidateDuplicates = useMemo(
+    () => findCandidateDuplicates(newCandidate.email, newCandidate.phone),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [newCandidate.email, newCandidate.phone, candidates]
+  );
+
   const handleAddCandidate = async () => {
     if (!newCandidate.name.trim()) return;
+    const { emailMatch, phoneMatch } = findCandidateDuplicates(newCandidate.email, newCandidate.phone);
+    if (emailMatch || phoneMatch) {
+      const reasons = [
+        emailMatch && `email (already used by ${emailMatch.name})`,
+        phoneMatch && phoneMatch.id !== emailMatch?.id && `phone number (already used by ${phoneMatch.name})`,
+      ].filter(Boolean);
+      if (!confirm(`This candidate's ${reasons.join(" and ")} matches an existing candidate. Add anyway?`)) return;
+    }
     setSavingCandidate(true);
     setError(null);
     try {
@@ -11680,7 +12209,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       // The candidate row is saved at this point — close the form and
       // refresh the list regardless of what happens next, so a CV upload
       // failure doesn't strand the UI on a stale, still-open form.
-      setNewCandidate({ name: "", phone: "", email: "", position: "", branch: "", department: "", branchManagerId: "", source: "", sourceOther: "" });
+      setNewCandidate({ name: "", phone: "", email: "", position: "", branch: "", department: "", branchManagerId: "", assignedInterviewerId: "", source: "", sourceOther: "" });
       setCvFile(null);
       setShowAddCandidate(false);
       await loadCandidates();
@@ -11866,22 +12395,26 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
 
-  // Candidate Notes — three independent slots (HR/Interviewer/Screening,
-  // see 0241_hr_candidates_screening_interviewer_notes.sql) stacked in one
+  // Candidate Notes — two independent slots (HR/Interviewer, see
+  // 0241_hr_candidates_screening_interviewer_notes.sql — Screening Note
+  // used to be a third slot here but is no longer used) stacked in one
   // Note column cell, each its own inline pencil-edit, same click-to-edit
   // pattern used elsewhere in this file (e.g. Estimate Time on Payroll
   // Detail). One shared draft/editing-cell state, keyed by which of the
-  // three fields is open, so editing one never touches the others.
-  type CandidateNoteField = "notes" | "interviewerNote" | "screeningNote";
+  // two fields is open, so editing one never touches the other.
+  type CandidateNoteField = "notes" | "interviewerNote";
   const [editingNoteCell, setEditingNoteCell] = useState<{ id: string; field: CandidateNoteField } | null>(null);
   const [noteDraft, setNoteDraft] = useState("");
   const [savingNoteCell, setSavingNoteCell] = useState<{ id: string; field: CandidateNoteField } | null>(null);
+  // The table's Note column is too narrow to show "Changed by" clearly for
+  // both fields at once (see the pop-out modal below) — clicking either
+  // note summary opens this instead of editing inline.
+  const [notesModalCandidateId, setNotesModalCandidateId] = useState<string | null>(null);
   const handleSaveCandidateNote = async (id: string, field: CandidateNoteField) => {
     setSavingNoteCell({ id, field });
     try {
       if (field === "notes") await updateCandidateNotes(id, noteDraft);
-      else if (field === "interviewerNote") await updateCandidateInterviewerNote(id, noteDraft);
-      else await updateCandidateScreeningNote(id, noteDraft);
+      else await updateCandidateInterviewerNote(id, noteDraft);
       setCandidates((prev) => prev.map((c) => (c.id === id ? { ...c, [field]: noteDraft.trim() || null } : c)));
       logFieldEditOptimistic(id, field);
       setEditingNoteCell(null);
@@ -11899,12 +12432,39 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // whole candidate. Same click-to-edit pattern as the Note column above,
   // one shared draft object since Contact edits two fields (phone + email)
   // at once.
-  type CandidateEditField = "name" | "position" | "branch" | "contact" | "department" | "branchManager" | "assignedInterviewer";
+  type CandidateEditField = "name" | "position" | "branch" | "contact" | "branchManager" | "assignedInterviewer" | "assignedManager" | "screeningDate";
   const [editingCandidateCell, setEditingCandidateCell] = useState<{ id: string; field: CandidateEditField } | null>(null);
-  const [candidateFieldDraft, setCandidateFieldDraft] = useState({ name: "", position: "", branch: "", phone: "", email: "", department: "", branchManagerId: "", assignedInterviewerId: "", source: "", sourceOther: "" });
+  const [candidateFieldDraft, setCandidateFieldDraft] = useState({ name: "", position: "", branch: "", phone: "", email: "", branchManagerId: "", assignedInterviewerId: "", assignedManagerId: "", source: "", sourceOther: "", screeningDate: "" });
   const [savingCandidateFieldId, setSavingCandidateFieldId] = useState<string | null>(null);
+  // Typeable Branch Manager picker for the Hiring table's inline cell —
+  // same search+select combobox pattern as the Training dialog's Trainer
+  // field, since branchManagerOptions can run long now that it covers any
+  // manager-tier role (not just literal Branch Managers) company-wide.
+  const [branchManagerCellSearch, setBranchManagerCellSearch] = useState("");
+  const [branchManagerCellDropdownOpen, setBranchManagerCellDropdownOpen] = useState(false);
+  // The Hiring table scrolls horizontally (overflow-x-auto), which clips an
+  // ordinary absolutely-positioned dropdown to that container's tiny
+  // visible band instead of letting it float over the page — portal the
+  // dropdown to document.body instead, positioned from the input's own
+  // on-screen rect, so it escapes the clip entirely.
+  const branchManagerCellInputRef = useRef<HTMLInputElement | null>(null);
+  const [branchManagerCellPos, setBranchManagerCellPos] = useState<{ top: number; left: number; width: number } | null>(null);
+  const openBranchManagerCellDropdown = () => {
+    const rect = branchManagerCellInputRef.current?.getBoundingClientRect();
+    if (rect) setBranchManagerCellPos({ top: rect.bottom + 4, left: rect.left, width: rect.width });
+    setBranchManagerCellDropdownOpen(true);
+  };
+  const filteredBranchManagerCellOptions = useMemo(() => {
+    const q = branchManagerCellSearch.trim().toLowerCase();
+    if (!q) return branchManagerOptions;
+    return branchManagerOptions.filter(
+      (m) => m.name.toLowerCase().includes(q) || (ROLE_LABELS[normalizeRole(m.position)] ?? m.position).toLowerCase().includes(q)
+    );
+  }, [branchManagerOptions, branchManagerCellSearch]);
   const startEditCandidateCell = (c: Candidate, field: CandidateEditField) => {
     setEditingCandidateCell({ id: c.id, field });
+    setBranchManagerCellSearch(field === "branchManager" ? branchManagerNameForCandidate(c) || "" : "");
+    setBranchManagerCellDropdownOpen(false);
     // A source matching one of the fixed options (Indeed/ZipRecruiter)
     // reselects that option; anything else on file (including from before
     // this dropdown existed) is treated as a custom "Other" value.
@@ -11915,11 +12475,12 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       branch: c.branch || "",
       phone: c.phone || "",
       email: c.email || "",
-      department: c.department || "",
       branchManagerId: c.branchManagerId || "",
       assignedInterviewerId: c.assignedInterviewerId || "",
+      assignedManagerId: c.assignedManagerId || "",
       source: isKnownSource ? c.source! : c.source ? "Other" : "",
       sourceOther: isKnownSource ? "" : c.source || "",
+      screeningDate: c.screeningDate || "",
     });
   };
   const handleSaveCandidateField = async (id: string, field: CandidateEditField) => {
@@ -11944,15 +12505,18 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       } else if (field === "branch") {
         await updateCandidateFields(id, { branch: candidateFieldDraft.branch });
         setCandidates((prev) => prev.map((c) => (c.id === id ? { ...c, branch: candidateFieldDraft.branch.trim() || null } : c)));
-      } else if (field === "department") {
-        await updateCandidateFields(id, { department: candidateFieldDraft.department });
-        setCandidates((prev) => prev.map((c) => (c.id === id ? { ...c, department: candidateFieldDraft.department.trim() || null } : c)));
       } else if (field === "branchManager") {
         await updateCandidateFields(id, { branchManagerId: candidateFieldDraft.branchManagerId });
         setCandidates((prev) => prev.map((c) => (c.id === id ? { ...c, branchManagerId: candidateFieldDraft.branchManagerId.trim() || null } : c)));
       } else if (field === "assignedInterviewer") {
         await updateCandidateFields(id, { assignedInterviewerId: candidateFieldDraft.assignedInterviewerId });
         setCandidates((prev) => prev.map((c) => (c.id === id ? { ...c, assignedInterviewerId: candidateFieldDraft.assignedInterviewerId.trim() || null } : c)));
+      } else if (field === "assignedManager") {
+        await updateCandidateFields(id, { assignedManagerId: candidateFieldDraft.assignedManagerId });
+        setCandidates((prev) => prev.map((c) => (c.id === id ? { ...c, assignedManagerId: candidateFieldDraft.assignedManagerId.trim() || null } : c)));
+      } else if (field === "screeningDate") {
+        await updateCandidateScreeningDate(id, candidateFieldDraft.screeningDate);
+        setCandidates((prev) => prev.map((c) => (c.id === id ? { ...c, screeningDate: candidateFieldDraft.screeningDate || null } : c)));
       }
       logFieldEditOptimistic(id, field);
       setEditingCandidateCell(null);
@@ -11978,6 +12542,24 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       setError(err instanceof Error ? err.message : "Failed to save.");
     } finally {
       setSavingOutreachId(null);
+    }
+  };
+
+  // "Document" column — plain manual check/X toggle for now (see
+  // updateCandidateDocumentVerified's comment); no auto-detection yet.
+  const [savingDocumentVerifiedId, setSavingDocumentVerifiedId] = useState<string | null>(null);
+  const handleToggleDocumentVerified = async (c: Candidate) => {
+    const next = !c.documentVerified;
+    setSavingDocumentVerifiedId(c.id);
+    setCandidates((prev) => prev.map((row) => (row.id === c.id ? { ...row, documentVerified: next } : row)));
+    try {
+      await updateCandidateDocumentVerified(c.id, next);
+      logFieldEditOptimistic(c.id, "documentVerified");
+    } catch (err) {
+      setCandidates((prev) => prev.map((row) => (row.id === c.id ? { ...row, documentVerified: !next } : row)));
+      setError(err instanceof Error ? err.message : "Failed to save.");
+    } finally {
+      setSavingDocumentVerifiedId(null);
     }
   };
 
@@ -12016,6 +12598,22 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       .filter((m) => !forwardRecipientIds.has(m.id))
       .filter((m) => !q || m.name.toLowerCase().includes(q) || (ROLE_LABELS[normalizeRole(m.position)] ?? m.position).toLowerCase().includes(q));
   }, [managerRecipients, forwardRecipientSearch, forwardRecipientIds]);
+
+  // Only set once the candidate has a created account — powers the "Send
+  // Credentials" section inside the same Forward Candidate dialog.
+  const forwardDialogProfileId = forwardCvDialog?.email ? profileIdByEmail.get(forwardCvDialog.email.trim().toLowerCase()) : undefined;
+  useEffect(() => {
+    setCredentialsSentTo(null);
+    if (!forwardDialogProfileId) {
+      setCredentialsPreview(null);
+      return;
+    }
+    setCredentialsPreviewLoading(true);
+    getProfileCredentialsPreview(forwardDialogProfileId)
+      .then(setCredentialsPreview)
+      .catch((err) => console.error("Failed to load credentials preview:", err))
+      .finally(() => setCredentialsPreviewLoading(false));
+  }, [forwardDialogProfileId]);
 
   const handleForwardCv = async () => {
     if (!forwardCvDialog || forwardRecipientIds.size === 0 || !uid) return;
@@ -12632,6 +13230,30 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     return map;
   }, [ptoRequests]);
 
+  // profileId -> synthetic "requests" (one per HR-plotted day with no
+  // formal pto_requests entry covering that date, 8 hours = one day,
+  // always "approved" — HR recording it via Absent List already IS the
+  // approval) merged into the balance calculations below, so a day HR
+  // plotted there actually draws against the official PTO/Sick Leave
+  // numbers instead of silently not counting. Same feature as the Time Off
+  // Calendar tab's orange cells — see HrCalendarTab.tsx's
+  // hrPlottedDaysForBalance for the full reasoning.
+  const hrPlottedDaysForBalance = useMemo(() => {
+    const map = new Map<string, { ptoType: PtoType; status: "approved"; startDate: string; hoursRequested: number }[]>();
+    for (const n of hrBalanceNotes) {
+      const type = HR_STATUS_TO_PTO_TYPE[n.hrNote];
+      if (!type) continue;
+      const coveredByRealRequest = (ptoRequestsByProfile.get(n.profileId) ?? []).some(
+        (r) => (r.status === "approved" || r.status === "pending") && r.startDate <= n.noteDate && n.noteDate <= r.endDate
+      );
+      if (coveredByRealRequest) continue;
+      const arr = map.get(n.profileId) ?? [];
+      arr.push({ ptoType: type, status: "approved", startDate: n.noteDate, hoursRequested: 8 });
+      map.set(n.profileId, arr);
+    }
+    return map;
+  }, [hrBalanceNotes, ptoRequestsByProfile]);
+
   const remainingPtoByProfile = useMemo(() => {
     const map = new Map<string, { remaining: number; allowance: number } | null>();
     for (const e of employees) {
@@ -12640,11 +13262,12 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         map.set(e.id, null);
         continue;
       }
-      const used = ptoDaysUsed(ptoRequestsByProfile.get(e.id) ?? [], window);
+      const combined = [...(ptoRequestsByProfile.get(e.id) ?? []), ...(hrPlottedDaysForBalance.get(e.id) ?? [])];
+      const used = ptoDaysUsed(combined, window);
       map.set(e.id, { remaining: Math.max(0, window.allowance - used), allowance: window.allowance });
     }
     return map;
-  }, [employees, ptoRequestsByProfile]);
+  }, [employees, ptoRequestsByProfile, hrPlottedDaysForBalance]);
 
   // Remaining Sick Leave per employee — flat 5 days every tenure year
   // (never increments), available from day 1 (no 1-year wait, unlike
@@ -12661,11 +13284,12 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         map.set(e.id, null);
         continue;
       }
-      const used = sickDaysUsed(ptoRequestsByProfile.get(e.id) ?? [], window);
+      const combined = [...(ptoRequestsByProfile.get(e.id) ?? []), ...(hrPlottedDaysForBalance.get(e.id) ?? [])];
+      const used = sickDaysUsed(combined, window);
       map.set(e.id, { remaining: Math.max(0, window.allowance - used), allowance: window.allowance });
     }
     return map;
-  }, [employees, ptoRequestsByProfile]);
+  }, [employees, ptoRequestsByProfile, hrPlottedDaysForBalance]);
 
   // ── Master List — same staff roster as Employee Directory, but split
   // into sub-tabs by department instead of one flat table. Sub-tabs are
@@ -13354,9 +13978,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
   // "New Automation Forms"' own General column — the same first 7 of
   // automatedFormsGeneralTabs above, minus Form I-9/Manager's Action Plan
-  // Form/Termination Notice Form/W-8ben — those 4 live directly under New
-  // Technician Forms instead (see newAutomationFormsTechnicianTabs below),
-  // so listing them here too would just be a duplicate.
+  // Form/W-8ben — those 3 live directly under New Technician Forms instead
+  // (see newAutomationFormsTechnicianTabs below), so listing them here too
+  // would just be a duplicate. Termination Notice Form IS included here —
+  // same "terminationForm" tab key as the old General column, just reachable
+  // from both places, same as every other tab this column reuses as-is.
   // "combineForms" (Bulk Form Send) gets its own distinct tab here rather
   // than being reused as-is — the old one's checkbox list is the legacy
   // 20-item breakdown (11 individual technician forms, etc.); this one
@@ -13365,7 +13991,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // Direct Deposit, W-8BEN), grouped by New Technician/New Office/PH Staff
   // — see the "newCombineForms" render block below.
   const newAutomationFormsGeneralTabs: NavTabDef[] = [
-    ...automatedFormsGeneralTabs.filter((t) => !["i9", "actionPlanForm", "terminationForm", "w8ben", "combineForms"].includes(t.key)),
+    ...automatedFormsGeneralTabs.filter((t) => !["i9", "actionPlanForm", "w8ben", "combineForms"].includes(t.key)),
     { key: "newCombineForms", label: "Bulk Form Send", count: 0, icon: Link2 },
   ];
 
@@ -13480,9 +14106,9 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     // inside "Automated Forms" above) for new consolidated form types as
     // they're built, starting with Master W-2 Technician Agreement. General
     // here is trimmed (newAutomationFormsGeneralTabs) — I-9/Action Plan/
-    // Termination/W-8ben deliberately excluded since I-9 and W-8ben already
-    // live directly under New Technician Forms, and Action Plan/Termination
-    // aren't part of this group at all.
+    // W-8ben deliberately excluded since I-9 and W-8ben already live
+    // directly under New Technician Forms, and Action Plan isn't part of
+    // this group at all. Termination Notice Form IS included.
     ...(paperworksOnly && companyId === "COMP001" ? [{
       group: "New Automation Forms",
       icon: Paperclip,
@@ -13964,6 +14590,44 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           </button>
         </div>
 
+        {/* Connect Gmail — connect-only for now (no send action yet); lets
+            HR link an account ahead of a candidate-emailing feature. */}
+        <div className="px-4 py-2.5 border-b border-white/10 bg-white/5">
+          <div className="flex items-center gap-2 px-3 py-2 bg-slate-900/50 border border-white/10 rounded-lg text-sm w-fit">
+            <Mail className={`h-4 w-4 shrink-0 ${hiringGmailStatus?.connected ? "text-green-400" : "text-slate-500"}`} />
+            <span className="text-xs text-slate-400 uppercase font-semibold">Hiring Gmail:</span>
+            {hiringGmailStatus?.connected ? (
+              <>
+                <span className="text-slate-200" title={hiringGmailStatus.connectedByName ? `Connected by ${hiringGmailStatus.connectedByName}` : undefined}>
+                  {hiringGmailStatus.connectedAccountName || "Unknown"}
+                  {hiringGmailStatus.connectedEmail && <span className="text-slate-500"> ({hiringGmailStatus.connectedEmail})</span>}
+                </span>
+                {canConnectHiringGmail && (
+                  <button
+                    type="button"
+                    onClick={() => void handleDisconnectHiringGmail()}
+                    disabled={disconnectingHiringGmail}
+                    className="text-red-300 hover:text-red-200 disabled:opacity-40 disabled:no-underline text-xs underline ml-1"
+                  >
+                    {disconnectingHiringGmail ? "Disconnecting…" : "Disconnect"}
+                  </button>
+                )}
+              </>
+            ) : canConnectHiringGmail ? (
+              <button
+                type="button"
+                onClick={() => void handleConnectHiringGmail()}
+                disabled={connectingHiringGmail}
+                className="text-blue-300 hover:text-blue-200 text-xs underline disabled:opacity-50"
+              >
+                {connectingHiringGmail ? "Connecting…" : "Connect Gmail"}
+              </button>
+            ) : (
+              <span className="text-slate-500 text-xs">Not connected — ask an Admin</span>
+            )}
+          </div>
+        </div>
+
         {/* Hiring Filters */}
         <div className="px-4 py-3 border-b border-white/10 bg-white/5">
           <div className="flex flex-wrap items-end gap-3">
@@ -13974,7 +14638,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                 <input value={hiringSearch} onChange={(e) => setHiringSearch(e.target.value)} placeholder="Name, position, or branch…" className="glass-input text-sm py-1.5 pl-8 pr-3 rounded-md w-56" />
               </div>
             </div>
-            {(hiringSearch || hiringStatusFilter.size > 0 || hiringPositionFilter.size > 0 || hiringBranchFilter.size > 0 || hiringBranchManagerFilter.size > 0 || hiringAssignedInterviewerFilter.size > 0 || hiringDepartmentFilter.size > 0 || hiringOutreachFilter.size > 0 || hiringCvFilter !== "all" || hiringAccountStatusFilter !== "all" || hiringNoteFilter !== "all") && (
+            {(hiringSearch || hiringStatusFilter.size > 0 || hiringPositionFilter.size > 0 || hiringBranchFilter.size > 0 || hiringBranchManagerFilter.size > 0 || hiringAssignedInterviewerFilter.size > 0 || hiringOutreachFilter.size > 0 || hiringCvFilter !== "all" || hiringAccountStatusFilter !== "all" || hiringNoteFilter !== "all" || hiringContactFilter !== "all" || hiringDocumentVerifiedFilter !== "all" || hiringScreeningDateFilter !== "all" || hiringInterviewDateFilter !== "all") && (
               <button
                 onClick={() => {
                   setHiringSearch("");
@@ -13983,11 +14647,14 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                   setHiringBranchFilter(new Set());
                   setHiringBranchManagerFilter(new Set());
                   setHiringAssignedInterviewerFilter(new Set());
-                  setHiringDepartmentFilter(new Set());
                   setHiringOutreachFilter(new Set());
                   setHiringCvFilter("all");
                   setHiringAccountStatusFilter("all");
                   setHiringNoteFilter("all");
+                  setHiringContactFilter("all");
+                  setHiringDocumentVerifiedFilter("all");
+                  setHiringScreeningDateFilter("all");
+                  setHiringInterviewDateFilter("all");
                 }}
                 className="btn text-sm px-3 mb-0.5"
               >
@@ -14040,8 +14707,21 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               <input type="text" placeholder="Phone Number" value={newCandidate.phone} onChange={(e) => setNewCandidate({ ...newCandidate, phone: e.target.value })} className="glass-input text-sm py-1.5 px-3 rounded-md" />
               <input type="email" placeholder="Email" value={newCandidate.email} onChange={(e) => setNewCandidate({ ...newCandidate, email: e.target.value })} className="glass-input text-sm py-1.5 px-3 rounded-md" />
             </div>
+            {(newCandidateDuplicates.emailMatch || newCandidateDuplicates.phoneMatch) && (
+              <p className="text-xs text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-md px-2.5 py-1.5 mb-3">
+                Possible duplicate:{" "}
+                {newCandidateDuplicates.emailMatch && `email already used by ${newCandidateDuplicates.emailMatch.name}`}
+                {newCandidateDuplicates.emailMatch && newCandidateDuplicates.phoneMatch && newCandidateDuplicates.phoneMatch.id !== newCandidateDuplicates.emailMatch.id && "; "}
+                {newCandidateDuplicates.phoneMatch &&
+                  newCandidateDuplicates.phoneMatch.id !== newCandidateDuplicates.emailMatch?.id &&
+                  `phone already used by ${newCandidateDuplicates.phoneMatch.name}`}
+              </p>
+            )}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
-              <input type="text" placeholder="Position" value={newCandidate.position} onChange={(e) => setNewCandidate({ ...newCandidate, position: e.target.value })} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+              <select value={newCandidate.position} onChange={(e) => setNewCandidate({ ...newCandidate, position: e.target.value })} className="glass-input text-sm py-1.5 px-3 rounded-md">
+                <option value="">Select Position</option>
+                {candidatePositionOptions.map((r) => <option key={r.value} value={r.label}>{r.label}</option>)}
+              </select>
               <select value={newCandidate.branch} onChange={(e) => setNewCandidate({ ...newCandidate, branch: e.target.value })} className="glass-input text-sm py-1.5 px-3 rounded-md"><option value="">Select Branch</option>{branchOptions.map((b) => <option key={b} value={b}>{b}</option>)}</select>
               <label className="glass-input text-sm py-1.5 px-3 rounded-md flex items-center gap-2 cursor-pointer text-muted-foreground">
                 <Paperclip className="h-3.5 w-3.5 shrink-0" />
@@ -14056,7 +14736,16 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               </select>
               <select value={newCandidate.branchManagerId} onChange={(e) => setNewCandidate({ ...newCandidate, branchManagerId: e.target.value })} className="glass-input text-sm py-1.5 px-3 rounded-md">
                 <option value="">Select Branch Manager</option>
-                {branchManagerOptions.map((m) => <option key={m.id} value={m.id}>{m.name}{m.branch ? ` — ${m.branch}` : ""}</option>)}
+                {branchManagerOptions.map((m) => <option key={m.id} value={m.id}>{m.name} — {ROLE_LABELS[normalizeRole(m.position)] ?? m.position}</option>)}
+              </select>
+              <select value={newCandidate.assignedInterviewerId} onChange={(e) => setNewCandidate({ ...newCandidate, assignedInterviewerId: e.target.value })} className="glass-input text-sm py-1.5 px-3 rounded-md">
+                <option value="">Select Assigned Interviewer (optional)</option>
+                <optgroup label="HR">
+                  {hrPersonnelOptions.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+                </optgroup>
+                <optgroup label="Branch Manager">
+                  {assignedInterviewerBranchManagerOptions.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+                </optgroup>
               </select>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
@@ -14183,7 +14872,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             </>
           );
           return (
-        <div className="overflow-x-auto">
+        <StickyHorizontalScrollbar>
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-white/10 bg-white/5">
@@ -14195,12 +14884,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                 )}
                 {isHiringColVisible("branch") && (
                   <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase relative">
-                    {renderHiringMultiSelectHeader("branch", "Branch", hiringBranchOptions, hiringBranchFilter, setHiringBranchFilter)}
-                  </th>
-                )}
-                {isHiringColVisible("branchManager") && (
-                  <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase relative">
-                    {renderHiringMultiSelectHeader("branchManager", "Branch Manager", hiringBranchManagerOptions, hiringBranchManagerFilter, setHiringBranchManagerFilter)}
+                    <div className="flex items-center gap-3">
+                      {renderHiringMultiSelectHeader("branch", "Branch", hiringBranchOptions, hiringBranchFilter, setHiringBranchFilter)}
+                      {renderHiringMultiSelectHeader("branchManager", "Manager", hiringBranchManagerOptions, hiringBranchManagerFilter, setHiringBranchManagerFilter)}
+                    </div>
                   </th>
                 )}
                 {isHiringColVisible("assignedInterviewer") && (
@@ -14208,12 +14895,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                     {renderHiringMultiSelectHeader("assignedInterviewer", "Assigned Interviewer", hiringAssignedInterviewerOptions, hiringAssignedInterviewerFilter, setHiringAssignedInterviewerFilter)}
                   </th>
                 )}
-                {isHiringColVisible("department") && (
+                {isHiringColVisible("contact") && (
                   <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase relative">
-                    {renderHiringMultiSelectHeader("department", "Department", hiringDepartmentOptions, hiringDepartmentFilter, setHiringDepartmentFilter)}
+                    {renderHiringTriStateHeader("contact", "Contact", hiringContactFilter, setHiringContactFilter, "Has contact info", "No contact info")}
                   </th>
                 )}
-                {isHiringColVisible("contact") && <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Contact</th>}
                 {isHiringColVisible("outreach") && (
                   <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase relative">
                     {renderHiringMultiSelectHeader("outreach", "Texted / Called", [...HIRING_OUTREACH_OPTIONS], hiringOutreachFilter, setHiringOutreachFilter)}
@@ -14224,9 +14910,24 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                     {renderHiringTriStateHeader("cv", "CV", hiringCvFilter, setHiringCvFilter, "Has CV", "No CV")}
                   </th>
                 )}
+                {isHiringColVisible("documentVerified") && (
+                  <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase relative whitespace-nowrap" title="Manual for now — will detect a specific document once HR specifies which one">
+                    {renderHiringTriStateHeader("documentVerified", "Plus One", hiringDocumentVerifiedFilter, setHiringDocumentVerifiedFilter, "✓ Checked", "✗ Not checked")}
+                  </th>
+                )}
                 {isHiringColVisible("status") && (
                   <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase relative">
                     {renderHiringMultiSelectHeader("status", "Status", hiringStatusOptions, hiringStatusFilter, setHiringStatusFilter)}
+                  </th>
+                )}
+                {isHiringColVisible("screeningDate") && (
+                  <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase relative whitespace-nowrap">
+                    {renderHiringTriStateHeader("screeningDate", "Screening Date", hiringScreeningDateFilter, setHiringScreeningDateFilter, "Has date", "No date")}
+                  </th>
+                )}
+                {isHiringColVisible("interviewDate") && (
+                  <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase relative whitespace-nowrap">
+                    {renderHiringTriStateHeader("interviewDate", "Interview Date", hiringInterviewDateFilter, setHiringInterviewDateFilter, "Has date", "No date")}
                   </th>
                 )}
                 {isHiringColVisible("accountStatus") && (
@@ -14278,20 +14979,21 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                       {renderFieldChangedBy(c.id, "name")}
                     </td>
                     {isHiringColVisible("position") && (
-                    <td className="px-4 py-3 text-sm text-muted-foreground">
+                    <td className="px-4 py-3 text-sm text-slate-200">
                       {editingCandidateCell?.id === c.id && editingCandidateCell.field === "position" ? (
                         <div className="flex items-center gap-1">
-                          <input
+                          <select
                             autoFocus
-                            type="text"
                             value={candidateFieldDraft.position}
                             onChange={(e) => setCandidateFieldDraft({ ...candidateFieldDraft, position: e.target.value })}
                             onKeyDown={(e) => {
-                              if (e.key === "Enter") void handleSaveCandidateField(c.id, "position");
                               if (e.key === "Escape") setEditingCandidateCell(null);
                             }}
                             className="w-28 rounded border border-white/15 bg-slate-800 px-1.5 py-0.5 text-xs text-white"
-                          />
+                          >
+                            <option value="">Select Position</option>
+                            {candidatePositionOptions.map((r) => <option key={r.value} value={r.label}>{r.label}</option>)}
+                          </select>
                           <button onClick={() => void handleSaveCandidateField(c.id, "position")} disabled={savingCandidateFieldId === c.id} className="text-emerald-400 hover:text-emerald-300 disabled:opacity-40">
                             <Check className="h-3.5 w-3.5" />
                           </button>
@@ -14306,7 +15008,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                     </td>
                     )}
                     {isHiringColVisible("branch") && (
-                    <td className="px-4 py-3 text-sm text-muted-foreground">
+                    <td className="px-4 py-3 text-sm text-slate-200 space-y-2">
+                      <div>
                       {editingCandidateCell?.id === c.id && editingCandidateCell.field === "branch" ? (
                         <div className="flex items-center gap-1">
                           <select
@@ -14329,21 +15032,67 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                         </button>
                       )}
                       {renderFieldChangedBy(c.id, "branch")}
-                    </td>
-                    )}
-                    {isHiringColVisible("branchManager") && (
-                    <td className="px-4 py-3 text-sm text-muted-foreground whitespace-nowrap">
+                      </div>
+                      <div className="pt-2 border-t border-white/5">
+                      <p className="text-[9px] font-semibold uppercase tracking-wide text-muted-foreground/70 mb-0.5">Manager</p>
                       {editingCandidateCell?.id === c.id && editingCandidateCell.field === "branchManager" ? (
                         <div className="flex items-center gap-1">
-                          <select
-                            autoFocus
-                            value={candidateFieldDraft.branchManagerId}
-                            onChange={(e) => setCandidateFieldDraft({ ...candidateFieldDraft, branchManagerId: e.target.value })}
-                            className="rounded border border-white/15 bg-slate-800 px-1.5 py-0.5 text-xs text-white"
-                          >
-                            <option value="">Auto (from Branch)</option>
-                            {branchManagerOptions.map((m) => <option key={m.id} value={m.id}>{m.name}{m.branch ? ` — ${m.branch}` : ""}</option>)}
-                          </select>
+                          <div className="relative w-48">
+                            <input
+                              ref={branchManagerCellInputRef}
+                              type="text"
+                              autoFocus
+                              value={branchManagerCellSearch}
+                              onChange={(e) => {
+                                setBranchManagerCellSearch(e.target.value);
+                                setCandidateFieldDraft({ ...candidateFieldDraft, branchManagerId: "" });
+                                openBranchManagerCellDropdown();
+                              }}
+                              onFocus={openBranchManagerCellDropdown}
+                              onBlur={() => setTimeout(() => setBranchManagerCellDropdownOpen(false), 150)}
+                              placeholder="Auto (from Branch)"
+                              className="w-full rounded border border-white/15 bg-slate-800 px-1.5 py-0.5 text-xs text-white"
+                            />
+                            {branchManagerCellDropdownOpen && branchManagerCellPos && createPortal(
+                              <div
+                                style={{ position: "fixed", top: branchManagerCellPos.top, left: branchManagerCellPos.left, width: branchManagerCellPos.width }}
+                                className="z-50 max-h-48 overflow-y-auto rounded-md border border-white/15 bg-slate-800 shadow-2xl normal-case"
+                              >
+                                <button
+                                  type="button"
+                                  onMouseDown={(e) => e.preventDefault()}
+                                  onClick={() => {
+                                    setCandidateFieldDraft({ ...candidateFieldDraft, branchManagerId: "" });
+                                    setBranchManagerCellSearch("");
+                                    setBranchManagerCellDropdownOpen(false);
+                                  }}
+                                  className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${!candidateFieldDraft.branchManagerId ? "bg-blue-500/20 text-blue-300" : ""}`}
+                                >
+                                  Auto (from Branch)
+                                </button>
+                                {filteredBranchManagerCellOptions.length === 0 ? (
+                                  <p className="px-3 py-2 text-xs text-muted-foreground">No matching managers.</p>
+                                ) : (
+                                  filteredBranchManagerCellOptions.map((m) => (
+                                    <button
+                                      key={m.id}
+                                      type="button"
+                                      onMouseDown={(e) => e.preventDefault()}
+                                      onClick={() => {
+                                        setCandidateFieldDraft({ ...candidateFieldDraft, branchManagerId: m.id });
+                                        setBranchManagerCellSearch(m.name);
+                                        setBranchManagerCellDropdownOpen(false);
+                                      }}
+                                      className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${candidateFieldDraft.branchManagerId === m.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                                    >
+                                      {m.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(m.position)] ?? m.position}</span>
+                                    </button>
+                                  ))
+                                )}
+                              </div>,
+                              document.body
+                            )}
+                          </div>
                           <button onClick={() => void handleSaveCandidateField(c.id, "branchManager")} disabled={savingCandidateFieldId === c.id} className="text-emerald-400 hover:text-emerald-300 disabled:opacity-40">
                             <Check className="h-3.5 w-3.5" />
                           </button>
@@ -14355,10 +15104,37 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                         </button>
                       )}
                       {renderFieldChangedBy(c.id, "branchManager")}
+                      </div>
                     </td>
                     )}
                     {isHiringColVisible("assignedInterviewer") && (
-                    <td className="px-4 py-3 text-sm text-muted-foreground whitespace-nowrap">
+                    <td className="px-4 py-3 text-sm text-slate-200 whitespace-nowrap">
+                      <div className="mb-1 pb-1 border-b border-white/5">
+                        <p className="text-[9px] font-semibold uppercase tracking-wide text-muted-foreground/70 mb-0.5">Technical Team Member</p>
+                        {editingCandidateCell?.id === c.id && editingCandidateCell.field === "assignedManager" ? (
+                          <div className="flex items-center gap-1">
+                            <select
+                              autoFocus
+                              value={candidateFieldDraft.assignedManagerId}
+                              onChange={(e) => setCandidateFieldDraft({ ...candidateFieldDraft, assignedManagerId: e.target.value })}
+                              className="rounded border border-white/15 bg-slate-800 px-1.5 py-0.5 text-xs text-white"
+                            >
+                              <option value="">Unassigned</option>
+                              {interviewManagerOptions.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+                            </select>
+                            <button onClick={() => void handleSaveCandidateField(c.id, "assignedManager")} disabled={savingCandidateFieldId === c.id} className="text-emerald-400 hover:text-emerald-300 disabled:opacity-40">
+                              <Check className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        ) : (
+                          <button onClick={() => startEditCandidateCell(c, "assignedManager")} className="flex items-center gap-1 text-left hover:text-blue-300" title="Manager acting as interviewer — Branch Manager and above only">
+                            {assignedManagerNameForCandidate(c) || <span className="text-muted-foreground">—</span>}
+                            <Pencil className="h-2.5 w-2.5 text-muted-foreground shrink-0" />
+                          </button>
+                        )}
+                        {renderFieldChangedBy(c.id, "assignedManager")}
+                      </div>
+                      <p className="text-[9px] font-semibold uppercase tracking-wide text-muted-foreground/70 mb-0.5">HR Staff</p>
                       {editingCandidateCell?.id === c.id && editingCandidateCell.field === "assignedInterviewer" ? (
                         <div className="flex items-center gap-1">
                           <select
@@ -14375,7 +15151,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           </button>
                         </div>
                       ) : (
-                        <button onClick={() => startEditCandidateCell(c, "assignedInterviewer")} className="flex items-center gap-1 text-left hover:text-blue-300">
+                        <button onClick={() => startEditCandidateCell(c, "assignedInterviewer")} className="flex items-center gap-1 text-left hover:text-blue-300" title="HR staff only">
                           {assignedInterviewerNameForCandidate(c) || <span className="text-muted-foreground">—</span>}
                           <Pencil className="h-2.5 w-2.5 text-muted-foreground shrink-0" />
                         </button>
@@ -14383,34 +15159,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                       {renderFieldChangedBy(c.id, "assignedInterviewer")}
                     </td>
                     )}
-                    {isHiringColVisible("department") && (
-                    <td className="px-4 py-3 text-sm text-muted-foreground whitespace-nowrap">
-                      {editingCandidateCell?.id === c.id && editingCandidateCell.field === "department" ? (
-                        <div className="flex items-center gap-1">
-                          <select
-                            autoFocus
-                            value={candidateFieldDraft.department}
-                            onChange={(e) => setCandidateFieldDraft({ ...candidateFieldDraft, department: e.target.value })}
-                            className="rounded border border-white/15 bg-slate-800 px-1.5 py-0.5 text-xs text-white"
-                          >
-                            <option value="">Select Department</option>
-                            {MASTER_LIST_DEPARTMENT_OPTIONS.map((d) => <option key={d} value={d}>{d}</option>)}
-                          </select>
-                          <button onClick={() => void handleSaveCandidateField(c.id, "department")} disabled={savingCandidateFieldId === c.id} className="text-emerald-400 hover:text-emerald-300 disabled:opacity-40">
-                            <Check className="h-3.5 w-3.5" />
-                          </button>
-                        </div>
-                      ) : (
-                        <button onClick={() => startEditCandidateCell(c, "department")} className="flex items-center gap-1 text-left hover:text-blue-300">
-                          {c.department || <span className="text-muted-foreground">—</span>}
-                          <Pencil className="h-2.5 w-2.5 text-muted-foreground shrink-0" />
-                        </button>
-                      )}
-                      {renderFieldChangedBy(c.id, "department")}
-                    </td>
-                    )}
                     {isHiringColVisible("contact") && (
-                    <td className="px-4 py-3 text-xs text-muted-foreground">
+                    <td className="px-4 py-3 text-xs text-slate-200">
                       {editingCandidateCell?.id === c.id && editingCandidateCell.field === "contact" ? (
                         <div className="flex flex-col gap-1">
                           <input
@@ -14515,6 +15265,23 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                       ) : <span className="text-muted-foreground text-xs">—</span>}
                     </td>
                     )}
+                    {isHiringColVisible("documentVerified") && (
+                    <td className="px-4 py-3 text-center">
+                      <button
+                        type="button"
+                        onClick={() => void handleToggleDocumentVerified(c)}
+                        disabled={savingDocumentVerifiedId === c.id}
+                        title={c.documentVerified ? "Click to mark as not verified" : "Click to mark as verified"}
+                        className="disabled:opacity-40"
+                      >
+                        {c.documentVerified ? (
+                          <CheckCircle className="h-4 w-4 text-green-400" />
+                        ) : (
+                          <XCircle className="h-4 w-4 text-red-400" />
+                        )}
+                      </button>
+                    </td>
+                    )}
                     {isHiringColVisible("status") && (
                     <td className="px-4 py-3">
                       <select value={c.status} onChange={(e) => handleCandidateStatus(c.id, e.target.value as CandidateStatus)} className={`text-xs font-semibold px-2 py-1 rounded border-0 ${CANDIDATE_STATUS_COLOR[c.status]}`}>
@@ -14536,12 +15303,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                       {c.createdAt && (
                         <div className="mt-1 text-[10px] text-muted-foreground whitespace-nowrap">
                           Applied: {new Date(c.createdAt).toLocaleDateString()}
-                        </div>
-                      )}
-                      {c.status === "interviewing" && c.interviewDate && (
-                        <div className={`mt-1 text-[10px] whitespace-nowrap ${candidateStatusTextColor(c.status)}`}>
-                          Interview: {new Date(c.interviewDate + "T00:00:00").toLocaleDateString()}
-                          {c.interviewTime ? ` ${formatHHMM(c.interviewTime)}${c.interviewTimezone ? ` ${c.interviewTimezone}` : ""}` : ""}
                         </div>
                       )}
                       {c.status === "training" && (c.trainingStartDate || c.trainingEndDate) && (
@@ -14567,11 +15328,60 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           <Link
                             to="/m/$module/$submodule"
                             params={{ module: "hr", submodule: "user-management" }}
+                            search={{
+                              openAddUser: "1",
+                              prefillName: c.name || undefined,
+                              prefillEmail: c.email || undefined,
+                              prefillBranch: c.branch || undefined,
+                              prefillManager: branchManagerNameForCandidate(c) || undefined,
+                              prefillLoginName: deriveLoginName(c.name) || undefined,
+                              prefillUserType: candidatePositionOptions.find((r) => r.label === c.position)?.value || undefined,
+                            } as any}
+                            title="Add this person's user account, pre-filled from their candidate record"
                             className="text-[10px] text-blue-400 hover:text-blue-300 underline whitespace-nowrap"
                           >
                             Create Account
                           </Link>
                         </div>
+                      )}
+                    </td>
+                    )}
+                    {isHiringColVisible("screeningDate") && (
+                    <td className="px-4 py-3 text-sm text-slate-200 whitespace-nowrap">
+                      {editingCandidateCell?.id === c.id && editingCandidateCell.field === "screeningDate" ? (
+                        <div className="flex items-center gap-1">
+                          <input
+                            type="date"
+                            autoFocus
+                            value={candidateFieldDraft.screeningDate}
+                            onChange={(e) => setCandidateFieldDraft({ ...candidateFieldDraft, screeningDate: e.target.value })}
+                            onKeyDown={(e) => { if (e.key === "Escape") setEditingCandidateCell(null); }}
+                            className="rounded border border-white/15 bg-slate-800 px-1.5 py-0.5 text-xs text-white"
+                          />
+                          <button onClick={() => void handleSaveCandidateField(c.id, "screeningDate")} disabled={savingCandidateFieldId === c.id} className="text-emerald-400 hover:text-emerald-300 disabled:opacity-40">
+                            <Check className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      ) : (
+                        <button onClick={() => startEditCandidateCell(c, "screeningDate")} className="flex items-center gap-1 text-left hover:text-blue-300">
+                          {c.screeningDate ? new Date(c.screeningDate + "T00:00:00").toLocaleDateString() : <span className="text-muted-foreground">—</span>}
+                          <Pencil className="h-2.5 w-2.5 text-muted-foreground shrink-0" />
+                        </button>
+                      )}
+                      {renderFieldChangedBy(c.id, "screeningDate")}
+                    </td>
+                    )}
+                    {isHiringColVisible("interviewDate") && (
+                    <td className="px-4 py-3 text-sm text-slate-200 whitespace-nowrap">
+                      {c.status === "interviewing" && c.interviewDate ? (
+                        <div className={candidateStatusTextColor(c.status)}>
+                          <div>{new Date(c.interviewDate + "T00:00:00").toLocaleDateString()}</div>
+                          {c.interviewTime && (
+                            <div className="text-[10px] opacity-80">{formatHHMM(c.interviewTime)}{c.interviewTimezone ? ` ${c.interviewTimezone}` : ""}</div>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
                       )}
                     </td>
                     )}
@@ -14593,7 +15403,16 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                         <Link
                           to="/m/$module/$submodule"
                           params={{ module: "hr", submodule: "user-management" }}
-                          title="Go to User Management to add this person"
+                          search={{
+                            openAddUser: "1",
+                            prefillName: c.name || undefined,
+                            prefillEmail: c.email || undefined,
+                            prefillBranch: c.branch || undefined,
+                            prefillManager: branchManagerNameForCandidate(c) || undefined,
+                            prefillLoginName: deriveLoginName(c.name) || undefined,
+                            prefillUserType: candidatePositionOptions.find((r) => r.label === c.position)?.value || undefined,
+                          } as any}
+                          title="Add this person's user account, pre-filled from their candidate record"
                           className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-red-500/20 text-red-300 hover:bg-red-500/30 hover:text-red-200 whitespace-nowrap"
                         >
                           Not Created
@@ -14612,7 +15431,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                             title="Click to pick which forms apply to this candidate"
                             className={`text-[10px] font-semibold px-1.5 py-0.5 rounded whitespace-nowrap ${
                               !progress
-                                ? "bg-slate-500/20 text-slate-400 hover:bg-slate-500/30 hover:text-slate-200"
+                                ? "bg-slate-500/20 text-slate-200 hover:bg-slate-500/30 hover:text-white"
                                 : progress.complete === progress.total
                                 ? "bg-green-500/20 text-green-300 hover:bg-green-500/30"
                                 : "bg-amber-500/20 text-amber-300 hover:bg-amber-500/30"
@@ -14625,46 +15444,25 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                     </td>
                     )}
                     {isHiringColVisible("note") && (
-                    <td className="px-4 py-3 max-w-[16rem] space-y-2">
+                    <td className="px-4 py-3 max-w-[16rem] space-y-1.5">
                       {(
                         [
                           { field: "notes" as const, label: "HR Note", value: c.notes },
                           { field: "interviewerNote" as const, label: "Interviewer Note", value: c.interviewerNote },
-                          { field: "screeningNote" as const, label: "Screening Note", value: c.screeningNote },
                         ]
                       ).map(({ field, label, value }) => (
-                        <div key={field}>
+                        <button
+                          key={field}
+                          onClick={() => setNotesModalCandidateId(c.id)}
+                          className="block w-full text-left"
+                          title="Click to view/edit all notes"
+                        >
                           <p className="text-[9px] font-semibold uppercase tracking-wide text-muted-foreground/70 mb-0.5">{label}</p>
-                          {editingNoteCell?.id === c.id && editingNoteCell.field === field ? (
-                            <div className="flex items-start gap-1">
-                              <textarea
-                                autoFocus
-                                value={noteDraft}
-                                onChange={(e) => setNoteDraft(e.target.value)}
-                                onKeyDown={(e) => { if (e.key === "Escape") setEditingNoteCell(null); }}
-                                rows={2}
-                                className="w-40 rounded border border-white/15 bg-slate-800 px-2 py-1 text-xs text-white focus:outline-none focus:border-blue-500"
-                              />
-                              <button
-                                onClick={() => void handleSaveCandidateNote(c.id, field)}
-                                disabled={savingNoteCell?.id === c.id && savingNoteCell.field === field}
-                                className="text-emerald-400 hover:text-emerald-300 disabled:opacity-40 shrink-0 mt-1"
-                              >
-                                <Check className="h-3.5 w-3.5" />
-                              </button>
-                            </div>
-                          ) : (
-                            <button
-                              onClick={() => { setEditingNoteCell({ id: c.id, field }); setNoteDraft(value || ""); }}
-                              className="inline-flex items-start gap-1 text-left text-xs text-muted-foreground hover:text-white"
-                              title="Click to edit"
-                            >
-                              <span className="line-clamp-2">{value || "—"}</span>
-                              <Pencil className="h-3 w-3 shrink-0 mt-0.5 opacity-60" />
-                            </button>
-                          )}
-                          {renderFieldChangedBy(c.id, field)}
-                        </div>
+                          <span className="inline-flex items-start gap-1 text-xs text-muted-foreground hover:text-white">
+                            <span className="line-clamp-1">{value || "—"}</span>
+                            <Pencil className="h-3 w-3 shrink-0 mt-0.5 opacity-60" />
+                          </span>
+                        </button>
                       ))}
                     </td>
                     )}
@@ -14691,7 +15489,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               )}
             </tbody>
           </table>
-        </div>
+        </StickyHorizontalScrollbar>
           );
         })()}
       </div>
@@ -22922,10 +23720,36 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       <div className="panel p-0 overflow-visible mt-4 relative z-20">
         <div className="px-4 py-4 border-b border-white/10">
           <h2 className="font-semibold text-sm">Send Master Independent Contractor Subcontractor Agreement Addendum</h2>
-          <p className="text-[10px] text-muted-foreground mt-0.5">The Contractor gets a link to fill in the Position Level, Guaranteed Minimum Baseline Payout, and their name, then sign. After they submit, use "Send to next signer" on the row below to route it to the Company HR Representative and the three managerial witnesses (Technical COO, Technical Director, CEO).</p>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Set the Position Level and Guaranteed Minimum Baseline Payout below before sending — these are compensation terms HR decides, not something the Contractor fills in themselves. The Contractor then gets a link to fill in just their name and sign. After they submit, use "Send to next signer" on the row below to route it to the Company HR Representative and the three managerial witnesses (Technical COO, Technical Director, CEO).</p>
         </div>
         <div className="p-4 flex flex-col md:flex-row gap-6">
           <div className="flex flex-col gap-3 w-full md:max-w-sm md:shrink-0">
+            <div className="flex flex-col gap-3 pb-3 border-b border-white/10">
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Position Level</label>
+                <select
+                  value={contractorAddendumPositionLevel}
+                  onChange={(e) => setContractorAddendumPositionLevel(e.target.value)}
+                  className="glass-input text-sm py-1.5 px-3 rounded-md"
+                >
+                  <option value="">Select a position level…</option>
+                  {CONTRACTOR_ADDENDUM_POSITION_LEVELS.map((level) => (
+                    <option key={level} value={level}>{level}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Guaranteed Minimum Baseline Payout ($/month)</label>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={contractorAddendumBaselinePayout}
+                  onChange={(e) => setContractorAddendumBaselinePayout(e.target.value)}
+                  placeholder="e.g. 4500"
+                  className="glass-input text-sm py-1.5 px-3 rounded-md"
+                />
+              </div>
+            </div>
             <div className="flex flex-col gap-1.5 pb-3 border-b border-white/10">
               <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">External Link (no login needed)</label>
               {contractorAddendumSentLink ? (
@@ -22949,7 +23773,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                       placeholder="Type their name (optional)…"
                       className="glass-input text-sm py-1.5 px-3 rounded-md flex-1"
                     />
-                    <button onClick={handleGenerateExternalContractorAddendum} disabled={contractorAddendumSending} className="btn text-sm px-3 py-1.5 disabled:opacity-50 shrink-0">
+                    <button onClick={handleGenerateExternalContractorAddendum} disabled={contractorAddendumSending || !contractorAddendumPositionLevel || !contractorAddendumBaselinePayout.trim()} className="btn text-sm px-3 py-1.5 disabled:opacity-50 shrink-0">
                       {contractorAddendumSending ? "Generating…" : "Generate Link"}
                     </button>
                   </div>
@@ -23003,7 +23827,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               </button>
               <button
                 onClick={handleSendContractorAddendum}
-                disabled={!contractorAddendumRecipientId || contractorAddendumSending}
+                disabled={!contractorAddendumRecipientId || !contractorAddendumPositionLevel || !contractorAddendumBaselinePayout.trim() || contractorAddendumSending}
                 className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
               >
                 {contractorAddendumSending ? "Sending…" : "Send Request"}
@@ -25834,6 +26658,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                     <option value="manager">Manager</option>
                     <option value="senior_manager">Senior Manager</option>
                     <option value="hr_staff">HR Staff</option>
+                    <option value="executive">Executive</option>
                     <option value="employee">Employee</option>
                   </select>
                 </div>
@@ -26944,9 +27769,135 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-slate-800 border border-white/10 rounded-lg p-6 max-w-md w-full">
             <h3 className="text-lg font-bold mb-1">Required Forms</h3>
+            {formsDialogSending ? (
+              <>
+                <p className="text-sm text-muted-foreground mb-3">
+                  Send the selected forms to <span className="font-semibold text-white">{formsDialog.candidateName}</span> — stays right here, no tab switch.
+                </p>
+                {!formsDialogCandidateHasAccount && (
+                  <p className="mb-3 text-xs text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-md px-2.5 py-2">
+                    ⚠ {formsDialog.candidateName} doesn't have an AHS account yet — "Generate Link for Selected Forms" (Send via Message) needs a real account to DM and won't work for them. Use "Copy Link Instead" below to get a shareable link, or create their account first (see the Account column on the Hiring table).
+                  </p>
+                )}
+                <div className="max-h-40 overflow-y-auto border border-white/10 rounded-md divide-y divide-white/5 mb-3">
+                  {Array.from(formsDialog.selected).map((type) => {
+                    const { statusText, statusColor } = getCandidateFormStatus(formsDialog.candidateId, type);
+                    return (
+                      <div key={type} className="flex items-center gap-2 px-3 py-1.5">
+                        <span className="flex-1 min-w-0 text-sm text-slate-200 truncate">{SIGNABLE_DOCUMENT_REGISTRY[type].label}</span>
+                        <span className={`shrink-0 text-[10px] font-semibold uppercase tracking-wide ${statusColor}`}>{statusText}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setFormsDialogSending(false)}
+                  className="w-full mb-3 text-xs px-3 py-2 rounded-md border border-white/10 bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white transition"
+                >
+                  Re-select Forms
+                </button>
+                <div className="flex flex-col gap-1 relative mb-3">
+                  <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Technician</label>
+                  <input
+                    type="text"
+                    value={combineFormsRecipientSearch}
+                    onChange={(e) => { setCombineFormsRecipientSearch(e.target.value); setCombineFormsRecipientId(""); setCombineFormsRecipientDropdownOpen(true); setCombineFormsExternalName(""); }}
+                    onFocus={() => setCombineFormsRecipientDropdownOpen(true)}
+                    onBlur={() => setTimeout(() => setCombineFormsRecipientDropdownOpen(false), 150)}
+                    placeholder="Search a teammate…"
+                    className="glass-input text-sm py-1.5 px-3 rounded-md"
+                  />
+                  {combineFormsRecipientDropdownOpen && (
+                    <div className="absolute z-50 top-full mt-1 w-full max-h-60 overflow-y-auto rounded-md border border-white/15 bg-slate-900 shadow-2xl">
+                      {filteredCombineFormsRecipients.length === 0 ? (
+                        <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+                      ) : (
+                        filteredCombineFormsRecipients.map((e) => (
+                          <button
+                            key={e.id}
+                            type="button"
+                            onMouseDown={(ev) => ev.preventDefault()}
+                            onClick={() => {
+                              setCombineFormsRecipientId(e.id);
+                              setCombineFormsRecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`);
+                              setCombineFormsRecipientDropdownOpen(false);
+                            }}
+                            className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${combineFormsRecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                          >
+                            {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
+                          </button>
+                        ))
+                      )}
+                    </div>
+                  )}
+                </div>
+                <div className="flex flex-col gap-1 mb-3">
+                  <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">— or, no AHS account —</label>
+                  <input
+                    type="text"
+                    value={combineFormsExternalName}
+                    onChange={(e) => { setCombineFormsExternalName(e.target.value); setCombineFormsRecipientId(""); setCombineFormsRecipientSearch(""); }}
+                    placeholder="Type their name…"
+                    className="glass-input text-sm py-1.5 px-3 rounded-md"
+                  />
+                  <p className="text-[10px] text-muted-foreground">Optional — only used by "Copy Link Instead" below.</p>
+                </div>
+                <div className="flex flex-wrap items-center gap-3 mb-3">
+                  <button
+                    type="button"
+                    disabled={!combineFormsRecipientId || selectedFormTypes.size === 0 || combineFormsBusy}
+                    onClick={() => handleGenerateCombinedForms("message")}
+                    className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-40 flex items-center gap-1.5"
+                  >
+                    <Link2 className="h-3.5 w-3.5" /> {combineFormsBusy ? "Generating…" : "Generate Link for Selected Forms"}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={selectedFormTypes.size === 0 || combineFormsBusy}
+                    onClick={() => handleGenerateCombinedForms("copyLink")}
+                    title="Generate the same forms but just copy the link — nothing gets sent as a message"
+                    className="btn text-sm px-4 py-2 disabled:opacity-40 flex items-center gap-1.5"
+                  >
+                    <Copy className="h-3.5 w-3.5" /> Copy Link Instead
+                  </button>
+                </div>
+                {combineFormsError && (
+                  <p className="mb-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{combineFormsError}</p>
+                )}
+                {combineFormsSentNotice && (
+                  <p className="mb-3 text-xs text-green-300 bg-green-500/10 border border-green-500/30 rounded-md px-2.5 py-2">{combineFormsSentNotice}</p>
+                )}
+                {combineFormsCopyLink && (
+                  <div className="mb-3 text-xs bg-blue-500/10 border border-blue-500/30 rounded-md px-2.5 py-2 flex flex-wrap items-center gap-2">
+                    <span>Copied to clipboard — share it however you'd like:</span>
+                    <code className="px-1.5 py-0.5 bg-black/30 rounded break-all">{combineFormsCopyLink}</code>
+                    <button type="button" onClick={() => navigator.clipboard.writeText(combineFormsCopyLink)} className="btn text-xs px-2 py-1">Copy Again</button>
+                  </div>
+                )}
+                <div className="flex justify-end">
+                  <button type="button" onClick={closeFormsDialog} className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white">Done</button>
+                </div>
+              </>
+            ) : (
+            <>
             <p className="text-sm text-muted-foreground mb-3">
               Which forms apply to <span className="font-semibold text-white">{formsDialog.candidateName}</span>?
             </p>
+            <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1.5">Quick-select by role (Staff Form Checklist tiers)</p>
+            <div className="flex flex-wrap gap-1.5 mb-3">
+              {STAFF_FORM_TIERS.map((tier) => (
+                <button
+                  key={tier.key}
+                  type="button"
+                  onClick={() => setFormsDialog({ ...formsDialog, selected: new Set(tier.formTypes) })}
+                  title={`Set required forms to this tier's set: ${tier.formTypes.map((t) => SIGNABLE_DOCUMENT_REGISTRY[t].label).join(", ")}`}
+                  className="text-xs px-2.5 py-1 rounded-md border border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 text-slate-300 hover:text-white transition"
+                >
+                  {tier.label}
+                </button>
+              ))}
+            </div>
             <div className="relative mb-2">
               <Search className="h-3.5 w-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
               <input
@@ -26961,53 +27912,92 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             <div className="max-h-80 overflow-y-auto border border-white/10 rounded-md divide-y divide-white/5 mb-4">
               {(() => {
                 const q = formsDialogSearch.trim().toLowerCase();
-                const types = (Object.keys(SIGNABLE_DOCUMENT_REGISTRY) as SignableDocumentType[]).filter(
-                  (type) => !q || SIGNABLE_DOCUMENT_REGISTRY[type].label.toLowerCase().includes(q)
-                );
+                const types = (Object.keys(SIGNABLE_DOCUMENT_REGISTRY) as SignableDocumentType[])
+                  .filter((type) => !q || SIGNABLE_DOCUMENT_REGISTRY[type].label.toLowerCase().includes(q))
+                  // Checked forms float to the top so HR can see at a glance
+                  // what a tier button (or manual picking) actually selected,
+                  // without scrolling the whole list to find them — stable
+                  // sort keeps each group's original registry order.
+                  .sort((a, b) => Number(formsDialog.selected.has(b)) - Number(formsDialog.selected.has(a)));
                 if (types.length === 0) {
                   return <div className="px-3 py-4 text-sm text-muted-foreground text-center">No forms match "{formsDialogSearch}".</div>;
                 }
                 const dialogCandidate = candidates.find((c) => c.id === formsDialog.candidateId);
                 const dialogProfileId = dialogCandidate?.email ? profileIdByEmail.get(dialogCandidate.email.trim().toLowerCase()) : undefined;
-                const signedTypes = dialogProfileId ? completeDocTypesByProfileId.get(dialogProfileId) : undefined;
-                const pendingTypes = dialogProfileId ? pendingDocTypesByProfileId.get(dialogProfileId) : undefined;
-                return types.map((type) => {
+                const firstUncheckedIndex = types.findIndex((t) => !formsDialog.selected.has(t));
+                return types.map((type, i) => {
                   const checked = formsDialog.selected.has(type);
-                  const isSigned = signedTypes?.has(type) ?? false;
-                  const isPending = !isSigned && (pendingTypes?.has(type) ?? false);
+                  // Real 4-bucket status (same one Staff Form Checklist
+                  // shows), not just a plain signed/pending boolean — lets
+                  // HR review exactly where each form stands and, once it's
+                  // "Awaiting HR", sign it right here. Same helper backs the
+                  // "send" step's own status summary below.
+                  const { doc, reviewStatus, statusText, statusColor } = getCandidateFormStatus(formsDialog.candidateId, type);
                   return (
-                    <div key={type} className="px-3 py-2">
-                      <div className="flex items-center gap-2 -mx-3 px-3 py-0.5 hover:bg-white/5">
-                        <label className="flex items-center gap-2 text-sm text-slate-200 cursor-pointer flex-1">
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            onChange={() => {
-                              const next = new Set(formsDialog.selected);
-                              if (next.has(type)) next.delete(type);
-                              else next.add(type);
-                              setFormsDialog({ ...formsDialog, selected: next });
-                            }}
-                            className="h-3.5 w-3.5 accent-blue-500 shrink-0"
-                          />
-                          {SIGNABLE_DOCUMENT_REGISTRY[type].label}
-                        </label>
-                        {isSigned && (
-                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-500/15 text-green-300 border border-green-500/30 shrink-0">Signed</span>
-                        )}
-                        {isPending && (
-                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow-500/15 text-yellow-300 border border-yellow-500/30 shrink-0">Sent</span>
-                        )}
-                        {checked && (
-                          <button
-                            type="button"
-                            onClick={() => void handleSendType(type)}
-                            disabled={savingFormsDialog}
-                            className="text-xs text-blue-400 hover:text-blue-300 underline disabled:opacity-40 shrink-0"
-                          >
-                            Send →
-                          </button>
-                        )}
+                    <div key={type}>
+                      {i === firstUncheckedIndex && i > 0 && (
+                        <div className="px-3 py-1 text-[10px] uppercase tracking-wide text-muted-foreground bg-white/5">Other forms</div>
+                      )}
+                      <div className="px-3 py-2">
+                        <div className="flex items-center gap-2 -mx-3 px-3 py-0.5 hover:bg-white/5">
+                          <label className="flex items-center gap-2 text-sm text-slate-200 cursor-pointer flex-1">
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => {
+                                const next = new Set(formsDialog.selected);
+                                if (next.has(type)) next.delete(type);
+                                else next.add(type);
+                                setFormsDialog({ ...formsDialog, selected: next });
+                              }}
+                              className="h-3.5 w-3.5 accent-blue-500 shrink-0"
+                            />
+                            {SIGNABLE_DOCUMENT_REGISTRY[type].label}
+                          </label>
+                          <span className={`shrink-0 text-[10px] font-semibold uppercase tracking-wide ${statusColor}`}>{statusText}</span>
+                          {doc?.pdfUrl && (
+                            <a
+                              href={doc.pdfUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex shrink-0 items-center gap-0.5 text-xs text-blue-400 hover:text-blue-300"
+                            >
+                              view <ExternalLink className="h-3 w-3" />
+                            </a>
+                          )}
+                          {reviewStatus === "awaiting_employee" && doc && dialogProfileId && (
+                            <button
+                              type="button"
+                              disabled={remindingFormType === type}
+                              onClick={() => void handleRemindFormDialog(doc, dialogProfileId, type)}
+                              title="Send a reminder DM with the fill link"
+                              className="inline-flex shrink-0 items-center gap-1 text-xs text-amber-300 hover:text-amber-200 disabled:opacity-40"
+                            >
+                              {remindingFormType === type ? <Loader2 className="h-3 w-3 animate-spin" /> : <Bell className="h-3 w-3" />} Remind
+                            </button>
+                          )}
+                          {reviewStatus === "awaiting_hr" && doc && DOCUMENT_TYPES_REQUIRING_EMPLOYER_SIGNATURE.has(type) && (
+                            <button
+                              type="button"
+                              onClick={() => handleSignAsHr(type, doc)}
+                              title="Review and complete HR's own signature/info for this form"
+                              className="inline-flex shrink-0 items-center gap-1 text-xs text-sky-300 hover:text-sky-200"
+                            >
+                              <PenLine className="h-3 w-3" /> Sign
+                            </button>
+                          )}
+                          {reviewStatus === "not_sent" && (
+                            <button
+                              type="button"
+                              disabled={savingFormsDialog}
+                              onClick={() => void handleSendType(type)}
+                              title="Create and send this form"
+                              className="inline-flex shrink-0 items-center gap-1 text-xs text-blue-400 hover:text-blue-300 disabled:opacity-40"
+                            >
+                              {savingFormsDialog ? <Loader2 className="h-3 w-3 animate-spin" /> : <Send className="h-3 w-3" />} Send
+                            </button>
+                          )}
+                        </div>
                       </div>
                     </div>
                   );
@@ -27027,20 +28017,176 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             <div className="flex gap-2 justify-between items-center">
               <span className="text-xs text-muted-foreground">{formsDialog.selected.size} selected</span>
               <div className="flex gap-2">
-                <button onClick={() => setFormsDialog(null)} disabled={savingFormsDialog} className="btn text-sm px-4 py-2">Cancel</button>
+                <button onClick={closeFormsDialog} disabled={savingFormsDialog} className="btn text-sm px-4 py-2">Cancel</button>
                 <button onClick={handleSaveFormsDialog} disabled={savingFormsDialog} className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50">
                   {savingFormsDialog ? "Saving…" : "Save"}
                 </button>
               </div>
             </div>
+            </>
+            )}
           </div>
         </div>
       )}
 
+      {/* Embedded "Review & Sign" for whichever form type ManagerReviewPage
+          supports, opened from the Required Forms popup's "Sign" button —
+          same component/pattern TechnicianFormChecklistPage.tsx's own
+          "Sign"/"Re-sign" buttons use (its signDoc state), just triggered
+          from Hiring instead. w4/i9 never reach here — handleSignAsHr
+          routes those two to their own existing dialogs instead. */}
+      {managerReviewDoc && (
+        <div className="fixed inset-0 z-[60] bg-black/60 flex items-center justify-center p-4" onClick={() => setManagerReviewDoc(null)}>
+          <div className="bg-slate-900 border border-white/10 rounded-lg shadow-2xl w-full max-w-2xl max-h-[92vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between gap-3 shrink-0">
+              <p className="text-sm font-semibold flex items-center gap-1.5"><PenLine className="h-4 w-4" /> Review &amp; Sign</p>
+              <button
+                type="button"
+                onClick={() => setManagerReviewDoc(null)}
+                className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-white/5"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4">
+              {managerReviewDoc.pdfUrl && (
+                <div className="mb-4 rounded-md overflow-hidden border border-white/10 bg-white/5">
+                  <iframe src={managerReviewDoc.pdfUrl} title="Document on file" className="w-full border-0" style={{ height: 380 }} />
+                </div>
+              )}
+              <ManagerReviewPage
+                docId={managerReviewDoc.id}
+                embedded
+                onSigned={() => {
+                  setManagerReviewDoc(null);
+                  void loadCandidateForms();
+                }}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Notes pop-out — HR/Interviewer/Screening Note all together, with
+          each field's "Changed by" attribution shown above its textarea
+          (the table cell is too narrow to show that clearly for all 3 at
+          once). Reuses the same editingNoteCell/noteDraft/handleSaveCandidateNote
+          state the old inline table-cell editor used — only where it renders
+          changed, not how saving/attribution works. */}
+      {notesModalCandidateId && (() => {
+        const nc = candidates.find((c) => c.id === notesModalCandidateId);
+        if (!nc) return null;
+        const closeNotesModal = () => { setNotesModalCandidateId(null); setEditingNoteCell(null); };
+        return (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={closeNotesModal}>
+            <div className="bg-slate-800 border border-white/10 rounded-lg p-6 max-w-lg w-full max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-lg font-bold">{nc.name}</h3>
+                <button onClick={closeNotesModal} className="text-muted-foreground hover:text-white text-lg leading-none">×</button>
+              </div>
+              {/* Read-only summary of the rest of this candidate's row — same
+                  data the Hiring table's other columns show, just gathered
+                  here so it's visible alongside the notes without scrolling
+                  the table sideways. Editing those fields is still done from
+                  the table itself, not here. */}
+              <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs mb-4 p-3 rounded-md bg-white/5 border border-white/10">
+                <div>
+                  <p className="text-[9px] font-semibold uppercase tracking-wide text-muted-foreground/70">Position</p>
+                  <p className="text-slate-200">{nc.position || "—"}</p>
+                </div>
+                <div>
+                  <p className="text-[9px] font-semibold uppercase tracking-wide text-muted-foreground/70">Status</p>
+                  <p className={`font-semibold ${candidateStatusTextColor(nc.status)}`}>{CANDIDATE_STATUS_LABEL[nc.status]}</p>
+                </div>
+                <div>
+                  <p className="text-[9px] font-semibold uppercase tracking-wide text-muted-foreground/70">Branch</p>
+                  <p className="text-slate-200">{nc.branch || "—"}</p>
+                </div>
+                <div>
+                  <p className="text-[9px] font-semibold uppercase tracking-wide text-muted-foreground/70">Manager</p>
+                  <p className="text-slate-200">{branchManagerNameForCandidate(nc) || "—"}</p>
+                </div>
+                <div>
+                  <p className="text-[9px] font-semibold uppercase tracking-wide text-muted-foreground/70">Interview Manager</p>
+                  <p className="text-slate-200">{assignedManagerNameForCandidate(nc) || "—"}</p>
+                </div>
+                <div>
+                  <p className="text-[9px] font-semibold uppercase tracking-wide text-muted-foreground/70">Assigned Interviewer (HR)</p>
+                  <p className="text-slate-200">{assignedInterviewerNameForCandidate(nc) || "—"}</p>
+                </div>
+                <div className="col-span-2">
+                  <p className="text-[9px] font-semibold uppercase tracking-wide text-muted-foreground/70">Contact</p>
+                  {nc.phone || nc.email || nc.source ? (
+                    <p className="text-slate-200">
+                      {[nc.phone, nc.email].filter(Boolean).join(" · ")}
+                      {nc.source && <span className="text-muted-foreground"> — Source: {nc.source}</span>}
+                    </p>
+                  ) : (
+                    <p className="text-slate-200">—</p>
+                  )}
+                </div>
+                {nc.createdAt && (
+                  <div>
+                    <p className="text-[9px] font-semibold uppercase tracking-wide text-muted-foreground/70">Applied</p>
+                    <p className="text-slate-200">{new Date(nc.createdAt).toLocaleDateString()}</p>
+                  </div>
+                )}
+              </div>
+              <div className="space-y-4">
+                {(
+                  [
+                    { field: "notes" as const, label: "HR Note", value: nc.notes },
+                    { field: "interviewerNote" as const, label: "Interviewer Note", value: nc.interviewerNote },
+                  ]
+                ).map(({ field, label, value }) => (
+                  <div key={field} className="border border-white/10 rounded-md p-3">
+                    <div className="flex items-start justify-between gap-2 mb-1.5">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{label}</p>
+                      {renderFieldChangedBy(nc.id, field)}
+                    </div>
+                    {editingNoteCell?.id === nc.id && editingNoteCell.field === field ? (
+                      <div className="flex flex-col gap-2">
+                        <textarea
+                          autoFocus
+                          value={noteDraft}
+                          onChange={(e) => setNoteDraft(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === "Escape") setEditingNoteCell(null); }}
+                          rows={4}
+                          className="w-full rounded border border-white/15 bg-slate-900 px-2.5 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500"
+                        />
+                        <div className="flex items-center gap-2 justify-end">
+                          <button onClick={() => setEditingNoteCell(null)} className="btn text-xs px-3 py-1.5">Cancel</button>
+                          <button
+                            onClick={() => void handleSaveCandidateNote(nc.id, field)}
+                            disabled={savingNoteCell?.id === nc.id && savingNoteCell.field === field}
+                            className="btn text-xs px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+                          >
+                            {savingNoteCell?.id === nc.id && savingNoteCell.field === field ? "Saving…" : "Save"}
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => { setEditingNoteCell({ id: nc.id, field }); setNoteDraft(value || ""); }}
+                        className="w-full text-left text-sm text-muted-foreground hover:text-white flex items-start gap-1.5"
+                        title="Click to edit"
+                      >
+                        <span className="flex-1 whitespace-pre-wrap">{value || "—"}</span>
+                        <Pencil className="h-3.5 w-3.5 shrink-0 mt-0.5 opacity-60" />
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Forward candidate details to a manager — sends name/position/branch/contact/status (plus the CV link, if one's on file) via the internal messenger (Team Messenger) */}
       {forwardCvDialog && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-slate-800 border border-white/10 rounded-lg p-6 max-w-sm w-full">
+          <div className="bg-slate-800 border border-white/10 rounded-lg p-6 max-w-md w-full max-h-[85vh] overflow-y-auto">
             <h3 className="text-lg font-bold mb-2">Forward Candidate</h3>
             <p className="text-sm text-muted-foreground mb-4">
               Send <span className="font-semibold text-white">{forwardCvDialog.name}</span>'s details{forwardCvDialog.cvPath ? " and CV" : ""} to one or more managers via the internal messenger.
@@ -27112,6 +28258,54 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                 {forwardSending ? "Sending…" : "Send"}
               </button>
             </div>
+
+            {/* Send Credentials — only once this candidate has a created
+                account (forwardDialogProfileId resolved). Shows the actual
+                email content before sending, instead of a blind confirm(). */}
+            {forwardDialogProfileId && (
+              <div className="mt-5 pt-4 border-t border-white/10">
+                <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Send Login Credentials</label>
+                <p className="text-xs text-muted-foreground mt-1 mb-2">
+                  Email {forwardCvDialog.name} their username, default password, and Unique ID.
+                </p>
+                {credentialsPreviewLoading ? (
+                  <p className="text-xs text-muted-foreground">Loading preview…</p>
+                ) : credentialsPreview ? (
+                  <div className="rounded-md border border-white/10 bg-slate-900/60 p-3 text-xs font-mono space-y-0.5">
+                    <p className="text-muted-foreground font-sans mb-1.5">Subject: Your AHS account details</p>
+                    <p>Hi {credentialsPreview.name || forwardCvDialog.name},</p>
+                    <p>&nbsp;</p>
+                    <p>Here are your account details for AHS:</p>
+                    <p>&nbsp;</p>
+                    <p>Username: <span className="text-slate-200">{deriveLoginName(credentialsPreview.name || forwardCvDialog.name)}</span></p>
+                    <p>Default password: <span className="text-slate-200">Welcome2024!</span></p>
+                    <p>Unique ID: <span className="text-slate-200">USIHS</span></p>
+                    <p>&nbsp;</p>
+                    <p>Log in here: <span className="text-blue-300">{getAppUrl()}</span></p>
+                    <p>&nbsp;</p>
+                    <p className="font-sans text-muted-foreground">Sent to: {credentialsPreview.email || "—"}</p>
+                  </div>
+                ) : (
+                  <p className="text-xs text-red-300">Couldn't load this account's details.</p>
+                )}
+                {!hiringGmailStatus?.connected && (
+                  <p className="text-[11px] text-amber-300 mt-2">Connect Gmail on the Hiring panel first before sending.</p>
+                )}
+                {credentialsSentTo && (
+                  <p className="text-[11px] text-green-300 mt-2">Sent to {credentialsSentTo}.</p>
+                )}
+                <div className="flex justify-end mt-2">
+                  <button
+                    type="button"
+                    onClick={() => void handleSendCredentials(forwardDialogProfileId)}
+                    disabled={!credentialsPreview?.email || sendingCredentialsId === forwardDialogProfileId || !hiringGmailStatus?.connected}
+                    className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+                  >
+                    {sendingCredentialsId === forwardDialogProfileId ? "Sending…" : credentialsSentTo ? "Send Again" : "Send Credentials"}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

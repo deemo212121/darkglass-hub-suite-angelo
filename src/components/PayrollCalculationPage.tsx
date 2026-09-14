@@ -5,12 +5,12 @@ import { ChevronLeft, Download } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
-import { getCompanyTimecardEntries, calcWorkedHours, computeScheduledDutyHours, startOfWeekSunday, splitRegularOvertimeWeekly, type CompanyTimecardEntry } from "@/lib/supabase/timecards";
+import { getCompanyTimecardEntries, calcWorkedHours, computeScheduledDutyHours, startOfWeekSunday, splitRegularOvertimeWeekly, CSR_WEEKLY_OVERTIME_THRESHOLD, type CompanyTimecardEntry } from "@/lib/supabase/timecards";
 import { getCompanySalaryEntries, rateEffectiveOn, entryEffectiveOn, currentRate, perCutoffSalary, type SalaryEntryRow } from "@/lib/supabase/salary";
 import { EmployeePayrollDetailModal } from "@/components/EmployeePayrollDetailModal";
 import { ActivityLogPanel } from "@/components/ActivityLogPanel";
 import { logModuleActivity } from "@/lib/supabase/moduleActivityLog";
-import { getRoleDepartmentBreakdown } from "@/lib/roleLabels";
+import { getRoleDepartmentBreakdown, isCsrRestrictedRole } from "@/lib/roleLabels";
 import { payGraceMinutesFor, applyGraceToCheckIn, roundCheckOutToSchedule } from "@/lib/attendanceGrace";
 
 const REGULAR_HOURS_PER_DAY = 8;
@@ -147,6 +147,10 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
   // those days aren't part of this period. Falls back to the old flat
   // per-day 8-hour cap only when no schedule is configured at all (dutyHours
   // 0), so a missing schedule doesn't just silently drop all their overtime.
+  // CSR is the one exception to the scheduled-duty-hours cap: their shift
+  // start/end times vary person to person and aren't reliably captured in
+  // required_check_in/required_check_out, so they use a flat 40 hrs/week
+  // (standard FLSA overtime) instead — see CSR_WEEKLY_OVERTIME_THRESHOLD.
   const rows: PayrollRow[] = useMemo(() => {
     return profiles.map((p) => {
       const dayEntries = (entriesByProfile.get(p.id) ?? []).slice().sort((a, b) => a.workDate.localeCompare(b.workDate));
@@ -158,15 +162,23 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
       let overtimeHours = 0;
       let grossPay = 0;
       const graceMinutes = payGraceMinutesFor(profileCountry(p));
-      const dutyHours = computeScheduledDutyHours(
-        p.required_check_in || "",
-        p.required_check_out || "",
-        p.working_hours,
-        p.meal_minutes,
-        p.off_days,
-        startDate,
-        endDate
-      );
+      // CSR shift start/end times vary person to person and aren't reliably
+      // captured in required_check_in/required_check_out, so the
+      // scheduled-duty-hours cap below doesn't apply cleanly to them —
+      // standard FLSA weekly overtime (over 40 hrs/wk) doesn't depend on a
+      // configured schedule being accurate. See CSR_WEEKLY_OVERTIME_THRESHOLD.
+      const isCsr = isCsrRestrictedRole(p.role, p.extra_roles);
+      const dutyHours = isCsr
+        ? CSR_WEEKLY_OVERTIME_THRESHOLD
+        : computeScheduledDutyHours(
+            p.required_check_in || "",
+            p.required_check_out || "",
+            p.working_hours,
+            p.meal_minutes,
+            p.off_days,
+            startDate,
+            endDate
+          );
       const hoursForDay = (day: CompanyTimecardEntry): number => {
         const paidCheckIn = p.required_check_in
           ? applyGraceToCheckIn(day.checkIn, p.required_check_in, graceMinutes)
@@ -191,7 +203,9 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
                 workingHours: p.working_hours,
                 mealMinutes: p.meal_minutes,
                 offDays: p.off_days,
-              }
+              },
+              8,
+              isCsr ? CSR_WEEKLY_OVERTIME_THRESHOLD : undefined
             )
           : new Map<string, { regular: number; overtime: number }>();
       const realDates = [...new Set(dayEntries.filter((d) => d.checkIn && d.checkOut).map((d) => d.workDate))].sort();
@@ -465,6 +479,8 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
           profileId={detailProfile.id}
           employeeName={detailProfile.display_name || detailProfile.email}
           department={getRoleDepartmentBreakdown(detailProfile.role).department}
+          role={detailProfile.role}
+          extraRoles={detailProfile.extra_roles}
           requiredCheckIn={detailProfile.required_check_in || undefined}
           requiredCheckOut={detailProfile.required_check_out || undefined}
           workingHours={detailProfile.working_hours}

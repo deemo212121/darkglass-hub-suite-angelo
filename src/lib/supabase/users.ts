@@ -796,6 +796,8 @@ export async function createCompanyUser(input: {
   email: string;
   password: string;
   displayName: string;
+  /** The Add User modal's "Login Name" field — the real login credential (e.g. "FirstName.LastName"), matched case-insensitively by login_email_for_username. Falls back to displayName (space-preserved) when omitted, for any caller that doesn't collect a separate login name. */
+  loginName?: string;
   role: UserRole;
   extraRoles?: UserRole[];
   companyId?: string;
@@ -811,7 +813,7 @@ export async function createCompanyUser(input: {
   workingHours?: number;
   mealMinutes?: number;
   employmentType?: "trainee" | "regular";
-}): Promise<string> {
+}): Promise<{ uid: string; profileId: string }> {
   // --- 1. Create the Firebase Auth credential on a SECONDARY app ---
   const primaryApp = getApps()[0];
   if (!primaryApp) throw new Error("Firebase not initialized");
@@ -848,11 +850,13 @@ export async function createCompanyUser(input: {
   // company_id is stamped server-side by the trg_profiles_stamp_company trigger
   // from the calling admin's company (auth_company_id()), so we don't send it.
   // This avoids the client passing the wrong format (e.g. legacy "COMP001").
-  // Username is the full name itself (not the old "FirstName.LastName" dotted
-  // form) — it's also what getUserByUsername/login_email_for_username match
-  // against for username-based login, so this is what an employee actually
-  // types at the login screen.
-  const username = input.displayName.trim().replace(/\s+/g, " ");
+  // Username is whatever was typed into the Add User modal's "Login Name"
+  // field — the real login credential (still the "FirstName.LastName"
+  // dotted convention every existing account uses), matched
+  // case-insensitively by getUserByUsername/login_email_for_username. Falls
+  // back to the full name (space-preserved) only for a caller that never
+  // collected a separate login name.
+  const username = input.loginName?.trim() || input.displayName.trim().replace(/\s+/g, " ");
   // De-duplicate extra roles and strip the primary one so it isn't double-stored.
   const extras = Array.from(new Set((input.extraRoles ?? []).filter((r) => r && r !== input.role)));
   const basePayload = {
@@ -875,13 +879,14 @@ export async function createCompanyUser(input: {
     meal_minutes: input.mealMinutes ?? null,
     is_active: true,
   };
-  let { error: insertErr } = await supabase
+  let { data: insertedRows, error: insertErr } = await supabase
     .from("profiles")
-    .insert({ ...basePayload, employment_type: input.employmentType ?? "regular" });
+    .insert({ ...basePayload, employment_type: input.employmentType ?? "regular" })
+    .select("id");
   if (insertErr?.code === "42703") {
     // employment_type (migration 0152) not applied yet — retry without it,
     // same best-effort treatment getCompanyUsers already gives that column.
-    ({ error: insertErr } = await supabase.from("profiles").insert(basePayload));
+    ({ data: insertedRows, error: insertErr } = await supabase.from("profiles").insert(basePayload).select("id"));
   }
 
   if (insertErr) {
@@ -890,7 +895,11 @@ export async function createCompanyUser(input: {
   }
 
   invalidateCompanyUsersCache();
-  return newUid;
+  // profiles.id (a real Postgres UUID) is a different value from the
+  // Firebase uid — callers that need to reference this new row from another
+  // table with a uuid FK (e.g. seedOnboardingTasks's employee_onboarding_tasks.profile_id)
+  // need this, not the Firebase uid.
+  return { uid: newUid, profileId: insertedRows?.[0]?.id as string };
 }
 
 /**
@@ -1226,4 +1235,20 @@ export async function migrateFirestoreUsersToSupabase(
   }
 
   return { migrated, skipped, failed, details };
+}
+
+/**
+ * Just enough of a profile to preview the "Send Credentials" email
+ * (ReportHRDaily.tsx's Forward Candidate dialog) before actually sending it
+ * — plain profile fields already readable under normal RLS, never the
+ * password/token itself (the default password is a fixed app-wide
+ * constant, not stored per-user; see gmailBridge.ts's send-hiring-credentials).
+ */
+export async function getProfileCredentialsPreview(profileId: string): Promise<{ username: string | null; technicianId: string | null; email: string | null; name: string | null } | null> {
+  const { data, error } = await supabase.from("profiles").select("username, technician_id, email, display_name").eq("id", profileId).single();
+  if (error) {
+    console.error("getProfileCredentialsPreview error:", error.message);
+    return null;
+  }
+  return { username: data.username ?? null, technicianId: data.technician_id ?? null, email: data.email ?? null, name: data.display_name ?? null };
 }

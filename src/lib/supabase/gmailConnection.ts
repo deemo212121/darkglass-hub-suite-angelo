@@ -8,9 +8,12 @@
  * "IT_1"/"IT_2"/"IT_3" (IT Tickets' "Send" — see migration 0173; unlike
  * every other slot, IT Tickets lets the caller pick WHICH of up to 3
  * connected accounts to send from per email, rather than always
- * resolving to one fixed slot), and "ATTENDANCE" (grace-period warning
+ * resolving to one fixed slot), "ATTENDANCE" (grace-period warning
  * emails — see migration 0217, src/lib/server/attendanceAlerts.ts; sent
- * only by the server-side cron job, not from any client action here).
+ * only by the server-side cron job, not from any client action here), and
+ * "HR_HIRING" (the Hiring panel's own connection, see migration 0249 —
+ * connected ahead of an actual candidate-emailing feature, so there's
+ * nothing to send through it yet).
  * Status/disconnect go through Supabase RPCs (see migration
  * 0113_hr_gmail_connections.sql), same pattern as customForms.ts's Google
  * Drive connection wrappers. The actual connect flow and sends both go
@@ -20,7 +23,7 @@
 import { supabase } from "./client";
 import { auth as firebaseAuth } from "@/lib/firebase/config";
 
-export type GmailRegion = "US" | "PH" | "PARTS" | "IT_1" | "IT_2" | "IT_3" | "ATTENDANCE";
+export type GmailRegion = "US" | "PH" | "PARTS" | "IT_1" | "IT_2" | "IT_3" | "ATTENDANCE" | "HR_HIRING";
 export const IT_TICKET_GMAIL_REGIONS: GmailRegion[] = ["IT_1", "IT_2", "IT_3"];
 
 export interface GmailConnectionStatus {
@@ -85,5 +88,23 @@ export async function sendPayslipEmail(params: {
   });
   const body = (await res.json().catch(() => ({}))) as { ok?: boolean; sentTo?: string; error?: string };
   if (!res.ok || !body.ok) throw new Error(body.error || "Failed to send payslip.");
+  return { sentTo: body.sentTo || "" };
+}
+
+/**
+ * Emails a just-created employee (see ReportHRDaily.tsx's Hiring panel,
+ * Account Status column) their username, the app-wide default password,
+ * and their Technician ID — always through the single HR_HIRING connection.
+ */
+export async function sendHiringCredentialsEmail(profileId: string): Promise<{ sentTo: string }> {
+  const idToken = await firebaseAuth?.currentUser?.getIdToken(false);
+  if (!idToken) throw new Error("You need to be logged in to send this email.");
+  const res = await fetch("/api/gmail?action=send-hiring-credentials", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ idToken, profileId }),
+  });
+  const body = (await res.json().catch(() => ({}))) as { ok?: boolean; sentTo?: string; error?: string };
+  if (!res.ok || !body.ok) throw new Error(body.error || "Failed to send credentials email.");
   return { sentTo: body.sentTo || "" };
 }

@@ -6,7 +6,7 @@
  */
 import { supabase } from "./client";
 
-export type ActivityLogModule = "accounting" | "payroll" | "attendance-monitoring" | "it-tickets" | "user-management";
+export type ActivityLogModule = "accounting" | "payroll" | "attendance-monitoring" | "it-tickets" | "user-management" | "absent-list";
 
 /** Human-readable label for each action code — new codes just show as-is (title-cased) if not listed here. */
 export const MODULE_ACTIVITY_ACTION_LABELS: Record<string, string> = {
@@ -25,6 +25,9 @@ export const MODULE_ACTIVITY_ACTION_LABELS: Record<string, string> = {
   timecard_correction_rejected: "Rejected time correction",
   conduct_warning_submitted: "Submitted conduct warning",
   attendance_note_saved: "Saved attendance note",
+  hr_status_saved: "Set HR Status",
+  attendance_note_attachment_added: "Attached a file",
+  attendance_note_attachment_removed: "Removed an attachment",
   it_ticket_submitted: "Submitted IT ticket",
   it_ticket_status_changed: "Changed IT ticket status",
   it_ticket_deleted: "Deleted IT ticket",

@@ -79,6 +79,23 @@ import { logActivity } from "@/lib/supabase/hrActivityLog";
 
 interface Props {
   docId: string;
+  /**
+   * True when rendered inline inside an already HR/Admin-gated view (e.g.
+   * TechnicianFormChecklistPage.tsx's "Sign" popup) rather than as the
+   * standalone /sign-manager-review/$docId route a DM link points a non-HR
+   * manager at. Skips the AppHeader/Home-link chrome (inappropriate inside
+   * a modal) and — since the surrounding page has already verified the
+   * viewer is ADMIN/HR — skips the strict "are you this document's current
+   * recipientId" check too: that check exists for the standalone route,
+   * where anyone with the link could otherwise try it regardless of role,
+   * but it would incorrectly block most HR staff here, since the document
+   * is still recipientId = the EMPLOYEE at the "awaiting HR" stage (the
+   * reassignment to whoever signs only happens at submit time, same as
+   * this page's own handlers already do).
+   */
+  embedded?: boolean;
+  /** Fires right after a successful signature save — lets an embedded caller close the popup and refresh its own list instead of the viewer needing to close it manually. */
+  onSigned?: () => void;
 }
 
 const TYPE_LABEL: Partial<Record<SignableDocumentType, string>> = {
@@ -115,10 +132,25 @@ const UNIFORM_CONFIGS: Partial<Record<SignableDocumentType, UniformSignConfig>> 
   flash_technician_travel: { employeeSigField: "employeeSignatureDataUrl", fillPdf: fillFlashTechnicianTravelPdf, uploadPdf: uploadFlashTechnicianTravelForm, logAction: "flash_technician_travel_employer_signed", nameFallback: "flash-technician-travel" },
 };
 
-/** Document types this page can complete — see the file header for why i9 isn't here yet. master_w2_agreement/master_w2_office_agreement/master_ph_contractor_agreement are HTML-captured (see masterW2AgreementFormTemplate.ts / masterW2OfficeAgreementFormTemplate.ts / masterPhContractorAgreementFormTemplate.ts), not a pdf-lib byte-fill like the UNIFORM_CONFIGS types, so they're handled as their own cases (handleSubmitMasterW2Agreement/handleSubmitMasterW2OfficeAgreement/handleSubmitMasterPhContractorAgreement) rather than fitting UniformSignConfig's fillPdf shape. */
-const SUPPORTED_TYPES = new Set<SignableDocumentType>(["parts_responsibility", "master_w2_agreement", "master_w2_office_agreement", "master_ph_contractor_agreement", ...Object.keys(UNIFORM_CONFIGS) as SignableDocumentType[]]);
+/**
+ * Document types this page can complete — see the file header for why i9
+ * isn't here yet. master_w2_agreement/master_w2_office_agreement/
+ * master_ph_contractor_agreement are HTML-captured (see
+ * masterW2AgreementFormTemplate.ts / masterW2OfficeAgreementFormTemplate.ts
+ * / masterPhContractorAgreementFormTemplate.ts), not a pdf-lib byte-fill
+ * like the UNIFORM_CONFIGS types, so they're handled as their own cases
+ * (handleSubmitMasterW2Agreement/handleSubmitMasterW2OfficeAgreement/
+ * handleSubmitMasterPhContractorAgreement) rather than fitting
+ * UniformSignConfig's fillPdf shape.
+ *
+ * Exported so TechnicianFormChecklistPage.tsx's "Sign" popup can decide
+ * whether a given "Awaiting HR review" row can actually be completed here
+ * (everything but i9) vs. still needs the plain "Needs your review" text
+ * pointing HR at Attendance Monitoring instead.
+ */
+export const SUPPORTED_TYPES = new Set<SignableDocumentType>(["parts_responsibility", "master_w2_agreement", "master_w2_office_agreement", "master_ph_contractor_agreement", ...Object.keys(UNIFORM_CONFIGS) as SignableDocumentType[]]);
 
-export function ManagerReviewPage({ docId }: Props) {
+export function ManagerReviewPage({ docId, embedded = false, onSigned }: Props) {
   const { ready, uid, displayName, role } = useAuth();
   const [myProfileId, setMyProfileId] = useState<string | null>(null);
   const [doc, setDoc] = useState<SignableDocument | null>(null);
@@ -156,6 +188,7 @@ export function ManagerReviewPage({ docId }: Props) {
 
   const isRecipient = !!doc && !!myProfileId && doc.recipientId === myProfileId;
   const isSuperadmin = role === "SUPERSUPERADMIN";
+  const isAuthorized = embedded || isRecipient || isSuperadmin;
   const isSupportedType = !!doc && SUPPORTED_TYPES.has(doc.documentType);
 
   const handleSubmitPartsResponsibility = async (dataUrl: string) => {
@@ -309,6 +342,7 @@ export function ManagerReviewPage({ docId }: Props) {
         await handleSubmitUniform(config, dataUrl);
       }
       setSubmitted(true);
+      onSigned?.();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save signature.");
     } finally {
@@ -340,13 +374,13 @@ export function ManagerReviewPage({ docId }: Props) {
   const employeeName = doc ? ((doc.formData as { employeeName?: string })?.employeeName || doc.recipientName || "—") : "—";
   const label = doc ? (TYPE_LABEL[doc.documentType] ?? doc.documentType) : "";
 
-  return (
-    <div className="min-h-screen bg-background">
-      <AppHeader />
-      <main className="max-w-lg mx-auto p-4">
+  const content = (
+    <>
+      {!embedded && (
         <Link to="/home" className="btn text-xs px-2.5 py-1.5 flex items-center gap-1 w-fit mb-4">
           <ChevronLeft className="h-3.5 w-3.5" /> Home
         </Link>
+      )}
 
         {loading ? (
           <div className="panel p-8 text-center text-sm text-muted-foreground flex items-center justify-center gap-2">
@@ -354,7 +388,7 @@ export function ManagerReviewPage({ docId }: Props) {
           </div>
         ) : error && !doc ? (
           <div className="panel p-6 text-sm text-red-300">{error}</div>
-        ) : !doc ? null : !isRecipient && !isSuperadmin ? (
+        ) : !doc ? null : !isAuthorized ? (
           <div className="panel p-6 text-sm text-muted-foreground">
             This form isn't currently assigned to you for review — it may have already been completed, or sent to someone else. Check with HR if you think this is wrong.
           </div>
@@ -411,7 +445,15 @@ export function ManagerReviewPage({ docId }: Props) {
             </button>
           </div>
         )}
-      </main>
+    </>
+  );
+
+  if (embedded) return content;
+
+  return (
+    <div className="min-h-screen bg-background">
+      <AppHeader />
+      <main className="max-w-lg mx-auto p-4">{content}</main>
     </div>
   );
 }

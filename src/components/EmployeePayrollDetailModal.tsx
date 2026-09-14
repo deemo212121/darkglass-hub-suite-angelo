@@ -1,7 +1,11 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { X, Plus, Pencil, Check, Loader2, ExternalLink, ChevronDown, ChevronRight, Trash2 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
-import { getAttendanceForRange, saveEntry, getProfileIdByFirebaseUid, computeScheduledDutyHours, startOfWeekSunday, splitRegularOvertimeWeekly, type AttendanceRow } from "@/lib/supabase/timecards";
+import { getAttendanceForRange, saveEntry, getProfileIdByFirebaseUid, computeScheduledDutyHours, startOfWeekSunday, splitRegularOvertimeWeekly, CSR_WEEKLY_OVERTIME_THRESHOLD, type AttendanceRow } from "@/lib/supabase/timecards";
+import { isCsrRestrictedRole } from "@/lib/roleLabels";
+import { getCompanyHolidaysInRange } from "@/lib/supabase/companyHolidays";
+import { getPendingCorrectionsInRange, type TimecardCorrectionRow } from "@/lib/supabase/timecardCorrections";
+import { PendingItemDetailModal, type PendingItem } from "@/components/PendingItemDetailModal";
 import { getTicketAttendanceForTechnician, slotSortKey, type TicketAttendanceRow } from "@/lib/supabase/technicianWhereabouts";
 import { getCompanyEmployeeRequests } from "@/lib/supabase/employeeRequests";
 import { getVisitDiagnosisByTicketIds } from "@/lib/supabase/tickets";
@@ -23,6 +27,9 @@ interface Props {
   profileId: string;
   employeeName: string;
   department?: string;
+  /** Used only to decide the CSR flat-40-hrs/week overtime exception (isCsrRestrictedRole) — see dailyHoursSplitByDate below. */
+  role?: string;
+  extraRoles?: string[] | null;
   requiredCheckIn?: string;
   requiredCheckOut?: string;
   workingHours?: number | null;
@@ -84,6 +91,8 @@ const STATUS_LABEL: Record<AttendanceRow["status"], string> = {
   "missing-out": "Missing Clock Out",
   "missing-meal": "Meal Not Taken",
   "day-off": "Rest Day",
+  holiday: "Holiday",
+  "pending-correction": "Pending Time Correction Request",
 };
 const STATUS_COLOR: Record<AttendanceRow["status"], string> = {
   present: "text-green-300",
@@ -92,12 +101,16 @@ const STATUS_COLOR: Record<AttendanceRow["status"], string> = {
   "missing-out": "text-yellow-300",
   "missing-meal": "text-orange-300",
   "day-off": "text-slate-400",
+  holiday: "text-purple-300",
+  "pending-correction": "text-amber-300",
 };
 
 export function EmployeePayrollDetailModal({
   profileId,
   employeeName,
   department,
+  role,
+  extraRoles,
   requiredCheckIn,
   requiredCheckOut,
   workingHours,
@@ -110,7 +123,11 @@ export function EmployeePayrollDetailModal({
   onRateChanged,
   onNext,
 }: Props) {
-  const { uid, displayName, email } = useAuth();
+  // Named myRole/myExtraRoles (not role/extraRoles) — those names are
+  // already taken by this component's own props above, which describe the
+  // EMPLOYEE BEING VIEWED (used for the CSR overtime check below), not the
+  // currently logged-in viewer these describe.
+  const { uid, displayName, email, role: myRole, extraRoles: myExtraRoles } = useAuth();
   const actorName = displayName || email || "Unknown";
   const todayISO = useMemo(() => new Date().toISOString().slice(0, 10), []);
   const [myProfileId, setMyProfileId] = useState<string | null>(null);
@@ -125,6 +142,12 @@ export function EmployeePayrollDetailModal({
   // it exists solely to seed the weekly overtime carry-over below for a
   // sub-range that happens to start mid-week. See splitRegularOvertimeWeekly.
   const [seedAttendance, setSeedAttendance] = useState<AttendanceRow[]>([]);
+  // Full pending-correction rows for THIS employee, keyed by date — kept
+  // around (not just the plain date strings AttendanceRow.status needs) so
+  // clicking a "Pending Time Correction Request" status can show the actual
+  // request detail + approve/reject inline, same popup Absent List uses.
+  const [pendingCorrectionByDate, setPendingCorrectionByDate] = useState<Map<string, TimecardCorrectionRow>>(new Map());
+  const [pendingDetailModal, setPendingDetailModal] = useState<{ date: string; item: PendingItem } | null>(null);
   const [history, setHistory] = useState<SalaryEntryRow[]>([]);
   const [ticketRows, setTicketRows] = useState<TicketAttendanceRow[]>([]);
   const [diagnoses, setDiagnoses] = useState<Map<string, string>>(new Map());
@@ -187,17 +210,29 @@ export function EmployeePayrollDetailModal({
       const seedStart = startOfWeekSunday(rangeStart);
       const seedEnd = addDaysISO(rangeStart, -1);
       const needsSeed = seedStart <= seedEnd;
-      const [attRows, seedRows, hist, myTicketRows] = await Promise.all([
-        getAttendanceForRange(profileId, rangeStart, rangeEnd, { requiredCheckIn, requiredCheckOut, workingHours, mealMinutes, daysOff: offDays, graceMinutes }),
+      const [holidays, seedRows, pendingCorrections, hist, myTicketRows] = await Promise.all([
+        getCompanyHolidaysInRange(rangeStart, rangeEnd).catch(() => []),
         needsSeed
           ? getAttendanceForRange(profileId, seedStart, seedEnd, { requiredCheckIn, requiredCheckOut, workingHours, mealMinutes, daysOff: offDays, graceMinutes })
           : Promise.resolve([]),
+        getPendingCorrectionsInRange(rangeStart, rangeEnd).catch(() => []),
         getSalaryHistory(profileId),
         getTicketAttendanceForTechnician(employeeName, rangeStart, rangeEnd),
       ]);
+      const attRows = await getAttendanceForRange(profileId, rangeStart, rangeEnd, {
+        requiredCheckIn,
+        requiredCheckOut,
+        workingHours,
+        mealMinutes,
+        daysOff: offDays,
+        graceMinutes,
+        holidayDates: holidays.map((h) => h.date),
+        pendingCorrectionDates: pendingCorrections.filter((c) => c.profileId === profileId).map((c) => c.workDate),
+      });
       if (cancelledRef.current) return;
       setAttendance(attRows);
       setSeedAttendance(seedRows);
+      setPendingCorrectionByDate(new Map(pendingCorrections.filter((c) => c.profileId === profileId).map((c) => [c.workDate, c])));
       setHistory(hist);
       setTicketRows(myTicketRows);
       // Not needed to render the rows themselves — fetched separately so a
@@ -355,8 +390,17 @@ export function EmployeePayrollDetailModal({
   // up Sun-Wed shows 0 new regular for those days, all overtime. Falls back
   // to the flat per-day 8-hour cap only when there's no configured schedule
   // to derive duty hours from.
+  // CSR shift start/end times vary person to person and aren't reliably
+  // captured in requiredCheckIn/requiredCheckOut, so the scheduled-duty-
+  // hours cap doesn't apply cleanly to them — they use a flat 40 hrs/week
+  // (standard FLSA overtime) instead, same as AccountingDashboard.tsx's
+  // computeHoursMap and PayrollCalculationPage.tsx. See
+  // CSR_WEEKLY_OVERTIME_THRESHOLD.
+  const isCsr = isCsrRestrictedRole(role, extraRoles);
   const dailyHoursSplitByDate = useMemo(() => {
-    const dutyHours = computeScheduledDutyHours(requiredCheckIn || "", requiredCheckOut || "", workingHours, mealMinutes, offDays, rangeStart, rangeEnd);
+    const dutyHours = isCsr
+      ? CSR_WEEKLY_OVERTIME_THRESHOLD
+      : computeScheduledDutyHours(requiredCheckIn || "", requiredCheckOut || "", workingHours, mealMinutes, offDays, rangeStart, rangeEnd);
     if (dutyHours <= 0) {
       const map = new Map<string, { regular: number; overtime: number }>();
       for (const row of attendance) {
@@ -366,8 +410,8 @@ export function EmployeePayrollDetailModal({
       return map;
     }
     const days = [...seedAttendance, ...attendance].map((row) => ({ date: row.date, rawHours: row.hoursWorked }));
-    return splitRegularOvertimeWeekly(days, { requiredCheckIn, requiredCheckOut, workingHours, mealMinutes, offDays });
-  }, [attendance, seedAttendance, requiredCheckIn, requiredCheckOut, workingHours, mealMinutes, offDays, rangeStart, rangeEnd]);
+    return splitRegularOvertimeWeekly(days, { requiredCheckIn, requiredCheckOut, workingHours, mealMinutes, offDays }, 8, isCsr ? CSR_WEEKLY_OVERTIME_THRESHOLD : undefined);
+  }, [attendance, seedAttendance, requiredCheckIn, requiredCheckOut, workingHours, mealMinutes, offDays, rangeStart, rangeEnd, isCsr]);
 
   // Fixed-salary pay doesn't depend on hours worked at all (see migration
   // 0118) — shows the monthly amount for this calendar-month estimate.
@@ -835,7 +879,7 @@ export function EmployeePayrollDetailModal({
                     {attendance.map((row) => {
                       const dayIsFixed = entryEffectiveOn(history, row.date)?.compensationType === "fixed";
                       const edit = attendanceEdits[row.date];
-                      const isRestDay = row.status === "day-off";
+                      const isRestDay = row.status === "day-off" || row.status === "holiday";
                       const { regular: regularHours, overtime: overtimeHours } = dailyHoursSplitByDate.get(row.date) ?? { regular: 0, overtime: 0 };
                       const dayRate = rateEffectiveOn(history, row.date);
                       const dayPayment = regularHours * dayRate + overtimeHours * dayRate * OVERTIME_MULTIPLIER;
@@ -938,7 +982,22 @@ export function EmployeePayrollDetailModal({
                             </div>
                           )}
                         </td>
-                        <td className={`py-1.5 text-right font-semibold ${STATUS_COLOR[row.status]}`}>{STATUS_LABEL[row.status]}</td>
+                        <td className={`py-1.5 text-right font-semibold ${STATUS_COLOR[row.status]}`}>
+                          {row.status === "pending-correction" && pendingCorrectionByDate.has(row.date) ? (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setPendingDetailModal({ date: row.date, item: { type: "correction", data: pendingCorrectionByDate.get(row.date)! } });
+                              }}
+                              className="underline decoration-dotted underline-offset-2 hover:text-amber-200"
+                            >
+                              {STATUS_LABEL[row.status]}
+                            </button>
+                          ) : (
+                            STATUS_LABEL[row.status]
+                          )}
+                        </td>
                         <td className="py-1.5 text-right font-semibold text-green-300">
                           {dayIsFixed ? (
                             <span className="text-slate-500 font-normal" title="Fixed-salary pay doesn't vary by day">—</span>
@@ -1164,6 +1223,23 @@ export function EmployeePayrollDetailModal({
           </div>
         )}
       </div>
+      {pendingDetailModal && (
+        <PendingItemDetailModal
+          profileName={employeeName}
+          date={pendingDetailModal.date}
+          item={pendingDetailModal.item}
+          profiles={[]}
+          myProfileId={myProfileId}
+          myRole={myRole}
+          myExtraRoles={myExtraRoles ?? []}
+          myDisplayName={displayName}
+          onClose={() => setPendingDetailModal(null)}
+          onReviewed={() => {
+            setPendingDetailModal(null);
+            load({ current: false });
+          }}
+        />
+      )}
     </div>
   );
 }

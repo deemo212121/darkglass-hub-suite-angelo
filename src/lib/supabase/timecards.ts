@@ -285,6 +285,14 @@ export function addDaysISO(dateStr: string, days: number): string {
  * ignores/discards result entries for dates before its own display start.
  * Returns a map of every input date to that day's {regular, overtime} split.
  */
+/**
+ * Standard FLSA weekly overtime threshold — used for CSR instead of the
+ * scheduled-duty-hours cap above, since CSR shift start/end times vary
+ * person to person and aren't reliably captured in
+ * requiredCheckIn/requiredCheckOut. See splitRegularOvertimeWeekly's
+ * flatWeeklyThreshold param.
+ */
+export const CSR_WEEKLY_OVERTIME_THRESHOLD = 40;
 export function splitRegularOvertimeWeekly(
   days: { date: string; rawHours: number }[],
   schedule: {
@@ -294,7 +302,18 @@ export function splitRegularOvertimeWeekly(
     mealMinutes?: number | null;
     offDays?: number[] | null;
   },
-  fallbackRegularHoursPerDay = 8
+  fallbackRegularHoursPerDay = 8,
+  /**
+   * Overrides the per-week cap with a flat number of hours (e.g. 40) instead
+   * of deriving it from requiredCheckIn/requiredCheckOut/workingHours — for
+   * CSR, whose duty schedule varies person-to-person and isn't reliably
+   * captured in those fields, standard FLSA weekly overtime (over 40 hrs/wk)
+   * doesn't depend on a configured schedule being accurate. `schedule` is
+   * ignored entirely when this is set. See callers (PayrollCalculationPage.tsx,
+   * AccountingDashboard.tsx, EmployeePayrollDetailModal.tsx) for the
+   * isCsrRestrictedRole check that decides when to pass this.
+   */
+  flatWeeklyThreshold?: number
 ): Map<string, { regular: number; overtime: number }> {
   const result = new Map<string, { regular: number; overtime: number }>();
   const sorted = [...days].sort((a, b) => a.date.localeCompare(b.date));
@@ -305,15 +324,17 @@ export function splitRegularOvertimeWeekly(
     const weekStart = startOfWeekSunday(date);
     if (weekStart !== currentWeekStart) {
       currentWeekStart = weekStart;
-      weekDuty = computeScheduledDutyHours(
-        schedule.requiredCheckIn || "",
-        schedule.requiredCheckOut || "",
-        schedule.workingHours,
-        schedule.mealMinutes,
-        schedule.offDays,
-        weekStart,
-        addDaysISO(weekStart, 6)
-      );
+      weekDuty = flatWeeklyThreshold != null
+        ? flatWeeklyThreshold
+        : computeScheduledDutyHours(
+            schedule.requiredCheckIn || "",
+            schedule.requiredCheckOut || "",
+            schedule.workingHours,
+            schedule.mealMinutes,
+            schedule.offDays,
+            weekStart,
+            addDaysISO(weekStart, 6)
+          );
       cumulativeRaw = 0;
     }
     let regular: number;
@@ -621,8 +642,21 @@ export interface AttendanceRow {
    * "day-off": no punch on a day in the person's off_days (weekend/RDO) —
    * a distinct status from "absent" so it reads as an expected rest day,
    * not a missed shift.
+   * "holiday": no punch on a company holiday (see companyHolidays.ts) —
+   * same idea as "day-off": nobody was expected to clock in, so this
+   * shouldn't read as a missed shift either. If they DID clock in, status
+   * is "present" as normal — a holiday doesn't change pay calculation,
+   * only whether a no-punch day counts as a miss.
+   * "pending-correction": there's an unresolved timecard correction
+   * (timecardCorrections.ts) filed for this date — the employee already
+   * flagged the missing/incorrect punch and it's awaiting manager/HR/
+   * Accounting approval, so this shouldn't read as a flat unexplained
+   * "absent"/"missing-*" until that review actually resolves it. Once
+   * approved, the correction upserts the real punch into timecard_entries
+   * and this reverts to "present" on the next fetch; if rejected, the
+   * underlying absent/missing status stands.
    */
-  status: "present" | "absent" | "missing-in" | "missing-out" | "missing-meal" | "day-off";
+  status: "present" | "absent" | "missing-in" | "missing-out" | "missing-meal" | "day-off" | "holiday" | "pending-correction";
 }
 
 /**
@@ -642,6 +676,10 @@ export async function getAttendanceForRange(
     daysOff?: number[];
     /** Opt-in — omitted/0 means hoursWorked is the literal punch, unchanged from today. Pay-facing callers pass payGraceMinutesFor(...) (see attendanceGrace.ts) so hoursWorked reflects paid hours, not just the raw clock-in. */
     graceMinutes?: number;
+    /** "YYYY-MM-DD" company holiday dates (see companyHolidays.ts) — a no-punch day here reads as "holiday", not "absent", same as daysOff. */
+    holidayDates?: string[];
+    /** "YYYY-MM-DD" dates with an unresolved timecard correction for this profile (see timecardCorrections.ts) — an absent/missing day here reads as "pending-correction" instead. */
+    pendingCorrectionDates?: string[];
   } = {}
 ): Promise<AttendanceRow[]> {
   const { data, error } = await supabase
@@ -661,6 +699,8 @@ export async function getAttendanceForRange(
   const start = new Date(startDate + "T00:00:00");
   const end = new Date(endDate + "T00:00:00");
   const daysOff = new Set((scheduled.daysOff ?? []).map((n) => n));
+  const holidayDates = new Set(scheduled.holidayDates ?? []);
+  const pendingCorrectionDates = new Set(scheduled.pendingCorrectionDates ?? []);
   // Same rule as the timecard punch flows (TimeClockMenu.tsx / routes/timecard.tsx):
   // a scheduled shift over 6 hours is meal-eligible. Punching no longer BLOCKS
   // timing out without a meal — this is just where that gets recorded instead.
@@ -673,12 +713,14 @@ export async function getAttendanceForRange(
     const key = `${yyyy}-${mm}-${dd}`;
     const dow = d.getDay();
     const isOffDay = daysOff.has(dow);
+    const isHoliday = holidayDates.has(key);
     const row = byDate.get(key);
     if (!row) {
       // No timecard entry. Future days are skipped entirely (nothing to
-      // report yet). A day off still gets its own row — status "day-off"
-      // instead of "absent" — so it reads as an expected rest day rather
-      // than a gap that looks like missing data, or a missed shift.
+      // report yet). A day off (or company holiday) still gets its own row
+      // — status "day-off"/"holiday" instead of "absent" — so it reads as
+      // an expected rest day rather than a gap that looks like missing
+      // data, or a missed shift.
       const isFuture = key > new Date().toISOString().slice(0, 10);
       if (!isFuture) {
         rows.push({
@@ -688,7 +730,7 @@ export async function getAttendanceForRange(
           mealStart: "",
           mealEnd: "",
           hoursWorked: 0,
-          status: isOffDay ? "day-off" : "absent",
+          status: isOffDay ? "day-off" : isHoliday ? "holiday" : pendingCorrectionDates.has(key) ? "pending-correction" : "absent",
         });
       }
       continue;
@@ -704,6 +746,7 @@ export async function getAttendanceForRange(
     if (entry.checkIn && !entry.checkOut) status = "missing-out";
     else if (!entry.checkIn && entry.checkOut) status = "missing-in";
     else if (entry.checkIn && entry.checkOut && mealEligible && !(entry.mealStart && entry.mealEnd)) status = "missing-meal";
+    if (status !== "present" && pendingCorrectionDates.has(key)) status = "pending-correction";
     // hoursWorked reflects PAID hours (grace-adjusted check-in/rounded
     // check-out, when opted in via graceMinutes being explicitly passed —
     // even 0, e.g. Technicians, still gets the clock-precision rounding) —

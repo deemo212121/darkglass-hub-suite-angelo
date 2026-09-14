@@ -41,6 +41,9 @@ export function ExternalFillContractorAddendumPage({ docId }: Props) {
   const [blank, setBlank] = useState<{ bytes: Uint8Array; layout: ContractorAddendumLayout } | null>(null);
   const [positionLevel, setPositionLevel] = useState("");
   const [baselinePayout, setBaselinePayout] = useState("");
+  // See FillContractorAddendumPage.tsx's identical field for the rationale
+  // — locked read-only once HR has set both at send time.
+  const [positionInfoLocked, setPositionInfoLocked] = useState(false);
   const [contractorName, setContractorName] = useState("");
   const sigPad = useSignaturePad({ defaultName: contractorName, width: 440, height: 100 });
   const today = useMemo(() => fmtDate(new Date()), []);
@@ -62,6 +65,7 @@ export function ExternalFillContractorAddendumPage({ docId }: Props) {
           const existing = document.formData as Partial<ContractorAddendumFormData>;
           if (existing.positionLevel) setPositionLevel(existing.positionLevel);
           if (existing.baselinePayout) setBaselinePayout(existing.baselinePayout);
+          if (existing.positionLevel && existing.baselinePayout) setPositionInfoLocked(true);
           const priorName = existing.signerNames?.employee || document.recipientName || "";
           if (priorName && !nameSeeded.current) {
             setContractorName(priorName);
@@ -138,19 +142,21 @@ export function ExternalFillContractorAddendumPage({ docId }: Props) {
         {pageIndex === layout.positionLevel.page && (
           <input
             style={{ ...rectStyle(layout.positionLevel, scale), fontSize: `${8 * scale}px` }}
-            className={overlayInputCls}
+            className={positionInfoLocked ? `${overlayInputCls} opacity-80 cursor-not-allowed` : overlayInputCls}
             value={positionLevel}
-            onChange={(e) => setPositionLevel(e.target.value)}
+            readOnly={positionInfoLocked}
+            onChange={(e) => !positionInfoLocked && setPositionLevel(e.target.value)}
             placeholder="Position Level"
           />
         )}
         {pageIndex === layout.baselinePayout.page && (
           <input
             style={{ ...rectStyle(layout.baselinePayout, scale), fontSize: `${8 * scale}px` }}
-            className={overlayInputCls}
+            className={positionInfoLocked ? `${overlayInputCls} opacity-80 cursor-not-allowed` : overlayInputCls}
             value={baselinePayout}
             inputMode="numeric"
-            onChange={(e) => setBaselinePayout(e.target.value.replace(/[^\d.,]/g, ""))}
+            readOnly={positionInfoLocked}
+            onChange={(e) => !positionInfoLocked && setBaselinePayout(e.target.value.replace(/[^\d.,]/g, ""))}
             placeholder="0.00"
           />
         )}

@@ -11,6 +11,8 @@ import {
   getAttendanceForRange,
   getMyProfileSchedule,
 } from "@/lib/supabase/timecards";
+import { getCompanyHolidaysInRange } from "@/lib/supabase/companyHolidays";
+import { getPendingCorrectionsInRange } from "@/lib/supabase/timecardCorrections";
 import {
   getCompanyPtoRequests,
   createPtoRequest,
@@ -178,6 +180,8 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
         start.setDate(start.getDate() - 30);
         const toKey = (d: Date) =>
           `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+        const holidays = await getCompanyHolidaysInRange(toKey(start), toKey(today)).catch(() => []);
+        const pendingCorrections = await getPendingCorrectionsInRange(toKey(start), toKey(today)).catch(() => []);
         const rows = await getAttendanceForRange(
           schedule.profileId,
           toKey(start),
@@ -188,6 +192,8 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
             workingHours: schedule.workingHours,
             mealMinutes: schedule.mealMinutes,
             daysOff: schedule.offDays,
+            holidayDates: holidays.map((h) => h.date),
+            pendingCorrectionDates: pendingCorrections.filter((c) => c.profileId === schedule.profileId).map((c) => c.workDate),
           }
         );
         if (cancelled) return;
@@ -732,6 +738,8 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
       try {
         const schedule = uid ? await getMyProfileSchedule(uid) : null;
         if (!cancelled) setMyScheduleInfo(schedule);
+        const holidays = await getCompanyHolidaysInRange(selectedPayslip.periodStart, selectedPayslip.periodEnd).catch(() => []);
+        const pendingCorrections = await getPendingCorrectionsInRange(selectedPayslip.periodStart, selectedPayslip.periodEnd).catch(() => []);
         const rows = await getAttendanceForRange(
           myProfileId,
           selectedPayslip.periodStart,
@@ -742,6 +750,8 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
             workingHours: schedule?.workingHours,
             mealMinutes: schedule?.mealMinutes,
             daysOff: schedule?.offDays,
+            holidayDates: holidays.map((h) => h.date),
+            pendingCorrectionDates: pendingCorrections.filter((c) => c.profileId === myProfileId).map((c) => c.workDate),
           }
         );
         if (cancelled) return;
@@ -1135,6 +1145,8 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                           "missing-out": { label: "Missing Time-Out", className: "bg-amber-500/20 text-amber-300" },
                           "missing-meal": { label: "Meal Not Taken", className: "bg-orange-500/20 text-orange-300" },
                           "day-off": { label: "Rest Day", className: "bg-slate-500/20 text-slate-300" },
+                          holiday: { label: "Holiday", className: "bg-purple-500/20 text-purple-300" },
+                          "pending-correction": { label: "Pending Time Correction Request", className: "bg-amber-500/20 text-amber-300" },
                         };
                         const meta = statusLabel[record.status];
                         return (

@@ -106,7 +106,7 @@ export async function buildWarningFormDocxBlob(data: WarningFormData, logoDataUr
 
   const logoBytes = logoDataUrl ? await dataUrlToBytes(logoDataUrl) : null;
   const sigBytes: Partial<Record<keyof WarningFormSignatures, Uint8Array>> = {};
-  for (const slot of ["employee", "manager", "senior_manager", "hr_staff"] as const) {
+  for (const slot of ["employee", "manager", "senior_manager", "hr_staff", "executive"] as const) {
     const entry = signatures[slot];
     if (entry) sigBytes[slot] = await dataUrlToBytes(entry.url);
   }
@@ -206,6 +206,7 @@ export async function buildWarningFormDocxBlob(data: WarningFormData, logoDataUr
       signatureRow("Manager Name", data.recipientSlot === "manager" ? data.recipientName : "", signatures.manager, sigBytes.manager ?? null),
       signatureRow("Senior Manager Name", data.recipientSlot === "senior_manager" ? data.recipientName : "", signatures.senior_manager, sigBytes.senior_manager ?? null),
       signatureRow("HR Staff Name", data.recipientSlot === "hr_staff" ? data.recipientName : "", signatures.hr_staff, sigBytes.hr_staff ?? null),
+      signatureRow("Executive Name", data.recipientSlot === "executive" ? data.recipientName : "", signatures.executive, sigBytes.executive ?? null),
     ],
   });
 

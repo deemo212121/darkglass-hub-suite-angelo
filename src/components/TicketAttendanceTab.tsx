@@ -157,7 +157,7 @@ export function TicketAttendanceTab() {
   // selected day (see isSingleDay below), same limitation Time In/Out here
   // already has.
   const [notes, setNotes] = useState<AttendanceNoteRow[]>([]);
-  const { uid } = useAuth();
+  const { uid, companyId } = useAuth();
   const [myProfileId, setMyProfileId] = useState<string | null>(null);
   useEffect(() => {
     if (!uid) return;
@@ -368,6 +368,7 @@ export function TicketAttendanceTab() {
   const [noteDraft, setNoteDraft] = useState("");
   const [savingNoteProfileId, setSavingNoteProfileId] = useState<string | null>(null);
   const handleSaveNote = async (profileId: string) => {
+    if (!companyId) return;
     const content = noteDraft;
     setSavingNoteProfileId(profileId);
     try {
@@ -378,11 +379,25 @@ export function TicketAttendanceTab() {
         notifyIndividual: false,
         notifyTeamLead: false,
         createdBy: myProfileId,
+        companyId,
       });
       setNotes((prev) => {
-        const existingHrNote = prev.find((n) => n.profileId === profileId && n.noteDate === dateFrom)?.hrNote || "";
+        const existing = prev.find((n) => n.profileId === profileId && n.noteDate === dateFrom);
         const next = prev.filter((n) => !(n.profileId === profileId && n.noteDate === dateFrom));
-        next.push({ profileId, noteDate: dateFrom, content, hrNote: existingHrNote, notifyIndividual: false, notifyTeamLead: false, createdBy: myProfileId });
+        next.push({
+          profileId,
+          noteDate: dateFrom,
+          content,
+          hrNote: existing?.hrNote || "",
+          notifyIndividual: false,
+          notifyTeamLead: false,
+          createdBy: myProfileId,
+          attachmentPath: existing?.attachmentPath ?? null,
+          attachmentAddedBy: existing?.attachmentAddedBy ?? null,
+          attachmentAddedAt: existing?.attachmentAddedAt ?? null,
+          attachmentRemovedBy: existing?.attachmentRemovedBy ?? null,
+          attachmentRemovedAt: existing?.attachmentRemovedAt ?? null,
+        });
         return next;
       });
       setEditingNoteProfileId(null);

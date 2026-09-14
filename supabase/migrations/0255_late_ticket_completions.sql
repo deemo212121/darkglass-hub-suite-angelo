@@ -1,5 +1,5 @@
 -- =====================================================================
--- 0246 — Late ticket completions: Claims sign-off + payroll carry-forward
+-- 0255 — Late ticket completions: Claims sign-off + payroll carry-forward
 --
 -- Tech payroll counts a ticket toward pay once its status reaches
 -- CL-Claimed/CL-Completed (isCompletedStatus() in techPayroll.ts), computed
@@ -25,7 +25,7 @@
 -- is_claims() mirrors is_finance()'s role-or-extra_roles pattern exactly
 -- (0206_finance_can_edit_profiles.sql).
 --
--- Run once in the Supabase SQL Editor, after 0245.
+-- Run once in the Supabase SQL Editor, after 0254.
 -- =====================================================================
 
 create table if not exists late_ticket_completions (
