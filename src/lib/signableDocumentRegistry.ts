@@ -89,6 +89,33 @@ export const TECHNICIAN_FORM_TYPES: SignableDocumentType[] = [
 ];
 
 /**
+ * The "New Automation Forms" per-tier form sets — each tier's own
+ * consolidated list, same 4 tiers TechnicianFormChecklistPage.tsx's
+ * CHECKLIST_TABS tracks (that file imports these directly rather than
+ * redeclaring them, so the two can never drift). Also used by
+ * ReportHRDaily.tsx's Hiring "Required Forms" dialog (STAFF_FORM_TIERS
+ * below) to let HR quick-select a candidate's forms by role/tier instead of
+ * checking each one by hand.
+ */
+export const NEW_TECHNICIAN_FORM_TYPES: SignableDocumentType[] = ["master_w2_agreement", "w4", "i9", "direct_deposit"];
+export const OFFICE_STAFF_US_FORM_TYPES: SignableDocumentType[] = ["master_w2_office_agreement", "w4", "i9", "direct_deposit"];
+export const PH_STAFF_FORM_TYPES: SignableDocumentType[] = ["master_ph_contractor_agreement", "w8ben", "direct_deposit"];
+export const BM_AND_UP_FORM_TYPES: SignableDocumentType[] = ["contractor_addendum", "w9", "direct_deposit"];
+
+export type StaffFormTier = "newTechnician" | "officeStaffUs" | "phStaff" | "bmAndUp";
+
+/** Label + form set per tier, in the same order/wording as
+ * TechnicianFormChecklistPage.tsx's own tab labels — kept here so any other
+ * UI (e.g. ReportHRDaily.tsx's Hiring forms dialog) can offer the identical
+ * role/tier picker without redefining the tiers itself. */
+export const STAFF_FORM_TIERS: { key: StaffFormTier; label: string; formTypes: SignableDocumentType[] }[] = [
+  { key: "newTechnician", label: "New Technician", formTypes: NEW_TECHNICIAN_FORM_TYPES },
+  { key: "officeStaffUs", label: "Office Staff (US)", formTypes: OFFICE_STAFF_US_FORM_TYPES },
+  { key: "phStaff", label: "PH Staff", formTypes: PH_STAFF_FORM_TYPES },
+  { key: "bmAndUp", label: "BM, SBS, Tech Director, Tech Assistant Director", formTypes: BM_AND_UP_FORM_TYPES },
+];
+
+/**
  * Of TECHNICIAN_FORM_TYPES, the subset that needs an HR/employer
  * countersignature AFTER the employee signs (ReportHRDaily.tsx's various
  * "*EmployerDialog"/"*ManagerDialog" review flows, each ending in a

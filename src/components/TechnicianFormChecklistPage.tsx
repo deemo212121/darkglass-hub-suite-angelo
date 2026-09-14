@@ -41,7 +41,20 @@ import { ManagerReviewPage, SUPPORTED_TYPES as EMPLOYER_SIGN_SUPPORTED_TYPES } f
 import { getCompanyUsers, getMyProfileId, setProfileFrozen, type ProfileRow } from "@/lib/supabase/users";
 import { isEligibleForTechnicianFormChecklist, isBmAndUpRole, getRoleDepartmentBreakdown } from "@/lib/roleLabels";
 import { getSignableDocumentsByTypes, getExistingActiveDocumentTypes, createSignableDocument, updateSignableDocumentPdfUrl, confirmSignableDocument, type SignableDocument, type SignableDocumentType } from "@/lib/supabase/signableDocuments";
-import { SIGNABLE_DOCUMENT_REGISTRY, TECHNICIAN_FORM_TYPES, getDocumentReviewStatus, isTechnicianExemptFromForm, exemptionRowValueForToggle, pickAuthoritativeDocument, isNewAutomationDoc, SHARED_OLD_NEW_AUTOMATION_TYPES } from "@/lib/signableDocumentRegistry";
+import {
+  SIGNABLE_DOCUMENT_REGISTRY,
+  TECHNICIAN_FORM_TYPES,
+  NEW_TECHNICIAN_FORM_TYPES,
+  OFFICE_STAFF_US_FORM_TYPES,
+  PH_STAFF_FORM_TYPES,
+  BM_AND_UP_FORM_TYPES,
+  getDocumentReviewStatus,
+  isTechnicianExemptFromForm,
+  exemptionRowValueForToggle,
+  pickAuthoritativeDocument,
+  isNewAutomationDoc,
+  SHARED_OLD_NEW_AUTOMATION_TYPES,
+} from "@/lib/signableDocumentRegistry";
 import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
 import { getTechnicianFormExemptions, setTechnicianFormExemption } from "@/lib/supabase/technicianFormExemptions";
 import { logActivity } from "@/lib/supabase/hrActivityLog";
@@ -57,11 +70,6 @@ import { CONTRACTOR_ADDENDUM_POSITION_LEVELS } from "@/lib/contractorAddendumFor
 // the Philippines subset of LOCATIONS_DATA.
 const PH_BRANCH_NAMES = new Set(LOCATIONS_DATA.filter((l) => l.isPhilippines).map((l) => l.location));
 const isPhBranch = (u: ProfileRow) => PH_BRANCH_NAMES.has(u.assigned_branch || "");
-
-const NEW_TECHNICIAN_FORM_TYPES: SignableDocumentType[] = ["master_w2_agreement", "w4", "i9", "direct_deposit"];
-const OFFICE_STAFF_US_FORM_TYPES: SignableDocumentType[] = ["master_w2_office_agreement", "w4", "i9", "direct_deposit"];
-const PH_STAFF_FORM_TYPES: SignableDocumentType[] = ["master_ph_contractor_agreement", "w8ben", "direct_deposit"];
-const BM_AND_UP_FORM_TYPES: SignableDocumentType[] = ["contractor_addendum", "w9", "direct_deposit"];
 
 type ChecklistTabKey = "technician" | "newTechnician" | "officeStaffUs" | "phStaff" | "bmAndUp";
 

@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect, useRef, Fragment } from "react";
 import { createPortal } from "react-dom";
 import { Link, useSearch, useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
-import { ChevronLeft, ChevronDown, ChevronUp, ChevronRight, Plus, Trash2, AlertTriangle, CheckCircle, XCircle, Paperclip, Users, Clock, UserCheck, UserX, UserMinus, Search, Bell, Download, Forward, History, FileText, ClipboardList, Landmark, GripVertical, FileCheck, Link2, Copy, Calendar, Check, Pencil, Filter, Columns3, Mail } from "lucide-react";
+import { ChevronLeft, ChevronDown, ChevronUp, ChevronRight, Plus, Trash2, AlertTriangle, CheckCircle, XCircle, Paperclip, Users, Clock, UserCheck, UserX, UserMinus, Search, Bell, Download, Forward, History, FileText, ClipboardList, Landmark, GripVertical, FileCheck, Link2, Copy, Calendar, Check, Pencil, Filter, Columns3, Mail, PenLine, X, ExternalLink, Loader2, Send } from "lucide-react";
 import { useSignaturePad } from "@/hooks/useSignaturePad";
 import { SignaturePadControls } from "@/components/SignaturePad";
 import { StickyHorizontalScrollbar } from "@/components/StickyHorizontalScrollbar";
@@ -92,7 +92,16 @@ import {
   type SignableDocumentType,
   type SignatureSlot as DocSignatureSlot,
 } from "@/lib/supabase/signableDocuments";
-import { SIGNABLE_DOCUMENT_REGISTRY, isNewAutomationDoc } from "@/lib/signableDocumentRegistry";
+import {
+  SIGNABLE_DOCUMENT_REGISTRY,
+  isNewAutomationDoc,
+  STAFF_FORM_TIERS,
+  getDocumentReviewStatus,
+  pickAuthoritativeDocument,
+  DOCUMENT_TYPES_REQUIRING_EMPLOYER_SIGNATURE,
+  SHARED_OLD_NEW_AUTOMATION_TYPES,
+} from "@/lib/signableDocumentRegistry";
+import { ManagerReviewPage } from "@/components/ManagerReviewPage";
 import { getCandidateRequiredFormTypes, setCandidateRequiredFormTypes } from "@/lib/supabase/candidateRequiredForms";
 import { buildWarningFormBodyMarkup, buildWarnNoteText, warningFormStyles, type WarningFormData, type SignatureSlot } from "@/lib/warningFormTemplate";
 import { buildNdaFormPages, ndaFormStyles, type NdaFormData } from "@/lib/ndaFormTemplate";
@@ -1978,44 +1987,199 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     () => new Map(employees.filter((e) => e.email).map((e) => [e.email.trim().toLowerCase(), e.id])),
     [employees]
   );
-  // Which document TYPES are complete (signed or confirmed — same
-  // "complete" definition getTechnicianIdsMissingRouteDocuments already
-  // uses) for a given profile, across every signable document ever sent to
-  // them — a candidate whose account existed under an old email that later
-  // changed would still show correctly once employeeEmailSet reflects the
-  // current one.
-  const completeDocTypesByProfileId = useMemo(() => {
+  // One authoritative SignableDocument per (person, type), same grouping
+  // TechnicianFormChecklistPage.tsx uses (byKey/latestByKey, lines ~299-336
+  // there) — feeds the Required Forms popup's real 4-bucket status
+  // (getDocumentReviewStatus) instead of the plain signed/pending booleans
+  // above. Grouped by formData.employeeId (falling back to recipientId),
+  // NOT recipientId alone — recipientId gets reassigned to whichever HR
+  // staffer completes the employer/countersign step, so grouping by it made
+  // a fully-confirmed two-party form vanish back to "Not sent" once it
+  // changed owners. w4/i9/direct_deposit/w8ben are shared with the legacy
+  // Automated Forms flow (SHARED_OLD_NEW_AUTOMATION_TYPES) — Hiring
+  // candidates only ever go through the New Automation Forms flow, so only
+  // "new"-tagged submissions of those 4 types count here, same as every
+  // "New Technician"/"Office Staff (US)"/"PH Staff"/"BM+" checklist tab.
+  const latestDocByPersonType = useMemo(() => {
+    const byKey = new Map<string, SignableDocument[]>();
+    for (const d of allSignableDocs) {
+      const personId = (d.formData as Record<string, any> | undefined)?.employeeId || d.recipientId;
+      if (!personId) continue;
+      if (SHARED_OLD_NEW_AUTOMATION_TYPES.has(d.documentType) && !isNewAutomationDoc(d)) continue;
+      const key = `${personId}|${d.documentType}`;
+      const arr = byKey.get(key);
+      if (arr) arr.push(d);
+      else byKey.set(key, [d]);
+    }
+    const latest = new Map<string, SignableDocument>();
+    for (const [key, group] of byKey) {
+      const best = pickAuthoritativeDocument(group);
+      if (best) latest.set(key, best);
+    }
+    return latest;
+  }, [allSignableDocs]);
+  // Embedded "Review & Sign" popup for whichever form type ManagerReviewPage
+  // itself supports (see DOCUMENT_TYPES_REQUIRING_EMPLOYER_SIGNATURE vs.
+  // ManagerReviewPage's own SUPPORTED_TYPES) — w4/i9 dispatch to their own
+  // existing dialogs (handleOpenW4EmployerDialog/handleOpenI9Section2)
+  // instead, same split TechnicianFormChecklistPage.tsx's own "Sign" button
+  // makes.
+  const [managerReviewDoc, setManagerReviewDoc] = useState<SignableDocument | null>(null);
+  const handleSignAsHr = (type: SignableDocumentType, doc: SignableDocument) => {
+    if (type === "w4") handleOpenW4EmployerDialog(doc);
+    else if (type === "i9") handleOpenI9Section2(doc);
+    else setManagerReviewDoc(doc);
+  };
+  // Which form types already have a real NEW-AUTOMATION document on file
+  // for a profile — built in one pass over allSignableDocs (not
+  // per-candidate) so scanning every candidate against every document stays
+  // cheap. A shared type (w4/i9/direct_deposit/w8ben — see
+  // SHARED_OLD_NEW_AUTOMATION_TYPES) only counts here if it's actually
+  // tagged new_automation; otherwise an old-flow "Technician" tab W-4 from
+  // years ago would count toward a candidate's NEW Technician tier and
+  // inflate the inferred set with unrelated history (this is exactly what
+  // produced "0/18" instead of "0/4" — the very first version of this
+  // fallback counted every document type this profile ever had, old-flow
+  // Technician checklist included, not just the current tier's 4).
+  const sentTypesByProfileId = useMemo(() => {
     const map = new Map<string, Set<SignableDocumentType>>();
-    for (const doc of allSignableDocs) {
-      if (!doc.recipientId || (doc.status !== "signed" && doc.status !== "confirmed")) continue;
-      const set = map.get(doc.recipientId) ?? new Set<SignableDocumentType>();
-      set.add(doc.documentType);
-      map.set(doc.recipientId, set);
+    for (const d of allSignableDocs) {
+      if (d.status === "cancelled" || !d.recipientId) continue;
+      if (SHARED_OLD_NEW_AUTOMATION_TYPES.has(d.documentType) && !isNewAutomationDoc(d)) continue;
+      const set = map.get(d.recipientId) ?? new Set<SignableDocumentType>();
+      set.add(d.documentType);
+      map.set(d.recipientId, set);
     }
     return map;
   }, [allSignableDocs]);
-  // Which document TYPES are sent but still awaiting a signature, per
-  // profile — lets the Forms popup show "Sent" (vs. "Signed") so HR can
-  // tell a Send actually went out instead of wondering if it worked.
-  const pendingDocTypesByProfileId = useMemo(() => {
+  // Same, for a no-account external send — keyed by the exact name it was
+  // sent under (recipientName, or formData.employeeName for older rows),
+  // same fallback identity getCandidateFormStatus uses below.
+  const sentTypesByExternalName = useMemo(() => {
     const map = new Map<string, Set<SignableDocumentType>>();
-    for (const doc of allSignableDocs) {
-      if (!doc.recipientId || doc.status !== "pending_signature") continue;
-      const set = map.get(doc.recipientId) ?? new Set<SignableDocumentType>();
-      set.add(doc.documentType);
-      map.set(doc.recipientId, set);
+    for (const d of allSignableDocs) {
+      if (d.status === "cancelled" || d.recipientId) continue;
+      if (SHARED_OLD_NEW_AUTOMATION_TYPES.has(d.documentType) && !isNewAutomationDoc(d)) continue;
+      const name = d.recipientName || (d.formData as Record<string, any> | undefined)?.employeeName;
+      if (!name) continue;
+      const set = map.get(name) ?? new Set<SignableDocumentType>();
+      set.add(d.documentType);
+      map.set(name, set);
     }
     return map;
   }, [allSignableDocs]);
-  // null = HR hasn't picked which forms apply to this candidate yet (no
-  // "X/Y" to show at all, distinct from "0/Y" which means forms ARE
-  // configured but none are complete).
-  const candidateFormProgress = (c: Candidate): { complete: number; total: number } | null => {
-    const required = requiredFormsByCandidateId.get(c.id);
-    if (!required || required.length === 0) return null;
+  // Whatever's ACTUALLY been sent to this candidate already (via Staff Form
+  // Checklist, an Automated Forms tab, etc.) — used as a fallback "required"
+  // set for a candidate HR never ran through this dialog's own tier
+  // buttons/checkboxes, so the "X/Y" badge and this popup's pre-checked
+  // state stay synced with reality instead of showing blank/"Select forms"
+  // (and 0 real progress) for someone who already has documents in flight.
+  //
+  // Returns exactly ONE tier's fixed form set (whichever tier has the most
+  // overlap with what's actually been sent) — NOT the raw union of every
+  // type ever sent. An open-ended union picks up anything this profile has
+  // ever touched across every flow/tab this company has ever used (old
+  // Technician-tab forms, one-off HR action forms, etc.), which is how a
+  // candidate with exactly 4 real New Technician documents on file ended up
+  // showing "0/18". Staff Form Checklist itself only ever tracks progress
+  // per fixed tier, so this mirrors that instead of inventing a new,
+  // unbounded definition of "required".
+  const sentFormTypesForCandidate = (c: Candidate): SignableDocumentType[] => {
     const profileId = c.email ? profileIdByEmail.get(c.email.trim().toLowerCase()) : undefined;
-    const complete = profileId ? completeDocTypesByProfileId.get(profileId) : undefined;
-    return { complete: complete ? required.filter((t) => complete.has(t)).length : 0, total: required.length };
+    const sentSet = profileId ? sentTypesByProfileId.get(profileId) : sentTypesByExternalName.get(c.name);
+    if (!sentSet || sentSet.size === 0) return [];
+    let best: SignableDocumentType[] = [];
+    let bestOverlap = 0;
+    for (const tier of STAFF_FORM_TIERS) {
+      const overlap = tier.formTypes.filter((t) => sentSet.has(t)).length;
+      if (overlap > bestOverlap) {
+        best = tier.formTypes;
+        bestOverlap = overlap;
+      }
+    }
+    return best;
+  };
+  // Shared by the Required Forms checklist view AND its "send" step's own
+  // status summary — same real 4-bucket status (getDocumentReviewStatus),
+  // computed once here so the two views can never show different things for
+  // the same form. `candidateId` resolves to a profile the same way the
+  // checklist view already does (via profileIdByEmail); returns "not_sent"
+  // (no doc) for a candidate with no matched account yet.
+  const getCandidateFormStatus = (candidateId: string, type: SignableDocumentType) => {
+    const candidate = candidates.find((c) => c.id === candidateId);
+    const profileId = candidate?.email ? profileIdByEmail.get(candidate.email.trim().toLowerCase()) : undefined;
+    let doc = profileId ? latestDocByPersonType.get(`${profileId}|${type}`) : undefined;
+    // No AHS account yet — an external send (Copy Link Instead's
+    // no-account path) never gets a recipientId or formData.employeeId
+    // (both blank/null by design, see handleGenerateCombinedForms), so
+    // latestDocByPersonType's grouping skips it entirely and this would
+    // otherwise read "Not sent" forever even after the candidate actually
+    // signs via the copied link. Fall back to matching by the exact name
+    // their forms were sent under (recipientName, or formData.employeeName
+    // for older rows) — imperfect (two different external candidates with
+    // the same typed name would collide) but far better than never
+    // reflecting a real signature.
+    if (!doc && candidate) {
+      const nameMatches = allSignableDocs.filter(
+        (d) => d.documentType === type && !d.recipientId && (d.recipientName === candidate.name || (d.formData as Record<string, any> | undefined)?.employeeName === candidate.name)
+      );
+      doc = pickAuthoritativeDocument(nameMatches);
+    }
+    const reviewStatus = getDocumentReviewStatus(type, doc);
+    const statusText =
+      reviewStatus === "done" ? "Signed" : reviewStatus === "awaiting_hr" ? "Awaiting HR review" : reviewStatus === "awaiting_employee" ? "Awaiting employee signature" : "Not sent";
+    const statusColor =
+      reviewStatus === "done" ? "text-emerald-400" : reviewStatus === "awaiting_hr" ? "text-sky-400" : reviewStatus === "awaiting_employee" ? "text-amber-400" : "text-slate-600";
+    return { doc, profileId, reviewStatus, statusText, statusColor };
+  };
+  // "Awaiting employee signature" — nudge with a DM to the same fill link,
+  // same behavior/wording as TechnicianFormChecklistPage.tsx's own Remind
+  // button, just not sharing its actionKey/actionError state (this dialog
+  // only ever reminds about one form at a time).
+  const [remindingFormType, setRemindingFormType] = useState<SignableDocumentType | null>(null);
+  const handleRemindFormDialog = async (doc: SignableDocument, personId: string, type: SignableDocumentType) => {
+    setRemindingFormType(type);
+    try {
+      if (myProfileId) {
+        const thread = await getOrCreateDmThread(myProfileId, personId);
+        const fillLink = `${getAppUrl()}${SIGNABLE_DOCUMENT_REGISTRY[type].internalPath}/${doc.id}`;
+        await sendMessage({
+          dmThreadId: thread.id,
+          senderId: myProfileId,
+          senderName: displayName || "HR",
+          body: `⏰ Reminder — please complete the ${SIGNABLE_DOCUMENT_REGISTRY[type].label}: ${fillLink}`,
+        });
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to send reminder.");
+    } finally {
+      setRemindingFormType(null);
+    }
+  };
+  // null = nothing to show (no forms explicitly required AND nothing's
+  // actually been sent yet), distinct from "0/Y" which means there IS a
+  // real set of forms (explicit or inferred) but none are complete yet.
+  const candidateFormProgress = (c: Candidate): { complete: number; total: number } | null => {
+    // Falls back to whatever's actually been sent (sentFormTypesForCandidate)
+    // when HR never explicitly picked forms for this candidate via this
+    // dialog's own checkboxes/tier buttons — e.g. someone sent straight
+    // through Staff Form Checklist's own tier tabs instead. Without this,
+    // the badge stayed blank ("Select forms") for a candidate who already
+    // has real documents in flight, which read as out of sync with what
+    // Staff Form Checklist itself shows for the same person.
+    const explicit = requiredFormsByCandidateId.get(c.id);
+    const required = explicit && explicit.length > 0 ? explicit : sentFormTypesForCandidate(c);
+    if (!required || required.length === 0) return null;
+    // Same "done" the Required Forms popup's own status list uses
+    // (getCandidateFormStatus/getDocumentReviewStatus) — this used to read
+    // completeDocTypesByProfileId directly, which only ever matches a
+    // candidate with a real AHS account, so anyone sent forms via "Copy
+    // Link Instead" (no account) stayed stuck at "0/Y" here forever even
+    // after actually signing, while the popup's own list (already fixed to
+    // fall back to name-matching) correctly showed them as done — the two
+    // disagreeing is exactly what was reported.
+    const complete = required.filter((t) => getCandidateFormStatus(c.id, t).reviewStatus === "done").length;
+    return { complete, total: required.length };
   };
 
   // Which Automated Forms tab (activeTab, ~line 719) sends each document
@@ -2066,10 +2230,42 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [formsDialog, setFormsDialog] = useState<{ candidateId: string; candidateName: string; selected: Set<SignableDocumentType> } | null>(null);
   const [savingFormsDialog, setSavingFormsDialog] = useState(false);
   const [formsDialogSearch, setFormsDialogSearch] = useState("");
+  // "Send All Selected via Bulk Form Send" used to jump to the Bulk Form
+  // Send tab (setActiveTab("combineForms")), which reads as "it navigated
+  // away" — the user's explicit call was to keep this inline instead. This
+  // flips the SAME dialog into a "send" step (recipient/external name +
+  // Generate Link/Copy Link) rather than closing it and switching tabs.
+  const [formsDialogSending, setFormsDialogSending] = useState(false);
+  // Whether THIS candidate had a matching AHS account at the moment "Send
+  // All Selected" was clicked — "Generate Link for Selected Forms" (Send
+  // via Message) needs a real recipient profile to DM; "Copy Link Instead"
+  // works either way. Captured once here (not re-derived from whatever's
+  // currently typed in the recipient search box) so the warning reflects
+  // this candidate's real state, not just "is the search box empty".
+  const [formsDialogCandidateHasAccount, setFormsDialogCandidateHasAccount] = useState(true);
+  const closeFormsDialog = () => {
+    setFormsDialog(null);
+    setFormsDialogSending(false);
+  };
   const openFormsDialog = (c: Candidate) => {
-    const existing = requiredFormsByCandidateId.get(c.id) ?? [];
-    setFormsDialog({ candidateId: c.id, candidateName: c.name, selected: new Set(existing) });
+    // Same fallback candidateFormProgress uses — if HR never explicitly
+    // picked forms for this candidate here, but real documents already
+    // exist for them (sent via Staff Form Checklist directly, say), start
+    // the checklist pre-checked to match what's actually out there instead
+    // of opening blank.
+    const explicit = requiredFormsByCandidateId.get(c.id) ?? [];
+    const existing = explicit.length > 0 ? explicit : sentFormTypesForCandidate(c);
+    const dialog = { candidateId: c.id, candidateName: c.name, selected: new Set(existing) };
+    setFormsDialog(dialog);
     setFormsDialogSearch("");
+    // Forms already picked for this candidate (the "X/Y" badge, not the
+    // plain "Select forms" placeholder) — jump straight to the send/
+    // copy-link step instead of the checklist, since the useful next move
+    // at that point is getting the link, not re-picking which forms apply.
+    // The user's explicit complaint: reopening the badge kept dropping back
+    // to the checklist with no quick way back to the link they'd already
+    // generated. Still one click back to the checklist from there.
+    setFormsDialogSending(existing.length > 0 && prepareSendState(dialog));
   };
   // Returns the freshly-saved types (so handleSendType can navigate right
   // after saving without waiting on a state re-render to read them back).
@@ -2088,7 +2284,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     setSavingFormsDialog(true);
     try {
       await saveFormsDialog(formsDialog);
-      setFormsDialog(null);
+      closeFormsDialog();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save required forms.");
     } finally {
@@ -9623,41 +9819,59 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [combineFormsSentNotice, setCombineFormsSentNotice] = useState<string | null>(null);
   const [combineFormsCopyLink, setCombineFormsCopyLink] = useState<string | null>(null);
 
-  // "Send All Selected" on the Forms popup (~line 1606) — saves the
-  // candidate's picks, then jumps to Bulk Form Send with those picks and
-  // the candidate (or their name, if they have no AHS account yet)
-  // preselected, instead of making HR re-check the same boxes there. Only
-  // the types Bulk Form Send actually supports get preselected — it covers
-  // onboarding paperwork, not the HR action forms (warning/promotion/
-  // termination), which stay reachable only via each row's own "Send →".
-  const handleSendAllSelected = async () => {
-    if (!formsDialog) return;
+  // Populates selectedFormTypes/combineFormsRecipientId/etc. (the same
+  // state Bulk Form Send's own tab reads) for the given candidate's forms
+  // dialog, WITHOUT saving or touching formsDialogSending itself — shared by
+  // handleSendAllSelected (after a fresh Save) and openFormsDialog (when
+  // reopening a candidate who already has required forms picked, so the
+  // send/copy-link step is one click away instead of buried behind "Send
+  // All Selected" again every time). Returns false if nothing here is
+  // actually bulk-sendable (only the HR action forms are selected).
+  const prepareSendState = (dialog: { candidateId: string; candidateName: string; selected: Set<SignableDocumentType> }): boolean => {
     const bulkSendableTypes = new Set<SignableDocumentType>(
       [...GENERAL_FORM_TYPES, ...TECHNICIAN_FORM_TYPES, ...MANAGEMENT_FORM_TYPES, ...NEW_TECHNICIAN_BULK_FORM_TYPES, ...NEW_OFFICE_BULK_FORM_TYPES, ...NEW_PH_BULK_FORM_TYPES, ...NEW_MANAGEMENT_BULK_FORM_TYPES].map((f) => f.type)
     );
-    const toSend = Array.from(formsDialog.selected).filter((t) => bulkSendableTypes.has(t));
-    if (toSend.length === 0) {
-      setError('None of the selected forms can be sent as a bundle — use "Send →" next to each one instead.');
+    const toSend = Array.from(dialog.selected).filter((t) => bulkSendableTypes.has(t));
+    if (toSend.length === 0) return false;
+    const candidate = candidates.find((c) => c.id === dialog.candidateId);
+    const profileId = candidate?.email ? profileIdByEmail.get(candidate.email.trim().toLowerCase()) : undefined;
+    const recipient = profileId ? employees.find((e) => e.id === profileId) : undefined;
+    setSelectedFormTypes(new Set(toSend));
+    setFormsDialogCandidateHasAccount(!!recipient);
+    if (recipient) {
+      setCombineFormsRecipientId(recipient.id);
+      setCombineFormsRecipientSearch(`${recipient.name} — ${ROLE_LABELS[normalizeRole(recipient.position)] ?? recipient.position}`);
+      setCombineFormsExternalName("");
+    } else {
+      setCombineFormsRecipientId("");
+      setCombineFormsRecipientSearch("");
+      setCombineFormsExternalName(dialog.candidateName);
+    }
+    setCombineFormsError(null);
+    setCombineFormsSentNotice(null);
+    setCombineFormsCopyLink(null);
+    return true;
+  };
+
+  // "Send All Selected" on the Forms popup (~line 1606) — saves the
+  // candidate's picks, preselects the recipient (or their typed name, if
+  // they have no AHS account yet) via prepareSendState, then flips this
+  // same dialog into its "send" step (formsDialogSending) instead of
+  // closing it and navigating to the Bulk Form Send tab — the user's
+  // explicit call was to keep this inline on Hiring, not jump pages. Only
+  // the types Bulk Form Send actually supports get preselected — it covers
+  // onboarding paperwork, not the HR action forms (warning/promotion/
+  // termination), which stay reachable only via each row's own "Send".
+  const handleSendAllSelected = async () => {
+    if (!formsDialog) return;
+    if (!prepareSendState(formsDialog)) {
+      setError('None of the selected forms can be sent as a bundle — use "Send" next to each one instead.');
       return;
     }
     setSavingFormsDialog(true);
     try {
       await saveFormsDialog(formsDialog);
-      const candidate = candidates.find((c) => c.id === formsDialog.candidateId);
-      const profileId = candidate?.email ? profileIdByEmail.get(candidate.email.trim().toLowerCase()) : undefined;
-      const recipient = profileId ? employees.find((e) => e.id === profileId) : undefined;
-      setSelectedFormTypes(new Set(toSend));
-      if (recipient) {
-        setCombineFormsRecipientId(recipient.id);
-        setCombineFormsRecipientSearch(`${recipient.name} — ${ROLE_LABELS[normalizeRole(recipient.position)] ?? recipient.position}`);
-        setCombineFormsExternalName("");
-      } else {
-        setCombineFormsRecipientId("");
-        setCombineFormsRecipientSearch("");
-        setCombineFormsExternalName(formsDialog.candidateName);
-      }
-      setFormsDialog(null);
-      setActiveTab("combineForms");
+      setFormsDialogSending(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save required forms.");
     } finally {
@@ -9685,7 +9899,15 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       // recipient — an external/no-login recipient has no stable identifier
       // to match duplicates against.
       if (recipient) {
-        const alreadySent = await getExistingActiveDocumentTypes(recipient.id, Array.from(selectedFormTypes));
+        // A type whose existing doc is still pending_signature gets reused
+        // below (see docs/existing further down) rather than duplicated —
+        // drop those from the warning so re-copying a link for something
+        // still awaiting signature doesn't read as "this will duplicate it"
+        // when it won't. Only an already-signed/confirmed (or otherwise not
+        // reusable) existing doc is a genuine resend worth confirming.
+        const alreadySent = (await getExistingActiveDocumentTypes(recipient.id, Array.from(selectedFormTypes))).filter(
+          (type) => latestDocByPersonType.get(`${recipient.id}|${type}`)?.status !== "pending_signature"
+        );
         if (alreadySent.length > 0) {
           const labelByType = new Map(
             [...GENERAL_FORM_TYPES, ...TECHNICIAN_FORM_TYPES, ...MANAGEMENT_FORM_TYPES, ...NEW_TECHNICIAN_BULK_FORM_TYPES, ...NEW_OFFICE_BULK_FORM_TYPES, ...NEW_PH_BULK_FORM_TYPES, ...NEW_MANAGEMENT_BULK_FORM_TYPES].map((f) => [f.type, f.label])
@@ -9701,10 +9923,32 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       // (shared document types with the old group) need this tag to land in
       // the right Sent History bucket. Harmless on the other types here
       // (master_w2_agreement etc.), which don't read formSource at all.
-      const formSourceTag = activeTab === "newCombineForms" ? { formSource: "new_automation" } : {};
+      // formsDialogSending (the Hiring "Required Forms" popup's inline send
+      // step) also counts — it never touches activeTab (stays on Hiring, no
+      // tab switch), but everything it sends is always New Automation Forms
+      // (see STAFF_FORM_TIERS) so it needs the same tag or these documents
+      // would be invisible to the New Technician/Office Staff (US)/PH
+      // Staff/BM+ checklist tiers, which only count "new"-tagged submissions
+      // of these shared types.
+      const formSourceTag = activeTab === "newCombineForms" || formsDialogSending ? { formSource: "new_automation" } : {};
+      // Reuse an existing STILL-PENDING document for a type instead of
+      // always creating a new one — the user's explicit complaint: a
+      // generated link is only ever held in local React state
+      // (combineFormsCopyLink), so a page reload loses it, and clicking
+      // "Copy Link Instead" again used to create a genuinely NEW set of
+      // hr_signable_documents rows (a different link than whatever was
+      // already shared) — exactly the "duplicate real rows" issue flagged
+      // in the comment below. Only meaningful for a real AHS recipient
+      // (external/no-account sends have no stable identifier to match
+      // against, same limitation the "already sent" check above already
+      // has) and only when that existing doc is still pending_signature —
+      // an already-signed/confirmed one is a genuine resend, not a "give me
+      // the same link back" case.
       const docs = await Promise.all(
-        Array.from(selectedFormTypes).map((type) =>
-          createSignableDocument(
+        Array.from(selectedFormTypes).map((type) => {
+          const existing = recipient ? latestDocByPersonType.get(`${recipient.id}|${type}`) : undefined;
+          if (existing && existing.status === "pending_signature") return existing;
+          return createSignableDocument(
             recipient
               ? {
                   documentType: type,
@@ -9720,8 +9964,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                   recipientSlot: "employee",
                   pdfUrl: "",
                 }
-          )
-        )
+          );
+        })
       );
 
       // Local dev only: point the bundle link at this dev server instead of
@@ -9757,7 +10001,13 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       setCombineFormsRecipientSearch("");
       setCombineFormsExternalName("");
       // Refresh each type's own "Sent X Forms" tracking table too, so these newly-generated documents show up there right away.
+      // Also refresh allSignableDocs (loadCandidateForms) so latestDocByPersonType
+      // picks up whatever just got created/reused — without this, clicking
+      // "Copy Link Instead" again in the SAME session (no reload needed)
+      // wouldn't see the doc it just made and would create a genuine
+      // duplicate instead of reusing it.
       await Promise.all([
+        loadCandidateForms(),
         loadSentW8benForms(), loadSentW4Forms(), loadSentW9Forms(), loadSentW4RForms(), loadSentI9Forms(),
         loadSentWageAckForms(), loadSentCarIqAgreementForms(), loadSentVehicleAgreementForms(), loadSentDamageForms(),
         loadSentDirectDepositForms(), loadSentEmployeeConfidentialityForms(), loadSentContractorDataForms(),
@@ -27519,9 +27769,135 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-slate-800 border border-white/10 rounded-lg p-6 max-w-md w-full">
             <h3 className="text-lg font-bold mb-1">Required Forms</h3>
+            {formsDialogSending ? (
+              <>
+                <p className="text-sm text-muted-foreground mb-3">
+                  Send the selected forms to <span className="font-semibold text-white">{formsDialog.candidateName}</span> — stays right here, no tab switch.
+                </p>
+                {!formsDialogCandidateHasAccount && (
+                  <p className="mb-3 text-xs text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-md px-2.5 py-2">
+                    ⚠ {formsDialog.candidateName} doesn't have an AHS account yet — "Generate Link for Selected Forms" (Send via Message) needs a real account to DM and won't work for them. Use "Copy Link Instead" below to get a shareable link, or create their account first (see the Account column on the Hiring table).
+                  </p>
+                )}
+                <div className="max-h-40 overflow-y-auto border border-white/10 rounded-md divide-y divide-white/5 mb-3">
+                  {Array.from(formsDialog.selected).map((type) => {
+                    const { statusText, statusColor } = getCandidateFormStatus(formsDialog.candidateId, type);
+                    return (
+                      <div key={type} className="flex items-center gap-2 px-3 py-1.5">
+                        <span className="flex-1 min-w-0 text-sm text-slate-200 truncate">{SIGNABLE_DOCUMENT_REGISTRY[type].label}</span>
+                        <span className={`shrink-0 text-[10px] font-semibold uppercase tracking-wide ${statusColor}`}>{statusText}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setFormsDialogSending(false)}
+                  className="w-full mb-3 text-xs px-3 py-2 rounded-md border border-white/10 bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white transition"
+                >
+                  Re-select Forms
+                </button>
+                <div className="flex flex-col gap-1 relative mb-3">
+                  <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Technician</label>
+                  <input
+                    type="text"
+                    value={combineFormsRecipientSearch}
+                    onChange={(e) => { setCombineFormsRecipientSearch(e.target.value); setCombineFormsRecipientId(""); setCombineFormsRecipientDropdownOpen(true); setCombineFormsExternalName(""); }}
+                    onFocus={() => setCombineFormsRecipientDropdownOpen(true)}
+                    onBlur={() => setTimeout(() => setCombineFormsRecipientDropdownOpen(false), 150)}
+                    placeholder="Search a teammate…"
+                    className="glass-input text-sm py-1.5 px-3 rounded-md"
+                  />
+                  {combineFormsRecipientDropdownOpen && (
+                    <div className="absolute z-50 top-full mt-1 w-full max-h-60 overflow-y-auto rounded-md border border-white/15 bg-slate-900 shadow-2xl">
+                      {filteredCombineFormsRecipients.length === 0 ? (
+                        <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+                      ) : (
+                        filteredCombineFormsRecipients.map((e) => (
+                          <button
+                            key={e.id}
+                            type="button"
+                            onMouseDown={(ev) => ev.preventDefault()}
+                            onClick={() => {
+                              setCombineFormsRecipientId(e.id);
+                              setCombineFormsRecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`);
+                              setCombineFormsRecipientDropdownOpen(false);
+                            }}
+                            className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${combineFormsRecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                          >
+                            {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
+                          </button>
+                        ))
+                      )}
+                    </div>
+                  )}
+                </div>
+                <div className="flex flex-col gap-1 mb-3">
+                  <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">— or, no AHS account —</label>
+                  <input
+                    type="text"
+                    value={combineFormsExternalName}
+                    onChange={(e) => { setCombineFormsExternalName(e.target.value); setCombineFormsRecipientId(""); setCombineFormsRecipientSearch(""); }}
+                    placeholder="Type their name…"
+                    className="glass-input text-sm py-1.5 px-3 rounded-md"
+                  />
+                  <p className="text-[10px] text-muted-foreground">Optional — only used by "Copy Link Instead" below.</p>
+                </div>
+                <div className="flex flex-wrap items-center gap-3 mb-3">
+                  <button
+                    type="button"
+                    disabled={!combineFormsRecipientId || selectedFormTypes.size === 0 || combineFormsBusy}
+                    onClick={() => handleGenerateCombinedForms("message")}
+                    className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-40 flex items-center gap-1.5"
+                  >
+                    <Link2 className="h-3.5 w-3.5" /> {combineFormsBusy ? "Generating…" : "Generate Link for Selected Forms"}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={selectedFormTypes.size === 0 || combineFormsBusy}
+                    onClick={() => handleGenerateCombinedForms("copyLink")}
+                    title="Generate the same forms but just copy the link — nothing gets sent as a message"
+                    className="btn text-sm px-4 py-2 disabled:opacity-40 flex items-center gap-1.5"
+                  >
+                    <Copy className="h-3.5 w-3.5" /> Copy Link Instead
+                  </button>
+                </div>
+                {combineFormsError && (
+                  <p className="mb-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{combineFormsError}</p>
+                )}
+                {combineFormsSentNotice && (
+                  <p className="mb-3 text-xs text-green-300 bg-green-500/10 border border-green-500/30 rounded-md px-2.5 py-2">{combineFormsSentNotice}</p>
+                )}
+                {combineFormsCopyLink && (
+                  <div className="mb-3 text-xs bg-blue-500/10 border border-blue-500/30 rounded-md px-2.5 py-2 flex flex-wrap items-center gap-2">
+                    <span>Copied to clipboard — share it however you'd like:</span>
+                    <code className="px-1.5 py-0.5 bg-black/30 rounded break-all">{combineFormsCopyLink}</code>
+                    <button type="button" onClick={() => navigator.clipboard.writeText(combineFormsCopyLink)} className="btn text-xs px-2 py-1">Copy Again</button>
+                  </div>
+                )}
+                <div className="flex justify-end">
+                  <button type="button" onClick={closeFormsDialog} className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white">Done</button>
+                </div>
+              </>
+            ) : (
+            <>
             <p className="text-sm text-muted-foreground mb-3">
               Which forms apply to <span className="font-semibold text-white">{formsDialog.candidateName}</span>?
             </p>
+            <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1.5">Quick-select by role (Staff Form Checklist tiers)</p>
+            <div className="flex flex-wrap gap-1.5 mb-3">
+              {STAFF_FORM_TIERS.map((tier) => (
+                <button
+                  key={tier.key}
+                  type="button"
+                  onClick={() => setFormsDialog({ ...formsDialog, selected: new Set(tier.formTypes) })}
+                  title={`Set required forms to this tier's set: ${tier.formTypes.map((t) => SIGNABLE_DOCUMENT_REGISTRY[t].label).join(", ")}`}
+                  className="text-xs px-2.5 py-1 rounded-md border border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 text-slate-300 hover:text-white transition"
+                >
+                  {tier.label}
+                </button>
+              ))}
+            </div>
             <div className="relative mb-2">
               <Search className="h-3.5 w-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
               <input
@@ -27536,53 +27912,92 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             <div className="max-h-80 overflow-y-auto border border-white/10 rounded-md divide-y divide-white/5 mb-4">
               {(() => {
                 const q = formsDialogSearch.trim().toLowerCase();
-                const types = (Object.keys(SIGNABLE_DOCUMENT_REGISTRY) as SignableDocumentType[]).filter(
-                  (type) => !q || SIGNABLE_DOCUMENT_REGISTRY[type].label.toLowerCase().includes(q)
-                );
+                const types = (Object.keys(SIGNABLE_DOCUMENT_REGISTRY) as SignableDocumentType[])
+                  .filter((type) => !q || SIGNABLE_DOCUMENT_REGISTRY[type].label.toLowerCase().includes(q))
+                  // Checked forms float to the top so HR can see at a glance
+                  // what a tier button (or manual picking) actually selected,
+                  // without scrolling the whole list to find them — stable
+                  // sort keeps each group's original registry order.
+                  .sort((a, b) => Number(formsDialog.selected.has(b)) - Number(formsDialog.selected.has(a)));
                 if (types.length === 0) {
                   return <div className="px-3 py-4 text-sm text-muted-foreground text-center">No forms match "{formsDialogSearch}".</div>;
                 }
                 const dialogCandidate = candidates.find((c) => c.id === formsDialog.candidateId);
                 const dialogProfileId = dialogCandidate?.email ? profileIdByEmail.get(dialogCandidate.email.trim().toLowerCase()) : undefined;
-                const signedTypes = dialogProfileId ? completeDocTypesByProfileId.get(dialogProfileId) : undefined;
-                const pendingTypes = dialogProfileId ? pendingDocTypesByProfileId.get(dialogProfileId) : undefined;
-                return types.map((type) => {
+                const firstUncheckedIndex = types.findIndex((t) => !formsDialog.selected.has(t));
+                return types.map((type, i) => {
                   const checked = formsDialog.selected.has(type);
-                  const isSigned = signedTypes?.has(type) ?? false;
-                  const isPending = !isSigned && (pendingTypes?.has(type) ?? false);
+                  // Real 4-bucket status (same one Staff Form Checklist
+                  // shows), not just a plain signed/pending boolean — lets
+                  // HR review exactly where each form stands and, once it's
+                  // "Awaiting HR", sign it right here. Same helper backs the
+                  // "send" step's own status summary below.
+                  const { doc, reviewStatus, statusText, statusColor } = getCandidateFormStatus(formsDialog.candidateId, type);
                   return (
-                    <div key={type} className="px-3 py-2">
-                      <div className="flex items-center gap-2 -mx-3 px-3 py-0.5 hover:bg-white/5">
-                        <label className="flex items-center gap-2 text-sm text-slate-200 cursor-pointer flex-1">
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            onChange={() => {
-                              const next = new Set(formsDialog.selected);
-                              if (next.has(type)) next.delete(type);
-                              else next.add(type);
-                              setFormsDialog({ ...formsDialog, selected: next });
-                            }}
-                            className="h-3.5 w-3.5 accent-blue-500 shrink-0"
-                          />
-                          {SIGNABLE_DOCUMENT_REGISTRY[type].label}
-                        </label>
-                        {isSigned && (
-                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-500/15 text-green-300 border border-green-500/30 shrink-0">Signed</span>
-                        )}
-                        {isPending && (
-                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow-500/15 text-yellow-300 border border-yellow-500/30 shrink-0">Sent</span>
-                        )}
-                        {checked && (
-                          <button
-                            type="button"
-                            onClick={() => void handleSendType(type)}
-                            disabled={savingFormsDialog}
-                            className="text-xs text-blue-400 hover:text-blue-300 underline disabled:opacity-40 shrink-0"
-                          >
-                            Send →
-                          </button>
-                        )}
+                    <div key={type}>
+                      {i === firstUncheckedIndex && i > 0 && (
+                        <div className="px-3 py-1 text-[10px] uppercase tracking-wide text-muted-foreground bg-white/5">Other forms</div>
+                      )}
+                      <div className="px-3 py-2">
+                        <div className="flex items-center gap-2 -mx-3 px-3 py-0.5 hover:bg-white/5">
+                          <label className="flex items-center gap-2 text-sm text-slate-200 cursor-pointer flex-1">
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => {
+                                const next = new Set(formsDialog.selected);
+                                if (next.has(type)) next.delete(type);
+                                else next.add(type);
+                                setFormsDialog({ ...formsDialog, selected: next });
+                              }}
+                              className="h-3.5 w-3.5 accent-blue-500 shrink-0"
+                            />
+                            {SIGNABLE_DOCUMENT_REGISTRY[type].label}
+                          </label>
+                          <span className={`shrink-0 text-[10px] font-semibold uppercase tracking-wide ${statusColor}`}>{statusText}</span>
+                          {doc?.pdfUrl && (
+                            <a
+                              href={doc.pdfUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex shrink-0 items-center gap-0.5 text-xs text-blue-400 hover:text-blue-300"
+                            >
+                              view <ExternalLink className="h-3 w-3" />
+                            </a>
+                          )}
+                          {reviewStatus === "awaiting_employee" && doc && dialogProfileId && (
+                            <button
+                              type="button"
+                              disabled={remindingFormType === type}
+                              onClick={() => void handleRemindFormDialog(doc, dialogProfileId, type)}
+                              title="Send a reminder DM with the fill link"
+                              className="inline-flex shrink-0 items-center gap-1 text-xs text-amber-300 hover:text-amber-200 disabled:opacity-40"
+                            >
+                              {remindingFormType === type ? <Loader2 className="h-3 w-3 animate-spin" /> : <Bell className="h-3 w-3" />} Remind
+                            </button>
+                          )}
+                          {reviewStatus === "awaiting_hr" && doc && DOCUMENT_TYPES_REQUIRING_EMPLOYER_SIGNATURE.has(type) && (
+                            <button
+                              type="button"
+                              onClick={() => handleSignAsHr(type, doc)}
+                              title="Review and complete HR's own signature/info for this form"
+                              className="inline-flex shrink-0 items-center gap-1 text-xs text-sky-300 hover:text-sky-200"
+                            >
+                              <PenLine className="h-3 w-3" /> Sign
+                            </button>
+                          )}
+                          {reviewStatus === "not_sent" && (
+                            <button
+                              type="button"
+                              disabled={savingFormsDialog}
+                              onClick={() => void handleSendType(type)}
+                              title="Create and send this form"
+                              className="inline-flex shrink-0 items-center gap-1 text-xs text-blue-400 hover:text-blue-300 disabled:opacity-40"
+                            >
+                              {savingFormsDialog ? <Loader2 className="h-3 w-3 animate-spin" /> : <Send className="h-3 w-3" />} Send
+                            </button>
+                          )}
+                        </div>
                       </div>
                     </div>
                   );
@@ -27602,11 +28017,51 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             <div className="flex gap-2 justify-between items-center">
               <span className="text-xs text-muted-foreground">{formsDialog.selected.size} selected</span>
               <div className="flex gap-2">
-                <button onClick={() => setFormsDialog(null)} disabled={savingFormsDialog} className="btn text-sm px-4 py-2">Cancel</button>
+                <button onClick={closeFormsDialog} disabled={savingFormsDialog} className="btn text-sm px-4 py-2">Cancel</button>
                 <button onClick={handleSaveFormsDialog} disabled={savingFormsDialog} className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50">
                   {savingFormsDialog ? "Saving…" : "Save"}
                 </button>
               </div>
+            </div>
+            </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Embedded "Review & Sign" for whichever form type ManagerReviewPage
+          supports, opened from the Required Forms popup's "Sign" button —
+          same component/pattern TechnicianFormChecklistPage.tsx's own
+          "Sign"/"Re-sign" buttons use (its signDoc state), just triggered
+          from Hiring instead. w4/i9 never reach here — handleSignAsHr
+          routes those two to their own existing dialogs instead. */}
+      {managerReviewDoc && (
+        <div className="fixed inset-0 z-[60] bg-black/60 flex items-center justify-center p-4" onClick={() => setManagerReviewDoc(null)}>
+          <div className="bg-slate-900 border border-white/10 rounded-lg shadow-2xl w-full max-w-2xl max-h-[92vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between gap-3 shrink-0">
+              <p className="text-sm font-semibold flex items-center gap-1.5"><PenLine className="h-4 w-4" /> Review &amp; Sign</p>
+              <button
+                type="button"
+                onClick={() => setManagerReviewDoc(null)}
+                className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-white/5"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4">
+              {managerReviewDoc.pdfUrl && (
+                <div className="mb-4 rounded-md overflow-hidden border border-white/10 bg-white/5">
+                  <iframe src={managerReviewDoc.pdfUrl} title="Document on file" className="w-full border-0" style={{ height: 380 }} />
+                </div>
+              )}
+              <ManagerReviewPage
+                docId={managerReviewDoc.id}
+                embedded
+                onSigned={() => {
+                  setManagerReviewDoc(null);
+                  void loadCandidateForms();
+                }}
+              />
             </div>
           </div>
         </div>
