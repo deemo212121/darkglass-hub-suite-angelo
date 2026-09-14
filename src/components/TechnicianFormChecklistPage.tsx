@@ -212,6 +212,11 @@ export function TechnicianFormChecklistPage() {
   // signing, just the document with a close button, instead of opening a
   // new browser tab.
   const [viewDoc, setViewDoc] = useState<{ doc: SignableDocument; label: string } | null>(null);
+  // Same "plain read-only popup" shape as viewDoc above, just for a License/
+  // SSN Card/ID photo instead of a signed document's pdfUrl — those live in
+  // a private Storage bucket behind a short-lived signed URL (fetched on
+  // click, not cached), not a fixed field on the SignableDocument itself.
+  const [idPhotoView, setIdPhotoView] = useState<{ url: string; label: string } | null>(null);
 
   // ── Contractor Addendum's "Send" step needs Position Level + Guaranteed
   // Minimum Baseline Payout up front — these are compensation/title terms
@@ -1168,7 +1173,7 @@ export function TechnicianFormChecklistPage() {
                                 type="button"
                                 onClick={() =>
                                   getTechnicianIdDocumentUrl(doc!.formData[field])
-                                    .then((url) => window.open(url, "_blank", "noopener,noreferrer"))
+                                    .then((url) => setIdPhotoView({ url, label: fieldLabel }))
                                     .catch((err) => setActionError(err instanceof Error ? err.message : `Failed to open ${fieldLabel} photo.`))
                                 }
                                 className="inline-flex shrink-0 items-center gap-0.5 text-xs text-blue-400 hover:text-blue-300"
@@ -1305,6 +1310,28 @@ export function TechnicianFormChecklistPage() {
           </div>
           <div className="flex-1 overflow-hidden bg-slate-950">
             {viewDoc.doc.pdfUrl && <iframe src={viewDoc.doc.pdfUrl} title={viewDoc.label} className="w-full h-full border-0" />}
+          </div>
+        </div>
+      </div>
+    )}
+
+    {/* Same plain read-only popup, for a License/SSN Card/ID photo — see
+        idPhotoView's own comment above. */}
+    {idPhotoView && (
+      <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => setIdPhotoView(null)}>
+        <div className="bg-slate-900 border border-white/10 rounded-lg shadow-2xl w-full max-w-[95vw] h-[95vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+          <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between gap-3 shrink-0">
+            <p className="text-sm font-semibold truncate">{idPhotoView.label}</p>
+            <button
+              type="button"
+              onClick={() => setIdPhotoView(null)}
+              className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-white/5"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          <div className="flex-1 overflow-hidden bg-slate-950">
+            <iframe src={idPhotoView.url} title={idPhotoView.label} className="w-full h-full border-0" />
           </div>
         </div>
       </div>
