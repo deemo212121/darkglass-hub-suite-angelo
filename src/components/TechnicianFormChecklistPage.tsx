@@ -1330,8 +1330,15 @@ export function TechnicianFormChecklistPage() {
               <X className="h-4 w-4" />
             </button>
           </div>
-          <div className="flex-1 overflow-hidden bg-slate-950">
-            <iframe src={idPhotoView.url} title={idPhotoView.label} className="w-full h-full border-0" />
+          <div className="flex-1 overflow-auto bg-slate-950 flex items-center justify-center p-4">
+            {/* A plain <img>, not an <iframe> — an iframe hands an image off
+                to the browser's own standalone image viewer, which renders
+                it at native pixel size (100% zoom) instead of scaling to
+                fit, so a real camera-resolution ID photo overflowed the
+                popup instead of fitting inside it. object-contain scales it
+                down to fit while still letting it grow up to its own
+                natural size on a small photo. */}
+            <img src={idPhotoView.url} alt={idPhotoView.label} className="max-w-full max-h-full object-contain" />
           </div>
         </div>
       </div>
