@@ -343,6 +343,8 @@ function buildDevTestFlashTechTrip(profileId: string): FlashTechTrip {
     id: "dev-test-trip-001",
     technicianProfileId: profileId,
     technicianName: "Angelo Mendoza",
+    technicianPhone: null,
+    technicianEmail: null,
     originLocation: "Atlanta",
     destinationLocation: "Columbus",
     startDate: "2026-09-01",

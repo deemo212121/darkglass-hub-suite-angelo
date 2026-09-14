@@ -161,6 +161,8 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
   // (also auto-filled, locked) Origin branch. Fetched on selection since
   // the technician list itself (getCompanyUsers) doesn't carry it.
   const [technicianAddress, setTechnicianAddress] = useState("");
+  const [technicianPhone, setTechnicianPhone] = useState("");
+  const [technicianEmail, setTechnicianEmail] = useState("");
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
@@ -288,6 +290,8 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
     setForm(emptyForm());
     setTechnicianQuery("");
     setTechnicianAddress("");
+    setTechnicianPhone("");
+    setTechnicianEmail("");
     setShowModal(true);
   };
 
@@ -306,6 +310,8 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
     });
     setTechnicianQuery(trip.technicianName);
     setTechnicianAddress("");
+    setTechnicianPhone(trip.technicianPhone || "");
+    setTechnicianEmail(trip.technicianEmail || "");
     if (trip.technicianProfileId) {
       getTechnicianContactInfoByIds([trip.technicianProfileId]).then((map) => {
         setTechnicianAddress(map.get(trip.technicianProfileId!)?.address || "");
@@ -326,8 +332,13 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
     setTechnicianQuery(u.display_name || u.email);
     setTechnicianDropdownOpen(false);
     setTechnicianAddress("");
+    setTechnicianPhone("");
+    setTechnicianEmail("");
     getTechnicianContactInfoByIds([u.id]).then((map) => {
-      setTechnicianAddress(map.get(u.id)?.address || "");
+      const info = map.get(u.id);
+      setTechnicianAddress(info?.address || "");
+      setTechnicianPhone(info?.phone || "");
+      setTechnicianEmail(info?.email || "");
     });
   };
 
@@ -354,6 +365,8 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
         const newTripId = await createFlashTechTrip({
           technicianProfileId: form.technicianProfileId,
           technicianName: form.technicianName.trim(),
+          technicianPhone,
+          technicianEmail,
           originLocation: form.originLocation.trim(),
           destinationLocation: form.destinationLocation.trim(),
           startDate: form.startDate,
@@ -662,6 +675,31 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
+                  <label className="text-xs font-semibold uppercase text-slate-400">Contact Number</label>
+                  <input
+                    value={technicianPhone}
+                    readOnly
+                    disabled
+                    placeholder={form.technicianProfileId ? "No phone number on file for this technician" : "Pick a technician from the search results first"}
+                    title="The technician's own phone number on file — editable afterward in the Tracker"
+                    className="glass-input mt-1 w-full cursor-not-allowed opacity-70"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-semibold uppercase text-slate-400">Email Address</label>
+                  <input
+                    value={technicianEmail}
+                    readOnly
+                    disabled
+                    placeholder={form.technicianProfileId ? "No email on file for this technician" : "Pick a technician from the search results first"}
+                    title="The technician's own email on file — editable afterward in the Tracker"
+                    className="glass-input mt-1 w-full cursor-not-allowed opacity-70"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
                   <label className="text-xs font-semibold uppercase text-slate-400">Start Date</label>
                   <input
                     type="date"
@@ -892,7 +930,7 @@ function FlashTechTrackerTable({
   }
 
   const HEADERS = [
-    "Name", "Tier Level", "Origin City", "Destination City", "Travel Date",
+    "Name", "Contact Number", "Email", "Tier Level", "Origin City", "Destination City", "Travel Date",
     "Hotel Name", "Lodging Date", "Address", "Hotel Rate", "Confirmation",
     "Rental Car", "Rental Date", "Rental Rate", "Vehicle Type", "Other Expenses",
     "Notes", "Receipts", "Type", "Status",
@@ -951,6 +989,12 @@ function FlashTechTrackerTable({
                       </option>
                     ))}
                   </select>
+                </td>
+                <td className="p-0.5 border-r border-white/10">
+                  <TrackerTextCell value={trip.technicianPhone || ""} disabled={!canEdit} placeholder="Contact number" onSave={(v) => patch("technicianPhone", { technicianPhone: v })} />
+                </td>
+                <td className="p-0.5 border-r border-white/10">
+                  <TrackerTextCell value={trip.technicianEmail || ""} disabled={!canEdit} placeholder="Email" onSave={(v) => patch("technicianEmail", { technicianEmail: v })} />
                 </td>
                 <td className="p-0.5 border-r border-white/10">
                   <TrackerSelectCell value={trip.tierLevel || ""} disabled={!canEdit} options={["", ...FLASH_TECH_TIER_LEVELS]} onSave={(v) => patch("tierLevel", { tierLevel: v || null })} />
