@@ -450,6 +450,15 @@ const hrMod: ModuleDef = {
       seed: () => ({}),
     },
     {
+      slug: "hiring-analytics",
+      title: "Analytics",
+      description: "Candidates by status, and who's actually been making changes in Hiring.",
+      custom: "hiring-analytics" as any,
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
+    {
       slug: "user-management",
       title: "User Management",
       description: "User accounts administration.",
