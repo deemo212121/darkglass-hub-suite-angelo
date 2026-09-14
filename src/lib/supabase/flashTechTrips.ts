@@ -176,7 +176,7 @@ export async function createFlashTechTrip(input: {
   createdByName: string | null;
   includeHotelExpense?: boolean;
   includeTransportationExpense?: boolean;
-}): Promise<void> {
+}): Promise<string> {
   const { data, error } = await supabase
     .from("flash_tech_trips")
     .insert({
@@ -200,7 +200,7 @@ export async function createFlashTechTrip(input: {
   const tripId = data.id as string;
   const routeLabel = `${input.originLocation} → ${input.destinationLocation}`;
   const tripProfileId = input.technicianProfileId;
-  if (!tripProfileId) return; // Nothing to link the placeholder expenses to.
+  if (!tripProfileId) return tripId; // Nothing to link the placeholder expenses to.
 
   const subtypeInserts: Array<{ subtype: "hotel" | "transportation"; description: string }> = [];
   if (input.includeHotelExpense !== false) {
@@ -228,6 +228,7 @@ export async function createFlashTechTrip(input: {
       console.error(`createFlashTechTrip: failed to create ${subtype} expense:`, err);
     }
   }
+  return tripId;
 }
 
 export async function updateFlashTechTrip(

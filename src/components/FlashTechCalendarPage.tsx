@@ -170,6 +170,15 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
   const [savingCellKey, setSavingCellKey] = useState<string | null>(null);
   const [uploadingReceiptId, setUploadingReceiptId] = useState<string | null>(null);
   const [previewReceiptUrl, setPreviewReceiptUrl] = useState<string | null>(null);
+  // The trip a freshly-created Schedule Trip save just landed in the
+  // Tracker on — scrolled to and briefly highlighted so it's obvious which
+  // row to keep filling in, then cleared after a few seconds.
+  const [highlightTripId, setHighlightTripId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!highlightTripId) return;
+    const t = setTimeout(() => setHighlightTripId(null), 4000);
+    return () => clearTimeout(t);
+  }, [highlightTripId]);
 
   const patchTrip = async (tripId: string, field: string, patch: Parameters<typeof updateFlashTechTripTrackerFields>[1]) => {
     const key = `${tripId}:${field}`;
@@ -339,8 +348,10 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
           endDate: form.endDate,
           notes: form.notes,
         });
+        closeModal();
+        await loadData();
       } else {
-        await createFlashTechTrip({
+        const newTripId = await createFlashTechTrip({
           technicianProfileId: form.technicianProfileId,
           technicianName: form.technicianName.trim(),
           originLocation: form.originLocation.trim(),
@@ -353,9 +364,15 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
           includeHotelExpense: form.includeHotelExpense,
           includeTransportationExpense: form.includeTransportationExpense,
         });
+        closeModal();
+        await loadData();
+        // Most of the Tracker's columns (hotel/rental/receipts/etc.) aren't
+        // known yet at scheduling time — jump straight to that new row in
+        // the Tracker instead of leaving HR to go find it, so filling the
+        // rest in is one continuous flow rather than a separate hunt.
+        setView("tracker");
+        setHighlightTripId(newTripId);
       }
-      closeModal();
-      await loadData();
     } catch (err) {
       alert(`Failed to save trip: ${err instanceof Error ? err.message : "Unknown error"}`);
     } finally {
@@ -544,6 +561,7 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
             canEdit={canEditTracker}
             savingCellKey={savingCellKey}
             uploadingReceiptId={uploadingReceiptId}
+            highlightTripId={highlightTripId}
             onPatch={patchTrip}
             onChangeTechnician={handleChangeTechnician}
             onUploadReceipt={handleUploadReceipt}
@@ -841,6 +859,7 @@ function FlashTechTrackerTable({
   canEdit,
   savingCellKey,
   uploadingReceiptId,
+  highlightTripId,
   onPatch,
   onChangeTechnician,
   onUploadReceipt,
@@ -853,6 +872,8 @@ function FlashTechTrackerTable({
   canEdit: boolean;
   savingCellKey: string | null;
   uploadingReceiptId: string | null;
+  /** A just-created trip to scroll to and briefly highlight — see handleSave's "jump into the Tracker" follow-through. */
+  highlightTripId: string | null;
   onPatch: (tripId: string, field: string, patch: TrackerPatch) => void;
   onChangeTechnician: (tripId: string, technicianProfileId: string | null, technicianName: string) => void;
   onUploadReceipt: (trip: FlashTechTrip, file: File) => void;
@@ -900,8 +921,15 @@ function FlashTechTrackerTable({
         <tbody>
           {trips.map((trip) => {
             const patch = (field: string, value: TrackerPatch) => onPatch(trip.id, field, value);
+            const isHighlighted = trip.id === highlightTripId;
             return (
-              <tr key={trip.id} className="border-b border-white/10 align-top hover:bg-white/5">
+              <tr
+                key={trip.id}
+                ref={isHighlighted ? (el) => el?.scrollIntoView({ behavior: "smooth", block: "center" }) : undefined}
+                className={`border-b border-white/10 align-top hover:bg-white/5 transition-colors ${
+                  isHighlighted ? "bg-blue-500/15 ring-1 ring-inset ring-blue-400/50" : ""
+                }`}
+              >
                 <td className="p-0.5 border-r border-white/10">
                   <select
                     value={trip.technicianProfileId || `unlinked:${trip.technicianName}`}
