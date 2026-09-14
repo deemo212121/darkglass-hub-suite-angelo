@@ -12,6 +12,7 @@ import {
   updateFlashTechTrip,
   deleteFlashTechTrip,
   updateFlashTechTripTrackerFields,
+  updateFlashTechTripTechnician,
   setFlashTechTripSbmConfirmed,
   uploadFlashTechTripReceipt,
   removeFlashTechTripReceipt,
@@ -176,6 +177,19 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
     try {
       await updateFlashTechTripTrackerFields(tripId, patch);
       setTrips((prev) => prev.map((t) => (t.id === tripId ? { ...t, ...patch } as FlashTechTrip : t)));
+    } catch (err) {
+      alert(`Failed to save: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setSavingCellKey((k) => (k === key ? null : k));
+    }
+  };
+
+  const handleChangeTechnician = async (tripId: string, technicianProfileId: string | null, technicianName: string) => {
+    const key = `${tripId}:technician`;
+    setSavingCellKey(key);
+    try {
+      await updateFlashTechTripTechnician(tripId, technicianProfileId, technicianName);
+      setTrips((prev) => prev.map((t) => (t.id === tripId ? { ...t, technicianProfileId, technicianName } : t)));
     } catch (err) {
       alert(`Failed to save: ${err instanceof Error ? err.message : "Unknown error"}`);
     } finally {
@@ -542,11 +556,13 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
         {view === "tracker" && (
           <FlashTechTrackerTable
             trips={sortedTrips}
+            users={users}
             loading={loading}
             canEdit={canEditTracker}
             savingCellKey={savingCellKey}
             uploadingReceiptId={uploadingReceiptId}
             onPatch={patchTrip}
+            onChangeTechnician={handleChangeTechnician}
             onToggleSbmConfirmed={handleToggleSbmConfirmed}
             onUploadReceipt={handleUploadReceipt}
             onRemoveReceipt={handleRemoveReceipt}
@@ -838,22 +854,26 @@ const TRACKER_STATUS_COLOR: Record<string, string> = {
 
 function FlashTechTrackerTable({
   trips,
+  users,
   loading,
   canEdit,
   savingCellKey,
   uploadingReceiptId,
   onPatch,
+  onChangeTechnician,
   onToggleSbmConfirmed,
   onUploadReceipt,
   onRemoveReceipt,
   onPreviewReceipt,
 }: {
   trips: FlashTechTrip[];
+  users: ProfileRow[];
   loading: boolean;
   canEdit: boolean;
   savingCellKey: string | null;
   uploadingReceiptId: string | null;
   onPatch: (tripId: string, field: string, patch: TrackerPatch) => void;
+  onChangeTechnician: (tripId: string, technicianProfileId: string | null, technicianName: string) => void;
   onToggleSbmConfirmed: (trip: FlashTechTrip) => void;
   onUploadReceipt: (trip: FlashTechTrip, file: File) => void;
   onRemoveReceipt: (trip: FlashTechTrip) => void;
@@ -877,6 +897,14 @@ function FlashTechTrackerTable({
     "SBM Confirmed", "Notes", "Receipts", "Type", "Status",
   ];
 
+  // Same "active, has a display name" pool the Schedule Trip modal's own
+  // technician search draws from — not narrowed to the TECHNICIAN role,
+  // since a Flash Tech trip can belong to any staff member covering
+  // another branch (Branch Manager, etc. — see this file's own header).
+  const technicianOptions = [...users]
+    .filter((u) => u.is_active && u.display_name)
+    .sort((a, b) => (a.display_name || "").localeCompare(b.display_name || ""));
+
   return (
     <div className="panel overflow-x-auto p-0">
       <table className="border-collapse text-xs">
@@ -894,7 +922,28 @@ function FlashTechTrackerTable({
             const patch = (field: string, value: TrackerPatch) => onPatch(trip.id, field, value);
             return (
               <tr key={trip.id} className="border-b border-white/10 align-top hover:bg-white/5">
-                <td className="px-2 py-1.5 whitespace-nowrap text-slate-200 font-medium border-r border-white/10">{trip.technicianName}</td>
+                <td className="p-0.5 border-r border-white/10">
+                  <select
+                    value={trip.technicianProfileId || `unlinked:${trip.technicianName}`}
+                    disabled={!canEdit || savingCellKey === `${trip.id}:technician`}
+                    onChange={(e) => {
+                      const picked = technicianOptions.find((u) => u.id === e.target.value);
+                      if (picked) onChangeTechnician(trip.id, picked.id, picked.display_name || picked.email);
+                    }}
+                    className="w-full min-w-[140px] bg-slate-900 text-xs font-medium px-1.5 py-1 border border-transparent hover:border-white/10 focus:border-blue-500 rounded outline-none disabled:opacity-60 disabled:cursor-not-allowed text-slate-200"
+                  >
+                    {!trip.technicianProfileId && (
+                      <option value={`unlinked:${trip.technicianName}`} disabled className="bg-slate-900">
+                        {trip.technicianName} (unlinked)
+                      </option>
+                    )}
+                    {technicianOptions.map((u) => (
+                      <option key={u.id} value={u.id} className="bg-slate-900">
+                        {u.display_name}
+                      </option>
+                    ))}
+                  </select>
+                </td>
                 <td className="p-0.5 border-r border-white/10">
                   <TrackerSelectCell value={trip.tierLevel || ""} disabled={!canEdit} options={["", ...FLASH_TECH_TIER_LEVELS]} onSave={(v) => patch("tierLevel", { tierLevel: v || null })} />
                 </td>

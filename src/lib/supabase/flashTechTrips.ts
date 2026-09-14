@@ -274,6 +274,18 @@ export async function deleteFlashTechTrip(id: string): Promise<void> {
   }
 }
 
+/** Reassigns the Name cell in the Tracker view to a different technician/staff member — same technician_profile_id/technician_name pair updateFlashTechTrip's full form writes, just on its own so the Tracker's other columns aren't resent. */
+export async function updateFlashTechTripTechnician(id: string, technicianProfileId: string | null, technicianName: string): Promise<void> {
+  const { error } = await supabase
+    .from("flash_tech_trips")
+    .update({ technician_profile_id: technicianProfileId, technician_name: technicianName })
+    .eq("id", id);
+  if (error) {
+    console.error("updateFlashTechTripTechnician error:", error.message);
+    throw new Error(error.message);
+  }
+}
+
 /**
  * Patches one or more of the tracker-only columns (migration 0257) — used
  * by the spreadsheet-style Tracker view's per-cell editors, so a single
