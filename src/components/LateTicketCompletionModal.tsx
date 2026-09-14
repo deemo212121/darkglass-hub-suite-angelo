@@ -19,6 +19,7 @@ import { getMyProfileId } from "@/lib/supabase/users";
 import {
   getPendingLateTicketCompletions,
   resolveLateTicketCompletion,
+  AlreadyResolvedError,
   type LateTicketCompletion,
 } from "@/lib/supabase/lateTicketCompletions";
 import { notifyRequestReviewers } from "@/lib/supabase/employeeRequests";
@@ -71,8 +72,17 @@ export function LateTicketCompletionModal() {
       }
       setRows((prev) => (prev ?? []).filter((r) => r.id !== row.id));
     } catch (err) {
-      console.error("LateTicketCompletionModal: failed to resolve", err);
-      alert("Something went wrong — please try again.");
+      if (err instanceof AlreadyResolvedError) {
+        // Someone else on the Claims team already acted on this exact
+        // ticket (the popup has no live sync between reviewers) — just
+        // drop it from this view instead of letting a second click
+        // silently override their decision.
+        alert(`Ticket ${row.ticketNo}: ${err.message}`);
+        setRows((prev) => (prev ?? []).filter((r) => r.id !== row.id));
+      } else {
+        console.error("LateTicketCompletionModal: failed to resolve", err);
+        alert("Something went wrong — please try again.");
+      }
     } finally {
       setBusyId(null);
     }

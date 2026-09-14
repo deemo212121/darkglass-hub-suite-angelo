@@ -222,10 +222,11 @@ export function TechActivityReportModal({
   // Confirmed late ticket completions (see late_ticket_completions /
   // LateTicketCompletionModal.tsx) not yet paid out — already folded into
   // ticketsCompleted above (so MCA/Completed Tickets treat them like any
-  // other completed ticket), priced here at today's rate and shown as their
-  // own rows below so it's obvious these came from an earlier, already-
-  // closed period rather than this one's own work.
-  const carryoverTotal = techCarryover.reduce((s, co) => s + co.count * techRateFor(co.repairType), 0);
+  // other completed ticket), priced here at today's rate and shown ONE ROW
+  // PER TICKET below (never grouped by repair type) so it's obvious both
+  // which specific ticket this is and that it came from an earlier,
+  // already-closed period rather than this one's own work.
+  const carryoverTotal = techCarryover.reduce((s, co) => s + techRateFor(co.repairType), 0);
 
   // ticketsCompleted (from the parent row) is already net of both redo and
   // on-hold exclusions (getTechCompletedRepairCounts excludes redo'd and
@@ -422,20 +423,25 @@ export function TechActivityReportModal({
                     );
                   })}
 
-                  {techCarryover.map((co, idx) => {
-                    const rate = techRateFor(co.repairType);
-                    const label = co.repairType === DEFAULT_REPAIR_TYPE ? "Completed Ticket" : co.repairType;
-                    return (
-                      <tr key={`carryover-${idx}`} title={`Confirmed by Claims — originally scheduled ${co.periodStart} – ${co.periodEnd}, but only reached Claimed/Completed after that week ended. Priced at today's rate; not part of this period's own ${label} count.`}>
-                        <td className="px-3 py-2 text-amber-300">
-                          {label} <span className="text-[10px] text-amber-400/70">(carried over from {co.periodStart} – {co.periodEnd})</span>
-                        </td>
-                        <td className="px-3 py-2 text-right text-slate-300">{co.count}</td>
-                        <td className="px-3 py-2 text-right text-slate-300">{fmt(rate)}</td>
-                        <td className="px-3 py-2 text-right text-slate-200">{fmt(co.count * rate)}</td>
-                      </tr>
-                    );
-                  })}
+                  {techCarryover.length > 0 && (
+                    <tr title="Confirmed by Claims — each reached Claimed/Completed after its own scheduled week had already ended. Priced at today's rate; not part of this period's own category counts.">
+                      <td className="px-3 py-2 align-top text-amber-300">Carried Over Tickets</td>
+                      <td className="px-3 py-2 text-right text-slate-300" colSpan={2}>
+                        {techCarryover.map((co) => {
+                          const rate = techRateFor(co.repairType);
+                          return (
+                            <div key={co.lateTicketCompletionId} className="whitespace-nowrap">
+                              <Link to="/ticket/$ticketNo" params={{ ticketNo: co.ticketNo }} target="_blank" rel="noreferrer" className="font-mono text-amber-300 underline hover:text-amber-200">
+                                {co.ticketNo}
+                              </Link>{" "}
+                              <span className="text-slate-400">({co.periodStart} to {co.periodEnd}) — {fmt(rate)}</span>
+                            </div>
+                          );
+                        })}
+                      </td>
+                      <td className="px-3 py-2 text-right align-top text-slate-200">{fmt(carryoverTotal)}</td>
+                    </tr>
+                  )}
 
                   <tr title="Completed visits this period where this technician was the assisting (2nd) technician on someone else's ticket.">
                     <td className="px-3 py-2 text-slate-300">Two Tech</td>

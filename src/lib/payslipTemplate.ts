@@ -70,7 +70,7 @@ export interface EmployeePayslipData {
    * piece-rate/bonus difference is broken out on page 2).
    */
   hasTechActivityPage?: boolean;
-  /** US employees (assigned_branch !== "Philippines") have a 13% tax withheld; PH employees don't show a Tax line at all. */
+  /** true when assigned_branch !== "Philippines". No longer drives a tax withholding line (removed) — kept for any future US/PH-specific formatting. */
   isUS: boolean;
 }
 
@@ -307,10 +307,7 @@ export const PAYSLIP_STYLES = `
 /** The <body> markup only — see this file's header comment for why it's split from PAYSLIP_STYLES. */
 export function renderPayslipBodyHtml(employee: EmployeePayslipData): string {
   const currentDate = new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
-  // US employees only — 13% withheld from Total. PH employees show no Tax
-  // line at all (tax stays 0, row is omitted below).
-  const tax = employee.isUS ? employee.grossPay * 0.13 : 0;
-  const grandTotal = employee.grossPay - tax + employee.extraPay;
+  const grandTotal = employee.grossPay + employee.extraPay;
 
   return `
   <div class="container">
@@ -440,13 +437,6 @@ export function renderPayslipBodyHtml(employee: EmployeePayslipData): string {
         <div class="amount">$${employee.grossPay.toFixed(2)}</div>
       </div>
 
-      ${employee.isUS ? `
-      <div class="summary-row" style="border: none; grid-template-columns: 2fr 1fr;">
-        <div>Tax (13%)</div>
-        <div class="amount">-$${tax.toFixed(2)}</div>
-      </div>
-      ` : ''}
-
       <div class="summary-row" style="border: none; grid-template-columns: 2fr 1fr;">
         <div>Extra</div>
         <div class="amount">$${employee.extraPay.toFixed(2)}</div>
@@ -493,11 +483,7 @@ export function renderTechActivitySummaryPageHtml(
   isUS: boolean,
   extraPay: number
 ): string {
-  // Same 13%-US-only tax rule as page 1's own summary — this page carries
-  // the real grand total now, since Total Payment here (piece-rate + bonus
-  // + hourly, all of it) is the technician's actual gross for the period.
-  const tax = isUS ? breakdown.totalPayment * 0.13 : 0;
-  const grandTotal = breakdown.totalPayment - tax + extraPay;
+  const grandTotal = breakdown.totalPayment + extraPay;
   return `
   <div class="container">
     <div class="header">
@@ -543,13 +529,6 @@ export function renderTechActivitySummaryPageHtml(
     </table>
 
     <div class="summary-section" style="margin-top: 0;">
-      ${isUS ? `
-      <div class="summary-row" style="border: none; grid-template-columns: 2fr 1fr;">
-        <div>Tax (13%)</div>
-        <div class="amount">-$${tax.toFixed(2)}</div>
-      </div>
-      ` : ''}
-
       <div class="summary-row" style="border: none; grid-template-columns: 2fr 1fr;">
         <div>Extra</div>
         <div class="amount">$${extraPay.toFixed(2)}</div>

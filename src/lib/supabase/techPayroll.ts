@@ -325,36 +325,42 @@ export async function getTechCompletedRepairCounts(
 }
 
 /**
- * A repair-type group of confirmed, not-yet-paid late ticket completions
- * (see late_ticket_completions / lateTicketCompletions.ts) for one
- * technician — a ticket whose status only reached CL-Claimed/CL-Completed
- * after the week it was scheduled in had already ended, and that Claims has
- * since confirmed. Sibling to TechRepairCount, kept separate (not merged
- * into getTechCompletedRepairCounts' result) so a payroll consumer can price
- * these at the CURRENT repair-type rate while still showing "(carried over
- * from <period>)" wherever they're displayed — see buildTechActivityBreakdown
- * and TechActivityReportModal.tsx, both of which render these as their own
- * distinctly-labeled lines rather than folding them into a category's normal
- * count. Not scoped to any date range — this always returns every
- * confirmed-but-unpaid row company-wide, however old, since a carried-over
- * ticket only ever gets consumed once (markCarryoversConsumed) the next time
- * ANY payroll run is generated for that technician.
+ * One confirmed, not-yet-paid late ticket completion (see
+ * late_ticket_completions / lateTicketCompletions.ts) for one technician — a
+ * ticket whose status only reached CL-Claimed/CL-Completed after the week it
+ * was scheduled in had already ended, and that Claims has since confirmed.
+ * Deliberately ONE ROW PER TICKET, never grouped/summed by repair type like
+ * TechRepairCount — carryovers are rare, exceptional, and Claims/Accounting
+ * both need to trace a specific dollar amount back to the specific ticket
+ * number they were told about, so two carried-over "Sealed System" tickets
+ * from the same period must never collapse into one anonymous "count: 2"
+ * line the way two ordinary ones would. See buildTechActivityBreakdown and
+ * TechActivityReportModal.tsx, both of which render one line per entry here.
+ * Not scoped to any date range — this always returns every confirmed-but-
+ * unpaid row company-wide, however old, since a carried-over ticket only
+ * ever gets consumed once (markCarryoversConsumed) the next time ANY payroll
+ * run is generated for that technician.
  */
-export interface TechCarryoverRepairCount extends TechRepairCount {
+export interface TechCarryoverTicket {
+  technician: string;
+  ticketId: string;
+  ticketNo: string;
+  repairType: string;
+  branch: string;
   periodStart: string;
   periodEnd: string;
-  /** late_ticket_completions row ids rolled into this group — pass to markCarryoversConsumed once a run actually pays them. */
-  lateTicketCompletionIds: string[];
+  /** The late_ticket_completions row id — pass to markCarryoversConsumed once a run actually pays this. */
+  lateTicketCompletionId: string;
 }
 
-export async function getCarryoverRepairCounts(): Promise<TechCarryoverRepairCount[]> {
+export async function getCarryoverTickets(): Promise<TechCarryoverTicket[]> {
   const { data: rows, error } = await supabase
     .from("late_ticket_completions")
-    .select("id, ticket_id, technician_name, period_start, period_end")
+    .select("id, ticket_id, ticket_no, technician_name, period_start, period_end")
     .eq("status", "confirmed")
     .is("carryover_payroll_run_id", null);
   if (error) {
-    console.error("getCarryoverRepairCounts error:", error.message);
+    console.error("getCarryoverTickets error:", error.message);
     return [];
   }
   const carryovers = (rows ?? []).filter((r: any) => String(r.technician_name || "").trim());
@@ -366,9 +372,9 @@ export async function getCarryoverRepairCounts(): Promise<TechCarryoverRepairCou
     supabase.from("visits").select("ticket_id, repair_type, created_at").in("ticket_id", ticketIds),
     supabase.from("mileage_entries").select("ticket_id").eq("payroll_excluded", true).in("ticket_id", ticketIds),
   ]);
-  if (tErr) console.error("getCarryoverRepairCounts (tickets) error:", tErr.message);
-  if (vErr) console.error("getCarryoverRepairCounts (visits) error:", vErr.message);
-  if (exErr) console.error("getCarryoverRepairCounts (exclusions) error:", exErr.message);
+  if (tErr) console.error("getCarryoverTickets (tickets) error:", tErr.message);
+  if (vErr) console.error("getCarryoverTickets (visits) error:", vErr.message);
+  if (exErr) console.error("getCarryoverTickets (exclusions) error:", exErr.message);
 
   const ticketById = new Map((ticketRows ?? []).map((t: any) => [t.id, t]));
   const latestRepairTypeByTicketId = new Map<string, string>();
@@ -382,27 +388,24 @@ export async function getCarryoverRepairCounts(): Promise<TechCarryoverRepairCou
   }
   const excludedTicketIds = new Set((excludedRows ?? []).map((r: any) => r.ticket_id));
 
-  const counts = new Map<string, TechCarryoverRepairCount>();
+  const out: TechCarryoverTicket[] = [];
   for (const row of carryovers as any[]) {
     const ticket = ticketById.get(row.ticket_id);
     if (!ticket || ticket.redo || excludedTicketIds.has(row.ticket_id)) continue;
-    const technician = String(row.technician_name).trim();
     const repairType = latestRepairTypeByTicketId.get(row.ticket_id) || DEFAULT_REPAIR_TYPE;
     const branch = ticket.location || "";
-    const key = `${technician.toLowerCase()}|${repairType}|${branch}|${row.period_start}|${row.period_end}`;
-    const prev = counts.get(key);
-    if (prev) {
-      prev.count += 1;
-      prev.lateTicketCompletionIds.push(row.id);
-    } else {
-      counts.set(key, {
-        technician, repairType, branch, count: 1,
-        periodStart: row.period_start, periodEnd: row.period_end,
-        lateTicketCompletionIds: [row.id],
-      });
-    }
+    out.push({
+      technician: String(row.technician_name).trim(),
+      ticketId: row.ticket_id,
+      ticketNo: row.ticket_no || "",
+      repairType,
+      branch,
+      periodStart: row.period_start,
+      periodEnd: row.period_end,
+      lateTicketCompletionId: row.id,
+    });
   }
-  return Array.from(counts.values());
+  return out;
 }
 
 /** One ticket a technician's completion was excluded for — Tech Activity Report's Redo / On Hold lists. */
@@ -1147,7 +1150,7 @@ export function buildTechActivityBreakdown(
   redoCount: number,
   onHoldCount: number,
   customItems: TechCustomPayItem[],
-  carryover: TechCarryoverRepairCount[] = []
+  carryover: TechCarryoverTicket[] = []
 ): TechActivityBreakdown {
   const branch = row.employee.assigned_branch || "";
   const rateFor = (category: string) => techRateFor(techRepairRates, category, branch);
@@ -1191,15 +1194,21 @@ export function buildTechActivityBreakdown(
   }
 
   // Confirmed late completions (see late_ticket_completions) not yet folded
-  // into any payroll run — priced at today's rate for their repair type,
-  // shown as their own line (never merged into the REPAIR_TYPES rows above)
-  // so it's always visible that these came from an earlier, already-closed
-  // period rather than this one's own work.
-  const carryoverTotal = carryover.reduce((s, co) => s + co.count * rateFor(co.repairType), 0);
-  for (const co of carryover) {
-    const rate = rateFor(co.repairType);
-    const label = `${co.repairType === DEFAULT_REPAIR_TYPE ? "Completed Ticket" : co.repairType} (carried over from ${co.periodStart} – ${co.periodEnd})`;
-    lineItems.push({ label, value: String(co.count), rate, payment: co.count * rate });
+  // into any payroll run — ONE combined "Carried Over Tickets" row (not a
+  // separate Payment Item row per ticket, which got noisy fast once more
+  // than one was pending at a time) whose Value lists each ticket number,
+  // its original period, and its own priced amount on its own line — so
+  // it's still traceable back to exactly which ticket Claims/Accounting
+  // were told about, just compressed into one line item the way Completed
+  // Tickets already compresses a whole period's worth into one formula.
+  // Rate is null (shown as "—") since each ticket can carry a different
+  // repair-type rate; Payment is their combined total.
+  const carryoverTotal = carryover.reduce((s, co) => s + rateFor(co.repairType), 0);
+  if (carryover.length > 0) {
+    const value = carryover
+      .map((co) => `${co.ticketNo} (${co.periodStart} to ${co.periodEnd}) — $${rateFor(co.repairType).toFixed(2)}`)
+      .join("<br>");
+    lineItems.push({ label: "Carried Over Tickets", value, rate: null, payment: carryoverTotal });
   }
 
   const twoTechRate = rateFor("Two Tech");

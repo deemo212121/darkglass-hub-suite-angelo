@@ -8,7 +8,7 @@
  * Flow: LateTicketCompletionModal.tsx (blocking popup for Claims-role users)
  * calls getPendingLateTicketCompletions()/resolveLateTicketCompletion();
  * confirming also fires the Accounting alert via notifyRequestReviewers()
- * (employeeRequests.ts). techPayroll.ts's getCarryoverRepairCounts() reads
+ * (employeeRequests.ts). techPayroll.ts's getCarryoverTickets() reads
  * confirmed-but-not-yet-paid rows directly (joined against tickets/visits
  * for pricing) so AccountingDashboard.tsx can fold them into whichever
  * payroll run generates next for that technician; its Generate Payroll
@@ -65,20 +65,65 @@ export async function getPendingLateTicketCompletions(): Promise<LateTicketCompl
   return (data ?? []).map(mapRow);
 }
 
-/** Claims (or admin/company-superadmin) confirms or rejects one row. */
+/**
+ * Thrown by resolveLateTicketCompletion when someone else on the Claims team
+ * already confirmed/rejected this exact row first — see that function's own
+ * comment for why this can happen and how callers should handle it.
+ */
+export class AlreadyResolvedError extends Error {
+  currentStatus: "confirmed" | "rejected";
+  reviewedByName: string | null;
+  constructor(currentStatus: "confirmed" | "rejected", reviewedByName: string | null) {
+    super(`Already reviewed by ${reviewedByName || "someone else"} as ${currentStatus === "confirmed" ? "Confirmed" : "Rejected"}.`);
+    this.name = "AlreadyResolvedError";
+    this.currentStatus = currentStatus;
+    this.reviewedByName = reviewedByName;
+  }
+}
+
+/**
+ * Claims (or admin/company-superadmin) confirms or rejects one row.
+ *
+ * The popup is broadcast to every Claims-role user at once (see
+ * LateTicketCompletionModal.tsx) — each of them loads their own independent
+ * snapshot of the pending list with no live sync between them, so two people
+ * can easily both be looking at the same pending ticket at once. The
+ * `.eq("status", "pending")` guard below makes the update a no-op once
+ * someone else has already resolved it, instead of silently overwriting
+ * their decision (and, for a confirm, re-notifying Accounting for a ticket
+ * that was actually rejected) — the caller gets AlreadyResolvedError back so
+ * it can tell the second reviewer who got there first instead of pretending
+ * their click worked.
+ */
 export async function resolveLateTicketCompletion(
   id: string,
   status: "confirmed" | "rejected",
   reviewedBy: string | null,
   reviewedByName: string | null
 ): Promise<void> {
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("late_ticket_completions")
     .update({ status, reviewed_by: reviewedBy, reviewed_by_name: reviewedByName, reviewed_at: new Date().toISOString() })
-    .eq("id", id);
+    .eq("id", id)
+    .eq("status", "pending")
+    .select("id")
+    .maybeSingle();
   if (error) {
     console.error("resolveLateTicketCompletion error:", error.message);
     throw new Error(error.message);
+  }
+  if (!data) {
+    const { data: current, error: fetchErr } = await supabase
+      .from("late_ticket_completions")
+      .select("status, reviewed_by_name")
+      .eq("id", id)
+      .maybeSingle();
+    if (fetchErr || !current || current.status === "pending") {
+      // Row vanished, or is somehow still pending despite the failed update
+      // (shouldn't happen) — surface a generic error rather than guess.
+      throw new Error("Failed to resolve this ticket — please refresh and try again.");
+    }
+    throw new AlreadyResolvedError(current.status as "confirmed" | "rejected", current.reviewed_by_name);
   }
 }
 
