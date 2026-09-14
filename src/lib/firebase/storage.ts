@@ -435,6 +435,18 @@ export async function uploadAttendanceNoteAttachmentFile(companyId: string, prof
   return getDownloadURL(snapshot.ref);
 }
 
+/** Flash Tech trip tracker's Receipts attachment — same single-file-per-row upload shape as uploadAttendanceNoteAttachmentFile above. */
+export async function uploadFlashTechTripReceiptFile(companyId: string, tripId: string, file: File): Promise<string> {
+  if (!isFirebaseReady() || !storage) {
+    throw new Error("Firebase Storage not configured");
+  }
+  const folder = `companies/${companyId}/flash-tech-trip-receipts/${tripId}`;
+  const objectName = `${Date.now()}-${sanitizeFileName(file.name)}`;
+  const objectRef = ref(storage, `${folder}/${objectName}`);
+  const snapshot = await uploadBytes(objectRef, file, { contentType: file.type || "application/octet-stream" });
+  return getDownloadURL(snapshot.ref);
+}
+
 /**
  * Delete a PTO/attendance-note attachment given its download URL — used by
  * the "Remove" action next to View on both the Time Off Calendar and Absent

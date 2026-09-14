@@ -698,6 +698,8 @@ function SubModule() {
         ? <TechnicianFormChecklistPage />
         : (sub as any).custom === "absent-list"
         ? <AbsentListPage mod={mod} sub={sub} />
+        : (sub as any).custom === "flash-tech"
+        ? <FlashTechCalendarPage mod={mod} sub={sub} />
         : sub.custom === "staff-list"
         ? <StaffListPage mod={mod} sub={sub} />
         : sub.custom === "work-map"
