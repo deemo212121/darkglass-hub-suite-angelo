@@ -465,9 +465,20 @@ export async function createPtoRequest(input: {
   reason: string;
   requestedBy: string | null;
   managerId?: string | null;
+  /**
+   * Skip the manager/HR/Accounting staged approval flow entirely — every
+   * stage is inserted already approved, credited to this reviewer id. For
+   * HR plotting time off directly (e.g. HrCalendarTab.tsx's "create" dialog)
+   * rather than an employee submitting their own request: HR made the call
+   * themselves, so there's nothing left for manager/HR/Accounting to sign
+   * off on. sync_pto_overall_status (0036/0101) derives the overall
+   * `status` from these three columns on insert, so setting all three here
+   * is enough — no separate reviewPtoStage calls needed.
+   */
+  autoApprovedBy?: string | null;
 }): Promise<PtoRequestRow> {
   const hoursRequested = weekdayCount(input.startDate, input.endDate) * 8;
-  const insertPayload = {
+  const insertPayload: Record<string, unknown> = {
     profile_id: input.profileId,
     pto_type: input.ptoType,
     start_date: input.startDate,
@@ -478,6 +489,23 @@ export async function createPtoRequest(input: {
     requested_by: input.requestedBy,
     manager_id: input.managerId ?? null,
   };
+  if (input.autoApprovedBy) {
+    const nowIso = new Date().toISOString();
+    Object.assign(insertPayload, {
+      manager_status: "approved",
+      manager_reviewed_by: input.autoApprovedBy,
+      manager_reviewed_at: nowIso,
+      hr_status: "approved",
+      hr_reviewed_by: input.autoApprovedBy,
+      hr_reviewed_at: nowIso,
+      accounting_status: "approved",
+      accounting_reviewed_by: input.autoApprovedBy,
+      accounting_reviewed_at: nowIso,
+      reviewed_by: input.autoApprovedBy,
+      reviewed_at: nowIso,
+      review_note: "Auto-approved — set directly by HR.",
+    });
+  }
   let { data, error } = await supabase.from("pto_requests").insert(insertPayload).select(SELECT_COLUMNS).single();
   if (isMissingColumnError(error)) {
     ({ data, error } = await supabase.from("pto_requests").insert(insertPayload).select(SELECT_COLUMNS_NO_ATTACHMENT).single());

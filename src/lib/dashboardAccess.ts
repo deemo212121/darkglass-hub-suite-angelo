@@ -49,6 +49,9 @@ export const DASHBOARD_ROLE_GATES: Record<string, string[]> = {
   "todo-list": ["ADMIN", "HR"],
   // HR module's Technician Form Checklist (custom: "technician-form-checklist") — same audience as hr-dashboard/todo-list.
   "technician-form-checklist": ["ADMIN", "HR"],
+  // HR module's Hiring Analytics (custom: "hiring-analytics") — candidate
+  // status/team-activity charts, same audience as the rest of Hiring.
+  "hiring-analytics": ["ADMIN", "HR"],
   // Same sensitivity as hr-dashboard — personal emails, addresses, DOB-
   // adjacent contact info per branch.
   "staff-list": ["ADMIN", "HR"],
