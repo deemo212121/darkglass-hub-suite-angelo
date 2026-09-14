@@ -548,7 +548,11 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
                                 } ${canManage ? "cursor-pointer hover:brightness-110" : "cursor-default"}`}
                               >
                                 <span className="truncate">{trip.technicianName}</span>
-                                {trip.carRentalNeeded && <Car className="h-2.5 w-2.5 shrink-0" />}
+                                {trip.carRentalNeeded && (
+                                  <span className="ml-auto inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full bg-amber-400">
+                                    <Car className="h-2.5 w-2.5 text-slate-900" strokeWidth={2.5} />
+                                  </span>
+                                )}
                               </button>
                             ))}
                             {dayTrips.length > 2 && (
