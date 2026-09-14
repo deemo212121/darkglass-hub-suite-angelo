@@ -21,7 +21,7 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
-import { ChevronLeft, Pencil, Check, Loader2, Filter, CalendarDays, ListChecks, ClipboardList, Paperclip, Flag } from "lucide-react";
+import { ChevronLeft, Pencil, Check, Loader2, Filter, CalendarDays, ListChecks, ClipboardList, Paperclip, Flag, History, X, BarChart3 } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { ROLE_LABELS } from "@/lib/roleLabels";
@@ -36,8 +36,7 @@ import { AttachmentPreviewModal } from "@/components/AttachmentPreviewModal";
 import { getCompanyHolidaysInRange, type CompanyHolidayRow } from "@/lib/supabase/companyHolidays";
 import { getPendingCorrectionsInRange, type TimecardCorrectionRow } from "@/lib/supabase/timecardCorrections";
 import { PendingItemDetailModal, type PendingItem } from "@/components/PendingItemDetailModal";
-import { ActivityLogPanel } from "@/components/ActivityLogPanel";
-import { logModuleActivity } from "@/lib/supabase/moduleActivityLog";
+import { logActivity, getActivityLog, activityActionLabel, type HrActivityLogEntry } from "@/lib/supabase/hrActivityLog";
 
 function todayISO(): string {
   return new Date().toISOString().slice(0, 10);
@@ -123,6 +122,7 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
   // fetches its own data), added as a third view so HR can check on-site
   // check-ins without leaving this page.
   const [view, setView] = useState<"list" | "calendar" | "ticketAttendance" | "holidays">("list");
+  const [statsCardHidden, setStatsCardHidden] = useState(false);
   const [dateFrom, setDateFrom] = useState(todayISO());
   const [dateTo, setDateTo] = useState(todayISO());
   const [search, setSearch] = useState("");
@@ -316,6 +316,21 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profiles, rangeDates, ptoRequests]);
 
+  // Read-only breakdown of the HR Status already applied on the rows
+  // currently shown (absentRows, i.e. whatever's left after the header
+  // filters) — purely a count, doesn't change what "Absent" means or how/
+  // when it gets set (see absentRows' own comment: HR Status is never
+  // assumed/auto-set). "—" groups rows nobody has reviewed yet. Always sums
+  // to absentRows.length, same number shown just above it.
+  const hrStatusBreakdown = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const r of absentRows) {
+      const k = r.hrNote || "—";
+      counts.set(k, (counts.get(k) ?? 0) + 1);
+    }
+    return counts;
+  }, [absentRows]);
+
   // absentRows is already sorted date-then-name, so grouping preserves that
   // order — one section per day, in range order, names beneath each.
   const groupedAbsentRows = useMemo(() => {
@@ -355,6 +370,7 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
     if (!companyId) return;
     const content = noteDraft;
     const key = `${profileId}|${noteDate}`;
+    const previousContent = notes.find((n) => n.profileId === profileId && n.noteDate === noteDate)?.content || "";
     setSavingNoteId(key);
     try {
       await upsertAttendanceNote({
@@ -366,6 +382,16 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
         createdBy: myProfileId,
         companyId,
       });
+      if (content !== previousContent) {
+        const p = profiles.find((pr) => pr.id === profileId);
+        void logActivity({
+          action: "attendance_note_changed",
+          targetType: "attendance_hr_status",
+          targetId: key,
+          targetLabel: `${p?.display_name || p?.email || profileId} — ${noteDate}`,
+          details: { from: previousContent || "(none)", to: content || "(none)" },
+        });
+      }
       setNotes((prev) => {
         const existing = prev.find((n) => n.profileId === profileId && n.noteDate === noteDate);
         return [
@@ -387,16 +413,6 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
         ];
       });
       setEditingId(null);
-      const employee = profiles.find((p) => p.id === profileId);
-      void logModuleActivity({
-        module: "absent-list",
-        actorName: displayName || "HR",
-        action: "attendance_note_saved",
-        targetType: "profile",
-        targetId: profileId,
-        targetLabel: employee?.display_name || employee?.email || undefined,
-        details: { note: content.trim(), noteDate },
-      });
     } catch (err) {
       alert(`Failed to save note: ${err instanceof Error ? err.message : "Unknown error"}`);
     } finally {
@@ -413,25 +429,20 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
     setSavingHrNoteId(key);
     try {
       await upsertAttendanceHrNote(profileId, noteDate, hrNote, myProfileId, companyId);
+      if (hrNote !== previousHrNote) {
+        const p = profiles.find((pr) => pr.id === profileId);
+        void logActivity({
+          action: "attendance_hr_status_changed",
+          targetType: "attendance_hr_status",
+          targetId: key,
+          targetLabel: `${p?.display_name || p?.email || profileId} — ${noteDate}`,
+          details: { from: previousHrNote || "(none)", to: hrNote || "(none)" },
+        });
+      }
       setNotes((prev) => {
         const existing = prev.find((n) => n.profileId === profileId && n.noteDate === noteDate);
         if (existing) return prev.map((n) => (n.profileId === profileId && n.noteDate === noteDate ? { ...n, hrNote, createdBy: myProfileId ?? n.createdBy } : n));
         return [...prev, { profileId, noteDate, content: "", hrNote, notifyIndividual: false, notifyTeamLead: false, createdBy: myProfileId, attachmentPath: null, attachmentAddedBy: null, attachmentAddedAt: null, attachmentRemovedBy: null, attachmentRemovedAt: null }];
-      });
-      const employee = profiles.find((p) => p.id === profileId);
-      void logModuleActivity({
-        module: "absent-list",
-        actorName: displayName || "HR",
-        action: "hr_status_saved",
-        targetType: "profile",
-        targetId: profileId,
-        targetLabel: employee?.display_name || employee?.email || undefined,
-        details: {
-          hrStatus: hrNote || "(cleared)",
-          previousHrStatus: previousHrNote || null,
-          note: `${previousHrNote || "Not set"} → ${hrNote || "Cleared"}`,
-          noteDate,
-        },
       });
     } catch (err) {
       alert(`Failed to save HR status: ${err instanceof Error ? err.message : "Unknown error"}`);
@@ -479,14 +490,12 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
         ];
       });
       const employee = profiles.find((p) => p.id === profileId);
-      void logModuleActivity({
-        module: "absent-list",
-        actorName: displayName || "HR",
-        action: "attendance_note_attachment_added",
-        targetType: "profile",
-        targetId: profileId,
-        targetLabel: employee?.display_name || employee?.email || undefined,
-        details: { fileName: file.name, noteDate },
+      void logActivity({
+        action: "attendance_attachment_added",
+        targetType: "attendance_hr_status",
+        targetId: key,
+        targetLabel: `${employee?.display_name || employee?.email || profileId} — ${noteDate}`,
+        details: { fileName: file.name },
       });
     } catch (err) {
       alert(`Failed to attach file: ${err instanceof Error ? err.message : "Unknown error"}`);
@@ -496,6 +505,20 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
   };
   const [previewAttachmentUrl, setPreviewAttachmentUrl] = useState<string | null>(null);
   const [pendingDetailModal, setPendingDetailModal] = useState<{ profileName: string; date: string; item: PendingItem } | null>(null);
+  const [historyModal, setHistoryModal] = useState<{ profileId: string; date: string; profileName: string } | null>(null);
+  const [historyEntries, setHistoryEntries] = useState<HrActivityLogEntry[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const openHistory = (profileId: string, date: string, profileName: string) => {
+    setHistoryModal({ profileId, date, profileName });
+    setHistoryLoading(true);
+    getActivityLog({ targetId: `${profileId}|${date}`, limit: 20 })
+      .then(setHistoryEntries)
+      .catch((err) => {
+        console.error("Failed to load activity history:", err);
+        setHistoryEntries([]);
+      })
+      .finally(() => setHistoryLoading(false));
+  };
   const handleViewAttachment = (attachmentPath: string) => {
     setPreviewAttachmentUrl(attachmentPath);
   };
@@ -510,14 +533,12 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
         prev.map((n) => (n.profileId === profileId && n.noteDate === noteDate ? { ...n, attachmentPath: null, attachmentRemovedBy: myProfileId, attachmentRemovedAt: now } : n))
       );
       const employee = profiles.find((p) => p.id === profileId);
-      void logModuleActivity({
-        module: "absent-list",
-        actorName: displayName || "HR",
-        action: "attendance_note_attachment_removed",
-        targetType: "profile",
-        targetId: profileId,
-        targetLabel: employee?.display_name || employee?.email || undefined,
-        details: { noteDate },
+      void logActivity({
+        action: "attendance_attachment_removed",
+        targetType: "attendance_hr_status",
+        targetId: key,
+        targetLabel: `${employee?.display_name || employee?.email || profileId} — ${noteDate}`,
+        details: {},
       });
     } catch (err) {
       alert(`Failed to remove attachment: ${err instanceof Error ? err.message : "Unknown error"}`);
@@ -694,6 +715,14 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
               ))}
             </select>
             {savingHrNoteId === key && <Loader2 className="h-3.5 w-3.5 animate-spin text-slate-500 shrink-0" />}
+            <button
+              type="button"
+              onClick={() => openHistory(p.id, rowDate, p.display_name || p.email)}
+              title="View change history for this day"
+              className="text-slate-500 hover:text-slate-300 shrink-0"
+            >
+              <History className="h-3.5 w-3.5" />
+            </button>
           </div>
           {hrNote && (() => {
             const addedById = noteByKey.get(key)?.createdBy;
@@ -833,6 +862,49 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
 
         {view === "holidays" && <HolidayCalendarTab myProfileId={myProfileId} />}
 
+        {view === "list" && !loading && (
+          statsCardHidden ? (
+            <button
+              type="button"
+              onClick={() => setStatsCardHidden(false)}
+              title="Show stats"
+              className="fixed right-3 top-20 z-40 rounded-full border border-white/10 bg-slate-900/90 p-2 shadow-lg backdrop-blur-md text-slate-400 hover:text-white transition"
+            >
+              <BarChart3 className="h-4 w-4" />
+            </button>
+          ) : (
+            <div className="fixed right-3 top-20 z-40 w-60 rounded-2xl border border-white/10 bg-slate-900/90 p-3 shadow-lg backdrop-blur-md text-sm text-slate-400">
+              <button
+                type="button"
+                onClick={() => setStatsCardHidden(true)}
+                title="Hide"
+                className="absolute top-2 right-2 text-slate-500 hover:text-white transition"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+              <div className="text-[10px] uppercase tracking-wide text-slate-500 pr-4">
+                {dateFrom === dateTo ? dateFrom : `${dateFrom} – ${dateTo}`}
+              </div>
+              <div className="mt-0.5">
+                <span className="text-red-300 font-semibold">{absentRows.length}</span> absent{rangeDates.length > 1 ? " (instances)" : ""}
+                {onLeaveCount > 0 && <span className="block mt-0.5 text-xs text-slate-500">({onLeaveCount} on approved leave, not counted)</span>}
+              </div>
+              {hrStatusBreakdown.size > 0 && (
+                <ul className="mt-2 pt-2 border-t border-white/10 text-xs space-y-0.5">
+                  {[...HR_STATUS_OPTIONS, "—"]
+                    .filter((s) => hrStatusBreakdown.has(s))
+                    .map((s) => (
+                      <li key={s} className={`flex items-center gap-1.5 ${HR_STATUS_COLOR[s] || "text-slate-500"}`}>
+                        <span className="text-slate-600">•</span>
+                        {hrStatusBreakdown.get(s)} {s === "—" ? "Not yet reviewed" : s}
+                      </li>
+                    ))}
+                </ul>
+              )}
+            </div>
+          )
+        )}
+
         {view === "list" && (
         <div className="panel">
           <div className="flex flex-wrap items-end gap-3 mb-4">
@@ -873,17 +945,7 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
                 className="glass-input"
               />
             </div>
-            <ActivityLogPanel module="absent-list" title="Activity Log" />
-            <div className="ml-auto text-right text-sm text-slate-400">
-              {loading ? (
-                "Loading…"
-              ) : (
-                <>
-                  <span className="text-red-300 font-semibold">{absentRows.length}</span> absent{rangeDates.length > 1 ? " (instances)" : ""}
-                  {onLeaveCount > 0 && <span className="ml-2 text-slate-500">({onLeaveCount} on approved leave, not counted)</span>}
-                </>
-              )}
-            </div>
+            {loading && <div className="ml-auto text-sm text-slate-400">Loading…</div>}
           </div>
 
           {loading ? (
@@ -960,6 +1022,38 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
             load();
           }}
         />
+      )}
+      {historyModal && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" onClick={() => setHistoryModal(null)}>
+          <div className="bg-slate-900 border border-white/10 rounded-lg max-w-md w-full" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
+              <div>
+                <h2 className="text-base font-bold text-white">Change History</h2>
+                <p className="text-xs text-slate-400 mt-0.5">{historyModal.profileName} — {historyModal.date}</p>
+              </div>
+              <button onClick={() => setHistoryModal(null)} className="p-1 hover:bg-white/10 rounded transition text-slate-400">✕</button>
+            </div>
+            <div className="px-5 py-4">
+              {historyLoading ? (
+                <p className="text-xs text-slate-400 flex items-center gap-2"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading…</p>
+              ) : historyEntries.length === 0 ? (
+                <p className="text-xs text-slate-500">No changes logged for this day yet.</p>
+              ) : (
+                <ul className="space-y-2 max-h-80 overflow-y-auto pr-1">
+                  {historyEntries.map((entry) => (
+                    <li key={entry.id} className="text-xs text-slate-400">
+                      <span className="text-slate-200 font-semibold">{activityActionLabel(entry.action)}</span>
+                      {entry.details?.from !== undefined && entry.details?.to !== undefined && (
+                        <span> — "{String(entry.details.from) || "—"}" → "{String(entry.details.to) || "—"}"</span>
+                      )}
+                      <div className="text-slate-500 mt-0.5">{entry.actorName || "Someone"} · {new Date(entry.createdAt).toLocaleString()}</div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+        </div>
       )}
     </main>
   );

@@ -48,6 +48,7 @@ import { getAttendanceNotes, uploadAttendanceNoteAttachment, removeAttendanceNot
 import { getCompanyHolidaysInRange, type CompanyHolidayRow } from "@/lib/supabase/companyHolidays";
 import { getPendingCorrectionsInRange, type TimecardCorrectionRow } from "@/lib/supabase/timecardCorrections";
 import { AttachmentPreviewModal } from "@/components/AttachmentPreviewModal";
+import { PendingItemDetailModal, type PendingItem } from "@/components/PendingItemDetailModal";
 
 export interface CalendarEmployee {
   id: string;
@@ -267,14 +268,27 @@ export function HrCalendarTab({ employees, myProfileId, myDisplayName }: Props) 
   // company holiday still wins outright, and any OTHER HR-plotted leave type
   // (already explained) is left alone too.
   const [pendingCorrections, setPendingCorrections] = useState<TimecardCorrectionRow[]>([]);
-  useEffect(() => {
+  const loadPendingCorrections = () => {
     if (days.length === 0) return;
     getPendingCorrectionsInRange(days[0].date, days[days.length - 1].date)
       .then(setPendingCorrections)
       .catch((err) => console.error("Failed to load pending timecard corrections:", err));
-  }, [days]);
-  const pendingCorrectionKeys = useMemo(() => new Set(pendingCorrections.map((c) => `${c.profileId}|${c.workDate}`)), [pendingCorrections]);
-  const hasPendingCorrectionFor = (profileId: string, date: string): boolean => pendingCorrectionKeys.has(`${profileId}|${date}`);
+  };
+  useEffect(loadPendingCorrections, [days]);
+  const pendingCorrectionByKey = useMemo(() => new Map(pendingCorrections.map((c) => [`${c.profileId}|${c.workDate}`, c])), [pendingCorrections]);
+  const hasPendingCorrectionFor = (profileId: string, date: string): boolean => pendingCorrectionByKey.has(`${profileId}|${date}`);
+
+  // Clicking a "PC" cell shows the actual correction (requested times,
+  // reason, Manager/HR/Accounting stage status) instead of the generic
+  // Add-Time-Off form — same shared popup Absent List and Payroll use.
+  const [pendingDetailModal, setPendingDetailModal] = useState<{ profileName: string; date: string; item: PendingItem } | null>(null);
+  // Minimal roster shape PendingItemDetailModal's manager-stage fallback
+  // needs — CalendarEmployee already carries id/name/managerName, just
+  // under different field names than ProfileRow.
+  const pendingModalProfiles = useMemo(
+    () => employees.map((e) => ({ id: e.id, display_name: e.name, email: "", manager_name: e.managerName ?? null })),
+    [employees]
+  );
 
   // profileId -> Map<date, request> — only requests matching the active
   // type filter are included, so a filtered-out request behaves like an
@@ -944,14 +958,23 @@ export function HrCalendarTab({ employees, myProfileId, myDisplayName }: Props) 
                         return (
                           <td
                             key={d.date}
-                            onClick={() => openCell(e, d.date)}
+                            onClick={() => {
+                              if (hasPendingCorrection) {
+                                const correction = pendingCorrectionByKey.get(`${e.id}|${d.date}`);
+                                if (correction) {
+                                  setPendingDetailModal({ profileName: e.name, date: d.date, item: { type: "correction", data: correction } });
+                                  return;
+                                }
+                              }
+                              openCell(e, d.date);
+                            }}
                             title={
                               request
                                 ? `${PTO_TYPE_LABELS[request.ptoType]} (${request.status}) — click for details`
                                 : holidayName
                                 ? `Holiday: ${holidayName}`
                                 : hasPendingCorrection
-                                ? "Pending Time Correction Request — awaiting manager/HR/Accounting approval. See the Corrections tab in Attendance Monitoring for details."
+                                ? "Pending Time Correction Request — click to see approval status"
                                 : hrPlotted
                                 ? hrPlotted.type === "absent"
                                   ? `Absent — no clock-in, via Absent List${addedByName ? ` (added by ${addedByName})` : ""}. Click to file a leave request instead.`
@@ -1297,6 +1320,24 @@ export function HrCalendarTab({ employees, myProfileId, myDisplayName }: Props) 
       )}
       {previewAttachmentUrl && (
         <AttachmentPreviewModal url={previewAttachmentUrl} title="Attachment" onClose={() => setPreviewAttachmentUrl(null)} />
+      )}
+      {pendingDetailModal && createPortal(
+        <PendingItemDetailModal
+          profileName={pendingDetailModal.profileName}
+          date={pendingDetailModal.date}
+          item={pendingDetailModal.item}
+          profiles={pendingModalProfiles}
+          myProfileId={myProfileId}
+          myRole={role}
+          myExtraRoles={extraRoles}
+          myDisplayName={myDisplayName}
+          onClose={() => setPendingDetailModal(null)}
+          onReviewed={() => {
+            setPendingDetailModal(null);
+            loadPendingCorrections();
+          }}
+        />,
+        document.body
       )}
     </div>
   );

@@ -18,11 +18,21 @@
  */
 import { useState } from "react";
 import { Check, Loader2 } from "lucide-react";
-import type { ProfileRow } from "@/lib/supabase/users";
 import { canReviewCorrectionStage, reviewCorrectionStage, type TimecardCorrectionRow, type CorrectionStage } from "@/lib/supabase/timecardCorrections";
 import { canReviewPtoStage, reviewPtoStage, type PtoRequestRow, type PtoStage } from "@/lib/supabase/pto";
 
 export type PendingItem = { type: "correction"; data: TimecardCorrectionRow } | { type: "pto"; data: PtoRequestRow };
+
+/** Only the fields the manager-stage fallback actually needs — narrower than
+ * the full ProfileRow so any caller's own roster shape (AbsentListPage's
+ * ProfileRow[], HrCalendarTab's CalendarEmployee[] mapped down, or [] where
+ * a caller has no roster loaded at all) can be passed directly. */
+export interface PendingItemProfileRef {
+  id: string;
+  display_name: string | null;
+  email: string;
+  manager_name: string | null;
+}
 
 const PTO_TYPE_LABELS: Record<PtoRequestRow["ptoType"], string> = {
   vacation: "Vacation",
@@ -62,7 +72,7 @@ export function PendingItemDetailModal({
    *  manager / that manager's own manager). Pass [] where the caller
    *  doesn't otherwise have the roster loaded — the fallback just won't
    *  apply (the primary managerId/role checks still work), no crash. */
-  profiles: ProfileRow[];
+  profiles: PendingItemProfileRef[];
   myProfileId: string | null;
   myRole: string | null | undefined;
   myExtraRoles: string[];
