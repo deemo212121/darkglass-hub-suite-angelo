@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { ChevronLeft, ChevronRight, RefreshCw, Plus, X, Trash2, CalendarDays, Table2, Paperclip, Loader2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, RefreshCw, Plus, X, Trash2, CalendarDays, Table2, Paperclip, Loader2, Car } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { useSmartBack } from "@/hooks/useSmartBack";
@@ -541,13 +541,14 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
                                 key={trip.id}
                                 onClick={() => (canManage ? openEditModal(trip) : undefined)}
                                 title={`${trip.technicianName}: ${trip.originLocation} → ${trip.destinationLocation} (${trip.startDate} – ${trip.endDate})${
-                                  canManage ? " — click to edit" : ""
-                                }`}
-                                className={`block w-full truncate rounded px-1 py-0.5 text-left text-[10px] leading-tight text-white ${
+                                  trip.carRentalNeeded ? " — car rental needed" : ""
+                                }${canManage ? " — click to edit" : ""}`}
+                                className={`flex w-full items-center gap-1 truncate rounded px-1 py-0.5 text-left text-[10px] leading-tight text-white ${
                                   CHIP_COLORS[tripColorIndex.get(trip.id) ?? 0]
                                 } ${canManage ? "cursor-pointer hover:brightness-110" : "cursor-default"}`}
                               >
-                                {trip.technicianName}
+                                <span className="truncate">{trip.technicianName}</span>
+                                {trip.carRentalNeeded && <Car className="h-2.5 w-2.5 shrink-0" />}
                               </button>
                             ))}
                             {dayTrips.length > 2 && (
