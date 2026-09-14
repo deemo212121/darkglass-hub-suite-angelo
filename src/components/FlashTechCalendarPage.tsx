@@ -100,6 +100,7 @@ type TripFormState = {
   startDate: string;
   endDate: string;
   notes: string;
+  carRentalNeeded: boolean;
   includeHotelExpense: boolean;
   includeTransportationExpense: boolean;
 };
@@ -114,6 +115,7 @@ function emptyForm(): TripFormState {
     startDate: today,
     endDate: today,
     notes: "",
+    carRentalNeeded: false,
     includeHotelExpense: true,
     includeTransportationExpense: true,
   };
@@ -305,6 +307,7 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
       startDate: trip.startDate,
       endDate: trip.endDate,
       notes: trip.notes || "",
+      carRentalNeeded: trip.carRentalNeeded,
       includeHotelExpense: Boolean(trip.hotelExpense),
       includeTransportationExpense: Boolean(trip.transportationExpense),
     });
@@ -358,6 +361,7 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
           startDate: form.startDate,
           endDate: form.endDate,
           notes: form.notes,
+          carRentalNeeded: form.carRentalNeeded,
         });
         closeModal();
         await loadData();
@@ -372,6 +376,7 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
           startDate: form.startDate,
           endDate: form.endDate,
           notes: form.notes,
+          carRentalNeeded: form.carRentalNeeded,
           createdBy: myProfileId,
           createdByName: displayName,
           includeHotelExpense: form.includeHotelExpense,
@@ -729,6 +734,26 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
                 />
               </div>
 
+              <div>
+                <label className="text-xs font-semibold uppercase text-slate-400">Car Rental Needed</label>
+                <div className="mt-1 flex gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setForm((f) => ({ ...f, carRentalNeeded: true }))}
+                    className={`btn text-sm px-3 py-1.5 flex-1 ${form.carRentalNeeded ? "bg-primary/20 text-primary" : ""}`}
+                  >
+                    Yes
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setForm((f) => ({ ...f, carRentalNeeded: false }))}
+                    className={`btn text-sm px-3 py-1.5 flex-1 ${!form.carRentalNeeded ? "bg-primary/20 text-primary" : ""}`}
+                  >
+                    No
+                  </button>
+                </div>
+              </div>
+
               {!editingTripId && (
                 <div className="rounded-lg border border-white/10 p-3 space-y-2">
                   <p className="text-xs text-slate-400">
@@ -932,7 +957,7 @@ function FlashTechTrackerTable({
   const HEADERS = [
     "Name", "Contact Number", "Email", "Tier Level", "Origin City", "Destination City", "Travel Date",
     "Hotel Name", "Lodging Date", "Address", "Hotel Rate", "Confirmation",
-    "Rental Car", "Rental Date", "Rental Rate", "Vehicle Type", "Other Expenses",
+    "Car Rental Needed", "Rental Car", "Rental Date", "Rental Rate", "Vehicle Type", "Other Expenses",
     "Notes", "Receipts", "Type", "Status",
   ];
 
@@ -1022,6 +1047,14 @@ function FlashTechTrackerTable({
                 </td>
                 <td className="p-0.5 border-r border-white/10">
                   <TrackerTextCell value={trip.hotelConfirmation || ""} disabled={!canEdit} placeholder="Confirmation #" onSave={(v) => patch("hotelConfirmation", { hotelConfirmation: v })} />
+                </td>
+                <td className="p-0.5 border-r border-white/10">
+                  <TrackerSelectCell
+                    value={trip.carRentalNeeded ? "Yes" : "No"}
+                    disabled={!canEdit}
+                    options={["Yes", "No"]}
+                    onSave={(v) => patch("carRentalNeeded", { carRentalNeeded: v === "Yes" })}
+                  />
                 </td>
                 <td className="p-0.5 border-r border-white/10">
                   <TrackerTextCell value={trip.rentalCar || ""} disabled={!canEdit} placeholder="Rental company" onSave={(v) => patch("rentalCar", { rentalCar: v })} />

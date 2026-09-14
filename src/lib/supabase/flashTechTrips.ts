@@ -28,6 +28,8 @@ export interface FlashTechTrip {
   startDate: string; // "YYYY-MM-DD"
   endDate: string; // "YYYY-MM-DD"
   notes: string | null;
+  /** Yes/No toggle set at scheduling time (migration 0260) — whether this trip needs a rental car at all, separate from the Tracker's own Rental Car/Rate/Vehicle Type detail fields filled in once it's actually booked. */
+  carRentalNeeded: boolean;
   createdBy: string | null;
   createdByName: string | null;
   createdAt: string;
@@ -67,6 +69,7 @@ function mapTripRow(row: any): Omit<FlashTechTrip, "hotelExpense" | "transportat
     startDate: row.start_date,
     endDate: row.end_date,
     notes: row.notes ?? null,
+    carRentalNeeded: Boolean(row.car_rental_needed),
     createdBy: row.created_by ?? null,
     createdByName: row.created_by_name ?? null,
     createdAt: row.created_at,
@@ -122,7 +125,7 @@ export async function getCompanyFlashTechTrips(): Promise<FlashTechTrip[]> {
     const { data: page, error } = await supabase
       .from("flash_tech_trips")
       .select(
-        "id, technician_profile_id, technician_name, technician_phone, technician_email, origin_location, destination_location, start_date, end_date, notes, created_by, created_by_name, created_at, " +
+        "id, technician_profile_id, technician_name, technician_phone, technician_email, origin_location, destination_location, start_date, end_date, notes, car_rental_needed, created_by, created_by_name, created_at, " +
           "tier_level, lodging_start_date, lodging_end_date, hotel_name, hotel_address, hotel_rate, hotel_confirmation, " +
           "rental_car, rental_start_date, rental_end_date, rental_rate, vehicle_type, other_expenses, " +
           "receipt_paths, trip_type, status"
@@ -179,6 +182,7 @@ export async function createFlashTechTrip(input: {
   startDate: string;
   endDate: string;
   notes: string;
+  carRentalNeeded?: boolean;
   createdBy: string | null;
   createdByName: string | null;
   includeHotelExpense?: boolean;
@@ -196,6 +200,7 @@ export async function createFlashTechTrip(input: {
       start_date: input.startDate,
       end_date: input.endDate,
       notes: input.notes || null,
+      car_rental_needed: input.carRentalNeeded ?? false,
       created_by: input.createdBy,
       created_by_name: input.createdByName,
     })
@@ -250,6 +255,7 @@ export async function updateFlashTechTrip(
     startDate: string;
     endDate: string;
     notes: string;
+    carRentalNeeded: boolean;
   }
 ): Promise<void> {
   const { error } = await supabase
@@ -262,6 +268,7 @@ export async function updateFlashTechTrip(
       start_date: fields.startDate,
       end_date: fields.endDate,
       notes: fields.notes || null,
+      car_rental_needed: fields.carRentalNeeded,
     })
     .eq("id", id);
   if (error) {
@@ -302,6 +309,7 @@ export async function updateFlashTechTripTrackerFields(
   fields: Partial<{
     technicianPhone: string | null;
     technicianEmail: string | null;
+    carRentalNeeded: boolean;
     tierLevel: string | null;
     lodgingStartDate: string | null;
     lodgingEndDate: string | null;
@@ -323,6 +331,7 @@ export async function updateFlashTechTripTrackerFields(
   const payload: Record<string, any> = {};
   if ("technicianPhone" in fields) payload.technician_phone = fields.technicianPhone || null;
   if ("technicianEmail" in fields) payload.technician_email = fields.technicianEmail || null;
+  if ("carRentalNeeded" in fields) payload.car_rental_needed = fields.carRentalNeeded;
   if ("tierLevel" in fields) payload.tier_level = fields.tierLevel || null;
   if ("lodgingStartDate" in fields) payload.lodging_start_date = fields.lodgingStartDate || null;
   if ("lodgingEndDate" in fields) payload.lodging_end_date = fields.lodgingEndDate || null;
