@@ -421,7 +421,7 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
             <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
             {loading ? "Loading…" : "Refresh"}
           </button>
-          {canManage && view === "calendar" && (
+          {canManage && (
             <button onClick={openCreateModal} className="btn btn-primary inline-flex items-center gap-2">
               <Plus className="h-4 w-4" />
               Schedule Trip
