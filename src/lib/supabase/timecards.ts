@@ -6,6 +6,7 @@
 import { supabase } from "./client";
 import { applyGraceToCheckIn, roundCheckOutToSchedule } from "@/lib/attendanceGrace";
 import { isTraineeApprovalEligible } from "@/lib/roleLabels";
+import type { PtoType } from "./pto";
 
 // The flat UI time-entry shape used by the timecard page.
 export interface UITimeEntry {
@@ -655,8 +656,19 @@ export interface AttendanceRow {
    * approved, the correction upserts the real punch into timecard_entries
    * and this reverts to "present" on the next fetch; if rejected, the
    * underlying absent/missing status stands.
+   * "paid-leave": no punch on a day covered by an APPROVED, PAID pto
+   * request (pto.ts's isPaidPtoType — Sick is always unpaid and never lands
+   * here) — hoursWorked is the day's scheduled net hours (not 0), so it
+   * pays out at the normal rate instead of reading as a missed shift. See
+   * leaveType for which kind (vacation/personal/bereavement/holiday-type
+   * PTO). Same crediting rule AccountingDashboard.tsx's computeHoursMap
+   * already applies to the real payroll total — this only makes that same
+   * truth visible on this per-day table instead of it disagreeing with the
+   * real number by showing "Absent"/$0.
    */
-  status: "present" | "absent" | "missing-in" | "missing-out" | "missing-meal" | "day-off" | "holiday" | "pending-correction";
+  status: "present" | "absent" | "missing-in" | "missing-out" | "missing-meal" | "day-off" | "holiday" | "pending-correction" | "paid-leave";
+  /** Only set when status is "paid-leave" — which kind of paid PTO covers this day. */
+  leaveType?: PtoType;
 }
 
 /**
@@ -680,6 +692,8 @@ export async function getAttendanceForRange(
     holidayDates?: string[];
     /** "YYYY-MM-DD" dates with an unresolved timecard correction for this profile (see timecardCorrections.ts) — an absent/missing day here reads as "pending-correction" instead. */
     pendingCorrectionDates?: string[];
+    /** "YYYY-MM-DD" -> leave type, for this profile's APPROVED, PAID pto requests (pto.ts's isPaidPtoType) overlapping the range — a no-punch day here reads as "paid-leave" (hoursWorked = the day's scheduled net hours) instead of "absent". */
+    paidLeaveDates?: Map<string, PtoType>;
   } = {}
 ): Promise<AttendanceRow[]> {
   const { data, error } = await supabase
@@ -701,11 +715,13 @@ export async function getAttendanceForRange(
   const daysOff = new Set((scheduled.daysOff ?? []).map((n) => n));
   const holidayDates = new Set(scheduled.holidayDates ?? []);
   const pendingCorrectionDates = new Set(scheduled.pendingCorrectionDates ?? []);
+  const paidLeaveDates = scheduled.paidLeaveDates ?? new Map<string, PtoType>();
   // Same rule as the timecard punch flows (TimeClockMenu.tsx / routes/timecard.tsx):
   // a scheduled shift over 6 hours is meal-eligible. Punching no longer BLOCKS
   // timing out without a meal — this is just where that gets recorded instead.
   const mealEligible =
     resolveScheduledShiftHours(scheduled.requiredCheckIn ?? "", scheduled.requiredCheckOut ?? "", scheduled.workingHours, scheduled.mealMinutes) > 6;
+  const scheduledNetHours = resolveScheduledNetHours(scheduled.requiredCheckIn ?? "", scheduled.requiredCheckOut ?? "", scheduled.workingHours, scheduled.mealMinutes);
   for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
     const yyyy = d.getFullYear();
     const mm = String(d.getMonth() + 1).padStart(2, "0");
@@ -714,23 +730,28 @@ export async function getAttendanceForRange(
     const dow = d.getDay();
     const isOffDay = daysOff.has(dow);
     const isHoliday = holidayDates.has(key);
+    const leaveType = paidLeaveDates.get(key);
     const row = byDate.get(key);
     if (!row) {
       // No timecard entry. Future days are skipped entirely (nothing to
       // report yet). A day off (or company holiday) still gets its own row
       // — status "day-off"/"holiday" instead of "absent" — so it reads as
       // an expected rest day rather than a gap that looks like missing
-      // data, or a missed shift.
+      // data, or a missed shift. Same for an approved paid-leave day, which
+      // also gets paid its scheduled net hours instead of reading as a
+      // missed shift (0 hours) — see AttendanceRow.status's "paid-leave" doc.
       const isFuture = key > new Date().toISOString().slice(0, 10);
       if (!isFuture) {
+        const isPaidLeave = !isOffDay && !isHoliday && leaveType != null && scheduledNetHours > 0;
         rows.push({
           date: key,
           clockIn: "",
           clockOut: "",
           mealStart: "",
           mealEnd: "",
-          hoursWorked: 0,
-          status: isOffDay ? "day-off" : isHoliday ? "holiday" : pendingCorrectionDates.has(key) ? "pending-correction" : "absent",
+          hoursWorked: isPaidLeave ? scheduledNetHours : 0,
+          status: isOffDay ? "day-off" : isHoliday ? "holiday" : isPaidLeave ? "paid-leave" : pendingCorrectionDates.has(key) ? "pending-correction" : "absent",
+          ...(isPaidLeave ? { leaveType } : {}),
         });
       }
       continue;
