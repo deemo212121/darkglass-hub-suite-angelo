@@ -637,14 +637,17 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs font-semibold uppercase text-slate-400">Origin</label>
-                  <input
+                  <select
                     value={form.originLocation}
-                    readOnly
-                    disabled
-                    placeholder="Pick a technician first"
-                    title="Auto-filled from the technician's own assigned branch — not editable"
-                    className="glass-input mt-1 w-full cursor-not-allowed opacity-70"
-                  />
+                    onChange={(e) => setForm((f) => ({ ...f, originLocation: e.target.value }))}
+                    title="Defaults to the technician's assigned branch — change it if they're actually starting from somewhere else (e.g. still out on a prior trip)"
+                    className="glass-input mt-1 w-full"
+                  >
+                    <option value="">Select branch…</option>
+                    {ALL_BRANCHES.filter((b) => b !== form.destinationLocation).map((b) => (
+                      <option key={b} value={b}>{b}</option>
+                    ))}
+                  </select>
                 </div>
                 <div>
                   <label className="text-xs font-semibold uppercase text-slate-400">Destination</label>
