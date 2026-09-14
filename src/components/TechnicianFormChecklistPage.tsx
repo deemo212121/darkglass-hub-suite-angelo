@@ -57,6 +57,7 @@ import {
   type DocumentReviewStatus,
 } from "@/lib/signableDocumentRegistry";
 import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
+import { getTechnicianIdDocumentUrl } from "@/lib/supabase/technicianIdDocuments";
 import { getTechnicianFormExemptions, setTechnicianFormExemption } from "@/lib/supabase/technicianFormExemptions";
 import { logActivity } from "@/lib/supabase/hrActivityLog";
 import { getAppUrl } from "@/lib/appUrl";
@@ -92,6 +93,25 @@ interface ChecklistTabConfig {
    */
   formSourceBucket: "old" | "new";
 }
+
+/**
+ * Identity photos collected alongside a Master Agreement's own typed
+ * fields (technicianIdDocuments.ts — private-bucket paths on the
+ * document's formData, never a plaintext SSN column). Not part of the
+ * signed PDF itself, so they need their own "view" links here rather than
+ * riding along with the doc's pdfUrl-driven one above.
+ */
+const ID_DOC_FIELDS: Partial<Record<SignableDocumentType, { field: string; label: string }[]>> = {
+  master_w2_agreement: [
+    { field: "licensePhotoPath", label: "License" },
+    { field: "ssnCardPhotoPath", label: "SSN Card" },
+  ],
+  master_w2_office_agreement: [
+    { field: "licensePhotoPath", label: "License" },
+    { field: "ssnCardPhotoPath", label: "SSN Card" },
+  ],
+  master_ph_contractor_agreement: [{ field: "governmentIdPhotoPath", label: "ID" }],
+};
 
 const CHECKLIST_TABS: ChecklistTabConfig[] = [
   {
@@ -1040,6 +1060,24 @@ export function TechnicianFormChecklistPage() {
                                 view <ExternalLink className="h-3 w-3" />
                               </button>
                             )}
+                            {!na && doc && ID_DOC_FIELDS[type]?.map(({ field, label: fieldLabel }) => {
+                              const path = doc.formData?.[field];
+                              if (!path) return null;
+                              return (
+                                <button
+                                  key={field}
+                                  type="button"
+                                  onClick={() =>
+                                    getTechnicianIdDocumentUrl(path)
+                                      .then((url) => window.open(url, "_blank", "noopener,noreferrer"))
+                                      .catch((err) => setActionError(err instanceof Error ? err.message : `Failed to open ${fieldLabel} photo.`))
+                                  }
+                                  className="inline-flex shrink-0 items-center gap-0.5 text-xs text-blue-400 hover:text-blue-300"
+                                >
+                                  view {fieldLabel} <ExternalLink className="h-3 w-3" />
+                                </button>
+                              );
+                            })}
                             {!na && done && doc && doc.status === "confirmed" && EMPLOYER_SIGN_SUPPORTED_TYPES.has(type) && (
                               <button
                                 type="button"
