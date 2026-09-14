@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { ChevronLeft, ChevronRight, RefreshCw, Plus, X, Trash2, CalendarDays, Table2, Paperclip, Loader2, Car } from "lucide-react";
+import { ChevronLeft, ChevronRight, RefreshCw, Plus, X, Trash2, CalendarDays, Table2, Paperclip, Loader2, Car, Users } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { useSmartBack } from "@/hooks/useSmartBack";
@@ -147,7 +147,9 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
   // by HR — see migration 0257's widened update policy.
   const canEditTracker = canManage || [role, ...extraRoles].some((r) => normalizeRole(r) === "HR");
 
-  const [view, setView] = useState<"calendar" | "tracker">("calendar");
+  const [view, setView] = useState<"calendar" | "tracker" | "availability">("calendar");
+  const [availabilitySearch, setAvailabilitySearch] = useState("");
+  const [availabilityStatusFilter, setAvailabilityStatusFilter] = useState<"all" | "available" | "busy">("all");
   const [monthValue, setMonthValue] = useState(todayMonthValue());
   const [trips, setTrips] = useState<FlashTechTrip[]>([]);
   const [users, setUsers] = useState<ProfileRow[]>([]);
@@ -286,6 +288,45 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
     const active = users.filter((u) => u.is_active && u.display_name);
     return q ? active.filter((u) => (u.display_name || "").toLowerCase().includes(q)) : active;
   }, [users, technicianQuery]);
+
+  // "Available for flash tech" right now — same eligible pool as the
+  // Schedule Trip picker itself (every active user, not narrowed to the
+  // TECHNICIAN role — see filteredTechnicianOptions above), split by
+  // whether they're mid-trip TODAY specifically (not just "in this month",
+  // since the calendar can browse other months while this answers "who's
+  // free to send out as of right now").
+  const technicianAvailability = useMemo(() => {
+    const today = todayIso();
+    const active = users.filter((u) => u.is_active && u.display_name);
+    const tripByProfileId = new Map<string, FlashTechTrip>();
+    for (const t of trips) {
+      if (t.technicianProfileId && t.startDate <= today && t.endDate >= today) tripByProfileId.set(t.technicianProfileId, t);
+    }
+    return active
+      .map((u) => ({ user: u, trip: tripByProfileId.get(u.id) ?? null }))
+      .sort((a, b) => {
+        // Available first, then busy — alphabetical within each group.
+        if (!!a.trip !== !!b.trip) return a.trip ? 1 : -1;
+        return (a.user.display_name || "").localeCompare(b.user.display_name || "");
+      });
+  }, [users, trips]);
+
+  const filteredTechnicianAvailability = useMemo(() => {
+    const q = availabilitySearch.trim().toLowerCase();
+    return technicianAvailability.filter(({ user, trip }) => {
+      if (availabilityStatusFilter === "available" && trip) return false;
+      if (availabilityStatusFilter === "busy" && !trip) return false;
+      if (q && !(user.display_name || "").toLowerCase().includes(q)) return false;
+      return true;
+    });
+  }, [technicianAvailability, availabilitySearch, availabilityStatusFilter]);
+
+  // Completed trips — endDate already before today, so they're no longer
+  // what's keeping anyone off the Available list above. Newest-ended first.
+  const flashTechHistory = useMemo(() => {
+    const today = todayIso();
+    return [...trips].filter((t) => t.endDate < today).sort((a, b) => b.endDate.localeCompare(a.endDate));
+  }, [trips]);
 
   const openCreateModal = () => {
     setEditingTripId(null);
@@ -469,6 +510,13 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
           >
             <Table2 className="h-3.5 w-3.5" /> Tracker
           </button>
+          <button
+            type="button"
+            onClick={() => setView("availability")}
+            className={`btn text-sm px-3 py-1.5 inline-flex items-center gap-1.5 ${view === "availability" ? "bg-primary/20 text-primary" : ""}`}
+          >
+            <Users className="h-3.5 w-3.5" /> Availability
+          </button>
         </div>
 
         {view === "calendar" && (
@@ -591,6 +639,122 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
             onRemoveReceipt={handleRemoveReceipt}
             onPreviewReceipt={setPreviewReceiptUrl}
           />
+        )}
+
+        {view === "availability" && (
+          <div className="panel p-0 overflow-hidden">
+            <div className="px-4 py-3 border-b border-white/10">
+              <h3 className="text-sm font-semibold text-white">Technician Availability</h3>
+              <p className="text-[11px] text-muted-foreground mt-0.5">Who's free to send out on a flash tech trip today ({todayIso()}) vs already out on one.</p>
+            </div>
+            <div className="flex flex-wrap items-center gap-3 px-4 py-3 border-b border-white/10">
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">Search</label>
+                <input
+                  type="text"
+                  value={availabilitySearch}
+                  onChange={(e) => setAvailabilitySearch(e.target.value)}
+                  placeholder="Technician name…"
+                  className="w-48 rounded-lg border border-white/15 bg-slate-900/60 px-2.5 py-1.5 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-blue-500"
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">Status</label>
+                <select
+                  value={availabilityStatusFilter}
+                  onChange={(e) => setAvailabilityStatusFilter(e.target.value as typeof availabilityStatusFilter)}
+                  className="rounded-lg border border-white/15 bg-slate-900/60 px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-blue-500"
+                >
+                  <option value="all">All</option>
+                  <option value="available">Available</option>
+                  <option value="busy">On Trip</option>
+                </select>
+              </div>
+              {(availabilitySearch || availabilityStatusFilter !== "all") && (
+                <button
+                  type="button"
+                  onClick={() => { setAvailabilitySearch(""); setAvailabilityStatusFilter("all"); }}
+                  className="text-xs text-blue-400 hover:text-blue-300 mt-4"
+                >
+                  Reset filters
+                </button>
+              )}
+              <span className="ml-auto text-[11px] text-muted-foreground self-end pb-1.5">
+                {filteredTechnicianAvailability.length} of {technicianAvailability.length}
+              </span>
+            </div>
+            {loading ? (
+              <div className="py-10 text-center text-slate-400 text-sm">Loading…</div>
+            ) : filteredTechnicianAvailability.length === 0 ? (
+              <div className="py-10 text-center text-slate-400 text-sm">
+                {technicianAvailability.length === 0 ? "No active technicians found." : "No technicians match that filter."}
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm border-collapse">
+                  <thead>
+                    <tr className="border-b border-white/10 text-left">
+                      <th className="px-4 py-2 text-[10px] font-semibold text-slate-500 uppercase tracking-wide">Technician</th>
+                      <th className="px-4 py-2 text-[10px] font-semibold text-slate-500 uppercase tracking-wide">Origin</th>
+                      <th className="px-4 py-2 text-[10px] font-semibold text-slate-500 uppercase tracking-wide">Destination</th>
+                      <th className="px-4 py-2 text-[10px] font-semibold text-slate-500 uppercase tracking-wide text-right">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/10">
+                    {filteredTechnicianAvailability.map(({ user, trip }) => (
+                      <tr key={user.id}>
+                        <td className="px-4 py-2.5 text-sm text-white truncate max-w-[220px]">{user.display_name}</td>
+                        <td className="px-4 py-2.5 text-xs text-slate-300">{trip ? trip.originLocation : <span className="text-slate-600">—</span>}</td>
+                        <td className="px-4 py-2.5 text-xs text-slate-300">{trip ? trip.destinationLocation : <span className="text-slate-600">—</span>}</td>
+                        <td className="px-4 py-2.5 text-right">
+                          {trip ? (
+                            <span
+                              className="inline-flex items-center gap-1.5 rounded-full border border-blue-500/30 bg-blue-500/10 px-2.5 py-1 text-xs text-blue-300"
+                              title={`${trip.startDate} – ${trip.endDate}`}
+                            >
+                              <span className="h-1.5 w-1.5 rounded-full bg-blue-400" /> On Trip — back {trip.endDate}
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-xs text-emerald-300">
+                              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" /> Available
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
+        {view === "availability" && (
+          <div className="panel p-0 overflow-hidden mt-4">
+            <div className="px-4 py-3 border-b border-white/10">
+              <h3 className="text-sm font-semibold text-white">Flash Tech History</h3>
+              <p className="text-[11px] text-muted-foreground mt-0.5">Every completed trip (end date already passed), most recent first.</p>
+            </div>
+            {loading ? (
+              <div className="py-10 text-center text-slate-400 text-sm">Loading…</div>
+            ) : flashTechHistory.length === 0 ? (
+              <div className="py-10 text-center text-slate-400 text-sm">No completed flash tech trips yet.</div>
+            ) : (
+              <ul className="divide-y divide-white/10 max-h-[28rem] overflow-y-auto">
+                {flashTechHistory.map((t) => (
+                  <li key={t.id} className="flex items-center justify-between gap-3 px-4 py-2.5">
+                    <div className="min-w-0">
+                      <span className="text-sm text-white truncate block">{t.technicianName}</span>
+                      <span className="text-[11px] text-muted-foreground">
+                        {t.originLocation} → {t.destinationLocation} · {t.startDate} – {t.endDate} · {t.tripType}
+                      </span>
+                    </div>
+                    <span className="shrink-0 rounded-full border border-white/15 bg-white/5 px-2.5 py-1 text-xs text-slate-300">{t.status}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
         )}
       </div>
 

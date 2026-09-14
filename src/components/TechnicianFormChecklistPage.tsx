@@ -1252,7 +1252,7 @@ export function TechnicianFormChecklistPage() {
         pdfUrl, regardless of status. */}
     {viewDoc && (
       <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => setViewDoc(null)}>
-        <div className="bg-slate-900 border border-white/10 rounded-lg shadow-2xl w-full max-w-2xl max-h-[92vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+        <div className="bg-slate-900 border border-white/10 rounded-lg shadow-2xl w-full max-w-[95vw] h-[95vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
           <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between gap-3 shrink-0">
             <p className="text-sm font-semibold truncate">{viewDoc.label}</p>
             <button
@@ -1264,7 +1264,7 @@ export function TechnicianFormChecklistPage() {
             </button>
           </div>
           <div className="flex-1 overflow-hidden bg-slate-950">
-            {viewDoc.doc.pdfUrl && <iframe src={viewDoc.doc.pdfUrl} title={viewDoc.label} className="w-full h-full min-h-[70vh] border-0" />}
+            {viewDoc.doc.pdfUrl && <iframe src={viewDoc.doc.pdfUrl} title={viewDoc.label} className="w-full h-full border-0" />}
           </div>
         </div>
       </div>
