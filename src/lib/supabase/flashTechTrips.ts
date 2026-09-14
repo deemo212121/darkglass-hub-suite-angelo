@@ -46,10 +46,8 @@ export interface FlashTechTrip {
   rentalRate: number | null;
   vehicleType: string | null;
   otherExpenses: number | null;
-  sbmConfirmed: boolean;
-  sbmConfirmedBy: string | null;
-  sbmConfirmedByName: string | null;
-  receiptPath: string | null;
+  /** Up to 5 receipt attachments (migration 0258 — was a single receiptPath). */
+  receiptPaths: string[];
   tripType: FlashTechTripType;
   status: FlashTechStatus;
 }
@@ -80,10 +78,7 @@ function mapTripRow(row: any): Omit<FlashTechTrip, "hotelExpense" | "transportat
     rentalRate: row.rental_rate != null ? Number(row.rental_rate) : null,
     vehicleType: row.vehicle_type ?? null,
     otherExpenses: row.other_expenses != null ? Number(row.other_expenses) : null,
-    sbmConfirmed: Boolean(row.sbm_confirmed),
-    sbmConfirmedBy: row.sbm_confirmed_by ?? null,
-    sbmConfirmedByName: row.sbm_confirmed_by_name ?? null,
-    receiptPath: row.receipt_path ?? null,
+    receiptPaths: Array.isArray(row.receipt_paths) ? row.receipt_paths : [],
     tripType: (row.trip_type ?? "Flashtech") as FlashTechTripType,
     status: (row.status ?? "Open") as FlashTechStatus,
   };
@@ -125,7 +120,7 @@ export async function getCompanyFlashTechTrips(): Promise<FlashTechTrip[]> {
         "id, technician_profile_id, technician_name, origin_location, destination_location, start_date, end_date, notes, created_by, created_by_name, created_at, " +
           "tier_level, lodging_start_date, lodging_end_date, hotel_name, hotel_address, hotel_rate, hotel_confirmation, " +
           "rental_car, rental_start_date, rental_end_date, rental_rate, vehicle_type, other_expenses, " +
-          "sbm_confirmed, sbm_confirmed_by, sbm_confirmed_by_name, receipt_path, trip_type, status"
+          "receipt_paths, trip_type, status"
       )
       .order("start_date", { ascending: true })
       .range(from, from + PAGE_SIZE - 1);
@@ -338,40 +333,25 @@ export async function updateFlashTechTripTrackerFields(
   }
 }
 
-/** The SBM Confirmed checkbox — stamps who checked it (cleared back to null when unchecked). */
-export async function setFlashTechTripSbmConfirmed(
-  id: string,
-  confirmed: boolean,
-  byId: string | null,
-  byName: string | null
-): Promise<void> {
-  const { error } = await supabase
-    .from("flash_tech_trips")
-    .update({
-      sbm_confirmed: confirmed,
-      sbm_confirmed_by: confirmed ? byId : null,
-      sbm_confirmed_by_name: confirmed ? byName : null,
-    })
-    .eq("id", id);
-  if (error) {
-    console.error("setFlashTechTripSbmConfirmed error:", error.message);
-    throw new Error(error.message);
-  }
-}
+/** Max receipts per trip (migration 0258) — enforced here client-side; the column itself is a plain unbounded array. */
+export const FLASH_TECH_MAX_RECEIPTS = 5;
 
-/** Uploads a trip's Receipts attachment and stamps receipt_path — same single-attachment shape as attendance_notes.attachment_path. */
-export async function uploadFlashTechTripReceipt(companyId: string, tripId: string, file: File): Promise<string> {
+/** Uploads one receipt and appends it to the trip's receipt_paths — caller passes the trip's CURRENT array (already in state) so this doesn't need a read-before-write round trip. */
+export async function uploadFlashTechTripReceipt(companyId: string, tripId: string, file: File, currentPaths: string[]): Promise<string[]> {
   const url = await uploadFlashTechTripReceiptFile(companyId, tripId, file);
-  const { error } = await supabase.from("flash_tech_trips").update({ receipt_path: url }).eq("id", tripId);
+  const nextPaths = [...currentPaths, url];
+  const { error } = await supabase.from("flash_tech_trips").update({ receipt_paths: nextPaths }).eq("id", tripId);
   if (error) throw new Error(error.message);
-  return url;
+  return nextPaths;
 }
 
-/** Removes a trip's Receipts attachment — deletes the Storage file (fail-open, same as removeAttendanceNoteAttachment) and clears receipt_path. */
-export async function removeFlashTechTripReceipt(tripId: string, receiptUrl: string): Promise<void> {
+/** Removes one receipt from the trip's receipt_paths — deletes the Storage file (fail-open, same as removeAttendanceNoteAttachment) and drops it from the array. */
+export async function removeFlashTechTripReceipt(tripId: string, receiptUrl: string, currentPaths: string[]): Promise<string[]> {
   await deleteAttachmentByUrl(receiptUrl).catch((err) => {
     console.warn("removeFlashTechTripReceipt: Storage delete failed, clearing DB reference anyway:", err);
   });
-  const { error } = await supabase.from("flash_tech_trips").update({ receipt_path: null }).eq("id", tripId);
+  const nextPaths = currentPaths.filter((p) => p !== receiptUrl);
+  const { error } = await supabase.from("flash_tech_trips").update({ receipt_paths: nextPaths }).eq("id", tripId);
   if (error) throw new Error(error.message);
+  return nextPaths;
 }

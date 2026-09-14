@@ -13,9 +13,9 @@ import {
   deleteFlashTechTrip,
   updateFlashTechTripTrackerFields,
   updateFlashTechTripTechnician,
-  setFlashTechTripSbmConfirmed,
   uploadFlashTechTripReceipt,
   removeFlashTechTripReceipt,
+  FLASH_TECH_MAX_RECEIPTS,
   FLASH_TECH_TIER_LEVELS,
   FLASH_TECH_TRIP_TYPES,
   FLASH_TECH_STATUSES,
@@ -197,32 +197,16 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
     }
   };
 
-  const handleToggleSbmConfirmed = async (trip: FlashTechTrip) => {
-    const key = `${trip.id}:sbmConfirmed`;
-    setSavingCellKey(key);
-    try {
-      const next = !trip.sbmConfirmed;
-      await setFlashTechTripSbmConfirmed(trip.id, next, myProfileId, displayName || "Someone");
-      setTrips((prev) =>
-        prev.map((t) =>
-          t.id === trip.id
-            ? { ...t, sbmConfirmed: next, sbmConfirmedBy: next ? myProfileId : null, sbmConfirmedByName: next ? displayName || "Someone" : null }
-            : t
-        )
-      );
-    } catch (err) {
-      alert(`Failed to save: ${err instanceof Error ? err.message : "Unknown error"}`);
-    } finally {
-      setSavingCellKey((k) => (k === key ? null : k));
-    }
-  };
-
   const handleUploadReceipt = async (trip: FlashTechTrip, file: File) => {
     if (!companyId) return;
+    if (trip.receiptPaths.length >= FLASH_TECH_MAX_RECEIPTS) {
+      alert(`Up to ${FLASH_TECH_MAX_RECEIPTS} receipts per trip.`);
+      return;
+    }
     setUploadingReceiptId(trip.id);
     try {
-      const url = await uploadFlashTechTripReceipt(companyId, trip.id, file);
-      setTrips((prev) => prev.map((t) => (t.id === trip.id ? { ...t, receiptPath: url } : t)));
+      const nextPaths = await uploadFlashTechTripReceipt(companyId, trip.id, file, trip.receiptPaths);
+      setTrips((prev) => prev.map((t) => (t.id === trip.id ? { ...t, receiptPaths: nextPaths } : t)));
     } catch (err) {
       alert(`Failed to upload receipt: ${err instanceof Error ? err.message : "Unknown error"}`);
     } finally {
@@ -230,13 +214,12 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
     }
   };
 
-  const handleRemoveReceipt = async (trip: FlashTechTrip) => {
-    if (!trip.receiptPath) return;
+  const handleRemoveReceipt = async (trip: FlashTechTrip, receiptUrl: string) => {
     if (!window.confirm("Remove this receipt?")) return;
     setUploadingReceiptId(trip.id);
     try {
-      await removeFlashTechTripReceipt(trip.id, trip.receiptPath);
-      setTrips((prev) => prev.map((t) => (t.id === trip.id ? { ...t, receiptPath: null } : t)));
+      const nextPaths = await removeFlashTechTripReceipt(trip.id, receiptUrl, trip.receiptPaths);
+      setTrips((prev) => prev.map((t) => (t.id === trip.id ? { ...t, receiptPaths: nextPaths } : t)));
     } catch (err) {
       alert(`Failed to remove receipt: ${err instanceof Error ? err.message : "Unknown error"}`);
     } finally {
@@ -563,7 +546,6 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
             uploadingReceiptId={uploadingReceiptId}
             onPatch={patchTrip}
             onChangeTechnician={handleChangeTechnician}
-            onToggleSbmConfirmed={handleToggleSbmConfirmed}
             onUploadReceipt={handleUploadReceipt}
             onRemoveReceipt={handleRemoveReceipt}
             onPreviewReceipt={setPreviewReceiptUrl}
@@ -861,7 +843,6 @@ function FlashTechTrackerTable({
   uploadingReceiptId,
   onPatch,
   onChangeTechnician,
-  onToggleSbmConfirmed,
   onUploadReceipt,
   onRemoveReceipt,
   onPreviewReceipt,
@@ -874,9 +855,8 @@ function FlashTechTrackerTable({
   uploadingReceiptId: string | null;
   onPatch: (tripId: string, field: string, patch: TrackerPatch) => void;
   onChangeTechnician: (tripId: string, technicianProfileId: string | null, technicianName: string) => void;
-  onToggleSbmConfirmed: (trip: FlashTechTrip) => void;
   onUploadReceipt: (trip: FlashTechTrip, file: File) => void;
-  onRemoveReceipt: (trip: FlashTechTrip) => void;
+  onRemoveReceipt: (trip: FlashTechTrip, receiptUrl: string) => void;
   onPreviewReceipt: (url: string) => void;
 }) {
   if (loading) {
@@ -894,7 +874,7 @@ function FlashTechTrackerTable({
     "Name", "Tier Level", "Origin City", "Destination City", "Travel Date",
     "Hotel Name", "Lodging Date", "Address", "Hotel Rate", "Confirmation",
     "Rental Car", "Rental Date", "Rental Rate", "Vehicle Type", "Other Expenses",
-    "SBM Confirmed", "Notes", "Receipts", "Type", "Status",
+    "Notes", "Receipts", "Type", "Status",
   ];
 
   // Same "active, has a display name" pool the Schedule Trip modal's own
@@ -992,55 +972,43 @@ function FlashTechTrackerTable({
                 <td className="p-0.5 border-r border-white/10">
                   <TrackerNumberCell value={trip.otherExpenses} disabled={!canEdit} onSave={(v) => patch("otherExpenses", { otherExpenses: v })} />
                 </td>
-                <td className="px-2 py-1.5 border-r border-white/10">
-                  <label className={`flex items-center gap-1.5 ${canEdit ? "cursor-pointer" : "cursor-not-allowed opacity-70"}`}>
-                    <input
-                      type="checkbox"
-                      checked={trip.sbmConfirmed}
-                      disabled={!canEdit || savingCellKey === `${trip.id}:sbmConfirmed`}
-                      onChange={() => onToggleSbmConfirmed(trip)}
-                      className="h-3.5 w-3.5 accent-emerald-500"
-                    />
-                    {savingCellKey === `${trip.id}:sbmConfirmed` && <Loader2 className="h-3 w-3 animate-spin text-slate-500" />}
-                  </label>
-                  {trip.sbmConfirmed && trip.sbmConfirmedByName && (
-                    <p className="text-[10px] text-slate-500 mt-0.5 whitespace-nowrap">{trip.sbmConfirmedByName}</p>
-                  )}
-                </td>
                 <td className="p-0.5 border-r border-white/10">
                   <TrackerTextCell value={trip.notes || ""} disabled={!canEdit} placeholder="Notes" onSave={(v) => patch("notes", { notes: v })} />
                 </td>
                 <td className="px-2 py-1.5 border-r border-white/10 whitespace-nowrap">
-                  {trip.receiptPath ? (
-                    <div className="flex items-center gap-2">
-                      <button type="button" onClick={() => onPreviewReceipt(trip.receiptPath!)} className="text-blue-400 hover:text-blue-300 inline-flex items-center gap-1 text-[11px]">
-                        <Paperclip className="h-3 w-3" /> View
-                      </button>
-                      {canEdit && (
-                        <button type="button" onClick={() => onRemoveReceipt(trip)} disabled={uploadingReceiptId === trip.id} className="text-red-400 hover:text-red-300 text-[11px] disabled:opacity-50">
-                          Remove
+                  <div className="flex flex-col gap-1">
+                    {trip.receiptPaths.map((url, i) => (
+                      <div key={url} className="flex items-center gap-2">
+                        <button type="button" onClick={() => onPreviewReceipt(url)} className="text-blue-400 hover:text-blue-300 inline-flex items-center gap-1 text-[11px]">
+                          <Paperclip className="h-3 w-3" /> Receipt {i + 1}
                         </button>
-                      )}
-                    </div>
-                  ) : canEdit ? (
-                    <label className="text-[11px] text-blue-400 hover:text-blue-300 cursor-pointer inline-flex items-center gap-1">
-                      {uploadingReceiptId === trip.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Paperclip className="h-3 w-3" />}
-                      {uploadingReceiptId === trip.id ? "Uploading…" : "Attach"}
-                      <input
-                        type="file"
-                        accept="image/*,.pdf"
-                        className="hidden"
-                        disabled={uploadingReceiptId === trip.id}
-                        onChange={(e) => {
-                          const file = e.target.files?.[0];
-                          if (file) onUploadReceipt(trip, file);
-                          e.target.value = "";
-                        }}
-                      />
-                    </label>
-                  ) : (
-                    <span className="text-slate-600">—</span>
-                  )}
+                        {canEdit && (
+                          <button type="button" onClick={() => onRemoveReceipt(trip, url)} disabled={uploadingReceiptId === trip.id} className="text-red-400 hover:text-red-300 text-[11px] disabled:opacity-50">
+                            Remove
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                    {canEdit && trip.receiptPaths.length < FLASH_TECH_MAX_RECEIPTS ? (
+                      <label className="text-[11px] text-blue-400 hover:text-blue-300 cursor-pointer inline-flex items-center gap-1">
+                        {uploadingReceiptId === trip.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Paperclip className="h-3 w-3" />}
+                        {uploadingReceiptId === trip.id ? "Uploading…" : `Attach (${trip.receiptPaths.length}/${FLASH_TECH_MAX_RECEIPTS})`}
+                        <input
+                          type="file"
+                          accept="image/*,.pdf"
+                          className="hidden"
+                          disabled={uploadingReceiptId === trip.id}
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) onUploadReceipt(trip, file);
+                            e.target.value = "";
+                          }}
+                        />
+                      </label>
+                    ) : (
+                      trip.receiptPaths.length === 0 && <span className="text-slate-600">—</span>
+                    )}
+                  </div>
                 </td>
                 <td className="p-0.5 border-r border-white/10">
                   <TrackerSelectCell value={trip.tripType} disabled={!canEdit} options={FLASH_TECH_TRIP_TYPES} onSave={(v) => patch("tripType", { tripType: v as FlashTechTrip["tripType"] })} />

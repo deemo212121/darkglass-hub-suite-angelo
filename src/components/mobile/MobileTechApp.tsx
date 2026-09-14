@@ -366,10 +366,7 @@ function buildDevTestFlashTechTrip(profileId: string): FlashTechTrip {
     rentalRate: null,
     vehicleType: null,
     otherExpenses: null,
-    sbmConfirmed: false,
-    sbmConfirmedBy: null,
-    sbmConfirmedByName: null,
-    receiptPath: null,
+    receiptPaths: [],
     tripType: "Flashtech",
     status: "Open",
   };
