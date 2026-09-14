@@ -33,7 +33,7 @@
  * "technician-form-checklist"; the route already renders <AppHeader />
  * and gates access to ADMIN / HR (DASHBOARD_ROLE_GATES).
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { ChevronLeft, ClipboardCheck, Loader2, ChevronDown, ExternalLink, RefreshCw, Send, Bell, Snowflake, Search, X, PenLine, Filter } from "lucide-react";
 import { useAuth } from "@/lib/auth";
@@ -1042,8 +1042,10 @@ export function TechnicianFormChecklistPage() {
                           : awaitingEmployee
                           ? "border-amber-500/60 bg-transparent"
                           : "border-white/20 bg-transparent";
+                        const idDocFields = !na && doc ? (ID_DOC_FIELDS[type] ?? []).filter(({ field }) => doc.formData?.[field]) : [];
                         return (
-                          <li key={type} className={`flex items-center gap-2.5 text-sm ${na ? "opacity-50" : ""}`}>
+                          <Fragment key={type}>
+                          <li className={`flex items-center gap-2.5 text-sm ${na ? "opacity-50" : ""}`}>
                             <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${markerClass}`}>
                               {done && <span className="text-[10px] font-bold leading-none">✓</span>}
                             </span>
@@ -1060,24 +1062,6 @@ export function TechnicianFormChecklistPage() {
                                 view <ExternalLink className="h-3 w-3" />
                               </button>
                             )}
-                            {!na && doc && ID_DOC_FIELDS[type]?.map(({ field, label: fieldLabel }) => {
-                              const path = doc.formData?.[field];
-                              if (!path) return null;
-                              return (
-                                <button
-                                  key={field}
-                                  type="button"
-                                  onClick={() =>
-                                    getTechnicianIdDocumentUrl(path)
-                                      .then((url) => window.open(url, "_blank", "noopener,noreferrer"))
-                                      .catch((err) => setActionError(err instanceof Error ? err.message : `Failed to open ${fieldLabel} photo.`))
-                                  }
-                                  className="inline-flex shrink-0 items-center gap-0.5 text-xs text-blue-400 hover:text-blue-300"
-                                >
-                                  view {fieldLabel} <ExternalLink className="h-3 w-3" />
-                                </button>
-                              );
-                            })}
                             {!na && done && doc && doc.status === "confirmed" && EMPLOYER_SIGN_SUPPORTED_TYPES.has(type) && (
                               <button
                                 type="button"
@@ -1176,6 +1160,24 @@ export function TechnicianFormChecklistPage() {
                               N/A
                             </label>
                           </li>
+                          {idDocFields.map(({ field, label: fieldLabel }) => (
+                            <li key={field} className="flex items-center gap-2.5 text-sm pl-6">
+                              <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded border border-white/20 bg-transparent" />
+                              <span className="flex-1 min-w-0 text-slate-400">{fieldLabel}</span>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  getTechnicianIdDocumentUrl(doc!.formData[field])
+                                    .then((url) => window.open(url, "_blank", "noopener,noreferrer"))
+                                    .catch((err) => setActionError(err instanceof Error ? err.message : `Failed to open ${fieldLabel} photo.`))
+                                }
+                                className="inline-flex shrink-0 items-center gap-0.5 text-xs text-blue-400 hover:text-blue-300"
+                              >
+                                view <ExternalLink className="h-3 w-3" />
+                              </button>
+                            </li>
+                          ))}
+                          </Fragment>
                         );
                       })}
                     </ul>
