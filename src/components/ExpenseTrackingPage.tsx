@@ -50,7 +50,23 @@ function isPdfReceipt(url: string): boolean {
   return /\.pdf(\?|$)/i.test(url);
 }
 
-export function ExpenseTrackingPage({ mod, sub, embedded }: { mod: ModuleDef; sub: SubModuleDef; embedded?: boolean }) {
+export function ExpenseTrackingPage({
+  mod,
+  sub,
+  embedded,
+  flashTechOnly,
+}: {
+  mod: ModuleDef;
+  sub: SubModuleDef;
+  embedded?: boolean;
+  /** Scopes every list/total on the page to only expenses linked to a Flash
+   *  Tech trip (flashTechTripId set) — used by the new Accounting "Expenses"
+   *  module's Flash Tech tab. Doesn't change what a manually-added expense
+   *  here gets linked to (there's no trip picker) — this only narrows what's
+   *  already shown, same rows Accounting Dashboard's own Flash Tech tab
+   *  creates via Schedule Trip's Hotel/Transportation checkboxes. */
+  flashTechOnly?: boolean;
+}) {
   const navigate = useNavigate();
   const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
   const { uid, ready, companyId } = useAuth();
@@ -121,8 +137,12 @@ export function ExpenseTrackingPage({ mod, sub, embedded }: { mod: ModuleDef; su
   const profileById = useMemo(() => new Map(profiles.map((p) => [p.id, p])), [profiles]);
   const profileName = (id: string) => profileById.get(id)?.display_name || profileById.get(id)?.email || "—";
 
+  // Every total/list below reads from this instead of raw `expenses` — the
+  // only place flashTechOnly's scoping actually applies.
+  const scopedExpenses = useMemo(() => (flashTechOnly ? expenses.filter((e) => e.flashTechTripId) : expenses), [expenses, flashTechOnly]);
+
   const filtered = useMemo(() => {
-    return expenses.filter((e) => {
+    return scopedExpenses.filter((e) => {
       if (filterEmployee !== "all" && e.profileId !== filterEmployee) return false;
       if (filterCategory !== "all" && e.category !== filterCategory) return false;
       if (filterStatus !== "all" && e.status !== filterStatus) return false;
@@ -132,16 +152,16 @@ export function ExpenseTrackingPage({ mod, sub, embedded }: { mod: ModuleDef; su
       }
       return true;
     });
-  }, [expenses, filterEmployee, filterCategory, filterStatus, search, profileById]);
+  }, [scopedExpenses, filterEmployee, filterCategory, filterStatus, search, profileById]);
 
-  const totalPending = expenses.filter((e) => e.status === "Pending");
-  const totalApproved = expenses.filter((e) => e.status === "Approved");
-  const totalReimbursed = expenses.filter((e) => e.status === "Reimbursed");
+  const totalPending = scopedExpenses.filter((e) => e.status === "Pending");
+  const totalApproved = scopedExpenses.filter((e) => e.status === "Approved");
+  const totalReimbursed = scopedExpenses.filter((e) => e.status === "Reimbursed");
   const sum = (rows: ExpenseRow[]) => rows.reduce((s, r) => s + r.amount, 0);
   const monthStart = new Date();
   monthStart.setDate(1);
   const monthStartISO = monthStart.toISOString().slice(0, 10);
-  const thisMonthTotal = sum(expenses.filter((e) => e.expenseDate >= monthStartISO));
+  const thisMonthTotal = sum(scopedExpenses.filter((e) => e.expenseDate >= monthStartISO));
 
   const fmtMoney = (n: number) => `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 

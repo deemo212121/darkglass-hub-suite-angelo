@@ -369,6 +369,19 @@ const accountingMod: ModuleDef = {
       count: 0,
       seed: () => ({}),
     },
+    // Category-tabbed container (ExpensesModulePage) — Flash Tech is the
+    // only tab for now (its own Hotel/Transportation expense rows, scoped
+    // out of the full Expense Tracking list), more categories land here as
+    // their own tabs later.
+    {
+      slug: "expenses",
+      title: "Expenses",
+      description: "Expense tracking by category — Flash Tech for now, more categories to come.",
+      custom: "expenses" as any,
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
   ],
 };
 
