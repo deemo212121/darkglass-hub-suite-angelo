@@ -55,6 +55,9 @@ export const SIGNABLE_DOCUMENT_REGISTRY: Record<SignableDocumentType, SignableDo
   // Same reasoning as master_w2_agreement above — PH recipients are all
   // existing AHS contractors, not outside candidates.
   master_ph_contractor_agreement: { label: "Master PH Contractor Agreement", internalPath: "/fill-master-ph-contractor-agreement", externalPath: "/fill-master-ph-contractor-agreement" },
+  // Same reasoning as master_w2_agreement above — BM/SBS/Director recipients
+  // are all existing AHS employees, not outside candidates.
+  master_w2_executive_agreement: { label: "W-2 Executive Exempt Management Agreement", internalPath: "/fill-master-w2-executive-agreement", externalPath: "/fill-master-w2-executive-agreement" },
 };
 
 export function signableDocumentLabel(type: SignableDocumentType): string {
@@ -100,7 +103,7 @@ export const TECHNICIAN_FORM_TYPES: SignableDocumentType[] = [
 export const NEW_TECHNICIAN_FORM_TYPES: SignableDocumentType[] = ["master_w2_agreement", "w4", "i9", "direct_deposit"];
 export const OFFICE_STAFF_US_FORM_TYPES: SignableDocumentType[] = ["master_w2_office_agreement", "w4", "i9", "direct_deposit"];
 export const PH_STAFF_FORM_TYPES: SignableDocumentType[] = ["master_ph_contractor_agreement", "w8ben", "direct_deposit"];
-export const BM_AND_UP_FORM_TYPES: SignableDocumentType[] = ["contractor_addendum", "w9", "direct_deposit"];
+export const BM_AND_UP_FORM_TYPES: SignableDocumentType[] = ["master_w2_executive_agreement", "direct_deposit"];
 
 export type StaffFormTier = "newTechnician" | "officeStaffUs" | "phStaff" | "bmAndUp";
 
@@ -150,6 +153,7 @@ export const DOCUMENT_TYPES_REQUIRING_EMPLOYER_SIGNATURE = new Set<SignableDocum
   "master_w2_agreement",
   "master_w2_office_agreement",
   "master_ph_contractor_agreement",
+  "master_w2_executive_agreement",
 ]);
 
 /**
