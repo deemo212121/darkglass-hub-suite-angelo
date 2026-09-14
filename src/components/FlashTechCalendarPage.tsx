@@ -515,7 +515,7 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
             onClick={() => setView("availability")}
             className={`btn text-sm px-3 py-1.5 inline-flex items-center gap-1.5 ${view === "availability" ? "bg-primary/20 text-primary" : ""}`}
           >
-            <Users className="h-3.5 w-3.5" /> Availability
+            <Users className="h-3.5 w-3.5" /> Flash Tech List
           </button>
         </div>
 
@@ -644,7 +644,7 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
         {view === "availability" && (
           <div className="panel p-0 overflow-hidden">
             <div className="px-4 py-3 border-b border-white/10">
-              <h3 className="text-sm font-semibold text-white">Technician Availability</h3>
+              <h3 className="text-sm font-semibold text-white">Flash Tech List</h3>
               <p className="text-[11px] text-muted-foreground mt-0.5">Who's free to send out on a flash tech trip today ({todayIso()}) vs already out on one.</p>
             </div>
             <div className="flex flex-wrap items-center gap-3 px-4 py-3 border-b border-white/10">
