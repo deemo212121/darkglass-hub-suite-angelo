@@ -577,7 +577,15 @@ export function EmployeePayrollDetailModal({
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <div className="bg-slate-800/50 border border-white/10 rounded-lg p-3">
               <p className="text-xs text-slate-400 uppercase">Total Hours</p>
-              <p className="text-xl font-bold text-white mt-1">{totalHours.toFixed(1)}</p>
+              {/* 3 decimals, not 1 — matches the per-day Hours column below so
+                  manually summing those doesn't drift from this figure. A
+                  clock-in/out to the second produces hours with many decimal
+                  digits; rounding each day to 1dp then summing accumulates
+                  error across a period (e.g. 48.4165... reads as 48.4 here
+                  but a naive sum of individually-1dp-rounded days can land on
+                  48.5) — EST. PAY already uses the full-precision figure, only
+                  the display was misleadingly coarse. */}
+              <p className="text-xl font-bold text-white mt-1">{totalHours.toFixed(3)}</p>
             </div>
             <div className="bg-slate-800/50 border border-white/10 rounded-lg p-3">
               <p className="text-xs text-slate-400 uppercase">Warnings</p>
@@ -893,8 +901,8 @@ export function EmployeePayrollDetailModal({
                             <td className={`py-1.5 ${row.clockOut ? "text-red-300" : "text-slate-500"}`}>{row.clockOut || "—"}</td>
                           </>
                         )}
-                        <td className="py-1.5 text-right text-slate-200">{row.hoursWorked ? regularHours.toFixed(1) : "—"}</td>
-                        <td className={`py-1.5 text-right ${overtimeHours > 0 ? "text-orange-300 font-semibold" : "text-slate-500"}`}>{overtimeHours > 0 ? overtimeHours.toFixed(1) : "—"}</td>
+                        <td className="py-1.5 text-right text-slate-200">{row.hoursWorked ? regularHours.toFixed(3) : "—"}</td>
+                        <td className={`py-1.5 text-right ${overtimeHours > 0 ? "text-orange-300 font-semibold" : "text-slate-500"}`}>{overtimeHours > 0 ? overtimeHours.toFixed(3) : "—"}</td>
                         <td className="py-1.5 text-right" onClick={(e) => e.stopPropagation()}>
                           {dayIsFixed ? (
                             <span className="text-slate-500" title="Fixed-salary pay doesn't vary by day — edit it from Salary History above instead">Fixed Salary</span>
