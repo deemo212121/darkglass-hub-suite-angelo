@@ -98,7 +98,13 @@ const HR_STATUS_TO_PTO_TYPE: Partial<Record<string, PtoType>> = {
 // of the PtoType union itself and handled via the two helpers below instead.
 type PlottedType = PtoType | "absent";
 function plottedTypeLabel(t: PlottedType): string {
-  return t === "absent" ? "Absent" : PTO_TYPE_LABELS[t];
+  // "Absent" was renamed to "Unnoticed" on the Absent List's HR Status
+  // dropdown — this is purely the display label; the internal PlottedType
+  // key stays "absent" (an identifier, not shown to users) and existing
+  // rows still literally stored as hr_note = "Absent" are untouched (see
+  // the hrNote === "Absent" check below, kept alongside "Unnoticed" so old
+  // data keeps mapping into this same bucket/behavior).
+  return t === "absent" ? "Unnoticed" : PTO_TYPE_LABELS[t];
 }
 function plottedTypeLetter(t: PlottedType): string {
   return t === "absent" ? "A" : PTO_TYPE_LETTER[t];
@@ -341,7 +347,10 @@ export function HrCalendarTab({ employees, myProfileId, myDisplayName }: Props) 
       Map<string, { type: PlottedType; addedBy: string | null; attachmentPath: string | null; attachmentAddedBy: string | null; attachmentRemovedBy: string | null }>
     >();
     for (const n of hrStatusNotes) {
-      const type: PlottedType | undefined = n.hrNote === "Absent" ? "absent" : HR_STATUS_TO_PTO_TYPE[n.hrNote];
+      // "Absent" (old label) and "Unnoticed" (its rename, same status) both
+      // map to the same "absent" plotted type — existing rows saved before
+      // the rename are untouched in the database and still read correctly.
+      const type: PlottedType | undefined = n.hrNote === "Absent" || n.hrNote === "Unnoticed" ? "absent" : HR_STATUS_TO_PTO_TYPE[n.hrNote];
       if (!type) continue;
       if (typeFilter !== "all" && type !== typeFilter) continue;
       if (cellsByProfile.get(n.profileId)?.has(n.noteDate)) continue;
@@ -820,7 +829,7 @@ export function HrCalendarTab({ employees, myProfileId, myDisplayName }: Props) 
           <span className="h-3 w-3 rounded-sm bg-cyan-500/80 inline-block" /> Set by HR (Absent List), no formal request
         </span>
         <span className="flex items-center gap-1.5">
-          <span className="h-3 w-3 rounded-sm bg-red-500/80 inline-block" /> Marked Absent (Absent List)
+          <span className="h-3 w-3 rounded-sm bg-red-500/80 inline-block" /> Marked Unnoticed (Absent List)
         </span>
         <span className="flex items-center gap-1.5">
           <span className="h-3 w-3 rounded-sm bg-slate-600/50 inline-block" /> Rest day
@@ -838,7 +847,7 @@ export function HrCalendarTab({ employees, myProfileId, myDisplayName }: Props) 
           </span>
         ))}
         <span className="flex items-center gap-1">
-          <span className="font-bold text-slate-300">A</span> = Absent
+          <span className="font-bold text-slate-300">A</span> = Unnoticed
         </span>
         <span className="flex items-center gap-1">
           <span className="font-bold text-slate-300">R</span> = Rest day
@@ -977,7 +986,7 @@ export function HrCalendarTab({ employees, myProfileId, myDisplayName }: Props) 
                                 ? "Pending Time Correction Request — click to see approval status"
                                 : hrPlotted
                                 ? hrPlotted.type === "absent"
-                                  ? `Absent — no clock-in, via Absent List${addedByName ? ` (added by ${addedByName})` : ""}. Click to file a leave request instead.`
+                                  ? `Unnoticed — no clock-in, via Absent List${addedByName ? ` (added by ${addedByName})` : ""}. Click to file a leave request instead.`
                                   : `${plottedTypeLabel(hrPlotted.type)} — set by HR via Absent List${addedByName ? ` (added by ${addedByName})` : ""}, no formal request yet. Click to formalize.`
                                 : isRestDay
                                 ? "Rest day"
@@ -1209,7 +1218,7 @@ export function HrCalendarTab({ employees, myProfileId, myDisplayName }: Props) 
                       className={`text-[11px] ${isAbsent ? "text-red-300 bg-red-500/10 border-red-500/30" : "text-cyan-300 bg-cyan-500/10 border-cyan-500/30"} border rounded-md px-2.5 py-2 space-y-1`}
                     >
                       <p>
-                        {isAbsent ? "Marked Absent via Absent List (no clock-in)." : `Already marked ${plottedTypeLabel(plotted.type)} via Absent List — no formal request yet.`}
+                        {isAbsent ? "Marked Unnoticed via Absent List (no clock-in)." : `Already marked ${plottedTypeLabel(plotted.type)} via Absent List — no formal request yet.`}
                         {addedByName ? ` Added by: ${addedByName}.` : ""} Saving below files a {isAbsent ? "leave request instead" : "real request for it"}.
                       </p>
                       <div className="flex items-center gap-3">

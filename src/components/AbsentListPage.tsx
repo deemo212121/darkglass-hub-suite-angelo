@@ -68,16 +68,24 @@ const HR_STATUS_OPTIONS = [
   "Holiday",
   "Unpaid",
   "Bereavement",
-  "Absent",
+  "Unnoticed",
   "Present (No Clock-In)",
   "Admin",
-  "Unnoticed",
   "Resigned",
   "Terminated",
 ];
+// "Absent" was RENAMED to "Unnoticed" (a label-only change — no clock-in,
+// no explanation on file — same status, same severity, same behavior
+// everywhere it's used, e.g. HrCalendarTab.tsx's red "Marked Unnoticed"
+// cell). Nothing already saved as "Absent" was touched or rewritten — those
+// rows keep showing "Absent" via the orphaned-value fallback in
+// renderAbsentRow below, and HrCalendarTab.tsx still recognizes both
+// "Absent" and "Unnoticed" as the same underlying status so old data keeps
+// behaving exactly as it did before the rename. Only a NEW pick from this
+// dropdown saves "Unnoticed" going forward.
 // Resigned/Terminated end employment entirely and Unnoticed flags a no-call/
 // no-show — meaningfully different severity from an ordinary leave type, so
-// they get their own color instead of blending into the rest. "Absent" is a
+// they get their own color instead of blending into the rest. It's a
 // deliberate HR call (never assumed/auto-set — see absentRows above, which
 // only lists candidates for review, not confirmed absences), so it also
 // gets its own color rather than blending in with Vacation/Sick/etc.
@@ -91,10 +99,13 @@ const HR_STATUS_OPTIONS = [
 // from HR_STATUS_TO_PTO_TYPE the same way Unnoticed/Resigned/Terminated are
 // (see HrCalendarTab.tsx) and never plot on the Time Off Calendar.
 const HR_STATUS_COLOR: Record<string, string> = {
+  // "Absent" kept here (not in HR_STATUS_OPTIONS anymore) purely so a
+  // pre-rename row still renders red instead of falling back to the
+  // default grey — see the comment above.
   Absent: "text-red-300",
+  Unnoticed: "text-red-300",
   "Present (No Clock-In)": "text-cyan-300",
   Admin: "text-sky-300",
-  Unnoticed: "text-amber-300",
   Resigned: "text-red-300",
   Terminated: "text-red-300",
 };
@@ -693,6 +704,14 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
               {HR_STATUS_OPTIONS.map((s) => (
                 <option key={s} value={s} className={`bg-slate-800 ${HR_STATUS_COLOR[s] || "text-slate-200"}`}>{s}</option>
               ))}
+              {/* A row already saved with a status that's since been removed
+                  from HR_STATUS_OPTIONS (e.g. "Unnoticed") keeps showing it
+                  here instead of going blank — picking anything else still
+                  works normally, this option just isn't offered on a row
+                  that doesn't already have it. */}
+              {hrNote && !HR_STATUS_OPTIONS.includes(hrNote) && (
+                <option value={hrNote} className={`bg-slate-800 ${HR_STATUS_COLOR[hrNote] || "text-slate-200"}`}>{hrNote}</option>
+              )}
             </select>
             {savingHrNoteId === key && <Loader2 className="h-3.5 w-3.5 animate-spin text-slate-500 shrink-0" />}
             <button
