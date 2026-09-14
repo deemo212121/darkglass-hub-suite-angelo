@@ -437,6 +437,20 @@ export function EmployeePayrollDetailModal({
       { regularPay: 0, overtimePay: 0, total: 0 }
     );
   }, [attendance, history, isCurrentlyFixed, currentEntry, dailyHoursSplitByDate]);
+  // Regular/overtime split of totalHours above — same dailyHoursSplitByDate
+  // computedPay itself sums, so this tile's breakdown line always agrees
+  // with Est. Pay's own regular/overtime split.
+  const totalHoursSplit = useMemo(
+    () =>
+      attendance.reduce(
+        (acc, r) => {
+          const { regular, overtime } = dailyHoursSplitByDate.get(r.date) ?? { regular: 0, overtime: 0 };
+          return { regular: acc.regular + regular, overtime: acc.overtime + overtime };
+        },
+        { regular: 0, overtime: 0 }
+      ),
+    [attendance, dailyHoursSplitByDate]
+  );
   const rateNow = useMemo(() => currentRate(history), [history]);
 
   const submitRateChange = async () => {
@@ -630,6 +644,9 @@ export function EmployeePayrollDetailModal({
                   48.5) — EST. PAY already uses the full-precision figure, only
                   the display was misleadingly coarse. */}
               <p className="text-xl font-bold text-white mt-1">{totalHours.toFixed(3)}</p>
+              <p className="text-xs text-slate-400 mt-0.5">
+                {totalHoursSplit.regular.toFixed(3)} regular + {totalHoursSplit.overtime.toFixed(3)} overtime
+              </p>
             </div>
             <div className="bg-slate-800/50 border border-white/10 rounded-lg p-3">
               <p className="text-xs text-slate-400 uppercase">Warnings</p>

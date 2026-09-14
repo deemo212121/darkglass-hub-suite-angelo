@@ -3977,13 +3977,13 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                                 {roleTypeLabel(row.employee)}
                               </td>
                               <td className="px-4 py-3 text-center text-slate-300">
-                                {row.hoursWorked.toFixed(1)}
+                                {row.hoursWorked.toFixed(3)}
                               </td>
                               <td className="px-4 py-3 text-center text-slate-300">
-                                {(row.hoursWorked + row.overtimeHours).toFixed(1)}
+                                {(row.hoursWorked + row.overtimeHours).toFixed(3)}
                               </td>
                               <td className="px-4 py-3 text-center text-orange-300">
-                                {row.overtimeHours.toFixed(1)}
+                                {row.overtimeHours.toFixed(3)}
                               </td>
                               <td className="px-4 py-3 text-center text-slate-400">
                                 {row.employee.mealMinutes ? `${row.employee.mealMinutes} min` : "—"}
