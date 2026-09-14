@@ -142,10 +142,17 @@ function donutByPerson(candidates: Candidate[], getPersonId: (c: Candidate) => s
 }
 
 /** The "donut + legend" card by itself — used both as AnalyticsCategory's
- * primary donut and standalone for the extra Hiring breakdowns below. */
-function DonutPanel({ heading, unitLabel, loading, slices, total }: { heading: string; unitLabel: string; loading: boolean; slices: DonutSlice[]; total: number }) {
+ * primary donut and standalone for the extra Hiring breakdowns below.
+ * Fixed width by default (rather than stretching to fill a grid cell) so it
+ * keeps the same visual weight next to a leaderboard; pass `fill` when it's
+ * one of several equal donuts sharing an evenly-divided grid row instead
+ * (a fixed width there would either leave gaps or overflow the row).
+ * `variantKey` re-keys the SVG/legend on real data changes (date range,
+ * branch filter, …) so the entrance animation below replays instead of only
+ * firing once on first mount. */
+function DonutPanel({ heading, unitLabel, loading, slices, total, variantKey, fill }: { heading: string; unitLabel: string; loading: boolean; slices: DonutSlice[]; total: number; variantKey?: string | number; fill?: boolean }) {
   return (
-    <div className="panel p-0 overflow-hidden">
+    <div className={`panel p-0 overflow-hidden transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-black/30 ${fill ? "w-full" : "w-full sm:w-[360px] shrink-0"}`}>
       <div className="px-4 py-4 border-b border-white/10">
         <h3 className="font-semibold text-sm flex items-center gap-1.5"><PieChart className="h-4 w-4 text-blue-300" /> {heading}</h3>
         <p className="text-[10px] text-muted-foreground mt-0.5">{total} {pluralizeUnit(unitLabel, total)} total.</p>
@@ -156,32 +163,112 @@ function DonutPanel({ heading, unitLabel, loading, slices, total }: { heading: s
         ) : total === 0 ? (
           <p className="text-sm text-muted-foreground py-8">Nothing to chart yet.</p>
         ) : (
-          <>
+          <div key={variantKey} className="w-full flex flex-col items-center gap-3">
             <svg viewBox="0 0 120 120" className="w-56 h-56 shrink-0" role="img" aria-label={heading}>
-              {slices.map((s) => (
-                <path key={s.key} d={s.path} fill={s.color} stroke="#0f172a" strokeWidth={2} />
+              {slices.map((s, i) => (
+                <path
+                  key={s.key}
+                  d={s.path}
+                  fill={s.color}
+                  stroke="#0f172a"
+                  strokeWidth={2}
+                  className="analytics-slice-in"
+                  style={{ transformOrigin: "60px 60px", animationDelay: `${i * 45}ms` }}
+                />
               ))}
               <text x="60" y="57" textAnchor="middle" className="fill-white" style={{ fontSize: 18, fontWeight: 700 }}>{total}</text>
               <text x="60" y="70" textAnchor="middle" className="fill-slate-400" style={{ fontSize: 7, textTransform: "uppercase", letterSpacing: "0.05em" }}>{pluralizeUnit(unitLabel, total === 1 ? 1 : 2)}</text>
             </svg>
             <ul className="w-full space-y-1.5">
-              {slices.map((s) => (
-                <li key={s.key} className="flex items-center gap-2 text-xs">
+              {slices.map((s, i) => (
+                <li key={s.key} className="flex items-center gap-2 text-xs analytics-row-in" style={{ animationDelay: `${i * 40}ms` }}>
                   <span className="h-2.5 w-2.5 rounded-sm shrink-0" style={{ backgroundColor: s.color }} />
                   <span className="flex-1 text-slate-200 truncate">{s.label}</span>
                   <span className="text-slate-400 tabular-nums shrink-0">{s.count} ({s.pct.toFixed(0)}%)</span>
                 </li>
               ))}
             </ul>
-          </>
+          </div>
         )}
       </div>
     </div>
   );
 }
 
-/** One category's worth of "donut on the left, Team Activity leaderboard on
- * the right" — the repeating shape every category on this page uses. */
+/** The leaderboard card by itself — capped at a real max-width instead of
+ * stretching to fill whatever's left in the row, so its card border never
+ * ends up wrapping a huge blank strip past a 7-row list (the "doesn't look
+ * good" bug: a ~1150px card that's ~450px of actual content). Bars fill the
+ * card's own width exactly, so there's no separate empty zone inside it. */
+function TeamActivityPanel({
+  heading,
+  subheading,
+  from,
+  onFromChange,
+  to,
+  onToChange,
+  loading,
+  byActor,
+}: {
+  heading: string;
+  subheading: string;
+  from: string;
+  onFromChange: (v: string) => void;
+  to: string;
+  onToChange: (v: string) => void;
+  loading: boolean;
+  byActor: { name: string; count: number }[];
+}) {
+  const max = byActor.reduce((m, a) => Math.max(m, a.count), 0);
+  const fingerprint = byActor.map((a) => `${a.name}:${a.count}`).join(",");
+  return (
+    <div className="panel w-full max-w-2xl p-0 overflow-hidden transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-black/30">
+      <div className="px-4 py-4 border-b border-white/10 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h3 className="font-semibold text-sm flex items-center gap-1.5"><Users className="h-4 w-4 text-blue-300" /> {heading}</h3>
+          <p className="text-[10px] text-muted-foreground mt-0.5">{subheading}</p>
+        </div>
+        <div className="flex items-end gap-2">
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">From</label>
+            <input type="date" value={from} onChange={(e) => onFromChange(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">To</label>
+            <input type="date" value={to} onChange={(e) => onToChange(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+          </div>
+        </div>
+      </div>
+      <div className="p-4">
+        {loading ? (
+          <p className="text-sm text-muted-foreground text-center py-6">Loading…</p>
+        ) : byActor.length === 0 ? (
+          <p className="text-sm text-muted-foreground text-center py-6">No activity in this range.</p>
+        ) : (
+          <div key={fingerprint} className="space-y-2">
+            {byActor.map((a, i) => (
+              <div key={a.name} className="flex items-center gap-3 analytics-row-in" style={{ animationDelay: `${i * 40}ms` }}>
+                <span className="w-36 shrink-0 text-sm text-slate-200 truncate" title={a.name}>{a.name}</span>
+                <div className="flex-1 h-5 rounded bg-white/5 overflow-hidden">
+                  <div className="h-full rounded bg-blue-500 analytics-bar-grow" style={{ width: `${max > 0 ? (a.count / max) * 100 : 0}%`, animationDelay: `${i * 40}ms` }} />
+                </div>
+                <span className="w-10 shrink-0 text-right text-sm font-semibold text-slate-200 tabular-nums">{a.count}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** One category's worth of donut(s) + a Team Activity leaderboard — the
+ * repeating shape every category on this page uses. With no `extraDonuts`,
+ * the donut and leaderboard sit side by side (Employee Monitoring: one
+ * donut, plenty of room). With `extraDonuts` (Hiring: three related
+ * breakdowns), all the donuts share one evenly-filled row first and Team
+ * Activity gets its own full-width row below — three donuts squeezed next
+ * to a leaderboard left no room for any of them to breathe. */
 function AnalyticsCategory({
   title,
   donutHeading,
@@ -189,6 +276,7 @@ function AnalyticsCategory({
   loading,
   slices,
   total,
+  extraDonuts,
   activityHeading,
   activitySubheading,
   activityFrom,
@@ -204,6 +292,7 @@ function AnalyticsCategory({
   loading: boolean;
   slices: DonutSlice[];
   total: number;
+  extraDonuts?: { heading: string; unitLabel: string; loading: boolean; slices: DonutSlice[]; total: number; variantKey?: string | number }[];
   activityHeading: string;
   activitySubheading: string;
   activityFrom: string;
@@ -213,51 +302,37 @@ function AnalyticsCategory({
   activityLoading: boolean;
   activityByActor: { name: string; count: number }[];
 }) {
-  const maxActivity = activityByActor.reduce((m, a) => Math.max(m, a.count), 0);
+  const activityPanel = (
+    <TeamActivityPanel
+      heading={activityHeading}
+      subheading={activitySubheading}
+      from={activityFrom}
+      onFromChange={onActivityFromChange}
+      to={activityTo}
+      onToChange={onActivityToChange}
+      loading={activityLoading}
+      byActor={activityByActor}
+    />
+  );
   return (
-    <section className="space-y-2">
+    <section className="space-y-4">
       <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-500 px-1">{title}</h2>
-      <div className="grid grid-cols-1 lg:grid-cols-[380px_1fr] gap-4 items-start">
-        <DonutPanel heading={donutHeading} unitLabel={donutUnitLabel} loading={loading} slices={slices} total={total} />
-
-        <div className="panel p-0 overflow-hidden">
-          <div className="px-4 py-4 border-b border-white/10 flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h3 className="font-semibold text-sm flex items-center gap-1.5"><Users className="h-4 w-4 text-blue-300" /> {activityHeading}</h3>
-              <p className="text-[10px] text-muted-foreground mt-0.5">{activitySubheading}</p>
-            </div>
-            <div className="flex items-end gap-2">
-              <div className="flex flex-col gap-1">
-                <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">From</label>
-                <input type="date" value={activityFrom} onChange={(e) => onActivityFromChange(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
-              </div>
-              <div className="flex flex-col gap-1">
-                <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">To</label>
-                <input type="date" value={activityTo} onChange={(e) => onActivityToChange(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
-              </div>
-            </div>
+      {extraDonuts && extraDonuts.length > 0 ? (
+        <>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            <DonutPanel heading={donutHeading} unitLabel={donutUnitLabel} loading={loading} slices={slices} total={total} variantKey={`${total}:${slices.map((s) => s.key).join(",")}`} fill />
+            {extraDonuts.map((d) => (
+              <DonutPanel key={d.heading} heading={d.heading} unitLabel={d.unitLabel} loading={d.loading} slices={d.slices} total={d.total} variantKey={d.variantKey} fill />
+            ))}
           </div>
-          <div className="p-4">
-            {activityLoading ? (
-              <p className="text-sm text-muted-foreground text-center py-6">Loading…</p>
-            ) : activityByActor.length === 0 ? (
-              <p className="text-sm text-muted-foreground text-center py-6">No activity in this range.</p>
-            ) : (
-              <div className="space-y-2 max-w-md">
-                {activityByActor.map((a) => (
-                  <div key={a.name} className="flex items-center gap-3">
-                    <span className="w-28 shrink-0 text-sm text-slate-200 truncate" title={a.name}>{a.name}</span>
-                    <div className="flex-1 h-5 rounded bg-white/5 overflow-hidden">
-                      <div className="h-full rounded bg-blue-500" style={{ width: `${maxActivity > 0 ? (a.count / maxActivity) * 100 : 0}%` }} />
-                    </div>
-                    <span className="w-10 shrink-0 text-right text-sm font-semibold text-slate-200 tabular-nums">{a.count}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+          {activityPanel}
+        </>
+      ) : (
+        <div className="flex flex-wrap items-start gap-4">
+          <DonutPanel heading={donutHeading} unitLabel={donutUnitLabel} loading={loading} slices={slices} total={total} variantKey={`${total}:${slices.map((s) => s.key).join(",")}`} />
+          {activityPanel}
         </div>
-      </div>
+      )}
     </section>
   );
 }
@@ -270,6 +345,27 @@ function last30Days(): { from: string; to: string } {
   from.setDate(from.getDate() - 29);
   return { from: from.toISOString().slice(0, 10), to: to.toISOString().slice(0, 10) };
 }
+
+// Scoped to this page (not the shared globals.css) so it can't affect any
+// other screen — donut slices/legend rows/leaderboard bars all replay these
+// on mount AND whenever their container is re-keyed (see variantKey/
+// activityFingerprint above), which is how a date-range or branch filter
+// change gets its own little "refresh" animation instead of just snapping.
+const ANALYTICS_ANIMATION_CSS = `
+  @keyframes analyticsSliceIn { from { opacity: 0; transform: scale(0.82); } to { opacity: 1; transform: scale(1); } }
+  @keyframes analyticsRowIn { from { opacity: 0; transform: translateX(-6px); } to { opacity: 1; transform: translateX(0); } }
+  @keyframes analyticsBarGrow { from { width: 0%; } }
+  @keyframes analyticsSectionIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+  .analytics-slice-in { animation: analyticsSliceIn 0.45s ease-out both; }
+  .analytics-row-in { animation: analyticsRowIn 0.35s ease-out both; }
+  .analytics-bar-grow { animation: analyticsBarGrow 0.7s cubic-bezier(0.16, 1, 0.3, 1) both; }
+  .analytics-section-in { animation: analyticsSectionIn 0.4s ease-out both; }
+  @media (prefers-reduced-motion: reduce) {
+    .analytics-slice-in, .analytics-row-in, .analytics-bar-grow, .analytics-section-in {
+      animation-duration: 0.01ms !important;
+    }
+  }
+`;
 
 function groupByActor(entries: HrActivityLogEntry[]): { name: string; count: number }[] {
   const counts = new Map<string, number>();
@@ -296,15 +392,6 @@ export function HiringAnalyticsPage() {
       .finally(() => { if (!cancelled) setCandidatesLoading(false); });
     return () => { cancelled = true; };
   }, []);
-  const hiringDonut = useMemo(() => {
-    const counts = new Map<CandidateStatus, number>();
-    for (const c of candidates) counts.set(c.status, (counts.get(c.status) ?? 0) + 1);
-    const rows = Array.from(counts.entries())
-      .map(([status, count]) => ({ key: status, label: CANDIDATE_STATUS_LABEL[status], count, color: CANDIDATE_STATUS_CHART_COLOR[status] }))
-      .sort((a, b) => b.count - a.count);
-    return buildDonutSlices(rows);
-  }, [candidates]);
-
   // Shared with Employee Monitoring below (created_by resolution) — fetched
   // once here since Hiring's own Assigned Manager/Interviewer donuts need
   // it too, to resolve assignedManagerId/assignedInterviewerId to a name.
@@ -317,14 +404,42 @@ export function HiringAnalyticsPage() {
     return () => { cancelled = true; };
   }, []);
   const nameByProfileId = useMemo(() => new Map(profiles.map((p) => [p.id, p.display_name || p.email || "Unknown"])), [profiles]);
+  const profileBranchById = useMemo(() => new Map(profiles.map((p) => [p.id, p.assigned_branch])), [profiles]);
+
+  // One Branch filter, shared by every donut on the page (Hiring's three +
+  // Employee Monitoring's one) — Team Activity keeps its own separate
+  // date-range filters below, since "when" and "which branch" are
+  // independent questions. "All Branches" (the default) applies no filter.
+  const branchOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const c of candidates) if (c.branch) set.add(c.branch);
+    for (const p of profiles) if (p.assigned_branch) set.add(p.assigned_branch);
+    return Array.from(set).sort();
+  }, [candidates, profiles]);
+  const [branchFilter, setBranchFilter] = useState<string>("all");
+
+  const filteredCandidates = useMemo(
+    () => (branchFilter === "all" ? candidates : candidates.filter((c) => c.branch === branchFilter)),
+    [candidates, branchFilter]
+  );
+  const candidateIdsInFilter = useMemo(() => new Set(filteredCandidates.map((c) => c.id)), [filteredCandidates]);
+
+  const hiringDonut = useMemo(() => {
+    const counts = new Map<CandidateStatus, number>();
+    for (const c of filteredCandidates) counts.set(c.status, (counts.get(c.status) ?? 0) + 1);
+    const rows = Array.from(counts.entries())
+      .map(([status, count]) => ({ key: status, label: CANDIDATE_STATUS_LABEL[status], count, color: CANDIDATE_STATUS_CHART_COLOR[status] }))
+      .sort((a, b) => b.count - a.count);
+    return buildDonutSlices(rows);
+  }, [filteredCandidates]);
 
   const assignedManagerDonut = useMemo(
-    () => donutByPerson(candidates, (c) => c.assignedManagerId, nameByProfileId),
-    [candidates, nameByProfileId]
+    () => donutByPerson(filteredCandidates, (c) => c.assignedManagerId, nameByProfileId),
+    [filteredCandidates, nameByProfileId]
   );
   const assignedInterviewerDonut = useMemo(
-    () => donutByPerson(candidates, (c) => c.assignedInterviewerId, nameByProfileId),
-    [candidates, nameByProfileId]
+    () => donutByPerson(filteredCandidates, (c) => c.assignedInterviewerId, nameByProfileId),
+    [filteredCandidates, nameByProfileId]
   );
 
   const defaultRange = last30Days();
@@ -341,7 +456,14 @@ export function HiringAnalyticsPage() {
       .finally(() => { if (!cancelled) setHiringActivityLoading(false); });
     return () => { cancelled = true; };
   }, [hiringActivityFrom, hiringActivityTo]);
-  const hiringActivityByActor = useMemo(() => groupByActor(hiringActivityEntries), [hiringActivityEntries]);
+  const hiringActivityByActor = useMemo(() => {
+    // A deleted candidate no longer exists in `candidates` at all, so its
+    // activity (e.g. candidate_deleted) can't be resolved to a branch when
+    // a specific branch is selected — best effort, same tradeoff as any
+    // filter applied after the fact rather than stored on the log row.
+    const entries = branchFilter === "all" ? hiringActivityEntries : hiringActivityEntries.filter((e) => e.targetId && candidateIdsInFilter.has(e.targetId));
+    return groupByActor(entries);
+  }, [hiringActivityEntries, branchFilter, candidateIdsInFilter]);
 
   // ── Employee Monitoring (Absent List's HR Status) ────────────────────
   // One shared date range drives BOTH the donut and Team Activity below —
@@ -364,6 +486,11 @@ export function HiringAnalyticsPage() {
       .finally(() => { if (!cancelled) setEmpNotesLoading(false); });
     return () => { cancelled = true; };
   }, [empFrom, empTo]);
+  const filteredEmpNotes = useMemo(
+    () => (branchFilter === "all" ? empNotes : empNotes.filter((r) => profileBranchById.get(r.profileId) === branchFilter)),
+    [empNotes, branchFilter, profileBranchById]
+  );
+
   const empHrNoteCounts = useMemo(() => {
     // Scoped to the HR Status field only. attendance_notes rows also exist
     // purely because someone left a general `content` note (a separate,
@@ -372,12 +499,12 @@ export function HiringAnalyticsPage() {
     // review" — it's just as often "never meant to have a status." Rather
     // than guess, only rows with a real status value are counted here.
     const counts = new Map<string, number>();
-    for (const r of empNotes) {
+    for (const r of filteredEmpNotes) {
       if (!r.hrNote) continue;
       counts.set(r.hrNote, (counts.get(r.hrNote) ?? 0) + 1);
     }
     return counts;
-  }, [empNotes]);
+  }, [filteredEmpNotes]);
 
   const empDonut = useMemo(() => {
     // HR Status is a freely-typed/growing option list (Vacation, Sick,
@@ -418,18 +545,25 @@ export function HiringAnalyticsPage() {
     // HR Status. Once enough history has accrued under the activity log,
     // this fallback should just be deleted and this should go back to
     // `groupByActor(empActivityEntries)`.
+    // A log entry's targetId is `${profileId}|${noteDate}` (see
+    // AbsentListPage.tsx's handleSaveHrStatus/handleSaveNote) — split it to
+    // resolve the branch filter the same way filteredEmpNotes does.
+    const branchFilteredEntries =
+      branchFilter === "all"
+        ? empActivityEntries
+        : empActivityEntries.filter((e) => e.targetId && profileBranchById.get(e.targetId.split("|")[0]) === branchFilter);
     const counts = new Map<string, number>();
-    for (const e of empActivityEntries) {
+    for (const e of branchFilteredEntries) {
       const name = e.actorName || "Unknown";
       counts.set(name, (counts.get(name) ?? 0) + 1);
     }
-    const loggedKeys = new Set(empActivityEntries.map((e) => e.targetId).filter((id): id is string => !!id));
+    const loggedKeys = new Set(branchFilteredEntries.map((e) => e.targetId).filter((id): id is string => !!id));
     const hrNameById = new Map(
       profiles
         .filter((p) => normalizeRole(p.role) === "HR" || (p.extra_roles ?? []).some((r) => normalizeRole(r) === "HR"))
         .map((p) => [p.id, p.display_name || p.email || "Unknown"])
     );
-    for (const r of empNotes) {
+    for (const r of filteredEmpNotes) {
       if (!r.hrNote || !r.createdBy) continue;
       const key = `${r.profileId}|${r.noteDate}`;
       if (loggedKeys.has(key)) continue; // already represented by a log entry — don't double-count
@@ -440,11 +574,12 @@ export function HiringAnalyticsPage() {
     return Array.from(counts.entries())
       .map(([name, count]) => ({ name, count }))
       .sort((a, b) => b.count - a.count);
-  }, [empActivityEntries, empNotes, profiles]);
+  }, [empActivityEntries, filteredEmpNotes, profiles, branchFilter, profileBranchById]);
 
   return (
     <main className="max-w-[1200px] mx-auto px-6 py-8">
-      <div className="flex items-center gap-3 mb-6">
+      <style>{ANALYTICS_ANIMATION_CSS}</style>
+      <div className="flex flex-wrap items-center gap-3 mb-6">
         <button
           type="button"
           onClick={() => navigate({ to: "/m/$module", params: { module: "hr" } })}
@@ -452,52 +587,83 @@ export function HiringAnalyticsPage() {
         >
           <ChevronLeft className="h-4 w-4" />
         </button>
-        <div className="flex-1">
+        <div className="flex-1 min-w-[200px]">
           <h1 className="flex items-center gap-2 text-xl font-bold text-white">
             <PieChart className="h-5 w-5" /> Analytics
           </h1>
           <p className="text-sm text-slate-400">Status breakdowns and who's actually been making changes, across HR.</p>
         </div>
+        <div className="flex flex-col gap-1">
+          <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Branch</label>
+          <select
+            value={branchFilter}
+            onChange={(e) => setBranchFilter(e.target.value)}
+            className="glass-input text-sm py-1.5 px-3 rounded-md"
+          >
+            <option value="all">All Branches</option>
+            {branchOptions.map((b) => (
+              <option key={b} value={b}>{b}</option>
+            ))}
+          </select>
+        </div>
       </div>
 
       <div className="space-y-8">
-        <AnalyticsCategory
-          title="Hiring"
-          donutHeading="Candidates by Status"
-          donutUnitLabel="candidate"
-          loading={candidatesLoading}
-          slices={hiringDonut.slices}
-          total={hiringDonut.total}
-          activityHeading="Team Activity"
-          activitySubheading="Who's actually made changes in Hiring — candidates added, status changes, CVs forwarded, deletions."
-          activityFrom={hiringActivityFrom}
-          onActivityFromChange={setHiringActivityFrom}
-          activityTo={hiringActivityTo}
-          onActivityToChange={setHiringActivityTo}
-          activityLoading={hiringActivityLoading}
-          activityByActor={hiringActivityByActor}
-        />
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <DonutPanel heading="Candidates by Assigned Manager" unitLabel="candidate" loading={candidatesLoading} slices={assignedManagerDonut.slices} total={assignedManagerDonut.total} />
-          <DonutPanel heading="Candidates by Assigned Interviewer" unitLabel="candidate" loading={candidatesLoading} slices={assignedInterviewerDonut.slices} total={assignedInterviewerDonut.total} />
+        <div className="analytics-section-in">
+          <AnalyticsCategory
+            title="Hiring"
+            donutHeading="Candidates by Status"
+            donutUnitLabel="candidate"
+            loading={candidatesLoading}
+            slices={hiringDonut.slices}
+            total={hiringDonut.total}
+            extraDonuts={[
+              {
+                heading: "Candidates by Assigned Manager",
+                unitLabel: "candidate",
+                loading: candidatesLoading,
+                slices: assignedManagerDonut.slices,
+                total: assignedManagerDonut.total,
+                variantKey: `${assignedManagerDonut.total}:${branchFilter}`,
+              },
+              {
+                heading: "Candidates by Assigned Interviewer",
+                unitLabel: "candidate",
+                loading: candidatesLoading,
+                slices: assignedInterviewerDonut.slices,
+                total: assignedInterviewerDonut.total,
+                variantKey: `${assignedInterviewerDonut.total}:${branchFilter}`,
+              },
+            ]}
+            activityHeading="Team Activity"
+            activitySubheading="Who's actually made changes in Hiring — candidates added, status changes, CVs forwarded, deletions."
+            activityFrom={hiringActivityFrom}
+            onActivityFromChange={setHiringActivityFrom}
+            activityTo={hiringActivityTo}
+            onActivityToChange={setHiringActivityTo}
+            activityLoading={hiringActivityLoading}
+            activityByActor={hiringActivityByActor}
+          />
         </div>
 
-        <AnalyticsCategory
-          title="Employee Monitoring"
-          donutHeading="HR Status Breakdown"
-          donutUnitLabel="status"
-          loading={empNotesLoading}
-          slices={empDonut.slices}
-          total={empDonut.total}
-          activityHeading="Team Activity"
-          activitySubheading="Who's actually made changes on the Absent List — HR Status set, notes edited. This same range also drives the HR Status Breakdown chart on the left. Rows from before activity logging existed fall back to who's on the row now (HR role only) so counts aren't undercounted for now."
-          activityFrom={empFrom}
-          onActivityFromChange={setEmpFrom}
-          activityTo={empTo}
-          onActivityToChange={setEmpTo}
-          activityLoading={empActivityLoading || empNotesLoading}
-          activityByActor={empActivityByActor}
-        />
+        <div className="analytics-section-in" style={{ animationDelay: "80ms" }}>
+          <AnalyticsCategory
+            title="Employee Monitoring"
+            donutHeading="HR Status Breakdown"
+            donutUnitLabel="status"
+            loading={empNotesLoading}
+            slices={empDonut.slices}
+            total={empDonut.total}
+            activityHeading="Team Activity"
+            activitySubheading="Who's actually made changes on the Absent List — HR Status set, notes edited. This same range also drives the HR Status Breakdown chart on the left. Rows from before activity logging existed fall back to who's on the row now (HR role only) so counts aren't undercounted for now."
+            activityFrom={empFrom}
+            onActivityFromChange={setEmpFrom}
+            activityTo={empTo}
+            onActivityToChange={setEmpTo}
+            activityLoading={empActivityLoading || empNotesLoading}
+            activityByActor={empActivityByActor}
+          />
+        </div>
       </div>
     </main>
   );
