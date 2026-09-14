@@ -82,7 +82,7 @@ type CellColor = "approved" | "pending" | "hrPlotted";
 // its own red cell instead of blending into the leave-type orange. The
 // remaining 2 HR Status options (Resigned/Terminated) aren't attendance
 // types at all and never populate a cell.
-const HR_STATUS_TO_PTO_TYPE: Partial<Record<string, PtoType>> = {
+export const HR_STATUS_TO_PTO_TYPE: Partial<Record<string, PtoType>> = {
   Vacation: "vacation",
   Sick: "sick",
   Personal: "personal",

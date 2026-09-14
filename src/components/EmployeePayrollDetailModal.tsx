@@ -7,6 +7,8 @@ import { getCompanyHolidaysInRange } from "@/lib/supabase/companyHolidays";
 import { getPendingCorrectionsInRange, type TimecardCorrectionRow } from "@/lib/supabase/timecardCorrections";
 import { PendingItemDetailModal, type PendingItem } from "@/components/PendingItemDetailModal";
 import { getCompanyPtoRequests, isPaidPtoType, type PtoRequestRow, type PtoType } from "@/lib/supabase/pto";
+import { getAttendanceNotes } from "@/lib/supabase/attendanceNotes";
+import { HR_STATUS_TO_PTO_TYPE } from "@/components/HrCalendarTab";
 import { getTicketAttendanceForTechnician, slotSortKey, type TicketAttendanceRow } from "@/lib/supabase/technicianWhereabouts";
 import { getCompanyEmployeeRequests } from "@/lib/supabase/employeeRequests";
 import { getVisitDiagnosisByTicketIds } from "@/lib/supabase/tickets";
@@ -230,13 +232,23 @@ export function EmployeePayrollDetailModal({
       .catch((err) => console.error("Failed to load PTO requests for payroll detail:", err));
   }, []);
 
-  // This profile's approved, PAID pto days, expanded to individual dates
-  // (skipping their own off days) — same expansion AccountingDashboard.tsx's
-  // computeHoursMap already does for the real payroll total. Not clipped to
-  // rangeStart/rangeEnd since it's threaded into both the main and seed-week
-  // getAttendanceForRange calls below, each of which only reads the keys
-  // inside its own iterated window anyway.
-  const paidLeaveDates = useMemo(() => {
+  // This profile's approved, PAID pto days from FORMAL pto_requests, expanded
+  // to individual dates (skipping their own off days) — same expansion
+  // AccountingDashboard.tsx's computeHoursMap already does for the real
+  // payroll total. Not clipped to rangeStart/rangeEnd since it's threaded
+  // into both the main and seed-week getAttendanceForRange calls below, each
+  // of which only reads the keys inside its own iterated window anyway.
+  //
+  // This is NOT the only way leave gets recorded — HR can also set a day's
+  // status directly on the Absent List ("HR Status" dropdown, no formal
+  // request at all), which writes into attendance_notes.hr_note instead of
+  // this table entirely (see HrCalendarTab.tsx's hrPlottedByProfile — the
+  // Time Off Calendar's teal "Set by HR (Absent List), no formal request"
+  // cells). `load()` below fetches that second source and merges it in
+  // (formal request wins if both somehow exist for the same date), so a day
+  // marked either way shows correctly here instead of only the formally
+  // requested-and-approved half of them.
+  const formalPaidLeaveDates = useMemo(() => {
     const map = new Map<string, PtoType>();
     const offDaySet = new Set(offDays ?? []);
     for (const pto of ptoRequests) {
@@ -257,15 +269,28 @@ export function EmployeePayrollDetailModal({
       const seedStart = startOfWeekSunday(rangeStart);
       const seedEnd = addDaysISO(rangeStart, -1);
       const needsSeed = seedStart <= seedEnd;
-      const [holidays, seedRows, pendingCorrections, hist, myTicketRows] = await Promise.all([
+      const notesStart = needsSeed ? seedStart : rangeStart;
+      const [holidays, pendingCorrections, hist, myTicketRows, hrStatusNotes] = await Promise.all([
         getCompanyHolidaysInRange(rangeStart, rangeEnd).catch(() => []),
-        needsSeed
-          ? getAttendanceForRange(profileId, seedStart, seedEnd, { requiredCheckIn, requiredCheckOut, workingHours, mealMinutes, daysOff: offDays, graceMinutes, paidLeaveDates })
-          : Promise.resolve([]),
         getPendingCorrectionsInRange(rangeStart, rangeEnd).catch(() => []),
         getSalaryHistory(profileId),
         getTicketAttendanceForTechnician(employeeName, rangeStart, rangeEnd),
+        getAttendanceNotes(notesStart, rangeEnd).catch(() => []),
       ]);
+      // Merge in HR-plotted leave (attendance_notes.hr_note, no formal
+      // pto_requests row) — a formal request wins if one somehow also
+      // covers the same date, same precedence HrCalendarTab.tsx uses.
+      const paidLeaveDates = new Map<string, PtoType>();
+      for (const n of hrStatusNotes) {
+        if (n.profileId !== profileId) continue;
+        const type = HR_STATUS_TO_PTO_TYPE[n.hrNote];
+        if (!type || !isPaidPtoType(type)) continue;
+        paidLeaveDates.set(n.noteDate, type);
+      }
+      for (const [date, type] of formalPaidLeaveDates) paidLeaveDates.set(date, type);
+      const seedRows = needsSeed
+        ? await getAttendanceForRange(profileId, seedStart, seedEnd, { requiredCheckIn, requiredCheckOut, workingHours, mealMinutes, daysOff: offDays, graceMinutes, paidLeaveDates })
+        : [];
       const attRows = await getAttendanceForRange(profileId, rangeStart, rangeEnd, {
         requiredCheckIn,
         requiredCheckOut,
@@ -300,7 +325,7 @@ export function EmployeePayrollDetailModal({
     load(cancelledRef);
     return () => { cancelledRef.current = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [profileId, rangeStart, rangeEnd, paidLeaveDates]);
+  }, [profileId, rangeStart, rangeEnd, formalPaidLeaveDates]);
 
   const totalHours = useMemo(() => attendance.reduce((s, r) => s + r.hoursWorked, 0), [attendance]);
   // One non-deleted mileage entry per ticket # — same convention Ticket
