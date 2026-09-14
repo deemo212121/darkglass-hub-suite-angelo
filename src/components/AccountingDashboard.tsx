@@ -71,11 +71,11 @@ import {
   deleteTechCustomPayItem,
   getTechRedoTickets,
   getTechOnHoldTickets,
-  getCarryoverRepairCounts,
+  getCarryoverTickets,
   buildTechActivityBreakdown,
   type TechRepairRate,
   type TechRepairCount,
-  type TechCarryoverRepairCount,
+  type TechCarryoverTicket,
   type TechManualPayItem,
   type TechCustomPayItem,
   type TechCategoryOverride,
@@ -267,12 +267,13 @@ export interface EmployeePayrollRow {
    * late_ticket_completions) not yet paid out, priced at today's rate.
    * Already folded into ticketsCompleted/grossPay below (so MCA/Completed
    * Tickets flat-rate treat them like any other completed ticket this
-   * period) — kept here separately, per repair-type + originating period,
-   * purely so TechActivityReportModal.tsx/buildTechActivityBreakdown can
-   * render them as their own "(carried over from ...)" lines instead of
-   * silently merging into this period's own category counts.
+   * period) — kept here separately, one entry per ticket (never grouped by
+   * repair type), purely so TechActivityReportModal.tsx/
+   * buildTechActivityBreakdown can render them as their own "ticket # —
+   * carried over from ..." lines instead of silently merging into this
+   * period's own category counts.
    */
-  techCarryover: TechCarryoverRepairCount[];
+  techCarryover: TechCarryoverTicket[];
   /** Distinct days this employee clocked in during the period — Avg. Comp.'s denominator. */
   workingDays: number;
   /** Tech Payroll only — completed visits this period where this employee was the assisting (2nd) technician. */
@@ -1018,7 +1019,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // not the period it was originally scheduled in. Refetched on the same
   // nonce as techCustomPayItemsAll so consuming a batch on Generate Payroll
   // is reflected immediately.
-  const [carryoverRepairCounts, setCarryoverRepairCounts] = useState<TechCarryoverRepairCount[]>([]);
+  const [carryoverRepairCounts, setCarryoverRepairCounts] = useState<TechCarryoverTicket[]>([]);
   // Assigned (not just completed) visit counts, and Finance's manually
   // entered LDT/Mileage/Training values — both for the same genStart/genEnd
   // period as techRepairCounts above. See the effect below.
@@ -1478,7 +1479,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // as still-owed on the very next render.
   const refreshCarryoverRepairCounts = useCallback(async () => {
     try {
-      setCarryoverRepairCounts(await getCarryoverRepairCounts());
+      setCarryoverRepairCounts(await getCarryoverTickets());
     } catch (err) {
       console.error("Failed to refresh carryover repair counts:", err);
     }
@@ -1942,18 +1943,17 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // grossPay exactly like any other completed ticket this period (so MCA and
   // the flat Completed Tickets rate see them too), but kept in their own map
   // (not merged into techGrossByProfile.categoryCounts) so techRow below can
-  // still show them as distinctly-labeled "(carried over)" lines.
-  const techCarryoverByProfile = new Map<string, { count: number; grossPay: number; groups: TechCarryoverRepairCount[] }>();
+  // still show them as distinctly-labeled, per-ticket "(carried over)" lines.
+  const techCarryoverByProfile = new Map<string, { count: number; grossPay: number; tickets: TechCarryoverTicket[] }>();
   for (const co of carryoverRepairCounts) {
     const emp = employeeByName.get(co.technician.trim().toLowerCase());
     if (!emp) continue;
     const rate = techRateFor(co.repairType, co.branch || emp.assigned_branch || "");
-    const amount = rate * co.count;
-    const prev = techCarryoverByProfile.get(emp.id) ?? { count: 0, grossPay: 0, groups: [] };
+    const prev = techCarryoverByProfile.get(emp.id) ?? { count: 0, grossPay: 0, tickets: [] };
     techCarryoverByProfile.set(emp.id, {
-      count: prev.count + co.count,
-      grossPay: prev.grossPay + amount,
-      groups: [...prev.groups, co],
+      count: prev.count + 1,
+      grossPay: prev.grossPay + rate,
+      tickets: [...prev.tickets, co],
     });
   }
 
@@ -2109,7 +2109,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
               sealedSystemR600: tech?.sealedSystemR600 ?? 0,
             },
             techCategoryCounts: tech?.categoryCounts ?? {},
-            techCarryover: carryover?.groups ?? [],
+            techCarryover: carryover?.tickets ?? [],
             workingDays,
             twoTechCount: twoTechCountForEmp,
             techManual: {
@@ -2441,7 +2441,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       // run's carryoverRepairCounts fetch. Not gated on nationHasExistingLineItems:
       // a regenerate re-pays the same technicians, so re-stamping (already
       // consumed) is a harmless no-op.
-      const consumedCarryoverIds = nationIncludedPayrollRows.flatMap((r) => r.techCarryover.flatMap((c) => c.lateTicketCompletionIds));
+      const consumedCarryoverIds = nationIncludedPayrollRows.flatMap((r) => r.techCarryover.map((c) => c.lateTicketCompletionId));
       if (consumedCarryoverIds.length > 0) {
         markCarryoversConsumed(consumedCarryoverIds, runId)
           .then(refreshCarryoverRepairCounts)
@@ -3977,13 +3977,13 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                                 {roleTypeLabel(row.employee)}
                               </td>
                               <td className="px-4 py-3 text-center text-slate-300">
-                                {row.hoursWorked.toFixed(1)}
+                                {row.hoursWorked.toFixed(3)}
                               </td>
                               <td className="px-4 py-3 text-center text-slate-300">
-                                {(row.hoursWorked + row.overtimeHours).toFixed(1)}
+                                {(row.hoursWorked + row.overtimeHours).toFixed(3)}
                               </td>
                               <td className="px-4 py-3 text-center text-orange-300">
-                                {row.overtimeHours.toFixed(1)}
+                                {row.overtimeHours.toFixed(3)}
                               </td>
                               <td className="px-4 py-3 text-center text-slate-400">
                                 {row.employee.mealMinutes ? `${row.employee.mealMinutes} min` : "—"}

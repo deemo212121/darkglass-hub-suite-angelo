@@ -413,6 +413,20 @@ const hrMod: ModuleDef = {
       count: 0,
       seed: () => ({}),
     },
+    // Standalone full-page version of the same FlashTechCalendarPage
+    // Accounting Dashboard already embeds as its own "Flash Tech" tab
+    // (unchanged) — same flash_tech_trips data either way, just also
+    // reachable as its own HR Dashboard tile so HR can fill in the Tracker
+    // view without needing Accounting access.
+    {
+      slug: "flash-tech",
+      title: "Flash Tech",
+      description: "Technician travel trips — schedule (Calendar) or fill in hotel/rental/receipt tracking detail (Tracker).",
+      custom: "flash-tech" as any,
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
     {
       slug: "technician-form-checklist",
       title: "Staff Form Checklist",

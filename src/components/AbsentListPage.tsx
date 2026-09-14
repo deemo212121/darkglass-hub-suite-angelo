@@ -73,6 +73,7 @@ const HR_STATUS_OPTIONS = [
   "Admin",
   "Resigned",
   "Terminated",
+  "Not yet Started",
 ];
 // "Absent" was RENAMED to "Unnoticed" (a label-only change — no clock-in,
 // no explanation on file — same status, same severity, same behavior
@@ -108,6 +109,7 @@ const HR_STATUS_COLOR: Record<string, string> = {
   Admin: "text-sky-300",
   Resigned: "text-red-300",
   Terminated: "text-red-300",
+  "Not yet Started": "text-violet-300",
 };
 
 interface AbsentRow {
@@ -432,6 +434,8 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
   const [savingHrNoteId, setSavingHrNoteId] = useState<string | null>(null);
   const handleSaveHrStatus = async (profileId: string, noteDate: string, hrNote: string) => {
     const key = `${profileId}|${noteDate}`;
+    // Captured before the save so the activity log can show the actual
+    // transition (e.g. "Absent → Sick"), not just the new value in isolation.
     const previousHrNote = notes.find((n) => n.profileId === profileId && n.noteDate === noteDate)?.hrNote || "";
     setSavingHrNoteId(key);
     try {
@@ -496,6 +500,14 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
           },
         ];
       });
+      const employee = profiles.find((p) => p.id === profileId);
+      void logActivity({
+        action: "attendance_attachment_added",
+        targetType: "attendance_hr_status",
+        targetId: key,
+        targetLabel: `${employee?.display_name || employee?.email || profileId} — ${noteDate}`,
+        details: { fileName: file.name },
+      });
     } catch (err) {
       alert(`Failed to attach file: ${err instanceof Error ? err.message : "Unknown error"}`);
     } finally {
@@ -531,6 +543,14 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
       setNotes((prev) =>
         prev.map((n) => (n.profileId === profileId && n.noteDate === noteDate ? { ...n, attachmentPath: null, attachmentRemovedBy: myProfileId, attachmentRemovedAt: now } : n))
       );
+      const employee = profiles.find((p) => p.id === profileId);
+      void logActivity({
+        action: "attendance_attachment_removed",
+        targetType: "attendance_hr_status",
+        targetId: key,
+        targetLabel: `${employee?.display_name || employee?.email || profileId} — ${noteDate}`,
+        details: {},
+      });
     } catch (err) {
       alert(`Failed to remove attachment: ${err instanceof Error ? err.message : "Unknown error"}`);
     } finally {

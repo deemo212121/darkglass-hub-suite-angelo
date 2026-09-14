@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "@tanstack/react-router";
-import { ChevronLeft, ChevronRight, RefreshCw, Plus, X, Trash2 } from "lucide-react";
+import { useNavigate } from "@tanstack/react-router";
+import { ChevronLeft, ChevronRight, RefreshCw, Plus, X, Trash2, CalendarDays, Table2, Paperclip, Loader2 } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
+import { useSmartBack } from "@/hooks/useSmartBack";
 import { normalizeRole } from "@/lib/roleLabels";
 import { getCompanyUsers, getMyProfileId, getTechnicianContactInfoByIds, type ProfileRow } from "@/lib/supabase/users";
 import {
@@ -10,8 +11,17 @@ import {
   createFlashTechTrip,
   updateFlashTechTrip,
   deleteFlashTechTrip,
+  updateFlashTechTripTrackerFields,
+  updateFlashTechTripTechnician,
+  setFlashTechTripSbmConfirmed,
+  uploadFlashTechTripReceipt,
+  removeFlashTechTripReceipt,
+  FLASH_TECH_TIER_LEVELS,
+  FLASH_TECH_TRIP_TYPES,
+  FLASH_TECH_STATUSES,
   type FlashTechTrip,
 } from "@/lib/supabase/flashTechTrips";
+import { AttachmentPreviewModal } from "@/components/AttachmentPreviewModal";
 import { REGIONS, REGION_LOCATIONS } from "@/lib/locations";
 const WEEKDAY_LABELS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const CHIP_COLORS = ["bg-blue-500/80", "bg-purple-500/80", "bg-emerald-500/80", "bg-amber-500/80", "bg-pink-500/80", "bg-cyan-500/80"];
@@ -127,9 +137,15 @@ function expenseBadge(label: string, expense: FlashTechTrip["hotelExpense"]) {
 }
 
 export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
-  const { uid, role, extraRoles, displayName } = useAuth();
+  const navigate = useNavigate();
+  const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
+  const { uid, role, extraRoles, displayName, companyId } = useAuth();
   const canManage = [role, ...extraRoles].some((r) => ["ADMIN", "SUPERADMIN", "FINANCE"].includes(normalizeRole(r)));
+  // Tracker fields (everything beyond scheduling itself) are also editable
+  // by HR — see migration 0257's widened update policy.
+  const canEditTracker = canManage || [role, ...extraRoles].some((r) => normalizeRole(r) === "HR");
 
+  const [view, setView] = useState<"calendar" | "tracker">("calendar");
   const [monthValue, setMonthValue] = useState(todayMonthValue());
   const [trips, setTrips] = useState<FlashTechTrip[]>([]);
   const [users, setUsers] = useState<ProfileRow[]>([]);
@@ -147,6 +163,86 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
   const [technicianAddress, setTechnicianAddress] = useState("");
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
+
+  // ── Tracker view (migration 0257) — per-cell edits, not the Schedule Trip
+  // modal's full-form save. `savingCellKey` is `${tripId}:${field}`, just
+  // for the small inline spinner on whichever cell is mid-save. ──
+  const [savingCellKey, setSavingCellKey] = useState<string | null>(null);
+  const [uploadingReceiptId, setUploadingReceiptId] = useState<string | null>(null);
+  const [previewReceiptUrl, setPreviewReceiptUrl] = useState<string | null>(null);
+
+  const patchTrip = async (tripId: string, field: string, patch: Parameters<typeof updateFlashTechTripTrackerFields>[1]) => {
+    const key = `${tripId}:${field}`;
+    setSavingCellKey(key);
+    try {
+      await updateFlashTechTripTrackerFields(tripId, patch);
+      setTrips((prev) => prev.map((t) => (t.id === tripId ? { ...t, ...patch } as FlashTechTrip : t)));
+    } catch (err) {
+      alert(`Failed to save: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setSavingCellKey((k) => (k === key ? null : k));
+    }
+  };
+
+  const handleChangeTechnician = async (tripId: string, technicianProfileId: string | null, technicianName: string) => {
+    const key = `${tripId}:technician`;
+    setSavingCellKey(key);
+    try {
+      await updateFlashTechTripTechnician(tripId, technicianProfileId, technicianName);
+      setTrips((prev) => prev.map((t) => (t.id === tripId ? { ...t, technicianProfileId, technicianName } : t)));
+    } catch (err) {
+      alert(`Failed to save: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setSavingCellKey((k) => (k === key ? null : k));
+    }
+  };
+
+  const handleToggleSbmConfirmed = async (trip: FlashTechTrip) => {
+    const key = `${trip.id}:sbmConfirmed`;
+    setSavingCellKey(key);
+    try {
+      const next = !trip.sbmConfirmed;
+      await setFlashTechTripSbmConfirmed(trip.id, next, myProfileId, displayName || "Someone");
+      setTrips((prev) =>
+        prev.map((t) =>
+          t.id === trip.id
+            ? { ...t, sbmConfirmed: next, sbmConfirmedBy: next ? myProfileId : null, sbmConfirmedByName: next ? displayName || "Someone" : null }
+            : t
+        )
+      );
+    } catch (err) {
+      alert(`Failed to save: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setSavingCellKey((k) => (k === key ? null : k));
+    }
+  };
+
+  const handleUploadReceipt = async (trip: FlashTechTrip, file: File) => {
+    if (!companyId) return;
+    setUploadingReceiptId(trip.id);
+    try {
+      const url = await uploadFlashTechTripReceipt(companyId, trip.id, file);
+      setTrips((prev) => prev.map((t) => (t.id === trip.id ? { ...t, receiptPath: url } : t)));
+    } catch (err) {
+      alert(`Failed to upload receipt: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setUploadingReceiptId(null);
+    }
+  };
+
+  const handleRemoveReceipt = async (trip: FlashTechTrip) => {
+    if (!trip.receiptPath) return;
+    if (!window.confirm("Remove this receipt?")) return;
+    setUploadingReceiptId(trip.id);
+    try {
+      await removeFlashTechTripReceipt(trip.id, trip.receiptPath);
+      setTrips((prev) => prev.map((t) => (t.id === trip.id ? { ...t, receiptPath: null } : t)));
+    } catch (err) {
+      alert(`Failed to remove receipt: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setUploadingReceiptId(null);
+    }
+  };
 
   const loadData = async () => {
     setLoading(true);
@@ -306,10 +402,10 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
       <div className={embedded ? "" : "max-w-[1600px] mx-auto px-6"}>
         <div className="mb-4 flex flex-wrap items-center gap-3 text-white">
           {!embedded && (
-            <Link to="/m/$module/$submodule" params={{ module: mod.slug, submodule: "expense-tracking" }} className="btn">
+            <button onClick={goBack} className="btn">
               <ChevronLeft className="h-4 w-4" />
-              Expense Tracking
-            </Link>
+              {mod.label}
+            </button>
           )}
           {!embedded && (
             <div>
@@ -325,7 +421,7 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
             <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
             {loading ? "Loading…" : "Refresh"}
           </button>
-          {canManage && (
+          {canManage && view === "calendar" && (
             <button onClick={openCreateModal} className="btn btn-primary inline-flex items-center gap-2">
               <Plus className="h-4 w-4" />
               Schedule Trip
@@ -335,10 +431,30 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
 
         {!canManage && (
           <div className="panel mb-4 text-sm text-slate-300">
-            Only SuperAdmin, Admin, and Accounting can schedule or edit trips here — you can still view the calendar.
+            Only SuperAdmin, Admin, and Accounting can schedule or edit trips here — you can still view the calendar
+            {canEditTracker ? " and fill in the Tracker below" : ""}.
           </div>
         )}
 
+        <div className="flex gap-1.5 mb-4">
+          <button
+            type="button"
+            onClick={() => setView("calendar")}
+            className={`btn text-sm px-3 py-1.5 inline-flex items-center gap-1.5 ${view === "calendar" ? "bg-primary/20 text-primary" : ""}`}
+          >
+            <CalendarDays className="h-3.5 w-3.5" /> Calendar
+          </button>
+          <button
+            type="button"
+            onClick={() => setView("tracker")}
+            className={`btn text-sm px-3 py-1.5 inline-flex items-center gap-1.5 ${view === "tracker" ? "bg-primary/20 text-primary" : ""}`}
+          >
+            <Table2 className="h-3.5 w-3.5" /> Tracker
+          </button>
+        </div>
+
+        {view === "calendar" && (
+        <>
         <div className="mb-4 flex items-center gap-3">
           <button onClick={() => setMonthValue((m) => shiftMonth(m, -1))} className="btn">
             <ChevronLeft className="h-4 w-4" />
@@ -434,7 +550,30 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
             </div>
           )}
         </div>
+        </>
+        )}
+
+        {view === "tracker" && (
+          <FlashTechTrackerTable
+            trips={sortedTrips}
+            users={users}
+            loading={loading}
+            canEdit={canEditTracker}
+            savingCellKey={savingCellKey}
+            uploadingReceiptId={uploadingReceiptId}
+            onPatch={patchTrip}
+            onChangeTechnician={handleChangeTechnician}
+            onToggleSbmConfirmed={handleToggleSbmConfirmed}
+            onUploadReceipt={handleUploadReceipt}
+            onRemoveReceipt={handleRemoveReceipt}
+            onPreviewReceipt={setPreviewReceiptUrl}
+          />
+        )}
       </div>
+
+      {previewReceiptUrl && (
+        <AttachmentPreviewModal url={previewReceiptUrl} title="Receipt" onClose={() => setPreviewReceiptUrl(null)} />
+      )}
 
       {showModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={closeModal}>
@@ -610,5 +749,312 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
         </div>
       )}
     </main>
+  );
+}
+
+// ── Tracker view — spreadsheet-style follow-up detail, per trip ─────────
+// (migration 0257). Name/Origin/Destination/Travel Date come from the
+// calendar's own Schedule Trip modal and are read-only here; everything
+// else is a per-cell inline editor, saved independently on blur/change so
+// one field's edit never risks another's in-flight value.
+
+type TrackerPatch = Parameters<typeof updateFlashTechTripTrackerFields>[1];
+
+function TrackerTextCell({ value, placeholder, disabled, onSave }: { value: string; placeholder?: string; disabled?: boolean; onSave: (v: string) => void }) {
+  const [draft, setDraft] = useState(value);
+  useEffect(() => setDraft(value), [value]);
+  return (
+    <input
+      value={draft}
+      disabled={disabled}
+      placeholder={placeholder}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => draft !== value && onSave(draft)}
+      className="w-full min-w-[120px] bg-transparent text-xs px-1.5 py-1 border border-transparent hover:border-white/10 focus:border-blue-500 rounded outline-none disabled:opacity-60 disabled:cursor-not-allowed text-slate-200"
+    />
+  );
+}
+
+function TrackerNumberCell({ value, disabled, onSave }: { value: number | null; disabled?: boolean; onSave: (v: number | null) => void }) {
+  const [draft, setDraft] = useState(value != null ? String(value) : "");
+  useEffect(() => setDraft(value != null ? String(value) : ""), [value]);
+  const commit = () => {
+    const n = draft.trim() === "" ? null : Number(draft);
+    if ((n == null ? null : n) !== value) onSave(Number.isFinite(n as number) ? n : null);
+  };
+  return (
+    <input
+      type="number"
+      step="0.01"
+      value={draft}
+      disabled={disabled}
+      placeholder="0.00"
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      className="w-full min-w-[80px] bg-transparent text-xs px-1.5 py-1 border border-transparent hover:border-white/10 focus:border-blue-500 rounded outline-none disabled:opacity-60 disabled:cursor-not-allowed text-slate-200"
+    />
+  );
+}
+
+function TrackerDateRangeCell({
+  start,
+  end,
+  disabled,
+  onSaveStart,
+  onSaveEnd,
+}: {
+  start: string | null;
+  end: string | null;
+  disabled?: boolean;
+  onSaveStart: (v: string | null) => void;
+  onSaveEnd: (v: string | null) => void;
+}) {
+  return (
+    <div className="flex flex-col gap-0.5 min-w-[130px]">
+      <input
+        type="date"
+        value={start || ""}
+        disabled={disabled}
+        onChange={(e) => onSaveStart(e.target.value || null)}
+        className="w-full bg-transparent text-[11px] px-1 py-0.5 border border-transparent hover:border-white/10 focus:border-blue-500 rounded outline-none disabled:opacity-60 disabled:cursor-not-allowed text-slate-200"
+      />
+      <input
+        type="date"
+        value={end || ""}
+        disabled={disabled}
+        onChange={(e) => onSaveEnd(e.target.value || null)}
+        className="w-full bg-transparent text-[11px] px-1 py-0.5 border border-transparent hover:border-white/10 focus:border-blue-500 rounded outline-none disabled:opacity-60 disabled:cursor-not-allowed text-slate-200"
+      />
+    </div>
+  );
+}
+
+function TrackerSelectCell({ value, options, disabled, onSave }: { value: string; options: readonly string[]; disabled?: boolean; onSave: (v: string) => void }) {
+  return (
+    <select
+      value={value}
+      disabled={disabled}
+      onChange={(e) => onSave(e.target.value)}
+      className="w-full min-w-[100px] bg-slate-900 text-xs px-1.5 py-1 border border-transparent hover:border-white/10 focus:border-blue-500 rounded outline-none disabled:opacity-60 disabled:cursor-not-allowed text-slate-200"
+    >
+      {options.map((o) => (
+        <option key={o} value={o} className="bg-slate-900">
+          {o}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+const TRACKER_STATUS_COLOR: Record<string, string> = {
+  Open: "text-emerald-300",
+  Closed: "text-slate-400",
+  Pending: "text-amber-300",
+};
+
+function FlashTechTrackerTable({
+  trips,
+  users,
+  loading,
+  canEdit,
+  savingCellKey,
+  uploadingReceiptId,
+  onPatch,
+  onChangeTechnician,
+  onToggleSbmConfirmed,
+  onUploadReceipt,
+  onRemoveReceipt,
+  onPreviewReceipt,
+}: {
+  trips: FlashTechTrip[];
+  users: ProfileRow[];
+  loading: boolean;
+  canEdit: boolean;
+  savingCellKey: string | null;
+  uploadingReceiptId: string | null;
+  onPatch: (tripId: string, field: string, patch: TrackerPatch) => void;
+  onChangeTechnician: (tripId: string, technicianProfileId: string | null, technicianName: string) => void;
+  onToggleSbmConfirmed: (trip: FlashTechTrip) => void;
+  onUploadReceipt: (trip: FlashTechTrip, file: File) => void;
+  onRemoveReceipt: (trip: FlashTechTrip) => void;
+  onPreviewReceipt: (url: string) => void;
+}) {
+  if (loading) {
+    return <div className="panel py-10 text-center text-slate-400 text-sm">Loading…</div>;
+  }
+  if (trips.length === 0) {
+    return (
+      <div className="panel py-10 text-center text-slate-400 text-sm">
+        No flash tech trips yet — schedule one from the Calendar tab first.
+      </div>
+    );
+  }
+
+  const HEADERS = [
+    "Name", "Tier Level", "Origin City", "Destination City", "Travel Date",
+    "Hotel Name", "Lodging Date", "Address", "Hotel Rate", "Confirmation",
+    "Rental Car", "Rental Date", "Rental Rate", "Vehicle Type", "Other Expenses",
+    "SBM Confirmed", "Notes", "Receipts", "Type", "Status",
+  ];
+
+  // Same "active, has a display name" pool the Schedule Trip modal's own
+  // technician search draws from — not narrowed to the TECHNICIAN role,
+  // since a Flash Tech trip can belong to any staff member covering
+  // another branch (Branch Manager, etc. — see this file's own header).
+  const technicianOptions = [...users]
+    .filter((u) => u.is_active && u.display_name)
+    .sort((a, b) => (a.display_name || "").localeCompare(b.display_name || ""));
+
+  return (
+    <div className="panel overflow-x-auto p-0">
+      <table className="border-collapse text-xs">
+        <thead>
+          <tr className="bg-slate-700/80 text-slate-200">
+            {HEADERS.map((h) => (
+              <th key={h} className="px-2 py-2 text-left font-semibold whitespace-nowrap border-r border-white/10 last:border-r-0">
+                {h}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {trips.map((trip) => {
+            const patch = (field: string, value: TrackerPatch) => onPatch(trip.id, field, value);
+            return (
+              <tr key={trip.id} className="border-b border-white/10 align-top hover:bg-white/5">
+                <td className="p-0.5 border-r border-white/10">
+                  <select
+                    value={trip.technicianProfileId || `unlinked:${trip.technicianName}`}
+                    disabled={!canEdit || savingCellKey === `${trip.id}:technician`}
+                    onChange={(e) => {
+                      const picked = technicianOptions.find((u) => u.id === e.target.value);
+                      if (picked) onChangeTechnician(trip.id, picked.id, picked.display_name || picked.email);
+                    }}
+                    className="w-full min-w-[140px] bg-slate-900 text-xs font-medium px-1.5 py-1 border border-transparent hover:border-white/10 focus:border-blue-500 rounded outline-none disabled:opacity-60 disabled:cursor-not-allowed text-slate-200"
+                  >
+                    {!trip.technicianProfileId && (
+                      <option value={`unlinked:${trip.technicianName}`} disabled className="bg-slate-900">
+                        {trip.technicianName} (unlinked)
+                      </option>
+                    )}
+                    {technicianOptions.map((u) => (
+                      <option key={u.id} value={u.id} className="bg-slate-900">
+                        {u.display_name}
+                      </option>
+                    ))}
+                  </select>
+                </td>
+                <td className="p-0.5 border-r border-white/10">
+                  <TrackerSelectCell value={trip.tierLevel || ""} disabled={!canEdit} options={["", ...FLASH_TECH_TIER_LEVELS]} onSave={(v) => patch("tierLevel", { tierLevel: v || null })} />
+                </td>
+                <td className="px-2 py-1.5 whitespace-nowrap text-slate-300 border-r border-white/10">{trip.originLocation}</td>
+                <td className="px-2 py-1.5 whitespace-nowrap text-slate-300 border-r border-white/10">{trip.destinationLocation}</td>
+                <td className="px-2 py-1.5 whitespace-nowrap text-slate-300 border-r border-white/10">{trip.startDate} – {trip.endDate}</td>
+                <td className="p-0.5 border-r border-white/10">
+                  <TrackerTextCell value={trip.hotelName || ""} disabled={!canEdit} placeholder="Hotel name" onSave={(v) => patch("hotelName", { hotelName: v })} />
+                </td>
+                <td className="p-0.5 border-r border-white/10">
+                  <TrackerDateRangeCell
+                    start={trip.lodgingStartDate}
+                    end={trip.lodgingEndDate}
+                    disabled={!canEdit}
+                    onSaveStart={(v) => patch("lodgingStartDate", { lodgingStartDate: v })}
+                    onSaveEnd={(v) => patch("lodgingEndDate", { lodgingEndDate: v })}
+                  />
+                </td>
+                <td className="p-0.5 border-r border-white/10">
+                  <TrackerTextCell value={trip.hotelAddress || ""} disabled={!canEdit} placeholder="Address" onSave={(v) => patch("hotelAddress", { hotelAddress: v })} />
+                </td>
+                <td className="p-0.5 border-r border-white/10">
+                  <TrackerNumberCell value={trip.hotelRate} disabled={!canEdit} onSave={(v) => patch("hotelRate", { hotelRate: v })} />
+                </td>
+                <td className="p-0.5 border-r border-white/10">
+                  <TrackerTextCell value={trip.hotelConfirmation || ""} disabled={!canEdit} placeholder="Confirmation #" onSave={(v) => patch("hotelConfirmation", { hotelConfirmation: v })} />
+                </td>
+                <td className="p-0.5 border-r border-white/10">
+                  <TrackerTextCell value={trip.rentalCar || ""} disabled={!canEdit} placeholder="Rental company" onSave={(v) => patch("rentalCar", { rentalCar: v })} />
+                </td>
+                <td className="p-0.5 border-r border-white/10">
+                  <TrackerDateRangeCell
+                    start={trip.rentalStartDate}
+                    end={trip.rentalEndDate}
+                    disabled={!canEdit}
+                    onSaveStart={(v) => patch("rentalStartDate", { rentalStartDate: v })}
+                    onSaveEnd={(v) => patch("rentalEndDate", { rentalEndDate: v })}
+                  />
+                </td>
+                <td className="p-0.5 border-r border-white/10">
+                  <TrackerNumberCell value={trip.rentalRate} disabled={!canEdit} onSave={(v) => patch("rentalRate", { rentalRate: v })} />
+                </td>
+                <td className="p-0.5 border-r border-white/10">
+                  <TrackerTextCell value={trip.vehicleType || ""} disabled={!canEdit} placeholder="Vehicle type" onSave={(v) => patch("vehicleType", { vehicleType: v })} />
+                </td>
+                <td className="p-0.5 border-r border-white/10">
+                  <TrackerNumberCell value={trip.otherExpenses} disabled={!canEdit} onSave={(v) => patch("otherExpenses", { otherExpenses: v })} />
+                </td>
+                <td className="px-2 py-1.5 border-r border-white/10">
+                  <label className={`flex items-center gap-1.5 ${canEdit ? "cursor-pointer" : "cursor-not-allowed opacity-70"}`}>
+                    <input
+                      type="checkbox"
+                      checked={trip.sbmConfirmed}
+                      disabled={!canEdit || savingCellKey === `${trip.id}:sbmConfirmed`}
+                      onChange={() => onToggleSbmConfirmed(trip)}
+                      className="h-3.5 w-3.5 accent-emerald-500"
+                    />
+                    {savingCellKey === `${trip.id}:sbmConfirmed` && <Loader2 className="h-3 w-3 animate-spin text-slate-500" />}
+                  </label>
+                  {trip.sbmConfirmed && trip.sbmConfirmedByName && (
+                    <p className="text-[10px] text-slate-500 mt-0.5 whitespace-nowrap">{trip.sbmConfirmedByName}</p>
+                  )}
+                </td>
+                <td className="p-0.5 border-r border-white/10">
+                  <TrackerTextCell value={trip.notes || ""} disabled={!canEdit} placeholder="Notes" onSave={(v) => patch("notes", { notes: v })} />
+                </td>
+                <td className="px-2 py-1.5 border-r border-white/10 whitespace-nowrap">
+                  {trip.receiptPath ? (
+                    <div className="flex items-center gap-2">
+                      <button type="button" onClick={() => onPreviewReceipt(trip.receiptPath!)} className="text-blue-400 hover:text-blue-300 inline-flex items-center gap-1 text-[11px]">
+                        <Paperclip className="h-3 w-3" /> View
+                      </button>
+                      {canEdit && (
+                        <button type="button" onClick={() => onRemoveReceipt(trip)} disabled={uploadingReceiptId === trip.id} className="text-red-400 hover:text-red-300 text-[11px] disabled:opacity-50">
+                          Remove
+                        </button>
+                      )}
+                    </div>
+                  ) : canEdit ? (
+                    <label className="text-[11px] text-blue-400 hover:text-blue-300 cursor-pointer inline-flex items-center gap-1">
+                      {uploadingReceiptId === trip.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Paperclip className="h-3 w-3" />}
+                      {uploadingReceiptId === trip.id ? "Uploading…" : "Attach"}
+                      <input
+                        type="file"
+                        accept="image/*,.pdf"
+                        className="hidden"
+                        disabled={uploadingReceiptId === trip.id}
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) onUploadReceipt(trip, file);
+                          e.target.value = "";
+                        }}
+                      />
+                    </label>
+                  ) : (
+                    <span className="text-slate-600">—</span>
+                  )}
+                </td>
+                <td className="p-0.5 border-r border-white/10">
+                  <TrackerSelectCell value={trip.tripType} disabled={!canEdit} options={FLASH_TECH_TRIP_TYPES} onSave={(v) => patch("tripType", { tripType: v as FlashTechTrip["tripType"] })} />
+                </td>
+                <td className="p-0.5">
+                  <span className={TRACKER_STATUS_COLOR[trip.status] || "text-slate-300"}>
+                    <TrackerSelectCell value={trip.status} disabled={!canEdit} options={FLASH_TECH_STATUSES} onSave={(v) => patch("status", { status: v as FlashTechTrip["status"] })} />
+                  </span>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
   );
 }

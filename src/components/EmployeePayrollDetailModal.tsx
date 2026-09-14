@@ -437,6 +437,20 @@ export function EmployeePayrollDetailModal({
       { regularPay: 0, overtimePay: 0, total: 0 }
     );
   }, [attendance, history, isCurrentlyFixed, currentEntry, dailyHoursSplitByDate]);
+  // Regular/overtime split of totalHours above — same dailyHoursSplitByDate
+  // computedPay itself sums, so this tile's breakdown line always agrees
+  // with Est. Pay's own regular/overtime split.
+  const totalHoursSplit = useMemo(
+    () =>
+      attendance.reduce(
+        (acc, r) => {
+          const { regular, overtime } = dailyHoursSplitByDate.get(r.date) ?? { regular: 0, overtime: 0 };
+          return { regular: acc.regular + regular, overtime: acc.overtime + overtime };
+        },
+        { regular: 0, overtime: 0 }
+      ),
+    [attendance, dailyHoursSplitByDate]
+  );
   const rateNow = useMemo(() => currentRate(history), [history]);
 
   const submitRateChange = async () => {
@@ -621,7 +635,18 @@ export function EmployeePayrollDetailModal({
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <div className="bg-slate-800/50 border border-white/10 rounded-lg p-3">
               <p className="text-xs text-slate-400 uppercase">Total Hours</p>
-              <p className="text-xl font-bold text-white mt-1">{totalHours.toFixed(1)}</p>
+              {/* 3 decimals, not 1 — matches the per-day Hours column below so
+                  manually summing those doesn't drift from this figure. A
+                  clock-in/out to the second produces hours with many decimal
+                  digits; rounding each day to 1dp then summing accumulates
+                  error across a period (e.g. 48.4165... reads as 48.4 here
+                  but a naive sum of individually-1dp-rounded days can land on
+                  48.5) — EST. PAY already uses the full-precision figure, only
+                  the display was misleadingly coarse. */}
+              <p className="text-xl font-bold text-white mt-1">{totalHours.toFixed(3)}</p>
+              <p className="text-xs text-slate-400 mt-0.5">
+                {totalHoursSplit.regular.toFixed(3)} regular + {totalHoursSplit.overtime.toFixed(3)} overtime
+              </p>
             </div>
             <div className="bg-slate-800/50 border border-white/10 rounded-lg p-3">
               <p className="text-xs text-slate-400 uppercase">Warnings</p>
@@ -937,8 +962,8 @@ export function EmployeePayrollDetailModal({
                             <td className={`py-1.5 ${row.clockOut ? "text-red-300" : "text-slate-500"}`}>{row.clockOut || "—"}</td>
                           </>
                         )}
-                        <td className="py-1.5 text-right text-slate-200">{row.hoursWorked ? regularHours.toFixed(1) : "—"}</td>
-                        <td className={`py-1.5 text-right ${overtimeHours > 0 ? "text-orange-300 font-semibold" : "text-slate-500"}`}>{overtimeHours > 0 ? overtimeHours.toFixed(1) : "—"}</td>
+                        <td className="py-1.5 text-right text-slate-200">{row.hoursWorked ? regularHours.toFixed(3) : "—"}</td>
+                        <td className={`py-1.5 text-right ${overtimeHours > 0 ? "text-orange-300 font-semibold" : "text-slate-500"}`}>{overtimeHours > 0 ? overtimeHours.toFixed(3) : "—"}</td>
                         <td className="py-1.5 text-right" onClick={(e) => e.stopPropagation()}>
                           {dayIsFixed ? (
                             <span className="text-slate-500" title="Fixed-salary pay doesn't vary by day — edit it from Salary History above instead">Fixed Salary</span>

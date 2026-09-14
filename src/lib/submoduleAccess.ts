@@ -71,7 +71,13 @@ export function canAccessSubmodule(
   if (isWhereaboutsSubmodule && !hasDashboardAccess(WHEREABOUTS_ROLES, role, extraRoles)) return false;
   if (sub.custom === "company-settings" && !isCompanySuperAdminRole(role, extraRoles)) return false;
 
-  if (moduleAllowedRoles && !hasDashboardAccess(moduleAllowedRoles, role, extraRoles)) return false;
+  // Same carve-out as the admin-module gate above (ALL_ROLES_ADMIN_SUBMODULES)
+  // — internal-message-support must stay unrestrictable even if a company
+  // configures a role-gate override for it via Accessibility Management,
+  // which doesn't know this submodule is meant to be exempt. See
+  // m.$module.$submodule.tsx's identical moduleAccessOk exemption.
+  const isAllRolesAdminSubmodule = moduleSlug === "admin" && ALL_ROLES_ADMIN_SUBMODULES.has(sub.slug);
+  if (moduleAllowedRoles && !isAllRolesAdminSubmodule && !hasDashboardAccess(moduleAllowedRoles, role, extraRoles)) return false;
 
   return true;
 }
