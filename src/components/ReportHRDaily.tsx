@@ -170,6 +170,7 @@ import { notifyHrRoleUsers } from "@/lib/supabase/hrRoleNotify";
 import { getCompanyCoeDocuments, addCoeDocument, type CoeDocument } from "@/lib/supabase/coeDocuments";
 import { getJotformSubmissions, getDeletedJotformSubmissions, updateJotformSubmissionStatus, softDeleteJotformSubmission, restoreJotformSubmission, type JotformSubmission, type JotformSubmissionStatus } from "@/lib/supabase/jotformSubmissions";
 import { getCustomFormSubmissions } from "@/lib/supabase/customForms";
+import { FLASH_TECH_TIER_LEVELS } from "@/lib/supabase/flashTechTrips";
 import { CustomFormsPanel } from "./CustomFormsPanel";
 
 // Formats a <input type="date"> value ("YYYY-MM-DD") as a long-form date
@@ -564,8 +565,11 @@ function loadHiringVisibleColumns(): Record<string, boolean> {
  */
 const MASTER_LIST_TRAINEE_TAB = "__trainee__";
 
-/** Current Technicians' own Tier Level dropdown options — writes profiles.tier_level. */
-const CURRENT_TECH_TIER_LEVEL_OPTIONS = ["Tier 1", "Tier 2", "Tier 3", "SBM", "BM", "TR", "DR", "TM"];
+/** Current Technicians' own Tier Level dropdown options — writes
+ *  profiles.tier_level. Same list Flash Tech's own Tier Level field uses
+ *  (FLASH_TECH_TIER_LEVELS, flashTechTrips.ts is the single source of
+ *  truth) so the two stay in sync instead of drifting apart. */
+const CURRENT_TECH_TIER_LEVEL_OPTIONS = FLASH_TECH_TIER_LEVELS;
 
 function canonicalDepartmentGroup(raw: string): string {
   const trimmed = raw.trim();

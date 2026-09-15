@@ -9,12 +9,32 @@ import { supabase } from "./client";
 import { createExpense, type ExpenseRow } from "./expenses";
 import { uploadFlashTechTripReceiptFile, deleteAttachmentByUrl } from "@/lib/firebase/storage";
 
-/** The 7 valid Tier Level values for the tracker's dropdown. */
-export const FLASH_TECH_TIER_LEVELS = ["Tier 1", "Tier 2", "Tier 3", "BM", "SBM", "A. Director", "Director"];
+/** Tier Level values — kept identical to Master List's own Current
+ *  Technicians tier dropdown (ReportHRDaily.tsx, profiles.tier_level) so
+ *  the two never drift apart; this is the single source of truth for both. */
+export const FLASH_TECH_TIER_LEVELS = ["Tier 1", "Tier 2", "Tier 3", "SBM", "BM", "TR", "DR", "TM"];
 export const FLASH_TECH_TRIP_TYPES = ["Flashtech", "Education", "Inspection"] as const;
 export type FlashTechTripType = (typeof FLASH_TECH_TRIP_TYPES)[number];
-export const FLASH_TECH_STATUSES = ["Open", "Closed", "Pending"] as const;
+/** No longer manually picked — see computeFlashTechTripStatus below. Order
+ *  matches the real lifecycle a trip moves through. */
+export const FLASH_TECH_STATUSES = ["Upcoming", "Open", "Closed"] as const;
 export type FlashTechStatus = (typeof FLASH_TECH_STATUSES)[number];
+
+/**
+ * Status is derived from the trip's own Travel dates against today, not a
+ * manually-picked field — per the user's explicit call: "Open" the day it
+ * starts, "Upcoming" before that, "Closed" once the end date has passed.
+ * A stored `status` column is still written (create + any date edit) so it
+ * stays reasonably queryable, but every UI read recomputes fresh from this
+ * function instead of trusting that stored value, since a trip nobody
+ * touches again would otherwise go stale the moment its date boundary
+ * passes (e.g. "Upcoming" long after it actually started).
+ */
+export function computeFlashTechTripStatus(startDate: string, endDate: string, todayIso: string = new Date().toISOString().slice(0, 10)): FlashTechStatus {
+  if (endDate < todayIso) return "Closed";
+  if (startDate > todayIso) return "Upcoming";
+  return "Open";
+}
 
 export interface FlashTechTrip {
   id: string;
@@ -36,8 +56,9 @@ export interface FlashTechTrip {
   /** This trip's linked expense rows, if any were created for it. */
   hotelExpense: ExpenseRow | null;
   transportationExpense: ExpenseRow | null;
-  // ── Tracker-only fields (migration 0257) — filled in by HR/Accounting
-  // after the trip is scheduled, not part of the Schedule Trip modal. ──
+  // ── Tracker fields (migration 0257) — fillable straight from the
+  // Schedule Trip modal now (createFlashTechTrip), and still editable
+  // afterward per-cell from the Tracker view either way. ──
   tierLevel: string | null;
   lodgingStartDate: string | null;
   lodgingEndDate: string | null;
@@ -55,6 +76,16 @@ export interface FlashTechTrip {
   receiptPaths: string[];
   tripType: FlashTechTripType;
   status: FlashTechStatus;
+  // ── Alternate hotel (migration 0261) — the Tracker's "Technician
+  // requested another hotel" toggle plus its own small set of fields,
+  // separate from the original hotel_* columns above so the original
+  // booking stays on record. ──
+  altHotelRequested: boolean;
+  altLodgingStartDate: string | null;
+  altLodgingEndDate: string | null;
+  altHotelAddress: string | null;
+  altHotelRate: number | null;
+  altHotelConfirmation: string | null;
 }
 
 function mapTripRow(row: any): Omit<FlashTechTrip, "hotelExpense" | "transportationExpense"> {
@@ -88,7 +119,15 @@ function mapTripRow(row: any): Omit<FlashTechTrip, "hotelExpense" | "transportat
     otherExpenses: row.other_expenses != null ? Number(row.other_expenses) : null,
     receiptPaths: Array.isArray(row.receipt_paths) ? row.receipt_paths : [],
     tripType: (row.trip_type ?? "Flashtech") as FlashTechTripType,
-    status: (row.status ?? "Open") as FlashTechStatus,
+    // Always freshly computed from the real dates, never the stored
+    // column — see computeFlashTechTripStatus's own doc comment for why.
+    status: computeFlashTechTripStatus(row.start_date, row.end_date),
+    altHotelRequested: Boolean(row.alt_hotel_requested),
+    altLodgingStartDate: row.alt_lodging_start_date ?? null,
+    altLodgingEndDate: row.alt_lodging_end_date ?? null,
+    altHotelAddress: row.alt_hotel_address ?? null,
+    altHotelRate: row.alt_hotel_rate != null ? Number(row.alt_hotel_rate) : null,
+    altHotelConfirmation: row.alt_hotel_confirmation ?? null,
   };
 }
 
@@ -128,7 +167,8 @@ export async function getCompanyFlashTechTrips(): Promise<FlashTechTrip[]> {
         "id, technician_profile_id, technician_name, technician_phone, technician_email, origin_location, destination_location, start_date, end_date, notes, car_rental_needed, created_by, created_by_name, created_at, " +
           "tier_level, lodging_start_date, lodging_end_date, hotel_name, hotel_address, hotel_rate, hotel_confirmation, " +
           "rental_car, rental_start_date, rental_end_date, rental_rate, vehicle_type, other_expenses, " +
-          "receipt_paths, trip_type, status"
+          "receipt_paths, trip_type, status, " +
+          "alt_hotel_requested, alt_lodging_start_date, alt_lodging_end_date, alt_hotel_address, alt_hotel_rate, alt_hotel_confirmation"
       )
       .order("start_date", { ascending: true })
       .range(from, from + PAGE_SIZE - 1);
@@ -187,6 +227,26 @@ export async function createFlashTechTrip(input: {
   createdByName: string | null;
   includeHotelExpense?: boolean;
   includeTransportationExpense?: boolean;
+  // ── Tracker fields, now fillable straight from Schedule Trip instead of
+  // only afterward via the Tracker's own per-cell editors (per the user's
+  // explicit call — the whole point used to be "unknown at scheduling
+  // time," but HR often does know these up front). All optional; a blank
+  // one just leaves the column empty for the Tracker to fill in later,
+  // same as before this existed. ──
+  tierLevel?: string | null;
+  hotelName?: string | null;
+  lodgingStartDate?: string | null;
+  lodgingEndDate?: string | null;
+  hotelAddress?: string | null;
+  hotelRate?: number | null;
+  hotelConfirmation?: string | null;
+  rentalCar?: string | null;
+  rentalStartDate?: string | null;
+  rentalEndDate?: string | null;
+  rentalRate?: number | null;
+  vehicleType?: string | null;
+  otherExpenses?: number | null;
+  tripType?: FlashTechTripType;
 }): Promise<string> {
   const { data, error } = await supabase
     .from("flash_tech_trips")
@@ -203,6 +263,24 @@ export async function createFlashTechTrip(input: {
       car_rental_needed: input.carRentalNeeded ?? false,
       created_by: input.createdBy,
       created_by_name: input.createdByName,
+      tier_level: input.tierLevel || null,
+      hotel_name: input.hotelName || null,
+      lodging_start_date: input.lodgingStartDate || null,
+      lodging_end_date: input.lodgingEndDate || null,
+      hotel_address: input.hotelAddress || null,
+      hotel_rate: input.hotelRate ?? null,
+      hotel_confirmation: input.hotelConfirmation || null,
+      rental_car: input.rentalCar || null,
+      rental_start_date: input.rentalStartDate || null,
+      rental_end_date: input.rentalEndDate || null,
+      rental_rate: input.rentalRate ?? null,
+      vehicle_type: input.vehicleType || null,
+      other_expenses: input.otherExpenses ?? null,
+      trip_type: input.tripType ?? "Flashtech",
+      // Not manually picked — see computeFlashTechTripStatus's doc
+      // comment. Written once here purely so the stored column starts
+      // out correct too; every read recomputes fresh regardless.
+      status: computeFlashTechTripStatus(input.startDate, input.endDate),
     })
     .select("id")
     .single();
@@ -269,6 +347,7 @@ export async function updateFlashTechTrip(
       end_date: fields.endDate,
       notes: fields.notes || null,
       car_rental_needed: fields.carRentalNeeded,
+      status: computeFlashTechTripStatus(fields.startDate, fields.endDate),
     })
     .eq("id", id);
   if (error) {
@@ -294,6 +373,24 @@ export async function updateFlashTechTripTechnician(id: string, technicianProfil
     .eq("id", id);
   if (error) {
     console.error("updateFlashTechTripTechnician error:", error.message);
+    throw new Error(error.message);
+  }
+}
+
+/**
+ * Patches just the trip's own Travel Start/End dates — separate from
+ * updateFlashTechTrip's full-form save (which resends every other base
+ * field too) so the Tracker's own Travel Date cell can correct a typo'd
+ * date without needing the whole Schedule Trip form, same pattern as
+ * updateFlashTechTripTechnician above.
+ */
+export async function updateFlashTechTripDates(id: string, startDate: string, endDate: string): Promise<void> {
+  const { error } = await supabase
+    .from("flash_tech_trips")
+    .update({ start_date: startDate, end_date: endDate, status: computeFlashTechTripStatus(startDate, endDate) })
+    .eq("id", id);
+  if (error) {
+    console.error("updateFlashTechTripDates error:", error.message);
     throw new Error(error.message);
   }
 }
@@ -325,7 +422,12 @@ export async function updateFlashTechTripTrackerFields(
     otherExpenses: number | null;
     notes: string | null;
     tripType: FlashTechTripType;
-    status: FlashTechStatus;
+    altHotelRequested: boolean;
+    altLodgingStartDate: string | null;
+    altLodgingEndDate: string | null;
+    altHotelAddress: string | null;
+    altHotelRate: number | null;
+    altHotelConfirmation: string | null;
   }>
 ): Promise<void> {
   const payload: Record<string, any> = {};
@@ -347,7 +449,12 @@ export async function updateFlashTechTripTrackerFields(
   if ("otherExpenses" in fields) payload.other_expenses = fields.otherExpenses;
   if ("notes" in fields) payload.notes = fields.notes || null;
   if ("tripType" in fields) payload.trip_type = fields.tripType;
-  if ("status" in fields) payload.status = fields.status;
+  if ("altHotelRequested" in fields) payload.alt_hotel_requested = fields.altHotelRequested;
+  if ("altLodgingStartDate" in fields) payload.alt_lodging_start_date = fields.altLodgingStartDate || null;
+  if ("altLodgingEndDate" in fields) payload.alt_lodging_end_date = fields.altLodgingEndDate || null;
+  if ("altHotelAddress" in fields) payload.alt_hotel_address = fields.altHotelAddress || null;
+  if ("altHotelRate" in fields) payload.alt_hotel_rate = fields.altHotelRate;
+  if ("altHotelConfirmation" in fields) payload.alt_hotel_confirmation = fields.altHotelConfirmation || null;
 
   const { error } = await supabase.from("flash_tech_trips").update(payload).eq("id", id);
   if (error) {
