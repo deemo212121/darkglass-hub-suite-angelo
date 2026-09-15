@@ -327,13 +327,20 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
   // the broader "any active staff member" pool the Schedule Trip picker
   // itself still offers (a trip can still be scheduled for a Branch
   // Manager covering another branch — this list just isn't the place to
-  // surface non-field staff as "available"/"needs a form" for that). Split
-  // by whether they're mid-trip TODAY specifically (not just "in this
-  // month", since the calendar can browse other months while this answers
-  // "who's free to send out as of right now").
+  // surface non-field staff as "available"/"needs a form" for that).
+  // Further narrowed to technicians who actually have at least one Flash
+  // Tech Tracker record (past or current trip) — this list tracks the
+  // people already in the flash tech program, not the whole technician
+  // roster company-wide. Split by whether they're mid-trip TODAY
+  // specifically (not just "in this month", since the calendar can browse
+  // other months while this answers "who's free to send out as of right
+  // now").
   const technicianAvailability = useMemo(() => {
     const today = todayIso();
-    const active = users.filter((u) => u.is_active && u.display_name && isEligibleForTechnicianFormChecklist(u.role, u.extra_roles));
+    const trackedProfileIds = new Set(trips.map((t) => t.technicianProfileId).filter((id): id is string => !!id));
+    const active = users.filter(
+      (u) => u.is_active && u.display_name && isEligibleForTechnicianFormChecklist(u.role, u.extra_roles) && trackedProfileIds.has(u.id)
+    );
     const tripByProfileId = new Map<string, FlashTechTrip>();
     for (const t of trips) {
       if (t.technicianProfileId && t.startDate <= today && t.endDate >= today) tripByProfileId.set(t.technicianProfileId, t);
