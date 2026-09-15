@@ -15,11 +15,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
-import { ChevronLeft, X, RefreshCw } from "lucide-react";
+import { ChevronLeft, X, RefreshCw, ExternalLink, Pencil, Check } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { BrandedLoader } from "@/components/BrandedLoader";
 import { getCompanyTickets } from "@/lib/supabase/tickets";
 import { getCompanyTicketClaimDetails } from "@/lib/supabase/claimDetails";
+import { getReceivingStatusProviderLinks, upsertReceivingStatusProviderLink } from "@/lib/supabase/receivingStatusLinks";
 import type { Ticket } from "@/lib/ticketData";
 import { LOCATIONS } from "@/lib/locations";
 import {
@@ -38,25 +39,55 @@ export function ReceivingStatusPage({ mod }: { mod: ModuleDef; sub: SubModuleDef
   const [error, setError] = useState<string | null>(null);
   const [rows, setRows] = useState<ReceivingStatusCell[]>([]);
   const [lastLoadedAt, setLastLoadedAt] = useState<Date | null>(null);
+  const [providerLinks, setProviderLinks] = useState<Map<string, string>>(new Map());
 
   const [branchFilter, setBranchFilter] = useState("ALL");
   const [providerFilter, setProviderFilter] = useState("ALL");
   const [drillDown, setDrillDown] = useState<DrillDown>(null);
 
+  const [editingProvider, setEditingProvider] = useState<string | null>(null);
+  const [editUrlValue, setEditUrlValue] = useState("");
+  const [savingLink, setSavingLink] = useState(false);
+
   const load = async () => {
     try {
       setLoading(true);
       setError(null);
-      const [tickets, claimDetailsByTicketId] = await Promise.all([
+      const [tickets, claimDetailsByTicketId, links] = await Promise.all([
         getCompanyTickets(),
         getCompanyTicketClaimDetails(),
+        getReceivingStatusProviderLinks(),
       ]);
       setRows(computeReceivingStatusRows(tickets, claimDetailsByTicketId));
+      setProviderLinks(links);
       setLastLoadedAt(new Date());
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load Receiving Status.");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const startEditingLink = (provider: string) => {
+    setEditingProvider(provider);
+    setEditUrlValue(providerLinks.get(provider) || "");
+  };
+
+  const saveLink = async (provider: string) => {
+    setSavingLink(true);
+    try {
+      await upsertReceivingStatusProviderLink(provider, editUrlValue);
+      setProviderLinks((prev) => {
+        const next = new Map(prev);
+        if (editUrlValue.trim()) next.set(provider, editUrlValue.trim());
+        else next.delete(provider);
+        return next;
+      });
+      setEditingProvider(null);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Failed to save link.");
+    } finally {
+      setSavingLink(false);
     }
   };
 
@@ -172,6 +203,27 @@ export function ReceivingStatusPage({ mod }: { mod: ModuleDef; sub: SubModuleDef
               ))}
             </div>
 
+            {/* Provider portal links — one per portal family (ServicePower, ServiceBench, etc.), editable by Admin. */}
+            <div className="rounded-xl border border-white/10 bg-white/5 p-2 mb-3">
+              <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">Provider Portals</p>
+              <div className="flex flex-wrap gap-2">
+                {providers.map((p) => (
+                  <ProviderLinkChip
+                    key={p}
+                    provider={p}
+                    url={providerLinks.get(p)}
+                    editing={editingProvider === p}
+                    editValue={editUrlValue}
+                    saving={savingLink}
+                    onEditValueChange={setEditUrlValue}
+                    onStartEdit={() => startEditingLink(p)}
+                    onSave={() => saveLink(p)}
+                    onCancel={() => setEditingProvider(null)}
+                  />
+                ))}
+              </div>
+            </div>
+
             {/* Branch x Provider breakdown — totals only, click a number to see the tickets. */}
             <div className="overflow-hidden rounded-xl border border-white/10 bg-white/5">
               <div className="overflow-x-auto">
@@ -192,9 +244,22 @@ export function ReceivingStatusPage({ mod }: { mod: ModuleDef; sub: SubModuleDef
                       <tr><td colSpan={7} className="px-2 py-6 text-center text-slate-500">No tickets match these filters.</td></tr>
                     ) : (
                       filteredRows.map((r) => (
-                        <tr key={`${r.branch} ${r.provider}`} className="border-b border-white/5 last:border-0 hover:bg-white/5">
+                        <tr key={`${r.branch}::${r.provider}`} className="border-b border-white/5 last:border-0 hover:bg-white/5">
                           <td className="px-2 py-1.5 text-slate-200">{r.branch}</td>
-                          <td className="px-2 py-1.5 text-slate-300">{r.provider}</td>
+                          <td className="px-2 py-1.5 text-slate-300">
+                            {providerLinks.get(r.provider) ? (
+                              <a
+                                href={providerLinks.get(r.provider)}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 text-blue-400 hover:underline"
+                              >
+                                {r.provider} <ExternalLink className="h-3 w-3" />
+                              </a>
+                            ) : (
+                              r.provider
+                            )}
+                          </td>
                           <CellButton value={r.total} onClick={() => openDrillDown(`${r.branch} — ${r.provider}`, r.tickets)} />
                           <CellButton value={r.incoming} color="text-amber-300" onClick={() => openDrillDown(`${r.branch} — ${r.provider} — Incoming`, r.incomingTickets)} />
                           <CellButton value={r.inProgress} color="text-blue-300" onClick={() => openDrillDown(`${r.branch} — ${r.provider} — In Progress`, r.inProgressTickets)} />
@@ -212,6 +277,68 @@ export function ReceivingStatusPage({ mod }: { mod: ModuleDef; sub: SubModuleDef
       </main>
 
       {drillDown && <TicketListModal title={drillDown.title} tickets={drillDown.tickets} onClose={() => setDrillDown(null)} />}
+    </div>
+  );
+}
+
+function ProviderLinkChip({
+  provider,
+  url,
+  editing,
+  editValue,
+  saving,
+  onEditValueChange,
+  onStartEdit,
+  onSave,
+  onCancel,
+}: {
+  provider: string;
+  url: string | undefined;
+  editing: boolean;
+  editValue: string;
+  saving: boolean;
+  onEditValueChange: (v: string) => void;
+  onStartEdit: () => void;
+  onSave: () => void;
+  onCancel: () => void;
+}) {
+  if (editing) {
+    return (
+      <div className="flex items-center gap-1 rounded-md border border-blue-500/50 bg-slate-950 px-2 py-1">
+        <span className="text-[10px] font-semibold text-slate-300">{provider}</span>
+        <input
+          type="url"
+          autoFocus
+          value={editValue}
+          onChange={(e) => onEditValueChange(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") onSave();
+            if (e.key === "Escape") onCancel();
+          }}
+          placeholder="https://…"
+          className="w-48 rounded border border-white/15 bg-slate-900 px-1.5 py-0.5 text-[11px] text-white focus:outline-none focus:border-blue-500"
+        />
+        <button type="button" onClick={onSave} disabled={saving} className="rounded p-0.5 text-emerald-400 hover:bg-white/10 disabled:opacity-50">
+          <Check className="h-3.5 w-3.5" />
+        </button>
+        <button type="button" onClick={onCancel} disabled={saving} className="rounded p-0.5 text-slate-400 hover:bg-white/10 disabled:opacity-50">
+          <X className="h-3.5 w-3.5" />
+        </button>
+      </div>
+    );
+  }
+  return (
+    <div className="flex items-center gap-1.5 rounded-md border border-white/10 bg-slate-950/50 px-2 py-1">
+      {url ? (
+        <a href={url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-[11px] text-blue-400 hover:underline">
+          {provider} <ExternalLink className="h-3 w-3" />
+        </a>
+      ) : (
+        <span className="text-[11px] text-slate-400">{provider} — no link set</span>
+      )}
+      <button type="button" onClick={onStartEdit} className="rounded p-0.5 text-slate-500 hover:text-slate-200 hover:bg-white/10" title="Edit link">
+        <Pencil className="h-3 w-3" />
+      </button>
     </div>
   );
 }
