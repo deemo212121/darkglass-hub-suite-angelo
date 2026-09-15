@@ -1381,15 +1381,15 @@ function TrackerSelectCell({ value, options, disabled, onSave }: { value: string
 }
 
 const TRACKER_STATUS_COLOR: Record<string, string> = {
-  Open: "text-emerald-300",
+  Open: "text-green-400",
   Closed: "text-slate-400",
-  Upcoming: "text-amber-300",
+  Upcoming: "text-yellow-300",
 };
 
 const TRACKER_ROW_STATUS_BG: Record<string, string> = {
-  Open: "bg-emerald-500/20 border-l-2 border-l-emerald-400 hover:bg-emerald-500/25",
+  Open: "bg-green-500/35 border-l-2 border-l-green-400 hover:bg-green-500/40",
   Closed: "bg-slate-500/15 border-l-2 border-l-slate-500 hover:bg-slate-500/20",
-  Upcoming: "bg-amber-500/20 border-l-2 border-l-amber-400 hover:bg-amber-500/25",
+  Upcoming: "bg-yellow-400/35 border-l-2 border-l-yellow-300 hover:bg-yellow-400/40",
 };
 
 function FlashTechTrackerTable({
@@ -1450,9 +1450,45 @@ function FlashTechTrackerTable({
     .filter((u) => u.is_active && u.display_name)
     .sort((a, b) => (a.display_name || "").localeCompare(b.display_name || ""));
 
-  // Confirmed before revealing the alt-hotel fields — turning it back off
-  // doesn't need the same confirmation, only adding it does.
-  const [confirmAltHotelTrip, setConfirmAltHotelTrip] = useState<FlashTechTrip | null>(null);
+  // "Technician requested another hotel" opens this form popup (add AND
+  // edit both go through it) instead of editing the Alt Hotel columns
+  // cell-by-cell inline — those columns are a read-only summary once set.
+  const [altHotelModalTrip, setAltHotelModalTrip] = useState<FlashTechTrip | null>(null);
+  const [altHotelForm, setAltHotelForm] = useState({ lodgingStart: "", lodgingEnd: "", address: "", rate: "", confirmation: "" });
+  const openAltHotelModal = (trip: FlashTechTrip) => {
+    setAltHotelModalTrip(trip);
+    setAltHotelForm({
+      lodgingStart: trip.altLodgingStartDate || "",
+      lodgingEnd: trip.altLodgingEndDate || "",
+      address: trip.altHotelAddress || "",
+      rate: trip.altHotelRate != null ? String(trip.altHotelRate) : "",
+      confirmation: trip.altHotelConfirmation || "",
+    });
+  };
+  const saveAltHotelModal = () => {
+    if (!altHotelModalTrip) return;
+    onPatch(altHotelModalTrip.id, "altHotelRequested", {
+      altHotelRequested: true,
+      altLodgingStartDate: altHotelForm.lodgingStart || null,
+      altLodgingEndDate: altHotelForm.lodgingEnd || null,
+      altHotelAddress: altHotelForm.address || null,
+      altHotelRate: altHotelForm.rate ? Number(altHotelForm.rate) : null,
+      altHotelConfirmation: altHotelForm.confirmation || null,
+    });
+    setAltHotelModalTrip(null);
+  };
+  const removeAltHotelModal = () => {
+    if (!altHotelModalTrip) return;
+    onPatch(altHotelModalTrip.id, "altHotelRequested", {
+      altHotelRequested: false,
+      altLodgingStartDate: null,
+      altLodgingEndDate: null,
+      altHotelAddress: null,
+      altHotelRate: null,
+      altHotelConfirmation: null,
+    });
+    setAltHotelModalTrip(null);
+  };
 
   // Whether every row's Alt Hotel fields render as their own 4 columns or
   // collapse into one — most trips never touch these, so collapsed is the
@@ -1544,16 +1580,12 @@ function FlashTechTrackerTable({
                   <button
                     type="button"
                     disabled={!canEdit}
-                    onClick={() =>
-                      trip.altHotelRequested
-                        ? patch("altHotelRequested", { altHotelRequested: false })
-                        : setConfirmAltHotelTrip(trip)
-                    }
+                    onClick={() => openAltHotelModal(trip)}
                     className={`mt-0.5 w-full rounded px-1.5 py-0.5 text-left text-[10px] leading-tight transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
                       trip.altHotelRequested ? "bg-amber-500/20 text-amber-300 hover:bg-amber-500/25" : "text-slate-500 hover:text-slate-300 hover:bg-white/5"
                     }`}
                   >
-                    {trip.altHotelRequested ? "▾ " : "▸ "}Technician requested another hotel
+                    {trip.altHotelRequested ? "✓ Alt hotel on file" : "Technician requested another hotel"}
                   </button>
                 </td>
                 <td className="p-0.5 border-r border-white/10">
@@ -1599,53 +1631,53 @@ function FlashTechTrackerTable({
                 </td>
                 {altColsExpanded ? (
                   <>
-                    <td className="p-0.5 border-r border-white/10 bg-amber-500/[0.04]">
-                      {trip.altHotelRequested ? (
-                        <TrackerDateRangeCell
-                          start={trip.altLodgingStartDate}
-                          end={trip.altLodgingEndDate}
-                          disabled={!canEdit}
-                          onSaveStart={(v) => patch("altLodgingStartDate", { altLodgingStartDate: v || null })}
-                          onSaveEnd={(v) => patch("altLodgingEndDate", { altLodgingEndDate: v || null })}
-                        />
+                    <td
+                      className={`px-2 py-1.5 whitespace-nowrap border-r border-white/10 bg-amber-500/[0.04] ${canEdit ? "cursor-pointer hover:bg-amber-500/10" : ""}`}
+                      onClick={() => canEdit && openAltHotelModal(trip)}
+                    >
+                      {trip.altHotelRequested && trip.altLodgingStartDate ? (
+                        <span className="text-slate-200">{trip.altLodgingStartDate} – {trip.altLodgingEndDate || "?"}</span>
                       ) : (
-                        <span className="block px-1.5 py-1 text-slate-600">—</span>
+                        <span className="text-slate-600">—</span>
                       )}
                     </td>
-                    <td className="p-0.5 border-r border-white/10 bg-amber-500/[0.04]">
-                      {trip.altHotelRequested ? (
-                        <TrackerTextCell
-                          value={trip.altHotelAddress || ""}
-                          disabled={!canEdit}
-                          placeholder="Address"
-                          onSave={(v) => patch("altHotelAddress", { altHotelAddress: v })}
-                        />
+                    <td
+                      className={`px-2 py-1.5 whitespace-nowrap border-r border-white/10 bg-amber-500/[0.04] ${canEdit ? "cursor-pointer hover:bg-amber-500/10" : ""}`}
+                      onClick={() => canEdit && openAltHotelModal(trip)}
+                    >
+                      {trip.altHotelRequested && trip.altHotelAddress ? (
+                        <span className="text-slate-200">{trip.altHotelAddress}</span>
                       ) : (
-                        <span className="block px-1.5 py-1 text-slate-600">—</span>
+                        <span className="text-slate-600">—</span>
                       )}
                     </td>
-                    <td className="p-0.5 border-r border-white/10 bg-amber-500/[0.04]">
-                      {trip.altHotelRequested ? (
-                        <TrackerNumberCell value={trip.altHotelRate} disabled={!canEdit} onSave={(v) => patch("altHotelRate", { altHotelRate: v })} />
+                    <td
+                      className={`px-2 py-1.5 whitespace-nowrap border-r border-white/10 bg-amber-500/[0.04] ${canEdit ? "cursor-pointer hover:bg-amber-500/10" : ""}`}
+                      onClick={() => canEdit && openAltHotelModal(trip)}
+                    >
+                      {trip.altHotelRequested && trip.altHotelRate != null ? (
+                        <span className="text-slate-200">{trip.altHotelRate.toFixed(2)}</span>
                       ) : (
-                        <span className="block px-1.5 py-1 text-slate-600">—</span>
+                        <span className="text-slate-600">—</span>
                       )}
                     </td>
-                    <td className="p-0.5 border-r border-white/10 bg-amber-500/[0.04]">
-                      {trip.altHotelRequested ? (
-                        <TrackerTextCell
-                          value={trip.altHotelConfirmation || ""}
-                          disabled={!canEdit}
-                          placeholder="Confirmation #"
-                          onSave={(v) => patch("altHotelConfirmation", { altHotelConfirmation: v })}
-                        />
+                    <td
+                      className={`px-2 py-1.5 whitespace-nowrap border-r border-white/10 bg-amber-500/[0.04] ${canEdit ? "cursor-pointer hover:bg-amber-500/10" : ""}`}
+                      onClick={() => canEdit && openAltHotelModal(trip)}
+                    >
+                      {trip.altHotelRequested && trip.altHotelConfirmation ? (
+                        <span className="text-slate-200">{trip.altHotelConfirmation}</span>
                       ) : (
-                        <span className="block px-1.5 py-1 text-slate-600">—</span>
+                        <span className="text-slate-600">—</span>
                       )}
                     </td>
                   </>
                 ) : (
-                  <td colSpan={ALT_HEADERS.length} className="p-0.5 border-r border-white/10 bg-amber-500/[0.04] text-center">
+                  <td
+                    colSpan={ALT_HEADERS.length}
+                    className={`p-0.5 border-r border-white/10 bg-amber-500/[0.04] text-center ${canEdit ? "cursor-pointer hover:bg-amber-500/10" : ""}`}
+                    onClick={() => canEdit && openAltHotelModal(trip)}
+                  >
                     {trip.altHotelRequested ? (
                       <span className="text-[10px] font-medium text-amber-300">● alt hotel on file</span>
                     ) : (
@@ -1734,38 +1766,86 @@ function FlashTechTrackerTable({
         </tbody>
       </table>
 
-      {confirmAltHotelTrip && (
+      {altHotelModalTrip && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
-          onClick={() => setConfirmAltHotelTrip(null)}
+          onClick={() => setAltHotelModalTrip(null)}
         >
           <div
-            className="w-full max-w-sm rounded-lg border border-white/10 bg-slate-800 p-5 shadow-xl"
+            className="w-full max-w-md rounded-lg border border-white/10 bg-slate-800 p-5 shadow-xl"
             onClick={(e) => e.stopPropagation()}
           >
-            <h3 className="text-sm font-semibold text-white">Technician requested another hotel?</h3>
+            <h3 className="text-sm font-semibold text-white">Technician requested another hotel</h3>
             <p className="mt-1.5 text-xs text-slate-400">
-              This adds a separate Lodging Date, Address, Hotel Rate, and Confirmation Number for {confirmAltHotelTrip.technicianName}'s
-              replacement stay — the original hotel details stay on the row untouched.
+              {altHotelModalTrip.technicianName}'s replacement stay — the original Hotel Name/Lodging Date/Address/Rate/Confirmation stay on the row untouched.
             </p>
-            <div className="mt-4 flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setConfirmAltHotelTrip(null)}
-                className="btn text-xs px-3 py-1.5"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  onPatch(confirmAltHotelTrip.id, "altHotelRequested", { altHotelRequested: true });
-                  setConfirmAltHotelTrip(null);
-                }}
-                className="btn btn-primary text-xs px-3 py-1.5"
-              >
-                Yes, add fields
-              </button>
+            <div className="mt-4 grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs font-semibold uppercase text-slate-400">Lodging Start</label>
+                <input
+                  type="date"
+                  value={altHotelForm.lodgingStart}
+                  onChange={(e) => setAltHotelForm((f) => ({ ...f, lodgingStart: e.target.value }))}
+                  className="glass-input mt-1 w-full"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-semibold uppercase text-slate-400">Lodging End</label>
+                <input
+                  type="date"
+                  value={altHotelForm.lodgingEnd}
+                  onChange={(e) => setAltHotelForm((f) => ({ ...f, lodgingEnd: e.target.value }))}
+                  className="glass-input mt-1 w-full"
+                />
+              </div>
+              <div className="col-span-2">
+                <label className="text-xs font-semibold uppercase text-slate-400">Address</label>
+                <input
+                  type="text"
+                  value={altHotelForm.address}
+                  onChange={(e) => setAltHotelForm((f) => ({ ...f, address: e.target.value }))}
+                  placeholder="Address"
+                  className="glass-input mt-1 w-full"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-semibold uppercase text-slate-400">Hotel Rate</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={altHotelForm.rate}
+                  onChange={(e) => setAltHotelForm((f) => ({ ...f, rate: e.target.value }))}
+                  className="glass-input mt-1 w-full"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-semibold uppercase text-slate-400">Confirmation #</label>
+                <input
+                  type="text"
+                  value={altHotelForm.confirmation}
+                  onChange={(e) => setAltHotelForm((f) => ({ ...f, confirmation: e.target.value }))}
+                  placeholder="Confirmation #"
+                  className="glass-input mt-1 w-full"
+                />
+              </div>
+            </div>
+            <div className="mt-5 flex items-center justify-between">
+              {altHotelModalTrip.altHotelRequested ? (
+                <button type="button" onClick={removeAltHotelModal} className="text-xs text-red-400 hover:text-red-300">
+                  Remove alternate hotel
+                </button>
+              ) : (
+                <span />
+              )}
+              <div className="flex gap-2">
+                <button type="button" onClick={() => setAltHotelModalTrip(null)} className="btn text-xs px-3 py-1.5">
+                  Cancel
+                </button>
+                <button type="button" onClick={saveAltHotelModal} className="btn btn-primary text-xs px-3 py-1.5">
+                  Save
+                </button>
+              </div>
             </div>
           </div>
         </div>
