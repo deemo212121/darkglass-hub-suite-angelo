@@ -33,9 +33,9 @@
  * "technician-form-checklist"; the route already renders <AppHeader />
  * and gates access to ADMIN / HR (DASHBOARD_ROLE_GATES).
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { ChevronLeft, ClipboardCheck, Loader2, ChevronDown, ExternalLink, RefreshCw, Send, Bell, Snowflake, Search, X, PenLine } from "lucide-react";
+import { ChevronLeft, ClipboardCheck, Loader2, ChevronDown, ExternalLink, RefreshCw, Send, Bell, Snowflake, Search, X, PenLine, Filter } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { ManagerReviewPage, SUPPORTED_TYPES as EMPLOYER_SIGN_SUPPORTED_TYPES } from "@/components/ManagerReviewPage";
 import { getCompanyUsers, getMyProfileId, setProfileFrozen, type ProfileRow } from "@/lib/supabase/users";
@@ -54,8 +54,10 @@ import {
   pickAuthoritativeDocument,
   isNewAutomationDoc,
   SHARED_OLD_NEW_AUTOMATION_TYPES,
+  type DocumentReviewStatus,
 } from "@/lib/signableDocumentRegistry";
 import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
+import { getTechnicianIdDocumentUrl } from "@/lib/supabase/technicianIdDocuments";
 import { getTechnicianFormExemptions, setTechnicianFormExemption } from "@/lib/supabase/technicianFormExemptions";
 import { logActivity } from "@/lib/supabase/hrActivityLog";
 import { getAppUrl } from "@/lib/appUrl";
@@ -91,6 +93,25 @@ interface ChecklistTabConfig {
    */
   formSourceBucket: "old" | "new";
 }
+
+/**
+ * Identity photos collected alongside a Master Agreement's own typed
+ * fields (technicianIdDocuments.ts — private-bucket paths on the
+ * document's formData, never a plaintext SSN column). Not part of the
+ * signed PDF itself, so they need their own "view" links here rather than
+ * riding along with the doc's pdfUrl-driven one above.
+ */
+const ID_DOC_FIELDS: Partial<Record<SignableDocumentType, { field: string; label: string }[]>> = {
+  master_w2_agreement: [
+    { field: "licensePhotoPath", label: "License" },
+    { field: "ssnCardPhotoPath", label: "SSN Card" },
+  ],
+  master_w2_office_agreement: [
+    { field: "licensePhotoPath", label: "License" },
+    { field: "ssnCardPhotoPath", label: "SSN Card" },
+  ],
+  master_ph_contractor_agreement: [{ field: "governmentIdPhotoPath", label: "ID" }],
+};
 
 const CHECKLIST_TABS: ChecklistTabConfig[] = [
   {
@@ -170,6 +191,13 @@ export function TechnicianFormChecklistPage() {
   const [branchFilter, setBranchFilter] = useState("");
   const [search, setSearch] = useState("");
   const [sortMode, setSortMode] = useState<SortMode>("missing-desc");
+  // Form + Status filters, e.g. "who still hasn't signed the I-9" or "who's
+  // waiting on HR to countersign the W-4" — form defaults to "every form",
+  // in which case status matches if ANY of a person's (non-exempt) forms in
+  // this tier is in that state, since there's no single "the" form to check.
+  const [formTypeFilter, setFormTypeFilter] = useState<SignableDocumentType | "">("");
+  const [statusFilter, setStatusFilter] = useState<"" | "done" | "awaiting_hr" | "not_signed">("");
+  const [statusPanelHidden, setStatusPanelHidden] = useState(false);
   const [actionKey, setActionKey] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   // Set to open the "Review & Sign" popup for an "Awaiting HR review" row —
@@ -184,6 +212,11 @@ export function TechnicianFormChecklistPage() {
   // signing, just the document with a close button, instead of opening a
   // new browser tab.
   const [viewDoc, setViewDoc] = useState<{ doc: SignableDocument; label: string } | null>(null);
+  // Same "plain read-only popup" shape as viewDoc above, just for a License/
+  // SSN Card/ID photo instead of a signed document's pdfUrl — those live in
+  // a private Storage bucket behind a short-lived signed URL (fetched on
+  // click, not cached), not a fixed field on the SignableDocument itself.
+  const [idPhotoView, setIdPhotoView] = useState<{ url: string; label: string } | null>(null);
 
   // ── Contractor Addendum's "Send" step needs Position Level + Guaranteed
   // Minimum Baseline Payout up front — these are compensation/title terms
@@ -406,6 +439,10 @@ export function TechnicianFormChecklistPage() {
     setBranchFilter("");
     setSortMode("missing-desc");
     setHideComplete(false);
+    // Each tier has its own form list, so a form picked under one tier
+    // (e.g. "Contractor Addendum" under BM+) may not exist under another.
+    setFormTypeFilter("");
+    setStatusFilter("");
   };
 
   const branchOptions = useMemo(
@@ -413,10 +450,47 @@ export function TechnicianFormChecklistPage() {
     [rows]
   );
 
+  const formOptions = useMemo(
+    () => activeConfig.formTypes.map((type) => ({ type, label: SIGNABLE_DOCUMENT_REGISTRY[type]?.label ?? type })),
+    [activeConfig]
+  );
+
+  /** True if any of `types` is in `status` for row `r`, skipping forms
+   *  marked Not Applicable — an exemption isn't "not signed", it's out of
+   *  scope entirely, same as it's excluded from doneCount/applicableTotal. */
+  const rowHasStatus = (r: TechRow, types: SignableDocumentType[], status: DocumentReviewStatus) =>
+    types.some((type) => !r.exempt.has(type) && getDocumentReviewStatus(type, r.docs.get(type)) === status);
+
+  // Once a specific Form is picked in the floating filter, break the whole
+  // tier's roster (not just whatever the Search/Branch text filters happen
+  // to leave visible) into who's Signed/Not Signed/Waiting for HR on THAT
+  // form — the Status dropdown alone only ever shows one bucket at a time,
+  // but seeing all three side by side per form is the more useful view.
+  const formStatusGroups = useMemo(() => {
+    if (!formTypeFilter) return null;
+    const signed: string[] = [];
+    const notSigned: string[] = [];
+    const awaitingHr: string[] = [];
+    for (const r of rows) {
+      if (r.exempt.has(formTypeFilter)) continue;
+      const status = getDocumentReviewStatus(formTypeFilter, r.docs.get(formTypeFilter));
+      if (status === "done") signed.push(r.name);
+      else if (status === "awaiting_hr") awaitingHr.push(r.name);
+      else notSigned.push(r.name);
+    }
+    const byName = (a: string, b: string) => a.localeCompare(b);
+    return { signed: signed.sort(byName), notSigned: notSigned.sort(byName), awaitingHr: awaitingHr.sort(byName) };
+  }, [rows, formTypeFilter]);
+
   const visibleRows = useMemo(() => {
     let result = rows;
     if (hideComplete) result = result.filter((r) => r.doneCount < r.applicableTotal);
     if (branchFilter) result = result.filter((r) => r.branch === branchFilter);
+    if (statusFilter) {
+      const checkTypes = formTypeFilter ? [formTypeFilter] : activeConfig.formTypes;
+      const targets: DocumentReviewStatus[] = statusFilter === "not_signed" ? ["not_sent", "awaiting_employee"] : [statusFilter];
+      result = result.filter((r) => targets.some((t) => rowHasStatus(r, checkTypes, t)));
+    }
     const q = search.trim().toLowerCase();
     if (q) result = result.filter((r) => r.name.toLowerCase().includes(q));
     const missing = (r: TechRow) => r.applicableTotal - r.doneCount;
@@ -813,10 +887,10 @@ export function TechnicianFormChecklistPage() {
             <option value="hide">Hide complete</option>
           </select>
         </div>
-        {(search || branchFilter || sortMode !== "missing-desc" || hideComplete) && (
+        {(search || branchFilter || sortMode !== "missing-desc" || hideComplete || statusFilter || formTypeFilter) && (
           <button
             type="button"
-            onClick={() => { setSearch(""); setBranchFilter(""); setSortMode("missing-desc"); setHideComplete(false); }}
+            onClick={() => { setSearch(""); setBranchFilter(""); setSortMode("missing-desc"); setHideComplete(false); setStatusFilter(""); setFormTypeFilter(""); }}
             className="text-xs text-blue-400 hover:text-blue-300 mt-4"
           >
             Reset filters
@@ -836,7 +910,13 @@ export function TechnicianFormChecklistPage() {
         <div className="rounded-xl border border-white/10 bg-slate-900/40 px-6 py-16 text-center">
           <ClipboardCheck className="mx-auto h-8 w-8 text-slate-600" />
           <p className="mt-3 text-sm text-slate-400">
-            {rows.length === 0 ? `No ${activeConfig.noun} found.` : search.trim() ? `No ${activeConfig.noun.slice(0, -1)} matches "${search.trim()}".` : `Every one of these ${activeConfig.noun} is fully signed up.`}
+            {rows.length === 0
+              ? `No ${activeConfig.noun} found.`
+              : search.trim()
+              ? `No ${activeConfig.noun.slice(0, -1)} matches "${search.trim()}".`
+              : statusFilter || formTypeFilter
+              ? `No ${activeConfig.noun} match that Status/Form filter.`
+              : `Every one of these ${activeConfig.noun} is fully signed up.`}
           </p>
         </div>
       ) : (
@@ -967,8 +1047,10 @@ export function TechnicianFormChecklistPage() {
                           : awaitingEmployee
                           ? "border-amber-500/60 bg-transparent"
                           : "border-white/20 bg-transparent";
+                        const idDocFields = !na && doc ? (ID_DOC_FIELDS[type] ?? []).filter(({ field }) => doc.formData?.[field]) : [];
                         return (
-                          <li key={type} className={`flex items-center gap-2.5 text-sm ${na ? "opacity-50" : ""}`}>
+                          <Fragment key={type}>
+                          <li className={`flex items-center gap-2.5 text-sm ${na ? "opacity-50" : ""}`}>
                             <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${markerClass}`}>
                               {done && <span className="text-[10px] font-bold leading-none">✓</span>}
                             </span>
@@ -1083,6 +1165,24 @@ export function TechnicianFormChecklistPage() {
                               N/A
                             </label>
                           </li>
+                          {idDocFields.map(({ field, label: fieldLabel }) => (
+                            <li key={field} className="flex items-center gap-2.5 text-sm pl-6">
+                              <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded border border-white/20 bg-transparent" />
+                              <span className="flex-1 min-w-0 text-slate-400">{fieldLabel}</span>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  getTechnicianIdDocumentUrl(doc!.formData[field])
+                                    .then((url) => setIdPhotoView({ url, label: fieldLabel }))
+                                    .catch((err) => setActionError(err instanceof Error ? err.message : `Failed to open ${fieldLabel} photo.`))
+                                }
+                                className="inline-flex shrink-0 items-center gap-0.5 text-xs text-blue-400 hover:text-blue-300"
+                              >
+                                view <ExternalLink className="h-3 w-3" />
+                              </button>
+                            </li>
+                          ))}
+                          </Fragment>
                         );
                       })}
                     </ul>
@@ -1095,12 +1195,109 @@ export function TechnicianFormChecklistPage() {
       )}
     </main>
 
+    {/* Floating Status/Form filter — pinned to the viewport (not the
+        scrolling <main> column) so it's reachable no matter how far down
+        the roster list you've scrolled. Same fixed-right-rail pattern as
+        AbsentListPage.tsx's own floating stats card. */}
+    {statusPanelHidden ? (
+      <button
+        type="button"
+        onClick={() => setStatusPanelHidden(false)}
+        title="Signed filter"
+        className="fixed right-3 top-20 z-40 rounded-full border border-white/10 bg-slate-900/90 p-3.5 shadow-lg backdrop-blur-md text-slate-400 hover:text-white transition"
+      >
+        <Filter className="h-6 w-6" />
+      </button>
+    ) : (
+      <div
+        className={`fixed right-3 top-20 z-40 rounded-2xl border border-white/10 bg-slate-900/90 p-3 shadow-lg backdrop-blur-md max-h-[85vh] overflow-y-auto transition-[width] ${
+          formStatusGroups ? "w-[26rem]" : "w-56"
+        }`}
+      >
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-xs font-semibold text-white">Filter</span>
+          <button type="button" onClick={() => setStatusPanelHidden(true)} title="Hide" className="text-slate-500 hover:text-white">
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+        <div className="flex flex-col gap-2">
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">Status</label>
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}
+              className="rounded-lg border border-white/15 bg-slate-900/60 px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-blue-500"
+            >
+              <option value="">Any status</option>
+              <option value="done">Signed</option>
+              <option value="not_signed">Not signed</option>
+              <option value="awaiting_hr">Awaiting HR Review</option>
+            </select>
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">Form</label>
+            <select
+              value={formTypeFilter}
+              onChange={(e) => setFormTypeFilter(e.target.value as SignableDocumentType | "")}
+              className="rounded-lg border border-white/15 bg-slate-900/60 px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-blue-500"
+            >
+              <option value="">All forms</option>
+              {formOptions.map((f) => <option key={f.type} value={f.type}>{f.label}</option>)}
+            </select>
+          </div>
+          {(statusFilter || formTypeFilter) && (
+            <button
+              type="button"
+              onClick={() => { setStatusFilter(""); setFormTypeFilter(""); }}
+              className="text-[11px] text-blue-400 hover:text-blue-300 text-left"
+            >
+              Clear
+            </button>
+          )}
+        </div>
+
+        {formStatusGroups && (
+          <div className="mt-3 pt-3 border-t border-white/10 flex flex-col gap-3">
+            {(
+              [
+                { key: "signed", status: "done", label: "Signed", names: formStatusGroups.signed, dot: "bg-emerald-400", text: "text-emerald-300" },
+                { key: "notSigned", status: "not_signed", label: "Not Signed", names: formStatusGroups.notSigned, dot: "bg-red-400", text: "text-red-300" },
+                { key: "awaitingHr", status: "awaiting_hr", label: "Awaiting HR Review", names: formStatusGroups.awaitingHr, dot: "bg-amber-400", text: "text-amber-300" },
+              ] as const
+            )
+              // The Status dropdown now actually narrows this list down to
+              // just the picked bucket instead of always showing all three
+              // regardless of what Status says — that mismatch was the
+              // "status filter not working" bug: Status="Signed" changed
+              // the roster below but visibly did nothing to this panel.
+              .filter((g) => !statusFilter || g.status === statusFilter)
+              .map((g) => (
+              <div key={g.key}>
+                <p className={`text-[11px] font-semibold uppercase tracking-wide flex items-center gap-1.5 ${g.text}`}>
+                  <span className={`h-1.5 w-1.5 rounded-full ${g.dot}`} /> {g.label} ({g.names.length})
+                </p>
+                {g.names.length === 0 ? (
+                  <p className="text-[11px] text-slate-500 mt-1">— none —</p>
+                ) : (
+                  <ul className="mt-1 space-y-0.5">
+                    {g.names.map((n) => (
+                      <li key={n} className="text-xs text-slate-300 truncate" title={n}>{n}</li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    )}
+
     {/* Plain read-only "view" popup — just the PDF and a close button, no
         signing. Opened from the "view" link/button on any row that has a
         pdfUrl, regardless of status. */}
     {viewDoc && (
       <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => setViewDoc(null)}>
-        <div className="bg-slate-900 border border-white/10 rounded-lg shadow-2xl w-full max-w-2xl max-h-[92vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+        <div className="bg-slate-900 border border-white/10 rounded-lg shadow-2xl w-full max-w-[95vw] h-[95vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
           <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between gap-3 shrink-0">
             <p className="text-sm font-semibold truncate">{viewDoc.label}</p>
             <button
@@ -1112,7 +1309,36 @@ export function TechnicianFormChecklistPage() {
             </button>
           </div>
           <div className="flex-1 overflow-hidden bg-slate-950">
-            {viewDoc.doc.pdfUrl && <iframe src={viewDoc.doc.pdfUrl} title={viewDoc.label} className="w-full h-full min-h-[70vh] border-0" />}
+            {viewDoc.doc.pdfUrl && <iframe src={viewDoc.doc.pdfUrl} title={viewDoc.label} className="w-full h-full border-0" />}
+          </div>
+        </div>
+      </div>
+    )}
+
+    {/* Same plain read-only popup, for a License/SSN Card/ID photo — see
+        idPhotoView's own comment above. */}
+    {idPhotoView && (
+      <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => setIdPhotoView(null)}>
+        <div className="bg-slate-900 border border-white/10 rounded-lg shadow-2xl w-full max-w-[95vw] h-[95vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+          <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between gap-3 shrink-0">
+            <p className="text-sm font-semibold truncate">{idPhotoView.label}</p>
+            <button
+              type="button"
+              onClick={() => setIdPhotoView(null)}
+              className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-white/5"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          <div className="flex-1 overflow-auto bg-slate-950 flex items-center justify-center p-4">
+            {/* A plain <img>, not an <iframe> — an iframe hands an image off
+                to the browser's own standalone image viewer, which renders
+                it at native pixel size (100% zoom) instead of scaling to
+                fit, so a real camera-resolution ID photo overflowed the
+                popup instead of fitting inside it. object-contain scales it
+                down to fit while still letting it grow up to its own
+                natural size on a small photo. */}
+            <img src={idPhotoView.url} alt={idPhotoView.label} className="max-w-full max-h-full object-contain" />
           </div>
         </div>
       </div>

@@ -613,10 +613,26 @@ export function HrCalendarTab({ employees, myProfileId, myDisplayName }: Props) 
     }
   };
 
+  // Held roles pile up (primary + extra), same convention as
+  // canReviewPtoStage/reviewPtoStage elsewhere in this file.
+  const isHrUser = [role, ...(extraRoles ?? [])].map((r) => (r || "").toUpperCase()).includes("HR");
+
+  // Vacation PTO needs 1 year of tenure (ptoYearWindow returns null below
+  // that — see pto.ts); Sick Leave has no such wait (sickYearWindow allows
+  // tenure year 0), so this only ever blocks Vacation. A missing Start Date
+  // entirely is the separate warning below this modal's Start/End fields,
+  // not this one — ptoYearWindow also returns null with no date at all, so
+  // this only fires once there IS a Start Date but it's under a year old.
+  const notYetPtoEligible = !!(modal?.employee.startDate && !ptoYearWindow(modal.employee.startDate, null));
+
   const handleCreate = async () => {
     if (!modal) return;
     if (!formStart || !formEnd) {
       setFormError("Pick a start and end date.");
+      return;
+    }
+    if (formType === "vacation" && notYetPtoEligible) {
+      setFormError(`${modal.employee.name} hasn't reached 1 year of tenure yet — can't file a Vacation leave until then.`);
       return;
     }
     if (formEnd < formStart) {
@@ -633,6 +649,13 @@ export function HrCalendarTab({ employees, myProfileId, myDisplayName }: Props) 
         endDate: formEnd,
         reason: formReason,
         requestedBy: myProfileId,
+        // HR plotting this directly from the calendar needs no separate
+        // manager/HR/Accounting sign-off — it's already HR's own call. See
+        // createPtoRequest's autoApprovedBy doc for why this skips straight
+        // to "approved" (and so immediately counts against the employee's
+        // PTO/Sick Leave balance via ptoDaysUsed/sickDaysUsed) instead of
+        // sitting as a pending request.
+        autoApprovedBy: isHrUser ? myProfileId : null,
       });
       if (attachFile && companyId) {
         await uploadPtoAttachment(created.id, companyId, attachFile, myProfileId);
@@ -654,6 +677,10 @@ export function HrCalendarTab({ employees, myProfileId, myDisplayName }: Props) 
     }
     if (formEnd < formStart) {
       setFormError("End date can't be before the start date.");
+      return;
+    }
+    if (formType === "vacation" && notYetPtoEligible) {
+      setFormError(`${modal.employee.name} hasn't reached 1 year of tenure yet — can't file a Vacation leave until then.`);
       return;
     }
     setSaving(true);
@@ -1280,6 +1307,11 @@ export function HrCalendarTab({ employees, myProfileId, myDisplayName }: Props) 
                     ))}
                   </select>
                 </div>
+                {formType === "vacation" && notYetPtoEligible && (
+                  <p className="text-[11px] text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-md px-2.5 py-2">
+                    ⚠️ {modal.employee.name} doesn't have a PTO counter — they haven't reached 1 year on the Master List yet. If this is a mistake, please fix their Start Date on the Master List so you can file a Vacation leave.
+                  </p>
+                )}
                 <div className="grid grid-cols-2 gap-2">
                   <div className="flex flex-col gap-1">
                     <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Start</label>
@@ -1290,6 +1322,17 @@ export function HrCalendarTab({ employees, myProfileId, myDisplayName }: Props) 
                     <input type="date" value={formEnd} onChange={(e) => setFormEnd(e.target.value)} className={inputCls} />
                   </div>
                 </div>
+                {formStart && (
+                  !modal.employee.startDate ? (
+                    <p className="text-[11px] text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-md px-2.5 py-2">
+                      ⚠️ No Start Date on file for {modal.employee.name} — their PTO/Sick Leave balance can't be tracked, so this won't subtract from it. Please fix their Start Date on the Master List.
+                    </p>
+                  ) : formStart < modal.employee.startDate ? (
+                    <p className="text-[11px] text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-md px-2.5 py-2">
+                      ⚠️ This date is before {modal.employee.name}'s Start Date on file ({modal.employee.startDate}) — it won't subtract from their PTO/Sick Leave balance. Please fix their Start Date on the Master List.
+                    </p>
+                  ) : null
+                )}
                 <div className="flex flex-col gap-1">
                   <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Reason</label>
                   <textarea value={formReason} onChange={(e) => setFormReason(e.target.value)} rows={2} className={inputCls} />
@@ -1313,7 +1356,8 @@ export function HrCalendarTab({ employees, myProfileId, myDisplayName }: Props) 
                 <div className="flex items-center gap-2 pt-1">
                   <button
                     type="button"
-                    disabled={saving}
+                    disabled={saving || (formType === "vacation" && notYetPtoEligible)}
+                    title={formType === "vacation" && notYetPtoEligible ? "Not eligible for Vacation PTO yet — fix their Start Date on the Master List first." : undefined}
                     onClick={modal.mode === "create" ? handleCreate : handleEditSave}
                     className="btn text-xs px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
                   >

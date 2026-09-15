@@ -20,11 +20,16 @@ export interface FlashTechTrip {
   id: string;
   technicianProfileId: string | null;
   technicianName: string;
+  /** Snapshotted from the technician's profile at scheduling time (migration 0259) — editable afterward via the Tracker's own Contact Number/Email cells, same as every other tracker-only field. */
+  technicianPhone: string | null;
+  technicianEmail: string | null;
   originLocation: string;
   destinationLocation: string;
   startDate: string; // "YYYY-MM-DD"
   endDate: string; // "YYYY-MM-DD"
   notes: string | null;
+  /** Yes/No toggle set at scheduling time (migration 0260) — whether this trip needs a rental car at all, separate from the Tracker's own Rental Car/Rate/Vehicle Type detail fields filled in once it's actually booked. */
+  carRentalNeeded: boolean;
   createdBy: string | null;
   createdByName: string | null;
   createdAt: string;
@@ -46,10 +51,8 @@ export interface FlashTechTrip {
   rentalRate: number | null;
   vehicleType: string | null;
   otherExpenses: number | null;
-  sbmConfirmed: boolean;
-  sbmConfirmedBy: string | null;
-  sbmConfirmedByName: string | null;
-  receiptPath: string | null;
+  /** Up to 5 receipt attachments (migration 0258 — was a single receiptPath). */
+  receiptPaths: string[];
   tripType: FlashTechTripType;
   status: FlashTechStatus;
 }
@@ -59,11 +62,14 @@ function mapTripRow(row: any): Omit<FlashTechTrip, "hotelExpense" | "transportat
     id: row.id,
     technicianProfileId: row.technician_profile_id ?? null,
     technicianName: row.technician_name,
+    technicianPhone: row.technician_phone ?? null,
+    technicianEmail: row.technician_email ?? null,
     originLocation: row.origin_location,
     destinationLocation: row.destination_location,
     startDate: row.start_date,
     endDate: row.end_date,
     notes: row.notes ?? null,
+    carRentalNeeded: Boolean(row.car_rental_needed),
     createdBy: row.created_by ?? null,
     createdByName: row.created_by_name ?? null,
     createdAt: row.created_at,
@@ -80,10 +86,7 @@ function mapTripRow(row: any): Omit<FlashTechTrip, "hotelExpense" | "transportat
     rentalRate: row.rental_rate != null ? Number(row.rental_rate) : null,
     vehicleType: row.vehicle_type ?? null,
     otherExpenses: row.other_expenses != null ? Number(row.other_expenses) : null,
-    sbmConfirmed: Boolean(row.sbm_confirmed),
-    sbmConfirmedBy: row.sbm_confirmed_by ?? null,
-    sbmConfirmedByName: row.sbm_confirmed_by_name ?? null,
-    receiptPath: row.receipt_path ?? null,
+    receiptPaths: Array.isArray(row.receipt_paths) ? row.receipt_paths : [],
     tripType: (row.trip_type ?? "Flashtech") as FlashTechTripType,
     status: (row.status ?? "Open") as FlashTechStatus,
   };
@@ -122,10 +125,10 @@ export async function getCompanyFlashTechTrips(): Promise<FlashTechTrip[]> {
     const { data: page, error } = await supabase
       .from("flash_tech_trips")
       .select(
-        "id, technician_profile_id, technician_name, origin_location, destination_location, start_date, end_date, notes, created_by, created_by_name, created_at, " +
+        "id, technician_profile_id, technician_name, technician_phone, technician_email, origin_location, destination_location, start_date, end_date, notes, car_rental_needed, created_by, created_by_name, created_at, " +
           "tier_level, lodging_start_date, lodging_end_date, hotel_name, hotel_address, hotel_rate, hotel_confirmation, " +
           "rental_car, rental_start_date, rental_end_date, rental_rate, vehicle_type, other_expenses, " +
-          "sbm_confirmed, sbm_confirmed_by, sbm_confirmed_by_name, receipt_path, trip_type, status"
+          "receipt_paths, trip_type, status"
       )
       .order("start_date", { ascending: true })
       .range(from, from + PAGE_SIZE - 1);
@@ -172,26 +175,32 @@ export async function getCompanyFlashTechTrips(): Promise<FlashTechTrip[]> {
 export async function createFlashTechTrip(input: {
   technicianProfileId: string | null;
   technicianName: string;
+  technicianPhone?: string;
+  technicianEmail?: string;
   originLocation: string;
   destinationLocation: string;
   startDate: string;
   endDate: string;
   notes: string;
+  carRentalNeeded?: boolean;
   createdBy: string | null;
   createdByName: string | null;
   includeHotelExpense?: boolean;
   includeTransportationExpense?: boolean;
-}): Promise<void> {
+}): Promise<string> {
   const { data, error } = await supabase
     .from("flash_tech_trips")
     .insert({
       technician_profile_id: input.technicianProfileId,
       technician_name: input.technicianName,
+      technician_phone: input.technicianPhone || null,
+      technician_email: input.technicianEmail || null,
       origin_location: input.originLocation,
       destination_location: input.destinationLocation,
       start_date: input.startDate,
       end_date: input.endDate,
       notes: input.notes || null,
+      car_rental_needed: input.carRentalNeeded ?? false,
       created_by: input.createdBy,
       created_by_name: input.createdByName,
     })
@@ -205,7 +214,7 @@ export async function createFlashTechTrip(input: {
   const tripId = data.id as string;
   const routeLabel = `${input.originLocation} → ${input.destinationLocation}`;
   const tripProfileId = input.technicianProfileId;
-  if (!tripProfileId) return; // Nothing to link the placeholder expenses to.
+  if (!tripProfileId) return tripId; // Nothing to link the placeholder expenses to.
 
   const subtypeInserts: Array<{ subtype: "hotel" | "transportation"; description: string }> = [];
   if (input.includeHotelExpense !== false) {
@@ -233,6 +242,7 @@ export async function createFlashTechTrip(input: {
       console.error(`createFlashTechTrip: failed to create ${subtype} expense:`, err);
     }
   }
+  return tripId;
 }
 
 export async function updateFlashTechTrip(
@@ -245,6 +255,7 @@ export async function updateFlashTechTrip(
     startDate: string;
     endDate: string;
     notes: string;
+    carRentalNeeded: boolean;
   }
 ): Promise<void> {
   const { error } = await supabase
@@ -257,6 +268,7 @@ export async function updateFlashTechTrip(
       start_date: fields.startDate,
       end_date: fields.endDate,
       notes: fields.notes || null,
+      car_rental_needed: fields.carRentalNeeded,
     })
     .eq("id", id);
   if (error) {
@@ -295,6 +307,9 @@ export async function updateFlashTechTripTechnician(id: string, technicianProfil
 export async function updateFlashTechTripTrackerFields(
   id: string,
   fields: Partial<{
+    technicianPhone: string | null;
+    technicianEmail: string | null;
+    carRentalNeeded: boolean;
     tierLevel: string | null;
     lodgingStartDate: string | null;
     lodgingEndDate: string | null;
@@ -314,6 +329,9 @@ export async function updateFlashTechTripTrackerFields(
   }>
 ): Promise<void> {
   const payload: Record<string, any> = {};
+  if ("technicianPhone" in fields) payload.technician_phone = fields.technicianPhone || null;
+  if ("technicianEmail" in fields) payload.technician_email = fields.technicianEmail || null;
+  if ("carRentalNeeded" in fields) payload.car_rental_needed = fields.carRentalNeeded;
   if ("tierLevel" in fields) payload.tier_level = fields.tierLevel || null;
   if ("lodgingStartDate" in fields) payload.lodging_start_date = fields.lodgingStartDate || null;
   if ("lodgingEndDate" in fields) payload.lodging_end_date = fields.lodgingEndDate || null;
@@ -338,40 +356,25 @@ export async function updateFlashTechTripTrackerFields(
   }
 }
 
-/** The SBM Confirmed checkbox — stamps who checked it (cleared back to null when unchecked). */
-export async function setFlashTechTripSbmConfirmed(
-  id: string,
-  confirmed: boolean,
-  byId: string | null,
-  byName: string | null
-): Promise<void> {
-  const { error } = await supabase
-    .from("flash_tech_trips")
-    .update({
-      sbm_confirmed: confirmed,
-      sbm_confirmed_by: confirmed ? byId : null,
-      sbm_confirmed_by_name: confirmed ? byName : null,
-    })
-    .eq("id", id);
-  if (error) {
-    console.error("setFlashTechTripSbmConfirmed error:", error.message);
-    throw new Error(error.message);
-  }
-}
+/** Max receipts per trip (migration 0258) — enforced here client-side; the column itself is a plain unbounded array. */
+export const FLASH_TECH_MAX_RECEIPTS = 5;
 
-/** Uploads a trip's Receipts attachment and stamps receipt_path — same single-attachment shape as attendance_notes.attachment_path. */
-export async function uploadFlashTechTripReceipt(companyId: string, tripId: string, file: File): Promise<string> {
+/** Uploads one receipt and appends it to the trip's receipt_paths — caller passes the trip's CURRENT array (already in state) so this doesn't need a read-before-write round trip. */
+export async function uploadFlashTechTripReceipt(companyId: string, tripId: string, file: File, currentPaths: string[]): Promise<string[]> {
   const url = await uploadFlashTechTripReceiptFile(companyId, tripId, file);
-  const { error } = await supabase.from("flash_tech_trips").update({ receipt_path: url }).eq("id", tripId);
+  const nextPaths = [...currentPaths, url];
+  const { error } = await supabase.from("flash_tech_trips").update({ receipt_paths: nextPaths }).eq("id", tripId);
   if (error) throw new Error(error.message);
-  return url;
+  return nextPaths;
 }
 
-/** Removes a trip's Receipts attachment — deletes the Storage file (fail-open, same as removeAttendanceNoteAttachment) and clears receipt_path. */
-export async function removeFlashTechTripReceipt(tripId: string, receiptUrl: string): Promise<void> {
+/** Removes one receipt from the trip's receipt_paths — deletes the Storage file (fail-open, same as removeAttendanceNoteAttachment) and drops it from the array. */
+export async function removeFlashTechTripReceipt(tripId: string, receiptUrl: string, currentPaths: string[]): Promise<string[]> {
   await deleteAttachmentByUrl(receiptUrl).catch((err) => {
     console.warn("removeFlashTechTripReceipt: Storage delete failed, clearing DB reference anyway:", err);
   });
-  const { error } = await supabase.from("flash_tech_trips").update({ receipt_path: null }).eq("id", tripId);
+  const nextPaths = currentPaths.filter((p) => p !== receiptUrl);
+  const { error } = await supabase.from("flash_tech_trips").update({ receipt_paths: nextPaths }).eq("id", tripId);
   if (error) throw new Error(error.message);
+  return nextPaths;
 }

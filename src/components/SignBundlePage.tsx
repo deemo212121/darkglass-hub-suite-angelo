@@ -12,6 +12,7 @@
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { CheckCircle2, ChevronLeft, ChevronRight, Circle, Loader2, Menu, X } from "lucide-react";
 import { useAuth } from "@/lib/auth";
+import { FillFormSignInRequired } from "@/components/FillFormSignInRequired";
 import { getSignableDocument, type SignableDocument } from "@/lib/supabase/signableDocuments";
 import { signableDocumentLabel } from "@/lib/signableDocumentRegistry";
 import { INTERNAL_SIGNABLE_DOCUMENT_COMPONENTS } from "@/lib/signableDocumentComponents";
@@ -90,6 +91,14 @@ export function SignBundlePage() {
     setIndex((i) => Math.min(ids.length - 1, i + 1));
   };
   const goBack = () => setIndex((i) => Math.max(0, i - 1));
+
+  if (ready && !uid) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-950 p-6">
+        <FillFormSignInRequired />
+      </div>
+    );
+  }
 
   if (loading) {
     return (

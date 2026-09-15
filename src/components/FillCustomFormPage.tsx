@@ -16,6 +16,7 @@ import { Link } from "@tanstack/react-router";
 import { ChevronLeft, Loader2 } from "lucide-react";
 import { AppHeader } from "@/components/Header";
 import { useAuth } from "@/lib/auth";
+import { FillFormSignInRequired } from "@/components/FillFormSignInRequired";
 import { randomId } from "@/lib/utils";
 import { getCustomForm, notifyInternalSubmission, submitCustomFormResponse, type CustomForm } from "@/lib/supabase/customForms";
 import { uploadCustomFormFile } from "@/lib/firebase/storage";
@@ -93,7 +94,9 @@ export function FillCustomFormPage({ formId }: Props) {
           <ChevronLeft className="h-3.5 w-3.5" /> Home
         </Link>
 
-        {loading ? (
+        {(ready && !uid) ? (
+          <FillFormSignInRequired />
+        ) : loading ? (
           <div className="panel p-8 text-center text-sm text-muted-foreground flex items-center justify-center gap-2">
             <Loader2 className="h-4 w-4 animate-spin" /> Loading form…
           </div>

@@ -369,6 +369,19 @@ const accountingMod: ModuleDef = {
       count: 0,
       seed: () => ({}),
     },
+    // Category-tabbed container (ExpensesModulePage) — Flash Tech is the
+    // only tab for now (its own Hotel/Transportation expense rows, scoped
+    // out of the full Expense Tracking list), more categories land here as
+    // their own tabs later.
+    {
+      slug: "expenses",
+      title: "Expenses",
+      description: "Expense tracking by category — Flash Tech for now, more categories to come.",
+      custom: "expenses" as any,
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
   ],
 };
 
@@ -432,6 +445,15 @@ const hrMod: ModuleDef = {
       title: "Staff Form Checklist",
       description: "Live signed/pending status of every Technician/New Technician/Office Staff/PH Staff/Management-tier form, per person.",
       custom: "technician-form-checklist" as any,
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
+    {
+      slug: "hiring-analytics",
+      title: "Analytics",
+      description: "Candidates by status, and who's actually been making changes in Hiring.",
+      custom: "hiring-analytics" as any,
       fields: [],
       count: 0,
       seed: () => ({}),
