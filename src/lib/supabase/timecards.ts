@@ -347,9 +347,9 @@ export function splitRegularOvertimeWeekly(
       // binary floating point can't represent most of those fractions
       // exactly, so a day with truly zero real overtime can come out as
       // something like 0.0000000001 instead of a clean 0. Left unsnapped,
-      // that's still "> 0" to every downstream consumer (display thresholds,
-      // foldMealCreditIntoSplit's own real-vs-none check), which used to
-      // misclassify a day with no real overtime as having some.
+      // that's still "> 0" to every downstream consumer (display thresholds
+      // included), which used to misclassify a day with no real overtime as
+      // having some.
       if (Math.abs(overtime) < 1 / 3600) overtime = 0;
     } else {
       regular = Math.min(rawHours, fallbackRegularHoursPerDay);
@@ -629,22 +629,23 @@ export function calcWorkedHours(entry: UITimeEntry): number {
 export const MEAL_ALWAYS_PAID_DEFAULT_HOURS = 0.5;
 
 /**
- * Extra PAID hours to add on top of a day's calcWorkedHours() result for
- * employees in meal-always-paid roles (roleLabels.ts's isMealAlwaysPaidRole)
- * — plain Technicians and the field-tech management tiers (Branch/Senior
- * Branch Manager, Tech Manager, Technical Director/Assistant Director)
- * aren't required to punch Meal In/Out, but their meal break is still paid
- * time.
+ * Extra PAID hours for employees in meal-always-paid roles (roleLabels.ts's
+ * isMealAlwaysPaidRole) — plain Technicians and the field-tech management
+ * tiers (Branch/Senior Branch Manager, Tech Manager, Technical
+ * Director/Assistant Director) aren't required to punch Meal In/Out, but
+ * their meal break is still paid time.
  *
- * Always the flat MEAL_ALWAYS_PAID_DEFAULT_HOURS, regardless of whether Meal
- * In/Out was punched or how long that punch was — a policy of "30 minutes
- * paid meal, period," not "whatever you happened to punch":
- *   - Unpunched day: calcWorkedHours never subtracted anything for a meal,
- *     so this is a genuine extra half hour of pay on top.
- *   - Punched day: calcWorkedHours already subtracted the REAL punched
- *     duration from worked hours (e.g. a 20-minute meal). This still credits
- *     back the flat half hour regardless — covering the gap when the real
- *     punch was under 30 minutes, capping it when the real punch ran over.
+ * A flat MEAL_ALWAYS_PAID_DEFAULT_HOURS whenever the day is meal-eligible,
+ * regardless of whether Meal In/Out was punched or how long that punch was
+ * — a policy of "30 minutes paid meal, period."
+ *
+ * Callers add this directly into the day's raw hours BEFORE running the
+ * regular/overtime weekly split (splitRegularOvertimeWeekly) — not folded
+ * on afterward — so it's treated exactly like real worked time: it fills
+ * whatever room is left in the week's regular quota, and only spills into
+ * overtime once that quota (real hours + this credit, combined) is used up.
+ * There is deliberately no separate "meal" bucket in the split output — the
+ * result is just regular/overtime, same as everywhere else in this file.
  */
 export function computeMealTimeCredit(
   entry: Pick<UITimeEntry, "mealStart" | "mealEnd">,
@@ -653,42 +654,6 @@ export function computeMealTimeCredit(
 ): number {
   if (!mealEligible || !mealAlwaysPaid) return 0;
   return MEAL_ALWAYS_PAID_DEFAULT_HOURS;
-}
-
-/**
- * Folds a day's paid meal credit into its ALREADY-COMPUTED regular/overtime
- * split (from real worked hours only — the split must NOT have the meal
- * credit mixed into its raw input, or "regular" silently absorbs it whenever
- * there's spare room under that day's/week's cap). The meal credit itself
- * must never inflate `regular` — only `meal` (a straight-rate line of its
- * own) or `overtime` ever change:
- *   - If this day already produced real overtime (the regular quota was
- *     fully used by real worked hours alone), the credit has nowhere to go
- *     in `regular` — it rides along as overtime, paid at the OT rate like
- *     everything else past that threshold. `meal` is 0 that day.
- *   - Otherwise the credit is its own straight-rate `meal` line, kept
- *     separate from `regular` for display, but still owed dollar-for-dollar.
- * Either way, `regular + meal + overtime` always equals the day's real
- * worked hours plus the meal credit, with no double-counting — safe to sum
- * for a "Total Hours" figure.
- */
-export function foldMealCreditIntoSplit(
-  split: { regular: number; overtime: number },
-  mealCredit: number
-): { regular: number; meal: number; overtime: number } {
-  if (mealCredit <= 0) return { regular: split.regular, meal: 0, overtime: split.overtime };
-  // A strict `> 0` here is a floating-point trap: splitRegularOvertimeWeekly
-  // derives its hours from integer-second time arithmetic divided by 3600,
-  // then sums many such values across a week's cumulative running total —
-  // binary floating point can't represent most of those fractions exactly,
-  // so a day with truly zero real overtime can still come out of the split
-  // as something like 0.0000000001 instead of a clean 0. That's still
-  // "> 0" in JS, so it used to wrongly divert the ENTIRE meal credit into
-  // overtime on days that have no real overtime at all. One second
-  // (1/3600 hour) is far smaller than any genuine minute-granularity
-  // overtime but comfortably larger than this kind of rounding noise.
-  if (split.overtime > 1 / 3600) return { regular: split.regular, meal: 0, overtime: split.overtime + mealCredit };
-  return { regular: split.regular, meal: mealCredit, overtime: split.overtime };
 }
 
 /** Public helper for components that need the raw HH:MM diff. */

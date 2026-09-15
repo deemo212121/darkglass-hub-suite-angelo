@@ -5,7 +5,7 @@ import { ChevronLeft, Download } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
-import { getCompanyTimecardEntries, calcWorkedHours, computeScheduledDutyHours, resolveScheduledShiftHours, computeMealTimeCredit, foldMealCreditIntoSplit, startOfWeekSunday, splitRegularOvertimeWeekly, CSR_WEEKLY_OVERTIME_THRESHOLD, type CompanyTimecardEntry } from "@/lib/supabase/timecards";
+import { getCompanyTimecardEntries, calcWorkedHours, computeScheduledDutyHours, resolveScheduledShiftHours, computeMealTimeCredit, startOfWeekSunday, splitRegularOvertimeWeekly, CSR_WEEKLY_OVERTIME_THRESHOLD, type CompanyTimecardEntry } from "@/lib/supabase/timecards";
 import { getCompanySalaryEntries, rateEffectiveOn, entryEffectiveOn, currentRate, perCutoffSalary, type SalaryEntryRow } from "@/lib/supabase/salary";
 import { EmployeePayrollDetailModal } from "@/components/EmployeePayrollDetailModal";
 import { ActivityLogPanel } from "@/components/ActivityLogPanel";
@@ -195,22 +195,16 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
       };
       // Technicians/Branch-Managers/Tech Managers/Technical Directors aren't
       // required to punch Meal In/Out, but their meal break is still paid —
-      // see timecards.ts's computeMealTimeCredit/foldMealCreditIntoSplit.
-      // Kept OUT of rawByDate (the regular/overtime split's raw input) so it
-      // can never silently inflate `regular` just because a day had spare
-      // room under the cap — it's folded in AFTER the split instead, so it
-      // only ever becomes its own straight-rate `meal` line, or rides along
-      // as overtime on a day that already used up its regular quota from
-      // real worked hours alone.
+      // see timecards.ts's computeMealTimeCredit. Merged directly into
+      // rawByDate BEFORE the weekly split runs below, so it naturally lands
+      // as Regular or Overtime with no separate "meal" bucket in the totals.
       const mealAlwaysPaid = isMealAlwaysPaidRole(p.role, p.extra_roles);
       const mealEligible = resolveScheduledShiftHours(p.required_check_in || "", p.required_check_out || "", p.working_hours, p.meal_minutes) > 6;
       const rawByDate = new Map<string, number>();
-      const mealCreditByDate = new Map<string, number>();
       for (const day of [...seedDayEntries, ...dayEntries]) {
         if (!day.checkIn || !day.checkOut) continue;
-        rawByDate.set(day.workDate, (rawByDate.get(day.workDate) ?? 0) + hoursForDay(day));
         const credit = computeMealTimeCredit(day, mealEligible, mealAlwaysPaid);
-        if (credit > 0) mealCreditByDate.set(day.workDate, (mealCreditByDate.get(day.workDate) ?? 0) + credit);
+        rawByDate.set(day.workDate, (rawByDate.get(day.workDate) ?? 0) + hoursForDay(day) + credit);
       }
       const split =
         dutyHours > 0
@@ -239,12 +233,11 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
           reg = Math.min(hours, REGULAR_HOURS_PER_DAY);
           ot = Math.max(0, hours - REGULAR_HOURS_PER_DAY);
         }
-        const folded = foldMealCreditIntoSplit({ regular: reg, overtime: ot }, mealCreditByDate.get(date) ?? 0);
-        regularHours += folded.regular + folded.meal;
-        overtimeHours += folded.overtime;
+        regularHours += reg;
+        overtimeHours += ot;
         if (!isFixed) {
           const rate = rateEffectiveOn(history, date);
-          grossPay += (folded.regular + folded.meal) * rate + folded.overtime * rate * OT_MULTIPLIER;
+          grossPay += reg * rate + ot * rate * OT_MULTIPLIER;
         }
       }
       if (isFixed && currentEntry?.annualSalary) grossPay = perCutoffSalary(currentEntry.annualSalary);
