@@ -23,6 +23,8 @@ import {
 } from "@/lib/supabase/flashTechTrips";
 import { AttachmentPreviewModal } from "@/components/AttachmentPreviewModal";
 import { REGIONS, REGION_LOCATIONS } from "@/lib/locations";
+import { getSignableDocuments } from "@/lib/supabase/signableDocuments";
+import { getDocumentReviewStatus, pickAuthoritativeDocument } from "@/lib/signableDocumentRegistry";
 const WEEKDAY_LABELS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const CHIP_COLORS = ["bg-blue-500/80", "bg-purple-500/80", "bg-emerald-500/80", "bg-amber-500/80", "bg-pink-500/80", "bg-cyan-500/80"];
 // Every real branch, for the Destination dropdown.
@@ -149,10 +151,16 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
 
   const [view, setView] = useState<"calendar" | "tracker" | "availability">("calendar");
   const [availabilitySearch, setAvailabilitySearch] = useState("");
-  const [availabilityStatusFilter, setAvailabilityStatusFilter] = useState<"all" | "available" | "busy">("all");
+  const [availabilityStatusFilter, setAvailabilityStatusFilter] = useState<"all" | "available" | "busy" | "needsForm">("all");
   const [monthValue, setMonthValue] = useState(todayMonthValue());
   const [trips, setTrips] = useState<FlashTechTrip[]>([]);
   const [users, setUsers] = useState<ProfileRow[]>([]);
+  // Who's actually filed (HR-confirmed) the Flash Technician Travel &
+  // Out-of-State Policy acknowledgment — the Flash Tech List's own
+  // "Available" status is meaningless for sending someone out if they
+  // haven't cleared this form yet, so it gets its own status instead of
+  // silently reading as just "Available".
+  const [flashFormFiledProfileIds, setFlashFormFiledProfileIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [myProfileId, setMyProfileId] = useState<string | null>(null);
 
@@ -245,9 +253,33 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
   const loadData = async () => {
     setLoading(true);
     try {
-      const [tripRows, userRows] = await Promise.all([getCompanyFlashTechTrips(), getCompanyUsers()]);
+      const [tripRows, userRows, flashFormDocs] = await Promise.all([
+        getCompanyFlashTechTrips(),
+        getCompanyUsers(),
+        getSignableDocuments("flash_technician_travel"),
+      ]);
       setTrips(tripRows);
       setUsers(userRows);
+
+      // Group by person (formData.employeeId, same "whose form is this"
+      // identity every other checklist uses — falls back to recipientId for
+      // older rows sent before that field existed), then pick whichever
+      // submission actually represents the best status reached, same as
+      // TechnicianFormChecklistPage.tsx does for every other form type.
+      const byPerson = new Map<string, typeof flashFormDocs>();
+      for (const d of flashFormDocs) {
+        const personId = (d.formData as Record<string, any> | undefined)?.employeeId || d.recipientId;
+        if (!personId) continue;
+        const arr = byPerson.get(personId);
+        if (arr) arr.push(d);
+        else byPerson.set(personId, [d]);
+      }
+      const filed = new Set<string>();
+      for (const [personId, group] of byPerson) {
+        const best = pickAuthoritativeDocument(group);
+        if (getDocumentReviewStatus("flash_technician_travel", best) === "done") filed.add(personId);
+      }
+      setFlashFormFiledProfileIds(filed);
     } finally {
       setLoading(false);
     }
@@ -303,19 +335,23 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
       if (t.technicianProfileId && t.startDate <= today && t.endDate >= today) tripByProfileId.set(t.technicianProfileId, t);
     }
     return active
-      .map((u) => ({ user: u, trip: tripByProfileId.get(u.id) ?? null }))
+      .map((u) => ({ user: u, trip: tripByProfileId.get(u.id) ?? null, formFiled: flashFormFiledProfileIds.has(u.id) }))
       .sort((a, b) => {
-        // Available first, then busy — alphabetical within each group.
-        if (!!a.trip !== !!b.trip) return a.trip ? 1 : -1;
+        // Busy last, then "needs form" (not actually sendable), then
+        // Available — alphabetical within each group.
+        const rank = (x: (typeof a)) => (x.trip ? 2 : x.formFiled ? 0 : 1);
+        const rankDiff = rank(a) - rank(b);
+        if (rankDiff !== 0) return rankDiff;
         return (a.user.display_name || "").localeCompare(b.user.display_name || "");
       });
-  }, [users, trips]);
+  }, [users, trips, flashFormFiledProfileIds]);
 
   const filteredTechnicianAvailability = useMemo(() => {
     const q = availabilitySearch.trim().toLowerCase();
-    return technicianAvailability.filter(({ user, trip }) => {
-      if (availabilityStatusFilter === "available" && trip) return false;
+    return technicianAvailability.filter(({ user, trip, formFiled }) => {
+      if (availabilityStatusFilter === "available" && (trip || !formFiled)) return false;
       if (availabilityStatusFilter === "busy" && !trip) return false;
+      if (availabilityStatusFilter === "needsForm" && (trip || formFiled)) return false;
       if (q && !(user.display_name || "").toLowerCase().includes(q)) return false;
       return true;
     });
@@ -667,6 +703,7 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
                 >
                   <option value="all">All</option>
                   <option value="available">Available</option>
+                  <option value="needsForm">Form Not Filed</option>
                   <option value="busy">On Trip</option>
                 </select>
               </div>
@@ -701,7 +738,7 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-white/10">
-                    {filteredTechnicianAvailability.map(({ user, trip }) => (
+                    {filteredTechnicianAvailability.map(({ user, trip, formFiled }) => (
                       <tr key={user.id}>
                         <td className="px-4 py-2.5 text-sm text-white truncate max-w-[220px]">{user.display_name}</td>
                         <td className="px-4 py-2.5 text-xs text-slate-300">{trip ? trip.originLocation : <span className="text-slate-600">—</span>}</td>
@@ -713,6 +750,13 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
                               title={`${trip.startDate} – ${trip.endDate}`}
                             >
                               <span className="h-1.5 w-1.5 rounded-full bg-blue-400" /> On Trip — back {trip.endDate}
+                            </span>
+                          ) : !formFiled ? (
+                            <span
+                              className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-xs text-amber-300"
+                              title="Flash Technician Travel & Out-of-State Policy form isn't on file (or still awaiting HR review)"
+                            >
+                              <span className="h-1.5 w-1.5 rounded-full bg-amber-400" /> Form Not Filed
                             </span>
                           ) : (
                             <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-xs text-emerald-300">
