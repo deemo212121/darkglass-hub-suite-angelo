@@ -13,13 +13,15 @@ import {
   deleteFlashTechTrip,
   updateFlashTechTripTrackerFields,
   updateFlashTechTripTechnician,
+  updateFlashTechTripDates,
   uploadFlashTechTripReceipt,
   removeFlashTechTripReceipt,
+  computeFlashTechTripStatus,
   FLASH_TECH_MAX_RECEIPTS,
   FLASH_TECH_TIER_LEVELS,
   FLASH_TECH_TRIP_TYPES,
-  FLASH_TECH_STATUSES,
   type FlashTechTrip,
+  type FlashTechTripType,
 } from "@/lib/supabase/flashTechTrips";
 import { AttachmentPreviewModal } from "@/components/AttachmentPreviewModal";
 import { REGIONS, REGION_LOCATIONS } from "@/lib/locations";
@@ -103,6 +105,23 @@ type TripFormState = {
   carRentalNeeded: boolean;
   includeHotelExpense: boolean;
   includeTransportationExpense: boolean;
+  // Every Tracker column, now fillable straight from Schedule Trip too (see
+  // createFlashTechTrip's own doc comment) — numbers kept as strings here
+  // like every other controlled input, parsed on save.
+  tierLevel: string;
+  hotelName: string;
+  lodgingStartDate: string;
+  lodgingEndDate: string;
+  hotelAddress: string;
+  hotelRate: string;
+  hotelConfirmation: string;
+  rentalCar: string;
+  rentalStartDate: string;
+  rentalEndDate: string;
+  rentalRate: string;
+  vehicleType: string;
+  otherExpenses: string;
+  tripType: FlashTechTripType;
 };
 
 function emptyForm(): TripFormState {
@@ -118,6 +137,20 @@ function emptyForm(): TripFormState {
     carRentalNeeded: false,
     includeHotelExpense: true,
     includeTransportationExpense: true,
+    tierLevel: "",
+    hotelName: "",
+    lodgingStartDate: "",
+    lodgingEndDate: "",
+    hotelAddress: "",
+    hotelRate: "",
+    hotelConfirmation: "",
+    rentalCar: "",
+    rentalStartDate: "",
+    rentalEndDate: "",
+    rentalRate: "",
+    vehicleType: "Enterprise",
+    otherExpenses: "",
+    tripType: "Flashtech",
   };
 }
 
@@ -151,6 +184,7 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
   const [availabilitySearch, setAvailabilitySearch] = useState("");
   const [availabilityStatusFilter, setAvailabilityStatusFilter] = useState<"all" | "available" | "busy">("all");
   const [monthValue, setMonthValue] = useState(todayMonthValue());
+  const [carRentalOnly, setCarRentalOnly] = useState(false);
   const [trips, setTrips] = useState<FlashTechTrip[]>([]);
   const [users, setUsers] = useState<ProfileRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -161,12 +195,13 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
   const [form, setForm] = useState<TripFormState>(emptyForm());
   const [technicianQuery, setTechnicianQuery] = useState("");
   const [technicianDropdownOpen, setTechnicianDropdownOpen] = useState(false);
-  // The selected technician's home address — display-only, alongside their
-  // (also auto-filled, locked) Origin branch. Fetched on selection since
-  // the technician list itself (getCompanyUsers) doesn't carry it.
-  const [technicianAddress, setTechnicianAddress] = useState("");
   const [technicianPhone, setTechnicianPhone] = useState("");
   const [technicianEmail, setTechnicianEmail] = useState("");
+  // Receipts picked in the Schedule Trip modal, before a trip id exists to
+  // upload them against — held here and actually uploaded once handleSave
+  // has a real tripId (new or existing), same FLASH_TECH_MAX_RECEIPTS cap
+  // (counting against whatever's already on the trip when editing).
+  const [newReceiptFiles, setNewReceiptFiles] = useState<File[]>([]);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
@@ -205,6 +240,25 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
     try {
       await updateFlashTechTripTechnician(tripId, technicianProfileId, technicianName);
       setTrips((prev) => prev.map((t) => (t.id === tripId ? { ...t, technicianProfileId, technicianName } : t)));
+    } catch (err) {
+      alert(`Failed to save: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setSavingCellKey((k) => (k === key ? null : k));
+    }
+  };
+
+  const handleChangeDates = async (tripId: string, field: "startDate" | "endDate", value: string) => {
+    const key = `${tripId}:travelDate`;
+    const current = trips.find((t) => t.id === tripId);
+    if (!current) return;
+    const startDate = field === "startDate" ? value : current.startDate;
+    const endDate = field === "endDate" ? value : current.endDate;
+    setSavingCellKey(key);
+    try {
+      await updateFlashTechTripDates(tripId, startDate, endDate);
+      setTrips((prev) =>
+        prev.map((t) => (t.id === tripId ? { ...t, startDate, endDate, status: computeFlashTechTripStatus(startDate, endDate) } : t))
+      );
     } catch (err) {
       alert(`Failed to save: ${err instanceof Error ? err.message : "Unknown error"}`);
     } finally {
@@ -271,17 +325,21 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
     [trips]
   );
   const tripColorIndex = useMemo(() => new Map(sortedTrips.map((t, i) => [t.id, i % CHIP_COLORS.length])), [sortedTrips]);
+  const calendarTrips = useMemo(
+    () => (carRentalOnly ? sortedTrips.filter((t) => t.carRentalNeeded) : sortedTrips),
+    [sortedTrips, carRentalOnly]
+  );
   const tripsByDay = useMemo(() => {
     const map = new Map<string, FlashTechTrip[]>();
     for (const week of monthWeeks) {
       for (const day of week) {
         if (!day.inMonth) continue;
-        const dayTrips = sortedTrips.filter((t) => t.startDate <= day.iso && t.endDate >= day.iso);
+        const dayTrips = calendarTrips.filter((t) => t.startDate <= day.iso && t.endDate >= day.iso);
         if (dayTrips.length > 0) map.set(day.iso, dayTrips);
       }
     }
     return map;
-  }, [monthWeeks, sortedTrips]);
+  }, [monthWeeks, calendarTrips]);
 
   const filteredTechnicianOptions = useMemo(() => {
     const q = technicianQuery.trim().toLowerCase();
@@ -332,9 +390,9 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
     setEditingTripId(null);
     setForm(emptyForm());
     setTechnicianQuery("");
-    setTechnicianAddress("");
     setTechnicianPhone("");
     setTechnicianEmail("");
+    setNewReceiptFiles([]);
     setShowModal(true);
   };
 
@@ -351,39 +409,83 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
       carRentalNeeded: trip.carRentalNeeded,
       includeHotelExpense: Boolean(trip.hotelExpense),
       includeTransportationExpense: Boolean(trip.transportationExpense),
+      tierLevel: trip.tierLevel || "",
+      hotelName: trip.hotelName || "",
+      lodgingStartDate: trip.lodgingStartDate || "",
+      lodgingEndDate: trip.lodgingEndDate || "",
+      hotelAddress: trip.hotelAddress || "",
+      hotelRate: trip.hotelRate != null ? String(trip.hotelRate) : "",
+      hotelConfirmation: trip.hotelConfirmation || "",
+      rentalCar: trip.rentalCar || "",
+      rentalStartDate: trip.rentalStartDate || "",
+      rentalEndDate: trip.rentalEndDate || "",
+      rentalRate: trip.rentalRate != null ? String(trip.rentalRate) : "",
+      vehicleType: trip.vehicleType || "",
+      otherExpenses: trip.otherExpenses != null ? String(trip.otherExpenses) : "",
+      tripType: trip.tripType,
     });
     setTechnicianQuery(trip.technicianName);
-    setTechnicianAddress("");
     setTechnicianPhone(trip.technicianPhone || "");
     setTechnicianEmail(trip.technicianEmail || "");
-    if (trip.technicianProfileId) {
-      getTechnicianContactInfoByIds([trip.technicianProfileId]).then((map) => {
-        setTechnicianAddress(map.get(trip.technicianProfileId!)?.address || "");
-      });
-    }
+    setNewReceiptFiles([]);
     setShowModal(true);
   };
 
   const closeModal = () => {
     setShowModal(false);
     setEditingTripId(null);
+    setNewReceiptFiles([]);
   };
 
   const handleSelectTechnician = (u: ProfileRow) => {
     // Origin locks to wherever they actually belong — not free-typed, so a
-    // trip's origin always reflects their real assigned branch.
-    setForm((f) => ({ ...f, technicianProfileId: u.id, technicianName: u.display_name || u.email, originLocation: u.assigned_branch || "" }));
+    // trip's origin always reflects their real assigned branch. Tier Level
+    // defaults from whatever's already set on Master List's Current
+    // Technicians tab (profiles.tier_level) — still just a starting point,
+    // HR can override it in the dropdown below for this specific trip.
+    setForm((f) => ({ ...f, technicianProfileId: u.id, technicianName: u.display_name || u.email, originLocation: u.assigned_branch || "", tierLevel: u.tier_level || "" }));
     setTechnicianQuery(u.display_name || u.email);
     setTechnicianDropdownOpen(false);
-    setTechnicianAddress("");
     setTechnicianPhone("");
     setTechnicianEmail("");
     getTechnicianContactInfoByIds([u.id]).then((map) => {
       const info = map.get(u.id);
-      setTechnicianAddress(info?.address || "");
       setTechnicianPhone(info?.phone || "");
       setTechnicianEmail(info?.email || "");
     });
+  };
+
+  // Shared by both create and edit — every Tracker column the form now also
+  // collects, parsed from the controlled-input strings into what the
+  // service functions actually expect. A blank field stays null, same as
+  // never having filled it in via the Tracker's own per-cell editors.
+  const buildTrackerFields = () => ({
+    tierLevel: form.tierLevel || null,
+    hotelName: form.hotelName || null,
+    lodgingStartDate: form.lodgingStartDate || null,
+    lodgingEndDate: form.lodgingEndDate || null,
+    hotelAddress: form.hotelAddress || null,
+    hotelRate: form.hotelRate.trim() === "" ? null : Number(form.hotelRate),
+    hotelConfirmation: form.hotelConfirmation || null,
+    rentalCar: form.rentalCar || null,
+    rentalStartDate: form.rentalStartDate || null,
+    rentalEndDate: form.rentalEndDate || null,
+    rentalRate: form.rentalRate.trim() === "" ? null : Number(form.rentalRate),
+    vehicleType: form.vehicleType || null,
+    otherExpenses: form.otherExpenses.trim() === "" ? null : Number(form.otherExpenses),
+    tripType: form.tripType,
+  });
+
+  // Uploads whatever's in newReceiptFiles against a now-real tripId, one at
+  // a time (same sequential pattern handleUploadReceipt uses in the
+  // Tracker), stopping at FLASH_TECH_MAX_RECEIPTS total.
+  const uploadPendingReceipts = async (tripId: string, existingPaths: string[]) => {
+    if (!companyId || newReceiptFiles.length === 0) return;
+    let paths = existingPaths;
+    for (const file of newReceiptFiles) {
+      if (paths.length >= FLASH_TECH_MAX_RECEIPTS) break;
+      paths = await uploadFlashTechTripReceipt(companyId, tripId, file, paths);
+    }
   };
 
   const handleSave = async () => {
@@ -404,6 +506,12 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
           notes: form.notes,
           carRentalNeeded: form.carRentalNeeded,
         });
+        await updateFlashTechTripTrackerFields(editingTripId, {
+          technicianPhone,
+          technicianEmail,
+          ...buildTrackerFields(),
+        });
+        await uploadPendingReceipts(editingTripId, editingTrip?.receiptPaths ?? []);
         closeModal();
         await loadData();
       } else {
@@ -422,15 +530,11 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
           createdByName: displayName,
           includeHotelExpense: form.includeHotelExpense,
           includeTransportationExpense: form.includeTransportationExpense,
+          ...buildTrackerFields(),
         });
+        await uploadPendingReceipts(newTripId, []);
         closeModal();
         await loadData();
-        // Most of the Tracker's columns (hotel/rental/receipts/etc.) aren't
-        // known yet at scheduling time — jump straight to that new row in
-        // the Tracker instead of leaving HR to go find it, so filling the
-        // rest in is one continuous flow rather than a separate hunt.
-        setView("tracker");
-        setHighlightTripId(newTripId);
       }
     } catch (err) {
       alert(`Failed to save trip: ${err instanceof Error ? err.message : "Unknown error"}`);
@@ -532,6 +636,15 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
           <button onClick={() => setMonthValue(todayMonthValue())} className="btn text-sm">
             Today
           </button>
+          <button
+            type="button"
+            onClick={() => setCarRentalOnly((v) => !v)}
+            className={`btn text-sm inline-flex items-center gap-1.5 ${carRentalOnly ? "bg-amber-500/20 text-amber-300 border-amber-400/40" : ""}`}
+            title="Show only trips flagged as needing a car rental"
+          >
+            <Car className="h-3.5 w-3.5" />
+            Car Rental Only
+          </button>
         </div>
 
         <div className="panel overflow-x-auto p-0">
@@ -566,7 +679,7 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
                       return (
                         <td
                           key={day.iso}
-                          className={`px-1.5 py-1 border-r border-white/10 last:border-r-0 align-top h-14 max-h-14 overflow-hidden ${
+                          className={`px-1.5 py-1 border-r border-white/10 last:border-r-0 align-top min-h-14 ${
                             !day.inMonth ? "bg-white/2" : ""
                           }`}
                         >
@@ -584,7 +697,7 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
                             {day.date.getDate()}
                           </div>
                           <div className="space-y-0.5">
-                            {dayTrips.slice(0, 2).map((trip) => (
+                            {dayTrips.map((trip) => (
                               <button
                                 key={trip.id}
                                 onClick={() => (canManage ? openEditModal(trip) : undefined)}
@@ -603,9 +716,6 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
                                 )}
                               </button>
                             ))}
-                            {dayTrips.length > 2 && (
-                              <div className="text-[10px] text-slate-400 px-1">+{dayTrips.length - 2} more</div>
-                            )}
                           </div>
                         </td>
                       );
@@ -635,6 +745,7 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
             highlightTripId={highlightTripId}
             onPatch={patchTrip}
             onChangeTechnician={handleChangeTechnician}
+            onChangeDates={handleChangeDates}
             onUploadReceipt={handleUploadReceipt}
             onRemoveReceipt={handleRemoveReceipt}
             onPreviewReceipt={setPreviewReceiptUrl}
@@ -801,6 +912,11 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
                     ))}
                   </div>
                 )}
+                {technicianQuery && !form.technicianProfileId && (
+                  <p className="mt-1 text-[11px] text-amber-300">
+                    Not linked to a real technician profile — click the search box above and pick a name from the dropdown, or this trip won't apply to their mobile route.
+                  </p>
+                )}
               </div>
 
               <div className="grid grid-cols-2 gap-3">
@@ -833,51 +949,46 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
                 </div>
               </div>
 
-              <div>
-                <label className="text-xs font-semibold uppercase text-slate-400">Technician Address</label>
-                <input
-                  value={technicianAddress}
-                  readOnly
-                  disabled
-                  placeholder={form.technicianProfileId ? "No home address on file for this technician" : "Pick a technician from the search results first"}
-                  title="The technician's own home address on file — not editable here"
-                  className="glass-input mt-1 w-full cursor-not-allowed opacity-70"
-                />
-                {technicianQuery && !form.technicianProfileId && (
-                  <p className="mt-1 text-[11px] text-amber-300">
-                    Not linked to a real technician profile — click the search box above and pick a name from the dropdown, or this trip won't apply to their mobile route.
-                  </p>
-                )}
-              </div>
-
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs font-semibold uppercase text-slate-400">Contact Number</label>
                   <input
                     value={technicianPhone}
-                    readOnly
-                    disabled
+                    onChange={(e) => setTechnicianPhone(e.target.value)}
                     placeholder={form.technicianProfileId ? "No phone number on file for this technician" : "Pick a technician from the search results first"}
-                    title="The technician's own phone number on file — editable afterward in the Tracker"
-                    className="glass-input mt-1 w-full cursor-not-allowed opacity-70"
+                    title="Defaults from the technician's profile — override it here if needed"
+                    className="glass-input mt-1 w-full"
                   />
                 </div>
                 <div>
                   <label className="text-xs font-semibold uppercase text-slate-400">Email Address</label>
                   <input
                     value={technicianEmail}
-                    readOnly
-                    disabled
+                    onChange={(e) => setTechnicianEmail(e.target.value)}
                     placeholder={form.technicianProfileId ? "No email on file for this technician" : "Pick a technician from the search results first"}
-                    title="The technician's own email on file — editable afterward in the Tracker"
-                    className="glass-input mt-1 w-full cursor-not-allowed opacity-70"
+                    title="Defaults from the technician's profile — override it here if needed"
+                    className="glass-input mt-1 w-full"
                   />
                 </div>
               </div>
 
+              <div>
+                <label className="text-xs font-semibold uppercase text-slate-400">Tier Level</label>
+                <select
+                  value={form.tierLevel}
+                  onChange={(e) => setForm((f) => ({ ...f, tierLevel: e.target.value }))}
+                  className="glass-input mt-1 w-full"
+                >
+                  <option value="">—</option>
+                  {FLASH_TECH_TIER_LEVELS.map((t) => (
+                    <option key={t} value={t}>{t}</option>
+                  ))}
+                </select>
+              </div>
+
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-xs font-semibold uppercase text-slate-400">Start Date</label>
+                  <label className="text-xs font-semibold uppercase text-slate-400">Travel Start Date</label>
                   <input
                     type="date"
                     value={form.startDate}
@@ -886,13 +997,74 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
                   />
                 </div>
                 <div>
-                  <label className="text-xs font-semibold uppercase text-slate-400">End Date</label>
+                  <label className="text-xs font-semibold uppercase text-slate-400">Travel End Date</label>
                   <input
                     type="date"
                     value={form.endDate}
                     onChange={(e) => setForm((f) => ({ ...f, endDate: e.target.value }))}
                     className="glass-input mt-1 w-full"
                   />
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-white/10 p-3 space-y-3">
+                <p className="text-xs font-semibold uppercase text-slate-400">Hotel</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-[11px] font-semibold uppercase text-slate-500">Hotel Name</label>
+                    <input
+                      value={form.hotelName}
+                      onChange={(e) => setForm((f) => ({ ...f, hotelName: e.target.value }))}
+                      className="glass-input mt-1 w-full"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-semibold uppercase text-slate-500">Confirmation #</label>
+                    <input
+                      value={form.hotelConfirmation}
+                      onChange={(e) => setForm((f) => ({ ...f, hotelConfirmation: e.target.value }))}
+                      className="glass-input mt-1 w-full"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="text-[11px] font-semibold uppercase text-slate-500">Address</label>
+                  <input
+                    value={form.hotelAddress}
+                    onChange={(e) => setForm((f) => ({ ...f, hotelAddress: e.target.value }))}
+                    className="glass-input mt-1 w-full"
+                  />
+                </div>
+                <div className="grid grid-cols-3 gap-3">
+                  <div>
+                    <label className="text-[11px] font-semibold uppercase text-slate-500">Lodging Start</label>
+                    <input
+                      type="date"
+                      value={form.lodgingStartDate}
+                      onChange={(e) => setForm((f) => ({ ...f, lodgingStartDate: e.target.value }))}
+                      className="glass-input mt-1 w-full"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-semibold uppercase text-slate-500">Lodging End</label>
+                    <input
+                      type="date"
+                      value={form.lodgingEndDate}
+                      onChange={(e) => setForm((f) => ({ ...f, lodgingEndDate: e.target.value }))}
+                      className="glass-input mt-1 w-full"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-semibold uppercase text-slate-500">Rate ($/night)</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={form.hotelRate}
+                      onChange={(e) => setForm((f) => ({ ...f, hotelRate: e.target.value }))}
+                      className="glass-input mt-1 w-full"
+                    />
+                  </div>
                 </div>
               </div>
 
@@ -924,6 +1096,131 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
                     No
                   </button>
                 </div>
+              </div>
+
+              <div className="rounded-lg border border-white/10 p-3 space-y-3">
+                <p className="text-xs font-semibold uppercase text-slate-400">Rental Car</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-[11px] font-semibold uppercase text-slate-500">Rental Company</label>
+                    <input
+                      value={form.rentalCar}
+                      onChange={(e) => setForm((f) => ({ ...f, rentalCar: e.target.value }))}
+                      className="glass-input mt-1 w-full"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-semibold uppercase text-slate-500">Vehicle Type</label>
+                    <input
+                      value={form.vehicleType}
+                      onChange={(e) => setForm((f) => ({ ...f, vehicleType: e.target.value }))}
+                      className="glass-input mt-1 w-full"
+                    />
+                  </div>
+                </div>
+                <div className="grid grid-cols-3 gap-3">
+                  <div>
+                    <label className="text-[11px] font-semibold uppercase text-slate-500">Rental Start</label>
+                    <input
+                      type="date"
+                      value={form.rentalStartDate}
+                      onChange={(e) => setForm((f) => ({ ...f, rentalStartDate: e.target.value }))}
+                      className="glass-input mt-1 w-full"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-semibold uppercase text-slate-500">Rental End</label>
+                    <input
+                      type="date"
+                      value={form.rentalEndDate}
+                      onChange={(e) => setForm((f) => ({ ...f, rentalEndDate: e.target.value }))}
+                      className="glass-input mt-1 w-full"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-semibold uppercase text-slate-500">Rate ($/day)</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={form.rentalRate}
+                      onChange={(e) => setForm((f) => ({ ...f, rentalRate: e.target.value }))}
+                      className="glass-input mt-1 w-full"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-semibold uppercase text-slate-400">Other Expenses</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={form.otherExpenses}
+                    onChange={(e) => setForm((f) => ({ ...f, otherExpenses: e.target.value }))}
+                    className="glass-input mt-1 w-full"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-semibold uppercase text-slate-400">Type</label>
+                  <select
+                    value={form.tripType}
+                    onChange={(e) => setForm((f) => ({ ...f, tripType: e.target.value as FlashTechTripType }))}
+                    className="glass-input mt-1 w-full"
+                  >
+                    {FLASH_TECH_TRIP_TYPES.map((t) => (
+                      <option key={t} value={t}>{t}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              {form.startDate && form.endDate && (
+                <p className="text-xs text-slate-400">
+                  Status: <span className={TRACKER_STATUS_COLOR[computeFlashTechTripStatus(form.startDate, form.endDate)] || "text-slate-300"}>
+                    {computeFlashTechTripStatus(form.startDate, form.endDate)}
+                  </span>{" "}
+                  <span className="text-slate-600">— automatically set from the travel dates.</span>
+                </p>
+              )}
+
+              <div>
+                <label className="text-xs font-semibold uppercase text-slate-400">
+                  Receipts {(editingTrip?.receiptPaths.length ?? 0) + newReceiptFiles.length > 0 && `(${(editingTrip?.receiptPaths.length ?? 0) + newReceiptFiles.length}/${FLASH_TECH_MAX_RECEIPTS})`}
+                </label>
+                {editingTrip && editingTrip.receiptPaths.length > 0 && (
+                  <p className="mt-1 text-[11px] text-slate-500">{editingTrip.receiptPaths.length} already on file — manage those from the Tracker; anything picked below is added on top.</p>
+                )}
+                <input
+                  type="file"
+                  multiple
+                  accept="image/*,.pdf"
+                  onChange={(e) => {
+                    const picked = Array.from(e.target.files ?? []);
+                    e.target.value = "";
+                    const room = FLASH_TECH_MAX_RECEIPTS - (editingTrip?.receiptPaths.length ?? 0) - newReceiptFiles.length;
+                    if (room <= 0) return alert(`Up to ${FLASH_TECH_MAX_RECEIPTS} receipts per trip.`);
+                    setNewReceiptFiles((prev) => [...prev, ...picked.slice(0, room)]);
+                  }}
+                  className="mt-1 block w-full text-xs text-slate-300 file:mr-3 file:rounded-md file:border-0 file:bg-white/10 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-white hover:file:bg-white/20"
+                />
+                {newReceiptFiles.length > 0 && (
+                  <ul className="mt-1.5 space-y-1">
+                    {newReceiptFiles.map((f, i) => (
+                      <li key={i} className="flex items-center justify-between gap-2 text-xs text-slate-300">
+                        <span className="truncate">{f.name}</span>
+                        <button
+                          type="button"
+                          onClick={() => setNewReceiptFiles((prev) => prev.filter((_, idx) => idx !== i))}
+                          className="shrink-0 text-slate-500 hover:text-red-400"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </div>
 
               {!editingTripId && (
@@ -988,10 +1285,12 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
 }
 
 // ── Tracker view — spreadsheet-style follow-up detail, per trip ─────────
-// (migration 0257). Name/Origin/Destination/Travel Date come from the
-// calendar's own Schedule Trip modal and are read-only here; everything
-// else is a per-cell inline editor, saved independently on blur/change so
-// one field's edit never risks another's in-flight value.
+// (migration 0257). Name and Travel Date are also correctable here (via
+// updateFlashTechTripTechnician/updateFlashTechTripDates) for fixing a typo
+// after the fact without reopening Schedule Trip; Origin/Destination stay
+// read-only. Everything else is a per-cell inline editor, saved
+// independently on blur/change so one field's edit never risks another's
+// in-flight value.
 
 type TrackerPatch = Parameters<typeof updateFlashTechTripTrackerFields>[1];
 
@@ -1084,7 +1383,13 @@ function TrackerSelectCell({ value, options, disabled, onSave }: { value: string
 const TRACKER_STATUS_COLOR: Record<string, string> = {
   Open: "text-emerald-300",
   Closed: "text-slate-400",
-  Pending: "text-amber-300",
+  Upcoming: "text-amber-300",
+};
+
+const TRACKER_ROW_STATUS_BG: Record<string, string> = {
+  Open: "bg-emerald-500/20 border-l-2 border-l-emerald-400 hover:bg-emerald-500/25",
+  Closed: "bg-slate-500/15 border-l-2 border-l-slate-500 hover:bg-slate-500/20",
+  Upcoming: "bg-amber-500/20 border-l-2 border-l-amber-400 hover:bg-amber-500/25",
 };
 
 function FlashTechTrackerTable({
@@ -1097,6 +1402,7 @@ function FlashTechTrackerTable({
   highlightTripId,
   onPatch,
   onChangeTechnician,
+  onChangeDates,
   onUploadReceipt,
   onRemoveReceipt,
   onPreviewReceipt,
@@ -1111,6 +1417,7 @@ function FlashTechTrackerTable({
   highlightTripId: string | null;
   onPatch: (tripId: string, field: string, patch: TrackerPatch) => void;
   onChangeTechnician: (tripId: string, technicianProfileId: string | null, technicianName: string) => void;
+  onChangeDates: (tripId: string, field: "startDate" | "endDate", value: string) => void;
   onUploadReceipt: (trip: FlashTechTrip, file: File) => void;
   onRemoveReceipt: (trip: FlashTechTrip, receiptUrl: string) => void;
   onPreviewReceipt: (url: string) => void;
@@ -1132,6 +1439,8 @@ function FlashTechTrackerTable({
     "Car Rental Needed", "Rental Car", "Rental Date", "Rental Rate", "Vehicle Type", "Other Expenses",
     "Notes", "Receipts", "Type", "Status",
   ];
+  const ALT_HEADERS = ["Alt Lodging Date", "Alt Address", "Alt Hotel Rate", "Alt Confirmation"];
+  const CONFIRMATION_IDX = HEADERS.indexOf("Confirmation");
 
   // Same "active, has a display name" pool the Schedule Trip modal's own
   // technician search draws from — not narrowed to the TECHNICIAN role,
@@ -1141,12 +1450,56 @@ function FlashTechTrackerTable({
     .filter((u) => u.is_active && u.display_name)
     .sort((a, b) => (a.display_name || "").localeCompare(b.display_name || ""));
 
+  // Confirmed before revealing the alt-hotel fields — turning it back off
+  // doesn't need the same confirmation, only adding it does.
+  const [confirmAltHotelTrip, setConfirmAltHotelTrip] = useState<FlashTechTrip | null>(null);
+
+  // Whether every row's Alt Hotel fields render as their own 4 columns or
+  // collapse into one — most trips never touch these, so collapsed is the
+  // default and keeps the table from being mostly-empty amber columns.
+  const [altColsExpanded, setAltColsExpanded] = useState(false);
+
   return (
     <div className="panel overflow-x-auto p-0">
       <table className="border-collapse text-xs">
         <thead>
           <tr className="bg-slate-700/80 text-slate-200">
-            {HEADERS.map((h) => (
+            {HEADERS.slice(0, CONFIRMATION_IDX + 1).map((h) => (
+              <th key={h} className="px-2 py-2 text-left font-semibold whitespace-nowrap border-r border-white/10">
+                {h}
+              </th>
+            ))}
+            {altColsExpanded ? (
+              ALT_HEADERS.map((h, i) => (
+                <th key={h} className="px-2 py-2 text-left font-semibold whitespace-nowrap border-r border-white/10 bg-amber-500/10 text-amber-200">
+                  <div className="flex items-center gap-1">
+                    {h}
+                    {i === ALT_HEADERS.length - 1 && (
+                      <button
+                        type="button"
+                        onClick={() => setAltColsExpanded(false)}
+                        title="Collapse Alt Hotel columns"
+                        className="ml-auto text-amber-300 hover:text-amber-100"
+                      >
+                        <ChevronLeft className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                  </div>
+                </th>
+              ))
+            ) : (
+              <th colSpan={ALT_HEADERS.length} className="px-1 py-2 whitespace-nowrap border-r border-white/10 bg-amber-500/10 text-amber-200">
+                <button
+                  type="button"
+                  onClick={() => setAltColsExpanded(true)}
+                  title="Show Alt Hotel columns"
+                  className="flex w-full items-center justify-center text-amber-300 hover:text-amber-100"
+                >
+                  <ChevronRight className="h-3.5 w-3.5" />
+                </button>
+              </th>
+            )}
+            {HEADERS.slice(CONFIRMATION_IDX + 1).map((h) => (
               <th key={h} className="px-2 py-2 text-left font-semibold whitespace-nowrap border-r border-white/10 last:border-r-0">
                 {h}
               </th>
@@ -1161,8 +1514,10 @@ function FlashTechTrackerTable({
               <tr
                 key={trip.id}
                 ref={isHighlighted ? (el) => el?.scrollIntoView({ behavior: "smooth", block: "center" }) : undefined}
-                className={`border-b border-white/10 align-top hover:bg-white/5 transition-colors ${
-                  isHighlighted ? "bg-blue-500/15 ring-1 ring-inset ring-blue-400/50" : ""
+                className={`border-b border-white/10 align-top transition-colors ${
+                  isHighlighted
+                    ? "bg-blue-500/15 ring-1 ring-inset ring-blue-400/50"
+                    : TRACKER_ROW_STATUS_BG[trip.status] || "hover:bg-white/5"
                 }`}
               >
                 <td className="p-0.5 border-r border-white/10">
@@ -1186,6 +1541,20 @@ function FlashTechTrackerTable({
                       </option>
                     ))}
                   </select>
+                  <button
+                    type="button"
+                    disabled={!canEdit}
+                    onClick={() =>
+                      trip.altHotelRequested
+                        ? patch("altHotelRequested", { altHotelRequested: false })
+                        : setConfirmAltHotelTrip(trip)
+                    }
+                    className={`mt-0.5 w-full rounded px-1.5 py-0.5 text-left text-[10px] leading-tight transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+                      trip.altHotelRequested ? "bg-amber-500/20 text-amber-300 hover:bg-amber-500/25" : "text-slate-500 hover:text-slate-300 hover:bg-white/5"
+                    }`}
+                  >
+                    {trip.altHotelRequested ? "▾ " : "▸ "}Technician requested another hotel
+                  </button>
                 </td>
                 <td className="p-0.5 border-r border-white/10">
                   <TrackerTextCell value={trip.technicianPhone || ""} disabled={!canEdit} placeholder="Contact number" onSave={(v) => patch("technicianPhone", { technicianPhone: v })} />
@@ -1198,7 +1567,15 @@ function FlashTechTrackerTable({
                 </td>
                 <td className="px-2 py-1.5 whitespace-nowrap text-slate-300 border-r border-white/10">{trip.originLocation}</td>
                 <td className="px-2 py-1.5 whitespace-nowrap text-slate-300 border-r border-white/10">{trip.destinationLocation}</td>
-                <td className="px-2 py-1.5 whitespace-nowrap text-slate-300 border-r border-white/10">{trip.startDate} – {trip.endDate}</td>
+                <td className="p-0.5 border-r border-white/10">
+                  <TrackerDateRangeCell
+                    start={trip.startDate}
+                    end={trip.endDate}
+                    disabled={!canEdit}
+                    onSaveStart={(v) => v && onChangeDates(trip.id, "startDate", v)}
+                    onSaveEnd={(v) => v && onChangeDates(trip.id, "endDate", v)}
+                  />
+                </td>
                 <td className="p-0.5 border-r border-white/10">
                   <TrackerTextCell value={trip.hotelName || ""} disabled={!canEdit} placeholder="Hotel name" onSave={(v) => patch("hotelName", { hotelName: v })} />
                 </td>
@@ -1220,6 +1597,62 @@ function FlashTechTrackerTable({
                 <td className="p-0.5 border-r border-white/10">
                   <TrackerTextCell value={trip.hotelConfirmation || ""} disabled={!canEdit} placeholder="Confirmation #" onSave={(v) => patch("hotelConfirmation", { hotelConfirmation: v })} />
                 </td>
+                {altColsExpanded ? (
+                  <>
+                    <td className="p-0.5 border-r border-white/10 bg-amber-500/[0.04]">
+                      {trip.altHotelRequested ? (
+                        <TrackerDateRangeCell
+                          start={trip.altLodgingStartDate}
+                          end={trip.altLodgingEndDate}
+                          disabled={!canEdit}
+                          onSaveStart={(v) => patch("altLodgingStartDate", { altLodgingStartDate: v || null })}
+                          onSaveEnd={(v) => patch("altLodgingEndDate", { altLodgingEndDate: v || null })}
+                        />
+                      ) : (
+                        <span className="block px-1.5 py-1 text-slate-600">—</span>
+                      )}
+                    </td>
+                    <td className="p-0.5 border-r border-white/10 bg-amber-500/[0.04]">
+                      {trip.altHotelRequested ? (
+                        <TrackerTextCell
+                          value={trip.altHotelAddress || ""}
+                          disabled={!canEdit}
+                          placeholder="Address"
+                          onSave={(v) => patch("altHotelAddress", { altHotelAddress: v })}
+                        />
+                      ) : (
+                        <span className="block px-1.5 py-1 text-slate-600">—</span>
+                      )}
+                    </td>
+                    <td className="p-0.5 border-r border-white/10 bg-amber-500/[0.04]">
+                      {trip.altHotelRequested ? (
+                        <TrackerNumberCell value={trip.altHotelRate} disabled={!canEdit} onSave={(v) => patch("altHotelRate", { altHotelRate: v })} />
+                      ) : (
+                        <span className="block px-1.5 py-1 text-slate-600">—</span>
+                      )}
+                    </td>
+                    <td className="p-0.5 border-r border-white/10 bg-amber-500/[0.04]">
+                      {trip.altHotelRequested ? (
+                        <TrackerTextCell
+                          value={trip.altHotelConfirmation || ""}
+                          disabled={!canEdit}
+                          placeholder="Confirmation #"
+                          onSave={(v) => patch("altHotelConfirmation", { altHotelConfirmation: v })}
+                        />
+                      ) : (
+                        <span className="block px-1.5 py-1 text-slate-600">—</span>
+                      )}
+                    </td>
+                  </>
+                ) : (
+                  <td colSpan={ALT_HEADERS.length} className="p-0.5 border-r border-white/10 bg-amber-500/[0.04] text-center">
+                    {trip.altHotelRequested ? (
+                      <span className="text-[10px] font-medium text-amber-300">● alt hotel on file</span>
+                    ) : (
+                      <span className="text-slate-600">—</span>
+                    )}
+                  </td>
+                )}
                 <td className="p-0.5 border-r border-white/10">
                   <TrackerSelectCell
                     value={trip.carRentalNeeded ? "Yes" : "No"}
@@ -1290,9 +1723,9 @@ function FlashTechTrackerTable({
                 <td className="p-0.5 border-r border-white/10">
                   <TrackerSelectCell value={trip.tripType} disabled={!canEdit} options={FLASH_TECH_TRIP_TYPES} onSave={(v) => patch("tripType", { tripType: v as FlashTechTrip["tripType"] })} />
                 </td>
-                <td className="p-0.5">
-                  <span className={TRACKER_STATUS_COLOR[trip.status] || "text-slate-300"}>
-                    <TrackerSelectCell value={trip.status} disabled={!canEdit} options={FLASH_TECH_STATUSES} onSave={(v) => patch("status", { status: v as FlashTechTrip["status"] })} />
+                <td className="p-1.5 px-2">
+                  <span className={`text-xs font-semibold ${TRACKER_STATUS_COLOR[trip.status] || "text-slate-300"}`}>
+                    {trip.status}
                   </span>
                 </td>
               </tr>
@@ -1300,6 +1733,43 @@ function FlashTechTrackerTable({
           })}
         </tbody>
       </table>
+
+      {confirmAltHotelTrip && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+          onClick={() => setConfirmAltHotelTrip(null)}
+        >
+          <div
+            className="w-full max-w-sm rounded-lg border border-white/10 bg-slate-800 p-5 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-sm font-semibold text-white">Technician requested another hotel?</h3>
+            <p className="mt-1.5 text-xs text-slate-400">
+              This adds a separate Lodging Date, Address, Hotel Rate, and Confirmation Number for {confirmAltHotelTrip.technicianName}'s
+              replacement stay — the original hotel details stay on the row untouched.
+            </p>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setConfirmAltHotelTrip(null)}
+                className="btn text-xs px-3 py-1.5"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  onPatch(confirmAltHotelTrip.id, "altHotelRequested", { altHotelRequested: true });
+                  setConfirmAltHotelTrip(null);
+                }}
+                className="btn btn-primary text-xs px-3 py-1.5"
+              >
+                Yes, add fields
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

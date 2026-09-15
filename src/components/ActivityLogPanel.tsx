@@ -28,6 +28,24 @@ export function ActivityLogPanel({ module, title = "Activity Log" }: { module: A
   const [loaded, setLoaded] = useState(false);
   const [loading, setLoading] = useState(false);
   const [entries, setEntries] = useState<ModuleActivityLogEntry[]>([]);
+  // Client-side — the up-to-200 entries already loaded per open, same as
+  // the rest of this panel; no separate query per filter change.
+  const [search, setSearch] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const filteredEntries = entries.filter((e) => {
+    const day = e.createdAt.slice(0, 10);
+    if (dateFrom && day < dateFrom) return false;
+    if (dateTo && day > dateTo) return false;
+    const q = search.trim().toLowerCase();
+    if (!q) return true;
+    return (
+      (e.actorName || "").toLowerCase().includes(q) ||
+      (e.targetLabel || "").toLowerCase().includes(q) ||
+      moduleActivityActionLabel(e.action).toLowerCase().includes(q)
+    );
+  });
+  const hasFilters = search.trim() !== "" || dateFrom !== "" || dateTo !== "";
 
   const load = async () => {
     setLoading(true);
@@ -71,20 +89,64 @@ export function ActivityLogPanel({ module, title = "Activity Log" }: { module: A
                 <h3 className="text-lg font-bold text-white flex items-center gap-2">
                   <History className="h-4 w-4" />
                   {title}
-                  {loaded ? ` (${entries.length})` : ""}
+                  {loaded ? ` (${hasFilters ? `${filteredEntries.length} of ${entries.length}` : entries.length})` : ""}
                 </h3>
                 <button onClick={() => setOpen(false)} className="text-slate-400 hover:text-white transition p-1">
                   ✕
                 </button>
               </div>
 
+              {loaded && entries.length > 0 && (
+                <div className="flex flex-wrap items-end gap-2 mb-4 pb-4 border-b border-white/10">
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">Search</label>
+                    <input
+                      type="text"
+                      value={search}
+                      onChange={(e) => setSearch(e.target.value)}
+                      placeholder="Who or what…"
+                      className="rounded-lg border border-white/15 bg-slate-800 px-2.5 py-1.5 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-blue-500 w-40"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">From</label>
+                    <input
+                      type="date"
+                      value={dateFrom}
+                      onChange={(e) => setDateFrom(e.target.value)}
+                      className="rounded-lg border border-white/15 bg-slate-800 px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-blue-500"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">To</label>
+                    <input
+                      type="date"
+                      value={dateTo}
+                      onChange={(e) => setDateTo(e.target.value)}
+                      className="rounded-lg border border-white/15 bg-slate-800 px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-blue-500"
+                    />
+                  </div>
+                  {hasFilters && (
+                    <button
+                      type="button"
+                      onClick={() => { setSearch(""); setDateFrom(""); setDateTo(""); }}
+                      className="text-xs text-blue-400 hover:text-blue-300 mb-1.5"
+                    >
+                      Reset filters
+                    </button>
+                  )}
+                </div>
+              )}
+
               {loading ? (
                 <p className="text-slate-500 text-sm">Loading…</p>
               ) : entries.length === 0 ? (
                 <p className="text-slate-500 text-sm">No activity yet.</p>
+              ) : filteredEntries.length === 0 ? (
+                <p className="text-slate-500 text-sm">No activity matches that filter.</p>
               ) : (
                 <div className="space-y-2">
-                  {entries.map((e) => (
+                  {filteredEntries.map((e) => (
                     <div key={e.id} className="bg-slate-800/50 rounded p-3 border border-white/5">
                       <div className="flex justify-between items-start gap-3">
                         <div>

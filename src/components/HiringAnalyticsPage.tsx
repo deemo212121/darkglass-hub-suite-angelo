@@ -84,7 +84,7 @@ const CANDIDATE_STATUS_CHART_COLOR: Record<CandidateStatus, string> = {
 // 1:1 identity mapping is safe here too.
 const FLASH_TECH_STATUS_CHART_COLOR: Record<(typeof FLASH_TECH_STATUSES)[number], string> = {
   Open: CHART_PALETTE[0],
-  Pending: CHART_PALETTE[1],
+  Upcoming: CHART_PALETTE[1],
   Closed: CHART_PALETTE[2],
 };
 
