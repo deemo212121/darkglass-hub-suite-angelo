@@ -5,12 +5,12 @@ import { ChevronLeft, Download } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
-import { getCompanyTimecardEntries, calcWorkedHours, computeScheduledDutyHours, startOfWeekSunday, splitRegularOvertimeWeekly, CSR_WEEKLY_OVERTIME_THRESHOLD, type CompanyTimecardEntry } from "@/lib/supabase/timecards";
+import { getCompanyTimecardEntries, calcWorkedHours, computeScheduledDutyHours, resolveScheduledShiftHours, computeMealTimeCredit, startOfWeekSunday, splitRegularOvertimeWeekly, CSR_WEEKLY_OVERTIME_THRESHOLD, type CompanyTimecardEntry } from "@/lib/supabase/timecards";
 import { getCompanySalaryEntries, rateEffectiveOn, entryEffectiveOn, currentRate, perCutoffSalary, type SalaryEntryRow } from "@/lib/supabase/salary";
 import { EmployeePayrollDetailModal } from "@/components/EmployeePayrollDetailModal";
 import { ActivityLogPanel } from "@/components/ActivityLogPanel";
 import { logModuleActivity } from "@/lib/supabase/moduleActivityLog";
-import { getRoleDepartmentBreakdown, isCsrRestrictedRole } from "@/lib/roleLabels";
+import { getRoleDepartmentBreakdown, isCsrRestrictedRole, isMealAlwaysPaidRole } from "@/lib/roleLabels";
 import { payGraceMinutesFor, applyGraceToCheckIn, roundCheckOutToSchedule } from "@/lib/attendanceGrace";
 
 const REGULAR_HOURS_PER_DAY = 8;
@@ -179,6 +179,16 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
             startDate,
             endDate
           );
+      // Technicians/Branch-Managers/Tech Managers/Technical Directors aren't
+      // required to punch Meal In/Out, but their meal break is still paid —
+      // see timecards.ts's computeMealTimeCredit. Added straight into the
+      // raw hours BEFORE the regular/overtime threshold split below, exactly
+      // like real worked time: if the day's/week's regular quota is already
+      // used up, the credit spills into overtime and is paid at the OT rate,
+      // same as anything else past that threshold — never unconditionally
+      // straight-rate pay regardless of how much the person already worked.
+      const mealAlwaysPaid = isMealAlwaysPaidRole(p.role, p.extra_roles);
+      const mealEligible = resolveScheduledShiftHours(p.required_check_in || "", p.required_check_out || "", p.working_hours, p.meal_minutes) > 6;
       const hoursForDay = (day: CompanyTimecardEntry): number => {
         const paidCheckIn = p.required_check_in
           ? applyGraceToCheckIn(day.checkIn, p.required_check_in, graceMinutes)
@@ -186,7 +196,8 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
         const paidCheckOut = p.required_check_out
           ? roundCheckOutToSchedule(day.checkOut, p.required_check_out)
           : day.checkOut;
-        return calcWorkedHours({ checkIn: paidCheckIn, checkOut: paidCheckOut, mealStart: day.mealStart, mealEnd: day.mealEnd, notes: "" });
+        const worked = calcWorkedHours({ checkIn: paidCheckIn, checkOut: paidCheckOut, mealStart: day.mealStart, mealEnd: day.mealEnd, notes: "" });
+        return worked + computeMealTimeCredit(day, mealEligible, mealAlwaysPaid);
       };
       const rawByDate = new Map<string, number>();
       for (const day of [...seedDayEntries, ...dayEntries]) {
