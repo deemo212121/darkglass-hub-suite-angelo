@@ -4,7 +4,6 @@
  */
 
 import { supabase } from "./client";
-import { applyGraceToCheckIn, roundCheckOutToSchedule } from "@/lib/attendanceGrace";
 import type { PtoType } from "./pto";
 
 // The flat UI time-entry shape used by the timecard page.
@@ -342,6 +341,16 @@ export function splitRegularOvertimeWeekly(
       cumulativeRaw += rawHours;
       regular = Math.max(0, Math.min(cumulativeRaw, weekDuty) - before);
       overtime = rawHours - regular;
+      // Snap near-zero noise from the cumulative running total to exactly 0.
+      // `regular`/`overtime` here come from repeatedly adding hours derived
+      // from integer-second time arithmetic (hoursBetween: seconds / 3600) —
+      // binary floating point can't represent most of those fractions
+      // exactly, so a day with truly zero real overtime can come out as
+      // something like 0.0000000001 instead of a clean 0. Left unsnapped,
+      // that's still "> 0" to every downstream consumer (display thresholds,
+      // foldMealCreditIntoSplit's own real-vs-none check), which used to
+      // misclassify a day with no real overtime as having some.
+      if (Math.abs(overtime) < 1 / 3600) overtime = 0;
     } else {
       regular = Math.min(rawHours, fallbackRegularHoursPerDay);
       overtime = Math.max(0, rawHours - fallbackRegularHoursPerDay);
@@ -616,7 +625,7 @@ export function calcWorkedHours(entry: UITimeEntry): number {
   return Math.max(0, hrs);
 }
 
-/** Flat paid-meal credit for a meal-always-paid role on a day they never punched Meal In/Out (see computeMealTimeCredit). */
+/** Flat paid-meal credit for a meal-always-paid role — see computeMealTimeCredit. */
 export const MEAL_ALWAYS_PAID_DEFAULT_HOURS = 0.5;
 
 /**
@@ -627,14 +636,15 @@ export const MEAL_ALWAYS_PAID_DEFAULT_HOURS = 0.5;
  * aren't required to punch Meal In/Out, but their meal break is still paid
  * time.
  *
- * calcWorkedHours only ever subtracts a meal when BOTH punches are present,
- * so an unpunched day isn't losing anything there already — this ADDS a flat
- * MEAL_ALWAYS_PAID_DEFAULT_HOURS credit on top for that case (a genuine extra
- * half hour of pay). When they DID punch a real meal, calcWorkedHours
- * subtracted that real duration from worked hours already — crediting that
- * same real duration back here pays it too, instead of the flat default, so
- * a punched meal is never worth less than an unpunched one. Never both: only
- * one of "real duration" or "flat default" is ever returned for a given day.
+ * Always the flat MEAL_ALWAYS_PAID_DEFAULT_HOURS, regardless of whether Meal
+ * In/Out was punched or how long that punch was — a policy of "30 minutes
+ * paid meal, period," not "whatever you happened to punch":
+ *   - Unpunched day: calcWorkedHours never subtracted anything for a meal,
+ *     so this is a genuine extra half hour of pay on top.
+ *   - Punched day: calcWorkedHours already subtracted the REAL punched
+ *     duration from worked hours (e.g. a 20-minute meal). This still credits
+ *     back the flat half hour regardless — covering the gap when the real
+ *     punch was under 30 minutes, capping it when the real punch ran over.
  */
 export function computeMealTimeCredit(
   entry: Pick<UITimeEntry, "mealStart" | "mealEnd">,
@@ -642,8 +652,43 @@ export function computeMealTimeCredit(
   mealAlwaysPaid: boolean
 ): number {
   if (!mealEligible || !mealAlwaysPaid) return 0;
-  if (entry.mealStart && entry.mealEnd) return Math.max(0, hoursBetween(entry.mealStart, entry.mealEnd));
   return MEAL_ALWAYS_PAID_DEFAULT_HOURS;
+}
+
+/**
+ * Folds a day's paid meal credit into its ALREADY-COMPUTED regular/overtime
+ * split (from real worked hours only — the split must NOT have the meal
+ * credit mixed into its raw input, or "regular" silently absorbs it whenever
+ * there's spare room under that day's/week's cap). The meal credit itself
+ * must never inflate `regular` — only `meal` (a straight-rate line of its
+ * own) or `overtime` ever change:
+ *   - If this day already produced real overtime (the regular quota was
+ *     fully used by real worked hours alone), the credit has nowhere to go
+ *     in `regular` — it rides along as overtime, paid at the OT rate like
+ *     everything else past that threshold. `meal` is 0 that day.
+ *   - Otherwise the credit is its own straight-rate `meal` line, kept
+ *     separate from `regular` for display, but still owed dollar-for-dollar.
+ * Either way, `regular + meal + overtime` always equals the day's real
+ * worked hours plus the meal credit, with no double-counting — safe to sum
+ * for a "Total Hours" figure.
+ */
+export function foldMealCreditIntoSplit(
+  split: { regular: number; overtime: number },
+  mealCredit: number
+): { regular: number; meal: number; overtime: number } {
+  if (mealCredit <= 0) return { regular: split.regular, meal: 0, overtime: split.overtime };
+  // A strict `> 0` here is a floating-point trap: splitRegularOvertimeWeekly
+  // derives its hours from integer-second time arithmetic divided by 3600,
+  // then sums many such values across a week's cumulative running total —
+  // binary floating point can't represent most of those fractions exactly,
+  // so a day with truly zero real overtime can still come out of the split
+  // as something like 0.0000000001 instead of a clean 0. That's still
+  // "> 0" in JS, so it used to wrongly divert the ENTIRE meal credit into
+  // overtime on days that have no real overtime at all. One second
+  // (1/3600 hour) is far smaller than any genuine minute-granularity
+  // overtime but comfortably larger than this kind of rounding noise.
+  if (split.overtime > 1 / 3600) return { regular: split.regular, meal: 0, overtime: split.overtime + mealCredit };
+  return { regular: split.regular, meal: mealCredit, overtime: split.overtime };
 }
 
 /** Public helper for components that need the raw HH:MM diff. */
@@ -803,24 +848,21 @@ export async function getAttendanceForRange(
     else if (!entry.checkIn && entry.checkOut) status = "missing-in";
     else if (entry.checkIn && entry.checkOut && mealEligible && !(entry.mealStart && entry.mealEnd)) status = "missing-meal";
     if (status !== "present" && pendingCorrectionDates.has(key)) status = "pending-correction";
-    // hoursWorked reflects PAID hours (grace-adjusted check-in/rounded
-    // check-out, when opted in via graceMinutes being explicitly passed —
-    // even 0, e.g. Technicians, still gets the clock-precision rounding) —
-    // clockIn/clockOut below stay the literal punch for display.
-    const graceOptedIn = scheduled.graceMinutes !== undefined;
-    const paidCheckIn = graceOptedIn && scheduled.requiredCheckIn
-      ? applyGraceToCheckIn(entry.checkIn, scheduled.requiredCheckIn, scheduled.graceMinutes ?? 0)
-      : entry.checkIn;
-    const paidCheckOut = graceOptedIn && scheduled.requiredCheckOut
-      ? roundCheckOutToSchedule(entry.checkOut, scheduled.requiredCheckOut)
-      : entry.checkOut;
+    // hoursWorked reflects the LITERAL punch — grace (payGraceMinutesFor/
+    // applyGraceToCheckIn/roundCheckOutToSchedule, attendanceGrace.ts) is a
+    // warning-suppression window only ("don't flag a missing/late clock-in
+    // until they're N minutes past schedule" — attendanceAlerts.ts,
+    // AttendanceMonitoringPage.tsx), not a pay policy. It must never inflate
+    // worked hours/pay by pulling a late check-in back to the scheduled
+    // time — an employee who clocks in late is paid for the hours they
+    // actually worked, same as any other day.
     rows.push({
       date: key,
       clockIn: entry.checkIn,
       clockOut: entry.checkOut,
       mealStart: entry.mealStart,
       mealEnd: entry.mealEnd,
-      hoursWorked: calcWorkedHours({ ...entry, checkIn: paidCheckIn, checkOut: paidCheckOut }),
+      hoursWorked: calcWorkedHours(entry),
       status,
     });
   }

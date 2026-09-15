@@ -43,9 +43,9 @@ import { getBranchRates, upsertBranchRate, type BranchRate } from "@/lib/supabas
 import { EmployeePayrollDetailModal } from "@/components/EmployeePayrollDetailModal";
 import { getRepairStatuses, type RepairStatus } from "@/lib/supabase/repairStatuses";
 import { TicketColumnFilter } from "@/components/TicketColumnFilter";
-import { getRoleDepartmentBreakdown, normalizeRole, ROLE_LABELS, TECHNICIAN_PAY_ROLES, isCsrRestrictedRole, isMealAlwaysPaidRole } from "@/lib/roleLabels";
-import { calcWorkedHours, getMyProfileSchedule, resolveScheduledNetHours, resolveScheduledShiftHours, computeMealTimeCredit, computeScheduledDutyHours, getAttendanceForRange, startOfWeekSunday, splitRegularOvertimeWeekly, addDaysISO, CSR_WEEKLY_OVERTIME_THRESHOLD } from "@/lib/supabase/timecards";
-import { payGraceMinutesFor, applyGraceToCheckIn, roundCheckOutToSchedule } from "@/lib/attendanceGrace";
+import { getRoleDepartmentBreakdown, normalizeRole, ROLE_LABELS, TECHNICIAN_PAY_ROLES, isMealAlwaysPaidRole, usesFlatWeeklyOvertimeThreshold } from "@/lib/roleLabels";
+import { calcWorkedHours, getMyProfileSchedule, resolveScheduledNetHours, resolveScheduledShiftHours, computeMealTimeCredit, foldMealCreditIntoSplit, computeScheduledDutyHours, getAttendanceForRange, startOfWeekSunday, splitRegularOvertimeWeekly, addDaysISO, CSR_WEEKLY_OVERTIME_THRESHOLD } from "@/lib/supabase/timecards";
+import { payGraceMinutesFor } from "@/lib/attendanceGrace";
 import { updatePayrollLineItemExtra, updatePayrollLineItemPaid } from "@/lib/supabase/payslips";
 import { getEmployeeInfoByProfileIds, getCompanyUsers, getTechnicianContactInfoByIds, type EmployeeInfo } from "@/lib/supabase/users";
 import { resolveTeamLeadOrManager } from "@/lib/notifyRouting";
@@ -397,6 +397,16 @@ function computeHoursMap(
   // just silently drop all their overtime.
   const rawByEmployeeDate = new Map<string, Map<string, number>>();
   const legacyDailyCapByEmployee = new Map<string, { regular: number; overtime: number }>();
+  // Technicians/Branch-Managers/Tech Managers/Technical Directors aren't
+  // required to punch Meal In/Out, but their meal break is still paid — see
+  // timecards.ts's computeMealTimeCredit/foldMealCreditIntoSplit. Tracked
+  // separately from rawByEmployeeDate (the regular/overtime split's raw
+  // input) so it can never silently inflate `regular` just because a day
+  // had spare room under the cap — it's folded in AFTER the split below
+  // instead, so it only ever becomes its own straight-rate credit, or rides
+  // along as overtime on a day that already used up its regular quota from
+  // real worked hours alone.
+  const mealCreditByEmployeeDate = new Map<string, Map<string, number>>();
   for (const tc of [...seedEntries, ...entries]) {
     const key = tc.profile_id || tc.employee_id;
     if (!key || !tc.check_in || !tc.check_out) continue;
@@ -407,40 +417,46 @@ function computeHoursMap(
       punchedDates.set(key, dates);
     }
     const emp = employeeById.get(key);
-    const graceMinutes = emp ? payGraceMinutesFor(emp.country) : 0;
-    const paidCheckIn = emp?.requiredCheckIn
-      ? applyGraceToCheckIn(tc.check_in, emp.requiredCheckIn, graceMinutes)
-      : tc.check_in;
-    const paidCheckOut = emp?.requiredCheckOut
-      ? roundCheckOutToSchedule(tc.check_out, emp.requiredCheckOut)
-      : tc.check_out;
-    // Technicians/Branch-Managers/Tech Managers/Technical Directors aren't
-    // required to punch Meal In/Out, but their meal break is still paid —
-    // see timecards.ts's computeMealTimeCredit. Added straight into the raw
-    // hours BEFORE the regular/overtime threshold split below, exactly like
-    // real worked time: if the day's/week's regular quota is already used
-    // up, the credit spills into overtime and is paid at the OT rate, same
-    // as anything else past that threshold — it's never unconditionally
-    // straight-rate pay regardless of how much the person already worked.
-    const mealAlwaysPaid = emp ? isMealAlwaysPaidRole(emp.role, emp.extraRoles) : false;
-    const mealEligible = emp ? resolveScheduledShiftHours(emp.requiredCheckIn || "", emp.requiredCheckOut || "", emp.workingHours, emp.mealMinutes) > 6 : false;
-    const mealCredit = computeMealTimeCredit({ mealStart: tc.meal_start || "", mealEnd: tc.meal_end || "" }, mealEligible, mealAlwaysPaid);
-    const hours =
-      calcWorkedHours({
-        checkIn: paidCheckIn,
-        checkOut: paidCheckOut,
-        mealStart: tc.meal_start || "",
-        mealEnd: tc.meal_end || "",
-        notes: "",
-      }) + mealCredit;
+    // Grace (payGraceMinutesFor/applyGraceToCheckIn/roundCheckOutToSchedule)
+    // is a warning-suppression window only (attendanceAlerts.ts,
+    // AttendanceMonitoringPage.tsx's Over/Under Time flags) — not a pay
+    // policy. Worked hours here are always the literal punch; an employee
+    // who clocks in late is paid for the hours they actually worked.
+    const hours = calcWorkedHours({
+      checkIn: tc.check_in,
+      checkOut: tc.check_out,
+      mealStart: tc.meal_start || "",
+      mealEnd: tc.meal_end || "",
+      notes: "",
+    });
     const byDate = rawByEmployeeDate.get(key) ?? new Map<string, number>();
     byDate.set(tc.work_date, (byDate.get(tc.work_date) ?? 0) + hours);
     rawByEmployeeDate.set(key, byDate);
+    let mealCredit = 0;
+    if (emp) {
+      const mealAlwaysPaid = isMealAlwaysPaidRole(emp.role, emp.extraRoles);
+      const mealEligible = resolveScheduledShiftHours(emp.requiredCheckIn || "", emp.requiredCheckOut || "", emp.workingHours, emp.mealMinutes) > 6;
+      mealCredit = computeMealTimeCredit({ mealStart: tc.meal_start || "", mealEnd: tc.meal_end || "" }, mealEligible, mealAlwaysPaid);
+      if (mealCredit > 0) {
+        const creditByDate = mealCreditByEmployeeDate.get(key) ?? new Map<string, number>();
+        creditByDate.set(tc.work_date, (creditByDate.get(tc.work_date) ?? 0) + mealCredit);
+        mealCreditByEmployeeDate.set(key, creditByDate);
+      }
+    }
     if (!isSeedRow) {
+      // No configured duty-hours schedule for this employee — falls back to
+      // a flat per-row 8-hour cap (see the `duty <= 0` branch below). Folded
+      // the same way as the real weekly split: the meal credit only
+      // inflates `regular` when this row's own hours didn't already exceed
+      // the flat cap on their own.
+      const folded = foldMealCreditIntoSplit(
+        { regular: Math.min(hours, REGULAR_HOURS_PER_DAY), overtime: Math.max(0, hours - REGULAR_HOURS_PER_DAY) },
+        mealCredit
+      );
       const prevLegacy = legacyDailyCapByEmployee.get(key) ?? { regular: 0, overtime: 0 };
       legacyDailyCapByEmployee.set(key, {
-        regular: prevLegacy.regular + Math.min(hours, REGULAR_HOURS_PER_DAY),
-        overtime: prevLegacy.overtime + Math.max(0, hours - REGULAR_HOURS_PER_DAY),
+        regular: prevLegacy.regular + folded.regular + folded.meal,
+        overtime: prevLegacy.overtime + folded.overtime,
       });
     }
   }
@@ -460,9 +476,14 @@ function computeHoursMap(
     // CSR shift start/end times vary person to person and aren't reliably
     // captured in requiredCheckIn/requiredCheckOut, so the scheduled-duty-
     // hours cap doesn't apply cleanly to them — they use a flat 40 hrs/week
-    // (standard FLSA overtime) instead. See CSR_WEEKLY_OVERTIME_THRESHOLD.
-    const isCsr = isCsrRestrictedRole(emp?.role, emp?.extraRoles);
-    const duty = isCsr ? CSR_WEEKLY_OVERTIME_THRESHOLD : dutyHoursByEmployeeId.get(key) ?? 0;
+    // (standard FLSA overtime) instead. Technician-tier roles use the same
+    // flat 40-hr rule too (roleLabels.ts's usesFlatWeeklyOvertimeThreshold)
+    // — their schedule-derived duty cap counts every non-off day toward the
+    // weekly budget regardless of attendance, so an absence earlier in the
+    // week can shrink the regular-hours room left for the days they DID
+    // work and trigger "overtime" well under a real 40-hour week.
+    const flatThreshold = usesFlatWeeklyOvertimeThreshold(emp?.role, emp?.extraRoles);
+    const duty = flatThreshold ? CSR_WEEKLY_OVERTIME_THRESHOLD : dutyHoursByEmployeeId.get(key) ?? 0;
     if (duty <= 0) {
       hoursMap.set(key, legacyDailyCapByEmployee.get(key) ?? { regular: 0, overtime: 0 });
       continue;
@@ -478,14 +499,16 @@ function computeHoursMap(
         offDays: emp?.offDays,
       },
       8,
-      isCsr ? CSR_WEEKLY_OVERTIME_THRESHOLD : undefined
+      flatThreshold ? CSR_WEEKLY_OVERTIME_THRESHOLD : undefined
     );
     let regular = 0;
     let overtime = 0;
+    const mealCreditByDate = mealCreditByEmployeeDate.get(key);
     for (const [date, hrs] of split) {
       if (date < periodStart || date > periodEnd) continue;
-      regular += hrs.regular;
-      overtime += hrs.overtime;
+      const folded = foldMealCreditIntoSplit(hrs, mealCreditByDate?.get(date) ?? 0);
+      regular += folded.regular + folded.meal;
+      overtime += folded.overtime;
     }
     hoursMap.set(key, { regular, overtime });
   }
@@ -2046,12 +2069,13 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     const hourlyRate = isFixed ? 0 : comp?.hourly_rate ?? emp.hourly_rate ?? 0;
     const annualSalary = isFixed ? comp?.annual_salary ?? 0 : null;
     const hours = hoursMap.get(emp.id) ?? { regular: 0, overtime: 0 };
-    // NOTE: for CSR, computeHoursMap above already splits regular/overtime
-    // against a flat 40 hrs/WEEK (not this schedule-derived, whole-period
-    // number) — see its own isCsrRestrictedRole check. This dutyHours value
-    // stays schedule-derived (and 0 for CSR with no configured schedule)
-    // since it's an informational whole-period total, not safe to just
-    // multiply the weekly 40 out by week count here.
+    // NOTE: for CSR/Technician-tier roles, computeHoursMap above already
+    // splits regular/overtime against a flat 40 hrs/WEEK (not this
+    // schedule-derived, whole-period number) — see its own
+    // usesFlatWeeklyOvertimeThreshold check. This dutyHours value stays
+    // schedule-derived (and 0 for CSR with no configured schedule) since
+    // it's an informational whole-period total, not safe to just multiply
+    // the weekly 40 out by week count here.
     const dutyHours = dutyHoursByEmployeeId.get(emp.id) ?? 0;
     const workingDays = workingDaysCountByProfile.get(emp.id) ?? 0;
 
@@ -2639,9 +2663,14 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         getAttendanceForRange(emp.id, genStart, genEnd, scheduled),
         needsSeed ? getAttendanceForRange(emp.id, seedStart, seedEnd, scheduled) : Promise.resolve([]),
       ]);
+      // CSR and Technician-tier roles use a flat 40-hr/week threshold instead
+      // of the schedule-derived duty cap — see usesFlatWeeklyOvertimeThreshold.
+      const flatThreshold = usesFlatWeeklyOvertimeThreshold(emp.role, emp.extraRoles);
       const split = splitRegularOvertimeWeekly(
         [...seedRows, ...attendanceRows].map((r) => ({ date: r.date, rawHours: r.hoursWorked })),
-        { requiredCheckIn: emp.requiredCheckIn, requiredCheckOut: emp.requiredCheckOut, workingHours: emp.workingHours, mealMinutes: emp.mealMinutes, offDays: emp.offDays }
+        { requiredCheckIn: emp.requiredCheckIn, requiredCheckOut: emp.requiredCheckOut, workingHours: emp.workingHours, mealMinutes: emp.mealMinutes, offDays: emp.offDays },
+        8,
+        flatThreshold ? CSR_WEEKLY_OVERTIME_THRESHOLD : undefined
       );
       const rate = row.hourlyRateUSD;
       return attendanceRows
