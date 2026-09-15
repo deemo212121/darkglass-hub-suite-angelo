@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { ChevronLeft, ChevronRight, RefreshCw, Plus, X, Trash2, CalendarDays, Table2, Paperclip, Loader2, Car, Users, Check } from "lucide-react";
+import { ChevronLeft, ChevronRight, RefreshCw, Plus, X, Trash2, CalendarDays, Table2, Paperclip, Loader2, Car, Users, Check, Minus } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { useSmartBack } from "@/hooks/useSmartBack";
@@ -24,7 +24,7 @@ import {
 import { AttachmentPreviewModal } from "@/components/AttachmentPreviewModal";
 import { REGIONS, REGION_LOCATIONS } from "@/lib/locations";
 import { getSignableDocuments } from "@/lib/supabase/signableDocuments";
-import { getDocumentReviewStatus, pickAuthoritativeDocument } from "@/lib/signableDocumentRegistry";
+import { getDocumentReviewStatus, pickAuthoritativeDocument, type DocumentReviewStatus } from "@/lib/signableDocumentRegistry";
 const WEEKDAY_LABELS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const CHIP_COLORS = ["bg-blue-500/80", "bg-purple-500/80", "bg-emerald-500/80", "bg-amber-500/80", "bg-pink-500/80", "bg-cyan-500/80"];
 // Every real branch, for the Destination dropdown.
@@ -155,12 +155,13 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
   const [monthValue, setMonthValue] = useState(todayMonthValue());
   const [trips, setTrips] = useState<FlashTechTrip[]>([]);
   const [users, setUsers] = useState<ProfileRow[]>([]);
-  // Who's actually filed (HR-confirmed) the Flash Technician Travel &
-  // Out-of-State Policy acknowledgment — the Flash Tech List's own
-  // "Available" status is meaningless for sending someone out if they
-  // haven't cleared this form yet, so it gets its own status instead of
-  // silently reading as just "Available".
-  const [flashFormFiledProfileIds, setFlashFormFiledProfileIds] = useState<Set<string>>(new Set());
+  // Each technician's Flash Technician Travel & Out-of-State Policy review
+  // status (same "not_sent"/"awaiting_employee"/"awaiting_hr"/"done" states
+  // Staff Form Checklist uses) — the Flash Tech List's own "Available"
+  // status is meaningless for sending someone out if they haven't cleared
+  // this form yet, and the Schedule Trip technician picker shows it as a
+  // check/dash/X per person.
+  const [flashFormStatusByProfileId, setFlashFormStatusByProfileId] = useState<Map<string, DocumentReviewStatus>>(new Map());
   const [loading, setLoading] = useState(true);
   const [myProfileId, setMyProfileId] = useState<string | null>(null);
 
@@ -274,12 +275,12 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
         if (arr) arr.push(d);
         else byPerson.set(personId, [d]);
       }
-      const filed = new Set<string>();
+      const statusByPerson = new Map<string, DocumentReviewStatus>();
       for (const [personId, group] of byPerson) {
         const best = pickAuthoritativeDocument(group);
-        if (getDocumentReviewStatus("flash_technician_travel", best) === "done") filed.add(personId);
+        statusByPerson.set(personId, getDocumentReviewStatus("flash_technician_travel", best));
       }
-      setFlashFormFiledProfileIds(filed);
+      setFlashFormStatusByProfileId(statusByPerson);
     } finally {
       setLoading(false);
     }
@@ -346,7 +347,7 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
       if (t.technicianProfileId && t.startDate <= today && t.endDate >= today) tripByProfileId.set(t.technicianProfileId, t);
     }
     return active
-      .map((u) => ({ user: u, trip: tripByProfileId.get(u.id) ?? null, formFiled: flashFormFiledProfileIds.has(u.id) }))
+      .map((u) => ({ user: u, trip: tripByProfileId.get(u.id) ?? null, formFiled: flashFormStatusByProfileId.get(u.id) === "done" }))
       .sort((a, b) => {
         // Busy last, then "needs form" (not actually sendable), then
         // Available — alphabetical within each group.
@@ -355,7 +356,7 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
         if (rankDiff !== 0) return rankDiff;
         return (a.user.display_name || "").localeCompare(b.user.display_name || "");
       });
-  }, [users, trips, flashFormFiledProfileIds]);
+  }, [users, trips, flashFormStatusByProfileId]);
 
   const filteredTechnicianAvailability = useMemo(() => {
     const q = availabilitySearch.trim().toLowerCase();
@@ -845,18 +846,22 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
                 {technicianDropdownOpen && filteredTechnicianOptions.length > 0 && (
                   <div className="absolute z-10 mt-1 max-h-48 w-full overflow-y-auto rounded-lg border border-white/15 bg-slate-900 shadow-lg">
                     {filteredTechnicianOptions.slice(0, 50).map((u) => {
-                      const formFiled = flashFormFiledProfileIds.has(u.id);
+                      const formStatus = flashFormStatusByProfileId.get(u.id) ?? "not_sent";
+                      const badge =
+                        formStatus === "done"
+                          ? { icon: <Check className="h-2.5 w-2.5" />, cls: "bg-emerald-500/20 text-emerald-400", title: "Flash Technician Travel form on file" }
+                          : formStatus === "awaiting_hr"
+                          ? { icon: <Minus className="h-2.5 w-2.5" />, cls: "bg-amber-500/20 text-amber-400", title: "Flash Technician Travel form submitted — awaiting HR review" }
+                          : { icon: <X className="h-2.5 w-2.5" />, cls: "bg-red-500/20 text-red-400", title: "Flash Technician Travel form not on file — can still be scheduled" };
                       return (
                         <button
                           key={u.id}
                           type="button"
                           onMouseDown={() => handleSelectTechnician(u)}
-                          title={formFiled ? "Flash Technician Travel form on file" : "Flash Technician Travel form not on file — can still be scheduled"}
+                          title={badge.title}
                           className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-slate-200 hover:bg-white/10"
                         >
-                          <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full ${formFiled ? "bg-emerald-500/20 text-emerald-400" : "bg-red-500/20 text-red-400"}`}>
-                            {formFiled ? <Check className="h-2.5 w-2.5" /> : <X className="h-2.5 w-2.5" />}
-                          </span>
+                          <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full ${badge.cls}`}>{badge.icon}</span>
                           <span className="truncate">{u.display_name || u.email}</span>
                         </button>
                       );
