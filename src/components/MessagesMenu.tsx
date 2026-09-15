@@ -25,7 +25,7 @@ import {
   type MessageRow,
   getUnreadCounts,
   listChannels,
-  subscribeToAllNewMessages,
+  subscribeToAllNewMessagesShared,
 } from "@/lib/supabase/messaging";
 import { getCompanyUsers, getMyProfileId, type ProfileRow } from "@/lib/supabase/users";
 import { supabase } from "@/lib/supabase/client";
@@ -232,7 +232,7 @@ export function MessagesMenu() {
     // don't need this check since every channel is company-wide.
     const isRelevant = (row: { channel_id?: string | null; dm_thread_id?: string | null }) =>
       !row.dm_thread_id || myDmThreadIdsRef.current.has(row.dm_thread_id);
-    const unsub = subscribeToAllNewMessages((row) => {
+    const unsub = subscribeToAllNewMessagesShared((row) => {
       if (!isRelevant(row)) return;
       debouncedRefresh();
       if (row?.sender_id && row.sender_id !== profileId) {
