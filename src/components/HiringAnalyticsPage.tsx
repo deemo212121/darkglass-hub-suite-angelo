@@ -16,6 +16,10 @@
  *    attendance_notes.created_by, restricted to the HR role — see the
  *    empActivityByActor memo below. Once enough log history has accrued
  *    this fallback should be deleted.
+ *  - Flash Tech: trips by status (donut) + who's actually been scheduling
+ *    them (Team Activity) — sourced straight from flash_tech_trips itself
+ *    (createdAt/createdByName), not hr_activity_log, since trip scheduling
+ *    isn't logged there.
  * A future category should add its own <AnalyticsCategory> section below
  * rather than a separate page — the slug/custom key ("hiring-analytics")
  * stays as internal plumbing, unrelated to the title.
@@ -31,12 +35,13 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { ChevronLeft, PieChart, Users } from "lucide-react";
+import { ChevronLeft, ChevronDown, PieChart, Users, Filter, X } from "lucide-react";
 import { getCandidates, type Candidate, type CandidateStatus } from "@/lib/supabase/hrCandidates";
 import { getAttendanceNotes, type AttendanceNoteRow } from "@/lib/supabase/attendanceNotes";
 import { getActivityLog, type HrActivityLogEntry } from "@/lib/supabase/hrActivityLog";
 import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
 import { normalizeRole } from "@/lib/roleLabels";
+import { getCompanyFlashTechTrips, FLASH_TECH_STATUSES, type FlashTechTrip } from "@/lib/supabase/flashTechTrips";
 
 const CANDIDATE_STATUS_LABEL: Record<CandidateStatus, string> = {
   applied: "Applied",
@@ -74,6 +79,14 @@ const CANDIDATE_STATUS_CHART_COLOR: Record<CandidateStatus, string> = {
   rejected: CHART_PALETTE[7],
   cancelled: CHART_OTHER_COLOR,
 };
+// Flash Tech trips by Status: same fixed-assignment reasoning as candidate
+// status above — only 3 possible values (FLASH_TECH_STATUSES), so a real
+// 1:1 identity mapping is safe here too.
+const FLASH_TECH_STATUS_CHART_COLOR: Record<(typeof FLASH_TECH_STATUSES)[number], string> = {
+  Open: CHART_PALETTE[0],
+  Pending: CHART_PALETTE[1],
+  Closed: CHART_PALETTE[2],
+};
 
 interface DonutSlice {
   key: string;
@@ -82,6 +95,8 @@ interface DonutSlice {
   color: string;
   pct: number;
   path: string;
+  /** Who's actually in this slice — shown when the legend row is clicked. */
+  names: string[];
 }
 
 /** Naive "add an s" breaks on words like "status" -> "statuses", not
@@ -92,16 +107,19 @@ function pluralizeUnit(unit: string, count: number): string {
 }
 
 /** Pure arc math — one donut-slice SVG path per row, in the order given (the
- * caller controls sort order; colors are already resolved on each row). */
-function buildDonutSlices(rows: { key: string; label: string; count: number; color: string }[]): { total: number; slices: DonutSlice[] } {
-  const total = rows.reduce((s, r) => s + r.count, 0);
+ * caller controls sort order; colors are already resolved on each row).
+ * `count` is derived from `names.length` rather than passed separately, so
+ * the two can never drift out of sync. */
+function buildDonutSlices(rows: { key: string; label: string; names: string[]; color: string }[]): { total: number; slices: DonutSlice[] } {
+  const withCount = rows.map((r) => ({ ...r, count: r.names.length }));
+  const total = withCount.reduce((s, r) => s + r.count, 0);
   const cx = 60, cy = 60, rOuter = 54, rInner = 32;
   const polar = (r: number, angleDeg: number) => {
     const rad = ((angleDeg - 90) * Math.PI) / 180;
     return { x: cx + r * Math.cos(rad), y: cy + r * Math.sin(rad) };
   };
   let cursor = 0;
-  const slices = rows.map((row) => {
+  const slices = withCount.map((row) => {
     const startAngle = total > 0 ? (cursor / total) * 360 : 0;
     cursor += row.count;
     const endAngle = total > 0 ? (cursor / total) * 360 : 0;
@@ -122,23 +140,38 @@ function buildDonutSlices(rows: { key: string; label: string; count: number; col
   return { total, slices };
 }
 
+/** Colors the top CHART_PALETTE.length groups by rank (largest first) and
+ * genuinely MERGES everything past that into one real "Other" slice — the
+ * dataviz skill's "fold to Other past N" rule for an open-ended category
+ * set. Previously the leftovers were each just recolored the same gray
+ * without merging, so a list past 8 groups (e.g. 13 branches) rendered
+ * several visually-identical gray dots/wedges with no way to tell them
+ * apart in the chart itself (the legend text still distinguished them, but
+ * the whole point of the color channel is to do that visually). */
+function foldToOtherAndColor(groups: { label: string; names: string[] }[]): { key: string; label: string; names: string[]; color: string }[] {
+  const sorted = [...groups].sort((a, b) => b.names.length - a.names.length);
+  const top = sorted.slice(0, CHART_PALETTE.length).map((g, i) => ({ key: g.label, label: g.label, names: g.names, color: CHART_PALETTE[i] }));
+  const rest = sorted.slice(CHART_PALETTE.length);
+  if (rest.length === 0) return top;
+  return [...top, { key: "__other__", label: `Other (${rest.length})`, names: rest.flatMap((g) => g.names), color: CHART_OTHER_COLOR }];
+}
+
 /** Groups candidates by a person-id field (assignedManagerId,
  * assignedInterviewerId, …) resolved to a display name via `nameById`,
  * falling back to "Unassigned". Colors by rank, same convention as the
  * HR Status donut — the set of people who could hold this field is
  * open-ended, so there's no fixed per-person color to assign. */
 function donutByPerson(candidates: Candidate[], getPersonId: (c: Candidate) => string | null, nameById: Map<string, string>): { total: number; slices: DonutSlice[] } {
-  const counts = new Map<string, number>();
+  const namesByLabel = new Map<string, string[]>();
   for (const c of candidates) {
     const id = getPersonId(c);
     const label = (id && nameById.get(id)) || "Unassigned";
-    counts.set(label, (counts.get(label) ?? 0) + 1);
+    const arr = namesByLabel.get(label);
+    if (arr) arr.push(c.name);
+    else namesByLabel.set(label, [c.name]);
   }
-  const rows = Array.from(counts.entries())
-    .map(([label, count]) => ({ key: label, label, count }))
-    .sort((a, b) => b.count - a.count)
-    .map((r, i) => ({ ...r, color: i < CHART_PALETTE.length ? CHART_PALETTE[i] : CHART_OTHER_COLOR }));
-  return buildDonutSlices(rows);
+  const groups = Array.from(namesByLabel.entries()).map(([label, names]) => ({ label, names: names.sort((a, b) => a.localeCompare(b)) }));
+  return buildDonutSlices(foldToOtherAndColor(groups));
 }
 
 /** The "donut + legend" card by itself — used both as AnalyticsCategory's
@@ -151,6 +184,11 @@ function donutByPerson(candidates: Candidate[], getPersonId: (c: Candidate) => s
  * branch filter, …) so the entrance animation below replays instead of only
  * firing once on first mount. */
 function DonutPanel({ heading, unitLabel, loading, slices, total, variantKey, fill }: { heading: string; unitLabel: string; loading: boolean; slices: DonutSlice[]; total: number; variantKey?: string | number; fill?: boolean }) {
+  // Which legend row (if any) has its name list expanded — reset whenever
+  // the underlying data changes (variantKey) so an expanded row never shows
+  // names left over from a different filter/date range.
+  const [expandedKey, setExpandedKey] = useState<string | null>(null);
+  useEffect(() => setExpandedKey(null), [variantKey]);
   return (
     <div className={`panel p-0 overflow-hidden transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-black/30 ${fill ? "w-full" : "w-full sm:w-[360px] shrink-0"}`}>
       <div className="px-4 py-4 border-b border-white/10">
@@ -180,13 +218,35 @@ function DonutPanel({ heading, unitLabel, loading, slices, total, variantKey, fi
               <text x="60" y="70" textAnchor="middle" className="fill-slate-400" style={{ fontSize: 7, textTransform: "uppercase", letterSpacing: "0.05em" }}>{pluralizeUnit(unitLabel, total === 1 ? 1 : 2)}</text>
             </svg>
             <ul className="w-full space-y-1.5">
-              {slices.map((s, i) => (
-                <li key={s.key} className="flex items-center gap-2 text-xs analytics-row-in" style={{ animationDelay: `${i * 40}ms` }}>
-                  <span className="h-2.5 w-2.5 rounded-sm shrink-0" style={{ backgroundColor: s.color }} />
-                  <span className="flex-1 text-slate-200 truncate">{s.label}</span>
-                  <span className="text-slate-400 tabular-nums shrink-0">{s.count} ({s.pct.toFixed(0)}%)</span>
-                </li>
-              ))}
+              {slices.map((s, i) => {
+                const isOpen = expandedKey === s.key;
+                return (
+                  <li key={s.key} className="analytics-row-in" style={{ animationDelay: `${i * 40}ms` }}>
+                    <button
+                      type="button"
+                      onClick={() => setExpandedKey(isOpen ? null : s.key)}
+                      title={`Click to see who's in "${s.label}"`}
+                      className="w-full flex items-center gap-2 text-xs text-left rounded px-1 -mx-1 py-0.5 hover:bg-white/5 transition-colors"
+                    >
+                      <span className="h-2.5 w-2.5 rounded-sm shrink-0" style={{ backgroundColor: s.color }} />
+                      <span className="flex-1 text-slate-200 truncate">{s.label}</span>
+                      <span className="text-slate-400 tabular-nums shrink-0">{s.count} ({s.pct.toFixed(0)}%)</span>
+                      <ChevronDown className={`h-3 w-3 shrink-0 text-slate-500 transition-transform ${isOpen ? "rotate-180" : ""}`} />
+                    </button>
+                    {isOpen && (
+                      <ul className="mt-1 mb-1.5 ml-3.5 pl-2.5 border-l border-white/10 space-y-0.5 max-h-40 overflow-y-auto">
+                        {s.names.length === 0 ? (
+                          <li className="text-[11px] text-slate-500 py-1">— none —</li>
+                        ) : (
+                          s.names.map((n, ni) => (
+                            <li key={ni} className="text-[11px] text-slate-300 truncate" title={n}>{n}</li>
+                          ))
+                        )}
+                      </ul>
+                    )}
+                  </li>
+                );
+              })}
             </ul>
           </div>
         )}
@@ -212,15 +272,20 @@ function TeamActivityPanel({
 }: {
   heading: string;
   subheading: string;
-  from: string;
-  onFromChange: (v: string) => void;
-  to: string;
-  onToChange: (v: string) => void;
+  /** Omit all four (rather than pass an unused range) for a leaderboard
+   *  that isn't date-scoped at all, e.g. "Trips by Technician" — a straight
+   *  all-time count off the already Branch-filtered dataset, not something
+   *  with its own From/To to pick. */
+  from?: string;
+  onFromChange?: (v: string) => void;
+  to?: string;
+  onToChange?: (v: string) => void;
   loading: boolean;
   byActor: { name: string; count: number }[];
 }) {
   const max = byActor.reduce((m, a) => Math.max(m, a.count), 0);
   const fingerprint = byActor.map((a) => `${a.name}:${a.count}`).join(",");
+  const hasDateRange = from !== undefined && onFromChange && to !== undefined && onToChange;
   return (
     <div className="panel w-full max-w-2xl p-0 overflow-hidden transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-black/30">
       <div className="px-4 py-4 border-b border-white/10 flex flex-wrap items-center justify-between gap-3">
@@ -228,16 +293,18 @@ function TeamActivityPanel({
           <h3 className="font-semibold text-sm flex items-center gap-1.5"><Users className="h-4 w-4 text-blue-300" /> {heading}</h3>
           <p className="text-[10px] text-muted-foreground mt-0.5">{subheading}</p>
         </div>
-        <div className="flex items-end gap-2">
-          <div className="flex flex-col gap-1">
-            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">From</label>
-            <input type="date" value={from} onChange={(e) => onFromChange(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+        {hasDateRange && (
+          <div className="flex items-end gap-2">
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">From</label>
+              <input type="date" value={from} onChange={(e) => onFromChange(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">To</label>
+              <input type="date" value={to} onChange={(e) => onToChange(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+            </div>
           </div>
-          <div className="flex flex-col gap-1">
-            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">To</label>
-            <input type="date" value={to} onChange={(e) => onToChange(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
-          </div>
-        </div>
+        )}
       </div>
       <div className="p-4">
         {loading ? (
@@ -269,6 +336,8 @@ function TeamActivityPanel({
  * breakdowns), all the donuts share one evenly-filled row first and Team
  * Activity gets its own full-width row below — three donuts squeezed next
  * to a leaderboard left no room for any of them to breathe. */
+type DonutDef = { heading: string; unitLabel: string; loading: boolean; slices: DonutSlice[]; total: number; variantKey?: string | number };
+
 function AnalyticsCategory({
   title,
   donutHeading,
@@ -277,6 +346,7 @@ function AnalyticsCategory({
   slices,
   total,
   extraDonuts,
+  sideDonut,
   activityHeading,
   activitySubheading,
   activityFrom,
@@ -292,7 +362,12 @@ function AnalyticsCategory({
   loading: boolean;
   slices: DonutSlice[];
   total: number;
-  extraDonuts?: { heading: string; unitLabel: string; loading: boolean; slices: DonutSlice[]; total: number; variantKey?: string | number }[];
+  extraDonuts?: DonutDef[];
+  /** An extra donut placed beside Team Activity instead of in the main
+   *  evenly-divided row — fills the blank space a capped-width leaderboard
+   *  otherwise leaves next to it, rather than competing for room in the
+   *  primary breakdown row above. */
+  sideDonut?: DonutDef;
   activityHeading: string;
   activitySubheading: string;
   activityFrom: string;
@@ -325,7 +400,12 @@ function AnalyticsCategory({
               <DonutPanel key={d.heading} heading={d.heading} unitLabel={d.unitLabel} loading={d.loading} slices={d.slices} total={d.total} variantKey={d.variantKey} fill />
             ))}
           </div>
-          {activityPanel}
+          <div className="flex flex-wrap items-start gap-4">
+            {activityPanel}
+            {sideDonut && (
+              <DonutPanel heading={sideDonut.heading} unitLabel={sideDonut.unitLabel} loading={sideDonut.loading} slices={sideDonut.slices} total={sideDonut.total} variantKey={sideDonut.variantKey} />
+            )}
+          </div>
         </>
       ) : (
         <div className="flex flex-wrap items-start gap-4">
@@ -378,8 +458,16 @@ function groupByActor(entries: HrActivityLogEntry[]): { name: string; count: num
     .sort((a, b) => b.count - a.count);
 }
 
+type AnalyticsCategoryKey = "hiring" | "employeeMonitoring" | "flashTech";
+
 export function HiringAnalyticsPage() {
   const navigate = useNavigate();
+
+  // Clicking a category's own title filters the page down to just that
+  // category; clicking the same one again (or nothing selected) shows every
+  // category — a simple toggle, not a hard single-select tab.
+  const [activeCategory, setActiveCategory] = useState<AnalyticsCategoryKey | null>(null);
+  const toggleCategory = (key: AnalyticsCategoryKey) => setActiveCategory((cur) => (cur === key ? null : key));
 
   // ── Hiring ──────────────────────────────────────────────────────────
   const [candidates, setCandidates] = useState<Candidate[]>([]);
@@ -425,11 +513,15 @@ export function HiringAnalyticsPage() {
   const candidateIdsInFilter = useMemo(() => new Set(filteredCandidates.map((c) => c.id)), [filteredCandidates]);
 
   const hiringDonut = useMemo(() => {
-    const counts = new Map<CandidateStatus, number>();
-    for (const c of filteredCandidates) counts.set(c.status, (counts.get(c.status) ?? 0) + 1);
-    const rows = Array.from(counts.entries())
-      .map(([status, count]) => ({ key: status, label: CANDIDATE_STATUS_LABEL[status], count, color: CANDIDATE_STATUS_CHART_COLOR[status] }))
-      .sort((a, b) => b.count - a.count);
+    const namesByStatus = new Map<CandidateStatus, string[]>();
+    for (const c of filteredCandidates) {
+      const arr = namesByStatus.get(c.status);
+      if (arr) arr.push(c.name);
+      else namesByStatus.set(c.status, [c.name]);
+    }
+    const rows = Array.from(namesByStatus.entries())
+      .map(([status, names]) => ({ key: status, label: CANDIDATE_STATUS_LABEL[status], names: names.sort((a, b) => a.localeCompare(b)), color: CANDIDATE_STATUS_CHART_COLOR[status] }))
+      .sort((a, b) => b.names.length - a.names.length);
     return buildDonutSlices(rows);
   }, [filteredCandidates]);
 
@@ -441,6 +533,20 @@ export function HiringAnalyticsPage() {
     () => donutByPerson(filteredCandidates, (c) => c.assignedInterviewerId, nameByProfileId),
     [filteredCandidates, nameByProfileId]
   );
+
+  // Candidates by Branch — open-ended set of branch names, same rank-color
+  // convention as the other person/label breakdowns above.
+  const hiringByBranchDonut = useMemo(() => {
+    const namesByBranch = new Map<string, string[]>();
+    for (const c of filteredCandidates) {
+      const branch = c.branch || "Unassigned";
+      const arr = namesByBranch.get(branch);
+      if (arr) arr.push(c.name);
+      else namesByBranch.set(branch, [c.name]);
+    }
+    const groups = Array.from(namesByBranch.entries()).map(([label, names]) => ({ label, names: names.sort((a, b) => a.localeCompare(b)) }));
+    return buildDonutSlices(foldToOtherAndColor(groups));
+  }, [filteredCandidates]);
 
   const defaultRange = last30Days();
   const [hiringActivityFrom, setHiringActivityFrom] = useState(defaultRange.from);
@@ -491,36 +597,38 @@ export function HiringAnalyticsPage() {
     [empNotes, branchFilter, profileBranchById]
   );
 
-  const empHrNoteCounts = useMemo(() => {
+  const empHrNoteGroups = useMemo(() => {
     // Scoped to the HR Status field only. attendance_notes rows also exist
     // purely because someone left a general `content` note (a separate,
     // manager-facing field — see AttendanceNoteRow) with no HR Status
     // involved at all, so a blank hrNote can't safely be read as "needs
     // review" — it's just as often "never meant to have a status." Rather
     // than guess, only rows with a real status value are counted here.
-    const counts = new Map<string, number>();
+    // Each "name" is one (employee, day) entry — the same person can appear
+    // more than once if they had that status on multiple days, matching
+    // what the donut is actually counting (statuses, not unique people).
+    const groups = new Map<string, string[]>();
     for (const r of filteredEmpNotes) {
       if (!r.hrNote) continue;
-      counts.set(r.hrNote, (counts.get(r.hrNote) ?? 0) + 1);
+      const name = `${nameByProfileId.get(r.profileId) || "Unknown"} — ${r.noteDate}`;
+      const arr = groups.get(r.hrNote);
+      if (arr) arr.push(name);
+      else groups.set(r.hrNote, [name]);
     }
-    return counts;
-  }, [filteredEmpNotes]);
+    return groups;
+  }, [filteredEmpNotes, nameByProfileId]);
 
   const empDonut = useMemo(() => {
     // HR Status is a freely-typed/growing option list (Vacation, Sick,
     // Admin, Unnoticed, Not yet Started, …) — unlike CandidateStatus's fixed
     // 9 values, there's no safe way to give every possible label its own
-    // permanent identity color within the validated 8-slot palette,  so
+    // permanent identity color within the validated 8-slot palette, so
     // colors are assigned by rank among whatever actually shows up in the
-    // selected range (top 8, largest first) instead of a fixed per-label
-    // mapping — the same "fold to Other past N" allowance the dataviz
-    // skill calls for on an open-ended category set.
-    const rows = Array.from(empHrNoteCounts.entries())
-      .map(([label, count]) => ({ key: label, label, count }))
-      .sort((a, b) => b.count - a.count)
-      .map((r, i) => ({ ...r, color: i < CHART_PALETTE.length ? CHART_PALETTE[i] : CHART_OTHER_COLOR }));
-    return buildDonutSlices(rows);
-  }, [empHrNoteCounts]);
+    // selected range (top 8, largest first), with anything past that
+    // genuinely merged into one "Other" slice rather than just recolored.
+    const groups = Array.from(empHrNoteGroups.entries()).map(([label, names]) => ({ label, names }));
+    return buildDonutSlices(foldToOtherAndColor(groups));
+  }, [empHrNoteGroups]);
 
   const [empActivityEntries, setEmpActivityEntries] = useState<HrActivityLogEntry[]>([]);
   const [empActivityLoading, setEmpActivityLoading] = useState(false);
@@ -576,6 +684,76 @@ export function HiringAnalyticsPage() {
       .sort((a, b) => b.count - a.count);
   }, [empActivityEntries, filteredEmpNotes, profiles, branchFilter, profileBranchById]);
 
+  // ── Flash Tech ─────────────────────────────────────────────────────
+  const [flashTechTrips, setFlashTechTrips] = useState<FlashTechTrip[]>([]);
+  const [flashTechLoading, setFlashTechLoading] = useState(true);
+  useEffect(() => {
+    let cancelled = false;
+    getCompanyFlashTechTrips()
+      .then((rows) => { if (!cancelled) setFlashTechTrips(rows); })
+      .catch((err) => console.error("Failed to load Flash Tech trips for Analytics:", err))
+      .finally(() => { if (!cancelled) setFlashTechLoading(false); });
+    return () => { cancelled = true; };
+  }, []);
+
+  // Same Branch filter as everything else on this page — a trip "involves"
+  // a branch if it either starts or ends there.
+  const filteredFlashTechTrips = useMemo(
+    () => (branchFilter === "all" ? flashTechTrips : flashTechTrips.filter((t) => t.originLocation === branchFilter || t.destinationLocation === branchFilter)),
+    [flashTechTrips, branchFilter]
+  );
+
+  const flashTechDonut = useMemo(() => {
+    const namesByStatus = new Map<string, string[]>();
+    for (const t of filteredFlashTechTrips) {
+      const name = `${t.technicianName || "Unassigned"} — ${t.originLocation} → ${t.destinationLocation} (${t.startDate}–${t.endDate})`;
+      const arr = namesByStatus.get(t.status);
+      if (arr) arr.push(name);
+      else namesByStatus.set(t.status, [name]);
+    }
+    const rows = Array.from(namesByStatus.entries())
+      .map(([status, names]) => ({ key: status, label: status, names, color: FLASH_TECH_STATUS_CHART_COLOR[status as (typeof FLASH_TECH_STATUSES)[number]] ?? CHART_OTHER_COLOR }))
+      .sort((a, b) => b.names.length - a.names.length);
+    return buildDonutSlices(rows);
+  }, [filteredFlashTechTrips]);
+
+  // Who's actually GONE on the trips (technicianName), as opposed to
+  // flashTechActivityByActor below (who scheduled them). A leaderboard
+  // rather than a donut — the technician list is open-ended and only grows,
+  // where a pie of ever-thinner slivers stops being readable long before a
+  // ranked bar list does; not date-scoped either, just the count across
+  // whatever's already Branch-filtered.
+  const flashTechByTechnician = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const t of filteredFlashTechTrips) {
+      const name = t.technicianName || "Unassigned";
+      counts.set(name, (counts.get(name) ?? 0) + 1);
+    }
+    return Array.from(counts.entries())
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count);
+  }, [filteredFlashTechTrips]);
+
+  const flashTechRange = last30Days();
+  const [flashTechActivityFrom, setFlashTechActivityFrom] = useState(flashTechRange.from);
+  const [flashTechActivityTo, setFlashTechActivityTo] = useState(flashTechRange.to);
+  const flashTechActivityByActor = useMemo(() => {
+    // No hr_activity_log entries exist for flash_tech_trips (scheduling
+    // isn't logged there) — read straight off each trip's own
+    // createdAt/createdByName instead, same "who's actually done the work"
+    // question every other Team Activity panel on this page answers.
+    const counts = new Map<string, number>();
+    for (const t of filteredFlashTechTrips) {
+      const created = t.createdAt?.slice(0, 10);
+      if (!created || created < flashTechActivityFrom || created > flashTechActivityTo) continue;
+      const name = t.createdByName || "Unknown";
+      counts.set(name, (counts.get(name) ?? 0) + 1);
+    }
+    return Array.from(counts.entries())
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count);
+  }, [filteredFlashTechTrips, flashTechActivityFrom, flashTechActivityTo]);
+
   return (
     <main className="max-w-[1200px] mx-auto px-6 py-8">
       <style>{ANALYTICS_ANIMATION_CSS}</style>
@@ -608,7 +786,34 @@ export function HiringAnalyticsPage() {
         </div>
       </div>
 
+      <div className="flex flex-wrap items-center gap-2 mb-6">
+        {([
+          { key: "hiring", label: "Hiring" },
+          { key: "employeeMonitoring", label: "Employee Monitoring" },
+          { key: "flashTech", label: "Flash Tech" },
+        ] as const).map((c) => {
+          const isActive = activeCategory === c.key;
+          return (
+            <button
+              key={c.key}
+              type="button"
+              onClick={() => toggleCategory(c.key)}
+              title={isActive ? "Showing only this category — click to show all again" : "Show only this category"}
+              className={`inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide px-3 py-1.5 rounded-full border transition-colors ${
+                isActive
+                  ? "text-blue-300 bg-blue-500/15 border-blue-500/40"
+                  : "text-slate-400 border-white/10 bg-white/5 hover:text-white hover:border-white/25"
+              }`}
+            >
+              {isActive ? <X className="h-3 w-3" /> : <Filter className="h-3 w-3" />}
+              {c.label}
+            </button>
+          );
+        })}
+      </div>
+
       <div className="space-y-8">
+        {(activeCategory === null || activeCategory === "hiring") && (
         <div className="analytics-section-in">
           <AnalyticsCategory
             title="Hiring"
@@ -635,6 +840,14 @@ export function HiringAnalyticsPage() {
                 variantKey: `${assignedInterviewerDonut.total}:${branchFilter}`,
               },
             ]}
+            sideDonut={{
+              heading: "Candidates by Branch",
+              unitLabel: "candidate",
+              loading: candidatesLoading,
+              slices: hiringByBranchDonut.slices,
+              total: hiringByBranchDonut.total,
+              variantKey: `${hiringByBranchDonut.total}:${branchFilter}`,
+            }}
             activityHeading="Team Activity"
             activitySubheading="Who's actually made changes in Hiring — candidates added, status changes, CVs forwarded, deletions."
             activityFrom={hiringActivityFrom}
@@ -645,7 +858,9 @@ export function HiringAnalyticsPage() {
             activityByActor={hiringActivityByActor}
           />
         </div>
+        )}
 
+        {(activeCategory === null || activeCategory === "employeeMonitoring") && (
         <div className="analytics-section-in" style={{ animationDelay: "80ms" }}>
           <AnalyticsCategory
             title="Employee Monitoring"
@@ -664,6 +879,36 @@ export function HiringAnalyticsPage() {
             activityByActor={empActivityByActor}
           />
         </div>
+        )}
+
+        {(activeCategory === null || activeCategory === "flashTech") && (
+        <div className="analytics-section-in" style={{ animationDelay: "160ms" }}>
+          <AnalyticsCategory
+            title="Flash Tech"
+            donutHeading="Trips by Status"
+            donutUnitLabel="trip"
+            loading={flashTechLoading}
+            slices={flashTechDonut.slices}
+            total={flashTechDonut.total}
+            activityHeading="Team Activity"
+            activitySubheading="Who's actually been scheduling flash tech trips — sourced from each trip's own record, not the activity log (trip scheduling isn't logged there)."
+            activityFrom={flashTechActivityFrom}
+            onActivityFromChange={setFlashTechActivityFrom}
+            activityTo={flashTechActivityTo}
+            onActivityToChange={setFlashTechActivityTo}
+            activityLoading={flashTechLoading}
+            activityByActor={flashTechActivityByActor}
+          />
+          <div className="mt-4">
+            <TeamActivityPanel
+              heading="Trips by Technician"
+              subheading="Who's actually gone out on flash tech trips — all-time count across whatever's Branch-filtered above, not date-scoped."
+              loading={flashTechLoading}
+              byActor={flashTechByTechnician}
+            />
+          </div>
+        </div>
+        )}
       </div>
     </main>
   );
