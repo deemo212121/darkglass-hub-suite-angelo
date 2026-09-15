@@ -23,6 +23,7 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { CheckCircle2, ChevronLeft, ChevronRight, Circle, Loader2, Menu, X } from "lucide-react";
 import { useAuth } from "@/lib/auth";
+import { FillFormSignInRequired } from "@/components/FillFormSignInRequired";
 import {
   confirmSignableDocument,
   getSignableDocument,
@@ -481,6 +482,14 @@ export function EmployerSignBundlePage() {
       setBusy(false);
     }
   };
+
+  if (ready && !uid) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-950 p-6">
+        <FillFormSignInRequired />
+      </div>
+    );
+  }
 
   if (loading) {
     return (
