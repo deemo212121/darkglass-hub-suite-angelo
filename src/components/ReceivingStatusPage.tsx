@@ -26,6 +26,7 @@ import { LOCATIONS } from "@/lib/locations";
 import {
   computeReceivingStatusRows,
   SYNC_STALE_HOURS,
+  DEFAULT_PROVIDER_LINKS,
   type ReceivingStatusCell,
 } from "@/lib/receivingStatusData";
 
@@ -68,9 +69,13 @@ export function ReceivingStatusPage({ mod }: { mod: ModuleDef; sub: SubModuleDef
     }
   };
 
+  /** Admin-saved override, falling back to the known default (Midea's public login page), else undefined. */
+  const resolveProviderLink = (provider: string): string | undefined =>
+    providerLinks.get(provider) || DEFAULT_PROVIDER_LINKS[provider];
+
   const startEditingLink = (provider: string) => {
     setEditingProvider(provider);
-    setEditUrlValue(providerLinks.get(provider) || "");
+    setEditUrlValue(resolveProviderLink(provider) || "");
   };
 
   const saveLink = async (provider: string) => {
@@ -211,7 +216,7 @@ export function ReceivingStatusPage({ mod }: { mod: ModuleDef; sub: SubModuleDef
                   <ProviderLinkChip
                     key={p}
                     provider={p}
-                    url={providerLinks.get(p)}
+                    url={resolveProviderLink(p)}
                     editing={editingProvider === p}
                     editValue={editUrlValue}
                     saving={savingLink}
@@ -247,9 +252,9 @@ export function ReceivingStatusPage({ mod }: { mod: ModuleDef; sub: SubModuleDef
                         <tr key={`${r.branch}::${r.provider}`} className="border-b border-white/5 last:border-0 hover:bg-white/5">
                           <td className="px-2 py-1.5 text-slate-200">{r.branch}</td>
                           <td className="px-2 py-1.5 text-slate-300">
-                            {providerLinks.get(r.provider) ? (
+                            {resolveProviderLink(r.provider) ? (
                               <a
-                                href={providerLinks.get(r.provider)}
+                                href={resolveProviderLink(r.provider)}
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 className="inline-flex items-center gap-1 text-blue-400 hover:underline"

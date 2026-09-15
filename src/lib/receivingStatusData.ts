@@ -26,26 +26,32 @@ export function rawProviderOf(t: Ticket): string {
  * Collapses TICKET_SOURCES' raw codes (see ticketData.ts) down to the
  * actual portal/site an admin would log into — e.g. "SP"/"SP1" are both
  * just ServicePower pulling in different brands' calls under one account,
- * so they share one link rather than each getting their own row. Anything
- * that doesn't match a known prefix falls back to its raw value as-is.
+ * so they share one link rather than each getting their own row.
+ *
+ * This is deliberately the full allow-list of ticket-pulling providers the
+ * business actually uses today (per direct instruction) — a source that
+ * doesn't match any of these returns null and is left off the page
+ * entirely, rather than showing up as an unrecognized/"Unknown" row.
  */
 const PROVIDER_FAMILY_PREFIXES: Array<[prefix: string, family: string]> = [
-  ["SP", "ServicePower"],
-  ["SB", "ServiceBench"],
-  ["SS", "SquareTrade"],
-  ["NSA", "NSA"],
   ["Midea", "Midea"],
-  ["LG", "LG"],
-  ["EarlyRepair", "EarlyRepair"],
+  ["SP", "ServicePower"],
+  ["SB", "ServiceBench - Asurion"],
+  ["NSA", "NSA"],
 ];
 
-export function providerFamilyOf(t: Ticket): string {
+export function providerFamilyOf(t: Ticket): string | null {
   const raw = rawProviderOf(t);
   for (const [prefix, family] of PROVIDER_FAMILY_PREFIXES) {
     if (raw.toUpperCase().startsWith(prefix.toUpperCase())) return family;
   }
-  return raw;
+  return null;
 }
+
+/** Real, known login URL for a provider portal — shown as the default link until an Admin overrides it via receiving_status_provider_links. */
+export const DEFAULT_PROVIDER_LINKS: Record<string, string> = {
+  Midea: "https://callexpert.dexwell.com/Account/Login.aspx",
+};
 
 export function branchOf(t: Ticket): string {
   return (t.location || "").trim() || "Unassigned";
@@ -92,8 +98,9 @@ export function computeReceivingStatusRows(
   const cells = new Map<string, ReceivingStatusCell>();
 
   for (const t of tickets) {
-    const branch = branchOf(t);
     const provider = providerFamilyOf(t);
+    if (!provider) continue;
+    const branch = branchOf(t);
     const key = `${branch}::${provider}`;
     let cell = cells.get(key);
     if (!cell) {
