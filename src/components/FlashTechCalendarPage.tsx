@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { ChevronLeft, ChevronRight, RefreshCw, Plus, X, Trash2, CalendarDays, Table2, Paperclip, Loader2, Car, Users } from "lucide-react";
+import { ChevronLeft, ChevronRight, RefreshCw, Plus, X, Trash2, CalendarDays, Table2, Paperclip, Loader2, Car, Users, Check } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { useSmartBack } from "@/hooks/useSmartBack";
@@ -844,16 +844,23 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
                 />
                 {technicianDropdownOpen && filteredTechnicianOptions.length > 0 && (
                   <div className="absolute z-10 mt-1 max-h-48 w-full overflow-y-auto rounded-lg border border-white/15 bg-slate-900 shadow-lg">
-                    {filteredTechnicianOptions.slice(0, 50).map((u) => (
-                      <button
-                        key={u.id}
-                        type="button"
-                        onMouseDown={() => handleSelectTechnician(u)}
-                        className="block w-full px-3 py-1.5 text-left text-sm text-slate-200 hover:bg-white/10"
-                      >
-                        {u.display_name || u.email}
-                      </button>
-                    ))}
+                    {filteredTechnicianOptions.slice(0, 50).map((u) => {
+                      const formFiled = flashFormFiledProfileIds.has(u.id);
+                      return (
+                        <button
+                          key={u.id}
+                          type="button"
+                          onMouseDown={() => handleSelectTechnician(u)}
+                          title={formFiled ? "Flash Technician Travel form on file" : "Flash Technician Travel form not on file — can still be scheduled"}
+                          className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-slate-200 hover:bg-white/10"
+                        >
+                          <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full ${formFiled ? "bg-emerald-500/20 text-emerald-400" : "bg-red-500/20 text-red-400"}`}>
+                            {formFiled ? <Check className="h-2.5 w-2.5" /> : <X className="h-2.5 w-2.5" />}
+                          </span>
+                          <span className="truncate">{u.display_name || u.email}</span>
+                        </button>
+                      );
+                    })}
                   </div>
                 )}
               </div>
