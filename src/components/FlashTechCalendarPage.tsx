@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { ChevronLeft, ChevronRight, RefreshCw, Plus, X, Trash2, CalendarDays, Table2, Paperclip, Loader2, Car, Users, Check, Minus } from "lucide-react";
+import { ChevronLeft, ChevronRight, RefreshCw, Plus, X, Trash2, CalendarDays, Table2, Paperclip, Loader2, Car, Users, Check, Minus, Building2 } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { useSmartBack } from "@/hooks/useSmartBack";
@@ -610,7 +610,7 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
 
   return (
     <main className={embedded ? "" : "flex-1 bg-slate-950 py-6"}>
-      <div className={embedded ? "" : "max-w-[1600px] mx-auto px-6"}>
+      <div className={embedded ? "" : "max-w-[1900px] mx-auto px-4"}>
         <div className="mb-4 flex flex-wrap items-center gap-3 text-white">
           {!embedded && (
             <button onClick={goBack} className="btn">
@@ -1436,7 +1436,7 @@ function TrackerSelectCell({ value, options, disabled, onSave }: { value: string
       value={value}
       disabled={disabled}
       onChange={(e) => onSave(e.target.value)}
-      className="w-full min-w-[100px] bg-slate-900 text-xs px-1.5 py-1 border border-transparent hover:border-white/10 focus:border-blue-500 rounded outline-none disabled:opacity-60 disabled:cursor-not-allowed text-slate-200"
+      className="w-full min-w-[100px] bg-transparent text-xs px-1.5 py-1 border border-transparent hover:border-white/10 focus:border-blue-500 rounded outline-none disabled:opacity-60 disabled:cursor-not-allowed text-slate-200"
     >
       {options.map((o) => (
         <option key={o} value={o} className="bg-slate-900">
@@ -1624,36 +1624,41 @@ function FlashTechTrackerTable({
                 }`}
               >
                 <td className="p-0.5 border-r border-white/10">
-                  <select
-                    value={trip.technicianProfileId || `unlinked:${trip.technicianName}`}
-                    disabled={!canEdit || savingCellKey === `${trip.id}:technician`}
-                    onChange={(e) => {
-                      const picked = technicianOptions.find((u) => u.id === e.target.value);
-                      if (picked) onChangeTechnician(trip.id, picked.id, picked.display_name || picked.email);
-                    }}
-                    className="w-full min-w-[140px] bg-slate-900 text-xs font-medium px-1.5 py-1 border border-transparent hover:border-white/10 focus:border-blue-500 rounded outline-none disabled:opacity-60 disabled:cursor-not-allowed text-slate-200"
-                  >
-                    {!trip.technicianProfileId && (
-                      <option value={`unlinked:${trip.technicianName}`} disabled className="bg-slate-900">
-                        {trip.technicianName} (unlinked)
-                      </option>
-                    )}
-                    {technicianOptions.map((u) => (
-                      <option key={u.id} value={u.id} className="bg-slate-900">
-                        {u.display_name}
-                      </option>
-                    ))}
-                  </select>
-                  <button
-                    type="button"
-                    disabled={!canEdit}
-                    onClick={() => openAltHotelModal(trip)}
-                    className={`mt-0.5 w-full rounded px-1.5 py-0.5 text-left text-[10px] leading-tight transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
-                      trip.altHotelRequested ? "bg-amber-500/20 text-amber-300 hover:bg-amber-500/25" : "text-slate-500 hover:text-slate-300 hover:bg-white/5"
-                    }`}
-                  >
-                    {trip.altHotelRequested ? "✓ Alt hotel on file" : "Technician requested another hotel"}
-                  </button>
+                  <div className="flex items-center gap-1">
+                    <select
+                      value={trip.technicianProfileId || `unlinked:${trip.technicianName}`}
+                      disabled={!canEdit || savingCellKey === `${trip.id}:technician`}
+                      onChange={(e) => {
+                        const picked = technicianOptions.find((u) => u.id === e.target.value);
+                        if (picked) onChangeTechnician(trip.id, picked.id, picked.display_name || picked.email);
+                      }}
+                      className="w-full min-w-[110px] bg-transparent text-xs font-medium px-1.5 py-1 border border-transparent hover:border-white/10 focus:border-blue-500 rounded outline-none disabled:opacity-60 disabled:cursor-not-allowed text-slate-200"
+                    >
+                      {!trip.technicianProfileId && (
+                        <option value={`unlinked:${trip.technicianName}`} disabled className="bg-slate-900">
+                          {trip.technicianName} (unlinked)
+                        </option>
+                      )}
+                      {technicianOptions.map((u) => (
+                        <option key={u.id} value={u.id} className="bg-slate-900">
+                          {u.display_name}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      disabled={!canEdit}
+                      onClick={() => openAltHotelModal(trip)}
+                      title={trip.altHotelRequested ? "Alt hotel on file — click to view/edit" : "Technician requested another hotel"}
+                      className={`shrink-0 h-7 w-7 flex items-center justify-center rounded-md border transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+                        trip.altHotelRequested
+                          ? "bg-amber-400 border-amber-300 text-slate-900 hover:bg-amber-300 shadow-[0_0_0_2px_rgba(251,191,36,0.25)]"
+                          : "bg-sky-500/25 border-sky-400/60 text-sky-200 hover:bg-sky-500/40 hover:text-white"
+                      }`}
+                    >
+                      <Building2 className="h-4 w-4" strokeWidth={2.5} />
+                    </button>
+                  </div>
                 </td>
                 <td className="p-0.5 border-r border-white/10">
                   <TrackerTextCell value={trip.technicianPhone || ""} disabled={!canEdit} placeholder="Contact number" onSave={(v) => patch("technicianPhone", { technicianPhone: v })} />
