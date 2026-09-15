@@ -5,7 +5,6 @@
 
 import { supabase } from "./client";
 import { applyGraceToCheckIn, roundCheckOutToSchedule } from "@/lib/attendanceGrace";
-import { isTraineeApprovalEligible } from "@/lib/roleLabels";
 
 // The flat UI time-entry shape used by the timecard page.
 export interface UITimeEntry {
@@ -137,23 +136,21 @@ export async function getMyProfileSchedule(firebaseUid: string): Promise<{
     }
   }
 
-  // The pending-approval trainee workflow is scoped to the Technician
-  // department only (the user's explicit call) — a CSR/Parts/other-
-  // department employee marked Trainee on Masterlist still gets the
-  // separate "limited module access" trainee restriction elsewhere
-  // (roleLabels.ts's isSubmoduleAllowedForTrainee), but their punches go
-  // straight onto the real timecard like a regular employee; only a
-  // Technician-tier trainee's punches redirect to trainee_timecard_entries.
+  // The pending-approval trainee workflow now follows Masterlist's
+  // Employment Status alone (per the user's explicit call) — ANY role
+  // marked Trainee there redirects their punches here for manager approval,
+  // not just the Technician department. It reverts the moment Employment
+  // Status is changed off Trainee on Masterlist.
   let employmentType: "trainee" | "regular" = "regular";
   if (data?.id) {
     const { data: typeRow, error: typeError } = await supabase
       .from("profiles")
-      .select("employment_type, role, extra_roles")
+      .select("employment_type")
       .eq("id", data.id)
       .maybeSingle();
     if (typeError) {
       console.error("getMyProfileSchedule (employment_type) error:", typeError.message);
-    } else if (typeRow?.employment_type === "trainee" && isTraineeApprovalEligible(typeRow.role, (typeRow as any).extra_roles)) {
+    } else if (typeRow?.employment_type === "trainee") {
       employmentType = "trainee";
     }
   }
@@ -742,8 +739,16 @@ export async function getAttendanceForRange(
       mealEnd: row.meal_end ?? "",
       notes: "",
     };
+    // A timecard_entries row existing for this date is NOT the same as a
+    // real punch — e.g. a trainee day approved with no actual check-in/out
+    // recorded, or any other row written with both time columns still
+    // null — used to fall through to the "present" default below with no
+    // real times to show, rendering as a misleading green "Present" next
+    // to blank Clock In/Out cells instead of the missing-data status a
+    // day with no `row` at all already gets (see the `!row` branch above).
     let status: AttendanceRow["status"] = "present";
-    if (entry.checkIn && !entry.checkOut) status = "missing-out";
+    if (!entry.checkIn && !entry.checkOut) status = isOffDay ? "day-off" : isHoliday ? "holiday" : "absent";
+    else if (entry.checkIn && !entry.checkOut) status = "missing-out";
     else if (!entry.checkIn && entry.checkOut) status = "missing-in";
     else if (entry.checkIn && entry.checkOut && mealEligible && !(entry.mealStart && entry.mealEnd)) status = "missing-meal";
     if (status !== "present" && pendingCorrectionDates.has(key)) status = "pending-correction";
