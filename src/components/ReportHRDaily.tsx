@@ -331,6 +331,8 @@ interface Employee {
   status: EmploymentStatus;
   /** Trainee vs Regular — a separate classification from `status` (Account Status) above. See migration 0152. */
   employmentType: "trainee" | "regular";
+  /** profiles.tier_level (migration 0162) — same field Staff List's own "Tier Level" tab edits; Current Technicians' own column here just narrows the dropdown to Tier 1/2/3. */
+  tierLevel: string | null;
   onboardingDocs: Record<string, boolean>;
   // Same off-day/required-shift fields Attendance Monitoring already uses
   // (profiles.off_days/required_check_in/required_check_out) — carried
@@ -558,6 +560,9 @@ function loadHiringVisibleColumns(): Record<string, boolean> {
  * matchesMasterListTab, which are department-only.
  */
 const MASTER_LIST_TRAINEE_TAB = "__trainee__";
+
+/** Current Technicians' own Tier Level dropdown options — writes profiles.tier_level. */
+const CURRENT_TECH_TIER_LEVEL_OPTIONS = ["Tier 1", "Tier 2", "Tier 3", "SBM", "BM", "TR", "DR", "TM"];
 
 function canonicalDepartmentGroup(raw: string): string {
   const trimmed = raw.trim();
@@ -1533,6 +1538,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           terminationReason: info.employeeNote || undefined,
           status: employmentStatus,
           employmentType: p.employment_type || "regular",
+          tierLevel: p.tier_level ?? null,
           onboardingDocs: info.onboardingDocs || {},
           offDays: p.off_days ?? [],
           requiredCheckIn: p.required_check_in || "",
@@ -13018,6 +13024,23 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
 
+  // Current Technicians' own Tier Level column — writes the same
+  // profiles.tier_level Staff List's own "Tier Level" tab already edits
+  // (StaffListPage.tsx), so the two stay in sync instead of drifting.
+  const handleUpdateTierLevel = async (id: string, newTier: string) => {
+    const employee = employees.find((e) => e.id === id);
+    const prevTier = employee?.tierLevel ?? null;
+    const nextTier = newTier || null;
+    setEmployees((prev) => prev.map((e) => (e.id === id ? { ...e, tierLevel: nextTier } : e)));
+    try {
+      await updateCompanyUser(id, { tierLevel: nextTier });
+      void logActivity({ action: "employee_status_changed", targetType: "employee", targetId: id, targetLabel: employee?.name, details: { tierLevel: nextTier } });
+    } catch (err) {
+      setEmployees((prev) => prev.map((e) => (e.id === id ? { ...e, tierLevel: prevTier } : e)));
+      setError(err instanceof Error ? err.message : "Failed to update tier level.");
+    }
+  };
+
   const handleCancelStatusChange = () => setConfirmDialog(null);
 
   // Master List's Department column dropdown (Unlisted/every other tab) —
@@ -16114,7 +16137,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           // column + branch-grouped rows matches how HR actually tracks it,
           // unlike every other department tab.
           const showBranchColumn = masterListDept === "Parts Manager and Parts";
-          const colCount = showBranchColumn ? 15 : 14;
+          const showTierColumn = masterListDept === "Current Technicians";
+          const colCount = (showBranchColumn ? 15 : 14) + (showTierColumn ? 1 : 0);
           return (
         <div className="overflow-x-auto">
           <table className="w-full text-[11px]">
@@ -16133,6 +16157,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                 <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase" title="Editable — writes profiles.meal_minutes, the other half of My Profile's Working Hours & Meal Time field">Meal Time</th>
                 <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase" title="Sick Leave is its own allowance, separate from vacation — flat 5 days/year, available from day 1">Sick Leave</th>
                 <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase" title="Remaining / Allowance">Vacation Leave</th>
+                {showTierColumn && <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase" title="Editable — writes profiles.tier_level, same field Staff List's own Tier Level tab uses">Tier Level</th>}
                 <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase">Employment Status</th>
                 <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase">Warnings</th>
               </tr>
@@ -16388,6 +16413,23 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           <span className="bg-yellow-500/20 text-yellow-300 px-1.5 py-0.5 rounded text-[10px] font-semibold">{pto.remaining}/{pto.allowance}</span>
                         )}
                       </td>
+                      {showTierColumn && (
+                        <td className="px-2 py-1">
+                          <select
+                            value={employee.tierLevel || ""}
+                            onChange={(e) => void handleUpdateTierLevel(employee.id, e.target.value)}
+                            className="text-[10px] font-semibold px-1.5 py-0.5 rounded border-0 bg-slate-700 text-slate-100"
+                          >
+                            <option value="">—</option>
+                            {employee.tierLevel && !CURRENT_TECH_TIER_LEVEL_OPTIONS.includes(employee.tierLevel) && (
+                              <option value={employee.tierLevel}>{employee.tierLevel}</option>
+                            )}
+                            {CURRENT_TECH_TIER_LEVEL_OPTIONS.map((t) => (
+                              <option key={t} value={t}>{t}</option>
+                            ))}
+                          </select>
+                        </td>
+                      )}
                       <td className="px-2 py-1">
                         <select
                           value={employee.employmentType}
