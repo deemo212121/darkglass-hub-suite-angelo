@@ -47,6 +47,7 @@ import {
   getEomHiringReport,
   setStaffingTarget,
   logCvForward,
+  notifyOnCandidateHired,
   type Candidate,
   type CandidateStatus,
   type EodHiringRow,
@@ -156,6 +157,7 @@ import { fillSubstanceScreeningPdf } from "@/lib/substanceScreeningPdfFill";
 import { logActivity, getActivityLog, activityActionLabel, type HrActivityLogEntry } from "@/lib/supabase/hrActivityLog";
 import { HrActivityLogPanel } from "@/components/HrActivityLogPage";
 import { InterviewCalendarTab, type InterviewCalendarCandidate } from "@/components/InterviewCalendarTab";
+import { AttachmentPreviewModal } from "@/components/AttachmentPreviewModal";
 import { subscribeTableChanges } from "@/lib/supabase/realtime";
 import { getCompanyPtoRequests, ptoYearWindow, ptoDaysUsed, sickYearWindow, sickDaysUsed, reviewPtoStage, canReviewPtoStage, type PtoRequestRow, type PtoType, type PtoStage } from "@/lib/supabase/pto";
 import { getAttendanceNotes, type AttendanceNoteRow } from "@/lib/supabase/attendanceNotes";
@@ -309,6 +311,7 @@ const STATUS_REQUIRES_DATE: Partial<Record<CandidateStatus, string>> = {
   interviewing: "Interview date",
   training: "Training start date",
   withdrawn: "Withdraw date",
+  hired: "Start date",
 };
 
 type EmploymentStatus = "active" | "inactive" | "terminated" | "resigned";
@@ -1020,7 +1023,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // (initialHrSearchRef) — after that, this component's own state is the
   // source of truth and pushes into the URL, not the other way around. ──
   const navigate = useNavigate();
-  const hrSearchParams = (useSearch({ strict: false }) as { tab?: string; submissionId?: string; profileId?: string; docId?: string }) ?? {};
+  const hrSearchParams = (useSearch({ strict: false }) as { tab?: string; submissionId?: string; profileId?: string; docId?: string; viewCvCandidateId?: string }) ?? {};
   const initialHrSearchRef = useRef(hrSearchParams);
   const VALID_HR_TABS = ["hiring", "warnings", "masterList", "leaders", "jotform", "jotformDocuments", "customForms", "onboarding", "hiringReports", "report", "coe", "warningForm", "promotionForm", "actionPlanForm", "terminationForm", "employeeRequestManager", "w8ben", "i9", "newI9", "wageAck", "carIqAgreement", "vehicleAgreement", "vehicleUseAgreement", "employeeConfidentiality", "mealRestBreak", "ptoAck", "partsResponsibility", "mileageFuel", "locationConsent", "damage", "contractorData", "contractorDataUs", "directDeposit", "substanceScreening", "flashTechnicianTravel", "combineForms", "newCombineForms", "employerQueue"] as const;
   useEffect(() => {
@@ -1028,6 +1031,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     if (tab && (VALID_HR_TABS as readonly string[]).includes(tab)) setActiveTab(tab as typeof activeTab);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const [deepLinkCvPreview, setDeepLinkCvPreview] = useState<{ url: string; title: string } | null>(null);
 
   // ── Connect Gmail (Hiring panel) — connect-only for now, ahead of an
   // actual candidate-emailing feature ("we need to send email at some
@@ -1723,6 +1728,22 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // ── Hiring / Candidates (live) ──
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [candidatesLoading, setCandidatesLoading] = useState(true);
+
+  // ── Deep-link from a "Candidate Hired" notification (see
+  // notifyOnCandidateHired's linkTo) — auto-opens that candidate's CV in a
+  // preview modal once the candidate list has loaded. Not handleViewCv's
+  // usual window.open: a notification click doesn't carry the "direct user
+  // gesture" a real click does, so a popup would just get blocked. ──
+  useEffect(() => {
+    const candidateId = initialHrSearchRef.current.viewCvCandidateId;
+    if (!candidateId || candidates.length === 0) return;
+    initialHrSearchRef.current = { ...initialHrSearchRef.current, viewCvCandidateId: undefined };
+    const candidate = candidates.find((c) => c.id === candidateId);
+    if (!candidate?.cvPath) return;
+    getCandidateCvUrl(candidate.cvPath)
+      .then((url) => setDeepLinkCvPreview({ url, title: `${candidate.name} — CV` }))
+      .catch((err) => setError(err instanceof Error ? err.message : "Failed to open CV."));
+  }, [candidates]);
   const [showAddCandidate, setShowAddCandidate] = useState(false);
   const [newCandidate, setNewCandidate] = useState({ name: "", phone: "", email: "", position: "", branch: "", department: "", branchManagerId: "", assignedInterviewerId: "", source: "", sourceOther: "" });
   const [cvFile, setCvFile] = useState<File | null>(null);
@@ -12555,7 +12576,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     if (requiredLabel) {
       const candidate = candidates.find((c) => c.id === id);
       const existingDate =
-        status === "interviewing" ? candidate?.interviewDate : status === "training" ? candidate?.trainingStartDate : candidate?.withdrawnDate;
+        status === "interviewing" ? candidate?.interviewDate : status === "training" ? candidate?.trainingStartDate : status === "hired" ? candidate?.startDate : candidate?.withdrawnDate;
       setStatusDateDialog({
         candidateId: id,
         candidateName: candidate?.name || "",
@@ -12583,6 +12604,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
   const handleConfirmStatusDate = async () => {
     if (!statusDateDialog) return;
+    // Captured before the update — only a genuine transition INTO Hired
+    // should notify (not re-saving the Start Date on someone already
+    // hired).
+    const wasAlreadyHired = candidates.find((c) => c.id === statusDateDialog.candidateId)?.status === "hired";
     try {
       await updateCandidateStatus(
         statusDateDialog.candidateId,
@@ -12592,6 +12617,19 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         statusDateDialog.status === "interviewing" ? statusDateDialog.time || undefined : undefined,
         statusDateDialog.status === "interviewing" ? statusDateDialog.timezone : undefined
       );
+      if (statusDateDialog.status === "hired" && !wasAlreadyHired && uid) {
+        const hiredCandidate = candidates.find((c) => c.id === statusDateDialog.candidateId);
+        getMyProfileId(uid)
+          .then((myProfileId) =>
+            notifyOnCandidateHired(
+              { id: statusDateDialog.candidateId, name: statusDateDialog.candidateName, branch: hiredCandidate?.branch ?? null, position: hiredCandidate?.position ?? null },
+              statusDateDialog.date,
+              myProfileId,
+              displayName || "HR"
+            )
+          )
+          .catch((err) => console.error("Failed to send hire notifications:", err));
+      }
       // Trainer isn't part of hr_update_candidate_status() (it's a plain
       // field, not a status-transition side effect like the dates above —
       // same convention as Branch Manager/Assigned Interviewer) but is
@@ -14679,6 +14717,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             </div>
           </div>
         </div>
+      )}
+
+      {deepLinkCvPreview && (
+        <AttachmentPreviewModal url={deepLinkCvPreview.url} title={deepLinkCvPreview.title} onClose={() => setDeepLinkCvPreview(null)} />
       )}
 
       {/* ── KPI overview — every tile is clickable, same as Attendance: it jumps straight to the tab/filter that explains the number instead of just displaying it.
