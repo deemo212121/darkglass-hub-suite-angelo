@@ -26,16 +26,18 @@
  * so fetches everything itself).
  */
 import { useEffect, useMemo, useState, Fragment } from "react";
-import { Check, X as XIcon, Clock3 } from "lucide-react";
+import { Check, X as XIcon, Clock3, RotateCcw } from "lucide-react";
 import type { ProfileRow } from "@/lib/supabase/users";
 import { calcWorkedHours } from "@/lib/supabase/timecards";
-import { ROLE_LABELS, normalizeRole, isTraineeApprovalEligible, isAttendanceFullAccessRole, isTraineeFallbackReviewerRole } from "@/lib/roleLabels";
+import { ROLE_LABELS, normalizeRole, isAttendanceFullAccessRole, isTraineeFallbackReviewerRole } from "@/lib/roleLabels";
 import {
   getCompanyTraineeEntries,
   canApproveTraineeDay,
   approveTraineeDay,
   rejectTraineeDay,
   recordTraineeDayWithoutPunch,
+  approveTraineeDayOnField,
+  resetTraineeDay,
   type TraineeTimecardEntry,
 } from "@/lib/supabase/traineeTimecards";
 
@@ -84,8 +86,25 @@ export function TraineeAttendanceTab({
   const [rejectingId, setRejectingId] = useState<string | null>(null);
   const [rejectReasonOption, setRejectReasonOption] = useState("");
   const [rejectReasonCustom, setRejectReasonCustom] = useState("");
+  // "On Field" needs a time range (when they were out) same as "Other"
+  // needs free text — see approveTraineeDayOnField's doc comment for why
+  // this becomes a real approval with real times instead of a rejection.
+  const [onFieldStart, setOnFieldStart] = useState("");
+  const [onFieldEnd, setOnFieldEnd] = useState("");
+  const resetRejectForm = () => {
+    setRejectingId(null);
+    setRejectReasonOption("");
+    setRejectReasonCustom("");
+    setOnFieldStart("");
+    setOnFieldEnd("");
+  };
+  // Unused for "On Field" — that path is approved with real times instead
+  // of rejected with a text note; kept simple for every other reason.
   const finalRejectReason = rejectReasonOption === "Other" ? rejectReasonCustom.trim() : rejectReasonOption;
-  const canSubmitReject = rejectReasonOption !== "" && (rejectReasonOption !== "Other" || rejectReasonCustom.trim() !== "");
+  const canSubmitReject =
+    rejectReasonOption !== "" &&
+    (rejectReasonOption !== "Other" || rejectReasonCustom.trim() !== "") &&
+    (rejectReasonOption !== "On Field" || (onFieldStart !== "" && onFieldEnd !== ""));
 
   const profileById = useMemo(() => new Map(profiles.map((p) => [p.id, p])), [profiles]);
   // Every trainee this viewer may see — same "my team" scoping every other
@@ -95,16 +114,14 @@ export function TraineeAttendanceTab({
   // from who happens to have punched yet — a brand-new trainee who hasn't
   // clocked in at all still needs to show up here, not just silently be
   // absent from the list.
-  // Technician department only — see isTraineeApprovalEligible's own doc
-  // comment (roleLabels.ts). A CSR/Parts/other-department employee marked
-  // Trainee on Masterlist never shows up here at all; their punches go
-  // straight onto the real timecard like a regular employee.
+  // Follows Masterlist's Employment Status alone — any role marked Trainee
+  // there shows up here, not just the Technician department (see
+  // getMyProfileSchedule in timecards.ts for the matching punch-redirect logic).
   const visibleTrainees = useMemo(
     () =>
       profiles.filter(
         (p) =>
           p.employment_type === "trainee" &&
-          isTraineeApprovalEligible(p.role, p.extra_roles) &&
           (teamScopedIds === null || teamScopedIds.has(p.id))
       ),
     [profiles, teamScopedIds]
@@ -172,14 +189,40 @@ export function TraineeAttendanceTab({
     }
   };
 
+  // Testing/correction convenience — wipes this day back to a clean slate
+  // (see resetTraineeDay's own doc comment) so it can be re-punched and
+  // re-run through the whole flow, instead of being stuck e.g. as an old
+  // "Approved" row from before On Field wrote real times.
+  const handleReset = async (entry: TraineeTimecardEntry) => {
+    if (!myProfileId) return;
+    const name = profileById.get(entry.profileId)?.display_name || "this trainee";
+    if (!window.confirm(`Reset ${name}'s timecard for ${entry.workDate} back to no punch at all? This clears both the trainee record and their real timecard for this day.`)) return;
+    setActingId(entry.id);
+    try {
+      await resetTraineeDay(entry.profileId, entry.workDate);
+      load();
+    } catch (err) {
+      alert(`Failed to reset: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setActingId(null);
+    }
+  };
+
   const submitReject = async (entry: TraineeTimecardEntry) => {
     if (!myProfileId || !canSubmitReject) return;
     setActingId(entry.id);
     try {
-      await rejectTraineeDay(entry.id, myProfileId, finalRejectReason);
-      setRejectingId(null);
-      setRejectReasonOption("");
-      setRejectReasonCustom("");
+      if (rejectReasonOption === "On Field") {
+        // Not a rejection — the entered range becomes the trainee's real
+        // Check In/Check Out for the day (see approveTraineeDayOnField's own
+        // doc comment), so it's approved outright with real times instead of
+        // landing in "rejected" with just a text note. Also how an already-
+        // "Approved" blank-times day (from before this existed) gets fixed.
+        await approveTraineeDayOnField(entry.profileId, entry.workDate, onFieldStart, onFieldEnd, myProfileId, myProfileId);
+      } else {
+        await rejectTraineeDay(entry.id, myProfileId, finalRejectReason);
+      }
+      resetRejectForm();
       load();
     } catch (err) {
       alert(`Failed to reject: ${err instanceof Error ? err.message : "Unknown error"}`);
@@ -212,10 +255,12 @@ export function TraineeAttendanceTab({
         profiles.find(
           (p) => p.is_active && (p.display_name || "").trim().toLowerCase() === (trainee?.manager_name || "").trim().toLowerCase()
         )?.id ?? null;
-      await recordTraineeDayWithoutPunch(profileId, dateTo, managerId, myProfileId, finalRejectReason);
-      setRejectingId(null);
-      setRejectReasonOption("");
-      setRejectReasonCustom("");
+      if (rejectReasonOption === "On Field") {
+        await approveTraineeDayOnField(profileId, dateTo, onFieldStart, onFieldEnd, managerId, myProfileId);
+      } else {
+        await recordTraineeDayWithoutPunch(profileId, dateTo, managerId, myProfileId, finalRejectReason);
+      }
+      resetRejectForm();
       load();
     } catch (err) {
       alert(`Failed to update status: ${err instanceof Error ? err.message : "Unknown error"}`);
@@ -347,18 +392,40 @@ export function TraineeAttendanceTab({
                                   className="w-full rounded border border-white/15 bg-slate-800 px-2 py-1 text-xs text-white"
                                 />
                               )}
+                              {rejectReasonOption === "On Field" && (
+                                <div className="grid grid-cols-2 gap-1">
+                                  <input
+                                    type="time"
+                                    value={onFieldStart}
+                                    onChange={(e) => setOnFieldStart(e.target.value)}
+                                    title="On Field start — becomes their real Check In"
+                                    className="w-full rounded border border-white/15 bg-slate-800 px-1.5 py-1 text-xs text-white"
+                                  />
+                                  <input
+                                    type="time"
+                                    value={onFieldEnd}
+                                    onChange={(e) => setOnFieldEnd(e.target.value)}
+                                    title="On Field end — becomes their real Check Out"
+                                    className="w-full rounded border border-white/15 bg-slate-800 px-1.5 py-1 text-xs text-white"
+                                  />
+                                </div>
+                              )}
                               <div className="flex gap-1.5">
                                 <button
                                   type="button"
                                   onClick={() => void submitPlaceholderReject(profile, row.profileId)}
                                   disabled={!canSubmitReject || isActingPlaceholder}
-                                  className="flex-1 rounded-md border border-red-400/40 bg-red-500/15 px-2 py-1 text-[11px] font-semibold text-red-300 hover:bg-red-500/25 disabled:opacity-40"
+                                  className={`flex-1 rounded-md border px-2 py-1 text-[11px] font-semibold disabled:opacity-40 ${
+                                    rejectReasonOption === "On Field"
+                                      ? "border-emerald-400/40 bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25"
+                                      : "border-red-400/40 bg-red-500/15 text-red-300 hover:bg-red-500/25"
+                                  }`}
                                 >
-                                  {isActingPlaceholder ? "…" : "Confirm"}
+                                  {isActingPlaceholder ? "…" : rejectReasonOption === "On Field" ? "Approve" : "Confirm"}
                                 </button>
                                 <button
                                   type="button"
-                                  onClick={() => { setRejectingId(null); setRejectReasonOption(""); setRejectReasonCustom(""); }}
+                                  onClick={resetRejectForm}
                                   disabled={isActingPlaceholder}
                                   className="rounded-md border border-white/15 bg-white/5 px-2 py-1 text-[11px] font-semibold text-slate-300 hover:bg-white/10"
                                 >
@@ -369,9 +436,9 @@ export function TraineeAttendanceTab({
                           ) : (
                             <button
                               type="button"
-                              onClick={() => { setRejectingId(placeholderKey); setRejectReasonOption(""); setRejectReasonCustom(""); }}
+                              onClick={() => { setRejectingId(placeholderKey); setRejectReasonOption(""); setRejectReasonCustom(""); setOnFieldStart(""); setOnFieldEnd(""); }}
                               disabled={isActingPlaceholder}
-                              title="Mark a status (e.g. Absent) without a punch"
+                              title="Mark a status (e.g. Absent, or On Field with real hours) without a punch"
                               className="rounded-md border border-white/15 bg-white/5 px-2 py-1 text-[11px] font-semibold text-slate-300 hover:bg-white/10 disabled:opacity-40"
                             >
                               Mark Status
@@ -431,18 +498,40 @@ export function TraineeAttendanceTab({
                                 className="w-full rounded border border-white/15 bg-slate-800 px-2 py-1 text-xs text-white"
                               />
                             )}
+                            {rejectReasonOption === "On Field" && (
+                              <div className="grid grid-cols-2 gap-1">
+                                <input
+                                  type="time"
+                                  value={onFieldStart}
+                                  onChange={(e) => setOnFieldStart(e.target.value)}
+                                  title="On Field start — becomes their real Check In"
+                                  className="w-full rounded border border-white/15 bg-slate-800 px-1.5 py-1 text-xs text-white"
+                                />
+                                <input
+                                  type="time"
+                                  value={onFieldEnd}
+                                  onChange={(e) => setOnFieldEnd(e.target.value)}
+                                  title="On Field end — becomes their real Check Out"
+                                  className="w-full rounded border border-white/15 bg-slate-800 px-1.5 py-1 text-xs text-white"
+                                />
+                              </div>
+                            )}
                             <div className="flex gap-1.5">
                               <button
                                 type="button"
                                 onClick={() => void submitReject(entry)}
                                 disabled={!canSubmitReject || isActing}
-                                className="flex-1 rounded-md border border-red-400/40 bg-red-500/15 px-2 py-1 text-[11px] font-semibold text-red-300 hover:bg-red-500/25 disabled:opacity-40"
+                                className={`flex-1 rounded-md border px-2 py-1 text-[11px] font-semibold disabled:opacity-40 ${
+                                  rejectReasonOption === "On Field"
+                                    ? "border-emerald-400/40 bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25"
+                                    : "border-red-400/40 bg-red-500/15 text-red-300 hover:bg-red-500/25"
+                                }`}
                               >
-                                {isActing ? "…" : "Confirm Reject"}
+                                {isActing ? "…" : rejectReasonOption === "On Field" ? "Approve" : "Confirm Reject"}
                               </button>
                               <button
                                 type="button"
-                                onClick={() => { setRejectingId(null); setRejectReasonOption(""); setRejectReasonCustom(""); }}
+                                onClick={resetRejectForm}
                                 disabled={isActing}
                                 className="rounded-md border border-white/15 bg-white/5 px-2 py-1 text-[11px] font-semibold text-slate-300 hover:bg-white/10"
                               >
@@ -463,12 +552,21 @@ export function TraineeAttendanceTab({
                             </button>
                             <button
                               type="button"
-                              onClick={() => { setRejectingId(entry.id); setRejectReasonOption(""); setRejectReasonCustom(""); }}
+                              onClick={() => { setRejectingId(entry.id); setRejectReasonOption(""); setRejectReasonCustom(""); setOnFieldStart(""); setOnFieldEnd(""); }}
                               disabled={isActing}
-                              title={entry.status === "rejected" ? "Change reason" : "Reject"}
+                              title={entry.status === "rejected" ? "Change reason" : "Reject / On Field"}
                               className="grid h-7 w-7 place-items-center rounded-full border border-red-400/40 bg-red-500/15 text-red-300 hover:bg-red-500/25 disabled:opacity-40"
                             >
                               <XIcon className="h-3.5 w-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void handleReset(entry)}
+                              disabled={isActing}
+                              title="Reset — clear this day back to no punch at all, for re-testing"
+                              className="grid h-7 w-7 place-items-center rounded-full border border-white/15 bg-white/5 text-slate-300 hover:bg-white/10 disabled:opacity-40"
+                            >
+                              <RotateCcw className="h-3.5 w-3.5" />
                             </button>
                           </div>
                         )}

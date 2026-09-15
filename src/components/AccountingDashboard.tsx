@@ -183,6 +183,10 @@ export interface SupabaseEmployee {
    *  to their profile_id (already-synced mileage entries, past payroll line
    *  items) can still resolve a real name instead of falling back to "—". */
   isActive: boolean;
+  /** profiles.employment_type === "trainee" (Master List) — drives the amber
+   *  "Trainee" badge on payroll rows, same convention TechnicianFormChecklistPage.tsx
+   *  already uses next to a name. */
+  isTrainee: boolean;
 }
 
 interface SalaryEntry {
@@ -1320,7 +1324,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
           for (let from = 0; ; from += PAGE_SIZE) {
             const { data, error } = await supabase
               .from("profiles")
-              .select("id,display_name,username,role,extra_roles,assigned_branch,email,off_days,required_check_in,required_check_out,payroll_excluded,is_active,schedule_timezone")
+              .select("id,display_name,username,role,extra_roles,assigned_branch,email,off_days,required_check_in,required_check_out,payroll_excluded,is_active,schedule_timezone,employment_type")
               .neq("role", "SUPERSUPERADMIN")
               .range(from, from + PAGE_SIZE - 1);
             if (error) return { data: null, error };
@@ -1437,6 +1441,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         scheduleTimezone: (p.schedule_timezone as ScheduleTimezone | null) ?? "CST",
         payrollExcluded: p.payroll_excluded ?? false,
         isActive: p.is_active ?? true,
+        isTrainee: p.employment_type === "trainee",
         };
       }) as SupabaseEmployee[]);
       setSalaryEntries((salRes.data ?? []) as SalaryEntry[]);
@@ -3955,6 +3960,9 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                                 >
                                   {row.employee.full_name}
                                 </button>
+                                {row.employee.isTrainee && (
+                                  <span className="ml-1.5 shrink-0 rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber-300">Trainee</span>
+                                )}
                                 {isTechRole(row.employee) && (() => {
                                   const mark = reviewMarks.get(row.employee.id);
                                   return mark ? (
