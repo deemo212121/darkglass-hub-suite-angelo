@@ -43,8 +43,8 @@ import { getBranchRates, upsertBranchRate, type BranchRate } from "@/lib/supabas
 import { EmployeePayrollDetailModal } from "@/components/EmployeePayrollDetailModal";
 import { getRepairStatuses, type RepairStatus } from "@/lib/supabase/repairStatuses";
 import { TicketColumnFilter } from "@/components/TicketColumnFilter";
-import { getRoleDepartmentBreakdown, normalizeRole, ROLE_LABELS, TECHNICIAN_PAY_ROLES, isCsrRestrictedRole } from "@/lib/roleLabels";
-import { calcWorkedHours, getMyProfileSchedule, resolveScheduledNetHours, computeScheduledDutyHours, getAttendanceForRange, startOfWeekSunday, splitRegularOvertimeWeekly, addDaysISO, CSR_WEEKLY_OVERTIME_THRESHOLD } from "@/lib/supabase/timecards";
+import { getRoleDepartmentBreakdown, normalizeRole, ROLE_LABELS, TECHNICIAN_PAY_ROLES, isCsrRestrictedRole, isMealAlwaysPaidRole } from "@/lib/roleLabels";
+import { calcWorkedHours, getMyProfileSchedule, resolveScheduledNetHours, resolveScheduledShiftHours, computeMealTimeCredit, computeScheduledDutyHours, getAttendanceForRange, startOfWeekSunday, splitRegularOvertimeWeekly, addDaysISO, CSR_WEEKLY_OVERTIME_THRESHOLD } from "@/lib/supabase/timecards";
 import { payGraceMinutesFor, applyGraceToCheckIn, roundCheckOutToSchedule } from "@/lib/attendanceGrace";
 import { updatePayrollLineItemExtra, updatePayrollLineItemPaid } from "@/lib/supabase/payslips";
 import { getEmployeeInfoByProfileIds, getCompanyUsers, getTechnicianContactInfoByIds, type EmployeeInfo } from "@/lib/supabase/users";
@@ -406,13 +406,25 @@ function computeHoursMap(
     const paidCheckOut = emp?.requiredCheckOut
       ? roundCheckOutToSchedule(tc.check_out, emp.requiredCheckOut)
       : tc.check_out;
-    const hours = calcWorkedHours({
-      checkIn: paidCheckIn,
-      checkOut: paidCheckOut,
-      mealStart: tc.meal_start || "",
-      mealEnd: tc.meal_end || "",
-      notes: "",
-    });
+    // Technicians/Branch-Managers/Tech Managers/Technical Directors aren't
+    // required to punch Meal In/Out, but their meal break is still paid —
+    // see timecards.ts's computeMealTimeCredit. Added straight into the raw
+    // hours BEFORE the regular/overtime threshold split below, exactly like
+    // real worked time: if the day's/week's regular quota is already used
+    // up, the credit spills into overtime and is paid at the OT rate, same
+    // as anything else past that threshold — it's never unconditionally
+    // straight-rate pay regardless of how much the person already worked.
+    const mealAlwaysPaid = emp ? isMealAlwaysPaidRole(emp.role, emp.extraRoles) : false;
+    const mealEligible = emp ? resolveScheduledShiftHours(emp.requiredCheckIn || "", emp.requiredCheckOut || "", emp.workingHours, emp.mealMinutes) > 6 : false;
+    const mealCredit = computeMealTimeCredit({ mealStart: tc.meal_start || "", mealEnd: tc.meal_end || "" }, mealEligible, mealAlwaysPaid);
+    const hours =
+      calcWorkedHours({
+        checkIn: paidCheckIn,
+        checkOut: paidCheckOut,
+        mealStart: tc.meal_start || "",
+        mealEnd: tc.meal_end || "",
+        notes: "",
+      }) + mealCredit;
     const byDate = rawByEmployeeDate.get(key) ?? new Map<string, number>();
     byDate.set(tc.work_date, (byDate.get(tc.work_date) ?? 0) + hours);
     rawByEmployeeDate.set(key, byDate);

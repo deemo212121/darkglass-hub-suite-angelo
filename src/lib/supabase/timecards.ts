@@ -619,6 +619,36 @@ export function calcWorkedHours(entry: UITimeEntry): number {
   return Math.max(0, hrs);
 }
 
+/** Flat paid-meal credit for a meal-always-paid role on a day they never punched Meal In/Out (see computeMealTimeCredit). */
+export const MEAL_ALWAYS_PAID_DEFAULT_HOURS = 0.5;
+
+/**
+ * Extra PAID hours to add on top of a day's calcWorkedHours() result for
+ * employees in meal-always-paid roles (roleLabels.ts's isMealAlwaysPaidRole)
+ * — plain Technicians and the field-tech management tiers (Branch/Senior
+ * Branch Manager, Tech Manager, Technical Director/Assistant Director)
+ * aren't required to punch Meal In/Out, but their meal break is still paid
+ * time.
+ *
+ * calcWorkedHours only ever subtracts a meal when BOTH punches are present,
+ * so an unpunched day isn't losing anything there already — this ADDS a flat
+ * MEAL_ALWAYS_PAID_DEFAULT_HOURS credit on top for that case (a genuine extra
+ * half hour of pay). When they DID punch a real meal, calcWorkedHours
+ * subtracted that real duration from worked hours already — crediting that
+ * same real duration back here pays it too, instead of the flat default, so
+ * a punched meal is never worth less than an unpunched one. Never both: only
+ * one of "real duration" or "flat default" is ever returned for a given day.
+ */
+export function computeMealTimeCredit(
+  entry: Pick<UITimeEntry, "mealStart" | "mealEnd">,
+  mealEligible: boolean,
+  mealAlwaysPaid: boolean
+): number {
+  if (!mealEligible || !mealAlwaysPaid) return 0;
+  if (entry.mealStart && entry.mealEnd) return Math.max(0, hoursBetween(entry.mealStart, entry.mealEnd));
+  return MEAL_ALWAYS_PAID_DEFAULT_HOURS;
+}
+
 /** Public helper for components that need the raw HH:MM diff. */
 export function hoursDiff(t1: string, t2: string): number {
   return hoursBetween(t1, t2);
