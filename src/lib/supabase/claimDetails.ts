@@ -42,6 +42,7 @@ export interface TicketClaimDetails {
   spClaimStatusDescription: string;
   spSubmittedAt: string;
   spLastResponse: unknown;
+  updatedAt: string;
 }
 
 function rowToClaimDetails(row: any): TicketClaimDetails {
@@ -77,6 +78,7 @@ function rowToClaimDetails(row: any): TicketClaimDetails {
     spClaimStatusDescription: row.sp_claim_status_description ?? "",
     spSubmittedAt: row.sp_submitted_at ?? "",
     spLastResponse: row.sp_last_response ?? null,
+    updatedAt: row.updated_at ?? "",
   };
 }
 

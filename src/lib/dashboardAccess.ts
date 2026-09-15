@@ -65,6 +65,13 @@ export const DASHBOARD_ROLE_GATES: Record<string, string[]> = {
   // both enforced again inside ItTicketsPage.tsx and by the it_tickets RLS
   // policies (migration 0112), not just this list.
   "it-tickets": ["IT", "ADMIN", "SENIOR_MANAGER", "SENIOR_BRANCH_MANAGER", "BIZOPS_SENIOR_MANAGER"],
+  // Tickets module's Receiving Status (custom: "receiving-status") — Admin
+  // and above only. Reached via the special-case in m.$module.$submodule.tsx
+  // (sub.custom === "receiving-status"), not the mod.slug === "dashboard" |
+  // "hr" | "accounting" list above, since the Tickets module also has its
+  // own unrelated "todo-list" submodule that must NOT inherit HR's
+  // "todo-list" gate if "tickets" were added to that list wholesale.
+  "receiving-status": ["ADMIN"],
 };
 
 /**

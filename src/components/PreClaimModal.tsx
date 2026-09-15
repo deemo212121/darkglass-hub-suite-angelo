@@ -67,7 +67,7 @@ const emptyForm = (): FormState => ({
   partsOnlyWarranty: false, failureDefectCode: "", resolutionCode: "", laborFee: 0,
   otherFee: 0, shippingFee: 0, extraMileFee: 0, mileageFee: 0, poAmount: 0,
   spClaimBatchNumber: "", spClaimSequenceNumber: "", spClaimStatusCode: "",
-  spClaimStatusDescription: "", spSubmittedAt: "", spLastResponse: null,
+  spClaimStatusDescription: "", spSubmittedAt: "", spLastResponse: null, updatedAt: "",
 });
 
 /**
