@@ -51,6 +51,8 @@ export function providerFamilyOf(t: Ticket): string | null {
 /** Real, known login URL for a provider portal — shown as the default link until an Admin overrides it via receiving_status_provider_links. */
 export const DEFAULT_PROVIDER_LINKS: Record<string, string> = {
   Midea: "https://callexpert.dexwell.com/Account/Login.aspx",
+  ServicePower: "https://hub.servicepower.com/",
+  NSA: "https://home2.nationalservicealliance.com/",
 };
 
 export function branchOf(t: Ticket): string {
