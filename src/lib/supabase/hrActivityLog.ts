@@ -2,6 +2,7 @@ import { supabase } from "./client";
 
 /** Human-readable label for each action code — new codes just show as-is (title-cased) if not listed here, so logging a new action never needs a UI change to be readable. */
 export const ACTIVITY_ACTION_LABELS: Record<string, string> = {
+  account_created: "Created account",
   candidate_added: "Added candidate",
   candidate_status_changed: "Changed candidate status",
   candidate_deleted: "Deleted candidate",

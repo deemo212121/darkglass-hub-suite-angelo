@@ -15,6 +15,7 @@ import { useAllRoleOptions } from "@/lib/customRoles";
 import { auth as firebaseAuth } from "@/lib/firebase/config";
 import { ActivityLogPanel } from "@/components/ActivityLogPanel";
 import { logModuleActivity } from "@/lib/supabase/moduleActivityLog";
+import { logActivity } from "@/lib/supabase/hrActivityLog";
 import { getCompanyWeeklyPasswordResetEnabled, setCompanyWeeklyPasswordResetEnabled } from "@/lib/supabase/companySettings";
 import { Switch } from "@/components/ui/switch";
 import { seedOnboardingTasks } from "@/lib/supabase/employeeOnboarding";
@@ -1350,6 +1351,22 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
         targetId: newUid,
         targetLabel: newUserForm.userName,
         details: { role: primaryRole, extraRoles },
+      });
+      // Also surfaced in the HR & Recruitment Dashboard's own Activity Log
+      // (a separate audit trail from User Management's above) so HR can see
+      // new accounts — including whether it's a trainee — without switching
+      // dashboards.
+      void logActivity({
+        action: "account_created",
+        targetType: "employee",
+        targetId: newProfileId,
+        targetLabel: newUserForm.userName,
+        details: {
+          role: primaryRole,
+          extraRoles: extraRoles.length ? extraRoles : undefined,
+          employmentType: newUserForm.isTrainee ? "trainee" : "regular",
+          assignedBranch: newUserForm.assignedBranch,
+        },
       });
 
       // Reload users from Supabase
