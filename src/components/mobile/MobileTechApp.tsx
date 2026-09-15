@@ -350,6 +350,7 @@ function buildDevTestFlashTechTrip(profileId: string): FlashTechTrip {
     startDate: "2026-09-01",
     endDate: "2026-09-01",
     notes: "Dev test — local only",
+    carRentalNeeded: false,
     createdBy: null,
     createdByName: null,
     createdAt: "2026-08-31T00:00:00.000Z",

@@ -42,6 +42,7 @@ export const INTERNAL_SIGNABLE_DOCUMENT_COMPONENTS: Record<SignableDocumentType,
   master_w2_agreement: lazy(() => import("@/components/FillMasterW2AgreementPage").then((m) => ({ default: m.FillMasterW2AgreementPage }))),
   master_w2_office_agreement: lazy(() => import("@/components/FillMasterW2OfficeAgreementPage").then((m) => ({ default: m.FillMasterW2OfficeAgreementPage }))),
   master_ph_contractor_agreement: lazy(() => import("@/components/FillMasterPhContractorAgreementPage").then((m) => ({ default: m.FillMasterPhContractorAgreementPage }))),
+  master_w2_executive_agreement: lazy(() => import("@/components/FillMasterW2ExecutiveAgreementPage").then((m) => ({ default: m.FillMasterW2ExecutiveAgreementPage }))),
 };
 
 export const EXTERNAL_SIGNABLE_DOCUMENT_COMPONENTS: Record<SignableDocumentType, ReturnType<typeof lazy>> = {
@@ -78,4 +79,5 @@ export const EXTERNAL_SIGNABLE_DOCUMENT_COMPONENTS: Record<SignableDocumentType,
   master_w2_agreement: lazy(() => import("@/components/FillMasterW2AgreementPage").then((m) => ({ default: m.FillMasterW2AgreementPage }))),
   master_w2_office_agreement: lazy(() => import("@/components/FillMasterW2OfficeAgreementPage").then((m) => ({ default: m.FillMasterW2OfficeAgreementPage }))),
   master_ph_contractor_agreement: lazy(() => import("@/components/FillMasterPhContractorAgreementPage").then((m) => ({ default: m.FillMasterPhContractorAgreementPage }))),
+  master_w2_executive_agreement: lazy(() => import("@/components/FillMasterW2ExecutiveAgreementPage").then((m) => ({ default: m.FillMasterW2ExecutiveAgreementPage }))),
 };

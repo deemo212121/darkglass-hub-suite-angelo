@@ -66,13 +66,14 @@ import {
   type OnboardingDocumentColumn,
   type OnboardingGroupKey,
 } from "@/lib/supabase/onboardingDocumentColumns";
-import { uploadCoeCertificate, uploadWarningForm, uploadPromotionForm, uploadActionPlanForm, uploadTerminationForm, uploadW8benForm, uploadW4Form, uploadW4RForm, uploadI9Form, uploadWageAckForm, uploadCarIqAgreementForm, uploadVehicleAgreementForm, uploadEmployeeConfidentialityForm, uploadMealRestBreakForm, uploadPtoAckForm, uploadPartsResponsibilityForm, uploadMileageFuelForm, uploadLocationConsentForm, uploadDamageForm, uploadContractorDataForm, uploadDirectDepositForm, uploadSubstanceScreeningForm, uploadFlashTechnicianTravelForm, uploadContractorAddendumForm, uploadMasterW2AgreementForm, uploadMasterW2OfficeAgreementForm, uploadMasterPhContractorAgreementForm, uploadSignableDocumentSignature, refreshStorageAuthToken } from "@/lib/firebase/storage";
+import { uploadCoeCertificate, uploadWarningForm, uploadPromotionForm, uploadActionPlanForm, uploadTerminationForm, uploadW8benForm, uploadW4Form, uploadW4RForm, uploadI9Form, uploadWageAckForm, uploadCarIqAgreementForm, uploadVehicleAgreementForm, uploadEmployeeConfidentialityForm, uploadMealRestBreakForm, uploadPtoAckForm, uploadPartsResponsibilityForm, uploadMileageFuelForm, uploadLocationConsentForm, uploadDamageForm, uploadContractorDataForm, uploadDirectDepositForm, uploadSubstanceScreeningForm, uploadFlashTechnicianTravelForm, uploadContractorAddendumForm, uploadMasterW2AgreementForm, uploadMasterW2OfficeAgreementForm, uploadMasterPhContractorAgreementForm, uploadMasterW2ExecutiveAgreementForm, uploadSignableDocumentSignature, refreshStorageAuthToken } from "@/lib/firebase/storage";
 import { captureHtmlToPdfBlob, captureHtmlPagesToPdfBlob, loadAssetDataUrl as loadImageDataUrl } from "@/lib/pdfCapture";
 import { downloadSignableDocumentPdf } from "@/lib/downloadSignableDocumentPdf";
 import { useSortableSearchTable } from "@/hooks/useSortableSearchTable";
 import { masterW2AgreementStyles, buildMasterW2AgreementBodyMarkup, type MasterW2AgreementFormData } from "@/lib/masterW2AgreementFormTemplate";
 import { masterW2OfficeAgreementStyles, buildMasterW2OfficeAgreementBodyMarkup, type MasterW2OfficeAgreementFormData } from "@/lib/masterW2OfficeAgreementFormTemplate";
 import { masterPhContractorAgreementStyles, buildMasterPhContractorAgreementBodyMarkup, type MasterPhContractorAgreementFormData } from "@/lib/masterPhContractorAgreementFormTemplate";
+import { masterW2ExecutiveAgreementStyles, buildMasterW2ExecutiveAgreementBodyMarkup, type MasterW2ExecutiveAgreementFormData } from "@/lib/masterW2ExecutiveAgreementFormTemplate";
 import { getTechnicianIdDocumentUrl } from "@/lib/supabase/technicianIdDocuments";
 import {
   createSignableDocument,
@@ -997,7 +998,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // Reviews, the Approved log, the department trend chart, and the full
   // Employee Directory all on top of each other, forcing a long scroll to
   // reach anything below Hiring.
-  const [activeTab, setActiveTab] = useState<"hiring" | "warnings" | "masterList" | "leaders" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "promotionForm" | "actionPlanForm" | "terminationForm" | "employeeRequestManager" | "w8ben" | "i9" | "wageAck" | "carIqAgreement" | "vehicleAgreement" | "vehicleUseAgreement" | "employeeConfidentiality" | "mealRestBreak" | "ptoAck" | "partsResponsibility" | "mileageFuel" | "locationConsent" | "damage" | "contractorData" | "contractorDataUs" | "directDeposit" | "substanceScreening" | "flashTechnicianTravel" | "contractorAddendum" | "combineForms" | "employerQueue" | "ndaForm" | "calendar" | "interviewCalendar" | "masterW2Agreement" | "newW4" | "masterW2OfficeAgreement" | "newW8ben" | "masterPhContractorAgreement" | "newI9" | "newDirectDeposit" | "newCombineForms" | "newOnboardingDocuments" | "newW9" | "newContractorAddendum">(paperworksOnly ? "combineForms" : "hiring");
+  const [activeTab, setActiveTab] = useState<"hiring" | "warnings" | "masterList" | "leaders" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "promotionForm" | "actionPlanForm" | "terminationForm" | "employeeRequestManager" | "w8ben" | "i9" | "wageAck" | "carIqAgreement" | "vehicleAgreement" | "vehicleUseAgreement" | "employeeConfidentiality" | "mealRestBreak" | "ptoAck" | "partsResponsibility" | "mileageFuel" | "locationConsent" | "damage" | "contractorData" | "contractorDataUs" | "directDeposit" | "substanceScreening" | "flashTechnicianTravel" | "contractorAddendum" | "combineForms" | "employerQueue" | "ndaForm" | "calendar" | "interviewCalendar" | "masterW2Agreement" | "newW4" | "masterW2OfficeAgreement" | "newW8ben" | "masterPhContractorAgreement" | "newI9" | "newDirectDeposit" | "newCombineForms" | "newOnboardingDocuments" | "newW9" | "newContractorAddendum" | "masterW2ExecutiveAgreement">(paperworksOnly ? "combineForms" : "hiring");
   const [openCategory, setOpenCategory] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   // Which floating-sidebar section headers (Automated Forms/Generate
@@ -2227,6 +2228,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     master_w2_agreement: "masterW2Agreement",
     master_w2_office_agreement: "masterW2OfficeAgreement",
     master_ph_contractor_agreement: "masterPhContractorAgreement",
+    master_w2_executive_agreement: "masterW2ExecutiveAgreement",
   };
 
   // Forms popup — checkbox list of every SignableDocumentType, letting HR
@@ -4967,6 +4969,295 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       setMasterW2OfficeAgreementEmployerError(err instanceof Error ? err.message : "Failed to save signature.");
     } finally {
       setMasterW2OfficeAgreementEmployerSaving(false);
+    }
+  };
+
+  // ── W-2 Executive Exempt Management Agreement — same two-party
+  // HTML-captured flow as the two Master W-2 agreements above, for the
+  // BM/SBS/Director/Tech Assistant Director tier (see
+  // masterW2ExecutiveAgreementFormTemplate.ts's header comment). Replaces
+  // that tier's old Contractor Addendum + W-9 (1099 paperwork) in the "New
+  // Automation Forms" flow — this tier is W-2. No license/SSN photo
+  // capture, and the document has one "employeeName" field rather than
+  // split first/middle/last. ──
+  const [sentMasterW2ExecutiveAgreementForms, setSentMasterW2ExecutiveAgreementForms] = useState<SignableDocument[]>([]);
+  const loadSentMasterW2ExecutiveAgreementForms = async () => {
+    try {
+      setSentMasterW2ExecutiveAgreementForms(await getSignableDocuments("master_w2_executive_agreement"));
+    } catch (err) {
+      console.error("Failed to load sent W-2 Executive Exempt Management Agreement forms:", err);
+    }
+  };
+  useEffect(() => {
+    if (activeTab === "masterW2ExecutiveAgreement" || activeTab === "jotformDocuments" || activeTab === "combineForms" || activeTab === "employerQueue") void loadSentMasterW2ExecutiveAgreementForms();
+  }, [activeTab]);
+  const sentMasterW2ExecutiveAgreementAwaitingEmployerCount = useMemo(
+    () => sentMasterW2ExecutiveAgreementForms.filter(isAwaitingEmployerStep).length,
+    [sentMasterW2ExecutiveAgreementForms]
+  );
+
+  type MasterW2ExecutiveAgreementSortColumn = "employee" | "branch" | "sentBy" | "status" | "sent";
+  const masterW2ExecutiveAgreementStatusLabel = (doc: SignableDocument): string =>
+    doc.status === "confirmed" ? "Completed"
+      : isAwaitingEmployerStep(doc) ? "Awaiting Employer Signature"
+      : doc.status === "cancelled" ? "Cancelled"
+      : "Awaiting Employee";
+  const {
+    search: masterW2ExecutiveAgreementSentSearch,
+    setSearch: setMasterW2ExecutiveAgreementSentSearch,
+    sortColumn: masterW2ExecutiveAgreementSentSortColumn,
+    sortDir: masterW2ExecutiveAgreementSentSortDir,
+    handleSort: handleMasterW2ExecutiveAgreementSentSort,
+    filterOptionsFor: masterW2ExecutiveAgreementFilterOptionsFor,
+    toggleFilterValue: masterW2ExecutiveAgreementToggleFilterValue,
+    clearColumnFilter: masterW2ExecutiveAgreementClearColumnFilter,
+    isColumnFiltered: masterW2ExecutiveAgreementIsColumnFiltered,
+    isValueChecked: masterW2ExecutiveAgreementIsValueChecked,
+    rows: sortedSentMasterW2ExecutiveAgreementForms,
+  } = useSortableSearchTable<SignableDocument, MasterW2ExecutiveAgreementSortColumn>(
+    sentMasterW2ExecutiveAgreementForms,
+    (doc, q) => {
+      const data = doc.formData as Partial<MasterW2ExecutiveAgreementFormData>;
+      const employeeName = (data.employeeName || doc.recipientName || "").toLowerCase();
+      const branch = (data.homeBranchRegion || "").toLowerCase();
+      return employeeName.includes(q) || branch.includes(q);
+    },
+    (doc, column) => {
+      const data = doc.formData as Partial<MasterW2ExecutiveAgreementFormData>;
+      switch (column) {
+        case "employee": return (data.employeeName || doc.recipientName || "").toLowerCase();
+        case "branch": return (data.homeBranchRegion || "").toLowerCase();
+        case "sentBy": return (doc.createdByName ?? "").toLowerCase();
+        case "status": return masterW2ExecutiveAgreementStatusLabel(doc).toLowerCase();
+        case "sent": return new Date(doc.createdAt).getTime();
+      }
+    },
+    (doc, column) => {
+      const data = doc.formData as Partial<MasterW2ExecutiveAgreementFormData>;
+      switch (column) {
+        case "branch": return data.homeBranchRegion || "—";
+        case "sentBy": return doc.createdByName ?? "—";
+        case "status": return masterW2ExecutiveAgreementStatusLabel(doc);
+        default: return "";
+      }
+    }
+  );
+
+  const [masterW2ExecutiveAgreementRecipientId, setMasterW2ExecutiveAgreementRecipientId] = useState("");
+  const [masterW2ExecutiveAgreementRecipientSearch, setMasterW2ExecutiveAgreementRecipientSearch] = useState("");
+  const [masterW2ExecutiveAgreementRecipientDropdownOpen, setMasterW2ExecutiveAgreementRecipientDropdownOpen] = useState(false);
+  const [masterW2ExecutiveAgreementSending, setMasterW2ExecutiveAgreementSending] = useState(false);
+  const [masterW2ExecutiveAgreementSendError, setMasterW2ExecutiveAgreementSendError] = useState<string | null>(null);
+  const [masterW2ExecutiveAgreementActionBusyId, setMasterW2ExecutiveAgreementActionBusyId] = useState<string | null>(null);
+  const [masterW2ExecutiveAgreementActionError, setMasterW2ExecutiveAgreementActionError] = useState<string | null>(null);
+  const [masterW2ExecutiveAgreementDocPreview, setMasterW2ExecutiveAgreementDocPreview] = useState<SignableDocument | null>(null);
+  const [masterW2ExecutiveAgreementPreviewExpanded, setMasterW2ExecutiveAgreementPreviewExpanded] = useState(false);
+  const [masterW2ExecutiveAgreementPreviewPdfUrl, setMasterW2ExecutiveAgreementPreviewPdfUrl] = useState<string | null>(null);
+  const [masterW2ExecutiveAgreementPreviewLoading, setMasterW2ExecutiveAgreementPreviewLoading] = useState(false);
+  const filteredMasterW2ExecutiveAgreementRecipients = useMemo(
+    () => employees.filter((e) => e.status === "active" && e.name.toLowerCase().includes(masterW2ExecutiveAgreementRecipientSearch.toLowerCase())),
+    [employees, masterW2ExecutiveAgreementRecipientSearch]
+  );
+
+  const buildMasterW2ExecutiveAgreementPreviewData = (employeeName: string): MasterW2ExecutiveAgreementFormData => ({
+    employeeId: "",
+    employeeName,
+    position: "",
+    positionOther: "",
+    effectiveDate: "",
+    primaryWorkState: "",
+    homeBranchRegion: "",
+    reportsTo: "",
+    guaranteedAnnualSalary: "",
+    employeeDateSigned: "",
+    employeeSignatureDataUrl: "",
+    employerDateSigned: "",
+    employerSignatureDataUrl: "",
+    employerPrintedNameTitle: "",
+  });
+
+  /** Toggles the inline collapsible preview panel — collapsing just hides it (and revokes the blob URL); expanding (re)builds a fresh blank-filled sample from the currently-selected recipient's name. HTML-captured (not a pdf-lib fill like the other types' own preview), same technique as the document itself. */
+  const toggleMasterW2ExecutiveAgreementPreview = async () => {
+    if (masterW2ExecutiveAgreementPreviewExpanded) {
+      setMasterW2ExecutiveAgreementPreviewExpanded(false);
+      if (masterW2ExecutiveAgreementPreviewPdfUrl) URL.revokeObjectURL(masterW2ExecutiveAgreementPreviewPdfUrl);
+      setMasterW2ExecutiveAgreementPreviewPdfUrl(null);
+      return;
+    }
+    setMasterW2ExecutiveAgreementSendError(null);
+    setMasterW2ExecutiveAgreementPreviewExpanded(true);
+    setMasterW2ExecutiveAgreementPreviewLoading(true);
+    try {
+      const recipientName = employees.find((e) => e.id === masterW2ExecutiveAgreementRecipientId)?.name || "";
+      const logo = masterW2ExecutiveAgreementLogoDataUrl || (await loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png")));
+      const pdfBlob = await captureHtmlToPdfBlob(buildMasterW2ExecutiveAgreementBodyMarkup(buildMasterW2ExecutiveAgreementPreviewData(recipientName), logo), masterW2ExecutiveAgreementStyles);
+      const url = URL.createObjectURL(pdfBlob);
+      setMasterW2ExecutiveAgreementPreviewPdfUrl(url);
+    } catch (err) {
+      setMasterW2ExecutiveAgreementSendError(err instanceof Error ? err.message : "Failed to build preview.");
+    } finally {
+      setMasterW2ExecutiveAgreementPreviewLoading(false);
+    }
+  };
+
+  const handleSendMasterW2ExecutiveAgreement = async () => {
+    if (!masterW2ExecutiveAgreementRecipientId || !uid) return;
+    setMasterW2ExecutiveAgreementSending(true);
+    setMasterW2ExecutiveAgreementSendError(null);
+    try {
+      const recipient = employees.find((e) => e.id === masterW2ExecutiveAgreementRecipientId);
+      if (!recipient) throw new Error("Select a recipient first.");
+
+      const alreadySent = await getExistingActiveDocumentTypes(recipient.id, ["master_w2_executive_agreement"]);
+      if (alreadySent.length > 0 && !window.confirm(`${recipient.name} already has a W-2 Executive Exempt Management Agreement on file. Send another one anyway?`)) {
+        return;
+      }
+
+      const doc = await createSignableDocument({
+        documentType: "master_w2_executive_agreement",
+        formData: { employeeId: recipient.id, employeeName: recipient.name } as unknown as Record<string, any>,
+        recipientId: masterW2ExecutiveAgreementRecipientId,
+        recipientSlot: "employee",
+        pdfUrl: "",
+      });
+
+      const myProfileId = await getMyProfileId(uid);
+      if (!myProfileId) throw new Error("Could not resolve your profile.");
+      const thread = await getOrCreateDmThread(myProfileId, masterW2ExecutiveAgreementRecipientId);
+      const fillLink = `${getAppUrl()}/fill-master-w2-executive-agreement/${doc.id}`;
+      await sendMessage({
+        dmThreadId: thread.id,
+        senderId: myProfileId,
+        senderName: displayName || "HR",
+        body: `📋 Please complete the W-2 Executive Exempt Management Employment Agreement: ${fillLink}`,
+      });
+
+      void logActivity({ action: "master_w2_executive_agreement_sent", targetType: "employee", targetId: recipient.id, targetLabel: recipient.name });
+
+      setMasterW2ExecutiveAgreementRecipientId("");
+      setMasterW2ExecutiveAgreementRecipientSearch("");
+      await loadSentMasterW2ExecutiveAgreementForms();
+    } catch (err) {
+      setMasterW2ExecutiveAgreementSendError(err instanceof Error ? err.message : "Failed to send request.");
+    } finally {
+      setMasterW2ExecutiveAgreementSending(false);
+    }
+  };
+
+  const handleCopyMasterW2ExecutiveAgreementLink = async (doc: SignableDocument) => {
+    try {
+      await navigator.clipboard.writeText(`${getAppUrl()}/fill-master-w2-executive-agreement/${doc.id}`);
+    } catch (err) {
+      console.error("Failed to copy link:", err);
+    }
+  };
+
+  const handleDownloadMasterW2ExecutiveAgreementPdf = async (doc: SignableDocument) => {
+    if (!doc.pdfUrl) return;
+    const name = (doc.formData as Partial<MasterW2ExecutiveAgreementFormData>).employeeName || doc.recipientName || "master-w2-executive-agreement";
+    await downloadSignableDocumentPdf(doc.pdfUrl, `W-2 Executive Exempt Management Agreement - ${name}.pdf`);
+  };
+
+  const handleReopenMasterW2ExecutiveAgreementEmployer = async (doc: SignableDocument) => {
+    if (!window.confirm("Re-open this for a new employer signature? The employee's signature stays as-is.")) return;
+    setMasterW2ExecutiveAgreementActionBusyId(doc.id);
+    setMasterW2ExecutiveAgreementActionError(null);
+    try {
+      await reopenEmployerSignature(doc.id);
+      await loadSentMasterW2ExecutiveAgreementForms();
+    } catch (err) {
+      setMasterW2ExecutiveAgreementActionError(err instanceof Error ? err.message : "Failed to reopen for re-signing.");
+    } finally {
+      setMasterW2ExecutiveAgreementActionBusyId(null);
+    }
+  };
+
+  const handleDeleteMasterW2ExecutiveAgreement = async (doc: SignableDocument) => {
+    if (!window.confirm("Permanently delete this W-2 Executive Exempt Management Agreement request?")) return;
+    setMasterW2ExecutiveAgreementActionBusyId(doc.id);
+    setMasterW2ExecutiveAgreementActionError(null);
+    try {
+      await deleteSignableDocument(doc.id);
+      await loadSentMasterW2ExecutiveAgreementForms();
+    } catch (err) {
+      setMasterW2ExecutiveAgreementActionError(err instanceof Error ? err.message : "Failed to delete.");
+    } finally {
+      setMasterW2ExecutiveAgreementActionBusyId(null);
+    }
+  };
+
+  // ── Complete Employer Signature — a plain signature pad plus the
+  // "Printed name / title" field the source document's Company signature
+  // line calls for, reassigns the document to the current HR user first so
+  // the RLS update policy allows it (same "claim" pattern Wage Ack's own
+  // dialog uses), then regenerates the whole PDF fresh with both
+  // signatures. ──
+  const [masterW2ExecutiveAgreementEmployerDialog, setMasterW2ExecutiveAgreementEmployerDialog] = useState<SignableDocument | null>(null);
+  const [masterW2ExecutiveAgreementEmployerPrintedNameTitle, setMasterW2ExecutiveAgreementEmployerPrintedNameTitle] = useState("");
+  const [masterW2ExecutiveAgreementEmployerSaving, setMasterW2ExecutiveAgreementEmployerSaving] = useState(false);
+  const [masterW2ExecutiveAgreementEmployerError, setMasterW2ExecutiveAgreementEmployerError] = useState<string | null>(null);
+  const masterW2ExecutiveAgreementEmployerSigPad = useSignaturePad({ width: 400, height: 120 });
+  const [masterW2ExecutiveAgreementLogoDataUrl, setMasterW2ExecutiveAgreementLogoDataUrl] = useState("");
+
+  const handleOpenMasterW2ExecutiveAgreementEmployerDialog = (doc: SignableDocument) => {
+    setMasterW2ExecutiveAgreementEmployerDialog(doc);
+    setMasterW2ExecutiveAgreementEmployerPrintedNameTitle("");
+    setMasterW2ExecutiveAgreementEmployerError(null);
+    if (!masterW2ExecutiveAgreementLogoDataUrl) {
+      loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png")).then(setMasterW2ExecutiveAgreementLogoDataUrl).catch(() => {});
+    }
+  };
+
+  const handleSaveMasterW2ExecutiveAgreementEmployerSignature = async () => {
+    if (!masterW2ExecutiveAgreementEmployerDialog || !uid) return;
+    if (!masterW2ExecutiveAgreementEmployerPrintedNameTitle.trim()) {
+      setMasterW2ExecutiveAgreementEmployerError("Enter the Company signer's printed name / title.");
+      return;
+    }
+    if (!masterW2ExecutiveAgreementEmployerSigPad.hasContent()) {
+      setMasterW2ExecutiveAgreementEmployerError("Please add your signature.");
+      return;
+    }
+    setMasterW2ExecutiveAgreementEmployerSaving(true);
+    setMasterW2ExecutiveAgreementEmployerError(null);
+    try {
+      const myProfileId = await getMyProfileId(uid);
+      if (!myProfileId) throw new Error("Could not resolve your profile.");
+
+      await reassignSignableDocument(masterW2ExecutiveAgreementEmployerDialog.id, { recipientId: myProfileId, recipientName: displayName || "HR" }, "hr_staff");
+
+      const existing = masterW2ExecutiveAgreementEmployerDialog.formData as MasterW2ExecutiveAgreementFormData;
+      const dataUrl = masterW2ExecutiveAgreementEmployerSigPad.toDataURL();
+      if (!dataUrl) {
+        setMasterW2ExecutiveAgreementEmployerError("Please add your signature.");
+        return;
+      }
+      await refreshStorageAuthToken();
+      const signatureUrl = await uploadSignableDocumentSignature(masterW2ExecutiveAgreementEmployerDialog.companyId, masterW2ExecutiveAgreementEmployerDialog.id, "hr_staff", dataUrl);
+      const signedAt = new Date().toISOString();
+
+      const merged: MasterW2ExecutiveAgreementFormData = {
+        ...existing,
+        employerSignatureDataUrl: dataUrl,
+        employerDateSigned: signedAt,
+        employerPrintedNameTitle: masterW2ExecutiveAgreementEmployerPrintedNameTitle.trim(),
+      };
+
+      const logo = masterW2ExecutiveAgreementLogoDataUrl || (await loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png")));
+      const pdfBlob = await captureHtmlToPdfBlob(buildMasterW2ExecutiveAgreementBodyMarkup(merged, logo), masterW2ExecutiveAgreementStyles);
+      const pdfUrl = await uploadMasterW2ExecutiveAgreementForm(masterW2ExecutiveAgreementEmployerDialog.companyId, existing.employeeName || "master-w2-executive-agreement", pdfBlob);
+
+      const entry = { name: displayName || "HR", url: signatureUrl, signedAt };
+      await signDocument(masterW2ExecutiveAgreementEmployerDialog.id, "hr_staff", entry, pdfUrl, merged as unknown as Record<string, any>);
+      await confirmSignableDocument(masterW2ExecutiveAgreementEmployerDialog.id, null);
+
+      void logActivity({ action: "master_w2_executive_agreement_employer_signed", targetType: "employee", targetLabel: existing.employeeName || "" });
+      setMasterW2ExecutiveAgreementEmployerDialog(null);
+      await loadSentMasterW2ExecutiveAgreementForms();
+    } catch (err) {
+      setMasterW2ExecutiveAgreementEmployerError(err instanceof Error ? err.message : "Failed to save signature.");
+    } finally {
+      setMasterW2ExecutiveAgreementEmployerSaving(false);
     }
   };
 
@@ -9792,14 +10083,9 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     { type: "direct_deposit", label: "Direct Deposit Authorization" },
   ];
   // Matches newAutomationFormsManagementTabs (BM, SBS, Tech Director, Tech
-  // Assistant Director Forms) — Contractor Addendum and W-9 don't have
-  // their own standalone "new" tab (w9 is a shortcut into the shared
-  // combined W-8/9/4/4R tab, Contractor Addendum reuses its one existing
-  // tab as-is), but both are still real SignableDocumentTypes the same way
-  // every other bulk-sendable type here is.
+  // Assistant Director Forms).
   const NEW_MANAGEMENT_BULK_FORM_TYPES: { type: SignableDocumentType; label: string }[] = [
-    { type: "contractor_addendum", label: "Master Independent Contractor Subcontractor Agreement Addendum" },
-    { type: "w9", label: "Form W-9" },
+    { type: "master_w2_executive_agreement", label: "W-2 Executive Exempt Management Agreement" },
     { type: "direct_deposit", label: "Direct Deposit Authorization" },
   ];
 
@@ -14076,17 +14362,17 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   ] as const;
 
   // "New Automation Forms"'s management-tier column — Branch Manager/Senior
-  // Branch Manager/Technical Director/Technical Assistant Director forms.
-  // All three reuse "new…"-prefixed keys distinct from the old group's own
-  // (plain "directDeposit"/"contractorAddendum"/the shared "w8ben" tab's W-9
-  // sub-picker) so each lands in the same new/old-separated bucket as every
-  // other New Automation Forms column — see isNewAutomationDoc's doc
-  // comment. "newW9" pins w8FormType to "w9" the same way "newW4"/"newW8ben"
-  // already pin their own sub-type (see the useEffect right after
-  // w8FormType's declaration) rather than needing its own full send flow.
+  // Branch Manager/Director/Tech Assistant Director forms. Contractor
+  // Addendum + W-9 (1099 paperwork) were replaced with the W-2 Executive
+  // Exempt Management Agreement — this tier is W-2, not 1099 — same
+  // un-prefixed-key treatment as masterW2Agreement/masterW2OfficeAgreement/
+  // masterPhContractorAgreement (a brand-new type with no old-flow
+  // equivalent doesn't need "new"-prefix bucket separation — see
+  // isNewAutomationDoc's doc comment). The old Contractor Addendum/W-9
+  // tabs (automatedFormsManagementTabs) stay untouched for whatever's
+  // already on file there.
   const newAutomationFormsManagementTabs = [
-    { key: "newContractorAddendum", label: "Master Independent Contractor Subcontractor Agreement Addendum", count: 0, icon: FileText },
-    { key: "newW9", label: "Form W-9", count: 0, icon: Landmark },
+    { key: "masterW2ExecutiveAgreement", label: "W-2 Executive Exempt Management Agreement", count: sentMasterW2ExecutiveAgreementAwaitingEmployerCount, icon: FileCheck },
     { key: "newDirectDeposit", label: "Direct Deposit Authorization", count: 0, icon: FileCheck },
   ] as const;
 
@@ -23231,6 +23517,301 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             </div>
             <div className="flex-1 overflow-hidden bg-slate-950">
               {masterW2OfficeAgreementDocPreview.pdfUrl && <iframe src={masterW2OfficeAgreementDocPreview.pdfUrl} title="Master W-2 Office Agreement" className="w-full h-full min-h-[70vh] border-0" />}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activeTab === "masterW2ExecutiveAgreement" && (
+      <>
+      <div className="panel p-0 overflow-visible mt-4 relative z-20">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">Send W-2 Executive Exempt Management Agreement Request</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Pick a teammate — they'll get a link to fill in their info and sign. Once they submit, it lands back here for HR to add the Company's authorized signature. For Branch Manager / Senior Branch Manager / Director / Tech Assistant Director — replaces the old Contractor Addendum + W-9 for this tier.</p>
+        </div>
+        <div className="p-4 flex flex-col md:flex-row gap-6">
+          <div className="flex flex-col gap-3 w-full md:max-w-sm md:shrink-0">
+            <div className="flex flex-col gap-1 relative">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient (AHS teammate)</label>
+              <input
+                type="text"
+                value={masterW2ExecutiveAgreementRecipientSearch}
+                onChange={(e) => { setMasterW2ExecutiveAgreementRecipientSearch(e.target.value); setMasterW2ExecutiveAgreementRecipientId(""); setMasterW2ExecutiveAgreementRecipientDropdownOpen(true); }}
+                onFocus={() => setMasterW2ExecutiveAgreementRecipientDropdownOpen(true)}
+                onBlur={() => setTimeout(() => setMasterW2ExecutiveAgreementRecipientDropdownOpen(false), 150)}
+                placeholder="Search a teammate…"
+                className="glass-input text-sm py-1.5 px-3 rounded-md"
+              />
+              {masterW2ExecutiveAgreementRecipientDropdownOpen && (
+                <div className="absolute z-50 top-full mt-1 w-full max-h-96 overflow-y-auto rounded-md border border-white/15 bg-slate-900 shadow-2xl">
+                  {filteredMasterW2ExecutiveAgreementRecipients.length === 0 ? (
+                    <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+                  ) : (
+                    filteredMasterW2ExecutiveAgreementRecipients.map((e) => (
+                      <button
+                        key={e.id}
+                        type="button"
+                        onMouseDown={(ev) => ev.preventDefault()}
+                        onClick={() => {
+                          setMasterW2ExecutiveAgreementRecipientId(e.id);
+                          setMasterW2ExecutiveAgreementRecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`);
+                          setMasterW2ExecutiveAgreementRecipientDropdownOpen(false);
+                        }}
+                        className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${masterW2ExecutiveAgreementRecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                      >
+                        {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+
+            {masterW2ExecutiveAgreementSendError && (
+              <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{masterW2ExecutiveAgreementSendError}</p>
+            )}
+            <div className="flex items-center gap-2">
+              <button
+                onClick={toggleMasterW2ExecutiveAgreementPreview}
+                className="btn text-sm px-4 py-2 flex items-center gap-1.5"
+              >
+                Preview <ChevronDown className={`h-3.5 w-3.5 transition-transform ${masterW2ExecutiveAgreementPreviewExpanded ? "rotate-180" : ""}`} />
+              </button>
+              <button
+                onClick={handleSendMasterW2ExecutiveAgreement}
+                disabled={!masterW2ExecutiveAgreementRecipientId || masterW2ExecutiveAgreementSending}
+                className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+              >
+                {masterW2ExecutiveAgreementSending ? "Sending…" : "Send Request"}
+              </button>
+            </div>
+          </div>
+
+          <div className="flex-1 min-w-0">
+            {masterW2ExecutiveAgreementPreviewExpanded ? (
+              <div className="border border-white/10 rounded-md overflow-hidden bg-white/5 h-full" style={{ minHeight: 560 }}>
+                {masterW2ExecutiveAgreementPreviewLoading || !masterW2ExecutiveAgreementPreviewPdfUrl ? (
+                  <div className="h-full flex items-center justify-center text-sm text-muted-foreground" style={{ minHeight: 560 }}>Loading preview…</div>
+                ) : (
+                  <iframe src={masterW2ExecutiveAgreementPreviewPdfUrl} title="W-2 Executive Exempt Management Agreement Preview" className="w-full border-0" style={{ height: 560 }} />
+                )}
+              </div>
+            ) : (
+              <div className="border border-dashed border-white/15 rounded-md flex items-center justify-center text-sm text-muted-foreground" style={{ minHeight: 560 }}>
+                Click "Preview" to see the document here.
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="panel p-0 overflow-hidden mt-4">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">Sent W-2 Executive Exempt Management Agreement Forms</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status. "Awaiting Employer Signature" means the employee finished — add your signature to finalize.</p>
+        </div>
+        <div className="px-4 py-3 border-b border-white/10 bg-white/5 flex flex-wrap items-end gap-3">
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+            <input
+              type="text"
+              value={masterW2ExecutiveAgreementSentSearch}
+              onChange={(e) => setMasterW2ExecutiveAgreementSentSearch(e.target.value)}
+              placeholder="Name or branch…"
+              className="glass-input text-sm py-1.5 pl-8 pr-3 rounded-md w-56"
+            />
+          </div>
+          {masterW2ExecutiveAgreementSentSearch && (
+            <button onClick={() => setMasterW2ExecutiveAgreementSentSearch("")} className="btn text-sm px-3 py-1.5">Clear</button>
+          )}
+          <span className="text-xs text-muted-foreground mb-1.5 ml-auto">
+            {sortedSentMasterW2ExecutiveAgreementForms.length}{masterW2ExecutiveAgreementSentSearch ? ` of ${sentMasterW2ExecutiveAgreementForms.length}` : ""} forms
+          </span>
+        </div>
+        {masterW2ExecutiveAgreementActionError && (
+          <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{masterW2ExecutiveAgreementActionError}</p>
+        )}
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-white/10 bg-white/5">
+                <SortableTh column="employee" label="Employee" sortColumn={masterW2ExecutiveAgreementSentSortColumn} sortDir={masterW2ExecutiveAgreementSentSortDir} onSort={handleMasterW2ExecutiveAgreementSentSort} />
+                <FilterableTh
+                  column="branch" label="Home Branch/Region"
+                  sortColumn={masterW2ExecutiveAgreementSentSortColumn} sortDir={masterW2ExecutiveAgreementSentSortDir} onSort={handleMasterW2ExecutiveAgreementSentSort}
+                  options={masterW2ExecutiveAgreementFilterOptionsFor("branch")}
+                  isChecked={(v) => masterW2ExecutiveAgreementIsValueChecked("branch", v)}
+                  onToggleValue={(v) => masterW2ExecutiveAgreementToggleFilterValue("branch", v)}
+                  onClear={() => masterW2ExecutiveAgreementClearColumnFilter("branch")}
+                  isFiltered={masterW2ExecutiveAgreementIsColumnFiltered("branch")}
+                />
+                <FilterableTh
+                  column="sentBy" label="Sent By"
+                  sortColumn={masterW2ExecutiveAgreementSentSortColumn} sortDir={masterW2ExecutiveAgreementSentSortDir} onSort={handleMasterW2ExecutiveAgreementSentSort}
+                  options={masterW2ExecutiveAgreementFilterOptionsFor("sentBy")}
+                  isChecked={(v) => masterW2ExecutiveAgreementIsValueChecked("sentBy", v)}
+                  onToggleValue={(v) => masterW2ExecutiveAgreementToggleFilterValue("sentBy", v)}
+                  onClear={() => masterW2ExecutiveAgreementClearColumnFilter("sentBy")}
+                  isFiltered={masterW2ExecutiveAgreementIsColumnFiltered("sentBy")}
+                />
+                <FilterableTh
+                  column="status" label="Status"
+                  sortColumn={masterW2ExecutiveAgreementSentSortColumn} sortDir={masterW2ExecutiveAgreementSentSortDir} onSort={handleMasterW2ExecutiveAgreementSentSort}
+                  options={masterW2ExecutiveAgreementFilterOptionsFor("status")}
+                  isChecked={(v) => masterW2ExecutiveAgreementIsValueChecked("status", v)}
+                  onToggleValue={(v) => masterW2ExecutiveAgreementToggleFilterValue("status", v)}
+                  onClear={() => masterW2ExecutiveAgreementClearColumnFilter("status")}
+                  isFiltered={masterW2ExecutiveAgreementIsColumnFiltered("status")}
+                />
+                <SortableTh column="sent" label="Sent" sortColumn={masterW2ExecutiveAgreementSentSortColumn} sortDir={masterW2ExecutiveAgreementSentSortDir} onSort={handleMasterW2ExecutiveAgreementSentSort} />
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sortedSentMasterW2ExecutiveAgreementForms.length === 0 ? (
+                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">{sentMasterW2ExecutiveAgreementForms.length === 0 ? "No requests sent yet." : "No forms match this search/filter."}</td></tr>
+              ) : (
+                sortedSentMasterW2ExecutiveAgreementForms.map((doc) => {
+                  const data = doc.formData as Partial<MasterW2ExecutiveAgreementFormData>;
+                  const recipient = employees.find((e) => e.id === doc.recipientId);
+                  const busy = masterW2ExecutiveAgreementActionBusyId === doc.id;
+                  const awaitingEmployer = isAwaitingEmployerStep(doc);
+                  return (
+                    <tr key={doc.id} className="border-b border-white/5 hover:bg-white/5">
+                      <td className="px-4 py-3 font-medium">
+                        {doc.pdfUrl ? (
+                          <button type="button" onClick={() => setMasterW2ExecutiveAgreementDocPreview(doc)} className="text-blue-300 hover:text-blue-200 hover:underline text-left">
+                            {data.employeeName || recipient?.name || doc.recipientName || "—"}
+                          </button>
+                        ) : (
+                          data.employeeName || recipient?.name || doc.recipientName || "—"
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-muted-foreground">{data.homeBranchRegion || "—"}</td>
+                      <td className="px-4 py-3 text-muted-foreground">{doc.createdByName ?? "—"}</td>
+                      <td className="px-4 py-3">
+                        <span className={`px-2 py-1 rounded text-xs font-semibold ${
+                          doc.status === "confirmed" ? "bg-green-500/20 text-green-300"
+                          : awaitingEmployer ? "bg-orange-500/20 text-orange-300"
+                          : doc.status === "cancelled" ? "bg-slate-500/20 text-slate-400"
+                          : "bg-yellow-500/20 text-yellow-300"
+                        }`}>
+                          {masterW2ExecutiveAgreementStatusLabel(doc)}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{new Date(doc.createdAt).toLocaleDateString()}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {doc.status === "pending_signature" && doc.recipientSlot === "employee" && (
+                            <button type="button" onClick={() => handleCopyMasterW2ExecutiveAgreementLink(doc)} className="btn text-[10px] px-2 py-1">
+                              Copy Link
+                            </button>
+                          )}
+                          {awaitingEmployer && (
+                            <>
+                              <button type="button" onClick={() => handleOpenMasterW2ExecutiveAgreementEmployerDialog(doc)} className="btn text-[10px] px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white">
+                                Add Employer Signature →
+                              </button>
+                              <button type="button" onClick={() => handleOpenEmployerReassign(doc)} className="btn text-[10px] px-2 py-1">
+                                Send to Employer
+                              </button>
+                            </>
+                          )}
+                          {doc.pdfUrl && (
+                            <button type="button" onClick={() => handleDownloadMasterW2ExecutiveAgreementPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
+                              Download PDF
+                            </button>
+                          )}
+                          {doc.status === "confirmed" && (
+                            <button type="button" onClick={() => handleReopenMasterW2ExecutiveAgreementEmployer(doc)} className="btn text-[10px] px-2 py-1" title="Redo the employer signature — keeps the employee's original signature">
+                              Re-sign
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => handleDeleteMasterW2ExecutiveAgreement(doc)}
+                            title="Permanently delete this request"
+                            className="text-muted-foreground hover:text-red-300 disabled:opacity-50"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      </>
+      )}
+
+      {masterW2ExecutiveAgreementEmployerDialog && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-800 border border-white/10 rounded-lg p-6 max-w-sm w-full">
+            <h3 className="text-lg font-bold mb-2">Add Employer Signature</h3>
+            <p className="text-sm text-muted-foreground mb-4">
+              Company authorized signature for{" "}
+              <span className="font-semibold text-white">{(masterW2ExecutiveAgreementEmployerDialog.formData as Partial<MasterW2ExecutiveAgreementFormData>).employeeName || "—"}</span>'s
+              W-2 Executive Exempt Management Employment Agreement.
+            </p>
+
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1 block">Printed Name / Title</label>
+            <input
+              className="glass-input text-sm py-1.5 px-3 rounded-md w-full mb-3"
+              value={masterW2ExecutiveAgreementEmployerPrintedNameTitle}
+              onChange={(e) => setMasterW2ExecutiveAgreementEmployerPrintedNameTitle(e.target.value)}
+              placeholder="e.g. Jane Smith, Owner"
+            />
+
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2 block">Add your signature</label>
+            <canvas
+              {...masterW2ExecutiveAgreementEmployerSigPad.canvasProps}
+              className={`bg-white rounded-md border border-white/15 w-full ${masterW2ExecutiveAgreementEmployerSigPad.canvasProps.className}`}
+            />
+            <div className="flex justify-center mt-2">
+              <SignaturePadControls pad={masterW2ExecutiveAgreementEmployerSigPad} />
+            </div>
+
+            {masterW2ExecutiveAgreementEmployerError && (
+              <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2 mt-3">{masterW2ExecutiveAgreementEmployerError}</p>
+            )}
+            <div className="flex gap-2 justify-end mt-4">
+              <button onClick={() => setMasterW2ExecutiveAgreementEmployerDialog(null)} className="btn text-sm px-4 py-2">Cancel</button>
+              <button
+                onClick={handleSaveMasterW2ExecutiveAgreementEmployerSignature}
+                disabled={masterW2ExecutiveAgreementEmployerSaving}
+                className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+              >
+                {masterW2ExecutiveAgreementEmployerSaving ? "Saving…" : "Complete & Sign"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {masterW2ExecutiveAgreementDocPreview && (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => setMasterW2ExecutiveAgreementDocPreview(null)}>
+          <div className="bg-slate-900 border border-white/10 rounded-lg shadow-2xl w-full max-w-6xl h-[92vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold">{(masterW2ExecutiveAgreementDocPreview.formData as Partial<MasterW2ExecutiveAgreementFormData>).employeeName || "—"}</p>
+                <p className="text-[10px] text-muted-foreground">
+                  {masterW2ExecutiveAgreementDocPreview.status === "confirmed" ? "Completed" : "Submitted"} {new Date(masterW2ExecutiveAgreementDocPreview.signedAt ?? masterW2ExecutiveAgreementDocPreview.createdAt).toLocaleString()}
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                {masterW2ExecutiveAgreementDocPreview.pdfUrl && (
+                  <a href={masterW2ExecutiveAgreementDocPreview.pdfUrl} target="_blank" rel="noopener noreferrer" className="btn text-xs px-2.5 py-1.5 flex items-center gap-1"><Download className="h-3 w-3" /> Download</a>
+                )}
+                <button type="button" onClick={() => setMasterW2ExecutiveAgreementDocPreview(null)} className="btn text-xs px-2.5 py-1.5">Close</button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-hidden bg-slate-950">
+              {masterW2ExecutiveAgreementDocPreview.pdfUrl && <iframe src={masterW2ExecutiveAgreementDocPreview.pdfUrl} title="W-2 Executive Exempt Management Agreement" className="w-full h-full min-h-[70vh] border-0" />}
             </div>
           </div>
         </div>

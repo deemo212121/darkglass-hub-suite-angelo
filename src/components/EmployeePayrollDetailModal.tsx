@@ -6,6 +6,9 @@ import { isCsrRestrictedRole } from "@/lib/roleLabels";
 import { getCompanyHolidaysInRange } from "@/lib/supabase/companyHolidays";
 import { getPendingCorrectionsInRange, type TimecardCorrectionRow } from "@/lib/supabase/timecardCorrections";
 import { PendingItemDetailModal, type PendingItem } from "@/components/PendingItemDetailModal";
+import { getCompanyPtoRequests, isPaidPtoType, type PtoRequestRow, type PtoType } from "@/lib/supabase/pto";
+import { getAttendanceNotes } from "@/lib/supabase/attendanceNotes";
+import { HR_STATUS_TO_PTO_TYPE } from "@/components/HrCalendarTab";
 import { getTicketAttendanceForTechnician, slotSortKey, type TicketAttendanceRow } from "@/lib/supabase/technicianWhereabouts";
 import { getCompanyEmployeeRequests } from "@/lib/supabase/employeeRequests";
 import { getVisitDiagnosisByTicketIds } from "@/lib/supabase/tickets";
@@ -93,6 +96,7 @@ const STATUS_LABEL: Record<AttendanceRow["status"], string> = {
   "day-off": "Rest Day",
   holiday: "Holiday",
   "pending-correction": "Pending Time Correction Request",
+  "paid-leave": "Paid Leave",
 };
 const STATUS_COLOR: Record<AttendanceRow["status"], string> = {
   present: "text-green-300",
@@ -103,7 +107,21 @@ const STATUS_COLOR: Record<AttendanceRow["status"], string> = {
   "day-off": "text-slate-400",
   holiday: "text-purple-300",
   "pending-correction": "text-amber-300",
+  "paid-leave": "text-sky-300",
 };
+const PTO_TYPE_LABEL: Record<string, string> = {
+  vacation: "Vacation Leave",
+  sick: "Sick Leave",
+  personal: "Personal Leave",
+  holiday: "Holiday Leave",
+  bereavement: "Bereavement Leave",
+  unpaid: "Unpaid Leave",
+};
+/** "Vacation Leave" etc. when the specific PTO type is known, else the generic STATUS_LABEL fallback ("Paid Leave"). */
+function statusLabelFor(row: AttendanceRow): string {
+  if (row.status === "paid-leave" && row.leaveType) return PTO_TYPE_LABEL[row.leaveType] ?? STATUS_LABEL[row.status];
+  return STATUS_LABEL[row.status];
+}
 
 export function EmployeePayrollDetailModal({
   profileId,
@@ -152,6 +170,14 @@ export function EmployeePayrollDetailModal({
   const [ticketRows, setTicketRows] = useState<TicketAttendanceRow[]>([]);
   const [diagnoses, setDiagnoses] = useState<Map<string, string>>(new Map());
   const [mileageEntries, setMileageEntries] = useState<MileageEntry[]>([]);
+  // Every PTO request company-wide (loaded once, filtered to this profile
+  // below) — same "load once, filter locally" convention as the two fetches
+  // above. Feeds paidLeaveDates: an approved, PAID (isPaidPtoType — Sick is
+  // always unpaid) day with no punch reads as "paid-leave" (scheduled net
+  // hours, at the normal rate) instead of "absent", matching the same
+  // crediting rule AccountingDashboard.tsx's computeHoursMap already applies
+  // to the real payroll total.
+  const [ptoRequests, setPtoRequests] = useState<PtoRequestRow[]>([]);
   // Which Attendance row's date is expanded to show that day's tickets —
   // same expand-on-click pattern Ticket Attendance itself uses, just scoped
   // to one date's tickets instead of a whole technician's range.
@@ -201,7 +227,40 @@ export function EmployeePayrollDetailModal({
     getMileageEntries()
       .then(setMileageEntries)
       .catch((err) => console.error("Failed to load mileage entries for payroll detail:", err));
+    getCompanyPtoRequests()
+      .then(setPtoRequests)
+      .catch((err) => console.error("Failed to load PTO requests for payroll detail:", err));
   }, []);
+
+  // This profile's approved, PAID pto days from FORMAL pto_requests, expanded
+  // to individual dates (skipping their own off days) — same expansion
+  // AccountingDashboard.tsx's computeHoursMap already does for the real
+  // payroll total. Not clipped to rangeStart/rangeEnd since it's threaded
+  // into both the main and seed-week getAttendanceForRange calls below, each
+  // of which only reads the keys inside its own iterated window anyway.
+  //
+  // This is NOT the only way leave gets recorded — HR can also set a day's
+  // status directly on the Absent List ("HR Status" dropdown, no formal
+  // request at all), which writes into attendance_notes.hr_note instead of
+  // this table entirely (see HrCalendarTab.tsx's hrPlottedByProfile — the
+  // Time Off Calendar's teal "Set by HR (Absent List), no formal request"
+  // cells). `load()` below fetches that second source and merges it in
+  // (formal request wins if both somehow exist for the same date), so a day
+  // marked either way shows correctly here instead of only the formally
+  // requested-and-approved half of them.
+  const formalPaidLeaveDates = useMemo(() => {
+    const map = new Map<string, PtoType>();
+    const offDaySet = new Set(offDays ?? []);
+    for (const pto of ptoRequests) {
+      if (pto.profileId !== profileId || pto.status !== "approved" || !isPaidPtoType(pto.ptoType)) continue;
+      for (let d = new Date(`${pto.startDate}T00:00:00`); d <= new Date(`${pto.endDate}T00:00:00`); d.setDate(d.getDate() + 1)) {
+        if (offDaySet.has(d.getDay())) continue;
+        const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+        map.set(key, pto.ptoType);
+      }
+    }
+    return map;
+  }, [ptoRequests, profileId, offDays]);
 
   const load = async (cancelledRef: { current: boolean }) => {
     setLoading(true);
@@ -210,15 +269,28 @@ export function EmployeePayrollDetailModal({
       const seedStart = startOfWeekSunday(rangeStart);
       const seedEnd = addDaysISO(rangeStart, -1);
       const needsSeed = seedStart <= seedEnd;
-      const [holidays, seedRows, pendingCorrections, hist, myTicketRows] = await Promise.all([
+      const notesStart = needsSeed ? seedStart : rangeStart;
+      const [holidays, pendingCorrections, hist, myTicketRows, hrStatusNotes] = await Promise.all([
         getCompanyHolidaysInRange(rangeStart, rangeEnd).catch(() => []),
-        needsSeed
-          ? getAttendanceForRange(profileId, seedStart, seedEnd, { requiredCheckIn, requiredCheckOut, workingHours, mealMinutes, daysOff: offDays, graceMinutes })
-          : Promise.resolve([]),
         getPendingCorrectionsInRange(rangeStart, rangeEnd).catch(() => []),
         getSalaryHistory(profileId),
         getTicketAttendanceForTechnician(employeeName, rangeStart, rangeEnd),
+        getAttendanceNotes(notesStart, rangeEnd).catch(() => []),
       ]);
+      // Merge in HR-plotted leave (attendance_notes.hr_note, no formal
+      // pto_requests row) — a formal request wins if one somehow also
+      // covers the same date, same precedence HrCalendarTab.tsx uses.
+      const paidLeaveDates = new Map<string, PtoType>();
+      for (const n of hrStatusNotes) {
+        if (n.profileId !== profileId) continue;
+        const type = HR_STATUS_TO_PTO_TYPE[n.hrNote];
+        if (!type || !isPaidPtoType(type)) continue;
+        paidLeaveDates.set(n.noteDate, type);
+      }
+      for (const [date, type] of formalPaidLeaveDates) paidLeaveDates.set(date, type);
+      const seedRows = needsSeed
+        ? await getAttendanceForRange(profileId, seedStart, seedEnd, { requiredCheckIn, requiredCheckOut, workingHours, mealMinutes, daysOff: offDays, graceMinutes, paidLeaveDates })
+        : [];
       const attRows = await getAttendanceForRange(profileId, rangeStart, rangeEnd, {
         requiredCheckIn,
         requiredCheckOut,
@@ -228,6 +300,7 @@ export function EmployeePayrollDetailModal({
         graceMinutes,
         holidayDates: holidays.map((h) => h.date),
         pendingCorrectionDates: pendingCorrections.filter((c) => c.profileId === profileId).map((c) => c.workDate),
+        paidLeaveDates,
       });
       if (cancelledRef.current) return;
       setAttendance(attRows);
@@ -252,7 +325,7 @@ export function EmployeePayrollDetailModal({
     load(cancelledRef);
     return () => { cancelledRef.current = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [profileId, rangeStart, rangeEnd]);
+  }, [profileId, rangeStart, rangeEnd, formalPaidLeaveDates]);
 
   const totalHours = useMemo(() => attendance.reduce((s, r) => s + r.hoursWorked, 0), [attendance]);
   // One non-deleted mileage entry per ticket # — same convention Ticket
@@ -371,7 +444,7 @@ export function EmployeePayrollDetailModal({
       setSavingLegMileageId(null);
     }
   };
-  const warnings = useMemo(() => attendance.filter((r) => r.status !== "present" && r.status !== "day-off"), [attendance]);
+  const warnings = useMemo(() => attendance.filter((r) => r.status !== "present" && r.status !== "day-off" && r.status !== "paid-leave"), [attendance]);
   // The entry effective as of the end of the viewed period — used to decide
   // whether this employee is currently paid hourly or a fixed salary, and
   // to show the right numbers for whichever it is.
@@ -401,16 +474,35 @@ export function EmployeePayrollDetailModal({
     const dutyHours = isCsr
       ? CSR_WEEKLY_OVERTIME_THRESHOLD
       : computeScheduledDutyHours(requiredCheckIn || "", requiredCheckOut || "", workingHours, mealMinutes, offDays, rangeStart, rangeEnd);
-    if (dutyHours <= 0) {
-      const map = new Map<string, { regular: number; overtime: number }>();
-      for (const row of attendance) {
-        const hours = row.hoursWorked;
-        map.set(row.date, { regular: Math.min(hours, REGULAR_HOURS_PER_DAY), overtime: Math.max(0, hours - REGULAR_HOURS_PER_DAY) });
+    // Paid-leave days (see AttendanceRow.status) are excluded from the
+    // weekly-cap split below and credited back in afterward as flat REGULAR
+    // hours instead — same as AccountingDashboard.tsx's computeHoursMap,
+    // which adds a pto day's scheduled net hours straight into `regular`
+    // unconditionally, never through the weekly overtime cap real punches
+    // go through. Running a paid day off through that cap would be wrong
+    // two ways: it could get capped away in an already-full week, or push
+    // real hours elsewhere in the week into overtime it never actually
+    // caused.
+    const isPaidLeave = (row: AttendanceRow) => row.status === "paid-leave";
+    const map = (() => {
+      if (dutyHours <= 0) {
+        const m = new Map<string, { regular: number; overtime: number }>();
+        for (const row of attendance) {
+          if (isPaidLeave(row)) continue;
+          const hours = row.hoursWorked;
+          m.set(row.date, { regular: Math.min(hours, REGULAR_HOURS_PER_DAY), overtime: Math.max(0, hours - REGULAR_HOURS_PER_DAY) });
+        }
+        return m;
       }
-      return map;
+      const days = [...seedAttendance, ...attendance].filter((row) => !isPaidLeave(row)).map((row) => ({ date: row.date, rawHours: row.hoursWorked }));
+      return splitRegularOvertimeWeekly(days, { requiredCheckIn, requiredCheckOut, workingHours, mealMinutes, offDays }, 8, isCsr ? CSR_WEEKLY_OVERTIME_THRESHOLD : undefined);
+    })();
+    for (const row of attendance) {
+      if (!isPaidLeave(row) || !row.hoursWorked) continue;
+      const prev = map.get(row.date) ?? { regular: 0, overtime: 0 };
+      map.set(row.date, { regular: prev.regular + row.hoursWorked, overtime: prev.overtime });
     }
-    const days = [...seedAttendance, ...attendance].map((row) => ({ date: row.date, rawHours: row.hoursWorked }));
-    return splitRegularOvertimeWeekly(days, { requiredCheckIn, requiredCheckOut, workingHours, mealMinutes, offDays }, 8, isCsr ? CSR_WEEKLY_OVERTIME_THRESHOLD : undefined);
+    return map;
   }, [attendance, seedAttendance, requiredCheckIn, requiredCheckOut, workingHours, mealMinutes, offDays, rangeStart, rangeEnd, isCsr]);
 
   // Fixed-salary pay doesn't depend on hours worked at all (see migration
@@ -992,10 +1084,10 @@ export function EmployeePayrollDetailModal({
                               }}
                               className="underline decoration-dotted underline-offset-2 hover:text-amber-200"
                             >
-                              {STATUS_LABEL[row.status]}
+                              {statusLabelFor(row)}
                             </button>
                           ) : (
-                            STATUS_LABEL[row.status]
+                            statusLabelFor(row)
                           )}
                         </td>
                         <td className="py-1.5 text-right font-semibold text-green-300">

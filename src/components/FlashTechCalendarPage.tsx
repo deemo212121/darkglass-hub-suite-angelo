@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { ChevronLeft, ChevronRight, RefreshCw, Plus, X, Trash2, CalendarDays, Table2, Paperclip, Loader2, Users } from "lucide-react";
+import { ChevronLeft, ChevronRight, RefreshCw, Plus, X, Trash2, CalendarDays, Table2, Paperclip, Loader2, Car, Users } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { useSmartBack } from "@/hooks/useSmartBack";
@@ -100,6 +100,7 @@ type TripFormState = {
   startDate: string;
   endDate: string;
   notes: string;
+  carRentalNeeded: boolean;
   includeHotelExpense: boolean;
   includeTransportationExpense: boolean;
 };
@@ -114,6 +115,7 @@ function emptyForm(): TripFormState {
     startDate: today,
     endDate: today,
     notes: "",
+    carRentalNeeded: false,
     includeHotelExpense: true,
     includeTransportationExpense: true,
   };
@@ -346,6 +348,7 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
       startDate: trip.startDate,
       endDate: trip.endDate,
       notes: trip.notes || "",
+      carRentalNeeded: trip.carRentalNeeded,
       includeHotelExpense: Boolean(trip.hotelExpense),
       includeTransportationExpense: Boolean(trip.transportationExpense),
     });
@@ -399,6 +402,7 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
           startDate: form.startDate,
           endDate: form.endDate,
           notes: form.notes,
+          carRentalNeeded: form.carRentalNeeded,
         });
         closeModal();
         await loadData();
@@ -413,6 +417,7 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
           startDate: form.startDate,
           endDate: form.endDate,
           notes: form.notes,
+          carRentalNeeded: form.carRentalNeeded,
           createdBy: myProfileId,
           createdByName: displayName,
           includeHotelExpense: form.includeHotelExpense,
@@ -510,7 +515,7 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
             onClick={() => setView("availability")}
             className={`btn text-sm px-3 py-1.5 inline-flex items-center gap-1.5 ${view === "availability" ? "bg-primary/20 text-primary" : ""}`}
           >
-            <Users className="h-3.5 w-3.5" /> Availability
+            <Users className="h-3.5 w-3.5" /> Flash Tech List
           </button>
         </div>
 
@@ -584,13 +589,18 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
                                 key={trip.id}
                                 onClick={() => (canManage ? openEditModal(trip) : undefined)}
                                 title={`${trip.technicianName}: ${trip.originLocation} → ${trip.destinationLocation} (${trip.startDate} – ${trip.endDate})${
-                                  canManage ? " — click to edit" : ""
-                                }`}
-                                className={`block w-full truncate rounded px-1 py-0.5 text-left text-[10px] leading-tight text-white ${
+                                  trip.carRentalNeeded ? " — car rental needed" : ""
+                                }${canManage ? " — click to edit" : ""}`}
+                                className={`flex w-full items-center gap-1 truncate rounded px-1 py-0.5 text-left text-[10px] leading-tight text-white ${
                                   CHIP_COLORS[tripColorIndex.get(trip.id) ?? 0]
                                 } ${canManage ? "cursor-pointer hover:brightness-110" : "cursor-default"}`}
                               >
-                                {trip.technicianName}
+                                <span className="truncate">{trip.technicianName}</span>
+                                {trip.carRentalNeeded && (
+                                  <span className="ml-auto inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full bg-amber-400">
+                                    <Car className="h-2.5 w-2.5 text-slate-900" strokeWidth={2.5} />
+                                  </span>
+                                )}
                               </button>
                             ))}
                             {dayTrips.length > 2 && (
@@ -634,7 +644,7 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
         {view === "availability" && (
           <div className="panel p-0 overflow-hidden">
             <div className="px-4 py-3 border-b border-white/10">
-              <h3 className="text-sm font-semibold text-white">Technician Availability</h3>
+              <h3 className="text-sm font-semibold text-white">Flash Tech List</h3>
               <p className="text-[11px] text-muted-foreground mt-0.5">Who's free to send out on a flash tech trip today ({todayIso()}) vs already out on one.</p>
             </div>
             <div className="flex flex-wrap items-center gap-3 px-4 py-3 border-b border-white/10">
@@ -796,14 +806,17 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs font-semibold uppercase text-slate-400">Origin</label>
-                  <input
+                  <select
                     value={form.originLocation}
-                    readOnly
-                    disabled
-                    placeholder="Pick a technician first"
-                    title="Auto-filled from the technician's own assigned branch — not editable"
-                    className="glass-input mt-1 w-full cursor-not-allowed opacity-70"
-                  />
+                    onChange={(e) => setForm((f) => ({ ...f, originLocation: e.target.value }))}
+                    title="Defaults to the technician's assigned branch — change it if they're actually starting from somewhere else (e.g. still out on a prior trip)"
+                    className="glass-input mt-1 w-full"
+                  >
+                    <option value="">Select branch…</option>
+                    {ALL_BRANCHES.filter((b) => b !== form.destinationLocation).map((b) => (
+                      <option key={b} value={b}>{b}</option>
+                    ))}
+                  </select>
                 </div>
                 <div>
                   <label className="text-xs font-semibold uppercase text-slate-400">Destination</label>
@@ -891,6 +904,26 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
                   rows={2}
                   className="glass-input mt-1 w-full"
                 />
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold uppercase text-slate-400">Car Rental Needed</label>
+                <div className="mt-1 flex gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setForm((f) => ({ ...f, carRentalNeeded: true }))}
+                    className={`btn text-sm px-3 py-1.5 flex-1 ${form.carRentalNeeded ? "bg-primary/20 text-primary" : ""}`}
+                  >
+                    Yes
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setForm((f) => ({ ...f, carRentalNeeded: false }))}
+                    className={`btn text-sm px-3 py-1.5 flex-1 ${!form.carRentalNeeded ? "bg-primary/20 text-primary" : ""}`}
+                  >
+                    No
+                  </button>
+                </div>
               </div>
 
               {!editingTripId && (
@@ -1096,7 +1129,7 @@ function FlashTechTrackerTable({
   const HEADERS = [
     "Name", "Contact Number", "Email", "Tier Level", "Origin City", "Destination City", "Travel Date",
     "Hotel Name", "Lodging Date", "Address", "Hotel Rate", "Confirmation",
-    "Rental Car", "Rental Date", "Rental Rate", "Vehicle Type", "Other Expenses",
+    "Car Rental Needed", "Rental Car", "Rental Date", "Rental Rate", "Vehicle Type", "Other Expenses",
     "Notes", "Receipts", "Type", "Status",
   ];
 
@@ -1186,6 +1219,14 @@ function FlashTechTrackerTable({
                 </td>
                 <td className="p-0.5 border-r border-white/10">
                   <TrackerTextCell value={trip.hotelConfirmation || ""} disabled={!canEdit} placeholder="Confirmation #" onSave={(v) => patch("hotelConfirmation", { hotelConfirmation: v })} />
+                </td>
+                <td className="p-0.5 border-r border-white/10">
+                  <TrackerSelectCell
+                    value={trip.carRentalNeeded ? "Yes" : "No"}
+                    disabled={!canEdit}
+                    options={["Yes", "No"]}
+                    onSave={(v) => patch("carRentalNeeded", { carRentalNeeded: v === "Yes" })}
+                  />
                 </td>
                 <td className="p-0.5 border-r border-white/10">
                   <TrackerTextCell value={trip.rentalCar || ""} disabled={!canEdit} placeholder="Rental company" onSave={(v) => patch("rentalCar", { rentalCar: v })} />

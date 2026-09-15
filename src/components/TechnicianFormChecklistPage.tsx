@@ -33,7 +33,7 @@
  * "technician-form-checklist"; the route already renders <AppHeader />
  * and gates access to ADMIN / HR (DASHBOARD_ROLE_GATES).
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { ChevronLeft, ClipboardCheck, Loader2, ChevronDown, ExternalLink, RefreshCw, Send, Bell, Snowflake, Search, X, PenLine, Filter } from "lucide-react";
 import { useAuth } from "@/lib/auth";
@@ -57,6 +57,7 @@ import {
   type DocumentReviewStatus,
 } from "@/lib/signableDocumentRegistry";
 import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
+import { getTechnicianIdDocumentUrl } from "@/lib/supabase/technicianIdDocuments";
 import { getTechnicianFormExemptions, setTechnicianFormExemption } from "@/lib/supabase/technicianFormExemptions";
 import { logActivity } from "@/lib/supabase/hrActivityLog";
 import { getAppUrl } from "@/lib/appUrl";
@@ -92,6 +93,25 @@ interface ChecklistTabConfig {
    */
   formSourceBucket: "old" | "new";
 }
+
+/**
+ * Identity photos collected alongside a Master Agreement's own typed
+ * fields (technicianIdDocuments.ts — private-bucket paths on the
+ * document's formData, never a plaintext SSN column). Not part of the
+ * signed PDF itself, so they need their own "view" links here rather than
+ * riding along with the doc's pdfUrl-driven one above.
+ */
+const ID_DOC_FIELDS: Partial<Record<SignableDocumentType, { field: string; label: string }[]>> = {
+  master_w2_agreement: [
+    { field: "licensePhotoPath", label: "License" },
+    { field: "ssnCardPhotoPath", label: "SSN Card" },
+  ],
+  master_w2_office_agreement: [
+    { field: "licensePhotoPath", label: "License" },
+    { field: "ssnCardPhotoPath", label: "SSN Card" },
+  ],
+  master_ph_contractor_agreement: [{ field: "governmentIdPhotoPath", label: "ID" }],
+};
 
 const CHECKLIST_TABS: ChecklistTabConfig[] = [
   {
@@ -192,6 +212,11 @@ export function TechnicianFormChecklistPage() {
   // signing, just the document with a close button, instead of opening a
   // new browser tab.
   const [viewDoc, setViewDoc] = useState<{ doc: SignableDocument; label: string } | null>(null);
+  // Same "plain read-only popup" shape as viewDoc above, just for a License/
+  // SSN Card/ID photo instead of a signed document's pdfUrl — those live in
+  // a private Storage bucket behind a short-lived signed URL (fetched on
+  // click, not cached), not a fixed field on the SignableDocument itself.
+  const [idPhotoView, setIdPhotoView] = useState<{ url: string; label: string } | null>(null);
 
   // ── Contractor Addendum's "Send" step needs Position Level + Guaranteed
   // Minimum Baseline Payout up front — these are compensation/title terms
@@ -1022,8 +1047,10 @@ export function TechnicianFormChecklistPage() {
                           : awaitingEmployee
                           ? "border-amber-500/60 bg-transparent"
                           : "border-white/20 bg-transparent";
+                        const idDocFields = !na && doc ? (ID_DOC_FIELDS[type] ?? []).filter(({ field }) => doc.formData?.[field]) : [];
                         return (
-                          <li key={type} className={`flex items-center gap-2.5 text-sm ${na ? "opacity-50" : ""}`}>
+                          <Fragment key={type}>
+                          <li className={`flex items-center gap-2.5 text-sm ${na ? "opacity-50" : ""}`}>
                             <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${markerClass}`}>
                               {done && <span className="text-[10px] font-bold leading-none">✓</span>}
                             </span>
@@ -1138,6 +1165,24 @@ export function TechnicianFormChecklistPage() {
                               N/A
                             </label>
                           </li>
+                          {idDocFields.map(({ field, label: fieldLabel }) => (
+                            <li key={field} className="flex items-center gap-2.5 text-sm pl-6">
+                              <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded border border-white/20 bg-transparent" />
+                              <span className="flex-1 min-w-0 text-slate-400">{fieldLabel}</span>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  getTechnicianIdDocumentUrl(doc!.formData[field])
+                                    .then((url) => setIdPhotoView({ url, label: fieldLabel }))
+                                    .catch((err) => setActionError(err instanceof Error ? err.message : `Failed to open ${fieldLabel} photo.`))
+                                }
+                                className="inline-flex shrink-0 items-center gap-0.5 text-xs text-blue-400 hover:text-blue-300"
+                              >
+                                view <ExternalLink className="h-3 w-3" />
+                              </button>
+                            </li>
+                          ))}
+                          </Fragment>
                         );
                       })}
                     </ul>
@@ -1265,6 +1310,35 @@ export function TechnicianFormChecklistPage() {
           </div>
           <div className="flex-1 overflow-hidden bg-slate-950">
             {viewDoc.doc.pdfUrl && <iframe src={viewDoc.doc.pdfUrl} title={viewDoc.label} className="w-full h-full border-0" />}
+          </div>
+        </div>
+      </div>
+    )}
+
+    {/* Same plain read-only popup, for a License/SSN Card/ID photo — see
+        idPhotoView's own comment above. */}
+    {idPhotoView && (
+      <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => setIdPhotoView(null)}>
+        <div className="bg-slate-900 border border-white/10 rounded-lg shadow-2xl w-full max-w-[95vw] h-[95vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+          <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between gap-3 shrink-0">
+            <p className="text-sm font-semibold truncate">{idPhotoView.label}</p>
+            <button
+              type="button"
+              onClick={() => setIdPhotoView(null)}
+              className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-white/5"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          <div className="flex-1 overflow-auto bg-slate-950 flex items-center justify-center p-4">
+            {/* A plain <img>, not an <iframe> — an iframe hands an image off
+                to the browser's own standalone image viewer, which renders
+                it at native pixel size (100% zoom) instead of scaling to
+                fit, so a real camera-resolution ID photo overflowed the
+                popup instead of fitting inside it. object-contain scales it
+                down to fit while still letting it grow up to its own
+                natural size on a small photo. */}
+            <img src={idPhotoView.url} alt={idPhotoView.label} className="max-w-full max-h-full object-contain" />
           </div>
         </div>
       </div>
