@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { X, Plus, Pencil, Check, Loader2, ExternalLink, ChevronDown, ChevronRight, Trash2 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
-import { getAttendanceForRange, saveEntry, getProfileIdByFirebaseUid, computeScheduledDutyHours, resolveScheduledShiftHours, computeMealTimeCredit, foldMealCreditIntoSplit, startOfWeekSunday, splitRegularOvertimeWeekly, CSR_WEEKLY_OVERTIME_THRESHOLD, type AttendanceRow } from "@/lib/supabase/timecards";
+import { getAttendanceForRange, saveEntry, getProfileIdByFirebaseUid, computeScheduledDutyHours, resolveScheduledShiftHours, computeMealTimeCredit, startOfWeekSunday, splitRegularOvertimeWeekly, CSR_WEEKLY_OVERTIME_THRESHOLD, type AttendanceRow } from "@/lib/supabase/timecards";
 import { isMealAlwaysPaidRole, usesFlatWeeklyOvertimeThreshold } from "@/lib/roleLabels";
 import { getCompanyHolidaysInRange } from "@/lib/supabase/companyHolidays";
 import { getPendingCorrectionsInRange, type TimecardCorrectionRow } from "@/lib/supabase/timecardCorrections";
@@ -356,12 +356,11 @@ export function EmployeePayrollDetailModal({
 
   // Technicians/Branch-Managers/Tech Managers/Technical Directors aren't
   // required to punch Meal In/Out, but their meal break is still paid — see
-  // timecards.ts's computeMealTimeCredit. Kept as its own per-date map
-  // (rather than folded straight into dailyHoursSplitByDate's `regular`
-  // like AccountingDashboard.tsx/PayrollCalculationPage.tsx do) so the table
-  // below can show it as its own "Meal Time" line and "Regular Hour(s)"
-  // keeps meaning exactly what it always has — actual worked time, net of
-  // any real punched meal.
+  // timecards.ts's computeMealTimeCredit. Merged directly into the raw hours
+  // fed into dailyHoursSplitByDate below (before the weekly regular/overtime
+  // split runs), so it naturally lands as Regular or Overtime with no
+  // separate "Meal" bucket in the totals. Kept as its own per-date map too,
+  // purely so the table can still show where that 30 minutes came from.
   const mealAlwaysPaid = isMealAlwaysPaidRole(role, extraRoles);
   const mealEligibleShift = resolveScheduledShiftHours(requiredCheckIn || "", requiredCheckOut || "", workingHours, mealMinutes) > 6;
   // Covers seedAttendance too (the partial week before rangeStart, used only
@@ -541,22 +540,24 @@ export function EmployeePayrollDetailModal({
     // real hours elsewhere in the week into overtime it never actually
     // caused.
     const isPaidLeave = (row: AttendanceRow) => row.status === "paid-leave";
-    // Deliberately built from row.hoursWorked ALONE — the paid meal credit
-    // must NOT be mixed into this raw split, or "regular" would silently
-    // absorb it whenever a day has spare room under the cap. The credit is
-    // folded in afterward by foldedHoursByDate below instead, which decides
-    // whether it becomes its own straight-rate line or overtime.
+    // Paid meal credit (mealCreditByDate) is added straight into the raw
+    // hours here, BEFORE the regular/overtime weekly split — treated exactly
+    // like real worked time. It fills whatever room is left in the week's
+    // regular quota and only spills into overtime once that quota (real
+    // hours + credit, combined) is actually used up — no separate "meal"
+    // bucket; the result is just regular/overtime like everywhere else.
+    const rawHoursFor = (row: AttendanceRow) => row.hoursWorked + (mealCreditByDate.get(row.date) ?? 0);
     const map = (() => {
       if (dutyHours <= 0) {
         const m = new Map<string, { regular: number; overtime: number }>();
         for (const row of attendance) {
           if (isPaidLeave(row)) continue;
-          const hours = row.hoursWorked;
+          const hours = rawHoursFor(row);
           m.set(row.date, { regular: Math.min(hours, REGULAR_HOURS_PER_DAY), overtime: Math.max(0, hours - REGULAR_HOURS_PER_DAY) });
         }
         return m;
       }
-      const days = [...seedAttendance, ...attendance].filter((row) => !isPaidLeave(row)).map((row) => ({ date: row.date, rawHours: row.hoursWorked }));
+      const days = [...seedAttendance, ...attendance].filter((row) => !isPaidLeave(row)).map((row) => ({ date: row.date, rawHours: rawHoursFor(row) }));
       return splitRegularOvertimeWeekly(days, { requiredCheckIn, requiredCheckOut, workingHours, mealMinutes, offDays }, 8, usesFlatWeeklyThreshold ? CSR_WEEKLY_OVERTIME_THRESHOLD : undefined);
     })();
     for (const row of attendance) {
@@ -565,23 +566,7 @@ export function EmployeePayrollDetailModal({
       map.set(row.date, { regular: prev.regular + row.hoursWorked, overtime: prev.overtime });
     }
     return map;
-  }, [attendance, seedAttendance, requiredCheckIn, requiredCheckOut, workingHours, mealMinutes, offDays, rangeStart, rangeEnd, usesFlatWeeklyThreshold]);
-
-  // Folds each day's paid meal credit into its regular/overtime split (see
-  // timecards.ts's foldMealCreditIntoSplit) — the single source every other
-  // figure below (Est. Pay, the Total Hours tile, Weekly Breakdown, and the
-  // day-by-day table's Regular Hour(s)/Meal Time/Overtime/Total Hours
-  // columns) reads from, so they can never disagree with each other. `meal`
-  // is 0 on a day that already produced real overtime (the credit rides
-  // along as overtime pay instead — see the helper's own doc comment).
-  const foldedHoursByDate = useMemo(() => {
-    const m = new Map<string, { regular: number; meal: number; overtime: number }>();
-    for (const row of attendance) {
-      const split = dailyHoursSplitByDate.get(row.date) ?? { regular: 0, overtime: 0 };
-      m.set(row.date, foldMealCreditIntoSplit(split, mealCreditByDate.get(row.date) ?? 0));
-    }
-    return m;
-  }, [attendance, dailyHoursSplitByDate, mealCreditByDate]);
+  }, [attendance, seedAttendance, requiredCheckIn, requiredCheckOut, workingHours, mealMinutes, offDays, rangeStart, rangeEnd, usesFlatWeeklyThreshold, mealCreditByDate]);
 
   // Fixed-salary pay doesn't depend on hours worked at all (see migration
   // 0118) — shows the monthly amount for this calendar-month estimate.
@@ -589,11 +574,10 @@ export function EmployeePayrollDetailModal({
   // that day, so a mid-month raise/promotion is handled automatically
   // instead of needing one flat rate for the whole period. Same per-day
   // figures as the Attendance table's own Payment column below (both read
-  // foldedHoursByDate) — kept in sync so this tile's total always matches
-  // summing that column by hand. Paid meal credit (`meal`) is paid at
-  // straight rate, same as `regular` — never multiplied by
-  // OVERTIME_MULTIPLIER; foldMealCreditIntoSplit already moved it into
-  // `overtime` instead on a day that already had real overtime.
+  // dailyHoursSplitByDate) — kept in sync so this tile's total always matches
+  // summing that column by hand. Paid meal credit is merged into `regular`/
+  // `overtime` before the split runs, so it's already paid at whichever rate
+  // that day's hours land in — no separate meal pay term needed here.
   const computedPay = useMemo(() => {
     if (isCurrentlyFixed && currentEntry?.annualSalary) {
       const fixed = monthlySalary(currentEntry.annualSalary);
@@ -602,43 +586,44 @@ export function EmployeePayrollDetailModal({
     return attendance.reduce(
       (acc, r) => {
         const rate = rateEffectiveOn(history, r.date);
-        const { regular, meal, overtime } = foldedHoursByDate.get(r.date) ?? { regular: 0, meal: 0, overtime: 0 };
-        const regularPay = (regular + meal) * rate;
+        const { regular, overtime } = dailyHoursSplitByDate.get(r.date) ?? { regular: 0, overtime: 0 };
+        const regularPay = regular * rate;
         const overtimePay = overtime * rate * OVERTIME_MULTIPLIER;
         return { regularPay: acc.regularPay + regularPay, overtimePay: acc.overtimePay + overtimePay, total: acc.total + regularPay + overtimePay };
       },
       { regularPay: 0, overtimePay: 0, total: 0 }
     );
-  }, [attendance, history, isCurrentlyFixed, currentEntry, foldedHoursByDate]);
-  // Regular/meal/overtime split of totalHours above — same foldedHoursByDate
-  // computedPay itself sums, so this tile's breakdown line always agrees
-  // with Est. Pay's own split.
+  }, [attendance, history, isCurrentlyFixed, currentEntry, dailyHoursSplitByDate]);
+  // Regular/overtime split of totalHours above — same dailyHoursSplitByDate
+  // computedPay itself sums (already meal-credit-inclusive, via the raw
+  // hours merge above), so this tile's breakdown line always agrees with
+  // Est. Pay's own split.
   const totalHoursSplit = useMemo(
     () =>
       attendance.reduce(
         (acc, r) => {
-          const { regular, meal, overtime } = foldedHoursByDate.get(r.date) ?? { regular: 0, meal: 0, overtime: 0 };
-          return { regular: acc.regular + regular, meal: acc.meal + meal, overtime: acc.overtime + overtime };
+          const { regular, overtime } = dailyHoursSplitByDate.get(r.date) ?? { regular: 0, overtime: 0 };
+          return { regular: acc.regular + regular, overtime: acc.overtime + overtime };
         },
-        { regular: 0, meal: 0, overtime: 0 }
+        { regular: 0, overtime: 0 }
       ),
-    [attendance, foldedHoursByDate]
+    [attendance, dailyHoursSplitByDate]
   );
-  // Regular/meal/overtime hours grouped by calendar week (Sunday–Saturday,
-  // same boundary splitRegularOvertimeWeekly resets the overtime threshold
-  // at) — shown between Salary History and the day-by-day Attendance table
-  // so a reviewer can see at a glance which week(s) in a multi-week range a
+  // Regular/overtime hours grouped by calendar week (Sunday–Saturday, same
+  // boundary splitRegularOvertimeWeekly resets the overtime threshold at) —
+  // shown between Salary History and the day-by-day Attendance table so a
+  // reviewer can see at a glance which week(s) in a multi-week range a
   // technician's hours actually landed in, without adding up the per-day
-  // rows by hand. Sourced from foldedHoursByDate, so it always agrees with
-  // the day rows and the Total Hours/Est. Pay tiles above.
+  // rows by hand. Sourced from dailyHoursSplitByDate, so it always agrees
+  // with the day rows and the Total Hours/Est. Pay tiles above.
   const weeklyBreakdown = useMemo(() => {
-    const byWeek = new Map<string, { regular: number; meal: number; overtime: number }>();
+    const byWeek = new Map<string, { regular: number; overtime: number }>();
     for (const row of attendance) {
-      const { regular, meal, overtime } = foldedHoursByDate.get(row.date) ?? { regular: 0, meal: 0, overtime: 0 };
-      if (!regular && !meal && !overtime) continue;
+      const { regular, overtime } = dailyHoursSplitByDate.get(row.date) ?? { regular: 0, overtime: 0 };
+      if (!regular && !overtime) continue;
       const weekStart = startOfWeekSunday(row.date);
-      const prev = byWeek.get(weekStart) ?? { regular: 0, meal: 0, overtime: 0 };
-      byWeek.set(weekStart, { regular: prev.regular + regular, meal: prev.meal + meal, overtime: prev.overtime + overtime });
+      const prev = byWeek.get(weekStart) ?? { regular: 0, overtime: 0 };
+      byWeek.set(weekStart, { regular: prev.regular + regular, overtime: prev.overtime + overtime });
     }
     return [...byWeek.entries()]
       .sort(([a], [b]) => a.localeCompare(b))
@@ -646,11 +631,10 @@ export function EmployeePayrollDetailModal({
         weekStart,
         weekEnd: addDaysISO(weekStart, 6),
         regular: hrs.regular,
-        meal: hrs.meal,
         overtime: hrs.overtime,
-        total: hrs.regular + hrs.meal + hrs.overtime,
+        total: hrs.regular + hrs.overtime,
       }));
-  }, [attendance, foldedHoursByDate]);
+  }, [attendance, dailyHoursSplitByDate]);
   const rateNow = useMemo(() => currentRate(history), [history]);
 
   const submitRateChange = async () => {
@@ -840,7 +824,7 @@ export function EmployeePayrollDetailModal({
                   only this display rounds to the nearest minute. */}
               <p className="text-xl font-bold text-white mt-1">{fmtClock(totalHours)}</p>
               <p className="text-xs text-slate-400 mt-0.5">
-                {fmtClock(totalHoursSplit.regular)} regular{totalHoursSplit.meal > 0 ? ` + ${fmtClock(totalHoursSplit.meal)} meal` : ""} + {fmtClock(totalHoursSplit.overtime)} overtime
+                {fmtClock(totalHoursSplit.regular)} regular + {fmtClock(totalHoursSplit.overtime)} overtime
               </p>
             </div>
             <div className="bg-slate-800/50 border border-white/10 rounded-lg p-3">
@@ -1008,7 +992,7 @@ export function EmployeePayrollDetailModal({
                       </span>
                       <span className="font-semibold text-white">{fmtClock(w.total)} hours</span>
                       <span className="text-slate-500">
-                        ({fmtClock(w.regular)} Reg{w.meal > 0 ? ` + ${fmtClock(w.meal)} Meal` : ""}{w.overtime > 0 ? ` + ${fmtClock(w.overtime)} OT` : ""})
+                        ({fmtClock(w.regular)} Reg{w.overtime > 0 ? ` + ${fmtClock(w.overtime)} OT` : ""})
                       </span>
                       {change && (
                         <span className={change.direction === "more" ? "text-orange-300" : change.direction === "less" ? "text-emerald-400" : "text-slate-500"}>
@@ -1086,9 +1070,9 @@ export function EmployeePayrollDetailModal({
                       <th className="text-left py-1.5">Meal Out</th>
                       <th className="text-left py-1.5">Check Out</th>
                       <th className="text-right py-1.5">Regular Hour(s)</th>
-                      <th className="text-right py-1.5" title="Flat paid meal credit for meal-always-paid roles (Technician, Branch/Senior Branch Manager, Tech Manager, Technical Director/Assistant Director). Always shown when eligible — but on a day that already had real overtime, this amount is paid at the OT rate and counted in the Overtime column instead of added again here (hover Overtime on those days for a note).">Meal Time</th>
+                      <th className="text-right py-1.5" title="Paid meal credit (30 min) for meal-always-paid roles (Technician, Branch/Senior Branch Manager, Tech Manager, Technical Director/Assistant Director). Added on top of Regular Hour(s) — but only whatever still fits under that week's overtime threshold; once the threshold's used up (in full, or partway through this day), the rest shows in Overtime instead, paid at the OT rate.">Meal Time</th>
                       <th className="text-right py-1.5">Overtime</th>
-                      <th className="text-right py-1.5" title="Regular Hour(s) + Overtime, plus Meal Time only on a day it wasn't already folded into Overtime">Total Hours</th>
+                      <th className="text-right py-1.5" title="Regular Hour(s) + Meal Time + Overtime">Total Hours</th>
                       <th className="text-right py-1.5">Rate</th>
                       <th className="text-right py-1.5">Status</th>
                       <th className="text-right py-1.5">Payment</th>
@@ -1105,23 +1089,37 @@ export function EmployeePayrollDetailModal({
                       const dayIsFixed = entryEffectiveOn(history, row.date)?.compensationType === "fixed";
                       const edit = attendanceEdits[row.date];
                       const isRestDay = row.status === "day-off" || row.status === "holiday";
-                      const { regular: regularHours, meal: mealCreditHours, overtime: overtimeHours } = foldedHoursByDate.get(row.date) ?? { regular: 0, meal: 0, overtime: 0 };
-                      const totalDayHours = regularHours + mealCreditHours + overtimeHours;
+                      // dailyHoursSplitByDate's regular/overtime is correct (meal credit
+                      // merged into the raw hours BEFORE the weekly cap runs, so the cap
+                      // trips on the right day even when credit is what pushes a day over)
+                      // but folds credit invisibly into whichever bucket it landed in. For
+                      // display, decompose that folded split back into three columns that
+                      // reconcile exactly to the folded total:
+                      //   Regular   = min(realHours, folded.regular) — real hours fill the
+                      //               regular bucket first; only less than realHours if
+                      //               real hours alone already used up the day's room.
+                      //   Overtime  = folded.overtime, unclipped — the true overtime,
+                      //               including any credit that spilled past the cap.
+                      //   Meal Time = folded.regular - Regular — whatever regular-bucket
+                      //               room the credit still fits into. On a day well under
+                      //               the cap this is the full flat credit; on the exact
+                      //               day the cap is crossed it's only the leftover room
+                      //               (e.g. 14 of 30 min, with the other 16 showing in
+                      //               Overtime instead); once the cap's fully used up by an
+                      //               earlier day, it's 0 (credit is entirely inside OT).
+                      // Regular + Meal Time + Overtime === folded.regular + folded.overtime
+                      // always, since adding hours to a day never changes its total, only
+                      // where the split boundary falls. Payment keeps using the folded
+                      // split directly, so credit that spills past the threshold is still
+                      // paid at the OT rate.
+                      const folded = dailyHoursSplitByDate.get(row.date) ?? { regular: 0, overtime: 0 };
+                      const realHours = row.hoursWorked;
+                      const regularHours = Math.min(realHours, folded.regular);
+                      const overtimeHours = folded.overtime;
+                      const mealCreditForDisplay = folded.regular - regularHours;
+                      const totalDayHours = folded.regular + folded.overtime;
                       const dayRate = rateEffectiveOn(history, row.date);
-                      const dayPayment = (regularHours + mealCreditHours) * dayRate + overtimeHours * dayRate * OVERTIME_MULTIPLIER;
-                      // The Meal Time CELL always shows the raw credit (mealCreditByDate)
-                      // so it's never invisible — even on a day where the day already had
-                      // real overtime and foldMealCreditIntoSplit folded the credit INTO
-                      // overtimeHours instead (mealCreditHours reads 0 that day, by design,
-                      // so Total Hours/Payment above don't double-count it). This is purely
-                      // a display value; the math keeps using the folded mealCreditHours.
-                      const mealCreditForDisplay = mealCreditByDate.get(row.date) ?? 0;
-                      const mealFoldedIntoOvertime = mealCreditForDisplay > 0 && mealCreditHours === 0;
-                      // Real (pre-meal) overtime for that breakdown — dailyHoursSplitByDate
-                      // is the split BEFORE foldMealCreditIntoSplit folds the credit in, so
-                      // on a mealFoldedIntoOvertime day this is the "base" figure the credit
-                      // got added on top of.
-                      const baseOvertimeHours = dailyHoursSplitByDate.get(row.date)?.overtime ?? 0;
+                      const dayPayment = folded.regular * dayRate + folded.overtime * dayRate * OVERTIME_MULTIPLIER;
                       const ticketStats = ticketStatsByDate.get(row.date);
                       const dayTicketRows = ticketRowsByDate.get(row.date) || [];
                       // The day's own drive-home leg (mileage.ts migration 0237) — set on
@@ -1202,21 +1200,11 @@ export function EmployeePayrollDetailModal({
                           </>
                         )}
                         <td className="py-1.5 text-right text-slate-200">{row.hoursWorked ? fmtClock(regularHours) : "—"}</td>
-                        <td className="py-1.5 text-right text-sky-300" title={mealFoldedIntoOvertime ? "Already included in Overtime — this day already had real overtime, so the paid meal credit is paid at the OT rate instead of its own straight-rate line." : undefined}>
+                        <td className="py-1.5 text-right text-sky-300" title="Paid on top of Regular Hour(s)/Overtime — see Total Hours for the sum.">
                           {mealCreditForDisplay > 0 ? fmtClock(mealCreditForDisplay) : "—"}
                         </td>
                         <td className={`py-1.5 text-right ${overtimeHours > 0 ? "text-orange-300 font-semibold" : "text-slate-500"}`}>
-                          {overtimeHours > 0 ? (
-                            mealFoldedIntoOvertime ? (
-                              <span title={`${fmtClock(baseOvertimeHours)} real overtime + ${fmtClock(mealCreditForDisplay)} paid meal credit, paid at the OT rate`}>
-                                {fmtClock(baseOvertimeHours)} <span className="font-normal text-slate-400">+ {fmtClock(mealCreditForDisplay)}</span>
-                              </span>
-                            ) : (
-                              fmtClock(overtimeHours)
-                            )
-                          ) : (
-                            "—"
-                          )}
+                          {overtimeHours > 0 ? fmtClock(overtimeHours) : "—"}
                         </td>
                         <td className="py-1.5 text-right text-slate-200">{row.hoursWorked ? fmtClock(totalDayHours) : "—"}</td>
                         <td className="py-1.5 text-right" onClick={(e) => e.stopPropagation()}>

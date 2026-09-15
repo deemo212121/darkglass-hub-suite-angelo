@@ -44,7 +44,7 @@ import { EmployeePayrollDetailModal } from "@/components/EmployeePayrollDetailMo
 import { getRepairStatuses, type RepairStatus } from "@/lib/supabase/repairStatuses";
 import { TicketColumnFilter } from "@/components/TicketColumnFilter";
 import { getRoleDepartmentBreakdown, normalizeRole, ROLE_LABELS, TECHNICIAN_PAY_ROLES, isMealAlwaysPaidRole, usesFlatWeeklyOvertimeThreshold } from "@/lib/roleLabels";
-import { calcWorkedHours, getMyProfileSchedule, resolveScheduledNetHours, resolveScheduledShiftHours, computeMealTimeCredit, foldMealCreditIntoSplit, computeScheduledDutyHours, getAttendanceForRange, startOfWeekSunday, splitRegularOvertimeWeekly, addDaysISO, CSR_WEEKLY_OVERTIME_THRESHOLD } from "@/lib/supabase/timecards";
+import { calcWorkedHours, getMyProfileSchedule, resolveScheduledNetHours, resolveScheduledShiftHours, computeMealTimeCredit, computeScheduledDutyHours, getAttendanceForRange, startOfWeekSunday, splitRegularOvertimeWeekly, addDaysISO, CSR_WEEKLY_OVERTIME_THRESHOLD } from "@/lib/supabase/timecards";
 import { payGraceMinutesFor } from "@/lib/attendanceGrace";
 import { updatePayrollLineItemExtra, updatePayrollLineItemPaid } from "@/lib/supabase/payslips";
 import { getEmployeeInfoByProfileIds, getCompanyUsers, getTechnicianContactInfoByIds, type EmployeeInfo } from "@/lib/supabase/users";
@@ -389,16 +389,6 @@ function computeHoursMap(
   // just silently drop all their overtime.
   const rawByEmployeeDate = new Map<string, Map<string, number>>();
   const legacyDailyCapByEmployee = new Map<string, { regular: number; overtime: number }>();
-  // Technicians/Branch-Managers/Tech Managers/Technical Directors aren't
-  // required to punch Meal In/Out, but their meal break is still paid — see
-  // timecards.ts's computeMealTimeCredit/foldMealCreditIntoSplit. Tracked
-  // separately from rawByEmployeeDate (the regular/overtime split's raw
-  // input) so it can never silently inflate `regular` just because a day
-  // had spare room under the cap — it's folded in AFTER the split below
-  // instead, so it only ever becomes its own straight-rate credit, or rides
-  // along as overtime on a day that already used up its regular quota from
-  // real worked hours alone.
-  const mealCreditByEmployeeDate = new Map<string, Map<string, number>>();
   for (const tc of [...seedEntries, ...entries]) {
     const key = tc.profile_id || tc.employee_id;
     if (!key || !tc.check_in || !tc.check_out) continue;
@@ -421,34 +411,28 @@ function computeHoursMap(
       mealEnd: tc.meal_end || "",
       notes: "",
     });
-    const byDate = rawByEmployeeDate.get(key) ?? new Map<string, number>();
-    byDate.set(tc.work_date, (byDate.get(tc.work_date) ?? 0) + hours);
-    rawByEmployeeDate.set(key, byDate);
+    // Technicians/Branch-Managers/Tech Managers/Technical Directors aren't
+    // required to punch Meal In/Out, but their meal break is still paid —
+    // see timecards.ts's computeMealTimeCredit. Merged directly into the raw
+    // hours BEFORE the weekly split runs below, so it naturally lands as
+    // Regular or Overtime with no separate "meal" bucket in the totals.
     let mealCredit = 0;
     if (emp) {
       const mealAlwaysPaid = isMealAlwaysPaidRole(emp.role, emp.extraRoles);
       const mealEligible = resolveScheduledShiftHours(emp.requiredCheckIn || "", emp.requiredCheckOut || "", emp.workingHours, emp.mealMinutes) > 6;
       mealCredit = computeMealTimeCredit({ mealStart: tc.meal_start || "", mealEnd: tc.meal_end || "" }, mealEligible, mealAlwaysPaid);
-      if (mealCredit > 0) {
-        const creditByDate = mealCreditByEmployeeDate.get(key) ?? new Map<string, number>();
-        creditByDate.set(tc.work_date, (creditByDate.get(tc.work_date) ?? 0) + mealCredit);
-        mealCreditByEmployeeDate.set(key, creditByDate);
-      }
     }
+    const rawHoursForDay = hours + mealCredit;
+    const byDate = rawByEmployeeDate.get(key) ?? new Map<string, number>();
+    byDate.set(tc.work_date, (byDate.get(tc.work_date) ?? 0) + rawHoursForDay);
+    rawByEmployeeDate.set(key, byDate);
     if (!isSeedRow) {
       // No configured duty-hours schedule for this employee — falls back to
-      // a flat per-row 8-hour cap (see the `duty <= 0` branch below). Folded
-      // the same way as the real weekly split: the meal credit only
-      // inflates `regular` when this row's own hours didn't already exceed
-      // the flat cap on their own.
-      const folded = foldMealCreditIntoSplit(
-        { regular: Math.min(hours, REGULAR_HOURS_PER_DAY), overtime: Math.max(0, hours - REGULAR_HOURS_PER_DAY) },
-        mealCredit
-      );
+      // a flat per-row 8-hour cap (see the `duty <= 0` branch below).
       const prevLegacy = legacyDailyCapByEmployee.get(key) ?? { regular: 0, overtime: 0 };
       legacyDailyCapByEmployee.set(key, {
-        regular: prevLegacy.regular + folded.regular + folded.meal,
-        overtime: prevLegacy.overtime + folded.overtime,
+        regular: prevLegacy.regular + Math.min(rawHoursForDay, REGULAR_HOURS_PER_DAY),
+        overtime: prevLegacy.overtime + Math.max(0, rawHoursForDay - REGULAR_HOURS_PER_DAY),
       });
     }
   }
@@ -495,12 +479,10 @@ function computeHoursMap(
     );
     let regular = 0;
     let overtime = 0;
-    const mealCreditByDate = mealCreditByEmployeeDate.get(key);
     for (const [date, hrs] of split) {
       if (date < periodStart || date > periodEnd) continue;
-      const folded = foldMealCreditIntoSplit(hrs, mealCreditByDate?.get(date) ?? 0);
-      regular += folded.regular + folded.meal;
-      overtime += folded.overtime;
+      regular += hrs.regular;
+      overtime += hrs.overtime;
     }
     hoursMap.set(key, { regular, overtime });
   }
@@ -2656,8 +2638,17 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       // CSR and Technician-tier roles use a flat 40-hr/week threshold instead
       // of the schedule-derived duty cap — see usesFlatWeeklyOvertimeThreshold.
       const flatThreshold = usesFlatWeeklyOvertimeThreshold(emp.role, emp.extraRoles);
+      // Technicians/Branch-Managers/Tech Managers/Technical Directors aren't
+      // required to punch Meal In/Out, but their meal break is still paid —
+      // merged directly into each day's raw hours BEFORE the weekly split
+      // runs, same as computeHoursMap/EmployeePayrollDetailModal.
+      const mealAlwaysPaid = isMealAlwaysPaidRole(emp.role, emp.extraRoles);
+      const mealEligible = resolveScheduledShiftHours(emp.requiredCheckIn || "", emp.requiredCheckOut || "", emp.workingHours, emp.mealMinutes) > 6;
       const split = splitRegularOvertimeWeekly(
-        [...seedRows, ...attendanceRows].map((r) => ({ date: r.date, rawHours: r.hoursWorked })),
+        [...seedRows, ...attendanceRows].map((r) => ({
+          date: r.date,
+          rawHours: r.hoursWorked + computeMealTimeCredit({ mealStart: r.mealStart, mealEnd: r.mealEnd }, mealEligible, mealAlwaysPaid),
+        })),
         { requiredCheckIn: emp.requiredCheckIn, requiredCheckOut: emp.requiredCheckOut, workingHours: emp.workingHours, mealMinutes: emp.mealMinutes, offDays: emp.offDays },
         8,
         flatThreshold ? CSR_WEEKLY_OVERTIME_THRESHOLD : undefined
