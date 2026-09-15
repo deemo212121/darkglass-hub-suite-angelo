@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect, useRef, Fragment } from "react";
 import { createPortal } from "react-dom";
 import { Link, useSearch, useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
-import { ChevronLeft, ChevronDown, ChevronUp, ChevronRight, Plus, Trash2, AlertTriangle, CheckCircle, XCircle, Paperclip, Users, Clock, UserCheck, UserX, UserMinus, Search, Bell, Download, Forward, History, FileText, ClipboardList, Landmark, GripVertical, FileCheck, Link2, Copy, Calendar, Check, Pencil, Filter, Columns3, Mail, PenLine, X, ExternalLink, Loader2, Send } from "lucide-react";
+import { ChevronLeft, ChevronDown, ChevronUp, ChevronRight, Plus, Trash2, AlertTriangle, CheckCircle, XCircle, Paperclip, Users, Clock, UserCheck, UserX, UserMinus, Search, Bell, Download, Forward, History, FileText, ClipboardList, Landmark, GripVertical, FileCheck, Link2, Copy, Calendar, Check, Pencil, Filter, Columns3, Mail, PenLine, X, ExternalLink, Loader2, Send, GraduationCap, LogOut } from "lucide-react";
 import { useSignaturePad } from "@/hooks/useSignaturePad";
 import { SignaturePadControls } from "@/components/SignaturePad";
 import { StickyHorizontalScrollbar } from "@/components/StickyHorizontalScrollbar";
@@ -2580,11 +2580,18 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     employeeEmailSet,
   ]);
 
+  // Mirrors candidateStatusOptions exactly — every status a candidate can
+  // actually be set to going forward gets a tile; "rejected" doesn't (see
+  // candidateStatusOptions's own comment: no longer offered as a choice),
+  // so it's deliberately not counted here anymore.
   const kpi = useMemo(() => ({
     candidates: visibleCandidates.length,
+    applied: visibleCandidates.filter((c) => c.status === "applied").length,
     scheduled: visibleCandidates.filter((c) => c.status === "interviewing").length,
-    rejected: visibleCandidates.filter((c) => c.status === "rejected").length,
+    training: visibleCandidates.filter((c) => c.status === "training").length,
     hired: visibleCandidates.filter((c) => c.status === "hired").length,
+    withdrawn: visibleCandidates.filter((c) => c.status === "withdrawn").length,
+    cancelled: visibleCandidates.filter((c) => c.status === "cancelled").length,
     terminated: employees.filter((e) => e.status === "terminated").length,
     resigned: employees.filter((e) => e.status === "resigned").length,
   }), [visibleCandidates, employees]);
@@ -14674,13 +14681,37 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         </div>
       )}
 
-      {/* ── KPI overview — every tile is clickable, same as Attendance: it jumps straight to the tab/filter that explains the number instead of just displaying it. ── */}
+      {/* ── KPI overview — every tile is clickable, same as Attendance: it jumps straight to the tab/filter that explains the number instead of just displaying it.
+          Split into two groups matching where each number actually comes from — candidateStatusOptions's real, currently-selectable candidate statuses
+          (Candidates is the pipeline total, not a status itself) vs. the employed workforce (Master List's employment status + today's attendance).
+          "Rejected" used to sit in the first group, but it's no longer a status a candidate can be set to (see candidateStatusOptions's own comment) — dropped rather than left counting a bucket nobody can add to anymore. ── */}
+      <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-1.5">Candidate Pipeline</p>
       <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2 mb-4">
         {[
           { label: "Candidates", value: kpi.candidates, color: "text-blue-300", icon: <Users className="h-4 w-4" />, onClick: () => { setActiveTab("hiring"); setHiringStatusFilter(new Set()); } },
+          { label: "Applied", value: kpi.applied, color: "text-blue-300", icon: <FileText className="h-4 w-4" />, onClick: () => { setActiveTab("hiring"); setHiringStatusFilter(new Set([CANDIDATE_STATUS_LABEL.applied])); } },
           { label: "Scheduled for Interview", value: kpi.scheduled, color: "text-yellow-300", icon: <Clock className="h-4 w-4" />, onClick: () => { setActiveTab("hiring"); setHiringStatusFilter(new Set([CANDIDATE_STATUS_LABEL.interviewing])); } },
-          { label: "Rejected", value: kpi.rejected, color: "text-red-300", icon: <XCircle className="h-4 w-4" />, onClick: () => { setActiveTab("hiring"); setHiringStatusFilter(new Set([CANDIDATE_STATUS_LABEL.rejected])); } },
+          { label: "Training", value: kpi.training, color: "text-cyan-300", icon: <GraduationCap className="h-4 w-4" />, onClick: () => { setActiveTab("hiring"); setHiringStatusFilter(new Set([CANDIDATE_STATUS_LABEL.training])); } },
           { label: "Hired", value: kpi.hired, color: "text-green-300", icon: <UserCheck className="h-4 w-4" />, onClick: () => { setActiveTab("hiring"); setHiringStatusFilter(new Set([CANDIDATE_STATUS_LABEL.hired])); } },
+          { label: "Withdrawn", value: kpi.withdrawn, color: "text-orange-300", icon: <LogOut className="h-4 w-4" />, onClick: () => { setActiveTab("hiring"); setHiringStatusFilter(new Set([CANDIDATE_STATUS_LABEL.withdrawn])); } },
+          { label: "Cancelled", value: kpi.cancelled, color: "text-red-300", icon: <XCircle className="h-4 w-4" />, onClick: () => { setActiveTab("hiring"); setHiringStatusFilter(new Set([CANDIDATE_STATUS_LABEL.cancelled])); } },
+        ].map((k) => (
+          <button
+            key={k.label}
+            type="button"
+            onClick={k.onClick}
+            className="panel p-3 text-center hover:bg-white/5 transition-colors cursor-pointer"
+          >
+            <div className="flex justify-center mb-1 text-muted-foreground">{k.icon}</div>
+            <p className={`text-xl font-bold ${k.color}`}>{k.value}</p>
+            <p className="text-[10px] text-muted-foreground uppercase tracking-wide mt-0.5">{k.label}</p>
+          </button>
+        ))}
+      </div>
+
+      <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-1.5">Workforce</p>
+      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2 mb-4">
+        {[
           { label: "Terminated", value: kpi.terminated, color: "text-red-400", icon: <UserX className="h-4 w-4" />, onClick: () => setActiveTab("masterList") },
           { label: "Resigned", value: kpi.resigned, color: "text-slate-300", icon: <UserMinus className="h-4 w-4" />, onClick: () => setActiveTab("masterList") },
         ].map((k) => (
