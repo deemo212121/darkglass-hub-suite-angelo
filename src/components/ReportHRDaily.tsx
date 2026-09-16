@@ -1811,7 +1811,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // documentVerified's own manual check/X toggle in the table body.
   const [hiringDocumentVerifiedFilter, setHiringDocumentVerifiedFilter] = useState<HiringTriState>("all");
   const [hiringScreeningDateFilter, setHiringScreeningDateFilter] = useState<Set<string>>(new Set());
-  const [hiringInterviewDateFilter, setHiringInterviewDateFilter] = useState<HiringTriState>("all");
+  const [hiringInterviewDateFilter, setHiringInterviewDateFilter] = useState<Set<string>>(new Set());
   // Screening Date column sort — null (default) leaves candidates in their
   // natural load order; clicking the header cycles null -> desc (soonest/
   // most-recent screening date first) -> asc -> null again. Undated
@@ -1821,6 +1821,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [hiringScreeningDateSortDir, setHiringScreeningDateSortDir] = useState<"asc" | "desc" | null>(null);
   const cycleHiringScreeningDateSort = () => {
     setHiringScreeningDateSortDir((cur) => (cur === null ? "desc" : cur === "desc" ? "asc" : null));
+  };
+  // Same sort behavior as Screening Date above, independent toggle.
+  const [hiringInterviewDateSortDir, setHiringInterviewDateSortDir] = useState<"asc" | "desc" | null>(null);
+  const cycleHiringInterviewDateSort = () => {
+    setHiringInterviewDateSortDir((cur) => (cur === null ? "desc" : cur === "desc" ? "asc" : null));
   };
 
   // Column visibility (persisted) — Candidate/Actions always show; the rest
@@ -2624,6 +2629,14 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     const labels = isoDates.map((iso) => new Date(iso + "T00:00:00").toLocaleDateString());
     return visibleCandidates.some((c) => !c.screeningDate) ? [...labels, "No date"] : labels;
   }, [visibleCandidates]);
+  // Same checklist-of-actual-dates convention as Screening Date above.
+  const hiringInterviewDateLabel = (c: Candidate): string =>
+    c.interviewDate ? new Date(c.interviewDate + "T00:00:00").toLocaleDateString() : "No date";
+  const hiringInterviewDateOptions = useMemo(() => {
+    const isoDates = Array.from(new Set(visibleCandidates.filter((c) => c.interviewDate).map((c) => c.interviewDate as string))).sort();
+    const labels = isoDates.map((iso) => new Date(iso + "T00:00:00").toLocaleDateString());
+    return visibleCandidates.some((c) => !c.interviewDate) ? [...labels, "No date"] : labels;
+  }, [visibleCandidates]);
 
   // Search/Status filters narrow what the table shows — KPI tiles and the
   // tab badge count stay based on visibleCandidates (unfiltered) above.
@@ -2678,8 +2691,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     if (hiringScreeningDateFilter.size > 0) {
       result = result.filter((c) => hiringScreeningDateFilter.has(hiringScreeningDateLabel(c)));
     }
-    if (hiringInterviewDateFilter !== "all") {
-      result = result.filter((c) => (hiringInterviewDateFilter === "has" ? !!c.interviewDate : !c.interviewDate));
+    if (hiringInterviewDateFilter.size > 0) {
+      result = result.filter((c) => hiringInterviewDateFilter.has(hiringInterviewDateLabel(c)));
     }
     if (hiringScreeningDateSortDir) {
       const dir = hiringScreeningDateSortDir === "asc" ? 1 : -1;
@@ -2688,6 +2701,15 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         if (!a.screeningDate) return 1; // undated always last, either direction
         if (!b.screeningDate) return -1;
         return dir * a.screeningDate.localeCompare(b.screeningDate);
+      });
+    }
+    if (hiringInterviewDateSortDir) {
+      const dir = hiringInterviewDateSortDir === "asc" ? 1 : -1;
+      result = [...result].sort((a, b) => {
+        if (!a.interviewDate && !b.interviewDate) return 0;
+        if (!a.interviewDate) return 1; // undated always last, either direction
+        if (!b.interviewDate) return -1;
+        return dir * a.interviewDate.localeCompare(b.interviewDate);
       });
     }
     return result;
@@ -2708,6 +2730,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     hiringScreeningDateFilter,
     hiringInterviewDateFilter,
     hiringScreeningDateSortDir,
+    hiringInterviewDateSortDir,
     employeeEmailSet,
   ]);
 
@@ -15151,7 +15174,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                 <input value={hiringSearch} onChange={(e) => setHiringSearch(e.target.value)} placeholder="Name, position, or branch…" className="glass-input text-sm py-1.5 pl-8 pr-3 rounded-md w-56" />
               </div>
             </div>
-            {(hiringSearch || hiringStatusFilter.size > 0 || hiringPositionFilter.size > 0 || hiringBranchFilter.size > 0 || hiringBranchManagerFilter.size > 0 || hiringAssignedInterviewerFilter.size > 0 || hiringOutreachFilter.size > 0 || hiringCvFilter !== "all" || hiringAccountStatusFilter !== "all" || hiringNoteFilter !== "all" || hiringContactFilter !== "all" || hiringDocumentVerifiedFilter !== "all" || hiringScreeningDateFilter.size > 0 || hiringInterviewDateFilter !== "all") && (
+            {(hiringSearch || hiringStatusFilter.size > 0 || hiringPositionFilter.size > 0 || hiringBranchFilter.size > 0 || hiringBranchManagerFilter.size > 0 || hiringAssignedInterviewerFilter.size > 0 || hiringOutreachFilter.size > 0 || hiringCvFilter !== "all" || hiringAccountStatusFilter !== "all" || hiringNoteFilter !== "all" || hiringContactFilter !== "all" || hiringDocumentVerifiedFilter !== "all" || hiringScreeningDateFilter.size > 0 || hiringInterviewDateFilter.size > 0) && (
               <button
                 onClick={() => {
                   setHiringSearch("");
@@ -15167,7 +15190,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                   setHiringContactFilter("all");
                   setHiringDocumentVerifiedFilter("all");
                   setHiringScreeningDateFilter(new Set());
-                  setHiringInterviewDateFilter("all");
+                  setHiringInterviewDateFilter(new Set());
                 }}
                 className="btn text-sm px-3 mb-0.5"
               >
@@ -15459,7 +15482,25 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                 )}
                 {isHiringColVisible("interviewDate") && (
                   <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase relative whitespace-nowrap">
-                    {renderHiringTriStateHeader("interviewDate", "Interview Date", hiringInterviewDateFilter, setHiringInterviewDateFilter, "Has date", "No date")}
+                    {renderHiringMultiSelectHeader("interviewDate", "Interview Date", hiringInterviewDateOptions, hiringInterviewDateFilter, setHiringInterviewDateFilter)}
+                    <button
+                      type="button"
+                      onClick={cycleHiringInterviewDateSort}
+                      title={
+                        hiringInterviewDateSortDir === "desc"
+                          ? "Sorted newest first — click for oldest first"
+                          : hiringInterviewDateSortDir === "asc"
+                          ? "Sorted oldest first — click to clear sort"
+                          : "Sort by Interview Date"
+                      }
+                      className={`ml-1 inline-flex align-middle ${hiringInterviewDateSortDir ? "text-blue-400" : "text-muted-foreground hover:text-slate-300"}`}
+                    >
+                      {hiringInterviewDateSortDir === "asc" ? (
+                        <ChevronUp className="h-3 w-3" />
+                      ) : (
+                        <ChevronDown className="h-3 w-3" />
+                      )}
+                    </button>
                   </th>
                 )}
                 {isHiringColVisible("accountStatus") && (
