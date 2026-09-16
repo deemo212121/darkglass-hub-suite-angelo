@@ -246,7 +246,20 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
     setSavingCellKey(key);
     try {
       await updateFlashTechTripTrackerFields(tripId, patch);
-      setTrips((prev) => prev.map((t) => (t.id === tripId ? { ...t, ...patch } as FlashTechTrip : t)));
+      setTrips((prev) =>
+        prev.map((t) => {
+          if (t.id !== tripId) return t;
+          const merged = { ...t, ...patch } as FlashTechTrip;
+          // `status` (what the Tracker's dropdown actually displays) isn't
+          // itself one of updateFlashTechTripTrackerFields' patchable
+          // fields — only statusOverride is. Without recomputing it here,
+          // picking "Cancelled" would save fine but the dropdown would
+          // keep showing the old auto-computed value until the next full
+          // reload — same precedence mapTripRow uses server-side.
+          merged.status = merged.statusOverride || computeFlashTechTripStatus(merged.startDate, merged.endDate);
+          return merged;
+        })
+      );
     } catch (err) {
       alert(`Failed to save: ${err instanceof Error ? err.message : "Unknown error"}`);
     } finally {
