@@ -190,6 +190,14 @@ export function TechnicianFormChecklistPage() {
   const [hideComplete, setHideComplete] = useState(false);
   const [branchFilter, setBranchFilter] = useState("");
   const [search, setSearch] = useState("");
+  // A "View in Staff Checklist" link from a chat message (see MessageBody.tsx)
+  // arrives as #name=<employee> — same URL-hash deep-link convention
+  // TeamMessenger.tsx already uses for #channel=/#dm=. Read once on mount so
+  // landing here jumps straight to that person instead of the full list.
+  useEffect(() => {
+    const hash = typeof window !== "undefined" ? window.location.hash : "";
+    if (hash.startsWith("#name=")) setSearch(decodeURIComponent(hash.slice("#name=".length)));
+  }, []);
   const [sortMode, setSortMode] = useState<SortMode>("missing-desc");
   // Form + Status filters, e.g. "who still hasn't signed the I-9" or "who's
   // waiting on HR to countersign the W-4" — form defaults to "every form",

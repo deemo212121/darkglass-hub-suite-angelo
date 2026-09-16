@@ -311,15 +311,17 @@ function sleep(ms: number) {
 async function fetchTicketPage(
   i: number,
   withCount: boolean,
+  sinceDate?: string,
 ): Promise<{ data: any[] | null; error: { message: string } | null; count?: number | null }> {
   let lastError: { message: string } | null = null;
   for (let attempt = 0; attempt <= PAGE_FETCH_RETRIES; attempt++) {
-    const query = supabase
+    let query = supabase
       .from("tickets")
       .select(SELECT, withCount ? { count: "exact" } : undefined)
       .order("created_at", { ascending: false })
-      .order("id", { ascending: false })
-      .range(i * PAGE_SIZE, i * PAGE_SIZE + PAGE_SIZE - 1);
+      .order("id", { ascending: false });
+    if (sinceDate) query = query.gte("created_at", sinceDate);
+    query = query.range(i * PAGE_SIZE, i * PAGE_SIZE + PAGE_SIZE - 1);
     const { data, error, count } = await query;
     if (!error) return { data, error: null, count };
     lastError = error;
@@ -329,16 +331,25 @@ async function fetchTicketPage(
   return { data: null, error: lastError };
 }
 
-export async function getCompanyTickets(): Promise<Ticket[]> {
+/**
+ * `sinceDate` (YYYY-MM-DD, optional) restricts to tickets created on/after
+ * that date. Every existing caller (dashboards, daily reports, KPI/Analytics
+ * pages) omits it and keeps getting the exact same full, unbounded history
+ * they always have — this is opt-in scoping for the couple of callers (the
+ * Ticket List page) that want a lighter default load, not a change to what
+ * this function returns by default.
+ */
+export async function getCompanyTickets(options?: { sinceDate?: string }): Promise<Ticket[]> {
   // created_at is NOT unique — a bulk import can give thousands of rows the
   // same timestamp, and range()-based paging over a non-unique sort key
   // silently drops/duplicates rows across page boundaries. id is the stable
   // tiebreaker (and matches idx_tickets_company_created).
+  const sinceDate = options?.sinceDate;
 
   // First page carries an exact count so we know how many more to fetch.
   // Small tenants (<= PAGE_SIZE) are done in this one request; larger ones
   // get the remaining pages concurrently instead of one-after-another.
-  const first = await fetchTicketPage(0, true);
+  const first = await fetchTicketPage(0, true, sinceDate);
   if (first.error) {
     console.error("getCompanyTickets error:", first.error.message);
     throw new Error(first.error.message);
@@ -349,7 +360,7 @@ export async function getCompanyTickets(): Promise<Ticket[]> {
   if (total <= PAGE_SIZE) return all;
 
   const rest = await Promise.all(
-    Array.from({ length: Math.ceil(total / PAGE_SIZE) - 1 }, (_, k) => fetchTicketPage(k + 1, false)),
+    Array.from({ length: Math.ceil(total / PAGE_SIZE) - 1 }, (_, k) => fetchTicketPage(k + 1, false, sinceDate)),
   );
   for (const { data, error } of rest) {
     if (error) {

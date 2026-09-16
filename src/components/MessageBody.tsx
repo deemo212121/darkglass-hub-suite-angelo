@@ -132,6 +132,19 @@ function escapeRegExp(value: string): string {
 }
 
 /**
+ * Every Fill*Page.tsx signed-document notification builds its filename
+ * label as "{Document Title} - {Employee Name}.pdf" — pulled back out here
+ * (last " - " to the .pdf) so the Staff Checklist link can jump straight to
+ * that person instead of landing on the unfiltered list. Heuristic, not a
+ * structured field, so it fails safe: returns null (link falls back to
+ * unfiltered) rather than guessing wrong on a label that doesn't match.
+ */
+function extractEmployeeNameFromLabel(label: string): string | null {
+  const m = label.match(/ - ([^-]+)\.pdf$/i);
+  return m ? m[1].trim() || null : null;
+}
+
+/**
  * Builds a regex matching `@FullName` for any of the given names — sorted
  * longest-first so "@John Smith" matches whole rather than stopping at
  * "@John" when both a "John" and a "John Smith" are members of the same
@@ -218,16 +231,32 @@ export function MessageBody({ text, className, mentionNames }: Props) {
       {parts.map((p, i) => {
         if (typeof p === "string") return <Fragment key={i}>{p}</Fragment>;
         if (p.kind === "namedLink") {
+          // Every Fill*Page.tsx "document signed" notification uses this
+          // exact [label](url) syntax to attach the signed PDF — rather
+          // than touching each of those 20+ send-sites individually to add
+          // a second link, this one shared render path covers all of them
+          // at once with a companion jump to the Staff Form Checklist,
+          // where the full signed/pending picture for that person lives.
+          const employeeName = extractEmployeeNameFromLabel(p.label);
           return (
-            <a
-              key={i}
-              href={p.url}
-              target="_blank"
-              rel="noreferrer noopener"
-              className="inline-flex items-center gap-1 text-blue-300 underline decoration-blue-300/40 hover:text-blue-200"
-            >
-              📎 {p.label}
-            </a>
+            <span key={i} className="inline-flex flex-wrap items-center gap-x-2 gap-y-0.5">
+              <a
+                href={p.url}
+                target="_blank"
+                rel="noreferrer noopener"
+                className="inline-flex items-center gap-1 text-blue-300 underline decoration-blue-300/40 hover:text-blue-200"
+              >
+                📎 {p.label}
+              </a>
+              <Link
+                to="/m/$module/$submodule"
+                params={{ module: "hr", submodule: "technician-form-checklist" }}
+                hash={employeeName ? `name=${encodeURIComponent(employeeName)}` : undefined}
+                className="text-[11px] text-blue-300/70 underline decoration-blue-300/30 hover:text-blue-200"
+              >
+                View in Staff Checklist
+              </Link>
+            </span>
           );
         }
         if (p.kind === "mention") {
