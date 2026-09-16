@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { ChevronLeft, ChevronRight, RefreshCw, Plus, X, Trash2, CalendarDays, Table2, Paperclip, Loader2, Car, Users, Check, Minus, Building2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, RefreshCw, Plus, X, Trash2, CalendarDays, Table2, Paperclip, Loader2, Car, Users, Check, Minus, Building2, Search, Filter } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { useSmartBack } from "@/hooks/useSmartBack";
@@ -1361,6 +1361,83 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
 
 type TrackerPatch = Parameters<typeof updateFlashTechTripTrackerFields>[1];
 
+/** Tracker header cell with a funnel icon that opens an Excel-style
+ *  checklist of that column's real values — same pattern as ReportHRDaily's
+ *  FilterableTh (Sent History tables), reimplemented locally here since
+ *  that one isn't exported and is tied to a different table's column type. */
+function FlashTechFilterableTh({
+  header,
+  options,
+  optionLabel,
+  selected,
+  onToggleValue,
+  onClear,
+  className,
+  extra,
+}: {
+  header: string;
+  options: string[];
+  optionLabel: (opt: string) => string;
+  selected: string[];
+  onToggleValue: (value: string) => void;
+  onClear: () => void;
+  className?: string;
+  /** Extra trailing control in the header cell (e.g. the Alt Hotel group's own collapse chevron). */
+  extra?: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLTableCellElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onClickOutside = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onClickOutside);
+    return () => document.removeEventListener("mousedown", onClickOutside);
+  }, [open]);
+  const isFiltered = selected.length > 0;
+
+  return (
+    <th
+      ref={ref}
+      className={`px-2 py-2 text-left font-semibold whitespace-nowrap border-r border-white/10 relative ${className ?? ""}`}
+    >
+      <span className="inline-flex items-center gap-1.5">
+        {header}
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          title={`Filter by ${header}`}
+          className={`p-0.5 rounded hover:bg-white/10 ${isFiltered ? "text-blue-400" : "text-slate-400/70"}`}
+        >
+          <Filter className="h-3 w-3" />
+        </button>
+        {extra}
+      </span>
+      {open && (
+        <div className="absolute z-20 mt-1.5 left-0 bg-slate-800 border border-white/10 rounded-md shadow-xl p-2 w-52 max-h-72 overflow-y-auto normal-case font-normal text-slate-200">
+          <div className="flex items-center justify-between mb-1.5 pb-1.5 border-b border-white/10">
+            <span className="text-[10px] text-slate-500">{options.length} value{options.length === 1 ? "" : "s"}</span>
+            {isFiltered && (
+              <button type="button" onClick={onClear} className="text-[10px] text-blue-300 hover:text-blue-200">Clear</button>
+            )}
+          </div>
+          {options.length === 0 ? (
+            <p className="px-1 py-1 text-[11px] text-slate-500">No values yet.</p>
+          ) : (
+            options.map((opt) => (
+              <label key={opt} className="flex items-center gap-2 py-1 px-1 text-xs cursor-pointer hover:bg-white/5 rounded">
+                <input type="checkbox" checked={selected.includes(opt)} onChange={() => onToggleValue(opt)} />
+                <span className="truncate">{optionLabel(opt)}</span>
+              </label>
+            ))
+          )}
+        </div>
+      )}
+    </th>
+  );
+}
+
 function TrackerTextCell({ value, placeholder, disabled, onSave }: { value: string; placeholder?: string; disabled?: boolean; onSave: (v: string) => void }) {
   const [draft, setDraft] = useState(value);
   useEffect(() => setDraft(value), [value]);
@@ -1562,22 +1639,135 @@ function FlashTechTrackerTable({
   // default and keeps the table from being mostly-empty amber columns.
   const [altColsExpanded, setAltColsExpanded] = useState(false);
 
+  // ── Per-column filtering (Excel-style checklist, same FilterableTh
+  // pattern as ReportHRDaily's Sent History tables) + the Name search bar
+  // above the table. Alt Hotel columns only get a filter funnel while
+  // expanded — same as the header itself, since there's nowhere to put 4 of
+  // them in the one collapsed cell.
+  const [nameSearch, setNameSearch] = useState("");
+  const [columnFilters, setColumnFilters] = useState<Record<string, string[]>>({});
+  const toggleColumnFilterValue = (header: string, value: string) =>
+    setColumnFilters((prev) => {
+      const current = prev[header] || [];
+      const next = current.includes(value) ? current.filter((v) => v !== value) : [...current, value];
+      return { ...prev, [header]: next };
+    });
+  const clearColumnFilter = (header: string) => setColumnFilters((prev) => ({ ...prev, [header]: [] }));
+  const isColumnFiltered = (header: string) => (columnFilters[header]?.length ?? 0) > 0;
+  const activeColumnFilterCount = Object.values(columnFilters).filter((v) => v.length > 0).length;
+
+  const getColumnText = (trip: FlashTechTrip, header: string): string => {
+    switch (header) {
+      case "Name": return trip.technicianName || "";
+      case "Contact Number": return trip.technicianPhone || "";
+      case "Email": return trip.technicianEmail || "";
+      case "Tier Level": return trip.tierLevel || "";
+      case "Origin City": return trip.originLocation || "";
+      case "Destination City": return trip.destinationLocation || "";
+      case "Travel Date": return `${trip.startDate} ${trip.endDate}`;
+      case "Hotel Name": return trip.hotelName || "";
+      case "Lodging Date": return `${trip.lodgingStartDate || ""} ${trip.lodgingEndDate || ""}`;
+      case "Address": return trip.hotelAddress || "";
+      case "Hotel Rate": return trip.hotelRate != null ? String(trip.hotelRate) : "";
+      case "Confirmation": return trip.hotelConfirmation || "";
+      case "Alt Lodging Date": return `${trip.altLodgingStartDate || ""} ${trip.altLodgingEndDate || ""}`;
+      case "Alt Address": return trip.altHotelAddress || "";
+      case "Alt Hotel Rate": return trip.altHotelRate != null ? String(trip.altHotelRate) : "";
+      case "Alt Confirmation": return trip.altHotelConfirmation || "";
+      case "Car Rental Needed": return trip.carRentalNeeded ? "Yes" : "No";
+      case "Rental Car": return trip.rentalCar || "";
+      case "Rental Date": return `${trip.rentalStartDate || ""} ${trip.rentalEndDate || ""}`;
+      case "Rental Rate": return trip.rentalRate != null ? String(trip.rentalRate) : "";
+      case "Vehicle Type": return trip.vehicleType || "";
+      case "Other Expenses": return trip.otherExpenses != null ? String(trip.otherExpenses) : "";
+      case "Notes": return trip.notes || "";
+      case "Receipts": return trip.receiptPaths.length > 0 ? "yes" : "no";
+      case "Type": return trip.tripType || "";
+      case "Status": return trip.status || "";
+      default: return "";
+    }
+  };
+
+  const filteredTrips = trips.filter((trip) => {
+    if (nameSearch.trim() && !trip.technicianName.toLowerCase().includes(nameSearch.trim().toLowerCase())) return false;
+    // Checked values are OR'd within a column (any match keeps the row),
+    // columns are AND'd against each other — standard AutoFilter semantics.
+    for (const [header, values] of Object.entries(columnFilters)) {
+      if (!values || values.length === 0) continue;
+      if (!values.includes(getColumnText(trip, header))) return false;
+    }
+    return true;
+  });
+
+  // Every column's checklist lists only the values that actually appear in
+  // it right now (so Tier Level doesn't show unused options), computed once
+  // per render rather than per open popover.
+  const RECEIPTS_LABEL: Record<string, string> = { yes: "Has receipts", no: "No receipts" };
+  const columnOptionsCache: Record<string, string[]> = {};
+  const getColumnOptions = (header: string): string[] => {
+    if (columnOptionsCache[header]) return columnOptionsCache[header];
+    const values = new Set<string>();
+    for (const trip of trips) {
+      const v = getColumnText(trip, header);
+      if (v) values.add(v);
+    }
+    const sorted = Array.from(values).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+    columnOptionsCache[header] = sorted;
+    return sorted;
+  };
+  const optionLabel = (header: string, opt: string) => (header === "Receipts" ? RECEIPTS_LABEL[opt] ?? opt : opt);
+
   return (
     <div className="panel overflow-x-auto p-0">
+      <div className="flex flex-wrap items-center gap-2 border-b border-white/10 bg-slate-800/60 px-3 py-2">
+        <Search className="h-3.5 w-3.5 text-slate-500" />
+        <input
+          type="text"
+          value={nameSearch}
+          onChange={(e) => setNameSearch(e.target.value)}
+          placeholder="Search by name…"
+          className="w-52 rounded border border-white/10 bg-slate-900/60 px-2 py-1.5 text-xs text-slate-200 placeholder:text-slate-500 outline-none focus:border-blue-500"
+        />
+        <span className="text-[11px] text-slate-500">
+          {filteredTrips.length === trips.length ? `${trips.length} trip${trips.length === 1 ? "" : "s"}` : `${filteredTrips.length} of ${trips.length} trips`}
+        </span>
+        {(nameSearch || activeColumnFilterCount > 0) && (
+          <button
+            type="button"
+            onClick={() => { setNameSearch(""); setColumnFilters({}); }}
+            className="text-[11px] text-blue-400 hover:text-blue-300"
+          >
+            Clear filters{activeColumnFilterCount > 0 ? ` (${activeColumnFilterCount})` : ""}
+          </button>
+        )}
+      </div>
       <table className="border-collapse text-xs">
         <thead>
           <tr className="bg-slate-700/80 text-slate-200">
             {HEADERS.slice(0, CONFIRMATION_IDX + 1).map((h) => (
-              <th key={h} className="px-2 py-2 text-left font-semibold whitespace-nowrap border-r border-white/10">
-                {h}
-              </th>
+              <FlashTechFilterableTh
+                key={h}
+                header={h}
+                options={getColumnOptions(h)}
+                optionLabel={(opt) => optionLabel(h, opt)}
+                selected={columnFilters[h] || []}
+                onToggleValue={(v) => toggleColumnFilterValue(h, v)}
+                onClear={() => clearColumnFilter(h)}
+              />
             ))}
             {altColsExpanded ? (
               ALT_HEADERS.map((h, i) => (
-                <th key={h} className="px-2 py-2 text-left font-semibold whitespace-nowrap border-r border-white/10 bg-amber-500/10 text-amber-200">
-                  <div className="flex items-center gap-1">
-                    {h}
-                    {i === ALT_HEADERS.length - 1 && (
+                <FlashTechFilterableTh
+                  key={h}
+                  header={h}
+                  options={getColumnOptions(h)}
+                  optionLabel={(opt) => optionLabel(h, opt)}
+                  selected={columnFilters[h] || []}
+                  onToggleValue={(v) => toggleColumnFilterValue(h, v)}
+                  onClear={() => clearColumnFilter(h)}
+                  className="bg-amber-500/10 text-amber-200"
+                  extra={
+                    i === ALT_HEADERS.length - 1 ? (
                       <button
                         type="button"
                         onClick={() => setAltColsExpanded(false)}
@@ -1586,9 +1776,9 @@ function FlashTechTrackerTable({
                       >
                         <ChevronLeft className="h-3.5 w-3.5" />
                       </button>
-                    )}
-                  </div>
-                </th>
+                    ) : undefined
+                  }
+                />
               ))
             ) : (
               <th colSpan={ALT_HEADERS.length} className="px-1 py-2 whitespace-nowrap border-r border-white/10 bg-amber-500/10 text-amber-200">
@@ -1603,14 +1793,28 @@ function FlashTechTrackerTable({
               </th>
             )}
             {HEADERS.slice(CONFIRMATION_IDX + 1).map((h) => (
-              <th key={h} className="px-2 py-2 text-left font-semibold whitespace-nowrap border-r border-white/10 last:border-r-0">
-                {h}
-              </th>
+              <FlashTechFilterableTh
+                key={h}
+                header={h}
+                options={getColumnOptions(h)}
+                optionLabel={(opt) => optionLabel(h, opt)}
+                selected={columnFilters[h] || []}
+                onToggleValue={(v) => toggleColumnFilterValue(h, v)}
+                onClear={() => clearColumnFilter(h)}
+                className="last:border-r-0"
+              />
             ))}
           </tr>
         </thead>
         <tbody>
-          {trips.map((trip) => {
+          {filteredTrips.length === 0 && (
+            <tr>
+              <td colSpan={HEADERS.length + ALT_HEADERS.length} className="px-4 py-8 text-center text-slate-500">
+                No trips match these filters.
+              </td>
+            </tr>
+          )}
+          {filteredTrips.map((trip) => {
             const patch = (field: string, value: TrackerPatch) => onPatch(trip.id, field, value);
             const isHighlighted = trip.id === highlightTripId;
             return (

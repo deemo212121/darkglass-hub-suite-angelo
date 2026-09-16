@@ -19,6 +19,7 @@ import { PasswordChangeReminder } from "@/components/PasswordChangeReminder";
 import { FrozenAccountModal } from "@/components/FrozenAccountModal";
 import { LateTicketCompletionModal } from "@/components/LateTicketCompletionModal";
 import { TicketSearchFab } from "@/components/TicketSearchFab";
+import { FloatingMessenger } from "@/components/FloatingMessenger";
 import { ModuleNavigator } from "@/components/ModuleNavigator";
 import { SessionKickedOutBanner } from "@/components/SessionKickedOutBanner";
 import { TechnicianLocationTracker } from "@/components/TechnicianLocationTracker";
@@ -172,6 +173,7 @@ function RootComponent() {
             {!hideChrome && <LateTicketCompletionModal />}
             <Outlet />
             {!hideChrome && <TicketSearchFab />}
+            {!hideChrome && <FloatingMessenger />}
             {/* Floating module navigator — sits below the AppHeader on every
                 authenticated page so users can hop between modules without
                 going back to /home. */}
