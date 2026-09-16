@@ -1776,7 +1776,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // "has" = ✓ (checked/verified), "none" = ✗ (not verified) — see
   // documentVerified's own manual check/X toggle in the table body.
   const [hiringDocumentVerifiedFilter, setHiringDocumentVerifiedFilter] = useState<HiringTriState>("all");
-  const [hiringScreeningDateFilter, setHiringScreeningDateFilter] = useState<HiringTriState>("all");
+  const [hiringScreeningDateFilter, setHiringScreeningDateFilter] = useState<Set<string>>(new Set());
   const [hiringInterviewDateFilter, setHiringInterviewDateFilter] = useState<HiringTriState>("all");
   // Screening Date column sort — null (default) leaves candidates in their
   // natural load order; clicking the header cycles null -> desc (soonest/
@@ -2539,6 +2539,17 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     () => Array.from(new Set(visibleCandidates.map((c) => CANDIDATE_STATUS_LABEL[c.status]))).sort(),
     [visibleCandidates]
   );
+  // Same "match by label" convention as hiringStatusOptions above — the
+  // checklist shows every actual Screening Date on file (chronological, not
+  // alphabetical, since "9/2/2026" would otherwise sort before "9/15/2026"),
+  // plus "No date" for candidates it hasn't been set for yet.
+  const hiringScreeningDateLabel = (c: Candidate): string =>
+    c.screeningDate ? new Date(c.screeningDate + "T00:00:00").toLocaleDateString() : "No date";
+  const hiringScreeningDateOptions = useMemo(() => {
+    const isoDates = Array.from(new Set(visibleCandidates.filter((c) => c.screeningDate).map((c) => c.screeningDate as string))).sort();
+    const labels = isoDates.map((iso) => new Date(iso + "T00:00:00").toLocaleDateString());
+    return visibleCandidates.some((c) => !c.screeningDate) ? [...labels, "No date"] : labels;
+  }, [visibleCandidates]);
 
   // Search/Status filters narrow what the table shows — KPI tiles and the
   // tab badge count stay based on visibleCandidates (unfiltered) above.
@@ -2590,8 +2601,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     if (hiringDocumentVerifiedFilter !== "all") {
       result = result.filter((c) => (hiringDocumentVerifiedFilter === "has" ? c.documentVerified : !c.documentVerified));
     }
-    if (hiringScreeningDateFilter !== "all") {
-      result = result.filter((c) => (hiringScreeningDateFilter === "has" ? !!c.screeningDate : !c.screeningDate));
+    if (hiringScreeningDateFilter.size > 0) {
+      result = result.filter((c) => hiringScreeningDateFilter.has(hiringScreeningDateLabel(c)));
     }
     if (hiringInterviewDateFilter !== "all") {
       result = result.filter((c) => (hiringInterviewDateFilter === "has" ? !!c.interviewDate : !c.interviewDate));
@@ -15050,7 +15061,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                 <input value={hiringSearch} onChange={(e) => setHiringSearch(e.target.value)} placeholder="Name, position, or branch…" className="glass-input text-sm py-1.5 pl-8 pr-3 rounded-md w-56" />
               </div>
             </div>
-            {(hiringSearch || hiringStatusFilter.size > 0 || hiringPositionFilter.size > 0 || hiringBranchFilter.size > 0 || hiringBranchManagerFilter.size > 0 || hiringAssignedInterviewerFilter.size > 0 || hiringOutreachFilter.size > 0 || hiringCvFilter !== "all" || hiringAccountStatusFilter !== "all" || hiringNoteFilter !== "all" || hiringContactFilter !== "all" || hiringDocumentVerifiedFilter !== "all" || hiringScreeningDateFilter !== "all" || hiringInterviewDateFilter !== "all") && (
+            {(hiringSearch || hiringStatusFilter.size > 0 || hiringPositionFilter.size > 0 || hiringBranchFilter.size > 0 || hiringBranchManagerFilter.size > 0 || hiringAssignedInterviewerFilter.size > 0 || hiringOutreachFilter.size > 0 || hiringCvFilter !== "all" || hiringAccountStatusFilter !== "all" || hiringNoteFilter !== "all" || hiringContactFilter !== "all" || hiringDocumentVerifiedFilter !== "all" || hiringScreeningDateFilter.size > 0 || hiringInterviewDateFilter !== "all") && (
               <button
                 onClick={() => {
                   setHiringSearch("");
@@ -15065,7 +15076,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                   setHiringNoteFilter("all");
                   setHiringContactFilter("all");
                   setHiringDocumentVerifiedFilter("all");
-                  setHiringScreeningDateFilter("all");
+                  setHiringScreeningDateFilter(new Set());
                   setHiringInterviewDateFilter("all");
                 }}
                 className="btn text-sm px-3 mb-0.5"
@@ -15334,7 +15345,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                 )}
                 {isHiringColVisible("screeningDate") && (
                   <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase relative whitespace-nowrap">
-                    {renderHiringTriStateHeader("screeningDate", "Screening Date", hiringScreeningDateFilter, setHiringScreeningDateFilter, "Has date", "No date")}
+                    {renderHiringMultiSelectHeader("screeningDate", "Screening Date", hiringScreeningDateOptions, hiringScreeningDateFilter, setHiringScreeningDateFilter)}
                     <button
                       type="button"
                       onClick={cycleHiringScreeningDateSort}
