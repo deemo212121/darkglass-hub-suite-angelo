@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect, useRef, Fragment } from "react";
 import { createPortal } from "react-dom";
 import { Link, useSearch, useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
-import { ChevronLeft, ChevronDown, ChevronUp, ChevronRight, Plus, Trash2, AlertTriangle, CheckCircle, XCircle, Paperclip, Users, Clock, UserCheck, UserX, UserMinus, Search, Bell, Download, Forward, History, FileText, ClipboardList, Landmark, GripVertical, FileCheck, Link2, Copy, Calendar, Check, Pencil, Filter, Columns3, Mail, PenLine, X, ExternalLink, Loader2, Send, GraduationCap, LogOut } from "lucide-react";
+import { ChevronLeft, ChevronDown, ChevronUp, ChevronRight, Plus, Trash2, AlertTriangle, CheckCircle, XCircle, Paperclip, Users, Clock, UserCheck, UserX, UserMinus, Search, Bell, Download, Forward, History, FileText, ClipboardList, Landmark, GripVertical, FileCheck, Link2, Copy, Calendar, Check, Pencil, Filter, Columns3, Mail, PenLine, X, ExternalLink, Loader2, Send, GraduationCap, LogOut, PhoneCall } from "lucide-react";
 import { useSignaturePad } from "@/hooks/useSignaturePad";
 import { SignaturePadControls } from "@/components/SignaturePad";
 import { StickyHorizontalScrollbar } from "@/components/StickyHorizontalScrollbar";
@@ -2732,6 +2732,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const kpi = useMemo(() => ({
     candidates: visibleCandidates.length,
     applied: visibleCandidates.filter((c) => c.status === "applied").length,
+    attempt: visibleCandidates.filter((c) => c.status === "attempt").length,
     scheduled: visibleCandidates.filter((c) => c.status === "interviewing").length,
     training: visibleCandidates.filter((c) => c.status === "training").length,
     hired: visibleCandidates.filter((c) => c.status === "hired").length,
@@ -14856,10 +14857,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       {activeTab === "hiring" && (
         <>
           <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-1.5">Candidate Pipeline</p>
-          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2 mb-4">
+          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2 mb-4">
             {[
               { label: "Candidates", value: kpi.candidates, color: "text-blue-300", icon: <Users className="h-4 w-4" />, onClick: () => setHiringStatusFilter(new Set()) },
               { label: "Applied", value: kpi.applied, color: "text-blue-300", icon: <FileText className="h-4 w-4" />, onClick: () => setHiringStatusFilter(new Set([CANDIDATE_STATUS_LABEL.applied])) },
+              { label: "Attempt", value: kpi.attempt, color: "text-orange-300", icon: <PhoneCall className="h-4 w-4" />, onClick: () => setHiringStatusFilter(new Set([CANDIDATE_STATUS_LABEL.attempt])) },
               { label: "Scheduled for Interview", value: kpi.scheduled, color: "text-yellow-300", icon: <Clock className="h-4 w-4" />, onClick: () => setHiringStatusFilter(new Set([CANDIDATE_STATUS_LABEL.interviewing])) },
               { label: "Training", value: kpi.training, color: "text-cyan-300", icon: <GraduationCap className="h-4 w-4" />, onClick: () => setHiringStatusFilter(new Set([CANDIDATE_STATUS_LABEL.training])) },
               { label: "Hired", value: kpi.hired, color: "text-green-300", icon: <UserCheck className="h-4 w-4" />, onClick: () => setHiringStatusFilter(new Set([CANDIDATE_STATUS_LABEL.hired])) },
