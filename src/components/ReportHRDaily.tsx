@@ -5514,6 +5514,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [masterPhContractorAgreementSendError, setMasterPhContractorAgreementSendError] = useState<string | null>(null);
   const [masterPhContractorAgreementActionBusyId, setMasterPhContractorAgreementActionBusyId] = useState<string | null>(null);
   const [masterPhContractorAgreementActionError, setMasterPhContractorAgreementActionError] = useState<string | null>(null);
+  const [masterPhContractorAgreementIdPreview, setMasterPhContractorAgreementIdPreview] = useState<{ url: string; title: string } | null>(null);
   const [masterPhContractorAgreementDocPreview, setMasterPhContractorAgreementDocPreview] = useState<SignableDocument | null>(null);
   const [masterPhContractorAgreementPreviewExpanded, setMasterPhContractorAgreementPreviewExpanded] = useState(false);
   const [masterPhContractorAgreementPreviewPdfUrl, setMasterPhContractorAgreementPreviewPdfUrl] = useState<string | null>(null);
@@ -24291,7 +24292,16 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                         {data.governmentIdPhotoPath ? (
                           <button
                             type="button"
-                            onClick={() => getTechnicianIdDocumentUrl(data.governmentIdPhotoPath!).then((url) => window.open(url, "_blank", "noopener,noreferrer")).catch((err) => setMasterPhContractorAgreementActionError(err instanceof Error ? err.message : "Failed to open ID photo."))}
+                            onClick={() =>
+                              getTechnicianIdDocumentUrl(data.governmentIdPhotoPath!)
+                                .then((url) =>
+                                  setMasterPhContractorAgreementIdPreview({
+                                    url,
+                                    title: `${data.employeeName || recipient?.name || doc.recipientName || "ID Document"} — Government ID`,
+                                  })
+                                )
+                                .catch((err) => setMasterPhContractorAgreementActionError(err instanceof Error ? err.message : "Failed to open ID photo."))
+                            }
                             className="text-blue-300 hover:text-blue-200 underline text-xs"
                           >
                             View ID
@@ -24408,6 +24418,14 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             </div>
           </div>
         </div>
+      )}
+
+      {masterPhContractorAgreementIdPreview && (
+        <AttachmentPreviewModal
+          url={masterPhContractorAgreementIdPreview.url}
+          title={masterPhContractorAgreementIdPreview.title}
+          onClose={() => setMasterPhContractorAgreementIdPreview(null)}
+        />
       )}
 
       {activeTab === "flashTechnicianTravel" && (
