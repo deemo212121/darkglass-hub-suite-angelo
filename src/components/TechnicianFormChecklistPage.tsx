@@ -177,6 +177,66 @@ function isComplete(doc: SignableDocument | undefined, type: SignableDocumentTyp
   return getDocumentReviewStatus(type, doc) === "done";
 }
 
+// Optional "instant preview while refreshing" cache — same sessionStorage
+// pattern as TicketList.tsx/ReportHRDaily.tsx's own caches: always still
+// fetches for real (see loadUsers/loadDocsForActiveTab below), this just
+// paints the roster and the active tab's forms immediately on a repeat
+// visit this session instead of a blank spinner while the network round-
+// trip completes. Fully guarded — a cache failure silently falls back to
+// the normal load. Docs are cached per tab (a separate key per
+// ChecklistTabKey) since each tab pulls a different set of document types.
+const CHECKLIST_CACHE_MAX_AGE_MS = 5 * 60 * 1000;
+const CHECKLIST_CACHE_MAX_BYTES = 4 * 1024 * 1024;
+const USERS_CACHE_KEY = "ahs:staffchecklist:users-cache:v1";
+
+function readCachedUsers(): ProfileRow[] | null {
+  try {
+    const raw = sessionStorage.getItem(USERS_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { savedAt: number; users: ProfileRow[] };
+    if (!parsed?.users || Date.now() - parsed.savedAt > CHECKLIST_CACHE_MAX_AGE_MS) return null;
+    return parsed.users;
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedUsers(users: ProfileRow[]): void {
+  try {
+    const payload = JSON.stringify({ savedAt: Date.now(), users });
+    if (payload.length > CHECKLIST_CACHE_MAX_BYTES) return;
+    sessionStorage.setItem(USERS_CACHE_KEY, payload);
+  } catch {
+    /* storage full/unavailable/private mode — caching is a pure bonus */
+  }
+}
+
+function docsCacheKey(tab: ChecklistTabKey): string {
+  return `ahs:staffchecklist:docs-cache:v1:${tab}`;
+}
+
+function readCachedDocs(tab: ChecklistTabKey): Map<string, SignableDocument> | null {
+  try {
+    const raw = sessionStorage.getItem(docsCacheKey(tab));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { savedAt: number; entries: [string, SignableDocument][] };
+    if (!parsed?.entries || Date.now() - parsed.savedAt > CHECKLIST_CACHE_MAX_AGE_MS) return null;
+    return new Map(parsed.entries);
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedDocs(tab: ChecklistTabKey, entries: Map<string, SignableDocument>): void {
+  try {
+    const payload = JSON.stringify({ savedAt: Date.now(), entries: Array.from(entries.entries()) });
+    if (payload.length > CHECKLIST_CACHE_MAX_BYTES) return;
+    sessionStorage.setItem(docsCacheKey(tab), payload);
+  } catch {
+    /* storage full/unavailable/private mode — caching is a pure bonus */
+  }
+}
+
 type SortMode = "missing-desc" | "missing-asc" | "name" | "branch";
 
 export function TechnicianFormChecklistPage() {
@@ -184,8 +244,11 @@ export function TechnicianFormChecklistPage() {
   const { uid, displayName } = useAuth();
   const [myProfileId, setMyProfileId] = useState<string | null>(null);
   const [activeChecklistTab, setActiveChecklistTab] = useState<ChecklistTabKey>("technician");
-  const [allUsers, setAllUsers] = useState<ProfileRow[]>([]);
-  const [latestByKey, setLatestByKey] = useState<Map<string, SignableDocument>>(new Map());
+  // Lazy initializers so a cache hit paints the roster/active tab's forms on
+  // the very first render — see the cache helpers above loadUsers/
+  // loadDocsForActiveTab further down, which always still fetch for real.
+  const [allUsers, setAllUsers] = useState<ProfileRow[]>(() => readCachedUsers() ?? []);
+  const [latestByKey, setLatestByKey] = useState<Map<string, SignableDocument>>(() => readCachedDocs("technician") ?? new Map());
   const [exemptions, setExemptions] = useState<Set<string>>(new Set());
   const [expanded, setExpanded] = useState<string | null>(null);
   const [hideComplete, setHideComplete] = useState(false);
@@ -312,12 +375,13 @@ export function TechnicianFormChecklistPage() {
 
   // The roster doesn't vary per tab — fetched once (and on manual Refresh),
   // not re-pulled every time the active tab changes.
-  const [usersLoading, setUsersLoading] = useState(true);
+  const [usersLoading, setUsersLoading] = useState(() => readCachedUsers() === null);
   const loadUsers = useCallback(async () => {
     setUsersLoading(true);
     try {
-      const users = await getCompanyUsers();
-      setAllUsers((users as ProfileRow[]).filter((u) => u.is_active));
+      const users = (await getCompanyUsers() as ProfileRow[]).filter((u) => u.is_active);
+      setAllUsers(users);
+      writeCachedUsers(users);
     } catch (err) {
       console.error("Staff form checklist: failed to load users:", err);
     } finally {
@@ -329,9 +393,18 @@ export function TechnicianFormChecklistPage() {
   // document type in the company) — re-runs whenever the tab changes, so
   // switching tabs costs one small, targeted fetch instead of the page
   // eagerly pulling the whole company's signable-document history up front.
-  const [docsLoading, setDocsLoading] = useState(true);
+  const [docsLoading, setDocsLoading] = useState(() => readCachedDocs("technician") === null);
   const loadDocsForActiveTab = useCallback(async () => {
-    setDocsLoading(true);
+    // Paint instantly from that tab's own cached copy (if any) while the
+    // real fetch below still always runs — covers switching TO a tab
+    // visited earlier this session, not just the very first mount.
+    const cachedForTab = readCachedDocs(activeConfig.key);
+    if (cachedForTab) {
+      setLatestByKey(cachedForTab);
+      setDocsLoading(false);
+    } else {
+      setDocsLoading(true);
+    }
     try {
       const [docs, exemptionRows] = await Promise.all([
         getSignableDocumentsByTypes(activeConfig.formTypes),
@@ -377,6 +450,7 @@ export function TechnicianFormChecklistPage() {
 
       setLatestByKey(latest);
       setExemptions(exemptionRows);
+      writeCachedDocs(activeConfig.key, latest);
     } catch (err) {
       console.error("Staff form checklist: failed to load documents:", err);
     } finally {
