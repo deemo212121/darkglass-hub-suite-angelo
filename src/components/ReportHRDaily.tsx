@@ -79,7 +79,7 @@ import { getTechnicianIdDocumentUrl } from "@/lib/supabase/technicianIdDocuments
 import {
   createSignableDocument,
   getSignableDocuments,
-  getAllSignableDocuments,
+  getSignableDocumentsByTypes,
   confirmSignableDocument,
   cancelSignableDocument,
   deleteSignableDocument,
@@ -98,6 +98,7 @@ import {
   SIGNABLE_DOCUMENT_REGISTRY,
   isNewAutomationDoc,
   STAFF_FORM_TIERS,
+  HIRING_CANDIDATE_DOCUMENT_TYPES,
   getDocumentReviewStatus,
   pickAuthoritativeDocument,
   DOCUMENT_TYPES_REQUIRING_EMPLOYER_SIGNATURE,
@@ -1777,6 +1778,16 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [hiringDocumentVerifiedFilter, setHiringDocumentVerifiedFilter] = useState<HiringTriState>("all");
   const [hiringScreeningDateFilter, setHiringScreeningDateFilter] = useState<HiringTriState>("all");
   const [hiringInterviewDateFilter, setHiringInterviewDateFilter] = useState<HiringTriState>("all");
+  // Screening Date column sort — null (default) leaves candidates in their
+  // natural load order; clicking the header cycles null -> desc (soonest/
+  // most-recent screening date first) -> asc -> null again. Undated
+  // candidates always sort to the bottom regardless of direction, so
+  // toggling direction never buries every dated candidate under a wall of
+  // blanks.
+  const [hiringScreeningDateSortDir, setHiringScreeningDateSortDir] = useState<"asc" | "desc" | null>(null);
+  const cycleHiringScreeningDateSort = () => {
+    setHiringScreeningDateSortDir((cur) => (cur === null ? "desc" : cur === "desc" ? "asc" : null));
+  };
 
   // Column visibility (persisted) — Candidate/Actions always show; the rest
   // toggle from the "Columns" button in the toolbar.
@@ -1855,7 +1866,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [requiredFormsByCandidateId, setRequiredFormsByCandidateId] = useState<Map<string, SignableDocumentType[]>>(new Map());
   const loadCandidateForms = async () => {
     try {
-      const [docs, required] = await Promise.all([getAllSignableDocuments(), getCandidateRequiredFormTypes()]);
+      const [docs, required] = await Promise.all([getSignableDocumentsByTypes(HIRING_CANDIDATE_DOCUMENT_TYPES), getCandidateRequiredFormTypes()]);
       setAllSignableDocs(docs);
       setRequiredFormsByCandidateId(required);
     } catch (err) {
@@ -2585,6 +2596,15 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     if (hiringInterviewDateFilter !== "all") {
       result = result.filter((c) => (hiringInterviewDateFilter === "has" ? !!c.interviewDate : !c.interviewDate));
     }
+    if (hiringScreeningDateSortDir) {
+      const dir = hiringScreeningDateSortDir === "asc" ? 1 : -1;
+      result = [...result].sort((a, b) => {
+        if (!a.screeningDate && !b.screeningDate) return 0;
+        if (!a.screeningDate) return 1; // undated always last, either direction
+        if (!b.screeningDate) return -1;
+        return dir * a.screeningDate.localeCompare(b.screeningDate);
+      });
+    }
     return result;
   }, [
     visibleCandidates,
@@ -2602,6 +2622,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     hiringDocumentVerifiedFilter,
     hiringScreeningDateFilter,
     hiringInterviewDateFilter,
+    hiringScreeningDateSortDir,
     employeeEmailSet,
   ]);
 
@@ -15314,6 +15335,24 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                 {isHiringColVisible("screeningDate") && (
                   <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase relative whitespace-nowrap">
                     {renderHiringTriStateHeader("screeningDate", "Screening Date", hiringScreeningDateFilter, setHiringScreeningDateFilter, "Has date", "No date")}
+                    <button
+                      type="button"
+                      onClick={cycleHiringScreeningDateSort}
+                      title={
+                        hiringScreeningDateSortDir === "desc"
+                          ? "Sorted newest first — click for oldest first"
+                          : hiringScreeningDateSortDir === "asc"
+                          ? "Sorted oldest first — click to clear sort"
+                          : "Sort by Screening Date"
+                      }
+                      className={`ml-1 inline-flex align-middle ${hiringScreeningDateSortDir ? "text-blue-400" : "text-muted-foreground hover:text-slate-300"}`}
+                    >
+                      {hiringScreeningDateSortDir === "asc" ? (
+                        <ChevronUp className="h-3 w-3" />
+                      ) : (
+                        <ChevronDown className="h-3 w-3" />
+                      )}
+                    </button>
                   </th>
                 )}
                 {isHiringColVisible("interviewDate") && (
