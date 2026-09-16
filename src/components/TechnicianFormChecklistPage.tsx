@@ -40,7 +40,7 @@ import { useAuth } from "@/lib/auth";
 import { ManagerReviewPage, SUPPORTED_TYPES as EMPLOYER_SIGN_SUPPORTED_TYPES } from "@/components/ManagerReviewPage";
 import { getCompanyUsers, getMyProfileId, setProfileFrozen, type ProfileRow } from "@/lib/supabase/users";
 import { isEligibleForTechnicianFormChecklist, isBmAndUpRole, getRoleDepartmentBreakdown } from "@/lib/roleLabels";
-import { getSignableDocumentsByTypes, getExistingActiveDocumentTypes, createSignableDocument, updateSignableDocumentPdfUrl, confirmSignableDocument, type SignableDocument, type SignableDocumentType } from "@/lib/supabase/signableDocuments";
+import { getSignableDocumentsByTypes, getExistingActiveDocumentTypes, createSignableDocument, updateSignableDocumentPdfUrl, updateSignableDocumentFormData, confirmSignableDocument, type SignableDocument, type SignableDocumentType } from "@/lib/supabase/signableDocuments";
 import {
   SIGNABLE_DOCUMENT_REGISTRY,
   TECHNICIAN_FORM_TYPES,
@@ -747,6 +747,34 @@ export function TechnicianFormChecklistPage() {
     }
   };
 
+  // HR's "reviewed this ID photo" checkbox (ID_DOC_FIELDS) — a plain flag on
+  // the document's own form_data, keyed per field so e.g. master_w2_agreement's
+  // separate License/SSN Card photos each track independently. Not part of
+  // the sign/countersign flow at all, purely a "someone on HR actually
+  // looked at this" record.
+  const handleToggleIdVerified = async (doc: SignableDocument, personId: string, type: SignableDocumentType, field: string) => {
+    const key = `${personId}|${type}|${field}`;
+    const verifiedField = `${field}Verified`;
+    const nextFormData = { ...doc.formData, [verifiedField]: !doc.formData?.[verifiedField] };
+    setActionKey(key);
+    setActionError(null);
+    try {
+      await updateSignableDocumentFormData(doc.id, nextFormData);
+      setLatestByKey((prev) => {
+        const mapKey = `${personId}|${type}`;
+        const existing = prev.get(mapKey);
+        if (!existing) return prev;
+        const next = new Map(prev);
+        next.set(mapKey, { ...existing, formData: nextFormData });
+        return next;
+      });
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Failed to update.");
+    } finally {
+      setActionKey(null);
+    }
+  };
+
   // "Not Applicable" — this person doesn't need this form. `exemptions`
   // tracks raw row-existence ("${personId}|${type}" has an exemption row at
   // all), not the UI-level exempt/not-exempt meaning — that's derived per
@@ -1184,10 +1212,23 @@ export function TechnicianFormChecklistPage() {
                               N/A
                             </label>
                           </li>
-                          {idDocFields.map(({ field, label: fieldLabel }) => (
+                          {idDocFields.map(({ field, label: fieldLabel }) => {
+                            const idKey = `${r.profileId}|${type}|${field}`;
+                            const idBusy = actionKey === idKey;
+                            const verified = !!doc!.formData?.[`${field}Verified`];
+                            return (
                             <li key={field} className="flex items-center gap-2.5 text-sm pl-6">
-                              <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded border border-white/20 bg-transparent" />
-                              <span className="flex-1 min-w-0 text-slate-400">{fieldLabel}</span>
+                              <button
+                                type="button"
+                                disabled={idBusy}
+                                onClick={() => void handleToggleIdVerified(doc!, r.profileId, type, field)}
+                                title={verified ? "Reviewed — click to unmark" : "Mark this ID photo as reviewed"}
+                                className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border disabled:opacity-40 ${verified ? "border-emerald-500 bg-emerald-500 text-slate-950" : "border-white/20 bg-transparent hover:border-white/40"}`}
+                              >
+                                {verified && <span className="text-[10px] font-bold leading-none">✓</span>}
+                              </button>
+                              <span className={`flex-1 min-w-0 ${verified ? "text-slate-500" : "text-slate-400"}`}>{fieldLabel}</span>
+                              {verified && <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wide text-emerald-400">Reviewed</span>}
                               <button
                                 type="button"
                                 onClick={() =>
@@ -1200,7 +1241,8 @@ export function TechnicianFormChecklistPage() {
                                 view <ExternalLink className="h-3 w-3" />
                               </button>
                             </li>
-                          ))}
+                            );
+                          })}
                           </Fragment>
                         );
                       })}

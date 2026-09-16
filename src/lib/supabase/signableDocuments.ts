@@ -435,6 +435,12 @@ export async function updateSignableDocumentPdfUrl(id: string, pdfUrl: string, f
   if (error) throw new Error(error.message);
 }
 
+/** Patches form_data alone, no pdf_url/regeneration involved — e.g. Staff Form Checklist's "mark this ID photo reviewed" toggle. */
+export async function updateSignableDocumentFormData(id: string, formData: Record<string, any>): Promise<void> {
+  const { error } = await supabase.from("hr_signable_documents").update({ form_data: formData }).eq("id", id);
+  if (error) throw new Error(error.message);
+}
+
 /**
  * Reassigns a document to another recipient/slot for signature ("Send to
  * Next Recipient" / "Send to Another Recipient") — previously captured
