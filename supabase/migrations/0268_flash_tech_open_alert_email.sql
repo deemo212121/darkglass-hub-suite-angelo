@@ -1,5 +1,5 @@
 -- =====================================================================
--- 0267 — Flash Tech "trip turned Open" auto-email
+-- 0268 — Flash Tech "trip turned Open" auto-email
 --
 -- Two pieces:
 --   1. A new connectable Gmail slot, "FLASH_TECH" — same
@@ -15,7 +15,7 @@
 --      (src/lib/server/flashTechOpenAlerts.ts) only ever emails once per
 --      trip's Upcoming->Open transition, not once per hourly tick.
 --
--- Run once in the Supabase SQL Editor, after 0266.
+-- Run once in the Supabase SQL Editor, after 0267.
 -- =====================================================================
 
 alter table hr_gmail_connections drop constraint if exists hr_gmail_connections_region_check;
