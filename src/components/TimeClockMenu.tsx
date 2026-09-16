@@ -146,13 +146,33 @@ export function TimeClockButtons() {
   // a NEW day's work_date. Without this, a tab left open across midnight
   // would still hold yesterday's checkIn in state; clicking Time Out the
   // next morning would then save {yesterday's checkIn, today's checkOut}
-  // under TODAY's row (todayKey() is recomputed fresh at click time, but
-  // `entry` wasn't) — producing a checkOut-before-checkIn row with no
+  // under TODAY's row — producing a checkOut-before-checkIn row with no
   // warning. persist() below re-checks this immediately before every save.
+  //
+  // This must be computed the same way persistPunch() computes `workDate`
+  // (server clock, converted into the employee's own scheduled CST/EST) —
+  // NOT the device's local clock. Using todayKey() here (device-local) while
+  // persistPunch used the server+zoned date meant the two could disagree
+  // near midnight whenever the device's OS timezone differed from the
+  // employee's scheduled branch timezone, firing a false "It's now a new
+  // day — your punch state was refreshed" even though nothing had actually
+  // rolled over yet in the employee's real working timezone.
   const loadedDateKeyRef = useRef<string>(todayKey());
 
-  const loadToday = (pid: string) => {
-    const dateKey = todayKey();
+  // Best-effort — a load (unlike an actual punch) degrades to the device's
+  // local date on a server-clock fetch failure rather than blocking the
+  // page, so a network hiccup on load doesn't strand the widget empty.
+  const currentZonedDateKey = async (): Promise<string> => {
+    try {
+      return zonedDateKey(await getServerNow(), scheduleTimezone);
+    } catch (err) {
+      console.error("Failed to fetch server time, falling back to device clock for date bookkeeping:", err);
+      return todayKey();
+    }
+  };
+
+  const loadToday = async (pid: string) => {
+    const dateKey = await currentZonedDateKey();
     loadedDateKeyRef.current = dateKey;
     setConfirmClearField(null);
     if (employmentType === "trainee") {
@@ -180,8 +200,8 @@ export function TimeClockButtons() {
   // not just when the persist() guard below happens to catch a stale save.
   useEffect(() => {
     if (!profileId) return;
-    const check = () => {
-      if (todayKey() !== loadedDateKeyRef.current) loadToday(profileId);
+    const check = async () => {
+      if ((await currentZonedDateKey()) !== loadedDateKeyRef.current) loadToday(profileId);
     };
     // visibilitychange is handled by onTabVisible below (also gates the
     // interval itself, which used to keep ticking every 60s in every

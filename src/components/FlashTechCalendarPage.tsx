@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { ChevronLeft, ChevronRight, RefreshCw, Plus, X, Trash2, CalendarDays, Table2, Paperclip, Loader2, Car, Users, Building2, Search, Filter } from "lucide-react";
+import { ChevronLeft, ChevronRight, RefreshCw, Plus, X, Trash2, CalendarDays, Table2, Paperclip, Loader2, Car, Users, Check, Minus, Building2, Search, Filter } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { useSmartBack } from "@/hooks/useSmartBack";
-import { normalizeRole } from "@/lib/roleLabels";
+import { normalizeRole, isEligibleForTechnicianFormChecklist } from "@/lib/roleLabels";
 import { getCompanyUsers, getMyProfileId, getTechnicianContactInfoByIds, type ProfileRow } from "@/lib/supabase/users";
 import {
   getCompanyFlashTechTrips,
@@ -20,11 +20,15 @@ import {
   FLASH_TECH_MAX_RECEIPTS,
   FLASH_TECH_TIER_LEVELS,
   FLASH_TECH_TRIP_TYPES,
+  FLASH_TECH_STATUSES,
   type FlashTechTrip,
   type FlashTechTripType,
+  type FlashTechStatus,
 } from "@/lib/supabase/flashTechTrips";
 import { AttachmentPreviewModal } from "@/components/AttachmentPreviewModal";
 import { REGIONS, REGION_LOCATIONS } from "@/lib/locations";
+import { getSignableDocuments } from "@/lib/supabase/signableDocuments";
+import { getDocumentReviewStatus, pickAuthoritativeDocument, type DocumentReviewStatus } from "@/lib/signableDocumentRegistry";
 const WEEKDAY_LABELS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const CHIP_COLORS = ["bg-blue-500/80", "bg-purple-500/80", "bg-emerald-500/80", "bg-amber-500/80", "bg-pink-500/80", "bg-cyan-500/80"];
 // Every real branch, for the Destination dropdown.
@@ -181,12 +185,28 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
   const canEditTracker = canManage || [role, ...extraRoles].some((r) => normalizeRole(r) === "HR");
 
   const [view, setView] = useState<"calendar" | "tracker" | "availability">("calendar");
+  // Which Check-Out Alert tile (0-7 days left) the Tracker is currently
+  // filtered to, if any — click a tile to narrow the table to just those
+  // technicians, click it again (or the "Clear" pill) to go back to
+  // everyone. Reset when leaving the Tracker tab so it doesn't stay
+  // silently applied if you come back to it later.
+  const [checkoutAlertFilter, setCheckoutAlertFilter] = useState<number | null>(null);
+  useEffect(() => {
+    if (view !== "tracker") setCheckoutAlertFilter(null);
+  }, [view]);
   const [availabilitySearch, setAvailabilitySearch] = useState("");
-  const [availabilityStatusFilter, setAvailabilityStatusFilter] = useState<"all" | "available" | "busy">("all");
+  const [availabilityStatusFilter, setAvailabilityStatusFilter] = useState<"all" | "available" | "busy" | "needsForm">("all");
   const [monthValue, setMonthValue] = useState(todayMonthValue());
   const [carRentalOnly, setCarRentalOnly] = useState(false);
   const [trips, setTrips] = useState<FlashTechTrip[]>([]);
   const [users, setUsers] = useState<ProfileRow[]>([]);
+  // Each technician's Flash Technician Travel & Out-of-State Policy review
+  // status (same "not_sent"/"awaiting_employee"/"awaiting_hr"/"done" states
+  // Staff Form Checklist uses) — the Flash Tech List's own "Available"
+  // status is meaningless for sending someone out if they haven't cleared
+  // this form yet, and the Schedule Trip technician picker shows it as a
+  // check/dash/X per person.
+  const [flashFormStatusByProfileId, setFlashFormStatusByProfileId] = useState<Map<string, DocumentReviewStatus>>(new Map());
   const [loading, setLoading] = useState(true);
   const [myProfileId, setMyProfileId] = useState<string | null>(null);
 
@@ -257,7 +277,11 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
     try {
       await updateFlashTechTripDates(tripId, startDate, endDate);
       setTrips((prev) =>
-        prev.map((t) => (t.id === tripId ? { ...t, startDate, endDate, status: computeFlashTechTripStatus(startDate, endDate) } : t))
+        prev.map((t) =>
+          t.id === tripId
+            ? { ...t, startDate, endDate, status: t.statusOverride || computeFlashTechTripStatus(startDate, endDate) }
+            : t
+        )
       );
     } catch (err) {
       alert(`Failed to save: ${err instanceof Error ? err.message : "Unknown error"}`);
@@ -299,9 +323,33 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
   const loadData = async () => {
     setLoading(true);
     try {
-      const [tripRows, userRows] = await Promise.all([getCompanyFlashTechTrips(), getCompanyUsers()]);
+      const [tripRows, userRows, flashFormDocs] = await Promise.all([
+        getCompanyFlashTechTrips(),
+        getCompanyUsers(),
+        getSignableDocuments("flash_technician_travel"),
+      ]);
       setTrips(tripRows);
       setUsers(userRows);
+
+      // Group by person (formData.employeeId, same "whose form is this"
+      // identity every other checklist uses — falls back to recipientId for
+      // older rows sent before that field existed), then pick whichever
+      // submission actually represents the best status reached, same as
+      // TechnicianFormChecklistPage.tsx does for every other form type.
+      const byPerson = new Map<string, typeof flashFormDocs>();
+      for (const d of flashFormDocs) {
+        const personId = (d.formData as Record<string, any> | undefined)?.employeeId || d.recipientId;
+        if (!personId) continue;
+        const arr = byPerson.get(personId);
+        if (arr) arr.push(d);
+        else byPerson.set(personId, [d]);
+      }
+      const statusByPerson = new Map<string, DocumentReviewStatus>();
+      for (const [personId, group] of byPerson) {
+        const best = pickAuthoritativeDocument(group);
+        statusByPerson.set(personId, getDocumentReviewStatus("flash_technician_travel", best));
+      }
+      setFlashFormStatusByProfileId(statusByPerson);
     } finally {
       setLoading(false);
     }
@@ -324,6 +372,33 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
     () => [...trips].sort((a, b) => a.startDate.localeCompare(b.startDate) || a.technicianName.localeCompare(b.technicianName)),
     [trips]
   );
+  // Tracker-only KPI row: how many technicians currently out on a trip
+  // ("Open" status — already started, not yet ended) are within 7 days of
+  // their End Date (their "check out"/return date), bucketed by the exact
+  // number of days left (0 = ending today). A trip that hasn't started yet
+  // doesn't count even if its End Date happens to fall in this window —
+  // this is about people already out who are coming up on their return.
+  // Returns null for a trip that isn't currently "Open" at all — including
+  // one manually marked Cancelled, even if its dates still span today.
+  const daysLeftIfOpen = (t: FlashTechTrip, today: string): number | null => {
+    if (t.status === "Cancelled" || t.startDate > today || t.endDate < today) return null;
+    return Math.round((new Date(t.endDate + "T00:00:00").getTime() - new Date(today + "T00:00:00").getTime()) / 86400000);
+  };
+  const checkoutAlertCounts = useMemo(() => {
+    const today = todayIso();
+    const counts = new Map<number, number>();
+    for (let d = 0; d <= 7; d++) counts.set(d, 0);
+    for (const t of sortedTrips) {
+      const daysLeft = daysLeftIfOpen(t, today);
+      if (daysLeft !== null && daysLeft >= 0 && daysLeft <= 7) counts.set(daysLeft, (counts.get(daysLeft) ?? 0) + 1);
+    }
+    return counts;
+  }, [sortedTrips]);
+  const trackerTrips = useMemo(() => {
+    if (checkoutAlertFilter === null) return sortedTrips;
+    const today = todayIso();
+    return sortedTrips.filter((t) => daysLeftIfOpen(t, today) === checkoutAlertFilter);
+  }, [sortedTrips, checkoutAlertFilter]);
   const tripColorIndex = useMemo(() => new Map(sortedTrips.map((t, i) => [t.id, i % CHIP_COLORS.length])), [sortedTrips]);
   const calendarTrips = useMemo(
     () => (carRentalOnly ? sortedTrips.filter((t) => t.carRentalNeeded) : sortedTrips),
@@ -347,33 +422,48 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
     return q ? active.filter((u) => (u.display_name || "").toLowerCase().includes(q)) : active;
   }, [users, technicianQuery]);
 
-  // "Available for flash tech" right now — same eligible pool as the
-  // Schedule Trip picker itself (every active user, not narrowed to the
-  // TECHNICIAN role — see filteredTechnicianOptions above), split by
-  // whether they're mid-trip TODAY specifically (not just "in this month",
-  // since the calendar can browse other months while this answers "who's
-  // free to send out as of right now").
+  // "Available for flash tech" right now — narrowed to actual field
+  // technicians (same eligibility check TechnicianFormChecklistPage.tsx's
+  // own "Technician" roster and the Flash Technician Travel form use), NOT
+  // the broader "any active staff member" pool the Schedule Trip picker
+  // itself still offers (a trip can still be scheduled for a Branch
+  // Manager covering another branch — this list just isn't the place to
+  // surface non-field staff as "available"/"needs a form" for that).
+  // Further narrowed to technicians who actually have at least one Flash
+  // Tech Tracker record (past or current trip) — this list tracks the
+  // people already in the flash tech program, not the whole technician
+  // roster company-wide. Split by whether they're mid-trip TODAY
+  // specifically (not just "in this month", since the calendar can browse
+  // other months while this answers "who's free to send out as of right
+  // now").
   const technicianAvailability = useMemo(() => {
     const today = todayIso();
-    const active = users.filter((u) => u.is_active && u.display_name);
+    const trackedProfileIds = new Set(trips.map((t) => t.technicianProfileId).filter((id): id is string => !!id));
+    const active = users.filter(
+      (u) => u.is_active && u.display_name && isEligibleForTechnicianFormChecklist(u.role, u.extra_roles) && trackedProfileIds.has(u.id)
+    );
     const tripByProfileId = new Map<string, FlashTechTrip>();
     for (const t of trips) {
-      if (t.technicianProfileId && t.startDate <= today && t.endDate >= today) tripByProfileId.set(t.technicianProfileId, t);
+      if (t.technicianProfileId && t.status !== "Cancelled" && t.startDate <= today && t.endDate >= today) tripByProfileId.set(t.technicianProfileId, t);
     }
     return active
-      .map((u) => ({ user: u, trip: tripByProfileId.get(u.id) ?? null }))
+      .map((u) => ({ user: u, trip: tripByProfileId.get(u.id) ?? null, formFiled: flashFormStatusByProfileId.get(u.id) === "done" }))
       .sort((a, b) => {
-        // Available first, then busy — alphabetical within each group.
-        if (!!a.trip !== !!b.trip) return a.trip ? 1 : -1;
+        // Busy last, then "needs form" (not actually sendable), then
+        // Available — alphabetical within each group.
+        const rank = (x: (typeof a)) => (x.trip ? 2 : x.formFiled ? 0 : 1);
+        const rankDiff = rank(a) - rank(b);
+        if (rankDiff !== 0) return rankDiff;
         return (a.user.display_name || "").localeCompare(b.user.display_name || "");
       });
-  }, [users, trips]);
+  }, [users, trips, flashFormStatusByProfileId]);
 
   const filteredTechnicianAvailability = useMemo(() => {
     const q = availabilitySearch.trim().toLowerCase();
-    return technicianAvailability.filter(({ user, trip }) => {
-      if (availabilityStatusFilter === "available" && trip) return false;
+    return technicianAvailability.filter(({ user, trip, formFiled }) => {
+      if (availabilityStatusFilter === "available" && (trip || !formFiled)) return false;
       if (availabilityStatusFilter === "busy" && !trip) return false;
+      if (availabilityStatusFilter === "needsForm" && (trip || formFiled)) return false;
       if (q && !(user.display_name || "").toLowerCase().includes(q)) return false;
       return true;
     });
@@ -735,8 +825,37 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
         )}
 
         {view === "tracker" && (
-          <FlashTechTrackerTable
-            trips={sortedTrips}
+          <>
+            <div className="mb-3">
+              <div className="flex items-center gap-2 mb-1.5">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Check-Out Alert — Days Until Return</p>
+                {checkoutAlertFilter !== null && (
+                  <button type="button" onClick={() => setCheckoutAlertFilter(null)} className="text-[10px] text-blue-400 hover:text-blue-300">
+                    Clear filter
+                  </button>
+                )}
+              </div>
+              <div className="grid grid-cols-4 sm:grid-cols-8 gap-1.5">
+                {[7, 6, 5, 4, 3, 2, 1, 0].map((d) => {
+                  const active = checkoutAlertFilter === d;
+                  return (
+                    <button
+                      key={d}
+                      type="button"
+                      onClick={() => setCheckoutAlertFilter((cur) => (cur === d ? null : d))}
+                      className={`panel p-1.5 text-center transition-colors hover:bg-white/5 ${active ? "ring-1 ring-blue-400 bg-blue-500/10" : ""}`}
+                    >
+                      <p className={`text-sm font-bold ${d <= 1 ? "text-red-400" : d <= 3 ? "text-amber-300" : "text-blue-300"}`}>
+                        {checkoutAlertCounts.get(d) ?? 0}
+                      </p>
+                      <p className="text-[9px] text-muted-foreground uppercase tracking-wide">{d === 0 ? "Today" : `${d} Day${d === 1 ? "" : "s"}`}</p>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            <FlashTechTrackerTable
+            trips={trackerTrips}
             users={users}
             loading={loading}
             canEdit={canEditTracker}
@@ -749,7 +868,8 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
             onUploadReceipt={handleUploadReceipt}
             onRemoveReceipt={handleRemoveReceipt}
             onPreviewReceipt={setPreviewReceiptUrl}
-          />
+            />
+          </>
         )}
 
         {view === "availability" && (
@@ -778,6 +898,7 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
                 >
                   <option value="all">All</option>
                   <option value="available">Available</option>
+                  <option value="needsForm">Form Not Filed</option>
                   <option value="busy">On Trip</option>
                 </select>
               </div>
@@ -812,7 +933,7 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-white/10">
-                    {filteredTechnicianAvailability.map(({ user, trip }) => (
+                    {filteredTechnicianAvailability.map(({ user, trip, formFiled }) => (
                       <tr key={user.id}>
                         <td className="px-4 py-2.5 text-sm text-white truncate max-w-[220px]">{user.display_name}</td>
                         <td className="px-4 py-2.5 text-xs text-slate-300">{trip ? trip.originLocation : <span className="text-slate-600">—</span>}</td>
@@ -824,6 +945,13 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
                               title={`${trip.startDate} – ${trip.endDate}`}
                             >
                               <span className="h-1.5 w-1.5 rounded-full bg-blue-400" /> On Trip — back {trip.endDate}
+                            </span>
+                          ) : !formFiled ? (
+                            <span
+                              className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-xs text-amber-300"
+                              title="Flash Technician Travel & Out-of-State Policy form isn't on file (or still awaiting HR review)"
+                            >
+                              <span className="h-1.5 w-1.5 rounded-full bg-amber-400" /> Form Not Filed
                             </span>
                           ) : (
                             <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-xs text-emerald-300">
@@ -900,16 +1028,27 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
                 />
                 {technicianDropdownOpen && filteredTechnicianOptions.length > 0 && (
                   <div className="absolute z-10 mt-1 max-h-48 w-full overflow-y-auto rounded-lg border border-white/15 bg-slate-900 shadow-lg">
-                    {filteredTechnicianOptions.slice(0, 50).map((u) => (
-                      <button
-                        key={u.id}
-                        type="button"
-                        onMouseDown={() => handleSelectTechnician(u)}
-                        className="block w-full px-3 py-1.5 text-left text-sm text-slate-200 hover:bg-white/10"
-                      >
-                        {u.display_name || u.email}
-                      </button>
-                    ))}
+                    {filteredTechnicianOptions.slice(0, 50).map((u) => {
+                      const formStatus = flashFormStatusByProfileId.get(u.id) ?? "not_sent";
+                      const badge =
+                        formStatus === "done"
+                          ? { icon: <Check className="h-2.5 w-2.5" />, cls: "bg-emerald-500/20 text-emerald-400", title: "Flash Technician Travel form on file" }
+                          : formStatus === "awaiting_hr"
+                          ? { icon: <Minus className="h-2.5 w-2.5" />, cls: "bg-amber-500/20 text-amber-400", title: "Flash Technician Travel form submitted — awaiting HR review" }
+                          : { icon: <X className="h-2.5 w-2.5" />, cls: "bg-red-500/20 text-red-400", title: "Flash Technician Travel form not on file — can still be scheduled" };
+                      return (
+                        <button
+                          key={u.id}
+                          type="button"
+                          onMouseDown={() => handleSelectTechnician(u)}
+                          title={badge.title}
+                          className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-slate-200 hover:bg-white/10"
+                        >
+                          <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full ${badge.cls}`}>{badge.icon}</span>
+                          <span className="truncate">{u.display_name || u.email}</span>
+                        </button>
+                      );
+                    })}
                   </div>
                 )}
                 {technicianQuery && !form.technicianProfileId && (
@@ -1461,12 +1600,14 @@ const TRACKER_STATUS_COLOR: Record<string, string> = {
   Open: "text-green-400",
   Closed: "text-slate-400",
   Upcoming: "text-yellow-300",
+  Cancelled: "text-red-400",
 };
 
 const TRACKER_ROW_STATUS_BG: Record<string, string> = {
   Open: "bg-green-500/35 border-l-2 border-l-green-400 hover:bg-green-500/40",
   Closed: "bg-slate-500/15 border-l-2 border-l-slate-500 hover:bg-slate-500/20",
   Upcoming: "bg-yellow-400/35 border-l-2 border-l-yellow-300 hover:bg-yellow-400/40",
+  Cancelled: "bg-red-500/15 border-l-2 border-l-red-500 hover:bg-red-500/20",
 };
 
 function FlashTechTrackerTable({
@@ -1964,10 +2105,20 @@ function FlashTechTrackerTable({
                 <td className="p-0.5 border-r border-white/10">
                   <TrackerSelectCell value={trip.tripType} disabled={!canEdit} options={FLASH_TECH_TRIP_TYPES} onSave={(v) => patch("tripType", { tripType: v as FlashTechTrip["tripType"] })} />
                 </td>
-                <td className="p-1.5 px-2">
-                  <span className={`text-xs font-semibold ${TRACKER_STATUS_COLOR[trip.status] || "text-slate-300"}`}>
-                    {trip.status}
-                  </span>
+                <td className="p-0.5">
+                  <select
+                    value={trip.status}
+                    disabled={!canEdit}
+                    onChange={(e) => patch("statusOverride", { statusOverride: e.target.value as FlashTechStatus })}
+                    className={`w-full min-w-[90px] bg-transparent text-xs font-semibold px-1.5 py-1 border border-transparent hover:border-white/10 focus:border-blue-500 rounded outline-none disabled:opacity-60 disabled:cursor-not-allowed ${TRACKER_STATUS_COLOR[trip.status] || "text-slate-300"}`}
+                    title={trip.statusOverride ? "Manually set — won't change automatically with the travel dates" : "Automatic, based on the travel dates"}
+                  >
+                    {FLASH_TECH_STATUSES.map((s) => (
+                      <option key={s} value={s} className="bg-slate-900 text-slate-200">
+                        {s}
+                      </option>
+                    ))}
+                  </select>
                 </td>
               </tr>
             );

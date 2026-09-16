@@ -15,9 +15,11 @@ import { uploadFlashTechTripReceiptFile, deleteAttachmentByUrl } from "@/lib/fir
 export const FLASH_TECH_TIER_LEVELS = ["Tier 1", "Tier 2", "Tier 3", "SBM", "BM", "TR", "DR", "TM"];
 export const FLASH_TECH_TRIP_TYPES = ["Flashtech", "Education", "Inspection"] as const;
 export type FlashTechTripType = (typeof FLASH_TECH_TRIP_TYPES)[number];
-/** No longer manually picked — see computeFlashTechTripStatus below. Order
- *  matches the real lifecycle a trip moves through. */
-export const FLASH_TECH_STATUSES = ["Upcoming", "Open", "Closed"] as const;
+/** Upcoming/Open/Closed are auto-computed from the travel dates (see
+ *  computeFlashTechTripStatus) unless a manual status_override is set
+ *  (migration 0265) — "Cancelled" is the one value nothing ever computes
+ *  on its own, so it only ever comes from an explicit override. */
+export const FLASH_TECH_STATUSES = ["Upcoming", "Open", "Closed", "Cancelled"] as const;
 export type FlashTechStatus = (typeof FLASH_TECH_STATUSES)[number];
 
 /**
@@ -76,6 +78,8 @@ export interface FlashTechTrip {
   receiptPaths: string[];
   tripType: FlashTechTripType;
   status: FlashTechStatus;
+  /** Manual override (migration 0265) — null means "let the dates decide" (see mapTripRow). Surfaced separately from `status` so the Tracker's dropdown can tell an explicit pick apart from the computed default. */
+  statusOverride: FlashTechStatus | null;
   // ── Alternate hotel (migration 0261) — the Tracker's "Technician
   // requested another hotel" toggle plus its own small set of fields,
   // separate from the original hotel_* columns above so the original
@@ -119,9 +123,11 @@ function mapTripRow(row: any): Omit<FlashTechTrip, "hotelExpense" | "transportat
     otherExpenses: row.other_expenses != null ? Number(row.other_expenses) : null,
     receiptPaths: Array.isArray(row.receipt_paths) ? row.receipt_paths : [],
     tripType: (row.trip_type ?? "Flashtech") as FlashTechTripType,
-    // Always freshly computed from the real dates, never the stored
+    // A manual status_override (migration 0265) wins outright; otherwise
+    // freshly computed from the real dates, never the stored `status`
     // column — see computeFlashTechTripStatus's own doc comment for why.
-    status: computeFlashTechTripStatus(row.start_date, row.end_date),
+    status: (row.status_override as FlashTechStatus | null) || computeFlashTechTripStatus(row.start_date, row.end_date),
+    statusOverride: (row.status_override as FlashTechStatus | null) ?? null,
     altHotelRequested: Boolean(row.alt_hotel_requested),
     altLodgingStartDate: row.alt_lodging_start_date ?? null,
     altLodgingEndDate: row.alt_lodging_end_date ?? null,
@@ -422,6 +428,8 @@ export async function updateFlashTechTripTrackerFields(
     otherExpenses: number | null;
     notes: string | null;
     tripType: FlashTechTripType;
+    /** null clears back to the auto-computed Upcoming/Open/Closed behavior. */
+    statusOverride: FlashTechStatus | null;
     altHotelRequested: boolean;
     altLodgingStartDate: string | null;
     altLodgingEndDate: string | null;
@@ -449,6 +457,7 @@ export async function updateFlashTechTripTrackerFields(
   if ("otherExpenses" in fields) payload.other_expenses = fields.otherExpenses;
   if ("notes" in fields) payload.notes = fields.notes || null;
   if ("tripType" in fields) payload.trip_type = fields.tripType;
+  if ("statusOverride" in fields) payload.status_override = fields.statusOverride;
   if ("altHotelRequested" in fields) payload.alt_hotel_requested = fields.altHotelRequested;
   if ("altLodgingStartDate" in fields) payload.alt_lodging_start_date = fields.altLodgingStartDate || null;
   if ("altLodgingEndDate" in fields) payload.alt_lodging_end_date = fields.altLodgingEndDate || null;

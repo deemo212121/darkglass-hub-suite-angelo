@@ -372,6 +372,7 @@ function buildDevTestFlashTechTrip(profileId: string): FlashTechTrip {
     receiptPaths: [],
     tripType: "Flashtech",
     status: "Open",
+    statusOverride: null,
     altHotelRequested: false,
     altLodgingStartDate: null,
     altLodgingEndDate: null,

@@ -7,6 +7,7 @@
  */
 
 import { supabase } from "./client";
+import { createNotification } from "./notifications";
 
 // "training" and "on_hold" added for EOD/EOM hiring reports (0048); "phone_screening",
 // "withdrawn", and "cancelled" added (and "on_hold" removed) by 0221_hr_candidates_status_update.sql.
@@ -17,7 +18,7 @@ import { supabase } from "./client";
 // 0048_hr_hiring_reports.sql (updated by 0221) for where that side effect
 // actually happens (atomically, alongside the status history log) — never
 // via a plain `update hr_candidates set status=...`.
-export type CandidateStatus = "applied" | "phone_screening" | "interviewing" | "selected" | "training" | "hired" | "rejected" | "withdrawn" | "cancelled";
+export type CandidateStatus = "applied" | "attempt" | "phone_screening" | "interviewing" | "selected" | "training" | "hired" | "rejected" | "withdrawn" | "cancelled";
 
 export interface Candidate {
   id: string;
@@ -45,6 +46,7 @@ export interface Candidate {
   trainingStartDate: string | null;  // required when status = "training"
   trainingEndDate: string | null;    // optional, settable alongside trainingStartDate
   withdrawnDate: string | null;      // required when status = "withdrawn"
+  startDate: string | null;          // required when status = "hired" — see migration 0261
   screeningDate: string | null;      // manual, independent of the phone_screening status — see updateCandidateScreeningDate. See migration 0247.
   documentVerified: boolean;         // manual check/X toggle for now — see updateCandidateDocumentVerified. See migration 0251.
   notes: string | null;              // "HR Note" in the UI
@@ -58,8 +60,12 @@ export interface Candidate {
 // `full_name` is the real column (the table predates this feature — see
 // 0001_init.sql / 0030_hr_candidates.sql); mapped to `name` here so the
 // rest of the app's Candidate type reads naturally.
-const SELECT = "id, company_id, full_name, phone, email, position, branch, department, branch_manager_id, assigned_interviewer_id, assigned_manager_id, trainer_id, source, texted_am, texted_pm, called_am, called_pm, cv_path, status, interview_date, interview_time, interview_timezone, training_start_date, training_end_date, withdrawn_date, screening_date, document_verified, notes, interviewer_note, created_by, created_at, updated_at, author:created_by (display_name, username)";
-// Falls back to this if document_verified doesn't exist yet — i.e.
+const SELECT = "id, company_id, full_name, phone, email, position, branch, department, branch_manager_id, assigned_interviewer_id, assigned_manager_id, trainer_id, source, texted_am, texted_pm, called_am, called_pm, cv_path, status, interview_date, interview_time, interview_timezone, training_start_date, training_end_date, withdrawn_date, start_date, screening_date, document_verified, notes, interviewer_note, created_by, created_at, updated_at, author:created_by (display_name, username)";
+// Falls back to this if start_date doesn't exist yet — i.e.
+// 0261_hr_candidates_start_date.sql hasn't been run against this
+// database, but 0251_hr_candidates_document_check.sql has.
+const SELECT_V14 = "id, company_id, full_name, phone, email, position, branch, department, branch_manager_id, assigned_interviewer_id, assigned_manager_id, trainer_id, source, texted_am, texted_pm, called_am, called_pm, cv_path, status, interview_date, interview_time, interview_timezone, training_start_date, training_end_date, withdrawn_date, screening_date, document_verified, notes, interviewer_note, created_by, created_at, updated_at, author:created_by (display_name, username)";
+// Falls back further to this if document_verified doesn't exist yet — i.e.
 // 0251_hr_candidates_document_check.sql hasn't been run against this
 // database, but 0248_hr_candidates_assigned_manager.sql has.
 const SELECT_V13 = "id, company_id, full_name, phone, email, position, branch, department, branch_manager_id, assigned_interviewer_id, assigned_manager_id, trainer_id, source, texted_am, texted_pm, called_am, called_pm, cv_path, status, interview_date, interview_time, interview_timezone, training_start_date, training_end_date, withdrawn_date, screening_date, notes, interviewer_note, created_by, created_at, updated_at, author:created_by (display_name, username)";
@@ -144,6 +150,7 @@ function fromRow(r: any): Candidate {
     trainingStartDate: r.training_start_date ?? null,
     trainingEndDate: r.training_end_date ?? null,
     withdrawnDate: r.withdrawn_date ?? null,
+    startDate: r.start_date ?? null,
     screeningDate: r.screening_date ?? null,
     documentVerified: r.document_verified ?? false,
     notes: r.notes,
@@ -171,6 +178,14 @@ export async function getCandidates(): Promise<Candidate[]> {
       .order("created_at", { ascending: false })
       .range(from, from + CANDIDATES_PAGE_SIZE - 1);
     if (isMissingColumnError(error) && select === SELECT) {
+      select = SELECT_V14;
+      ({ data, error } = await supabase
+        .from("hr_candidates")
+        .select(select)
+        .order("created_at", { ascending: false })
+        .range(from, from + CANDIDATES_PAGE_SIZE - 1));
+    }
+    if (isMissingColumnError(error) && select === SELECT_V14) {
       select = SELECT_V13;
       ({ data, error } = await supabase
         .from("hr_candidates")
@@ -488,6 +503,58 @@ export async function updateCandidateStatus(
     }
     throw new Error(error.message);
   }
+}
+
+// Fixed extra recipients on every hire notification, regardless of branch —
+// the user's explicit list (Naveen Lakhani, Yujung Chris Yong, Lou Basco).
+// Not role-derived like Branch Manager/SBM below since none of the three
+// hold a BM/SBM role themselves.
+const HIRE_NOTIFICATION_EXTRA_RECIPIENT_IDS = [
+  "bec83133-0de3-4fa6-8174-f6aa1b04d3e8", // Naveen Lakhani
+  "f4131c1f-0676-40e0-aa61-dc10ca620259", // Yujung Chris Yong
+  "17e098e0-f237-45dc-b8e0-13e34cf275fc", // Lou Basco
+];
+
+/**
+ * Notifies every active Branch Manager + Senior Branch Manager company-wide
+ * (not scoped to the hire's own branch — the user's explicit call), plus
+ * the three fixed extra recipients above, whenever a candidate is marked
+ * Hired with a Start Date. `linkTo` deep-links into the Hiring tab with
+ * `viewCvCandidateId` — ReportHRDaily.tsx picks that up on load and opens
+ * the candidate's CV in a preview modal (not a new tab — a notification
+ * click doesn't carry the "direct user gesture" a real click does, so
+ * window.open would just get popup-blocked).
+ */
+export async function notifyOnCandidateHired(
+  candidate: { id: string; name: string; branch: string | null; position: string | null },
+  startDate: string,
+  senderId: string | null,
+  senderName: string | null
+): Promise<void> {
+  const { data: bmSbm, error } = await supabase
+    .from("profiles")
+    .select("id")
+    .in("role", ["BRANCH_MANAGER", "SENIOR_BRANCH_MANAGER"])
+    .eq("is_active", true);
+  if (error) console.error("notifyOnCandidateHired (BM/SBM lookup) error:", error.message);
+
+  const recipientIds = new Set<string>([...(bmSbm ?? []).map((r) => r.id), ...HIRE_NOTIFICATION_EXTRA_RECIPIENT_IDS]);
+  if (senderId) recipientIds.delete(senderId);
+
+  const dateLabel = (() => {
+    const d = new Date(startDate);
+    return isNaN(d.getTime()) ? startDate : d.toLocaleDateString();
+  })();
+  const body = `🎉 ${candidate.name} was hired${candidate.position ? ` as ${candidate.position}` : ""}${candidate.branch ? ` (${candidate.branch})` : ""} — starting ${dateLabel}.`;
+  const linkTo = `/m/hr/hr-dashboard?tab=hiring&viewCvCandidateId=${candidate.id}`;
+
+  await Promise.all(
+    Array.from(recipientIds).map((recipientId) =>
+      createNotification({ recipientId, senderId, senderName, body, linkTo }).catch((err) =>
+        console.error(`notifyOnCandidateHired: failed for recipient ${recipientId}:`, err)
+      )
+    )
+  );
 }
 
 /** Sets the manual Screening Date — independent of the phone_screening status (no required-date dialog like Interview Date has). See migration 0247. */

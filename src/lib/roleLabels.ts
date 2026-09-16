@@ -138,6 +138,36 @@ export function hasAnyTechnicianPayRole(role: string | null | undefined, extraRo
 }
 
 /**
+ * Field-technician-tier roles (same set as TECHNICIAN_PAY_ROLES) whose meal
+ * break is always paid — Technicians, Branch/Senior Branch Manager, Tech
+ * Manager, and Technical Director/Assistant Director aren't required to
+ * punch Meal In/Out at all, so there's often no real punched duration for
+ * calcWorkedHours to (dis)credit in the first place. Same check as
+ * hasAnyTechnicianPayRole, named for its own call site — see timecards.ts's
+ * computeMealTimeCredit for how this turns into extra pay.
+ */
+export function isMealAlwaysPaidRole(role: string | null | undefined, extraRoles?: string[] | null): boolean {
+  return hasAnyTechnicianPayRole(role, extraRoles);
+}
+
+/**
+ * True for roles whose weekly overtime uses a flat 40-hour threshold instead
+ * of the schedule-derived duty-hours cap (timecards.ts's
+ * computeScheduledDutyHours) — CSR roles (isCsrRestrictedRole; their shift
+ * times aren't reliably captured in required_check_in/required_check_out)
+ * and, by the same policy, every Technician-tier role too (same set as
+ * TECHNICIAN_PAY_ROLES). The schedule-derived cap can trigger overtime well
+ * under 40 real hours for a Technician — it counts every non-off day in the
+ * week toward the cap regardless of attendance, so absences early in the
+ * week shrink the effective regular-hours budget left for the days they DID
+ * work, producing overtime on hours that were never actually in excess of a
+ * real 40-hour week. See timecards.ts's CSR_WEEKLY_OVERTIME_THRESHOLD.
+ */
+export function usesFlatWeeklyOvertimeThreshold(role: string | null | undefined, extraRoles?: string[] | null): boolean {
+  return isCsrRestrictedRole(role, extraRoles) || isMealAlwaysPaidRole(role, extraRoles);
+}
+
+/**
  * Primary roles that can plausibly be doing field-technician work — the
  * Technician tier itself, plus Branch Manager/Senior Branch Manager (who
  * often still run routes). Deliberately does NOT include ADMIN, SUPERADMIN,

@@ -239,16 +239,33 @@ export function FillDirectDepositPage({ docId }: Props) {
                     <div className="sm:col-span-2"><label className={labelCls}>Street Address*</label><input className={inputCls} value={form.streetAddress} onChange={(e) => updateField("streetAddress", e.target.value)} /></div>
                     <div><label className={labelCls}>City*</label><input className={inputCls} value={form.city} onChange={(e) => updateField("city", e.target.value)} /></div>
                     <div>
-                      <label className={labelCls}>State*</label>
-                      <select className={inputCls} value={form.state} onChange={(e) => updateField("state", e.target.value)}>
-                        <option value="">Please Select</option>
-                        {DIRECT_DEPOSIT_STATES.map((s) => <option key={s} value={s}>{s}</option>)}
-                      </select>
+                      <label className={labelCls}>{form.country === "United States" ? "State*" : "State / Province*"}</label>
+                      {form.country === "United States" ? (
+                        <select className={inputCls} value={form.state} onChange={(e) => updateField("state", e.target.value)}>
+                          <option value="">Please Select</option>
+                          {DIRECT_DEPOSIT_STATES.map((s) => <option key={s} value={s}>{s}</option>)}
+                        </select>
+                      ) : (
+                        <input className={inputCls} value={form.state} onChange={(e) => updateField("state", e.target.value)} placeholder="e.g. Metro Manila" />
+                      )}
                     </div>
                     <div><label className={labelCls}>Zip Code*</label><input className={inputCls} value={form.zipCode} onChange={(e) => updateField("zipCode", e.target.value)} /></div>
                     <div>
                       <label className={labelCls}>Country*</label>
-                      <select className={inputCls} value={form.country} onChange={(e) => updateField("country", e.target.value)}>
+                      <select
+                        className={inputCls}
+                        value={form.country}
+                        onChange={(e) => {
+                          const nextCountry = e.target.value;
+                          // A US state selected while Country was "United States" won't mean
+                          // anything once it switches away (and vice versa for typed-in text
+                          // that happens to collide with a US state's exact spelling) — clear
+                          // it so the field never silently carries a stale, mismatched value.
+                          const wasUs = form.country === "United States";
+                          const isUs = nextCountry === "United States";
+                          setForm((f) => ({ ...f, country: nextCountry, state: wasUs !== isUs ? "" : f.state }));
+                        }}
+                      >
                         <option value="">Please Select</option>
                         {DIRECT_DEPOSIT_COUNTRIES.map((c) => <option key={c} value={c}>{c}</option>)}
                       </select>

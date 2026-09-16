@@ -24,9 +24,10 @@ import { getAllAgentNotes, type CsrAgentNote } from "@/lib/supabase/csrAgentNote
 const TOOLTIP_STYLE = { background: "#ffffff", border: "1px solid #cbd5e1", borderRadius: 6, color: "#0f172a", fontSize: 12, fontWeight: 600, boxShadow: "0 4px 12px rgba(0,0,0,0.3)" } as const;
 const LEGEND_STYLE = { fontSize: 11, color: "#94a3b8" } as const;
 
-const STATUS_ORDER: CandidateStatus[] = ["applied", "phone_screening", "interviewing", "selected", "training", "hired", "rejected", "withdrawn", "cancelled"];
+const STATUS_ORDER: CandidateStatus[] = ["applied", "attempt", "phone_screening", "interviewing", "selected", "training", "hired", "rejected", "withdrawn", "cancelled"];
 const STATUS_LABEL: Record<CandidateStatus, string> = {
   applied: "Applied",
+  attempt: "Attempt",
   phone_screening: "Phone Screening",
   interviewing: "Interviewing",
   selected: "Selected",

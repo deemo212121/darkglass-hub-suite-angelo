@@ -119,6 +119,23 @@ export const STAFF_FORM_TIERS: { key: StaffFormTier; label: string; formTypes: S
 ];
 
 /**
+ * Every document type a Hiring candidate could ever have — every type
+ * EXCEPT the ones that only apply after someone is already an employee
+ * (a warning, a promotion, an action plan, a termination). Derived from
+ * SIGNABLE_DOCUMENT_REGISTRY (so a newly added document type is included
+ * by default, not silently missed) rather than retyping the ~26-item list
+ * by hand. Used by ReportHRDaily.tsx's Hiring tab to load only the
+ * document types it can actually show instead of every signable document
+ * company-wide (see getAllSignableDocuments) — that call alone used to
+ * pull every warning/promotion/action-plan/termination form for every
+ * employee's entire tenure, none of which Hiring ever renders.
+ */
+const EMPLOYEE_ONLY_DOCUMENT_TYPES = new Set<SignableDocumentType>(["warning_form", "promotion_form", "action_plan_form", "termination_form"]);
+export const HIRING_CANDIDATE_DOCUMENT_TYPES: SignableDocumentType[] = (
+  Object.keys(SIGNABLE_DOCUMENT_REGISTRY) as SignableDocumentType[]
+).filter((t) => !EMPLOYEE_ONLY_DOCUMENT_TYPES.has(t));
+
+/**
  * Of TECHNICIAN_FORM_TYPES, the subset that needs an HR/employer
  * countersignature AFTER the employee signs (ReportHRDaily.tsx's various
  * "*EmployerDialog"/"*ManagerDialog" review flows, each ending in a

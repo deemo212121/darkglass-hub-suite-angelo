@@ -4,7 +4,6 @@
  */
 
 import { supabase } from "./client";
-import { applyGraceToCheckIn, roundCheckOutToSchedule } from "@/lib/attendanceGrace";
 import type { PtoType } from "./pto";
 
 // The flat UI time-entry shape used by the timecard page.
@@ -342,6 +341,16 @@ export function splitRegularOvertimeWeekly(
       cumulativeRaw += rawHours;
       regular = Math.max(0, Math.min(cumulativeRaw, weekDuty) - before);
       overtime = rawHours - regular;
+      // Snap near-zero noise from the cumulative running total to exactly 0.
+      // `regular`/`overtime` here come from repeatedly adding hours derived
+      // from integer-second time arithmetic (hoursBetween: seconds / 3600) —
+      // binary floating point can't represent most of those fractions
+      // exactly, so a day with truly zero real overtime can come out as
+      // something like 0.0000000001 instead of a clean 0. Left unsnapped,
+      // that's still "> 0" to every downstream consumer (display thresholds
+      // included), which used to misclassify a day with no real overtime as
+      // having some.
+      if (Math.abs(overtime) < 1 / 3600) overtime = 0;
     } else {
       regular = Math.min(rawHours, fallbackRegularHoursPerDay);
       overtime = Math.max(0, rawHours - fallbackRegularHoursPerDay);
@@ -616,6 +625,37 @@ export function calcWorkedHours(entry: UITimeEntry): number {
   return Math.max(0, hrs);
 }
 
+/** Flat paid-meal credit for a meal-always-paid role — see computeMealTimeCredit. */
+export const MEAL_ALWAYS_PAID_DEFAULT_HOURS = 0.5;
+
+/**
+ * Extra PAID hours for employees in meal-always-paid roles (roleLabels.ts's
+ * isMealAlwaysPaidRole) — plain Technicians and the field-tech management
+ * tiers (Branch/Senior Branch Manager, Tech Manager, Technical
+ * Director/Assistant Director) aren't required to punch Meal In/Out, but
+ * their meal break is still paid time.
+ *
+ * A flat MEAL_ALWAYS_PAID_DEFAULT_HOURS whenever the day is meal-eligible,
+ * regardless of whether Meal In/Out was punched or how long that punch was
+ * — a policy of "30 minutes paid meal, period."
+ *
+ * Callers add this directly into the day's raw hours BEFORE running the
+ * regular/overtime weekly split (splitRegularOvertimeWeekly) — not folded
+ * on afterward — so it's treated exactly like real worked time: it fills
+ * whatever room is left in the week's regular quota, and only spills into
+ * overtime once that quota (real hours + this credit, combined) is used up.
+ * There is deliberately no separate "meal" bucket in the split output — the
+ * result is just regular/overtime, same as everywhere else in this file.
+ */
+export function computeMealTimeCredit(
+  entry: Pick<UITimeEntry, "mealStart" | "mealEnd">,
+  mealEligible: boolean,
+  mealAlwaysPaid: boolean
+): number {
+  if (!mealEligible || !mealAlwaysPaid) return 0;
+  return MEAL_ALWAYS_PAID_DEFAULT_HOURS;
+}
+
 /** Public helper for components that need the raw HH:MM diff. */
 export function hoursDiff(t1: string, t2: string): number {
   return hoursBetween(t1, t2);
@@ -773,24 +813,21 @@ export async function getAttendanceForRange(
     else if (!entry.checkIn && entry.checkOut) status = "missing-in";
     else if (entry.checkIn && entry.checkOut && mealEligible && !(entry.mealStart && entry.mealEnd)) status = "missing-meal";
     if (status !== "present" && pendingCorrectionDates.has(key)) status = "pending-correction";
-    // hoursWorked reflects PAID hours (grace-adjusted check-in/rounded
-    // check-out, when opted in via graceMinutes being explicitly passed —
-    // even 0, e.g. Technicians, still gets the clock-precision rounding) —
-    // clockIn/clockOut below stay the literal punch for display.
-    const graceOptedIn = scheduled.graceMinutes !== undefined;
-    const paidCheckIn = graceOptedIn && scheduled.requiredCheckIn
-      ? applyGraceToCheckIn(entry.checkIn, scheduled.requiredCheckIn, scheduled.graceMinutes ?? 0)
-      : entry.checkIn;
-    const paidCheckOut = graceOptedIn && scheduled.requiredCheckOut
-      ? roundCheckOutToSchedule(entry.checkOut, scheduled.requiredCheckOut)
-      : entry.checkOut;
+    // hoursWorked reflects the LITERAL punch — grace (payGraceMinutesFor/
+    // applyGraceToCheckIn/roundCheckOutToSchedule, attendanceGrace.ts) is a
+    // warning-suppression window only ("don't flag a missing/late clock-in
+    // until they're N minutes past schedule" — attendanceAlerts.ts,
+    // AttendanceMonitoringPage.tsx), not a pay policy. It must never inflate
+    // worked hours/pay by pulling a late check-in back to the scheduled
+    // time — an employee who clocks in late is paid for the hours they
+    // actually worked, same as any other day.
     rows.push({
       date: key,
       clockIn: entry.checkIn,
       clockOut: entry.checkOut,
       mealStart: entry.mealStart,
       mealEnd: entry.mealEnd,
-      hoursWorked: calcWorkedHours({ ...entry, checkIn: paidCheckIn, checkOut: paidCheckOut }),
+      hoursWorked: calcWorkedHours(entry),
       status,
     });
   }
