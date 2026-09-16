@@ -183,6 +183,15 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
   const canEditTracker = canManage || [role, ...extraRoles].some((r) => normalizeRole(r) === "HR");
 
   const [view, setView] = useState<"calendar" | "tracker" | "availability">("calendar");
+  // Which Check-Out Alert tile (0-7 days left) the Tracker is currently
+  // filtered to, if any — click a tile to narrow the table to just those
+  // technicians, click it again (or the "Clear" pill) to go back to
+  // everyone. Reset when leaving the Tracker tab so it doesn't stay
+  // silently applied if you come back to it later.
+  const [checkoutAlertFilter, setCheckoutAlertFilter] = useState<number | null>(null);
+  useEffect(() => {
+    if (view !== "tracker") setCheckoutAlertFilter(null);
+  }, [view]);
   const [availabilitySearch, setAvailabilitySearch] = useState("");
   const [availabilityStatusFilter, setAvailabilityStatusFilter] = useState<"all" | "available" | "busy" | "needsForm">("all");
   const [monthValue, setMonthValue] = useState(todayMonthValue());
@@ -363,17 +372,26 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
   // number of days left (0 = ending today). A trip that hasn't started yet
   // doesn't count even if its End Date happens to fall in this window —
   // this is about people already out who are coming up on their return.
+  // Returns null for a trip that isn't currently "Open" at all.
+  const daysLeftIfOpen = (t: FlashTechTrip, today: string): number | null => {
+    if (t.startDate > today || t.endDate < today) return null;
+    return Math.round((new Date(t.endDate + "T00:00:00").getTime() - new Date(today + "T00:00:00").getTime()) / 86400000);
+  };
   const checkoutAlertCounts = useMemo(() => {
     const today = todayIso();
     const counts = new Map<number, number>();
     for (let d = 0; d <= 7; d++) counts.set(d, 0);
     for (const t of sortedTrips) {
-      if (t.startDate > today || t.endDate < today) continue; // not currently "Open"
-      const daysLeft = Math.round((new Date(t.endDate + "T00:00:00").getTime() - new Date(today + "T00:00:00").getTime()) / 86400000);
-      if (daysLeft >= 0 && daysLeft <= 7) counts.set(daysLeft, (counts.get(daysLeft) ?? 0) + 1);
+      const daysLeft = daysLeftIfOpen(t, today);
+      if (daysLeft !== null && daysLeft >= 0 && daysLeft <= 7) counts.set(daysLeft, (counts.get(daysLeft) ?? 0) + 1);
     }
     return counts;
   }, [sortedTrips]);
+  const trackerTrips = useMemo(() => {
+    if (checkoutAlertFilter === null) return sortedTrips;
+    const today = todayIso();
+    return sortedTrips.filter((t) => daysLeftIfOpen(t, today) === checkoutAlertFilter);
+  }, [sortedTrips, checkoutAlertFilter]);
   const tripColorIndex = useMemo(() => new Map(sortedTrips.map((t, i) => [t.id, i % CHIP_COLORS.length])), [sortedTrips]);
   const calendarTrips = useMemo(
     () => (carRentalOnly ? sortedTrips.filter((t) => t.carRentalNeeded) : sortedTrips),
@@ -802,20 +820,35 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
         {view === "tracker" && (
           <>
             <div className="mb-3">
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-1.5">Check-Out Alert — Days Until Return</p>
-              <div className="grid grid-cols-4 sm:grid-cols-8 gap-2">
-                {[7, 6, 5, 4, 3, 2, 1, 0].map((d) => (
-                  <div key={d} className="panel p-3 text-center">
-                    <p className={`text-xl font-bold ${d <= 1 ? "text-red-400" : d <= 3 ? "text-amber-300" : "text-blue-300"}`}>
-                      {checkoutAlertCounts.get(d) ?? 0}
-                    </p>
-                    <p className="text-[10px] text-muted-foreground uppercase tracking-wide mt-0.5">{d === 0 ? "Today" : `${d} Day${d === 1 ? "" : "s"}`}</p>
-                  </div>
-                ))}
+              <div className="flex items-center gap-2 mb-1.5">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Check-Out Alert — Days Until Return</p>
+                {checkoutAlertFilter !== null && (
+                  <button type="button" onClick={() => setCheckoutAlertFilter(null)} className="text-[10px] text-blue-400 hover:text-blue-300">
+                    Clear filter
+                  </button>
+                )}
+              </div>
+              <div className="grid grid-cols-4 sm:grid-cols-8 gap-1.5">
+                {[7, 6, 5, 4, 3, 2, 1, 0].map((d) => {
+                  const active = checkoutAlertFilter === d;
+                  return (
+                    <button
+                      key={d}
+                      type="button"
+                      onClick={() => setCheckoutAlertFilter((cur) => (cur === d ? null : d))}
+                      className={`panel p-1.5 text-center transition-colors hover:bg-white/5 ${active ? "ring-1 ring-blue-400 bg-blue-500/10" : ""}`}
+                    >
+                      <p className={`text-sm font-bold ${d <= 1 ? "text-red-400" : d <= 3 ? "text-amber-300" : "text-blue-300"}`}>
+                        {checkoutAlertCounts.get(d) ?? 0}
+                      </p>
+                      <p className="text-[9px] text-muted-foreground uppercase tracking-wide">{d === 0 ? "Today" : `${d} Day${d === 1 ? "" : "s"}`}</p>
+                    </button>
+                  );
+                })}
               </div>
             </div>
             <FlashTechTrackerTable
-            trips={sortedTrips}
+            trips={trackerTrips}
             users={users}
             loading={loading}
             canEdit={canEditTracker}
