@@ -224,17 +224,7 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
   };
   const flashTechAlertEmailDirty = [...flashTechAlertEmailChips, flashTechAlertEmailInput.trim()].filter(Boolean).join(",") !== flashTechAlertEmail;
   const [savingFlashTechAlertEmail, setSavingFlashTechAlertEmail] = useState(false);
-  const [testingFlashTechAlerts, setTestingFlashTechAlerts] = useState(false);
-  // Testing-only — pretends "today" is this date so you can prove a trip
-  // scheduled to start in the future would actually trigger a real email,
-  // without waiting for real midnight. Forces the server into simulate
-  // mode (sends real mail, writes nothing) — see flashTechOpenAlerts.ts.
-  const [simulateAlertDate, setSimulateAlertDate] = useState("");
   const [flashTechAlertNotice, setFlashTechAlertNotice] = useState<string | null>(null);
-  // Per-trip reasons from the last "Run check now"/simulated test — so "0
-  // sent" isn't a dead end, you can see exactly why each checked trip did
-  // or didn't get an email (e.g. a manual Status override blocking it).
-  const [flashTechAlertDetails, setFlashTechAlertDetails] = useState<Array<{ tripId: string; technicianName: string; outcome: string }>>([]);
   useEffect(() => {
     loadFlashTechGmailStatus();
     getFlashTechOpenAlertEmail()
@@ -303,38 +293,6 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
       setSavingFlashTechAlertEmail(false);
     }
   };
-  // Manual trigger for local testing — the hourly cron only ever fires in a
-  // deployed Worker (vite dev runs no Workers runtime at all), so this is
-  // the only way to exercise the alert check without deploying and waiting
-  // out the clock. A REAL run, not a sandboxed preview.
-  const handleTestFlashTechAlertsNow = async () => {
-    setTestingFlashTechAlerts(true);
-    setFlashTechAlertNotice(null);
-    setFlashTechAlertDetails([]);
-    try {
-      const idToken = await firebaseAuth?.currentUser?.getIdToken(false);
-      if (!idToken) { setFlashTechAlertNotice("You need to be logged in."); return; }
-      const res = await fetch("/api/run-flash-tech-alerts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ idToken, asOfIso: simulateAlertDate || undefined }),
-      });
-      const body = (await res.json().catch(() => ({}))) as {
-        ok?: boolean;
-        error?: string;
-        result?: { emailsSent: number; tripsChecked: number; details?: Array<{ tripId: string; technicianName: string; outcome: string }> };
-      };
-      if (!res.ok || !body.ok) throw new Error(body.error || "Run failed.");
-      const modeNote = simulateAlertDate ? ` (simulated as of ${simulateAlertDate} — no trip data was changed)` : "";
-      setFlashTechAlertNotice(`Checked ${body.result?.tripsChecked ?? 0} trip(s), sent ${body.result?.emailsSent ?? 0} alert(s)${modeNote}.`);
-      setFlashTechAlertDetails(body.result?.details ?? []);
-    } catch (err) {
-      setFlashTechAlertNotice(err instanceof Error ? err.message : "Run failed.");
-    } finally {
-      setTestingFlashTechAlerts(false);
-    }
-  };
-
   const [view, setView] = useState<"calendar" | "tracker" | "availability">("calendar");
   // Which Check-Out Alert tile (0-7 days left) the Tracker is currently
   // filtered to, if any — click a tile to narrow the table to just those
@@ -975,40 +933,11 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
                 >
                   {savingFlashTechAlertEmail ? "Saving…" : "Save"}
                 </button>
-                {flashTechGmailStatus?.connected && flashTechAlertEmail && (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => void handleTestFlashTechAlertsNow()}
-                      disabled={testingFlashTechAlerts}
-                      title={simulateAlertDate ? `Pretends today is ${simulateAlertDate} and sends real test emails — doesn't touch real trip data` : "Runs the real hourly check right now — sends real emails for any trip that's actually due"}
-                      className="text-slate-400 hover:text-slate-200 text-xs underline disabled:opacity-40"
-                    >
-                      {testingFlashTechAlerts ? "Checking…" : simulateAlertDate ? "Run simulated test" : "Run check now"}
-                    </button>
-                    <input
-                      type="date"
-                      value={simulateAlertDate}
-                      onChange={(e) => setSimulateAlertDate(e.target.value)}
-                      title="Optional — simulate a future date to test without waiting for real midnight"
-                      className="glass-input text-xs py-1 px-1.5 w-36"
-                    />
-                  </>
-                )}
               </div>
             )}
 
             {flashTechAlertNotice && <span className="text-xs text-slate-400">{flashTechAlertNotice}</span>}
           </div>
-          {flashTechAlertDetails.length > 0 && (
-            <div className="mt-2 space-y-0.5 border-t border-white/10 pt-2">
-              {flashTechAlertDetails.map((d) => (
-                <p key={d.tripId} className="text-[11px] text-slate-500">
-                  <span className="text-slate-300 font-medium">{d.technicianName}:</span> {d.outcome}
-                </p>
-              ))}
-            </div>
-          )}
         </div>
 
         {view === "calendar" && (
