@@ -265,6 +265,7 @@ const HR_STATUS_TO_PTO_TYPE: Partial<Record<string, PtoType>> = {
 
 const CANDIDATE_STATUS_LABEL: Record<CandidateStatus, string> = {
   applied: "Applied",
+  attempt: "Attempt",
   phone_screening: "Phone Screening",
   interviewing: "Interviewing",
   selected: "Selected",
@@ -276,6 +277,7 @@ const CANDIDATE_STATUS_LABEL: Record<CandidateStatus, string> = {
 };
 const CANDIDATE_STATUS_COLOR: Record<CandidateStatus, string> = {
   applied: "bg-blue-500/20 text-blue-300",
+  attempt: "bg-orange-500/20 text-orange-300",
   phone_screening: "bg-indigo-500/20 text-indigo-300",
   interviewing: "bg-yellow-500/20 text-yellow-300",
   selected: "bg-purple-500/20 text-purple-300",
@@ -13057,8 +13059,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // silently loses its label; they just can't be picked again going
   // forward.
   const candidateStatusOptions = (isHrOrAdmin
-    ? ["applied", "interviewing", "training", "hired", "withdrawn", "cancelled"]
-    : ["interviewing", "training", "withdrawn", "cancelled"]) as CandidateStatus[];
+    ? ["applied", "attempt", "interviewing", "training", "hired", "withdrawn", "cancelled"]
+    : ["attempt", "interviewing", "training", "withdrawn", "cancelled"]) as CandidateStatus[];
 
   // ── Employee status handlers (now real — persists to employee_info + is_active) ──
   const handleUpdateEmployeeStatus = (id: string, newStatus: EmploymentStatus) => {

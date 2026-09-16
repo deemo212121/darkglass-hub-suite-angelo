@@ -18,7 +18,7 @@ import { createNotification } from "./notifications";
 // 0048_hr_hiring_reports.sql (updated by 0221) for where that side effect
 // actually happens (atomically, alongside the status history log) — never
 // via a plain `update hr_candidates set status=...`.
-export type CandidateStatus = "applied" | "phone_screening" | "interviewing" | "selected" | "training" | "hired" | "rejected" | "withdrawn" | "cancelled";
+export type CandidateStatus = "applied" | "attempt" | "phone_screening" | "interviewing" | "selected" | "training" | "hired" | "rejected" | "withdrawn" | "cancelled";
 
 export interface Candidate {
   id: string;

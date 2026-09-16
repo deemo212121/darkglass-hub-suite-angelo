@@ -45,6 +45,7 @@ import { getCompanyFlashTechTrips, FLASH_TECH_STATUSES, type FlashTechTrip } fro
 
 const CANDIDATE_STATUS_LABEL: Record<CandidateStatus, string> = {
   applied: "Applied",
+  attempt: "Attempt",
   phone_screening: "Phone Screening",
   interviewing: "Interviewing",
   selected: "Selected",
@@ -70,6 +71,7 @@ const CHART_OTHER_COLOR = "#6b7280";
 // selected range instead — documented at that call site.
 const CANDIDATE_STATUS_CHART_COLOR: Record<CandidateStatus, string> = {
   applied: CHART_PALETTE[0],
+  attempt: CHART_OTHER_COLOR,
   phone_screening: CHART_PALETTE[1],
   interviewing: CHART_PALETTE[2],
   selected: CHART_PALETTE[3],
