@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect, useRef, Fragment } from "react";
 import { createPortal } from "react-dom";
 import { Link, useSearch, useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
-import { ChevronLeft, ChevronDown, ChevronUp, ChevronRight, Plus, Trash2, AlertTriangle, CheckCircle, XCircle, Paperclip, Users, Clock, UserCheck, UserX, UserMinus, Search, Bell, Download, Forward, History, FileText, ClipboardList, Landmark, GripVertical, FileCheck, Link2, Copy, Calendar, Check, Pencil, Filter, Columns3, Mail, PenLine, X, ExternalLink, Loader2, Send } from "lucide-react";
+import { ChevronLeft, ChevronDown, ChevronUp, ChevronRight, Plus, Trash2, AlertTriangle, CheckCircle, XCircle, Paperclip, Users, Clock, UserCheck, UserX, UserMinus, Search, Bell, Download, Forward, History, FileText, ClipboardList, Landmark, GripVertical, FileCheck, Link2, Copy, Calendar, Check, Pencil, Filter, Columns3, Mail, PenLine, X, ExternalLink, Loader2, Send, GraduationCap, LogOut } from "lucide-react";
 import { useSignaturePad } from "@/hooks/useSignaturePad";
 import { SignaturePadControls } from "@/components/SignaturePad";
 import { StickyHorizontalScrollbar } from "@/components/StickyHorizontalScrollbar";
@@ -47,6 +47,7 @@ import {
   getEomHiringReport,
   setStaffingTarget,
   logCvForward,
+  notifyOnCandidateHired,
   type Candidate,
   type CandidateStatus,
   type EodHiringRow,
@@ -78,7 +79,7 @@ import { getTechnicianIdDocumentUrl } from "@/lib/supabase/technicianIdDocuments
 import {
   createSignableDocument,
   getSignableDocuments,
-  getAllSignableDocuments,
+  getSignableDocumentsByTypes,
   confirmSignableDocument,
   cancelSignableDocument,
   deleteSignableDocument,
@@ -97,6 +98,7 @@ import {
   SIGNABLE_DOCUMENT_REGISTRY,
   isNewAutomationDoc,
   STAFF_FORM_TIERS,
+  HIRING_CANDIDATE_DOCUMENT_TYPES,
   getDocumentReviewStatus,
   pickAuthoritativeDocument,
   DOCUMENT_TYPES_REQUIRING_EMPLOYER_SIGNATURE,
@@ -156,6 +158,7 @@ import { fillSubstanceScreeningPdf } from "@/lib/substanceScreeningPdfFill";
 import { logActivity, getActivityLog, activityActionLabel, type HrActivityLogEntry } from "@/lib/supabase/hrActivityLog";
 import { HrActivityLogPanel } from "@/components/HrActivityLogPage";
 import { InterviewCalendarTab, type InterviewCalendarCandidate } from "@/components/InterviewCalendarTab";
+import { AttachmentPreviewModal } from "@/components/AttachmentPreviewModal";
 import { subscribeTableChanges } from "@/lib/supabase/realtime";
 import { getCompanyPtoRequests, ptoYearWindow, ptoDaysUsed, sickYearWindow, sickDaysUsed, reviewPtoStage, canReviewPtoStage, type PtoRequestRow, type PtoType, type PtoStage } from "@/lib/supabase/pto";
 import { getAttendanceNotes, type AttendanceNoteRow } from "@/lib/supabase/attendanceNotes";
@@ -168,6 +171,7 @@ import { notifyHrRoleUsers } from "@/lib/supabase/hrRoleNotify";
 import { getCompanyCoeDocuments, addCoeDocument, type CoeDocument } from "@/lib/supabase/coeDocuments";
 import { getJotformSubmissions, getDeletedJotformSubmissions, updateJotformSubmissionStatus, softDeleteJotformSubmission, restoreJotformSubmission, type JotformSubmission, type JotformSubmissionStatus } from "@/lib/supabase/jotformSubmissions";
 import { getCustomFormSubmissions } from "@/lib/supabase/customForms";
+import { FLASH_TECH_TIER_LEVELS } from "@/lib/supabase/flashTechTrips";
 import { CustomFormsPanel } from "./CustomFormsPanel";
 
 // Formats a <input type="date"> value ("YYYY-MM-DD") as a long-form date
@@ -261,6 +265,7 @@ const HR_STATUS_TO_PTO_TYPE: Partial<Record<string, PtoType>> = {
 
 const CANDIDATE_STATUS_LABEL: Record<CandidateStatus, string> = {
   applied: "Applied",
+  attempt: "Attempt",
   phone_screening: "Phone Screening",
   interviewing: "Interviewing",
   selected: "Selected",
@@ -272,6 +277,7 @@ const CANDIDATE_STATUS_LABEL: Record<CandidateStatus, string> = {
 };
 const CANDIDATE_STATUS_COLOR: Record<CandidateStatus, string> = {
   applied: "bg-blue-500/20 text-blue-300",
+  attempt: "bg-orange-500/20 text-orange-300",
   phone_screening: "bg-indigo-500/20 text-indigo-300",
   interviewing: "bg-yellow-500/20 text-yellow-300",
   selected: "bg-purple-500/20 text-purple-300",
@@ -309,6 +315,7 @@ const STATUS_REQUIRES_DATE: Partial<Record<CandidateStatus, string>> = {
   interviewing: "Interview date",
   training: "Training start date",
   withdrawn: "Withdraw date",
+  hired: "Start date",
 };
 
 type EmploymentStatus = "active" | "inactive" | "terminated" | "resigned";
@@ -331,6 +338,8 @@ interface Employee {
   status: EmploymentStatus;
   /** Trainee vs Regular — a separate classification from `status` (Account Status) above. See migration 0152. */
   employmentType: "trainee" | "regular";
+  /** profiles.tier_level (migration 0162) — same field Staff List's own "Tier Level" tab edits; Current Technicians' own column here just narrows the dropdown to Tier 1/2/3. */
+  tierLevel: string | null;
   onboardingDocs: Record<string, boolean>;
   // Same off-day/required-shift fields Attendance Monitoring already uses
   // (profiles.off_days/required_check_in/required_check_out) — carried
@@ -551,6 +560,38 @@ function loadHiringVisibleColumns(): Record<string, boolean> {
   }
 }
 
+// Optional "instant preview while refreshing" cache for the Hiring tab's
+// candidate list — same sessionStorage pattern as TicketList.tsx's own
+// ticket cache: always still re-fetches for real, so nothing here can show
+// stale data permanently, it just paints the table immediately on a repeat
+// visit this session instead of a blank loading state. Fully guarded — a
+// cache failure silently falls back to the normal load.
+const CANDIDATES_CACHE_KEY = "ahs:hrdashboard:candidates-cache:v1";
+const CANDIDATES_CACHE_MAX_AGE_MS = 5 * 60 * 1000;
+const CANDIDATES_CACHE_MAX_BYTES = 4 * 1024 * 1024;
+
+function readCachedCandidates(): Candidate[] | null {
+  try {
+    const raw = sessionStorage.getItem(CANDIDATES_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { savedAt: number; candidates: Candidate[] };
+    if (!parsed?.candidates || Date.now() - parsed.savedAt > CANDIDATES_CACHE_MAX_AGE_MS) return null;
+    return parsed.candidates;
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedCandidates(candidates: Candidate[]): void {
+  try {
+    const payload = JSON.stringify({ savedAt: Date.now(), candidates });
+    if (payload.length > CANDIDATES_CACHE_MAX_BYTES) return;
+    sessionStorage.setItem(CANDIDATES_CACHE_KEY, payload);
+  } catch {
+    /* storage full/unavailable/private mode — caching is a pure bonus */
+  }
+}
+
 /**
  * Sentinel for the Master List "Trainee" tab — cross-cutting (a trainee can
  * be in any department), so it's rendered as its own button after the
@@ -558,6 +599,12 @@ function loadHiringVisibleColumns(): Record<string, boolean> {
  * matchesMasterListTab, which are department-only.
  */
 const MASTER_LIST_TRAINEE_TAB = "__trainee__";
+
+/** Current Technicians' own Tier Level dropdown options — writes
+ *  profiles.tier_level. Same list Flash Tech's own Tier Level field uses
+ *  (FLASH_TECH_TIER_LEVELS, flashTechTrips.ts is the single source of
+ *  truth) so the two stay in sync instead of drifting apart. */
+const CURRENT_TECH_TIER_LEVEL_OPTIONS = FLASH_TECH_TIER_LEVELS;
 
 function canonicalDepartmentGroup(raw: string): string {
   const trimmed = raw.trim();
@@ -1015,7 +1062,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // (initialHrSearchRef) — after that, this component's own state is the
   // source of truth and pushes into the URL, not the other way around. ──
   const navigate = useNavigate();
-  const hrSearchParams = (useSearch({ strict: false }) as { tab?: string; submissionId?: string; profileId?: string; docId?: string }) ?? {};
+  const hrSearchParams = (useSearch({ strict: false }) as { tab?: string; submissionId?: string; profileId?: string; docId?: string; viewCvCandidateId?: string }) ?? {};
   const initialHrSearchRef = useRef(hrSearchParams);
   const VALID_HR_TABS = ["hiring", "warnings", "masterList", "leaders", "jotform", "jotformDocuments", "customForms", "onboarding", "hiringReports", "report", "coe", "warningForm", "promotionForm", "actionPlanForm", "terminationForm", "employeeRequestManager", "w8ben", "i9", "newI9", "wageAck", "carIqAgreement", "vehicleAgreement", "vehicleUseAgreement", "employeeConfidentiality", "mealRestBreak", "ptoAck", "partsResponsibility", "mileageFuel", "locationConsent", "damage", "contractorData", "contractorDataUs", "directDeposit", "substanceScreening", "flashTechnicianTravel", "combineForms", "newCombineForms", "employerQueue"] as const;
   useEffect(() => {
@@ -1023,6 +1070,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     if (tab && (VALID_HR_TABS as readonly string[]).includes(tab)) setActiveTab(tab as typeof activeTab);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const [deepLinkCvPreview, setDeepLinkCvPreview] = useState<{ url: string; title: string } | null>(null);
 
   // ── Connect Gmail (Hiring panel) — connect-only for now, ahead of an
   // actual candidate-emailing feature ("we need to send email at some
@@ -1533,6 +1582,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           terminationReason: info.employeeNote || undefined,
           status: employmentStatus,
           employmentType: p.employment_type || "regular",
+          tierLevel: p.tier_level ?? null,
           onboardingDocs: info.onboardingDocs || {},
           offDays: p.off_days ?? [],
           requiredCheckIn: p.required_check_in || "",
@@ -1717,6 +1767,22 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // ── Hiring / Candidates (live) ──
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [candidatesLoading, setCandidatesLoading] = useState(true);
+
+  // ── Deep-link from a "Candidate Hired" notification (see
+  // notifyOnCandidateHired's linkTo) — auto-opens that candidate's CV in a
+  // preview modal once the candidate list has loaded. Not handleViewCv's
+  // usual window.open: a notification click doesn't carry the "direct user
+  // gesture" a real click does, so a popup would just get blocked. ──
+  useEffect(() => {
+    const candidateId = initialHrSearchRef.current.viewCvCandidateId;
+    if (!candidateId || candidates.length === 0) return;
+    initialHrSearchRef.current = { ...initialHrSearchRef.current, viewCvCandidateId: undefined };
+    const candidate = candidates.find((c) => c.id === candidateId);
+    if (!candidate?.cvPath) return;
+    getCandidateCvUrl(candidate.cvPath)
+      .then((url) => setDeepLinkCvPreview({ url, title: `${candidate.name} — CV` }))
+      .catch((err) => setError(err instanceof Error ? err.message : "Failed to open CV."));
+  }, [candidates]);
   const [showAddCandidate, setShowAddCandidate] = useState(false);
   const [newCandidate, setNewCandidate] = useState({ name: "", phone: "", email: "", position: "", branch: "", department: "", branchManagerId: "", assignedInterviewerId: "", source: "", sourceOther: "" });
   const [cvFile, setCvFile] = useState<File | null>(null);
@@ -1744,8 +1810,18 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // "has" = ✓ (checked/verified), "none" = ✗ (not verified) — see
   // documentVerified's own manual check/X toggle in the table body.
   const [hiringDocumentVerifiedFilter, setHiringDocumentVerifiedFilter] = useState<HiringTriState>("all");
-  const [hiringScreeningDateFilter, setHiringScreeningDateFilter] = useState<HiringTriState>("all");
+  const [hiringScreeningDateFilter, setHiringScreeningDateFilter] = useState<Set<string>>(new Set());
   const [hiringInterviewDateFilter, setHiringInterviewDateFilter] = useState<HiringTriState>("all");
+  // Screening Date column sort — null (default) leaves candidates in their
+  // natural load order; clicking the header cycles null -> desc (soonest/
+  // most-recent screening date first) -> asc -> null again. Undated
+  // candidates always sort to the bottom regardless of direction, so
+  // toggling direction never buries every dated candidate under a wall of
+  // blanks.
+  const [hiringScreeningDateSortDir, setHiringScreeningDateSortDir] = useState<"asc" | "desc" | null>(null);
+  const cycleHiringScreeningDateSort = () => {
+    setHiringScreeningDateSortDir((cur) => (cur === null ? "desc" : cur === "desc" ? "asc" : null));
+  };
 
   // Column visibility (persisted) — Candidate/Actions always show; the rest
   // toggle from the "Columns" button in the toolbar.
@@ -1808,11 +1884,25 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         getLatestFieldEdits().then(setFieldEditsByKey),
       ]);
       setCandidates(rows);
+      writeCachedCandidates(rows);
     } catch (err) {
       console.error("Failed to load candidates:", err);
     } finally {
       setCandidatesLoading(false);
     }
+  };
+  // Used only by the realtime subscription below — a coworker editing
+  // candidates rapidly (a real pattern during active hiring) used to refire
+  // this full reload (4 parallel queries) on every single row change with no
+  // coalescing. Bundling a burst into one reload keeps the exact same
+  // "reload the whole list, stay correct across joined columns" behavior
+  // (see that effect's own comment), just not once per change. Direct calls
+  // after the user's OWN edits (add/status-change/etc., elsewhere in this
+  // file) stay un-debounced so your own action still reflects instantly.
+  const loadCandidatesDebounceRef = useRef<number | undefined>(undefined);
+  const loadCandidatesDebounced = () => {
+    if (loadCandidatesDebounceRef.current) window.clearTimeout(loadCandidatesDebounceRef.current);
+    loadCandidatesDebounceRef.current = window.setTimeout(() => { void loadCandidates(); }, 800);
   };
 
   // Forms column — every signed/pending document company-wide (one bulk
@@ -1824,7 +1914,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [requiredFormsByCandidateId, setRequiredFormsByCandidateId] = useState<Map<string, SignableDocumentType[]>>(new Map());
   const loadCandidateForms = async () => {
     try {
-      const [docs, required] = await Promise.all([getAllSignableDocuments(), getCandidateRequiredFormTypes()]);
+      const [docs, required] = await Promise.all([getSignableDocumentsByTypes(HIRING_CANDIDATE_DOCUMENT_TYPES), getCandidateRequiredFormTypes()]);
       setAllSignableDocs(docs);
       setRequiredFormsByCandidateId(required);
     } catch (err) {
@@ -1874,15 +1964,34 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
   useEffect(() => {
     if (!ready) return;
+    // Master List + Hiring's own data first — whichever tab you actually
+    // landed on, these are the ones its first paint is waiting on.
     loadEmployees();
+    // Paint the Hiring table instantly from a recent cached copy (if any)
+    // while loadCandidates() below still always runs the real fetch — this
+    // never skips the network call, it just avoids a blank loading state on
+    // a repeat visit this session.
+    const cachedCandidates = readCachedCandidates();
+    if (cachedCandidates) {
+      setCandidates(cachedCandidates);
+      setCandidatesLoading(false);
+    }
     loadCandidates();
     loadCandidateForms();
-    loadNotes();
-    loadPtoRequests();
-    loadHrBalanceNotes();
-    loadTodayTimecardEntries();
-    loadRequestManagerData();
     if (uid) void getMyProfileId(uid).then(setMyProfileId);
+    // Everything else (Warnings, PTO, Attendance, Manager Requests) still
+    // loads automatically — just a beat later, so it isn't competing with
+    // the above for the same initial network/render burst on whichever tab
+    // you're actually looking at. Nothing here is skipped or gated by tab;
+    // this is scheduling only, not a "don't load it" change.
+    const deferredId = window.setTimeout(() => {
+      loadNotes();
+      loadPtoRequests();
+      loadHrBalanceNotes();
+      loadTodayTimecardEntries();
+      loadRequestManagerData();
+    }, 300);
+    return () => window.clearTimeout(deferredId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, isHrOrAdmin]);
 
@@ -1893,7 +2002,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   useEffect(() => {
     if (!ready || !companyId) return;
     const unsubs = [
-      subscribeTableChanges("hr_candidates", () => void loadCandidates(), `company_id=eq.${companyId}`),
+      subscribeTableChanges("hr_candidates", loadCandidatesDebounced, `company_id=eq.${companyId}`),
       subscribeTableChanges("employee_conduct_notes", () => void loadNotes(), `company_id=eq.${companyId}`),
       subscribeTableChanges("hr_signable_documents", () => { void loadSentWarningForms(); void loadSentW8benForms(); void loadSentW4Forms(); void loadSentW9Forms(); void loadSentW4RForms(); void loadSentI9Forms(); void loadSentWageAckForms(); void loadSentCarIqAgreementForms(); void loadSentVehicleAgreementForms(); void loadSentEmployeeConfidentialityForms(); void loadSentMealRestBreakForms(); void loadSentPtoAckForms(); void loadSentPartsResponsibilityForms(); void loadSentMileageFuelForms(); void loadSentLocationConsentForms(); void loadSentSubstanceScreeningForms(); }, `company_id=eq.${companyId}`),
       subscribeTableChanges("pto_requests", () => void loadPtoRequests(), `company_id=eq.${companyId}`),
@@ -2426,22 +2535,29 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     [employees]
   );
 
+  // O(1) lookup instead of employees.find() — the 4 name-resolvers below
+  // are called per candidate row per render (several times each, e.g. once
+  // for display + once for the "prefill" popup), so a linear scan through
+  // every employee on every call was O(rows × employees) redone constantly,
+  // including on every keystroke that re-renders the table (search, etc.).
+  const employeesById = useMemo(() => new Map(employees.map((e) => [e.id, e])), [employees]);
+
   // Resolved display names — same fallback logic the table cells themselves
   // use (manual override, else auto-derived from branch for Branch Manager;
   // nothing auto-derived for Assigned Interviewer/Trainer) — shared with the
   // column filters below so "filter by X" always matches what's actually shown.
   const branchManagerNameForCandidate = (c: Candidate): string | null =>
-    (c.branchManagerId && employees.find((e) => e.id === c.branchManagerId)?.name) ||
+    (c.branchManagerId && employeesById.get(c.branchManagerId)?.name) ||
     (c.branch ? branchManagerByBranch.get(c.branch) : undefined) ||
     null;
   const assignedInterviewerNameForCandidate = (c: Candidate): string | null =>
-    (c.assignedInterviewerId && employees.find((e) => e.id === c.assignedInterviewerId)?.name) || null;
+    (c.assignedInterviewerId && employeesById.get(c.assignedInterviewerId)?.name) || null;
   // No longer auto-falls back to the Branch Manager — HR must explicitly
   // pick someone (per HR's explicit call to remove the "Auto" behavior).
   const assignedManagerNameForCandidate = (c: Candidate): string | null =>
-    (c.assignedManagerId && employees.find((e) => e.id === c.assignedManagerId)?.name) || null;
+    (c.assignedManagerId && employeesById.get(c.assignedManagerId)?.name) || null;
   const trainerNameForCandidate = (c: Candidate): string | null =>
-    (c.trainerId && employees.find((e) => e.id === c.trainerId)?.name) || null;
+    (c.trainerId && employeesById.get(c.trainerId)?.name) || null;
 
   // Forward Candidate's recipient prefill — ALWAYS both people shown in the
   // Assigned Interviewer column: the manager acting as interviewer (top
@@ -2497,6 +2613,17 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     () => Array.from(new Set(visibleCandidates.map((c) => CANDIDATE_STATUS_LABEL[c.status]))).sort(),
     [visibleCandidates]
   );
+  // Same "match by label" convention as hiringStatusOptions above — the
+  // checklist shows every actual Screening Date on file (chronological, not
+  // alphabetical, since "9/2/2026" would otherwise sort before "9/15/2026"),
+  // plus "No date" for candidates it hasn't been set for yet.
+  const hiringScreeningDateLabel = (c: Candidate): string =>
+    c.screeningDate ? new Date(c.screeningDate + "T00:00:00").toLocaleDateString() : "No date";
+  const hiringScreeningDateOptions = useMemo(() => {
+    const isoDates = Array.from(new Set(visibleCandidates.filter((c) => c.screeningDate).map((c) => c.screeningDate as string))).sort();
+    const labels = isoDates.map((iso) => new Date(iso + "T00:00:00").toLocaleDateString());
+    return visibleCandidates.some((c) => !c.screeningDate) ? [...labels, "No date"] : labels;
+  }, [visibleCandidates]);
 
   // Search/Status filters narrow what the table shows — KPI tiles and the
   // tab badge count stay based on visibleCandidates (unfiltered) above.
@@ -2548,11 +2675,20 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     if (hiringDocumentVerifiedFilter !== "all") {
       result = result.filter((c) => (hiringDocumentVerifiedFilter === "has" ? c.documentVerified : !c.documentVerified));
     }
-    if (hiringScreeningDateFilter !== "all") {
-      result = result.filter((c) => (hiringScreeningDateFilter === "has" ? !!c.screeningDate : !c.screeningDate));
+    if (hiringScreeningDateFilter.size > 0) {
+      result = result.filter((c) => hiringScreeningDateFilter.has(hiringScreeningDateLabel(c)));
     }
     if (hiringInterviewDateFilter !== "all") {
       result = result.filter((c) => (hiringInterviewDateFilter === "has" ? !!c.interviewDate : !c.interviewDate));
+    }
+    if (hiringScreeningDateSortDir) {
+      const dir = hiringScreeningDateSortDir === "asc" ? 1 : -1;
+      result = [...result].sort((a, b) => {
+        if (!a.screeningDate && !b.screeningDate) return 0;
+        if (!a.screeningDate) return 1; // undated always last, either direction
+        if (!b.screeningDate) return -1;
+        return dir * a.screeningDate.localeCompare(b.screeningDate);
+      });
     }
     return result;
   }, [
@@ -2571,14 +2707,36 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     hiringDocumentVerifiedFilter,
     hiringScreeningDateFilter,
     hiringInterviewDateFilter,
+    hiringScreeningDateSortDir,
     employeeEmailSet,
   ]);
 
+  // Rendering all 626+ candidate rows at once (no cap) was measured causing
+  // severe scroll jank — ~70k DOM nodes for one table, nearly 8s of blocked
+  // main-thread work in a 4s scroll — so this table gets the same paging
+  // Ticket List already proved out, just fixed at 50/page per HR's own call
+  // rather than a full page-size picker.
+  const HIRING_PAGE_SIZE = 50;
+  const [hiringCandidatesPage, setHiringCandidatesPage] = useState(1);
+  const hiringTotalPages = Math.max(1, Math.ceil(filteredCandidates.length / HIRING_PAGE_SIZE));
+  const hiringSafePage = Math.min(hiringCandidatesPage, hiringTotalPages);
+  const pagedCandidates = useMemo(
+    () => filteredCandidates.slice((hiringSafePage - 1) * HIRING_PAGE_SIZE, hiringSafePage * HIRING_PAGE_SIZE),
+    [filteredCandidates, hiringSafePage]
+  );
+
+  // Mirrors candidateStatusOptions exactly — every status a candidate can
+  // actually be set to going forward gets a tile; "rejected" doesn't (see
+  // candidateStatusOptions's own comment: no longer offered as a choice),
+  // so it's deliberately not counted here anymore.
   const kpi = useMemo(() => ({
     candidates: visibleCandidates.length,
+    applied: visibleCandidates.filter((c) => c.status === "applied").length,
     scheduled: visibleCandidates.filter((c) => c.status === "interviewing").length,
-    rejected: visibleCandidates.filter((c) => c.status === "rejected").length,
+    training: visibleCandidates.filter((c) => c.status === "training").length,
     hired: visibleCandidates.filter((c) => c.status === "hired").length,
+    withdrawn: visibleCandidates.filter((c) => c.status === "withdrawn").length,
+    cancelled: visibleCandidates.filter((c) => c.status === "cancelled").length,
     terminated: employees.filter((e) => e.status === "terminated").length,
     resigned: employees.filter((e) => e.status === "resigned").length,
   }), [visibleCandidates, employees]);
@@ -12542,7 +12700,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     if (requiredLabel) {
       const candidate = candidates.find((c) => c.id === id);
       const existingDate =
-        status === "interviewing" ? candidate?.interviewDate : status === "training" ? candidate?.trainingStartDate : candidate?.withdrawnDate;
+        status === "interviewing" ? candidate?.interviewDate : status === "training" ? candidate?.trainingStartDate : status === "hired" ? candidate?.startDate : candidate?.withdrawnDate;
       setStatusDateDialog({
         candidateId: id,
         candidateName: candidate?.name || "",
@@ -12570,6 +12728,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
   const handleConfirmStatusDate = async () => {
     if (!statusDateDialog) return;
+    // Captured before the update — only a genuine transition INTO Hired
+    // should notify (not re-saving the Start Date on someone already
+    // hired).
+    const wasAlreadyHired = candidates.find((c) => c.id === statusDateDialog.candidateId)?.status === "hired";
     try {
       await updateCandidateStatus(
         statusDateDialog.candidateId,
@@ -12579,6 +12741,19 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         statusDateDialog.status === "interviewing" ? statusDateDialog.time || undefined : undefined,
         statusDateDialog.status === "interviewing" ? statusDateDialog.timezone : undefined
       );
+      if (statusDateDialog.status === "hired" && !wasAlreadyHired && uid) {
+        const hiredCandidate = candidates.find((c) => c.id === statusDateDialog.candidateId);
+        getMyProfileId(uid)
+          .then((myProfileId) =>
+            notifyOnCandidateHired(
+              { id: statusDateDialog.candidateId, name: statusDateDialog.candidateName, branch: hiredCandidate?.branch ?? null, position: hiredCandidate?.position ?? null },
+              statusDateDialog.date,
+              myProfileId,
+              displayName || "HR"
+            )
+          )
+          .catch((err) => console.error("Failed to send hire notifications:", err));
+      }
       // Trainer isn't part of hr_update_candidate_status() (it's a plain
       // field, not a status-transition side effect like the dates above —
       // same convention as Branch Manager/Assigned Interviewer) but is
@@ -12970,8 +13145,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // silently loses its label; they just can't be picked again going
   // forward.
   const candidateStatusOptions = (isHrOrAdmin
-    ? ["applied", "interviewing", "training", "hired", "withdrawn", "cancelled"]
-    : ["interviewing", "training", "withdrawn", "cancelled"]) as CandidateStatus[];
+    ? ["applied", "attempt", "interviewing", "training", "hired", "withdrawn", "cancelled"]
+    : ["attempt", "interviewing", "training", "withdrawn", "cancelled"]) as CandidateStatus[];
 
   // ── Employee status handlers (now real — persists to employee_info + is_active) ──
   const handleUpdateEmployeeStatus = (id: string, newStatus: EmploymentStatus) => {
@@ -13015,6 +13190,23 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     } catch (err) {
       setEmployees((prev) => prev.map((e) => (e.id === id ? { ...e, employmentType: prevType } : e)));
       setError(err instanceof Error ? err.message : "Failed to update employment type.");
+    }
+  };
+
+  // Current Technicians' own Tier Level column — writes the same
+  // profiles.tier_level Staff List's own "Tier Level" tab already edits
+  // (StaffListPage.tsx), so the two stay in sync instead of drifting.
+  const handleUpdateTierLevel = async (id: string, newTier: string) => {
+    const employee = employees.find((e) => e.id === id);
+    const prevTier = employee?.tierLevel ?? null;
+    const nextTier = newTier || null;
+    setEmployees((prev) => prev.map((e) => (e.id === id ? { ...e, tierLevel: nextTier } : e)));
+    try {
+      await updateCompanyUser(id, { tierLevel: nextTier });
+      void logActivity({ action: "employee_status_changed", targetType: "employee", targetId: id, targetLabel: employee?.name, details: { tierLevel: nextTier } });
+    } catch (err) {
+      setEmployees((prev) => prev.map((e) => (e.id === id ? { ...e, tierLevel: prevTier } : e)));
+      setError(err instanceof Error ? err.message : "Failed to update tier level.");
     }
   };
 
@@ -14651,37 +14843,70 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         </div>
       )}
 
-      {/* ── KPI overview — every tile is clickable, same as Attendance: it jumps straight to the tab/filter that explains the number instead of just displaying it. ── */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2 mb-4">
-        {[
-          { label: "Candidates", value: kpi.candidates, color: "text-blue-300", icon: <Users className="h-4 w-4" />, onClick: () => { setActiveTab("hiring"); setHiringStatusFilter(new Set()); } },
-          { label: "Scheduled for Interview", value: kpi.scheduled, color: "text-yellow-300", icon: <Clock className="h-4 w-4" />, onClick: () => { setActiveTab("hiring"); setHiringStatusFilter(new Set([CANDIDATE_STATUS_LABEL.interviewing])); } },
-          { label: "Rejected", value: kpi.rejected, color: "text-red-300", icon: <XCircle className="h-4 w-4" />, onClick: () => { setActiveTab("hiring"); setHiringStatusFilter(new Set([CANDIDATE_STATUS_LABEL.rejected])); } },
-          { label: "Hired", value: kpi.hired, color: "text-green-300", icon: <UserCheck className="h-4 w-4" />, onClick: () => { setActiveTab("hiring"); setHiringStatusFilter(new Set([CANDIDATE_STATUS_LABEL.hired])); } },
-          { label: "Terminated", value: kpi.terminated, color: "text-red-400", icon: <UserX className="h-4 w-4" />, onClick: () => setActiveTab("masterList") },
-          { label: "Resigned", value: kpi.resigned, color: "text-slate-300", icon: <UserMinus className="h-4 w-4" />, onClick: () => setActiveTab("masterList") },
-        ].map((k) => (
-          <button
-            key={k.label}
-            type="button"
-            onClick={k.onClick}
-            className="panel p-3 text-center hover:bg-white/5 transition-colors cursor-pointer"
-          >
-            <div className="flex justify-center mb-1 text-muted-foreground">{k.icon}</div>
-            <p className={`text-xl font-bold ${k.color}`}>{k.value}</p>
-            <p className="text-[10px] text-muted-foreground uppercase tracking-wide mt-0.5">{k.label}</p>
-          </button>
-        ))}
-        <button
-          type="button"
-          onClick={() => setAttendanceModalOpen(true)}
-          className="panel p-3 text-center hover:bg-white/5 transition-colors cursor-pointer"
-        >
-          <div className="flex justify-center mb-1 text-muted-foreground"><UserCheck className="h-4 w-4" /></div>
-          <p className="text-xl font-bold text-cyan-300">{attendanceSummary.present.length}</p>
-          <p className="text-[10px] text-muted-foreground uppercase tracking-wide mt-0.5">Attendance</p>
-        </button>
-      </div>
+      {deepLinkCvPreview && (
+        <AttachmentPreviewModal url={deepLinkCvPreview.url} title={deepLinkCvPreview.title} onClose={() => setDeepLinkCvPreview(null)} />
+      )}
+
+      {/* ── KPI overview — every tile is clickable, same as Attendance: it jumps straight to the tab/filter that explains the number instead of just displaying it.
+          Split into two groups matching where each number actually comes from — candidateStatusOptions's real, currently-selectable candidate statuses
+          (Candidates is the pipeline total, not a status itself) vs. the employed workforce (Master List's employment status + today's attendance).
+          "Rejected" used to sit in the first group, but it's no longer a status a candidate can be set to (see candidateStatusOptions's own comment) — dropped rather than left counting a bucket nobody can add to anymore.
+          Each group is scoped to the tab it actually describes — Candidate Pipeline only shows on Hiring, Workforce only on Master List — instead of both
+          sitting above every tab regardless of relevance. ── */}
+      {activeTab === "hiring" && (
+        <>
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-1.5">Candidate Pipeline</p>
+          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2 mb-4">
+            {[
+              { label: "Candidates", value: kpi.candidates, color: "text-blue-300", icon: <Users className="h-4 w-4" />, onClick: () => setHiringStatusFilter(new Set()) },
+              { label: "Applied", value: kpi.applied, color: "text-blue-300", icon: <FileText className="h-4 w-4" />, onClick: () => setHiringStatusFilter(new Set([CANDIDATE_STATUS_LABEL.applied])) },
+              { label: "Scheduled for Interview", value: kpi.scheduled, color: "text-yellow-300", icon: <Clock className="h-4 w-4" />, onClick: () => setHiringStatusFilter(new Set([CANDIDATE_STATUS_LABEL.interviewing])) },
+              { label: "Training", value: kpi.training, color: "text-cyan-300", icon: <GraduationCap className="h-4 w-4" />, onClick: () => setHiringStatusFilter(new Set([CANDIDATE_STATUS_LABEL.training])) },
+              { label: "Hired", value: kpi.hired, color: "text-green-300", icon: <UserCheck className="h-4 w-4" />, onClick: () => setHiringStatusFilter(new Set([CANDIDATE_STATUS_LABEL.hired])) },
+              { label: "Withdrawn", value: kpi.withdrawn, color: "text-orange-300", icon: <LogOut className="h-4 w-4" />, onClick: () => setHiringStatusFilter(new Set([CANDIDATE_STATUS_LABEL.withdrawn])) },
+              { label: "Cancelled", value: kpi.cancelled, color: "text-red-300", icon: <XCircle className="h-4 w-4" />, onClick: () => setHiringStatusFilter(new Set([CANDIDATE_STATUS_LABEL.cancelled])) },
+            ].map((k) => (
+              <button
+                key={k.label}
+                type="button"
+                onClick={k.onClick}
+                className="panel p-3 text-center hover:bg-white/5 transition-colors cursor-pointer"
+              >
+                <div className="flex justify-center mb-1 text-muted-foreground">{k.icon}</div>
+                <p className={`text-xl font-bold ${k.color}`}>{k.value}</p>
+                <p className="text-[10px] text-muted-foreground uppercase tracking-wide mt-0.5">{k.label}</p>
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+
+      {activeTab === "masterList" && (
+        <>
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-1.5">Workforce</p>
+          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2 mb-4">
+            {[
+              { label: "Terminated", value: kpi.terminated, color: "text-red-400", icon: <UserX className="h-4 w-4" /> },
+              { label: "Resigned", value: kpi.resigned, color: "text-slate-300", icon: <UserMinus className="h-4 w-4" /> },
+            ].map((k) => (
+              <div key={k.label} className="panel p-3 text-center">
+                <div className="flex justify-center mb-1 text-muted-foreground">{k.icon}</div>
+                <p className={`text-xl font-bold ${k.color}`}>{k.value}</p>
+                <p className="text-[10px] text-muted-foreground uppercase tracking-wide mt-0.5">{k.label}</p>
+              </div>
+            ))}
+            <button
+              type="button"
+              onClick={() => setAttendanceModalOpen(true)}
+              className="panel p-3 text-center hover:bg-white/5 transition-colors cursor-pointer"
+            >
+              <div className="flex justify-center mb-1 text-muted-foreground"><UserCheck className="h-4 w-4" /></div>
+              <p className="text-xl font-bold text-cyan-300">{attendanceSummary.present.length}</p>
+              <p className="text-[10px] text-muted-foreground uppercase tracking-wide mt-0.5">Attendance</p>
+            </button>
+          </div>
+        </>
+      )}
 
       {/* ── Attendance summary modal — today's present/absent breakdown ── */}
       {attendanceModalOpen && (
@@ -14924,7 +15149,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                 <input value={hiringSearch} onChange={(e) => setHiringSearch(e.target.value)} placeholder="Name, position, or branch…" className="glass-input text-sm py-1.5 pl-8 pr-3 rounded-md w-56" />
               </div>
             </div>
-            {(hiringSearch || hiringStatusFilter.size > 0 || hiringPositionFilter.size > 0 || hiringBranchFilter.size > 0 || hiringBranchManagerFilter.size > 0 || hiringAssignedInterviewerFilter.size > 0 || hiringOutreachFilter.size > 0 || hiringCvFilter !== "all" || hiringAccountStatusFilter !== "all" || hiringNoteFilter !== "all" || hiringContactFilter !== "all" || hiringDocumentVerifiedFilter !== "all" || hiringScreeningDateFilter !== "all" || hiringInterviewDateFilter !== "all") && (
+            {(hiringSearch || hiringStatusFilter.size > 0 || hiringPositionFilter.size > 0 || hiringBranchFilter.size > 0 || hiringBranchManagerFilter.size > 0 || hiringAssignedInterviewerFilter.size > 0 || hiringOutreachFilter.size > 0 || hiringCvFilter !== "all" || hiringAccountStatusFilter !== "all" || hiringNoteFilter !== "all" || hiringContactFilter !== "all" || hiringDocumentVerifiedFilter !== "all" || hiringScreeningDateFilter.size > 0 || hiringInterviewDateFilter !== "all") && (
               <button
                 onClick={() => {
                   setHiringSearch("");
@@ -14939,7 +15164,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                   setHiringNoteFilter("all");
                   setHiringContactFilter("all");
                   setHiringDocumentVerifiedFilter("all");
-                  setHiringScreeningDateFilter("all");
+                  setHiringScreeningDateFilter(new Set());
                   setHiringInterviewDateFilter("all");
                 }}
                 className="btn text-sm px-3 mb-0.5"
@@ -15158,6 +15383,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             </>
           );
           return (
+        <>
         <StickyHorizontalScrollbar>
           <table className="w-full text-sm">
             <thead>
@@ -15208,7 +15434,25 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                 )}
                 {isHiringColVisible("screeningDate") && (
                   <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase relative whitespace-nowrap">
-                    {renderHiringTriStateHeader("screeningDate", "Screening Date", hiringScreeningDateFilter, setHiringScreeningDateFilter, "Has date", "No date")}
+                    {renderHiringMultiSelectHeader("screeningDate", "Screening Date", hiringScreeningDateOptions, hiringScreeningDateFilter, setHiringScreeningDateFilter)}
+                    <button
+                      type="button"
+                      onClick={cycleHiringScreeningDateSort}
+                      title={
+                        hiringScreeningDateSortDir === "desc"
+                          ? "Sorted newest first — click for oldest first"
+                          : hiringScreeningDateSortDir === "asc"
+                          ? "Sorted oldest first — click to clear sort"
+                          : "Sort by Screening Date"
+                      }
+                      className={`ml-1 inline-flex align-middle ${hiringScreeningDateSortDir ? "text-blue-400" : "text-muted-foreground hover:text-slate-300"}`}
+                    >
+                      {hiringScreeningDateSortDir === "asc" ? (
+                        <ChevronUp className="h-3 w-3" />
+                      ) : (
+                        <ChevronDown className="h-3 w-3" />
+                      )}
+                    </button>
                   </th>
                 )}
                 {isHiringColVisible("interviewDate") && (
@@ -15236,7 +15480,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               ) : filteredCandidates.length === 0 ? (
                 <tr><td colSpan={2 + HIRING_COLUMNS.filter((c) => isHiringColVisible(c.key)).length} className="px-4 py-8 text-center text-muted-foreground text-sm">{visibleCandidates.length === 0 ? "No candidates yet." : "No candidates match these filters."}</td></tr>
               ) : (
-                filteredCandidates.map((c) => (
+                pagedCandidates.map((c) => (
                   <tr key={c.id} className="border-b border-white/5 hover:bg-white/5">
                     <td className="px-4 py-3 font-medium">
                       {editingCandidateCell?.id === c.id && editingCandidateCell.field === "name" ? (
@@ -15776,6 +16020,33 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             </tbody>
           </table>
         </StickyHorizontalScrollbar>
+        {hiringTotalPages > 1 && (
+          <div className="flex items-center justify-between gap-3 px-1 py-3 text-xs text-muted-foreground">
+            <span>
+              Showing {(hiringSafePage - 1) * HIRING_PAGE_SIZE + 1}–{Math.min(hiringSafePage * HIRING_PAGE_SIZE, filteredCandidates.length)} of {filteredCandidates.length} candidates
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setHiringCandidatesPage((p) => Math.max(1, p - 1))}
+                disabled={hiringSafePage <= 1}
+                className="btn text-xs px-2.5 py-1 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Previous
+              </button>
+              <span>Page {hiringSafePage} of {hiringTotalPages}</span>
+              <button
+                type="button"
+                onClick={() => setHiringCandidatesPage((p) => Math.min(hiringTotalPages, p + 1))}
+                disabled={hiringSafePage >= hiringTotalPages}
+                className="btn text-xs px-2.5 py-1 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Next
+              </button>
+            </div>
+          </div>
+        )}
+        </>
           );
         })()}
       </div>
@@ -16114,7 +16385,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           // column + branch-grouped rows matches how HR actually tracks it,
           // unlike every other department tab.
           const showBranchColumn = masterListDept === "Parts Manager and Parts";
-          const colCount = showBranchColumn ? 15 : 14;
+          const showTierColumn = masterListDept === "Current Technicians";
+          const colCount = (showBranchColumn ? 15 : 14) + (showTierColumn ? 1 : 0);
           return (
         <div className="overflow-x-auto">
           <table className="w-full text-[11px]">
@@ -16133,6 +16405,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                 <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase" title="Editable — writes profiles.meal_minutes, the other half of My Profile's Working Hours & Meal Time field">Meal Time</th>
                 <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase" title="Sick Leave is its own allowance, separate from vacation — flat 5 days/year, available from day 1">Sick Leave</th>
                 <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase" title="Remaining / Allowance">Vacation Leave</th>
+                {showTierColumn && <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase" title="Editable — writes profiles.tier_level, same field Staff List's own Tier Level tab uses">Tier Level</th>}
                 <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase">Employment Status</th>
                 <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase">Warnings</th>
               </tr>
@@ -16388,6 +16661,23 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           <span className="bg-yellow-500/20 text-yellow-300 px-1.5 py-0.5 rounded text-[10px] font-semibold">{pto.remaining}/{pto.allowance}</span>
                         )}
                       </td>
+                      {showTierColumn && (
+                        <td className="px-2 py-1">
+                          <select
+                            value={employee.tierLevel || ""}
+                            onChange={(e) => void handleUpdateTierLevel(employee.id, e.target.value)}
+                            className="text-[10px] font-semibold px-1.5 py-0.5 rounded border-0 bg-slate-700 text-slate-100"
+                          >
+                            <option value="">—</option>
+                            {employee.tierLevel && !CURRENT_TECH_TIER_LEVEL_OPTIONS.includes(employee.tierLevel) && (
+                              <option value={employee.tierLevel}>{employee.tierLevel}</option>
+                            )}
+                            {CURRENT_TECH_TIER_LEVEL_OPTIONS.map((t) => (
+                              <option key={t} value={t}>{t}</option>
+                            ))}
+                          </select>
+                        </td>
+                      )}
                       <td className="px-2 py-1">
                         <select
                           value={employee.employmentType}
@@ -27078,6 +27368,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                   <option value="manager">Manager</option>
                   <option value="senior_manager">Senior Manager</option>
                   <option value="hr_staff">HR Staff</option>
+                  <option value="executive">Executive</option>
                   <option value="employee">Employee</option>
                 </select>
                 {warnActionError && (

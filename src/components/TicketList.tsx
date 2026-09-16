@@ -210,6 +210,53 @@ function getTicketVisitors(ticketNo: string): string[] {
   return [...new Set(visits.filter(v => v.ticketNo === ticketNo).map(v => v.visitedBy))];
 }
 
+/** Same data as getTicketVisitors, but for every ticket in one pass — read
+ *  once and reused per render instead of a fresh localStorage read + parse
+ *  for every single row's "Visited by" tooltip on every render. */
+function buildVisitorsByTicket(): Record<string, string[]> {
+  const visits = loadTicketVisits();
+  const map: Record<string, string[]> = {};
+  for (const v of visits) {
+    const list = map[v.ticketNo] ?? (map[v.ticketNo] = []);
+    if (!list.includes(v.visitedBy)) list.push(v.visitedBy);
+  }
+  return map;
+}
+
+// Optional "instant preview while refreshing" cache for the default
+// (scoped) ticket load — sessionStorage so it never survives past this
+// browser tab closing, and always still re-fetches for real in the
+// background, so nothing here can ever show stale data permanently; it
+// just makes hopping back to this page paint immediately instead of
+// waiting on the network again. Guarded end to end — a cache failure
+// (quota, private browsing, corrupt JSON) silently falls back to the
+// normal load, never breaks the page.
+const TICKETS_CACHE_KEY = "ahs:ticketlist:cache:v1";
+const TICKETS_CACHE_MAX_AGE_MS = 5 * 60 * 1000;
+const TICKETS_CACHE_MAX_BYTES = 4 * 1024 * 1024;
+
+function readCachedTickets(): TicketItem[] | null {
+  try {
+    const raw = sessionStorage.getItem(TICKETS_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { savedAt: number; tickets: TicketItem[] };
+    if (!parsed?.tickets || Date.now() - parsed.savedAt > TICKETS_CACHE_MAX_AGE_MS) return null;
+    return parsed.tickets;
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedTickets(tickets: TicketItem[]): void {
+  try {
+    const payload = JSON.stringify({ savedAt: Date.now(), tickets });
+    if (payload.length > TICKETS_CACHE_MAX_BYTES) return;
+    sessionStorage.setItem(TICKETS_CACHE_KEY, payload);
+  } catch {
+    /* storage full/unavailable/private mode — caching is a pure bonus */
+  }
+}
+
 function daysAgo(isoString: string): number {
   const d = new Date(isoString);
   const now = new Date();
@@ -288,6 +335,20 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
   const [tickets, setTickets] = useState<TicketItem[]>([]);
   const [ticketsLoading, setTicketsLoading] = useState(true);
 
+  // Default view only loads recent history — the full unbounded fetch was
+  // the single biggest cause of this page feeling slow to open. Every OTHER
+  // page/dashboard/KPI that reads tickets calls getCompanyTickets() with no
+  // args and is completely unaffected; this scoping is local to this
+  // component only. "Load full history" (below) or picking a Start Date
+  // filter earlier than this window both upgrade to the full fetch.
+  const TICKET_LOOKBACK_DAYS = 180;
+  const ticketLookbackSinceIso = () => {
+    const d = new Date();
+    d.setDate(d.getDate() - TICKET_LOOKBACK_DAYS);
+    return d.toISOString().slice(0, 10);
+  };
+  const [fullHistoryLoaded, setFullHistoryLoaded] = useState(false);
+
   // Ticket ids whose derived "Part Order" state + latest Visit Log Triage
   // Note have already been fetched. These two columns come from the visits/
   // parts tables, not `tickets`, so they need a separate lookup — but doing
@@ -301,11 +362,27 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
     try {
       setTicketsLoading(true);
       enrichedIdsRef.current = new Set();
-      const rows = await getCompanyTickets();
+      const rows = await getCompanyTickets(fullHistoryLoaded ? undefined : { sinceDate: ticketLookbackSinceIso() });
       setTickets(rows as TicketItem[]);
+      if (!fullHistoryLoaded) writeCachedTickets(rows as TicketItem[]);
     } catch (err) {
       console.error("Failed to load tickets:", err);
       setTickets([]);
+    } finally {
+      setTicketsLoading(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fullHistoryLoaded]);
+
+  const loadFullTicketHistory = useCallback(async () => {
+    try {
+      setTicketsLoading(true);
+      enrichedIdsRef.current = new Set();
+      const rows = await getCompanyTickets();
+      setTickets(rows as TicketItem[]);
+      setFullHistoryLoaded(true);
+    } catch (err) {
+      console.error("Failed to load full ticket history:", err);
     } finally {
       setTicketsLoading(false);
     }
@@ -313,14 +390,26 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
 
   useEffect(() => {
     let cancelled = false;
+    // Paint instantly from a recent cached copy (if any) while the real,
+    // authoritative fetch below still always runs — this never skips the
+    // network call, it just gives the page something to show immediately
+    // instead of a blank loading state on a repeat visit this session.
+    const cached = readCachedTickets();
+    if (cached) {
+      setTickets(cached);
+      setTicketsLoading(false);
+    }
     const load = async () => {
       try {
-        setTicketsLoading(true);
-        const rows = await getCompanyTickets();
-        if (!cancelled) setTickets(rows as TicketItem[]);
+        if (!cached) setTicketsLoading(true);
+        const rows = await getCompanyTickets({ sinceDate: ticketLookbackSinceIso() });
+        if (!cancelled) {
+          setTickets(rows as TicketItem[]);
+          writeCachedTickets(rows as TicketItem[]);
+        }
       } catch (err) {
         console.error("Failed to load tickets:", err);
-        if (!cancelled) setTickets([]);
+        if (!cancelled && !cached) setTickets([]);
       } finally {
         if (!cancelled) setTicketsLoading(false);
       }
@@ -514,9 +603,27 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
   const canViewMisdiagnosed = canManageMisdiagnosed(role, extraRoles);
   const canViewDataCloseFilter = canFilterDataClosedTickets(role, extraRoles);
   const [searchQuery, setSearchQuery] = useState("");
+  // The input itself stays snappy on `searchQuery` directly — only the
+  // expensive recomputes below (filteredItems, and especially
+  // columnOptions' O(columns × tickets) scan) wait for typing to pause
+  // instead of redoing that work on every single keystroke.
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearchQuery(searchQuery), 250);
+    return () => clearTimeout(t);
+  }, [searchQuery]);
   const [repairStatusFilter, setRepairStatusFilter] = useState("");
   const [startDateFilter, setStartDateFilter] = useState("");
   const [endDateFilter, setEndDateFilter] = useState("");
+  // Picking a Start Date earlier than the default load window would
+  // otherwise silently show "0 tickets" for dates that were simply never
+  // fetched, not because none exist — auto-upgrade to full history instead
+  // of leaving that as a confusing gap.
+  useEffect(() => {
+    if (fullHistoryLoaded || !startDateFilter) return;
+    if (startDateFilter < ticketLookbackSinceIso()) void loadFullTicketHistory();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [startDateFilter, fullHistoryLoaded]);
   const [locationFilter, setLocationFilter] = useState("");
   const [ticketSourceFilter, setTicketSourceFilter] = useState("");
   const [statusGroupFilter, setStatusGroupFilter] = useState<"" | "open" | "completed" | "cancelled">("");
@@ -565,22 +672,25 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
   const [changeNoteInput, setChangeNoteInput] = useState("");
   const [changeByInput, setChangeByInput] = useState("");
   const [visitedTickets, setVisitedTickets] = useState<Set<string>>(new Set());
+  const [visitorsByTicket, setVisitorsByTicket] = useState<Record<string, string[]>>({});
 
 
   useEffect(() => { setStatusLog(loadStatusLog()); }, []);
-  useEffect(() => { 
+  useEffect(() => {
     // Load visited tickets from localStorage whenever component mounts
     const visits = loadTicketVisits();
     const visited = new Set(visits.map(v => v.ticketNo));
     setVisitedTickets(visited);
-    
+    setVisitorsByTicket(buildVisitorsByTicket());
+
     // Also listen for storage changes from other tabs/windows
     const handleStorageChange = () => {
       const updatedVisits = loadTicketVisits();
       const updatedVisited = new Set(updatedVisits.map(v => v.ticketNo));
       setVisitedTickets(updatedVisited);
+      setVisitorsByTicket(buildVisitorsByTicket());
     };
-    
+
     window.addEventListener("storage", handleStorageChange);
     return () => window.removeEventListener("storage", handleStorageChange);
   }, []);
@@ -600,21 +710,35 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
     setChangeNoteInput("");
   }, [statusLog, changeByInput, changeNoteInput]);
 
+  // Precomputed once per statusLog change instead of filter+sort over the
+  // WHOLE log on every single call — ticketAgingDays/ticketStatusLog get
+  // called once per visible row per render (and again inside the column-
+  // filter-options scan), so an O(N) scan per call was O(rows × log size)
+  // redone constantly instead of the O(1) lookup this makes it.
+  const statusLogByTicket = useMemo(() => {
+    const map = new Map<string, StatusLogEntry[]>();
+    for (const entry of statusLog) {
+      const list = map.get(entry.ticketNo);
+      if (list) list.push(entry);
+      else map.set(entry.ticketNo, [entry]);
+    }
+    for (const list of map.values()) list.sort((a, b) => b.changedAt.localeCompare(a.changedAt));
+    return map;
+  }, [statusLog]);
+
   const ticketAgingDays = useCallback((ticket: { ticketNo: string; aging: number; statusChangedAt?: string }) => {
     // Find most recent status change for this ticket
-    const lastChange = statusLog
-      .filter(l => l.ticketNo === ticket.ticketNo)
-      .sort((a, b) => b.changedAt.localeCompare(a.changedAt))[0];
+    const lastChange = statusLogByTicket.get(ticket.ticketNo)?.[0];
     if (lastChange) return daysAgo(lastChange.changedAt);
     // If statusChangedAt recorded on the ticket itself
     if (ticket.statusChangedAt) return daysAgo(ticket.statusChangedAt);
     // Fallback to seed data aging
     return ticket.aging;
-  }, [statusLog]);
+  }, [statusLogByTicket]);
 
   const ticketStatusLog = useCallback((ticketNo: string) => {
-    return statusLog.filter(l => l.ticketNo === ticketNo).sort((a, b) => b.changedAt.localeCompare(a.changedAt));
-  }, [statusLog]);
+    return statusLogByTicket.get(ticketNo) ?? [];
+  }, [statusLogByTicket]);
 
   const locationOptions = useMemo(
     () => mergeLocationOptions(LOCATIONS, loadSavedLocations(), SAMPLE_TICKETS.map((ticket) => ticket.location)),
@@ -681,7 +805,7 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
   };
 
   const filteredItems = useMemo(() => {
-    const query = searchQuery.toLowerCase();
+    const query = debouncedSearchQuery.toLowerCase();
     const norm = (v: string | null | undefined) => String(v ?? "").trim().toLowerCase();
     const repairNeedle = norm(repairStatusFilter);
     const locationNeedle = norm(locationFilter);
@@ -713,13 +837,13 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
       const matchesMisdiagnosed = !misdiagnosedOnlyFilter || !canViewMisdiagnosed || ticket.misdiagnosed === "Y";
       return matchesAccess && matchesSearch && matchesRepairStatus && matchesDate && matchesLocation && matchesSource && matchesStatusGroup && matchesColumns && matchesMisdiagnosed;
     });
-  }, [endDateFilter, locationFilter, repairStatusFilter, searchQuery, startDateFilter, ticketSourceFilter, statusGroupFilter, tickets, allowedLocations, columnFilters, misdiagnosedOnlyFilter, canViewMisdiagnosed, statusLog]);
+  }, [endDateFilter, locationFilter, repairStatusFilter, debouncedSearchQuery, startDateFilter, ticketSourceFilter, statusGroupFilter, tickets, allowedLocations, columnFilters, misdiagnosedOnlyFilter, canViewMisdiagnosed, statusLog]);
 
   // Build option lists per column from the data set **before** that column's own
   // filter is applied — so opening Loc still shows every Loc value present in
   // tickets that pass every OTHER filter. This mirrors Excel's autofilter UX.
   const buildOptionsExcluding = (excludeKey: ColumnFilterKey): string[] => {
-    const query = searchQuery.toLowerCase();
+    const query = debouncedSearchQuery.toLowerCase();
     const values = new Set<string>();
     for (const ticket of SAMPLE_TICKETS) {
       const matchesAccess = allowedLocations === null || allowedLocations.includes(ticket.location);
@@ -746,7 +870,7 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
     for (const key of COLUMN_FILTER_KEYS) out[key] = buildOptionsExcluding(key);
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tickets, columnFilters, allowedLocations, searchQuery, repairStatusFilter, startDateFilter, endDateFilter, locationFilter, ticketSourceFilter, statusLog]);
+  }, [tickets, columnFilters, allowedLocations, debouncedSearchQuery, repairStatusFilter, startDateFilter, endDateFilter, locationFilter, ticketSourceFilter, statusLog]);
 
   const renderColFilter = (key: ColumnFilterKey, label: string) => (
     <TicketColumnFilter
@@ -841,10 +965,16 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
   }, [filteredItems, sortKey, sortDir]);
 
   const PAGE_SIZE_OPTIONS = [25, 50, 75, 100, 125] as const;
+  // "All" still means "every filtered ticket" for search/sort/export (those
+  // all run against sortedItems, not this) — this only caps how many actual
+  // <tr> elements get drawn into the DOM at once, so picking "All" on a
+  // large filtered set can't hand the browser thousands of live rows (each
+  // with its own selects/inputs) to render and keep in memory simultaneously.
+  const ALL_VIEW_RENDER_CAP = 1000;
   const totalPages = pageSize === "all" ? 1 : Math.max(1, Math.ceil(sortedItems.length / pageSize));
   const safePage = Math.min(currentPage, totalPages);
   const pagedItems = useMemo(() => {
-    if (pageSize === "all") return sortedItems;
+    if (pageSize === "all") return sortedItems.slice(0, ALL_VIEW_RENDER_CAP);
     const start = (safePage - 1) * pageSize;
     return sortedItems.slice(start, start + pageSize);
   }, [sortedItems, safePage, pageSize]);
@@ -1052,6 +1182,19 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
         </div>
 
         <div className="panel">
+          {!fullHistoryLoaded && (
+            <div className="mb-4 flex flex-wrap items-center gap-2 rounded-lg border border-blue-500/20 bg-blue-500/5 px-3 py-2 text-xs text-muted-foreground">
+              <span>Showing tickets from the last {TICKET_LOOKBACK_DAYS / 30} months for a faster load.</span>
+              <button
+                type="button"
+                onClick={() => void loadFullTicketHistory()}
+                disabled={ticketsLoading}
+                className="text-blue-400 hover:text-blue-300 font-medium disabled:opacity-50"
+              >
+                {ticketsLoading ? "Loading…" : "Load full history"}
+              </button>
+            </div>
+          )}
           <div className="mb-6 space-y-3">
             <div className="grid gap-3 lg:grid-cols-3">
               <input
@@ -1238,7 +1381,7 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
               <tbody>
                 {pagedItems.map((ticket) => (
                   <tr key={ticket.ticketNo} className="border-b border-white/5 hover:bg-white/5 transition-colors">
-                    <td className="px-2 py-1.5 text-center font-bold text-green-400 w-12" title={visitedTickets.has(ticket.ticketNo) ? `Visited by: ${getTicketVisitors(ticket.ticketNo).join(", ")}` : "Not visited"}>
+                    <td className="px-2 py-1.5 text-center font-bold text-green-400 w-12" title={visitedTickets.has(ticket.ticketNo) ? `Visited by: ${(visitorsByTicket[ticket.ticketNo] ?? []).join(", ")}` : "Not visited"}>
                       {visitedTickets.has(ticket.ticketNo) ? "✓" : ""}
                     </td>
                     {isColVisible("ticketNo") && (
@@ -1256,6 +1399,11 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
                               const newSet = new Set([...prev, ticket.ticketNo]);
                               console.log("Updated visitedTickets:", newSet);
                               return newSet;
+                            });
+                            setVisitorsByTicket(prev => {
+                              const existing = prev[ticket.ticketNo] ?? [];
+                              if (existing.includes(email)) return prev;
+                              return { ...prev, [ticket.ticketNo]: [...existing, email] };
                             });
                           } else {
                             console.warn("No email available");
@@ -1352,7 +1500,9 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
               {filteredItems.length === 0
                 ? "Showing 0 tickets"
                 : pageSize === "all"
-                ? `Showing all ${filteredItems.length} of ${filteredItems.length} tickets`
+                ? filteredItems.length > ALL_VIEW_RENDER_CAP
+                  ? `Showing first ${ALL_VIEW_RENDER_CAP} of ${filteredItems.length} tickets — narrow your filters to see the rest (Export still includes all ${filteredItems.length})`
+                  : `Showing all ${filteredItems.length} of ${filteredItems.length} tickets`
                 : `Showing ${(safePage - 1) * pageSize + 1}–${Math.min(safePage * pageSize, filteredItems.length)} of ${filteredItems.length} tickets`}
               {" "}({selectedItems.size} selected)
             </span>

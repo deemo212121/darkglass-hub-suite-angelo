@@ -127,27 +127,11 @@ export const TECHNICIAN_PAY_ROLES = new Set(
 );
 
 /**
- * The trainee pending-approval timecard workflow (trainee_timecard_entries,
- * migration 0216 — see traineeTimecards.ts) is scoped to the Technician
- * department only, per the user's explicit call: a CSR/Parts/other-
- * department employee marked Trainee on Masterlist (profiles.employment_type)
- * still gets the separate "limited module access" trainee restriction
- * (isSubmoduleAllowedForTrainee below), but their punches go straight onto
- * the real timecard like a regular employee — only a Technician-tier
- * trainee's punches redirect here for manager approval.
- */
-export function isTraineeApprovalEligible(role: string | null | undefined, extraRoles?: string[] | null): boolean {
-  return anyHeldRoleIn(TECHNICIAN_PAY_ROLES, role, extraRoles);
-}
-
-/**
  * True if this person holds a technician-tier role either as their primary
  * role OR as a secondary one — e.g. a CSR who also picks up Technician
- * shifts. Same "pile up" semantics as isTraineeApprovalEligible above (in
- * fact the identical check, just named for its own call site instead of
- * reusing a trainee-specific name). Used by TechnicianFormChecklistPage.tsx
- * so someone technician-tier only via extra_roles still shows up on the
- * checklist instead of being silently dropped by a primary-role-only check.
+ * shifts. Used by TechnicianFormChecklistPage.tsx so someone technician-tier
+ * only via extra_roles still shows up on the checklist instead of being
+ * silently dropped by a primary-role-only check.
  */
 export function hasAnyTechnicianPayRole(role: string | null | undefined, extraRoles?: string[] | null): boolean {
   return anyHeldRoleIn(TECHNICIAN_PAY_ROLES, role, extraRoles);

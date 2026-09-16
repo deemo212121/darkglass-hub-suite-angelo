@@ -37,9 +37,9 @@ import {
   peekLatestThreadMessage,
   removeChannelMember,
   sendMessage as sendMessageRow,
-  subscribeToAllNewMessages,
   subscribeToMessages,
 } from "@/lib/supabase/messaging";
+import { subscribeMessagesBus } from "@/lib/supabase/realtimeMessagesBus";
 import {
   getCompanyUsers,
   getMyProfileId,
@@ -216,9 +216,12 @@ export function TeamMessenger({ mod, sub }: Props) {
 
   // Keep the EMPLOYEES sidebar's recency order live — any new message
   // anywhere (not just in the currently-open thread) re-sorts it, debounced
-  // so a burst of messages only triggers one refetch. Same
-  // subscribeToAllNewMessages + debounce shape MessagesMenu.tsx already
-  // uses for its own live badge/preview refresh.
+  // so a burst of messages only triggers one refetch. Shares the same
+  // underlying Realtime channel MessagesMenu.tsx/FloatingMessenger.tsx's own
+  // live badge/preview refresh uses (subscribeMessagesBus is reference-
+  // counted, not a second subscription) rather than opening a duplicate
+  // unfiltered company-wide channel on top of the one already running for
+  // the header/floating widget.
   useEffect(() => {
     if (!profileId) return;
     let debounceTimer: number | undefined;
@@ -226,7 +229,7 @@ export function TeamMessenger({ mod, sub }: Props) {
       if (debounceTimer) window.clearTimeout(debounceTimer);
       debounceTimer = window.setTimeout(() => { void refreshDmInbox(); }, 800);
     };
-    const unsub = subscribeToAllNewMessages(() => debouncedRefresh());
+    const unsub = subscribeMessagesBus(() => debouncedRefresh());
     return () => {
       if (debounceTimer) window.clearTimeout(debounceTimer);
       unsub();

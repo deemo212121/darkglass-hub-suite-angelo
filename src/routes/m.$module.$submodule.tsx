@@ -129,6 +129,7 @@ import { CSRStatusSummary } from "@/components/CSRStatusSummary";
 import { ExpenseTrackingPage } from "@/components/ExpenseTrackingPage";
 import { ClaimsDashboard } from "@/components/ClaimsDashboard";
 import { OperationsDashboard } from "@/components/OperationsDashboard";
+import { ReceivingStatusPage } from "@/components/ReceivingStatusPage";
 
 export const Route = createFileRoute("/m/$module/$submodule")({
   ssr: false,
@@ -205,7 +206,12 @@ function SubModule() {
   // — without this, a company with no explicit override configured would
   // fall through to explicitModuleOverride's null and open the page to
   // every signed-in role.
-  const moduleAllowedRoles = (mod.slug === "dashboard" || mod.slug === "hr" || mod.slug === "accounting") ? getDashboardRoleGate(sub.slug) : explicitModuleOverride;
+  // "receiving-status" (Tickets module) is special-cased here rather than
+  // added to the mod.slug list above — Tickets also has its own unrelated
+  // "todo-list" submodule, and blanket-including "tickets" in that list
+  // would make it inherit HR's "todo-list" DASHBOARD_ROLE_GATES entry too
+  // (gates are keyed by submodule slug alone). See dashboardAccess.ts.
+  const moduleAllowedRoles = (mod.slug === "dashboard" || mod.slug === "hr" || mod.slug === "accounting" || (sub as any).custom === "receiving-status") ? getDashboardRoleGate(sub.slug) : explicitModuleOverride;
   const roleGrantsQuick = !moduleAllowedRoles || hasDashboardAccess(moduleAllowedRoles, role, []);
   const adminGrantsQuick = mod.slug !== "admin" || hasDashboardAccess(ADMIN_MODULE_ROLES, role, []);
   const userMgmtGrantsQuick = sub.custom !== "user-management" || hasDashboardAccess(USER_MANAGEMENT_ROLES, role, []);
@@ -760,6 +766,8 @@ function SubModule() {
         ? <ReservedPartList mod={mod} sub={sub} />
         : sub.custom === "ticket-list"
         ? <TicketList mod={mod} sub={sub} />
+        : (sub as any).custom === "receiving-status"
+        ? <ReceivingStatusPage mod={mod} sub={sub} />
         : sub.slug === "new-ticket"
         ? <NewTicketPage mod={mod} sub={sub} />
         : sub.slug === "todo-list"

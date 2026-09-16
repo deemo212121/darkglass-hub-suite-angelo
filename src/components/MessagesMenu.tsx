@@ -25,8 +25,9 @@ import {
   type MessageRow,
   getUnreadCounts,
   listChannels,
-  subscribeToAllNewMessages,
+  markThreadRead,
 } from "@/lib/supabase/messaging";
+import { subscribeMessagesBus } from "@/lib/supabase/realtimeMessagesBus";
 import { getCompanyUsers, getMyProfileId, type ProfileRow } from "@/lib/supabase/users";
 import { supabase } from "@/lib/supabase/client";
 import { playNotifySound } from "@/lib/notifySound";
@@ -226,13 +227,17 @@ export function MessagesMenu() {
     let debounceTimer: number | undefined;
     const debouncedRefresh = () => {
       if (debounceTimer) window.clearTimeout(debounceTimer);
-      debounceTimer = window.setTimeout(() => { void refresh(profileId); }, 800);
+      // Trimmed from 800ms — that was adding most of a second on top of
+      // realtime's own delivery latency for every single message, which is
+      // most of what made the badge feel slow to update. 250ms still
+      // coalesces a genuine back-to-back burst without being noticeable.
+      debounceTimer = window.setTimeout(() => { void refresh(profileId); }, 250);
     };
     // A DM row is only relevant if I'm actually a participant — channels
     // don't need this check since every channel is company-wide.
     const isRelevant = (row: { channel_id?: string | null; dm_thread_id?: string | null }) =>
       !row.dm_thread_id || myDmThreadIdsRef.current.has(row.dm_thread_id);
-    const unsub = subscribeToAllNewMessages((row) => {
+    const unsub = subscribeMessagesBus((row) => {
       if (!isRelevant(row)) return;
       debouncedRefresh();
       if (row?.sender_id && row.sender_id !== profileId) {
@@ -278,6 +283,20 @@ export function MessagesMenu() {
 
   const recent = useMemo(() => previews.slice(0, 6), [previews]);
 
+  const markAllRead = async () => {
+    if (!profileId) return;
+    const unread = previews.filter((p) => p.unread > 0);
+    if (unread.length === 0) return;
+    // Optimistic — same pattern as the floating widget's own Mark all read.
+    setPreviews((prev) => prev.map((p) => (p.unread > 0 ? { ...p, unread: 0 } : p)));
+    setUnreadTotal(0);
+    await Promise.all(
+      unread.map((p) =>
+        markThreadRead(p.kind === "channel" ? { profileId, channelId: p.id } : { profileId, dmThreadId: p.id })
+      )
+    );
+  };
+
   const goTo = (p: ThreadPreview) => {
     // The team messenger reads channel/dm ids from the URL hash so the
     // dropdown can hand-off without needing per-thread routes. TanStack
@@ -320,7 +339,18 @@ export function MessagesMenu() {
               <div className="text-sm font-semibold text-white">Messages</div>
               <div className="text-[11px] text-muted-foreground">{unreadTotal} unread</div>
             </div>
-            <MessageSquare className="h-4 w-4 text-blue-200" />
+            <div className="flex items-center gap-2">
+              {unreadTotal > 0 && (
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); void markAllRead(); }}
+                  className="rounded-full px-2 py-1 text-[10px] font-semibold text-blue-300 hover:bg-white/5 hover:text-blue-200 transition whitespace-nowrap"
+                >
+                  Mark all read
+                </button>
+              )}
+              <MessageSquare className="h-4 w-4 text-blue-200" />
+            </div>
           </div>
         </DropdownMenuLabel>
         <DropdownMenuSeparator className="bg-[var(--color-panel-border)]" />

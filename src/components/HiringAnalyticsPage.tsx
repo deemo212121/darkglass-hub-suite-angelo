@@ -45,6 +45,7 @@ import { getCompanyFlashTechTrips, FLASH_TECH_STATUSES, type FlashTechTrip } fro
 
 const CANDIDATE_STATUS_LABEL: Record<CandidateStatus, string> = {
   applied: "Applied",
+  attempt: "Attempt",
   phone_screening: "Phone Screening",
   interviewing: "Interviewing",
   selected: "Selected",
@@ -70,6 +71,7 @@ const CHART_OTHER_COLOR = "#6b7280";
 // selected range instead — documented at that call site.
 const CANDIDATE_STATUS_CHART_COLOR: Record<CandidateStatus, string> = {
   applied: CHART_PALETTE[0],
+  attempt: CHART_OTHER_COLOR,
   phone_screening: CHART_PALETTE[1],
   interviewing: CHART_PALETTE[2],
   selected: CHART_PALETTE[3],
@@ -80,12 +82,13 @@ const CANDIDATE_STATUS_CHART_COLOR: Record<CandidateStatus, string> = {
   cancelled: CHART_OTHER_COLOR,
 };
 // Flash Tech trips by Status: same fixed-assignment reasoning as candidate
-// status above — only 3 possible values (FLASH_TECH_STATUSES), so a real
+// status above — only 4 possible values (FLASH_TECH_STATUSES), so a real
 // 1:1 identity mapping is safe here too.
 const FLASH_TECH_STATUS_CHART_COLOR: Record<(typeof FLASH_TECH_STATUSES)[number], string> = {
   Open: CHART_PALETTE[0],
-  Pending: CHART_PALETTE[1],
+  Upcoming: CHART_PALETTE[1],
   Closed: CHART_PALETTE[2],
+  Cancelled: CHART_OTHER_COLOR,
 };
 
 interface DonutSlice {

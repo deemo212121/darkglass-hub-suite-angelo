@@ -183,6 +183,14 @@ export interface SupabaseEmployee {
    *  to their profile_id (already-synced mileage entries, past payroll line
    *  items) can still resolve a real name instead of falling back to "—". */
   isActive: boolean;
+  /** profiles.employment_type === "trainee" (Master List) — drives the amber
+   *  "Trainee" badge on payroll rows, same convention TechnicianFormChecklistPage.tsx
+   *  already uses next to a name. */
+  isTrainee: boolean;
+  /** profiles.tier_level (migration 0162) — same field Master List's "Current
+   *  Technicians" tab and Staff List's own "Tier Level" tab edit; shown here
+   *  as a yellow badge beside Role. */
+  tierLevel: string | null;
 }
 
 interface SalaryEntry {
@@ -1325,7 +1333,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
           for (let from = 0; ; from += PAGE_SIZE) {
             const { data, error } = await supabase
               .from("profiles")
-              .select("id,display_name,username,role,extra_roles,assigned_branch,email,off_days,required_check_in,required_check_out,payroll_excluded,is_active,schedule_timezone")
+              .select("id,display_name,username,role,extra_roles,assigned_branch,email,off_days,required_check_in,required_check_out,payroll_excluded,is_active,schedule_timezone,employment_type,tier_level")
               .neq("role", "SUPERSUPERADMIN")
               .range(from, from + PAGE_SIZE - 1);
             if (error) return { data: null, error };
@@ -1442,6 +1450,8 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         scheduleTimezone: (p.schedule_timezone as ScheduleTimezone | null) ?? "CST",
         payrollExcluded: p.payroll_excluded ?? false,
         isActive: p.is_active ?? true,
+        isTrainee: p.employment_type === "trainee",
+        tierLevel: p.tier_level ?? null,
         };
       }) as SupabaseEmployee[]);
       setSalaryEntries((salRes.data ?? []) as SalaryEntry[]);
@@ -3975,6 +3985,9 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                                 >
                                   {row.employee.full_name}
                                 </button>
+                                {row.employee.isTrainee && (
+                                  <span className="ml-1.5 shrink-0 rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber-300">Trainee</span>
+                                )}
                                 {isTechRole(row.employee) && (() => {
                                   const mark = reviewMarks.get(row.employee.id);
                                   return mark ? (
@@ -4006,7 +4019,14 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                                 {row.employee.department || "—"}
                               </td>
                               <td className="px-4 py-3 text-slate-300">
-                                {roleTypeLabel(row.employee)}
+                                <span className="inline-flex items-center gap-1.5">
+                                  {roleTypeLabel(row.employee)}
+                                  {row.employee.tierLevel && (
+                                    <span className="shrink-0 rounded-full border border-yellow-500/40 bg-yellow-500/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-yellow-300">
+                                      {row.employee.tierLevel}
+                                    </span>
+                                  )}
+                                </span>
                               </td>
                               <td className="px-4 py-3 text-center text-slate-300">
                                 {row.hoursWorked.toFixed(3)}

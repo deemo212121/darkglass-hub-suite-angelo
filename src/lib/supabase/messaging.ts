@@ -764,3 +764,14 @@ export function subscribeToAllNewMessages(onMessage: (row: MessageRow) => void):
     try { supabase.removeChannel(sub); } catch { /* ignore */ }
   };
 }
+
+// subscribeToAllNewMessages is unfiltered by necessity (no company_id
+// column on messages to filter server-side against -- see its own doc
+// comment above), which makes it expensive: every message insert,
+// company-wide, re-evaluated against every connected client's copy of this
+// channel. Every caller that wants "all new messages" (MessagesMenu.tsx,
+// FloatingMessenger.tsx, TeamMessenger.tsx) shares ONE real subscription via
+// subscribeMessagesBus (src/lib/supabase/realtimeMessagesBus.ts) instead of
+// each opening its own duplicate instance -- use that, not this function
+// directly, unless you have a reason to bypass the shared bus.
+

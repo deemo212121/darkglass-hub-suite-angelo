@@ -13,7 +13,7 @@ import { supabase } from "./client";
 import { getEntryForDate, saveEntry, type UITimeEntry, type PunchField } from "./timecards";
 import { getCompanyUsers, type ProfileRow } from "./users";
 import { createNotification } from "./notifications";
-import { isAttendanceFullAccessRole, isTraineeFallbackReviewerRole, isTraineeApprovalEligible } from "@/lib/roleLabels";
+import { isAttendanceFullAccessRole, isTraineeFallbackReviewerRole } from "@/lib/roleLabels";
 
 /** Same deep-link convention timecard_corrections' own notifications already
  *  use (see reviewCorrectionStage) — the bell-icon notification list keys
@@ -318,17 +318,16 @@ export interface TraineeReviewQueueItem {
 
 /**
  * Everything this manager still needs to act on: any trainee day already
- * sitting "pending" (isDirectTraineeManager match), PLUS any Technician-
- * department trainee under them (profiles.manager_name match, same
- * Technician-only scoping as isTraineeApprovalEligible everywhere else)
- * who hasn't punched AT ALL yet today. A no-show is exactly as much
- * something to review as a late one — per the user's explicit call, it
- * must surface here too instead of staying invisible until the trainee
- * eventually punches (or never does). Shared by the blocking review
- * popups (mobile's TraineeAttendanceMobileModal, desktop's
- * TraineeAttendanceReviewModal) AND getPendingTraineeReviewCount below, so
- * the count gating the manager's own Check Out and the list they actually
- * see can never disagree.
+ * sitting "pending" (isDirectTraineeManager match), PLUS any trainee under
+ * them (profiles.manager_name match, Employment Status = Trainee on
+ * Masterlist regardless of role/department) who hasn't punched AT ALL yet
+ * today. A no-show is exactly as much something to review as a late one —
+ * per the user's explicit call, it must surface here too instead of staying
+ * invisible until the trainee eventually punches (or never does). Shared by
+ * the blocking review popups (mobile's TraineeAttendanceMobileModal,
+ * desktop's TraineeAttendanceReviewModal) AND getPendingTraineeReviewCount
+ * below, so the count gating the manager's own Check Out and the list they
+ * actually see can never disagree.
  */
 export async function getTraineeReviewQueue(managerProfileId: string): Promise<TraineeReviewQueueItem[]> {
   const todayIso = new Date().toISOString().slice(0, 10);
@@ -350,7 +349,6 @@ export async function getTraineeReviewQueue(managerProfileId: string): Promise<T
         .filter(
           (p) =>
             p.employment_type === "trainee" &&
-            isTraineeApprovalEligible(p.role, p.extra_roles) &&
             (p.manager_name || "").trim().toLowerCase() === managerName &&
             !entriesTodayByProfile.has(p.id)
         )
@@ -439,4 +437,75 @@ export async function recordTraineeDayWithoutPunch(
     console.error("recordTraineeDayWithoutPunch error:", error.message);
     throw new Error(error.message);
   }
+}
+
+/**
+ * "On Field" isn't a rejection — the trainee genuinely worked that day, just
+ * without punching through the app (out on a job site with no signal, etc.),
+ * so the manager-entered time range IS their real Check In/Check Out, not
+ * just a text note. Writes it onto trainee_timecard_entries (status
+ * "approved" straight away, upsert so this works for an existing pending
+ * punch OR a pure no-show alike) AND mirrors it onto the real
+ * timecard_entries via saveEntry — same reused-not-reimplemented pattern
+ * approveTraineeDay uses — so payroll/attendance immediately shows the real
+ * hours instead of a blank "Present" row with nothing to plot (see
+ * getAttendanceForRange in timecards.ts, which only shows real times when
+ * timecard_entries actually has them).
+ */
+export async function approveTraineeDayOnField(
+  profileId: string,
+  workDate: string,
+  checkIn: string,
+  checkOut: string,
+  managerId: string | null,
+  reviewedByProfileId: string
+): Promise<void> {
+  const nowIso = new Date().toISOString();
+  const { error } = await supabase
+    .from("trainee_timecard_entries")
+    .upsert(
+      {
+        profile_id: profileId,
+        work_date: workDate,
+        check_in: checkIn || null,
+        check_out: checkOut || null,
+        manager_id: managerId,
+        status: "approved",
+        reviewed_by: reviewedByProfileId,
+        reviewed_at: nowIso,
+        reject_reason: null,
+      },
+      { onConflict: "profile_id,work_date" }
+    );
+  if (error) {
+    console.error("approveTraineeDayOnField error:", error.message);
+    throw new Error(error.message);
+  }
+  const existing = await getEntryForDate(profileId, workDate);
+  await saveEntry(profileId, workDate, {
+    checkIn,
+    checkOut,
+    mealStart: existing?.mealStart || "",
+    mealEnd: existing?.mealEnd || "",
+    notes: existing?.notes ?? "",
+  });
+}
+
+/**
+ * Testing/correction convenience — wipes this trainee's day back to a clean
+ * slate: deletes the trainee_timecard_entries row entirely (so it goes back
+ * to "hasn't punched at all today" and shows as a placeholder row again,
+ * ready to re-punch) and blanks out whatever got written onto the real
+ * timecard_entries too, so a stuck day (e.g. an old "Approved" row from
+ * before On Field wrote real times) can be re-run through the whole
+ * punch -> review -> approve flow from scratch instead of being permanently
+ * stuck.
+ */
+export async function resetTraineeDay(profileId: string, workDate: string): Promise<void> {
+  const { error } = await supabase.from("trainee_timecard_entries").delete().eq("profile_id", profileId).eq("work_date", workDate);
+  if (error) {
+    console.error("resetTraineeDay error:", error.message);
+    throw new Error(error.message);
+  }
+  await saveEntry(profileId, workDate, { checkIn: "", checkOut: "", mealStart: "", mealEnd: "", notes: "" });
 }

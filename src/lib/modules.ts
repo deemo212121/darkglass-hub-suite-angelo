@@ -1010,6 +1010,14 @@ const ticketsMod: ModuleDef = {
         eta: `${8 + (i%9)}:${i%2 ? "30" : "00"} ${i%9 < 4 ? "AM" : "PM"}`,
       }),
     },
+    {
+      slug: "receiving-status",
+      title: "Receiving Status",
+      description: "Incoming tickets by Branch and 3rd-party Ticket Provider, with sync status.",
+      custom: "receiving-status" as any,
+      fields: [],
+      seed: () => ({}),
+    },
   ],
 };
 

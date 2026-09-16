@@ -39,6 +39,7 @@ import {
   approveTraineeDay,
   rejectTraineeDay,
   recordTraineeDayWithoutPunch,
+  approveTraineeDayOnField,
   type TraineeReviewQueueItem,
 } from "@/lib/supabase/traineeTimecards";
 /** Fixed rejection categories the user asked for — "Other" reveals a required free-text field. */
@@ -68,9 +69,27 @@ export function TraineeAttendanceMobileModal({ myProfileId, trigger }: TraineeAt
   const [rejecting, setRejecting] = useState(false);
   const [rejectReasonOption, setRejectReasonOption] = useState("");
   const [rejectReasonCustom, setRejectReasonCustom] = useState("");
+  // "On Field" needs a time range (when they were out) same as "Other"
+  // needs free text — baked straight into the stored reason string since
+  // reject_reason is a plain text column, no separate start/end columns to add.
+  const [onFieldStart, setOnFieldStart] = useState("");
+  const [onFieldEnd, setOnFieldEnd] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const resetRejectForm = () => {
+    setRejecting(false);
+    setRejectReasonOption("");
+    setRejectReasonCustom("");
+    setOnFieldStart("");
+    setOnFieldEnd("");
+  };
+  // Unused for "On Field" — that path is approved with real times instead
+  // of rejected with a text note (see submitReject below), so it never
+  // reads this value; kept simple for every other reason.
   const finalRejectReason = rejectReasonOption === "Other" ? rejectReasonCustom.trim() : rejectReasonOption;
-  const canSubmitReject = rejectReasonOption !== "" && (rejectReasonOption !== "Other" || rejectReasonCustom.trim() !== "");
+  const canSubmitReject =
+    rejectReasonOption !== "" &&
+    (rejectReasonOption !== "Other" || rejectReasonCustom.trim() !== "") &&
+    (rejectReasonOption !== "On Field" || (onFieldStart !== "" && onFieldEnd !== ""));
 
   const load = async () => {
     if (!myProfileId) return;
@@ -115,7 +134,13 @@ export function TraineeAttendanceMobileModal({ myProfileId, trigger }: TraineeAt
     if (!myProfileId || submitting || !canSubmitReject) return;
     setSubmitting(true);
     try {
-      if (item.kind === "entry" && item.entry) {
+      if (rejectReasonOption === "On Field") {
+        // Not a rejection — the manager-entered range becomes the trainee's
+        // real Check In/Check Out for the day (see approveTraineeDayOnField's
+        // own doc comment for why), so it's approved outright with real
+        // times instead of landing in "rejected" with just a text note.
+        await approveTraineeDayOnField(item.trainee.id, item.workDate, onFieldStart, onFieldEnd, myProfileId, myProfileId);
+      } else if (item.kind === "entry" && item.entry) {
         await rejectTraineeDay(item.entry.id, myProfileId, finalRejectReason);
       } else {
         // No-show — nothing punched yet, so there's no row to update; this
@@ -125,9 +150,7 @@ export function TraineeAttendanceMobileModal({ myProfileId, trigger }: TraineeAt
       }
       setPending((prev) => prev.filter((p) => itemKey(p) !== itemKey(item)));
       setSelectedKey(null);
-      setRejecting(false);
-      setRejectReasonOption("");
-      setRejectReasonCustom("");
+      resetRejectForm();
     } catch (err) {
       console.error("Failed to submit trainee status:", err);
       alert("Couldn't submit this — please try again.");
@@ -145,7 +168,7 @@ export function TraineeAttendanceMobileModal({ myProfileId, trigger }: TraineeAt
           {selected && (
             <button
               type="button"
-              onClick={() => { setSelectedKey(null); setRejecting(false); setRejectReasonOption(""); setRejectReasonCustom(""); }}
+              onClick={() => { setSelectedKey(null); resetRejectForm(); }}
               aria-label="Back to list"
               className="grid h-8 w-8 shrink-0 place-items-center rounded-full border border-white/10 bg-white/5 text-slate-300"
             >
@@ -250,10 +273,36 @@ export function TraineeAttendanceMobileModal({ myProfileId, trigger }: TraineeAt
                       className="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-slate-500 focus:border-red-400/50 focus:outline-none"
                     />
                   )}
+                  {rejectReasonOption === "On Field" && (
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-medium text-slate-300">What time were they on field?</label>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <div className="text-[10px] uppercase tracking-wide text-slate-400 mb-1">From</div>
+                          <input
+                            type="time"
+                            value={onFieldStart}
+                            onChange={(e) => setOnFieldStart(e.target.value)}
+                            autoFocus
+                            className="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-white focus:border-red-400/50 focus:outline-none"
+                          />
+                        </div>
+                        <div>
+                          <div className="text-[10px] uppercase tracking-wide text-slate-400 mb-1">To</div>
+                          <input
+                            type="time"
+                            value={onFieldEnd}
+                            onChange={(e) => setOnFieldEnd(e.target.value)}
+                            className="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-white focus:border-red-400/50 focus:outline-none"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  )}
                   <div className="flex gap-3">
                     <button
                       type="button"
-                      onClick={() => { setRejecting(false); setRejectReasonOption(""); setRejectReasonCustom(""); }}
+                      onClick={resetRejectForm}
                       className="flex-1 rounded-full border border-white/10 bg-white/5 px-4 py-3 text-sm font-semibold text-slate-300 transition"
                     >
                       Cancel
@@ -262,9 +311,11 @@ export function TraineeAttendanceMobileModal({ myProfileId, trigger }: TraineeAt
                       type="button"
                       disabled={submitting || !canSubmitReject}
                       onClick={() => submitReject(selected)}
-                      className="flex-1 rounded-full bg-red-500 px-4 py-3 text-sm font-semibold text-white transition disabled:opacity-50"
+                      className={`flex-1 rounded-full px-4 py-3 text-sm font-semibold text-white transition disabled:opacity-50 ${
+                        rejectReasonOption === "On Field" ? "bg-emerald-500" : "bg-red-500"
+                      }`}
                     >
-                      {selected.kind === "noshow" ? "Submit" : "Submit Rejection"}
+                      {rejectReasonOption === "On Field" ? "Approve" : selected.kind === "noshow" ? "Submit" : "Submit Rejection"}
                     </button>
                   </div>
                 </div>
