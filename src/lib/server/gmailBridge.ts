@@ -87,8 +87,11 @@ export function readEnv(env?: Record<string, string | undefined>): EnvBag | { er
 // "HR_HIRING" (migration 0249) is the Hiring panel's own connect-only slot —
 // connected ahead of an actual candidate-emailing feature, so there's no
 // send action for it here yet, just connect/disconnect/status.
-export type Region = "US" | "PH" | "PARTS" | "IT_1" | "IT_2" | "IT_3" | "ATTENDANCE" | "HR_HIRING";
-const VALID_REGIONS = new Set<Region>(["US", "PH", "PARTS", "IT_1", "IT_2", "IT_3", "ATTENDANCE", "HR_HIRING"]);
+// "FLASH_TECH" (migration 0267) sends the "trip turned Open" alert — same
+// as ATTENDANCE, only ever sent by flashTechOpenAlerts.ts's cron job
+// directly, not via an action= branch here.
+export type Region = "US" | "PH" | "PARTS" | "IT_1" | "IT_2" | "IT_3" | "ATTENDANCE" | "HR_HIRING" | "FLASH_TECH";
+const VALID_REGIONS = new Set<Region>(["US", "PH", "PARTS", "IT_1", "IT_2", "IT_3", "ATTENDANCE", "HR_HIRING", "FLASH_TECH"]);
 function parseRegion(value: string | null | undefined): Region | null {
   const upper = String(value ?? "").toUpperCase();
   return VALID_REGIONS.has(upper as Region) ? (upper as Region) : null;
@@ -350,16 +353,20 @@ export async function handleGmailRequest(request: Request, env?: Record<string, 
   // Google's own redirect back to us — registered as this OAuth client's
   // (additional) redirect_uri.
   // Every region's connect button lives on Accounting Dashboard except
-  // ATTENDANCE (Attendance Monitoring's Settings tab) and HR_HIRING (the
-  // Hiring tab on hr-dashboard) — this is the only thing that decides
-  // where the OAuth round-trip lands the user back.
+  // ATTENDANCE (Attendance Monitoring's Settings tab), HR_HIRING (the
+  // Hiring tab on hr-dashboard), and FLASH_TECH (the Flash Tech page) —
+  // this is the only thing that decides where the OAuth round-trip lands
+  // the user back.
   // Builds the redirect via URL/URLSearchParams (not string concatenation)
   // since ATTENDANCE/HR_HIRING's return pages already carry their own
   // ?tab=... query string — naively appending "?gmailConnected=..." after
   // it would produce an invalid double-"?" URL.
   const returnUrlFor = (origin: string, region: Region, extraParams: Record<string, string>) => {
     const path =
-      region === "ATTENDANCE" ? "/m/dashboard/attendance-monitoring" : region === "HR_HIRING" ? "/m/hr/hr-dashboard" : "/m/accounting/accounting-dashboard";
+      region === "ATTENDANCE" ? "/m/dashboard/attendance-monitoring"
+      : region === "HR_HIRING" ? "/m/hr/hr-dashboard"
+      : region === "FLASH_TECH" ? "/m/hr/flash-tech"
+      : "/m/accounting/accounting-dashboard";
     const u = new URL(path, origin);
     if (region === "ATTENDANCE") u.searchParams.set("tab", "settings");
     if (region === "HR_HIRING") u.searchParams.set("tab", "hiring");

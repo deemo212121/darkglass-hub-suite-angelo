@@ -18,6 +18,7 @@ import { handleAdminUpdateEmailRequest } from "./lib/server/adminUpdateEmailBrid
 import { handleLiveChatStaffRequest } from "./lib/server/liveChatStaffBridge";
 import { handleGmailRequest } from "./lib/server/gmailBridge";
 import { handleRunAttendanceAlertsRequest } from "./lib/server/attendanceAlerts";
+import { handleRunFlashTechOpenAlertsRequest } from "./lib/server/flashTechOpenAlerts";
 import { handleAdminPasswordRequest } from "./lib/server/adminPasswordBridge";
 import { handleLoginLockoutRequest } from "./lib/server/loginLockoutBridge";
 import { handlePasswordResetRequest } from "./lib/server/passwordResetRequestBridge";
@@ -179,6 +180,10 @@ export default {
       const merged = await resolveServerEnv(env);
       return await handleRunAttendanceAlertsRequest(request, merged);
     }
+    if (url.pathname === "/api/run-flash-tech-alerts") {
+      const merged = await resolveServerEnv(env);
+      return await handleRunFlashTechOpenAlertsRequest(request, merged);
+    }
     if (url.pathname === "/api/live-chat") {
       const merged = await resolveServerEnv(env);
       return await handleLiveChatRequest(request, merged);
@@ -211,9 +216,9 @@ export default {
   },
 
   // Cron Trigger (see wrangler.jsonc "triggers.crons") — dispatches on which
-  // schedule fired: hourly runs the NSA parts pull (and, once a week, the
-  // password reset check below), every 5 minutes runs the attendance
-  // grace-period check.
+  // schedule fired: hourly runs the NSA parts pull, the Flash Tech
+  // "trip turned Open" alert check, and (once a week) the password reset
+  // check below; every 5 minutes runs the attendance grace-period check.
   async scheduled(event: { cron?: string }, env: unknown, ctx: { waitUntil: (p: Promise<unknown>) => void }) {
     const merged = await resolveServerEnv(env);
 
@@ -249,7 +254,20 @@ export default {
       ),
     );
 
-    // No separate cron entry for this — the hourly tick above lands on an
+    // No separate cron entry for this either — a trip's Upcoming->Open
+    // transition is a calendar-date boundary, not something that needs
+    // 5-minute granularity, so the hourly tick is plenty (catches it within
+    // an hour of midnight).
+    ctx.waitUntil(
+      import("./lib/server/flashTechOpenAlerts").then(
+        ({ runFlashTechOpenAlertCheck }) => runFlashTechOpenAlertCheck(merged),
+      ).then(
+        (result) => console.log("flashTechOpenAlerts:", JSON.stringify(result)),
+        (error) => console.error("flashTechOpenAlerts failed:", error),
+      ),
+    );
+
+    // No separate cron entry for this either — the hourly tick above lands on an
     // exact America/Chicago hour boundary too (see passwordResetSchedule.ts's
     // header comment), so this just checks "is it Monday 00:00 Chicago time
     // right now" every time the hourly cron fires anyway.
