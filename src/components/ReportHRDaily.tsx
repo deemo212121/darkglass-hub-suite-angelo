@@ -560,6 +560,38 @@ function loadHiringVisibleColumns(): Record<string, boolean> {
   }
 }
 
+// Optional "instant preview while refreshing" cache for the Hiring tab's
+// candidate list — same sessionStorage pattern as TicketList.tsx's own
+// ticket cache: always still re-fetches for real, so nothing here can show
+// stale data permanently, it just paints the table immediately on a repeat
+// visit this session instead of a blank loading state. Fully guarded — a
+// cache failure silently falls back to the normal load.
+const CANDIDATES_CACHE_KEY = "ahs:hrdashboard:candidates-cache:v1";
+const CANDIDATES_CACHE_MAX_AGE_MS = 5 * 60 * 1000;
+const CANDIDATES_CACHE_MAX_BYTES = 4 * 1024 * 1024;
+
+function readCachedCandidates(): Candidate[] | null {
+  try {
+    const raw = sessionStorage.getItem(CANDIDATES_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { savedAt: number; candidates: Candidate[] };
+    if (!parsed?.candidates || Date.now() - parsed.savedAt > CANDIDATES_CACHE_MAX_AGE_MS) return null;
+    return parsed.candidates;
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedCandidates(candidates: Candidate[]): void {
+  try {
+    const payload = JSON.stringify({ savedAt: Date.now(), candidates });
+    if (payload.length > CANDIDATES_CACHE_MAX_BYTES) return;
+    sessionStorage.setItem(CANDIDATES_CACHE_KEY, payload);
+  } catch {
+    /* storage full/unavailable/private mode — caching is a pure bonus */
+  }
+}
+
 /**
  * Sentinel for the Master List "Trainee" tab — cross-cutting (a trainee can
  * be in any department), so it's rendered as its own button after the
@@ -1852,11 +1884,25 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         getLatestFieldEdits().then(setFieldEditsByKey),
       ]);
       setCandidates(rows);
+      writeCachedCandidates(rows);
     } catch (err) {
       console.error("Failed to load candidates:", err);
     } finally {
       setCandidatesLoading(false);
     }
+  };
+  // Used only by the realtime subscription below — a coworker editing
+  // candidates rapidly (a real pattern during active hiring) used to refire
+  // this full reload (4 parallel queries) on every single row change with no
+  // coalescing. Bundling a burst into one reload keeps the exact same
+  // "reload the whole list, stay correct across joined columns" behavior
+  // (see that effect's own comment), just not once per change. Direct calls
+  // after the user's OWN edits (add/status-change/etc., elsewhere in this
+  // file) stay un-debounced so your own action still reflects instantly.
+  const loadCandidatesDebounceRef = useRef<number | undefined>(undefined);
+  const loadCandidatesDebounced = () => {
+    if (loadCandidatesDebounceRef.current) window.clearTimeout(loadCandidatesDebounceRef.current);
+    loadCandidatesDebounceRef.current = window.setTimeout(() => { void loadCandidates(); }, 800);
   };
 
   // Forms column — every signed/pending document company-wide (one bulk
@@ -1918,15 +1964,34 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
   useEffect(() => {
     if (!ready) return;
+    // Master List + Hiring's own data first — whichever tab you actually
+    // landed on, these are the ones its first paint is waiting on.
     loadEmployees();
+    // Paint the Hiring table instantly from a recent cached copy (if any)
+    // while loadCandidates() below still always runs the real fetch — this
+    // never skips the network call, it just avoids a blank loading state on
+    // a repeat visit this session.
+    const cachedCandidates = readCachedCandidates();
+    if (cachedCandidates) {
+      setCandidates(cachedCandidates);
+      setCandidatesLoading(false);
+    }
     loadCandidates();
     loadCandidateForms();
-    loadNotes();
-    loadPtoRequests();
-    loadHrBalanceNotes();
-    loadTodayTimecardEntries();
-    loadRequestManagerData();
     if (uid) void getMyProfileId(uid).then(setMyProfileId);
+    // Everything else (Warnings, PTO, Attendance, Manager Requests) still
+    // loads automatically — just a beat later, so it isn't competing with
+    // the above for the same initial network/render burst on whichever tab
+    // you're actually looking at. Nothing here is skipped or gated by tab;
+    // this is scheduling only, not a "don't load it" change.
+    const deferredId = window.setTimeout(() => {
+      loadNotes();
+      loadPtoRequests();
+      loadHrBalanceNotes();
+      loadTodayTimecardEntries();
+      loadRequestManagerData();
+    }, 300);
+    return () => window.clearTimeout(deferredId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, isHrOrAdmin]);
 
@@ -1937,7 +2002,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   useEffect(() => {
     if (!ready || !companyId) return;
     const unsubs = [
-      subscribeTableChanges("hr_candidates", () => void loadCandidates(), `company_id=eq.${companyId}`),
+      subscribeTableChanges("hr_candidates", loadCandidatesDebounced, `company_id=eq.${companyId}`),
       subscribeTableChanges("employee_conduct_notes", () => void loadNotes(), `company_id=eq.${companyId}`),
       subscribeTableChanges("hr_signable_documents", () => { void loadSentWarningForms(); void loadSentW8benForms(); void loadSentW4Forms(); void loadSentW9Forms(); void loadSentW4RForms(); void loadSentI9Forms(); void loadSentWageAckForms(); void loadSentCarIqAgreementForms(); void loadSentVehicleAgreementForms(); void loadSentEmployeeConfidentialityForms(); void loadSentMealRestBreakForms(); void loadSentPtoAckForms(); void loadSentPartsResponsibilityForms(); void loadSentMileageFuelForms(); void loadSentLocationConsentForms(); void loadSentSubstanceScreeningForms(); }, `company_id=eq.${companyId}`),
       subscribeTableChanges("pto_requests", () => void loadPtoRequests(), `company_id=eq.${companyId}`),
@@ -2470,22 +2535,29 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     [employees]
   );
 
+  // O(1) lookup instead of employees.find() — the 4 name-resolvers below
+  // are called per candidate row per render (several times each, e.g. once
+  // for display + once for the "prefill" popup), so a linear scan through
+  // every employee on every call was O(rows × employees) redone constantly,
+  // including on every keystroke that re-renders the table (search, etc.).
+  const employeesById = useMemo(() => new Map(employees.map((e) => [e.id, e])), [employees]);
+
   // Resolved display names — same fallback logic the table cells themselves
   // use (manual override, else auto-derived from branch for Branch Manager;
   // nothing auto-derived for Assigned Interviewer/Trainer) — shared with the
   // column filters below so "filter by X" always matches what's actually shown.
   const branchManagerNameForCandidate = (c: Candidate): string | null =>
-    (c.branchManagerId && employees.find((e) => e.id === c.branchManagerId)?.name) ||
+    (c.branchManagerId && employeesById.get(c.branchManagerId)?.name) ||
     (c.branch ? branchManagerByBranch.get(c.branch) : undefined) ||
     null;
   const assignedInterviewerNameForCandidate = (c: Candidate): string | null =>
-    (c.assignedInterviewerId && employees.find((e) => e.id === c.assignedInterviewerId)?.name) || null;
+    (c.assignedInterviewerId && employeesById.get(c.assignedInterviewerId)?.name) || null;
   // No longer auto-falls back to the Branch Manager — HR must explicitly
   // pick someone (per HR's explicit call to remove the "Auto" behavior).
   const assignedManagerNameForCandidate = (c: Candidate): string | null =>
-    (c.assignedManagerId && employees.find((e) => e.id === c.assignedManagerId)?.name) || null;
+    (c.assignedManagerId && employeesById.get(c.assignedManagerId)?.name) || null;
   const trainerNameForCandidate = (c: Candidate): string | null =>
-    (c.trainerId && employees.find((e) => e.id === c.trainerId)?.name) || null;
+    (c.trainerId && employeesById.get(c.trainerId)?.name) || null;
 
   // Forward Candidate's recipient prefill — ALWAYS both people shown in the
   // Assigned Interviewer column: the manager acting as interviewer (top
@@ -2638,6 +2710,20 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     hiringScreeningDateSortDir,
     employeeEmailSet,
   ]);
+
+  // Rendering all 626+ candidate rows at once (no cap) was measured causing
+  // severe scroll jank — ~70k DOM nodes for one table, nearly 8s of blocked
+  // main-thread work in a 4s scroll — so this table gets the same paging
+  // Ticket List already proved out, just fixed at 50/page per HR's own call
+  // rather than a full page-size picker.
+  const HIRING_PAGE_SIZE = 50;
+  const [hiringCandidatesPage, setHiringCandidatesPage] = useState(1);
+  const hiringTotalPages = Math.max(1, Math.ceil(filteredCandidates.length / HIRING_PAGE_SIZE));
+  const hiringSafePage = Math.min(hiringCandidatesPage, hiringTotalPages);
+  const pagedCandidates = useMemo(
+    () => filteredCandidates.slice((hiringSafePage - 1) * HIRING_PAGE_SIZE, hiringSafePage * HIRING_PAGE_SIZE),
+    [filteredCandidates, hiringSafePage]
+  );
 
   // Mirrors candidateStatusOptions exactly — every status a candidate can
   // actually be set to going forward gets a tile; "rejected" doesn't (see
@@ -15297,6 +15383,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             </>
           );
           return (
+        <>
         <StickyHorizontalScrollbar>
           <table className="w-full text-sm">
             <thead>
@@ -15393,7 +15480,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               ) : filteredCandidates.length === 0 ? (
                 <tr><td colSpan={2 + HIRING_COLUMNS.filter((c) => isHiringColVisible(c.key)).length} className="px-4 py-8 text-center text-muted-foreground text-sm">{visibleCandidates.length === 0 ? "No candidates yet." : "No candidates match these filters."}</td></tr>
               ) : (
-                filteredCandidates.map((c) => (
+                pagedCandidates.map((c) => (
                   <tr key={c.id} className="border-b border-white/5 hover:bg-white/5">
                     <td className="px-4 py-3 font-medium">
                       {editingCandidateCell?.id === c.id && editingCandidateCell.field === "name" ? (
@@ -15933,6 +16020,33 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             </tbody>
           </table>
         </StickyHorizontalScrollbar>
+        {hiringTotalPages > 1 && (
+          <div className="flex items-center justify-between gap-3 px-1 py-3 text-xs text-muted-foreground">
+            <span>
+              Showing {(hiringSafePage - 1) * HIRING_PAGE_SIZE + 1}–{Math.min(hiringSafePage * HIRING_PAGE_SIZE, filteredCandidates.length)} of {filteredCandidates.length} candidates
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setHiringCandidatesPage((p) => Math.max(1, p - 1))}
+                disabled={hiringSafePage <= 1}
+                className="btn text-xs px-2.5 py-1 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Previous
+              </button>
+              <span>Page {hiringSafePage} of {hiringTotalPages}</span>
+              <button
+                type="button"
+                onClick={() => setHiringCandidatesPage((p) => Math.min(hiringTotalPages, p + 1))}
+                disabled={hiringSafePage >= hiringTotalPages}
+                className="btn text-xs px-2.5 py-1 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Next
+              </button>
+            </div>
+          </div>
+        )}
+        </>
           );
         })()}
       </div>

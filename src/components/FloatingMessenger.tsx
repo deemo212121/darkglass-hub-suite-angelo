@@ -29,6 +29,7 @@ import {
 } from "@/lib/supabase/messaging";
 import { subscribeMessagesBus } from "@/lib/supabase/realtimeMessagesBus";
 import { getCompanyUsers, getMyProfileId, type ProfileRow } from "@/lib/supabase/users";
+import { MessageBody } from "@/components/MessageBody";
 import { playNotifySound } from "@/lib/notifySound";
 import { onTabVisible } from "@/lib/pageVisibility";
 
@@ -472,8 +473,8 @@ export function FloatingMessenger() {
                     const mine = m.sender_id === profileId;
                     return (
                       <div key={m.id} className={`flex ${mine ? "justify-end" : "justify-start"}`}>
-                        <div className={`max-w-[75%] rounded-2xl px-3 py-1.5 text-sm ${mine ? "bg-blue-600 text-white" : "bg-slate-700 text-slate-100"}`}>
-                          {m.body}
+                        <div className={`max-w-[75%] min-w-0 rounded-2xl px-3 py-1.5 text-sm ${mine ? "bg-blue-600 text-white" : "bg-slate-700 text-slate-100"}`}>
+                          <MessageBody text={m.body} className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]" />
                         </div>
                       </div>
                     );
