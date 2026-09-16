@@ -357,6 +357,23 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
     () => [...trips].sort((a, b) => a.startDate.localeCompare(b.startDate) || a.technicianName.localeCompare(b.technicianName)),
     [trips]
   );
+  // Tracker-only KPI row: how many technicians currently out on a trip
+  // ("Open" status — already started, not yet ended) are within 7 days of
+  // their End Date (their "check out"/return date), bucketed by the exact
+  // number of days left (0 = ending today). A trip that hasn't started yet
+  // doesn't count even if its End Date happens to fall in this window —
+  // this is about people already out who are coming up on their return.
+  const checkoutAlertCounts = useMemo(() => {
+    const today = todayIso();
+    const counts = new Map<number, number>();
+    for (let d = 0; d <= 7; d++) counts.set(d, 0);
+    for (const t of sortedTrips) {
+      if (t.startDate > today || t.endDate < today) continue; // not currently "Open"
+      const daysLeft = Math.round((new Date(t.endDate + "T00:00:00").getTime() - new Date(today + "T00:00:00").getTime()) / 86400000);
+      if (daysLeft >= 0 && daysLeft <= 7) counts.set(daysLeft, (counts.get(daysLeft) ?? 0) + 1);
+    }
+    return counts;
+  }, [sortedTrips]);
   const tripColorIndex = useMemo(() => new Map(sortedTrips.map((t, i) => [t.id, i % CHIP_COLORS.length])), [sortedTrips]);
   const calendarTrips = useMemo(
     () => (carRentalOnly ? sortedTrips.filter((t) => t.carRentalNeeded) : sortedTrips),
@@ -783,7 +800,21 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
         )}
 
         {view === "tracker" && (
-          <FlashTechTrackerTable
+          <>
+            <div className="mb-3">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-1.5">Check-Out Alert — Days Until Return</p>
+              <div className="grid grid-cols-4 sm:grid-cols-8 gap-2">
+                {[7, 6, 5, 4, 3, 2, 1, 0].map((d) => (
+                  <div key={d} className="panel p-3 text-center">
+                    <p className={`text-xl font-bold ${d <= 1 ? "text-red-400" : d <= 3 ? "text-amber-300" : "text-blue-300"}`}>
+                      {checkoutAlertCounts.get(d) ?? 0}
+                    </p>
+                    <p className="text-[10px] text-muted-foreground uppercase tracking-wide mt-0.5">{d === 0 ? "Today" : `${d} Day${d === 1 ? "" : "s"}`}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <FlashTechTrackerTable
             trips={sortedTrips}
             users={users}
             loading={loading}
@@ -797,7 +828,8 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
             onUploadReceipt={handleUploadReceipt}
             onRemoveReceipt={handleRemoveReceipt}
             onPreviewReceipt={setPreviewReceiptUrl}
-          />
+            />
+          </>
         )}
 
         {view === "availability" && (
