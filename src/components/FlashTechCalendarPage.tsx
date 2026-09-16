@@ -1,11 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { ChevronLeft, ChevronRight, RefreshCw, Plus, X, Trash2, CalendarDays, Table2, Paperclip, Loader2, Car, Users, Check, Minus, Building2, Search, Filter } from "lucide-react";
+import { ChevronLeft, ChevronRight, RefreshCw, Plus, X, Trash2, CalendarDays, Table2, Paperclip, Loader2, Car, Users, Check, Minus, Building2, Search, Filter, Mail } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { useSmartBack } from "@/hooks/useSmartBack";
 import { normalizeRole, isEligibleForTechnicianFormChecklist } from "@/lib/roleLabels";
 import { getCompanyUsers, getMyProfileId, getTechnicianContactInfoByIds, type ProfileRow } from "@/lib/supabase/users";
+import { getGmailConnectionStatus, disconnectGmail, type GmailConnectionStatus } from "@/lib/supabase/gmailConnection";
+import { getFlashTechOpenAlertEmail, setFlashTechOpenAlertEmail } from "@/lib/supabase/companySettings";
+import { auth as firebaseAuth } from "@/lib/firebase/config";
 import {
   getCompanyFlashTechTrips,
   createFlashTechTrip,
@@ -183,6 +186,154 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
   // Tracker fields (everything beyond scheduling itself) are also editable
   // by HR — see migration 0257's widened update policy.
   const canEditTracker = canManage || [role, ...extraRoles].some((r) => normalizeRole(r) === "HR");
+  const isHrRole = [role, ...extraRoles].some((r) => normalizeRole(r) === "HR");
+  // Connect (OAuth) is Admin/SuperAdmin only — same CONNECT_ROLES gate every
+  // other Gmail slot's server-side connect action enforces. Editing WHO the
+  // "trip turned Open" alert goes to is a little wider (HR too), matching
+  // set_flash_tech_open_alert_email's own role check.
+  const canConnectFlashTechGmail = role ? ["ADMIN", "SUPERADMIN"].includes(normalizeRole(role)) : false;
+  const canEditFlashTechAlertEmail = canConnectFlashTechGmail || isHrRole;
+
+  // ── Connect Gmail + "trip turned Open" alert recipient — same
+  // connect-flow/region idiom as ReportHRDaily.tsx's Hiring Gmail block
+  // (migration 0267, src/lib/server/flashTechOpenAlerts.ts's hourly cron
+  // job is what actually sends the alert; this page only connects the
+  // mailbox and sets who receives it). ──
+  const [flashTechGmailStatus, setFlashTechGmailStatus] = useState<GmailConnectionStatus | null>(null);
+  const [connectingFlashTechGmail, setConnectingFlashTechGmail] = useState(false);
+  const [disconnectingFlashTechGmail, setDisconnectingFlashTechGmail] = useState(false);
+  const loadFlashTechGmailStatus = () => {
+    getGmailConnectionStatus("FLASH_TECH")
+      .then(setFlashTechGmailStatus)
+      .catch((err) => console.error("Failed to load Flash Tech Gmail connection status:", err));
+  };
+  const [flashTechAlertEmail, setFlashTechAlertEmailState] = useState(""); // saved, comma-separated
+  // Draft shown as individual chips — one container per email — instead of
+  // one shared text box, per HR's explicit request. flashTechAlertEmailInput
+  // holds whatever's currently being typed, not yet turned into a chip.
+  const [flashTechAlertEmailChips, setFlashTechAlertEmailChips] = useState<string[]>([]);
+  const [flashTechAlertEmailInput, setFlashTechAlertEmailInput] = useState("");
+  const commitFlashTechAlertEmailChip = () => {
+    const v = flashTechAlertEmailInput.trim().replace(/,+$/, "");
+    if (!v) { setFlashTechAlertEmailInput(""); return; }
+    setFlashTechAlertEmailChips((prev) => (prev.includes(v) ? prev : [...prev, v]));
+    setFlashTechAlertEmailInput("");
+  };
+  const removeFlashTechAlertEmailChip = (email: string) => {
+    setFlashTechAlertEmailChips((prev) => prev.filter((e) => e !== email));
+  };
+  const flashTechAlertEmailDirty = [...flashTechAlertEmailChips, flashTechAlertEmailInput.trim()].filter(Boolean).join(",") !== flashTechAlertEmail;
+  const [savingFlashTechAlertEmail, setSavingFlashTechAlertEmail] = useState(false);
+  const [testingFlashTechAlerts, setTestingFlashTechAlerts] = useState(false);
+  // Testing-only — pretends "today" is this date so you can prove a trip
+  // scheduled to start in the future would actually trigger a real email,
+  // without waiting for real midnight. Forces the server into simulate
+  // mode (sends real mail, writes nothing) — see flashTechOpenAlerts.ts.
+  const [simulateAlertDate, setSimulateAlertDate] = useState("");
+  const [flashTechAlertNotice, setFlashTechAlertNotice] = useState<string | null>(null);
+  // Per-trip reasons from the last "Run check now"/simulated test — so "0
+  // sent" isn't a dead end, you can see exactly why each checked trip did
+  // or didn't get an email (e.g. a manual Status override blocking it).
+  const [flashTechAlertDetails, setFlashTechAlertDetails] = useState<Array<{ tripId: string; technicianName: string; outcome: string }>>([]);
+  useEffect(() => {
+    loadFlashTechGmailStatus();
+    getFlashTechOpenAlertEmail()
+      .then((email) => {
+        setFlashTechAlertEmailState(email);
+        setFlashTechAlertEmailChips(email.split(",").map((s) => s.trim()).filter(Boolean));
+      })
+      .catch((err) => console.error("Failed to load Flash Tech alert recipient:", err));
+  }, []);
+  // Google redirects back here with ?gmailConnected=1|0 after the consent
+  // screen (see gmailBridge.ts) — show the result once, then strip the
+  // param so refreshing the page doesn't re-show it.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const result = params.get("gmailConnected");
+    if (result === null) return;
+    setFlashTechAlertNotice(result === "1" ? "Gmail connected." : "Couldn't connect Gmail — please try again.");
+    if (result === "1") loadFlashTechGmailStatus();
+    params.delete("gmailConnected");
+    params.delete("gmailRegion");
+    const next = `${window.location.pathname}${params.toString() ? `?${params}` : ""}`;
+    window.history.replaceState(null, "", next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const handleConnectFlashTechGmail = async () => {
+    setConnectingFlashTechGmail(true);
+    try {
+      const idToken = await firebaseAuth?.currentUser?.getIdToken(false);
+      if (!idToken) { setFlashTechAlertNotice("You need to be logged in to connect Gmail."); return; }
+      // A real navigation (not fetch) — Google's consent screen has to run in the top-level window.
+      window.location.href = `/api/gmail?action=connect&region=FLASH_TECH&idToken=${encodeURIComponent(idToken)}`;
+    } finally {
+      setConnectingFlashTechGmail(false);
+    }
+  };
+  const handleDisconnectFlashTechGmail = async () => {
+    if (!confirm("Disconnect Gmail from the Flash Tech page?")) return;
+    setDisconnectingFlashTechGmail(true);
+    try {
+      await disconnectGmail("FLASH_TECH");
+      loadFlashTechGmailStatus();
+    } catch (err) {
+      setFlashTechAlertNotice(err instanceof Error ? err.message : "Failed to disconnect Gmail.");
+    } finally {
+      setDisconnectingFlashTechGmail(false);
+    }
+  };
+  const handleSaveFlashTechAlertEmail = async () => {
+    // Anything still sitting in the typing box counts too — saving
+    // shouldn't silently drop an email that was typed but never
+    // Enter/comma-committed into its own chip.
+    const pending = flashTechAlertEmailInput.trim().replace(/,+$/, "");
+    const all = pending && !flashTechAlertEmailChips.includes(pending) ? [...flashTechAlertEmailChips, pending] : flashTechAlertEmailChips;
+    const joined = all.join(",");
+    setSavingFlashTechAlertEmail(true);
+    setFlashTechAlertNotice(null);
+    try {
+      await setFlashTechOpenAlertEmail(joined);
+      setFlashTechAlertEmailState(joined);
+      setFlashTechAlertEmailChips(all);
+      setFlashTechAlertEmailInput("");
+      setFlashTechAlertNotice("Saved.");
+    } catch (err) {
+      setFlashTechAlertNotice(err instanceof Error ? err.message : "Failed to save.");
+    } finally {
+      setSavingFlashTechAlertEmail(false);
+    }
+  };
+  // Manual trigger for local testing — the hourly cron only ever fires in a
+  // deployed Worker (vite dev runs no Workers runtime at all), so this is
+  // the only way to exercise the alert check without deploying and waiting
+  // out the clock. A REAL run, not a sandboxed preview.
+  const handleTestFlashTechAlertsNow = async () => {
+    setTestingFlashTechAlerts(true);
+    setFlashTechAlertNotice(null);
+    setFlashTechAlertDetails([]);
+    try {
+      const idToken = await firebaseAuth?.currentUser?.getIdToken(false);
+      if (!idToken) { setFlashTechAlertNotice("You need to be logged in."); return; }
+      const res = await fetch("/api/run-flash-tech-alerts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ idToken, asOfIso: simulateAlertDate || undefined }),
+      });
+      const body = (await res.json().catch(() => ({}))) as {
+        ok?: boolean;
+        error?: string;
+        result?: { emailsSent: number; tripsChecked: number; details?: Array<{ tripId: string; technicianName: string; outcome: string }> };
+      };
+      if (!res.ok || !body.ok) throw new Error(body.error || "Run failed.");
+      const modeNote = simulateAlertDate ? ` (simulated as of ${simulateAlertDate} — no trip data was changed)` : "";
+      setFlashTechAlertNotice(`Checked ${body.result?.tripsChecked ?? 0} trip(s), sent ${body.result?.emailsSent ?? 0} alert(s)${modeNote}.`);
+      setFlashTechAlertDetails(body.result?.details ?? []);
+    } catch (err) {
+      setFlashTechAlertNotice(err instanceof Error ? err.message : "Run failed.");
+    } finally {
+      setTestingFlashTechAlerts(false);
+    }
+  };
 
   const [view, setView] = useState<"calendar" | "tracker" | "availability">("calendar");
   // Which Check-Out Alert tile (0-7 days left) the Tracker is currently
@@ -724,6 +875,140 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
           >
             <Users className="h-3.5 w-3.5" /> Flash Tech List
           </button>
+        </div>
+
+        {/* Connect Gmail + who gets emailed when a trip auto-turns Open —
+            the actual send happens on the server's hourly cron
+            (flashTechOpenAlerts.ts), this is just connect + recipient. */}
+        <div className="panel mb-4 p-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex items-center gap-2 px-3 py-2 bg-slate-900/50 border border-white/10 rounded-lg text-sm w-fit">
+              <Mail className={`h-4 w-4 shrink-0 ${flashTechGmailStatus?.connected ? "text-green-400" : "text-slate-500"}`} />
+              <span className="text-xs text-slate-400 uppercase font-semibold">Flash Tech Gmail:</span>
+              {flashTechGmailStatus?.connected ? (
+                <>
+                  <span className="text-slate-200" title={flashTechGmailStatus.connectedByName ? `Connected by ${flashTechGmailStatus.connectedByName}` : undefined}>
+                    {flashTechGmailStatus.connectedAccountName || "Unknown"}
+                    {flashTechGmailStatus.connectedEmail && <span className="text-slate-500"> ({flashTechGmailStatus.connectedEmail})</span>}
+                  </span>
+                  {canConnectFlashTechGmail && (
+                    <button
+                      type="button"
+                      onClick={() => void handleDisconnectFlashTechGmail()}
+                      disabled={disconnectingFlashTechGmail}
+                      className="text-red-300 hover:text-red-200 disabled:opacity-40 disabled:no-underline text-xs underline ml-1"
+                    >
+                      {disconnectingFlashTechGmail ? "Disconnecting…" : "Disconnect"}
+                    </button>
+                  )}
+                </>
+              ) : canConnectFlashTechGmail ? (
+                <button
+                  type="button"
+                  onClick={() => void handleConnectFlashTechGmail()}
+                  disabled={connectingFlashTechGmail}
+                  className="text-blue-300 hover:text-blue-200 text-xs underline disabled:opacity-50"
+                >
+                  {connectingFlashTechGmail ? "Connecting…" : "Connect Gmail"}
+                </button>
+              ) : (
+                <span className="text-slate-500 text-xs">Not connected — ask an Admin</span>
+              )}
+            </div>
+
+            {canEditFlashTechAlertEmail && (
+              <div className="flex items-center gap-2">
+                <label className="text-xs text-slate-400 uppercase font-semibold whitespace-nowrap">Notify when Open:</label>
+                <div className="flex flex-wrap items-center gap-1.5 rounded-lg border border-white/10 bg-slate-900/60 px-2 py-1.5 min-w-[16rem]">
+                  {flashTechAlertEmailChips.map((email) => (
+                    <span
+                      key={email}
+                      className="inline-flex items-center gap-1 rounded-full bg-blue-500/15 border border-blue-400/30 text-blue-200 text-xs px-2 py-0.5"
+                    >
+                      {email}
+                      <button
+                        type="button"
+                        onClick={() => removeFlashTechAlertEmailChip(email)}
+                        title="Remove"
+                        className="text-blue-300 hover:text-white"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </span>
+                  ))}
+                  <input
+                    type="text"
+                    value={flashTechAlertEmailInput}
+                    onChange={(e) => {
+                      // Typing/pasting a comma commits the chip immediately —
+                      // same as pressing Enter — so pasting "a@x.com, b@x.com"
+                      // splits into two chips instead of one comma-joined blob.
+                      const v = e.target.value;
+                      if (v.includes(",")) {
+                        const parts = v.split(",");
+                        const last = parts.pop() ?? "";
+                        const newChips = parts.map((s) => s.trim()).filter(Boolean);
+                        if (newChips.length) {
+                          setFlashTechAlertEmailChips((prev) => Array.from(new Set([...prev, ...newChips])));
+                        }
+                        setFlashTechAlertEmailInput(last);
+                      } else {
+                        setFlashTechAlertEmailInput(v);
+                      }
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") { e.preventDefault(); commitFlashTechAlertEmailChip(); }
+                      else if (e.key === "Backspace" && !flashTechAlertEmailInput && flashTechAlertEmailChips.length > 0) {
+                        removeFlashTechAlertEmailChip(flashTechAlertEmailChips[flashTechAlertEmailChips.length - 1]);
+                      }
+                    }}
+                    onBlur={commitFlashTechAlertEmailChip}
+                    placeholder={flashTechAlertEmailChips.length ? "Add another…" : "email@example.com"}
+                    className="flex-1 min-w-[10rem] bg-transparent text-sm text-slate-200 placeholder:text-slate-500 outline-none py-0.5"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void handleSaveFlashTechAlertEmail()}
+                  disabled={savingFlashTechAlertEmail || !flashTechAlertEmailDirty}
+                  className="btn text-xs px-2.5 py-1.5 disabled:opacity-40"
+                >
+                  {savingFlashTechAlertEmail ? "Saving…" : "Save"}
+                </button>
+                {flashTechGmailStatus?.connected && flashTechAlertEmail && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => void handleTestFlashTechAlertsNow()}
+                      disabled={testingFlashTechAlerts}
+                      title={simulateAlertDate ? `Pretends today is ${simulateAlertDate} and sends real test emails — doesn't touch real trip data` : "Runs the real hourly check right now — sends real emails for any trip that's actually due"}
+                      className="text-slate-400 hover:text-slate-200 text-xs underline disabled:opacity-40"
+                    >
+                      {testingFlashTechAlerts ? "Checking…" : simulateAlertDate ? "Run simulated test" : "Run check now"}
+                    </button>
+                    <input
+                      type="date"
+                      value={simulateAlertDate}
+                      onChange={(e) => setSimulateAlertDate(e.target.value)}
+                      title="Optional — simulate a future date to test without waiting for real midnight"
+                      className="glass-input text-xs py-1 px-1.5 w-36"
+                    />
+                  </>
+                )}
+              </div>
+            )}
+
+            {flashTechAlertNotice && <span className="text-xs text-slate-400">{flashTechAlertNotice}</span>}
+          </div>
+          {flashTechAlertDetails.length > 0 && (
+            <div className="mt-2 space-y-0.5 border-t border-white/10 pt-2">
+              {flashTechAlertDetails.map((d) => (
+                <p key={d.tripId} className="text-[11px] text-slate-500">
+                  <span className="text-slate-300 font-medium">{d.technicianName}:</span> {d.outcome}
+                </p>
+              ))}
+            </div>
+          )}
         </div>
 
         {view === "calendar" && (
