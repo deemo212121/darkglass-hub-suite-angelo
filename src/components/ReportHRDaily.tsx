@@ -12838,6 +12838,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   };
 
   const handleDeleteCandidate = async (id: string) => {
+    const candidateName = candidates.find((c) => c.id === id)?.name || "this candidate";
+    if (!window.confirm(`Delete ${candidateName}? This cannot be undone.`)) return;
     try {
       const candidate = candidates.find((c) => c.id === id);
       await deleteCandidate(id);
