@@ -14861,8 +14861,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             {[
               { label: "Candidates", value: kpi.candidates, color: "text-blue-300", icon: <Users className="h-4 w-4" />, onClick: () => setHiringStatusFilter(new Set()) },
               { label: "Applied", value: kpi.applied, color: "text-blue-300", icon: <FileText className="h-4 w-4" />, onClick: () => setHiringStatusFilter(new Set([CANDIDATE_STATUS_LABEL.applied])) },
-              { label: "Attempt", value: kpi.attempt, color: "text-orange-300", icon: <PhoneCall className="h-4 w-4" />, onClick: () => setHiringStatusFilter(new Set([CANDIDATE_STATUS_LABEL.attempt])) },
               { label: "Scheduled for Interview", value: kpi.scheduled, color: "text-yellow-300", icon: <Clock className="h-4 w-4" />, onClick: () => setHiringStatusFilter(new Set([CANDIDATE_STATUS_LABEL.interviewing])) },
+              { label: "Attempt", value: kpi.attempt, color: "text-orange-300", icon: <PhoneCall className="h-4 w-4" />, onClick: () => setHiringStatusFilter(new Set([CANDIDATE_STATUS_LABEL.attempt])) },
               { label: "Training", value: kpi.training, color: "text-cyan-300", icon: <GraduationCap className="h-4 w-4" />, onClick: () => setHiringStatusFilter(new Set([CANDIDATE_STATUS_LABEL.training])) },
               { label: "Hired", value: kpi.hired, color: "text-green-300", icon: <UserCheck className="h-4 w-4" />, onClick: () => setHiringStatusFilter(new Set([CANDIDATE_STATUS_LABEL.hired])) },
               { label: "Withdrawn", value: kpi.withdrawn, color: "text-orange-300", icon: <LogOut className="h-4 w-4" />, onClick: () => setHiringStatusFilter(new Set([CANDIDATE_STATUS_LABEL.withdrawn])) },
