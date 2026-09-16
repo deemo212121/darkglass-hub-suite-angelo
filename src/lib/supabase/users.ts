@@ -813,6 +813,8 @@ export async function createCompanyUser(input: {
   workingHours?: number;
   mealMinutes?: number;
   employmentType?: "trainee" | "regular";
+  /** Date.getDay() indices (0=Sunday..6=Saturday) — see AdminUserManagementPage.tsx's DAYS_OF_WEEK_INDEX comment for why this isn't just display position. */
+  offDays?: number[];
 }): Promise<{ uid: string; profileId: string }> {
   // --- 1. Create the Firebase Auth credential on a SECONDARY app ---
   const primaryApp = getApps()[0];
@@ -875,6 +877,7 @@ export async function createCompanyUser(input: {
     po_initials: input.poInitials ?? "",
     required_check_in: input.requiredCheckIn ?? "",
     required_check_out: input.requiredCheckOut ?? "",
+    off_days: input.offDays ?? [],
     working_hours: input.workingHours ?? null,
     meal_minutes: input.mealMinutes ?? null,
     is_active: true,

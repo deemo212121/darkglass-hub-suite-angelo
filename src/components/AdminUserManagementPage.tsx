@@ -1315,20 +1315,11 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
         poInitials: newUserForm.poInitials,
         requiredCheckIn: newUserForm.requiredCheckIn,
         requiredCheckOut: newUserForm.requiredCheckOut,
+        offDays: newUserForm.selectedOffDays,
         workingHours: newUserForm.workingHours.trim() ? Number(newUserForm.workingHours) : undefined,
         mealMinutes: newUserForm.mealMinutes.trim() ? Number(newUserForm.mealMinutes) : undefined,
         employmentType: newUserForm.isTrainee ? "trainee" : "regular",
       });
-
-      // Save schedule / off-days / PO initials to localStorage (until employees domain is wired)
-      localStorage.setItem(`requiredSchedule_${newUid}`, JSON.stringify({
-        requiredCheckIn: newUserForm.requiredCheckIn,
-        requiredCheckOut: newUserForm.requiredCheckOut,
-      }));
-      localStorage.setItem(`offDays_${newUid}`, JSON.stringify(newUserForm.selectedOffDays));
-      if (newUserForm.poInitials) {
-        localStorage.setItem(`poInitials_${newUid}`, newUserForm.poInitials);
-      }
 
       alert(`User ${newUserForm.userName} created successfully!\nDefault password: Welcome2024!`);
 
