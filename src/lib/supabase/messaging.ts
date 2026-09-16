@@ -765,35 +765,13 @@ export function subscribeToAllNewMessages(onMessage: (row: MessageRow) => void):
   };
 }
 
-// ── subscribeToAllNewMessages is unfiltered by necessity (no company_id
-// column on messages to filter server-side against — see its own doc
-// comment above), which made it the single most expensive Realtime
-// subscription in the app: every message insert, company-wide, re-evaluated
-// against EVERY connected client's copy of this channel. MessagesMenu.tsx
-// (mounted in the global header — every logged-in user, every page) and
-// TeamMessenger.tsx (whenever that page is open) each used to open their
-// OWN separate instance of it, so an active Team Messenger user carried two
-// identical unfiltered channels at once. This reference-counted wrapper
-// shares one real underlying channel across every caller — the channel
-// opens on the first subscriber and closes on the last unsubscribe — so no
-// matter how many components want "all new messages," the database only
-// ever sees one subscription's worth of load per session, not one per
-// component instance. ──
-const allNewMessagesListeners = new Set<(row: MessageRow) => void>();
-let allNewMessagesUnsub: (() => void) | null = null;
+// subscribeToAllNewMessages is unfiltered by necessity (no company_id
+// column on messages to filter server-side against -- see its own doc
+// comment above), which makes it expensive: every message insert,
+// company-wide, re-evaluated against every connected client's copy of this
+// channel. Every caller that wants "all new messages" (MessagesMenu.tsx,
+// FloatingMessenger.tsx, TeamMessenger.tsx) shares ONE real subscription via
+// subscribeMessagesBus (src/lib/supabase/realtimeMessagesBus.ts) instead of
+// each opening its own duplicate instance -- use that, not this function
+// directly, unless you have a reason to bypass the shared bus.
 
-export function subscribeToAllNewMessagesShared(onMessage: (row: MessageRow) => void): () => void {
-  allNewMessagesListeners.add(onMessage);
-  if (!allNewMessagesUnsub) {
-    allNewMessagesUnsub = subscribeToAllNewMessages((row) => {
-      for (const listener of allNewMessagesListeners) listener(row);
-    });
-  }
-  return () => {
-    allNewMessagesListeners.delete(onMessage);
-    if (allNewMessagesListeners.size === 0 && allNewMessagesUnsub) {
-      allNewMessagesUnsub();
-      allNewMessagesUnsub = null;
-    }
-  };
-}
