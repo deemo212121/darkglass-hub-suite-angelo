@@ -20,8 +20,10 @@ import {
   FLASH_TECH_MAX_RECEIPTS,
   FLASH_TECH_TIER_LEVELS,
   FLASH_TECH_TRIP_TYPES,
+  FLASH_TECH_STATUSES,
   type FlashTechTrip,
   type FlashTechTripType,
+  type FlashTechStatus,
 } from "@/lib/supabase/flashTechTrips";
 import { AttachmentPreviewModal } from "@/components/AttachmentPreviewModal";
 import { REGIONS, REGION_LOCATIONS } from "@/lib/locations";
@@ -275,7 +277,11 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
     try {
       await updateFlashTechTripDates(tripId, startDate, endDate);
       setTrips((prev) =>
-        prev.map((t) => (t.id === tripId ? { ...t, startDate, endDate, status: computeFlashTechTripStatus(startDate, endDate) } : t))
+        prev.map((t) =>
+          t.id === tripId
+            ? { ...t, startDate, endDate, status: t.statusOverride || computeFlashTechTripStatus(startDate, endDate) }
+            : t
+        )
       );
     } catch (err) {
       alert(`Failed to save: ${err instanceof Error ? err.message : "Unknown error"}`);
@@ -372,9 +378,10 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
   // number of days left (0 = ending today). A trip that hasn't started yet
   // doesn't count even if its End Date happens to fall in this window —
   // this is about people already out who are coming up on their return.
-  // Returns null for a trip that isn't currently "Open" at all.
+  // Returns null for a trip that isn't currently "Open" at all — including
+  // one manually marked Cancelled, even if its dates still span today.
   const daysLeftIfOpen = (t: FlashTechTrip, today: string): number | null => {
-    if (t.startDate > today || t.endDate < today) return null;
+    if (t.status === "Cancelled" || t.startDate > today || t.endDate < today) return null;
     return Math.round((new Date(t.endDate + "T00:00:00").getTime() - new Date(today + "T00:00:00").getTime()) / 86400000);
   };
   const checkoutAlertCounts = useMemo(() => {
@@ -437,7 +444,7 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
     );
     const tripByProfileId = new Map<string, FlashTechTrip>();
     for (const t of trips) {
-      if (t.technicianProfileId && t.startDate <= today && t.endDate >= today) tripByProfileId.set(t.technicianProfileId, t);
+      if (t.technicianProfileId && t.status !== "Cancelled" && t.startDate <= today && t.endDate >= today) tripByProfileId.set(t.technicianProfileId, t);
     }
     return active
       .map((u) => ({ user: u, trip: tripByProfileId.get(u.id) ?? null, formFiled: flashFormStatusByProfileId.get(u.id) === "done" }))
@@ -1593,12 +1600,14 @@ const TRACKER_STATUS_COLOR: Record<string, string> = {
   Open: "text-green-400",
   Closed: "text-slate-400",
   Upcoming: "text-yellow-300",
+  Cancelled: "text-red-400",
 };
 
 const TRACKER_ROW_STATUS_BG: Record<string, string> = {
   Open: "bg-green-500/35 border-l-2 border-l-green-400 hover:bg-green-500/40",
   Closed: "bg-slate-500/15 border-l-2 border-l-slate-500 hover:bg-slate-500/20",
   Upcoming: "bg-yellow-400/35 border-l-2 border-l-yellow-300 hover:bg-yellow-400/40",
+  Cancelled: "bg-red-500/15 border-l-2 border-l-red-500 hover:bg-red-500/20",
 };
 
 function FlashTechTrackerTable({
@@ -2096,10 +2105,20 @@ function FlashTechTrackerTable({
                 <td className="p-0.5 border-r border-white/10">
                   <TrackerSelectCell value={trip.tripType} disabled={!canEdit} options={FLASH_TECH_TRIP_TYPES} onSave={(v) => patch("tripType", { tripType: v as FlashTechTrip["tripType"] })} />
                 </td>
-                <td className="p-1.5 px-2">
-                  <span className={`text-xs font-semibold ${TRACKER_STATUS_COLOR[trip.status] || "text-slate-300"}`}>
-                    {trip.status}
-                  </span>
+                <td className="p-0.5">
+                  <select
+                    value={trip.status}
+                    disabled={!canEdit}
+                    onChange={(e) => patch("statusOverride", { statusOverride: e.target.value as FlashTechStatus })}
+                    className={`w-full min-w-[90px] bg-transparent text-xs font-semibold px-1.5 py-1 border border-transparent hover:border-white/10 focus:border-blue-500 rounded outline-none disabled:opacity-60 disabled:cursor-not-allowed ${TRACKER_STATUS_COLOR[trip.status] || "text-slate-300"}`}
+                    title={trip.statusOverride ? "Manually set — won't change automatically with the travel dates" : "Automatic, based on the travel dates"}
+                  >
+                    {FLASH_TECH_STATUSES.map((s) => (
+                      <option key={s} value={s} className="bg-slate-900 text-slate-200">
+                        {s}
+                      </option>
+                    ))}
+                  </select>
                 </td>
               </tr>
             );

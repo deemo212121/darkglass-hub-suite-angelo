@@ -82,12 +82,13 @@ const CANDIDATE_STATUS_CHART_COLOR: Record<CandidateStatus, string> = {
   cancelled: CHART_OTHER_COLOR,
 };
 // Flash Tech trips by Status: same fixed-assignment reasoning as candidate
-// status above — only 3 possible values (FLASH_TECH_STATUSES), so a real
+// status above — only 4 possible values (FLASH_TECH_STATUSES), so a real
 // 1:1 identity mapping is safe here too.
 const FLASH_TECH_STATUS_CHART_COLOR: Record<(typeof FLASH_TECH_STATUSES)[number], string> = {
   Open: CHART_PALETTE[0],
   Upcoming: CHART_PALETTE[1],
   Closed: CHART_PALETTE[2],
+  Cancelled: CHART_OTHER_COLOR,
 };
 
 interface DonutSlice {
