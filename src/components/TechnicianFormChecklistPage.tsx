@@ -61,6 +61,7 @@ import { getTechnicianIdDocumentUrl } from "@/lib/supabase/technicianIdDocuments
 import { getTechnicianFormExemptions, setTechnicianFormExemption } from "@/lib/supabase/technicianFormExemptions";
 import { logActivity } from "@/lib/supabase/hrActivityLog";
 import { getAppUrl } from "@/lib/appUrl";
+import { onTabVisible } from "@/lib/pageVisibility";
 import { LOCATIONS_DATA } from "@/lib/zipCoverage";
 import { uploadW4Form } from "@/lib/firebase/storage";
 import { fillW4Pdf } from "@/lib/w4PdfFill";
@@ -404,6 +405,16 @@ export function TechnicianFormChecklistPage() {
   useEffect(() => {
     void loadDocsForActiveTab();
   }, [loadDocsForActiveTab]);
+
+  // A form sent/signed from somewhere else (HR Dashboard, a technician's own
+  // fill link, etc.) has no way to push an update here — this page only
+  // fetches once on mount/tab-switch, so a tab left open for a while quietly
+  // goes stale ("Not sent" for a form that's actually already signed and
+  // waiting on HR). Catching up on refocus — same fix TimeClockMenu.tsx/
+  // MessagesMenu.tsx already use for the same "long-open tab" staleness —
+  // means coming back to this tab always shows current status without
+  // needing to remember to click Refresh.
+  useEffect(() => onTabVisible(() => void load()), [load]);
 
   const rows: TechRow[] = useMemo(() => {
     return allUsers.filter(activeConfig.isEligible).map((u) => {
