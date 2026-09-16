@@ -27252,6 +27252,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                   <option value="manager">Manager</option>
                   <option value="senior_manager">Senior Manager</option>
                   <option value="hr_staff">HR Staff</option>
+                  <option value="executive">Executive</option>
                   <option value="employee">Employee</option>
                 </select>
                 {warnActionError && (
