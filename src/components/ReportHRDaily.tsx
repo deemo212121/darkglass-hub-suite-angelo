@@ -17910,7 +17910,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                       </div>
                     )}
                     {!canCorrManagerAct && !canCorrHrAct && !canCorrAccountingAct && (
-                      <span className="text-xs text-muted-foreground">{r.managerStatus === "pending" ? "Awaiting manager" : "Awaiting HR/Accounting"}</span>
+                      <span className="text-xs text-muted-foreground">Awaiting review (any 2 of Manager/HR/Accounting)</span>
                     )}
                   </div>
                   </div>

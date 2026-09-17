@@ -3,13 +3,16 @@
  * See migration 0028: timecard_corrections + an append-only
  * timecard_correction_history audit trail populated by a DB trigger.
  *
- * Approval is staged (0098_timecard_correction_two_stage_approval.sql),
- * mirroring pto_requests' manager+HR pattern but with a different shape:
- * the employee's direct manager reviews first, then EITHER HR or Accounting
- * (the FINANCE role app-wide) gives the final approval — an OR gate, not an
- * AND like PTO's manager+HR. The legacy `status` column is derived
- * server-side by a trigger from the three stage columns, so existing code
- * checking `status === "approved"` keeps working unchanged.
+ * Approval is staged (0098_timecard_correction_two_stage_approval.sql,
+ * quorum rule updated by 0267_timecard_correction_two_of_three_quorum.sql):
+ * Manager, HR, and Accounting (the FINANCE role app-wide) can each review
+ * independently at any time — none of the three is gated behind another
+ * going first, so an unavailable manager doesn't stall a correction that
+ * needs to land fast. Overall approval needs ANY 2 of the 3 stages to
+ * approve; any single stage rejecting still rejects the whole request. The
+ * legacy `status` column is derived server-side by a trigger from the three
+ * stage columns, so existing code checking `status === "approved"` keeps
+ * working unchanged.
  */
 
 import { supabase } from "./client";
@@ -173,15 +176,18 @@ export async function getPendingCorrectionsInRange(startDate: string, endDate: s
  * The manager stage is for the specific resolved direct manager (or anyone
  * with the generic MANAGER role as a stand-in if none was resolved at
  * submission time). HR and Accounting (the FINANCE role app-wide — see
- * dashboardAccess.ts's "accounting-dashboard": ["ADMIN","FINANCE"]) can only
- * act once the manager has approved, and either one alone is sufficient —
- * this is an OR gate, unlike PTO's manager+HR AND gate. Both SUPERADMIN (a
+ * dashboardAccess.ts's "accounting-dashboard": ["ADMIN","FINANCE"]) can act
+ * at any time — all three stages are open in parallel, not gated behind the
+ * manager going first, so an unavailable manager doesn't block a correction
+ * that needs to land fast. See sync_timecard_correction_overall_status
+ * (migration 0267) for the "any 2 of 3 approve" quorum that decides overall
+ * approval from these three independent stage columns. Both SUPERADMIN (a
  * company's own top-tier admin) and SUPERSUPERADMIN (the platform-level
  * role) bypass every stage, same as PTO — a single approval from either is
  * final.
  */
 export function canReviewCorrectionStage(
-  request: Pick<TimecardCorrectionRow, "managerId" | "managerStatus">,
+  request: Pick<TimecardCorrectionRow, "managerId">,
   stage: CorrectionStage,
   viewerProfileId: string | null,
   viewerRole: string | null | undefined,
@@ -211,7 +217,6 @@ export function canReviewCorrectionStage(
     if (request.managerId) return false;
     return has("MANAGER");
   }
-  if (request.managerStatus !== "approved") return false;
   if (stage === "hr") return has("HR");
   return has("FINANCE");
 }
@@ -259,16 +264,16 @@ export async function createTimecardCorrection(input: {
  * request. `corrected` optionally updates the proposed corrected punch —
  * any reviewing stage may adjust it, not just whoever submitted it.
  *
- * On final approval (manager approved AND (HR or Accounting) approved —
- * read back from the DB after the update, since the overall `status` is
- * derived server-side by a trigger) the corrected punch is merged into the
+ * On final approval (any 2 of the 3 stages approved — read back from the DB
+ * after the update, since the overall `status` is derived server-side by a
+ * trigger) the corrected punch is merged into the
  * real timecard_entries row, exactly like the old single-stage
  * approveTimecardCorrection used to do immediately. On rejection at any
- * stage, or on a manager-only approval still awaiting HR/Accounting, only a
- * notification goes out — nothing is applied to the employee's timecard yet.
+ * stage, or on just one of the three approving so far, only a notification
+ * goes out — nothing is applied to the employee's timecard yet.
  */
 export async function reviewCorrectionStage(
-  correction: Pick<TimecardCorrectionRow, "id" | "profileId" | "workDate">,
+  correction: Pick<TimecardCorrectionRow, "id" | "profileId" | "workDate" | "managerId">,
   stage: CorrectionStage,
   decision: "approved" | "rejected",
   reviewerId: string,
@@ -350,29 +355,39 @@ export async function reviewCorrectionStage(
     return;
   }
 
-  // Manager-only approval so far — ping HR and Accounting that it's their turn.
-  if (stage === "manager") {
+  // Exactly one of the three stages has approved so far (still "pending"
+  // overall) — ping whoever holds the OTHER two stages that one more
+  // approval (from any of them) finalizes it. Manager, HR, and Accounting
+  // are symmetric under the 2-of-3 quorum, so this fires regardless of
+  // which stage just acted, not just the manager.
+  if (updated.status === "pending") {
     try {
       const roster = await getCompanyUsers();
       const requesterName = roster.find((p) => p.id === correction.profileId)?.display_name || "An employee";
       const recipients = roster.filter((p) => {
         if (p.id === reviewerId || !p.is_active) return false;
         const heldRoles = [p.role, ...(p.extra_roles ?? [])].map((r) => (r || "").toUpperCase());
-        return heldRoles.includes("HR") || heldRoles.includes("FINANCE");
+        const isManager = correction.managerId ? p.id === correction.managerId : heldRoles.includes("MANAGER");
+        const isHr = heldRoles.includes("HR");
+        const isFinance = heldRoles.includes("FINANCE");
+        if (stage === "manager") return isHr || isFinance;
+        if (stage === "hr") return isManager || isFinance;
+        return isManager || isHr; // stage === "accounting"
       });
+      const stageDoneLabel = stage === "manager" ? "the manager" : stage === "hr" ? "HR" : "Accounting";
       await Promise.all(
         recipients.map((r) =>
           createNotification({
             recipientId: r.id,
             senderId: reviewerId,
             senderName: reviewerName,
-            body: `⏱️ Time correction for ${requesterName} (${correction.workDate}) was approved by the manager — awaiting HR or Accounting review.`,
+            body: `⏱️ Time correction for ${requesterName} (${correction.workDate}) was approved by ${stageDoneLabel} — one more approval (Manager, HR, or Accounting) finalizes it.`,
             linkTo: "/m/dashboard/attendance-monitoring?tab=corrections",
           })
         )
       );
     } catch (err) {
-      console.error("Failed to notify HR/Accounting of pending correction:", err);
+      console.error("Failed to notify remaining stages of pending correction:", err);
     }
   }
 }
