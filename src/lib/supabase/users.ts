@@ -84,6 +84,8 @@ export interface ProfileRow {
   employment_type: "trainee" | "regular";
   /** HR-initiated freeze (migration 0223) — see roleLabels.ts's isSubmoduleAllowedForFrozen. Same best-effort fetch pattern as employment_type; defaults to false. */
   frozen: boolean;
+  /** HR override (migration 0271) — a trainee with this set gets full access to their real role's modules/submodules despite employment_type still being "trainee" (see getProfileForLogin's isTrainee). Same best-effort fetch pattern as employment_type/frozen; defaults to false. */
+  trainee_access_granted: boolean;
   is_active: boolean;
   /** Set by AdminUserManagementPage.tsx's Reset Password actions — see migration 0103. Forces a redirect to /profile until they change it (__root.tsx). */
   must_change_password: boolean;
@@ -133,15 +135,15 @@ export async function getProfileForLogin(firebaseUid: string): Promise<{
 } | null> {
   let { data, error } = await supabase
     .from("profiles")
-    .select("email, role, extra_roles, display_name, is_active, work_plan, branch_access, must_change_password, employment_type, frozen, companies:company_id (legacy_code, login_alias, is_active)")
+    .select("email, role, extra_roles, display_name, is_active, work_plan, branch_access, must_change_password, employment_type, frozen, trainee_access_granted, companies:company_id (legacy_code, login_alias, is_active)")
     .eq("firebase_uid", firebaseUid)
     .maybeSingle();
 
-  // 42703 = "column frozen does not exist" — migration 0223 hasn't been run
-  // yet. This runs on every login, so falling back to the pre-0223 SELECT
-  // (frozen defaults to false) has to work, not just degrade — a broken
-  // login for the entire company is a much worse failure than one missing
-  // feature.
+  // 42703 = "a selected column doesn't exist" — either migration 0223
+  // (frozen) or 0271 (trainee_access_granted) hasn't been run yet. This runs
+  // on every login, so falling back to the pre-0223/0271 SELECT (both
+  // default to false) has to work, not just degrade — a broken login for
+  // the entire company is a much worse failure than one missing feature.
   if (error?.code === "42703") {
     ({ data, error } = await supabase
       .from("profiles")
@@ -171,7 +173,13 @@ export async function getProfileForLogin(firebaseUid: string): Promise<{
     workPlan: (data as any).work_plan ?? null,
     branchAccess: (data as any).branch_access ?? null,
     mustChangePassword: (data as any).must_change_password ?? false,
-    isTrainee: (data as any).employment_type === "trainee",
+    // A trainee with trainee_access_granted set (migration 0271, HR's "Grant
+    // Access" button on Master List's Trainee tab) gets full access to their
+    // real role despite employment_type still reading "trainee" — the
+    // restriction itself (roleLabels.ts's isModuleAllowedForTrainee) never
+    // needs to know about the override, since it just stops seeing isTrainee
+    // as true once granted.
+    isTrainee: (data as any).employment_type === "trainee" && (data as any).trainee_access_granted !== true,
     isFrozen: (data as any).frozen === true,
   };
 }
@@ -205,6 +213,30 @@ export async function setProfileFrozen(profileId: string, frozen: boolean, actor
       frozen
         ? { frozen: true, frozen_at: new Date().toISOString(), frozen_by: actorId, frozen_by_name: actorName }
         : { frozen: false }
+    )
+    .eq("id", profileId);
+  if (error) throw new Error(error.message);
+}
+
+/**
+ * Grants (or revokes) a trainee's full access to their real role — see
+ * migration 0271. Only lifts the access restriction (roleLabels.ts's
+ * isModuleAllowedForTrainee/isSubmoduleAllowedForTrainee, via
+ * getProfileForLogin's isTrainee); employment_type itself is left alone, so
+ * Master List's Employment Status column keeps reading "Trainee" for
+ * payroll/HR classification. Takes effect the next time they log in or
+ * reload (same as the Frozen restriction above — this isn't pushed live to
+ * an already-open session). Revoking just clears the flag; the stamped
+ * trainee_access_granted_at/_by/_by_name are left as a historical record of
+ * the last grant, overwritten the next time this is called with granted=true.
+ */
+export async function setTraineeAccessGranted(profileId: string, granted: boolean, actorId: string, actorName: string): Promise<void> {
+  const { error } = await supabase
+    .from("profiles")
+    .update(
+      granted
+        ? { trainee_access_granted: true, trainee_access_granted_at: new Date().toISOString(), trainee_access_granted_by: actorId, trainee_access_granted_by_name: actorName }
+        : { trainee_access_granted: false }
     )
     .eq("id", profileId);
   if (error) throw new Error(error.message);
@@ -577,6 +609,22 @@ async function fetchCompanyUsersUncached(): Promise<ProfileRow[]> {
     }
   }
 
+  // Same best-effort pattern again — trainee_access_granted (migration 0271) is newer/optional too.
+  for (const row of rows) row.trainee_access_granted = false;
+  if (rows.length > 0) {
+    const { data: grantRows, error: grantError } = await supabase
+      .from("profiles")
+      .select("id, trainee_access_granted")
+      .in("id", rows.map((r) => r.id));
+    if (grantError) {
+      console.error("getCompanyUsers (trainee_access_granted) error:", grantError.message);
+    } else {
+      const grantById = new Map((grantRows ?? []).map((r: any) => [r.id, r.trainee_access_granted]));
+      for (const row of rows) {
+        row.trainee_access_granted = grantById.get(row.id) === true;
+      }
+    }
+  }
   return rows;
 }
 
