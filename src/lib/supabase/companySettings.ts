@@ -3,7 +3,7 @@
  * provider, COE body template, default technician, HR notification
  * toggles, the weekly forced password reset opt-out, and the Flash Tech
  * "trip turned Open" alert recipient. See migrations 0053, 0063, 0067,
- * 0090, 0235, and 0267.
+ * 0090, 0235, and 0268.
  */
 
 import { supabase } from "./client";
@@ -154,7 +154,7 @@ export async function setNotifyAdminsTaxForms(enabled: boolean): Promise<void> {
 
 /**
  * Who gets emailed when a Flash Tech trip's status auto-flips to Open (see
- * migration 0267, src/lib/server/flashTechOpenAlerts.ts). One editable,
+ * migration 0268, src/lib/server/flashTechOpenAlerts.ts). One editable,
  * company-wide address — comma-separate for more than one recipient. Empty
  * string means "no one" (the alert job silently skips a company with
  * nothing set here, same tolerance the FLASH_TECH Gmail connection itself

@@ -1,5 +1,5 @@
 -- =====================================================================
--- 0267_timecard_correction_two_of_three_quorum.sql
+-- 0270_timecard_correction_two_of_three_quorum.sql
 --
 -- Timecard corrections (0098_timecard_correction_two_stage_approval.sql)
 -- required the manager to approve first, then either HR or Accounting to

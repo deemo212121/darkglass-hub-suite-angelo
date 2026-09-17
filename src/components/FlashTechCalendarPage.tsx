@@ -196,7 +196,7 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
 
   // ── Connect Gmail + "trip turned Open" alert recipient — same
   // connect-flow/region idiom as ReportHRDaily.tsx's Hiring Gmail block
-  // (migration 0267, src/lib/server/flashTechOpenAlerts.ts's hourly cron
+  // (migration 0268, src/lib/server/flashTechOpenAlerts.ts's hourly cron
   // job is what actually sends the alert; this page only connects the
   // mailbox and sets who receives it). ──
   const [flashTechGmailStatus, setFlashTechGmailStatus] = useState<GmailConnectionStatus | null>(null);
