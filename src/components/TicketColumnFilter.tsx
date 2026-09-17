@@ -91,10 +91,18 @@ export function TicketColumnFilter({ options, selected, onChange, label, classNa
   const hasFilter = selected.size > 0;
 
   const toggle = (value: string) => {
-    const next = new Set(selected);
+    // "Select All" is checked (empty set) but every individual box also
+    // reads as checked (see isChecked below) — unchecking one from that
+    // state means "everything except this one", not "just this one", so
+    // start from every currently-visible option rather than the empty set.
+    const next = allSelected ? new Set(sortedOptions) : new Set(selected);
     if (next.has(value)) next.delete(value);
     else next.add(value);
-    onChange(next);
+    // Re-checking back up to literally every visible option collapses to
+    // "no filter" (empty set) instead of an explicit full list, so a value
+    // that shows up in this column later (not visible right now) isn't
+    // silently excluded just because it didn't exist when this was set.
+    onChange(next.size === sortedOptions.length ? new Set() : next);
   };
 
   const selectAll = () => onChange(new Set()); // clear filter
@@ -154,7 +162,7 @@ export function TicketColumnFilter({ options, selected, onChange, label, classNa
             ) : (
               filteredOptions.map((opt) => {
                 const display = opt || EMPTY_LABEL;
-                const isChecked = !allSelected && selected.has(opt);
+                const isChecked = allSelected || selected.has(opt);
                 return (
                   <label
                     key={opt || "__empty__"}
