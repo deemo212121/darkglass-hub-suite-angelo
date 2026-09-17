@@ -11,8 +11,11 @@ import { TIME_FRAMES, FRAME_START_TIME, type TimeFrame, normalizeTimePeriod } fr
 import {
   getCompanyTickets,
   updateTicketAssignment,
+  updateTicketStatus,
   getLatestVisitTechnicianByTicketIds,
+  getLatestVisitTriageNoteByTicketIds,
 } from "@/lib/supabase/tickets";
+import { getRepairStatuses, type RepairStatus } from "@/lib/supabase/repairStatuses";
 import { getLocations as sbGetLocations } from "@/lib/supabase/locationManagement";
 import { getCompanyTechnicians, type TechnicianOption, type TechnicianHome } from "@/lib/supabase/users";
 import { lookupZip } from "@/lib/zipCoverage";
@@ -398,6 +401,16 @@ export function WorkPlannerPage({ mod, sub }: Props) {
       .then(setLiveTechnicians)
       .catch((err) => console.error("Work Planner: failed to load technician roster:", err));
   }, []);
+  // Company-configured status codes (RepairStatusesPage.tsx / migration
+  // 0146) — the same option list the rest of the app uses, so the ticket
+  // detail popup's Repair Status dropdown never drifts from what's
+  // actually valid to set on tickets.status.
+  const [repairStatuses, setRepairStatuses] = useState<RepairStatus[]>([]);
+  useEffect(() => {
+    getRepairStatuses()
+      .then(setRepairStatuses)
+      .catch((err) => console.error("Work Planner: failed to load repair statuses:", err));
+  }, []);
   const [plannerDate, setPlannerDate] = useState(() => getLocalDateStr());
   const [showRescheduled, setShowRescheduled] = useState(false);
   // Technician columns/rows with zero tickets for the selected day are
@@ -408,6 +421,27 @@ export function WorkPlannerPage({ mod, sub }: Props) {
   const [plannerTickets, setPlannerTickets] = useState<PlannerTicket[]>([]);
   const [changedTickets, setChangedTickets] = useState<Array<{ type: string; ticketNum: string; scheduleDate: string; newTimeSlot: string; previousTimeSlot: string; technician: string; timestamp: string }>>([]);
   const [selectedTicket, setSelectedTicket] = useState<PlannerTicket | null>(null);
+  // Latest Visit Log Triage Note for whichever ticket is open in the detail
+  // popup — lives on the `visits` table (getLatestVisitTriageNoteByTicketIds),
+  // not the ticket row itself, so it's fetched on demand per selection
+  // rather than eagerly for every ticket on the board.
+  const [selectedTicketTriageNote, setSelectedTicketTriageNote] = useState("");
+  const selectedTicketId = String(selectedTicket?._id ?? "").trim();
+  useEffect(() => {
+    if (!selectedTicketId) {
+      setSelectedTicketTriageNote("");
+      return;
+    }
+    let cancelled = false;
+    getLatestVisitTriageNoteByTicketIds([selectedTicketId])
+      .then((notes) => { if (!cancelled) setSelectedTicketTriageNote(notes.get(selectedTicketId) ?? ""); })
+      .catch((err) => console.error("Work Planner: failed to load triage note:", err));
+    return () => { cancelled = true; };
+    // Keyed on the ticket's stable id, not the `selectedTicket` object
+    // itself — the optimistic status/technician updates below replace that
+    // object on every change, which would otherwise refetch the note
+    // needlessly each time instead of only when the OPEN TICKET changes.
+  }, [selectedTicketId]);
   const [mapMode, setMapMode] = useState<"map" | "satellite">("map");
   const [mapReady, setMapReady] = useState(false);
   const [mapError, setMapError] = useState<string | null>(null);
@@ -1276,6 +1310,66 @@ export function WorkPlannerPage({ mod, sub }: Props) {
     dragSourceRef.current = null;
   };
 
+  // Repair Status / Technician changes made directly from the ticket detail
+  // popup (map pin click / schedule tile click) — same optimistic-update
+  // + persist pattern handleDrop uses above, just triggered from a
+  // dropdown instead of a drag. Updates both the board (plannerTickets) and
+  // the open popup's own state so the change is visible immediately in
+  // both places without waiting on a full reload.
+  const [updatingTicketField, setUpdatingTicketField] = useState<"status" | "technician" | null>(null);
+
+  const handleChangeSelectedTicketStatus = async (newStatus: string) => {
+    if (!selectedTicket || newStatus === selectedTicket.status) return;
+    const ticketNo = selectedTicket.ticketNo;
+    const previousStatus = selectedTicket.status;
+    setUpdatingTicketField("status");
+    setPlannerTickets((current) => current.map((t) => (t.ticketNo === ticketNo ? { ...t, status: newStatus } : t)));
+    setSelectedTicket((current) => (current && current.ticketNo === ticketNo ? { ...current, status: newStatus } : current));
+    try {
+      await updateTicketStatus(ticketNo, newStatus);
+      window.dispatchEvent(new CustomEvent("ticket-data-updated", { detail: { ticketNo } }));
+    } catch (err) {
+      console.error("Failed to update ticket status:", err);
+      alert(`Failed to save status: ${err instanceof Error ? err.message : "Unknown error"}`);
+      setPlannerTickets((current) => current.map((t) => (t.ticketNo === ticketNo ? { ...t, status: previousStatus } : t)));
+      setSelectedTicket((current) => (current && current.ticketNo === ticketNo ? { ...current, status: previousStatus } : current));
+    } finally {
+      setUpdatingTicketField(null);
+    }
+  };
+
+  const handleChangeSelectedTicketTechnician = async (newTechnician: string) => {
+    if (!selectedTicket || newTechnician === selectedTicket.technician) return;
+    const ticketNo = selectedTicket.ticketNo;
+    const previousTechnician = selectedTicket.technician;
+    setUpdatingTicketField("technician");
+    setPlannerTickets((current) => current.map((t) => (t.ticketNo === ticketNo ? { ...t, technician: newTechnician } : t)));
+    setSelectedTicket((current) => (current && current.ticketNo === ticketNo ? { ...current, technician: newTechnician } : current));
+    try {
+      await updateTicketAssignment(ticketNo, { technician: newTechnician });
+      window.dispatchEvent(new CustomEvent("ticket-data-updated", { detail: { ticketNo } }));
+      setChangedTickets((current) => [
+        {
+          type: "Technician Reassignment",
+          ticketNum: ticketNo,
+          scheduleDate: plannerDate,
+          newTimeSlot: selectedTicket.slot,
+          previousTimeSlot: selectedTicket.slot,
+          technician: newTechnician,
+          timestamp: new Date().toLocaleTimeString(),
+        },
+        ...current,
+      ]);
+    } catch (err) {
+      console.error("Failed to update ticket technician:", err);
+      alert(`Failed to save technician: ${err instanceof Error ? err.message : "Unknown error"}`);
+      setPlannerTickets((current) => current.map((t) => (t.ticketNo === ticketNo ? { ...t, technician: previousTechnician } : t)));
+      setSelectedTicket((current) => (current && current.ticketNo === ticketNo ? { ...current, technician: previousTechnician } : current));
+    } finally {
+      setUpdatingTicketField(null);
+    }
+  };
+
   // Daily Schedule tile click -> pan/zoom the Assigned Locations Map to
   // that ticket's pin (same plotted-tickets list the pin navigator uses),
   // and scroll the map into view since it sits below the schedule grid.
@@ -1649,20 +1743,45 @@ export function WorkPlannerPage({ mod, sub }: Props) {
               <>
                 <div className="detail-row">
                   <div className="detail-field grow"><div className="detail-label">Customer</div><div className="detail-value">{selectedTicket.customer || "Unknown"}</div></div>
-                  <div className="detail-field"><div className="detail-label">Technician</div><div className="detail-value">{selectedTicket.technician || "Unassigned"}</div></div>
+                  <div className="detail-field">
+                    <div className="detail-label">Technician</div>
+                    <div className="detail-value">
+                      <select
+                        className="control-select"
+                        style={{ width: "100%", minWidth: 0 }}
+                        value={selectedTicket.technician || "Unassigned"}
+                        disabled={updatingTicketField === "technician"}
+                        onChange={(event) => void handleChangeSelectedTicketTechnician(event.target.value)}
+                      >
+                        <option value="Unassigned">Unassigned</option>
+                        {/* Keep the current value selectable even if it isn't a real technician profile — e.g. a branch's catch-all default (see getSelectedTechRoster). */}
+                        {selectedTicket.technician && selectedTicket.technician !== "Unassigned" && !liveTechnicians.some((t) => t.name === selectedTicket.technician) && (
+                          <option value={selectedTicket.technician}>{selectedTicket.technician}</option>
+                        )}
+                        {liveTechnicians.map((t) => (
+                          <option key={t.id} value={t.name}>{t.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
                   <div className="detail-field">
                     <div className="detail-label">Repair Status</div>
                     <div className="detail-value">
-                      <span className={`status-pill-detail tone-tech-0`}>
-                        {(() => {
-                          // Get full ticket data with visits from centralized system
-                          const fullTicket = getTicketByNumber(selectedTicket.ticketNo);
-                          // Get latest visit's repair status if available
-                          const latestVisit = fullTicket?.visits?.[0]; // Assumes visits are sorted by date (newest first)
-                          const repairStatus = latestVisit?.repairStatus || selectedTicket.status || "Open";
-                          return repairStatus;
-                        })()}
-                      </span>
+                      <select
+                        className="control-select"
+                        style={{ width: "100%", minWidth: 0 }}
+                        value={selectedTicket.status || ""}
+                        disabled={updatingTicketField === "status"}
+                        onChange={(event) => void handleChangeSelectedTicketStatus(event.target.value)}
+                      >
+                        {/* Keep the current value selectable even if it isn't (or is no longer) a configured Repair Status. */}
+                        {selectedTicket.status && !repairStatuses.some((s) => s.code === selectedTicket.status) && (
+                          <option value={selectedTicket.status}>{selectedTicket.status}</option>
+                        )}
+                        {repairStatuses.map((s) => (
+                          <option key={s.id} value={s.code}>{s.code}</option>
+                        ))}
+                      </select>
                     </div>
                   </div>
                 </div>
@@ -1670,8 +1789,16 @@ export function WorkPlannerPage({ mod, sub }: Props) {
                 <div className="detail-row">
                   <div className="detail-field grow"><div className="detail-label">Address</div><div className="detail-value">{selectedTicket.address || selectedTicket.city || selectedTicket.location || "-"}</div></div>
                   <div className="detail-field"><div className="detail-label">Schedule</div><div className="detail-value"><span className="schedule-box"><CalendarDays className="h-4 w-4" /><span>{selectedTicket.schedule || plannerDate}</span></span></div></div>
+                  <div className="detail-field"><div className="detail-label">Posting Date</div><div className="detail-value">{selectedTicket.created || "-"}</div></div>
                 </div>
                 <div className="detail-row"><div className="detail-field grow"><div className="detail-label">Contact</div><div className="detail-value">{selectedTicket.phone || "-"}</div></div></div>
+                <hr className="detail-divider" />
+                <div className="detail-row">
+                  <div className="detail-field grow"><div className="detail-label">Technician Triage Notes</div><div className="detail-value">{selectedTicketTriageNote || "-"}</div></div>
+                </div>
+                <div className="detail-row">
+                  <div className="detail-field grow"><div className="detail-label">Internal Notes</div><div className="detail-value">{selectedTicket.internalNote || "-"}</div></div>
+                </div>
               </>
             ) : (
               <div className="text-sm text-slate-300">Select a ticket to view its details.</div>
