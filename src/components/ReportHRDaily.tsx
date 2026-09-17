@@ -2948,7 +2948,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // HR signature uses (e.g. wageAckEmployerSigPad below) — was a plain
   // "typed name as text" input before, the only signature on any generated
   // HR document that didn't actually look like a signature.
-  const coeOfficeUseSigPad = useSignaturePad({ width: 300, height: 90 });
+  const coeOfficeUseSigPad = useSignaturePad({ width: 260, height: 70 });
   const updateCoeField = (field: keyof typeof coeForm, value: string) =>
     setCoeForm((prev) => ({ ...prev, [field]: value }));
 
@@ -18792,7 +18792,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Signature</label>
             <canvas
               {...coeOfficeUseSigPad.canvasProps}
-              className={`bg-white rounded-md border border-white/15 ${coeOfficeUseSigPad.canvasProps.className}`}
+              className={`bg-white rounded-md border border-white/15 w-[260px] max-w-full self-start ${coeOfficeUseSigPad.canvasProps.className}`}
             />
             <div className="mt-1">
               <SignaturePadControls pad={coeOfficeUseSigPad} />
