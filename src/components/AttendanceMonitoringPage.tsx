@@ -421,6 +421,12 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   const [correctionSearch, setCorrectionSearch] = useState("");
   const [correctionStatusFilter, setCorrectionStatusFilter] = useState<"all" | CorrectionStatus>("all");
   const [correctionDepartmentFilter, setCorrectionDepartmentFilter] = useState<string>("all");
+  const [correctionBranchFilter, setCorrectionBranchFilter] = useState<string>("all");
+  // Filters the correction's own workDate (the date the correction is FOR),
+  // not createdAt (when it was submitted) — a correction filed today for a
+  // shift two weeks ago should show up under that shift's date, not today's.
+  const [correctionWorkDateFrom, setCorrectionWorkDateFrom] = useState("");
+  const [correctionWorkDateTo, setCorrectionWorkDateTo] = useState("");
   const [correctionTimecardData, setCorrectionTimecardData] = useState<{ checkIn: string; checkOut: string; mealStart: string; mealEnd: string }>({ checkIn: "", checkOut: "", mealStart: "", mealEnd: "" });
   const [notesData, setNotesData] = useState<Record<string, { content: string; notifyIndividual: boolean; notifyTeamLead: boolean; createdBy: string | null }>>({});
   const [branchRoles, setBranchRoles] = useState<BranchRoles[]>([]);
@@ -1528,10 +1534,27 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
         const p = allProfileById.get(c.profileId);
         if (!p || profileDepartment(p) !== correctionDepartmentFilter) return false;
       }
+      if (correctionBranchFilter !== "all") {
+        const p = allProfileById.get(c.profileId);
+        if (!p || p.assigned_branch !== correctionBranchFilter) return false;
+      }
+      if (correctionWorkDateFrom && c.workDate < correctionWorkDateFrom) return false;
+      if (correctionWorkDateTo && c.workDate > correctionWorkDateTo) return false;
       if (q && !profileName(c.profileId).toLowerCase().includes(q)) return false;
       return true;
     });
-  }, [corrections, correctionSearch, correctionStatusFilter, correctionDepartmentFilter, profileName, teamScopedIds, allProfileById]);
+  }, [
+    corrections,
+    correctionSearch,
+    correctionStatusFilter,
+    correctionDepartmentFilter,
+    correctionBranchFilter,
+    correctionWorkDateFrom,
+    correctionWorkDateTo,
+    profileName,
+    teamScopedIds,
+    allProfileById,
+  ]);
 
   // Correction History panel — same team scoping as filteredCorrections
   // above, via each history entry's related correction's profileId.
@@ -2503,7 +2526,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
 
               <div className="bg-slate-900/50 border border-white/10 rounded-lg p-6 overflow-x-auto">
                 <h2 className="text-lg font-bold text-white mb-4">Attendance Corrections</h2>
-                <div className="grid gap-3 md:grid-cols-3 mb-4">
+                <div className="grid gap-3 md:grid-cols-4 mb-4">
                   <div>
                     <label className="block text-xs text-slate-400 uppercase mb-2">Search Employee</label>
                     <input
@@ -2540,6 +2563,50 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                       ))}
                     </select>
                   </div>
+                  <div>
+                    <label className="block text-xs text-slate-400 uppercase mb-2">Filter by Branch</label>
+                    <select
+                      value={correctionBranchFilter}
+                      onChange={(e) => setCorrectionBranchFilter(e.target.value)}
+                      className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none"
+                    >
+                      <option value="all">All Branches</option>
+                      {locations.map((loc) => (
+                        <option key={loc} value={loc}>{loc}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="md:col-span-2">
+                    <label className="block text-xs text-slate-400 uppercase mb-2">
+                      Filter by Work Date
+                      {(correctionWorkDateFrom || correctionWorkDateTo) && (
+                        <button
+                          type="button"
+                          onClick={() => { setCorrectionWorkDateFrom(""); setCorrectionWorkDateTo(""); }}
+                          className="ml-2 text-blue-400 hover:text-blue-300 normal-case"
+                        >
+                          Clear
+                        </button>
+                      )}
+                    </label>
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="date"
+                        value={correctionWorkDateFrom}
+                        max={correctionWorkDateTo || undefined}
+                        onChange={(e) => setCorrectionWorkDateFrom(e.target.value)}
+                        className="flex-1 min-w-0 bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none"
+                      />
+                      <span className="text-slate-500 text-xs shrink-0">to</span>
+                      <input
+                        type="date"
+                        value={correctionWorkDateTo}
+                        min={correctionWorkDateFrom || undefined}
+                        onChange={(e) => setCorrectionWorkDateTo(e.target.value)}
+                        className="flex-1 min-w-0 bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none"
+                      />
+                    </div>
+                  </div>
                 </div>
                 <table className="w-full text-sm">
                   <thead>
@@ -2556,7 +2623,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                     {loading ? (
                       <tr><td colSpan={6} className="px-3 py-8 text-center text-slate-400">Loading…</td></tr>
                     ) : filteredCorrections.length === 0 ? (
-                      <tr><td colSpan={6} className="px-3 py-8 text-center text-slate-400">{correctionSearch.trim() || correctionStatusFilter !== "all" || correctionDepartmentFilter !== "all" ? "No correction requests match your search/filter." : "No correction requests yet."}</td></tr>
+                      <tr><td colSpan={6} className="px-3 py-8 text-center text-slate-400">{correctionSearch.trim() || correctionStatusFilter !== "all" || correctionDepartmentFilter !== "all" || correctionBranchFilter !== "all" || correctionWorkDateFrom || correctionWorkDateTo ? "No correction requests match your search/filter." : "No correction requests yet."}</td></tr>
                     ) : filteredCorrections.map((correction) => (
                       <tr key={correction.id} className="border-b border-white/5 hover:bg-white/5 transition">
                         <td className="px-3 py-3 text-white font-medium">
