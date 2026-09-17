@@ -70,7 +70,7 @@ import {
 import { uploadCoeCertificate, uploadWarningForm, uploadPromotionForm, uploadActionPlanForm, uploadTerminationForm, uploadW8benForm, uploadW4Form, uploadW4RForm, uploadI9Form, uploadWageAckForm, uploadCarIqAgreementForm, uploadVehicleAgreementForm, uploadEmployeeConfidentialityForm, uploadMealRestBreakForm, uploadPtoAckForm, uploadPartsResponsibilityForm, uploadMileageFuelForm, uploadLocationConsentForm, uploadDamageForm, uploadContractorDataForm, uploadDirectDepositForm, uploadSubstanceScreeningForm, uploadFlashTechnicianTravelForm, uploadContractorAddendumForm, uploadMasterW2AgreementForm, uploadMasterW2OfficeAgreementForm, uploadMasterPhContractorAgreementForm, uploadMasterW2ExecutiveAgreementForm, uploadSignableDocumentSignature, refreshStorageAuthToken } from "@/lib/firebase/storage";
 import { captureHtmlToPdfBlob, captureHtmlPagesToPdfBlob, loadAssetDataUrl as loadImageDataUrl } from "@/lib/pdfCapture";
 import { downloadSignableDocumentPdf } from "@/lib/downloadSignableDocumentPdf";
-import { repairMultiSignerPdfs } from "@/lib/repairMultiSignerSignatures";
+import { repairMultiSignerPdfs, type RepairResult } from "@/lib/repairMultiSignerSignatures";
 import { useSortableSearchTable } from "@/hooks/useSortableSearchTable";
 import { masterW2AgreementStyles, buildMasterW2AgreementBodyMarkup, type MasterW2AgreementFormData } from "@/lib/masterW2AgreementFormTemplate";
 import { masterW2OfficeAgreementStyles, buildMasterW2OfficeAgreementBodyMarkup, type MasterW2OfficeAgreementFormData } from "@/lib/masterW2OfficeAgreementFormTemplate";
@@ -11920,23 +11920,29 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // ONE-TIME repair for documents signed before resolveSignaturesForCapture
   // existed — see repairMultiSignerSignatures.ts's doc comment. Remove this
   // button + handler once confirmed there's nothing left to fix.
+  //
+  // Result is shown in an inline panel (repairResult), not window.alert —
+  // after a page has triggered several alert()/confirm() dialogs in one
+  // session, Chrome silently offers (and the user can accidentally enable)
+  // "Prevent this page from creating additional dialogs", after which
+  // EVERY future alert()/confirm() on that page — including the initial
+  // confirm() this used to gate on — silently no-ops with no visible sign
+  // anything was suppressed, which looks exactly like "the button doesn't
+  // do anything." An always-visible in-page panel can't be silently
+  // dismissed that way, and also survives long enough to actually read
+  // (an alert() covering the whole screen is easy to dismiss by reflex
+  // before registering what it said).
   const [repairingSignatures, setRepairingSignatures] = useState(false);
+  const [repairResult, setRepairResult] = useState<RepairResult | null>(null);
   const handleRepairMultiSignerSignatures = async () => {
-    if (!window.confirm("Re-generate the PDF for every warning/promotion/action-plan/termination form with 2+ signatures, so no signature is missing from the file? This can take a while and re-uploads a new PDF for each affected record.")) return;
+    setRepairResult(null);
     setRepairingSignatures(true);
     try {
       const result = await repairMultiSignerPdfs();
       void loadSentTerminationForms();
-      const lines = [
-        `Checked: ${result.checked}`,
-        `Repaired: ${result.repaired.length}`,
-        ...(result.repaired.length ? result.repaired.map((r) => `  • ${r}`) : []),
-        `Failed: ${result.failed.length}`,
-        ...(result.failed.length ? result.failed.map((f) => `  • ${f.type} ${f.id}: ${f.error}`) : []),
-      ];
-      alert(lines.join("\n"));
+      setRepairResult(result);
     } catch (err) {
-      alert(`Repair failed: ${err instanceof Error ? err.message : "Unknown error"}`);
+      setRepairResult({ checked: 0, repaired: [], failed: [{ id: "", type: "termination_form", error: err instanceof Error ? err.message : "Unknown error" }] });
     } finally {
       setRepairingSignatures(false);
     }
@@ -20172,6 +20178,26 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             {repairingSignatures ? "Repairing…" : "Repair Missing Signatures"}
           </button>
         </div>
+        {repairResult && (
+          <div className="mx-4 mt-3 text-xs bg-slate-800/60 border border-white/10 rounded-md px-3 py-2.5">
+            <div className="flex items-center justify-between gap-3">
+              <p className="font-semibold">
+                Checked {repairResult.checked} · Repaired {repairResult.repaired.length} · Failed {repairResult.failed.length}
+              </p>
+              <button type="button" onClick={() => setRepairResult(null)} className="text-muted-foreground hover:text-foreground shrink-0">✕</button>
+            </div>
+            {repairResult.repaired.length > 0 && (
+              <ul className="mt-1.5 text-green-300 list-disc list-inside">
+                {repairResult.repaired.map((r) => <li key={r}>{r}</li>)}
+              </ul>
+            )}
+            {repairResult.failed.length > 0 && (
+              <ul className="mt-1.5 text-red-300 list-disc list-inside">
+                {repairResult.failed.map((f, i) => <li key={f.id || i}>{f.type} {f.id}: {f.error}</li>)}
+              </ul>
+            )}
+          </div>
+        )}
         {terminationActionError && (
           <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{terminationActionError}</p>
         )}
