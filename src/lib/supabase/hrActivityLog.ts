@@ -98,6 +98,8 @@ export const ACTIVITY_ACTION_LABELS: Record<string, string> = {
   part_daily_collection_unmarked_collected: "Unmarked collected",
   technician_frozen: "Froze account",
   technician_unfrozen: "Unfroze account",
+  trainee_access_granted: "Granted trainee full access",
+  trainee_access_revoked: "Revoked trainee full access",
   attendance_hr_status_changed: "Changed HR Status",
   attendance_note_changed: "Changed note",
   attendance_attachment_added: "Added attachment",

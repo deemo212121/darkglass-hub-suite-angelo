@@ -23,7 +23,7 @@ import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { normalizeRole, ROLE_LABELS, isJotformHrRole, getRoleDepartmentBreakdown } from "@/lib/roleLabels";
 import { useAllRoleOptions } from "@/lib/customRoles";
-import { getCompanyUsers, getProfileEmployeeInfo, getEmployeeInfoByProfileIds, saveProfileEmployeeInfo, updateCompanyUser, getMyProfileId, getAccountCreatorsByEmail, getProfileCredentialsPreview, type EmployeeInfo } from "@/lib/supabase/users";
+import { getCompanyUsers, getProfileEmployeeInfo, getEmployeeInfoByProfileIds, saveProfileEmployeeInfo, updateCompanyUser, getMyProfileId, getAccountCreatorsByEmail, getProfileCredentialsPreview, setTraineeAccessGranted, type EmployeeInfo } from "@/lib/supabase/users";
 import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
 import { subscribeNotifications, markNotificationRead, deleteNotification, type AppNotification } from "@/lib/firebase/notifications";
 import {
@@ -338,6 +338,8 @@ interface Employee {
   status: EmploymentStatus;
   /** Trainee vs Regular — a separate classification from `status` (Account Status) above. See migration 0152. */
   employmentType: "trainee" | "regular";
+  /** HR override (migration 0268) — a trainee with this set gets full access to their real role despite employmentType still being "trainee". See users.ts's setTraineeAccessGranted. */
+  traineeAccessGranted: boolean;
   /** profiles.tier_level (migration 0162) — same field Staff List's own "Tier Level" tab edits; Current Technicians' own column here just narrows the dropdown to Tier 1/2/3. */
   tierLevel: string | null;
   onboardingDocs: Record<string, boolean>;
@@ -1583,6 +1585,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           terminationReason: info.employeeNote || undefined,
           status: employmentStatus,
           employmentType: p.employment_type || "regular",
+          traineeAccessGranted: p.trainee_access_granted === true,
           tierLevel: p.tier_level ?? null,
           onboardingDocs: info.onboardingDocs || {},
           offDays: p.off_days ?? [],
@@ -13196,6 +13199,31 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
 
+  // Grant (or revoke) a trainee's full access to their real role, WITHOUT
+  // touching Employment Status — see migration 0268, users.ts's
+  // setTraineeAccessGranted. Takes effect the trainee's next login/reload,
+  // same as the Frozen toggle just above.
+  const handleToggleTraineeAccessGranted = async (id: string, currentlyGranted: boolean) => {
+    const employee = employees.find((e) => e.id === id);
+    const warning = currentlyGranted
+      ? `Revoke ${employee?.name || "this trainee"}'s access? They'll go back to seeing only Employee Self-Service + Messages next time they log in.`
+      : `Grant ${employee?.name || "this trainee"} full access to their actual role (${ROLE_LABELS[normalizeRole(employee?.position || "")] ?? employee?.position})? They'll keep showing as "Trainee" here, but will see everything their role normally does starting next login. Clock in/out and Messages stay available either way.`;
+    if (!window.confirm(warning)) return;
+    setEmployees((prev) => prev.map((e) => (e.id === id ? { ...e, traineeAccessGranted: !currentlyGranted } : e)));
+    try {
+      await setTraineeAccessGranted(id, !currentlyGranted, myProfileId || "", displayName || "HR");
+      void logActivity({
+        action: currentlyGranted ? "trainee_access_revoked" : "trainee_access_granted",
+        targetType: "employee",
+        targetId: id,
+        targetLabel: employee?.name,
+      });
+    } catch (err) {
+      setEmployees((prev) => prev.map((e) => (e.id === id ? { ...e, traineeAccessGranted: currentlyGranted } : e)));
+      setError(err instanceof Error ? err.message : "Failed to update trainee access.");
+    }
+  };
+
   // Current Technicians' own Tier Level column — writes the same
   // profiles.tier_level Staff List's own "Tier Level" tab already edits
   // (StaffListPage.tsx), so the two stay in sync instead of drifting.
@@ -16421,7 +16449,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           // unlike every other department tab.
           const showBranchColumn = masterListDept === "Parts Manager and Parts";
           const showTierColumn = masterListDept === "Current Technicians";
-          const colCount = (showBranchColumn ? 15 : 14) + (showTierColumn ? 1 : 0);
+          const showAccessColumn = masterListDept === MASTER_LIST_TRAINEE_TAB;
+          const colCount = (showBranchColumn ? 15 : 14) + (showTierColumn ? 1 : 0) + (showAccessColumn ? 1 : 0);
           return (
         <div className="overflow-x-auto">
           <table className="w-full text-[11px]">
@@ -16442,6 +16471,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                 <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase" title="Remaining / Allowance">Vacation Leave</th>
                 {showTierColumn && <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase" title="Editable — writes profiles.tier_level, same field Staff List's own Tier Level tab uses">Tier Level</th>}
                 <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase">Employment Status</th>
+                {showAccessColumn && <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase" title="Lets a trainee use their real role's full access while still showing as Trainee above">Access</th>}
                 <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase">Warnings</th>
               </tr>
             </thead>
@@ -16723,6 +16753,29 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           <option value="trainee">Trainee</option>
                         </select>
                       </td>
+                      {showAccessColumn && (
+                        <td className="px-2 py-1">
+                          {employee.employmentType !== "trainee" ? (
+                            <span className="text-muted-foreground text-[10px]">—</span>
+                          ) : (
+                            <button
+                              onClick={() => void handleToggleTraineeAccessGranted(employee.id, employee.traineeAccessGranted)}
+                              title={
+                                employee.traineeAccessGranted
+                                  ? "Full access granted — click to revoke (back to Employee Self-Service + Messages only)"
+                                  : "Grant this trainee full access to their real role, while keeping them Trainee above"
+                              }
+                              className={`text-[10px] font-semibold px-1.5 py-0.5 rounded whitespace-nowrap ${
+                                employee.traineeAccessGranted
+                                  ? "bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30"
+                                  : "bg-slate-500/20 text-slate-200 hover:bg-slate-500/30 hover:text-white"
+                              }`}
+                            >
+                              {employee.traineeAccessGranted ? "Access granted" : "Grant access"}
+                            </button>
+                          )}
+                        </td>
+                      )}
                       <td className="px-2 py-1">
                         {warnings > 0 ? <span className="bg-yellow-500/20 text-yellow-300 px-1.5 py-0.5 rounded text-[10px] font-semibold">{warnings}</span> : <span className="text-muted-foreground text-[10px]">—</span>}
                       </td>
