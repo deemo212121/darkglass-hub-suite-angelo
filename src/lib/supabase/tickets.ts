@@ -278,6 +278,7 @@ export async function backfillTicketLocations(): Promise<{ scanned: number; upda
     updated++;
   }
 
+  if (updated > 0) invalidateCompanyTicketsCache();
   return { scanned: rows.length, updated };
 }
 
@@ -285,6 +286,26 @@ export async function backfillTicketLocations(): Promise<{ scanned: number; upda
 // biggest table in the app. Page through in chunks of 1000 instead, same
 // fix as jotformSubmissions.ts's getJotformSubmissions.
 const PAGE_SIZE = 1000;
+
+// getCompanyTickets is the single heaviest, most frequently repeated fetch in
+// the app: every dashboard/report mount re-pages the company's ENTIRE ticket
+// history (thousands of rows) from scratch, even when several of them mount
+// within the same few seconds (e.g. switching tabs on a dashboard that embeds
+// more than one report). Same fix as users.ts's getCompanyUsers cache: a
+// short TTL plus in-flight dedup so near-simultaneous/rapid callers share one
+// fetch instead of each re-paging the whole table. Kept much shorter than the
+// users cache (30s) since tickets change far more often — every write below
+// calls invalidateCompanyTicketsCache() immediately, so the TTL only papers
+// over the gap between an outside change (ServicePower sync, a raw SQL bulk
+// import run directly in Supabase) and the next natural fetch. Keyed by
+// sinceDate so the unscoped (full-history) and scoped callers never collide.
+const COMPANY_TICKETS_CACHE_TTL_MS = 15_000;
+const companyTicketsCache = new Map<string, { data: Ticket[]; expiresAt: number }>();
+const companyTicketsInFlight = new Map<string, Promise<Ticket[]>>();
+
+export function invalidateCompanyTicketsCache(): void {
+  companyTicketsCache.clear();
+}
 
 /**
  * Get all tickets for the caller's company (RLS-scoped).
@@ -340,11 +361,39 @@ async function fetchTicketPage(
  * this function returns by default.
  */
 export async function getCompanyTickets(options?: { sinceDate?: string }): Promise<Ticket[]> {
+  const sinceDate = options?.sinceDate;
+  const cacheKey = sinceDate ?? "";
+  const cached = companyTicketsCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cloneTickets(cached.data);
+
+  const inFlight = companyTicketsInFlight.get(cacheKey);
+  if (inFlight) return cloneTickets(await inFlight);
+
+  const promise = fetchCompanyTicketsUncached(sinceDate).finally(() => {
+    companyTicketsInFlight.delete(cacheKey);
+  });
+  companyTicketsInFlight.set(cacheKey, promise);
+  const rows = await promise;
+  companyTicketsCache.set(cacheKey, { data: rows, expiresAt: Date.now() + COMPANY_TICKETS_CACHE_TTL_MS });
+  return cloneTickets(rows);
+}
+
+// At least one existing caller (Work Planner's visit-technician overlay)
+// mutates ticket objects in place after fetching them (`t.technician = ...`)
+// — harmless when every call did its own network round trip and got back
+// objects nobody else held, but with a shared cache those same objects are
+// now handed to every caller in the same TTL window. A shallow per-ticket
+// copy keeps that (and any other in-place mutation) from leaking between
+// unrelated screens sharing the cache.
+function cloneTickets(rows: Ticket[]): Ticket[] {
+  return rows.map((t) => ({ ...t }));
+}
+
+async function fetchCompanyTicketsUncached(sinceDate?: string): Promise<Ticket[]> {
   // created_at is NOT unique — a bulk import can give thousands of rows the
   // same timestamp, and range()-based paging over a non-unique sort key
   // silently drops/duplicates rows across page boundaries. id is the stable
   // tiebreaker (and matches idx_tickets_company_created).
-  const sinceDate = options?.sinceDate;
 
   // First page carries an exact count so we know how many more to fetch.
   // Small tenants (<= PAGE_SIZE) are done in this one request; larger ones
@@ -657,6 +706,7 @@ export async function createTicket(input: Partial<Ticket>): Promise<Ticket> {
     console.error("createTicket error:", tErr.message);
     throw new Error(tErr.message);
   }
+  invalidateCompanyTicketsCache();
   return rowToTicket(ticket);
 }
 
@@ -672,6 +722,7 @@ export async function updateTicketStatus(ticketNo: string, status: string): Prom
     console.error("updateTicketStatus error:", error.message);
     throw new Error(error.message);
   }
+  invalidateCompanyTicketsCache();
 }
 
 /**
@@ -688,6 +739,7 @@ export async function updateTicketMisdiagnosed(ticketNo: string, misdiagnosed: b
     console.error("updateTicketMisdiagnosed error:", error.message);
     throw new Error(error.message);
   }
+  invalidateCompanyTicketsCache();
 }
 
 /**
@@ -722,6 +774,7 @@ export async function updateTicketAssignment(
     console.error("updateTicketAssignment error:", error.message);
     throw new Error(error.message);
   }
+  invalidateCompanyTicketsCache();
 }
 
 /**
@@ -747,6 +800,7 @@ export async function setTicketOnsiteCheckIn(
       console.error("setTicketOnsiteCheckIn error:", error.message);
       throw new Error(error.message);
     }
+    invalidateCompanyTicketsCache();
     triggerMileageRecompute(data);
     return;
   }
@@ -779,6 +833,7 @@ export async function setTicketOnsiteCheckIn(
     console.error("setTicketOnsiteCheckIn error:", error.message);
     throw new Error(error.message);
   }
+  invalidateCompanyTicketsCache();
   triggerMileageRecompute(data);
 }
 
@@ -837,6 +892,7 @@ export async function deleteTicket(ticketNo: string): Promise<void> {
     console.error("deleteTicket error:", error.message);
     throw new Error(error.message);
   }
+  invalidateCompanyTicketsCache();
 }
 
 /**
@@ -917,6 +973,10 @@ export async function updateTicketCustomer(
       console.error("updateTicketCustomer update error:", error.message);
       throw new Error(error.message);
     }
+    // Customer fields are embedded on every Ticket via getCompanyTickets'
+    // `customer:customers(...)` join, so a plain customers-table write still
+    // needs to bust that cache even though it never touches the tickets row.
+    invalidateCompanyTicketsCache();
   } else {
     // No customer yet — create one and link it. company_id auto-stamped.
     const { data: cust, error: insErr } = await supabase
@@ -936,6 +996,7 @@ export async function updateTicketCustomer(
       console.error("updateTicketCustomer link error:", linkErr.message);
       throw new Error(linkErr.message);
     }
+    invalidateCompanyTicketsCache();
   }
 }
 
@@ -1006,6 +1067,7 @@ export async function updateTicketFields(
     console.error("updateTicketFields error:", error.message);
     throw new Error(error.message);
   }
+  invalidateCompanyTicketsCache();
 }
 
 // ---- visits ----------------------------------------------------------------
@@ -1968,9 +2030,11 @@ export async function upsertTicketFromServicePower(
   // browser tab so the race "lookup → not found → insert" can't run twice
   // in parallel. Cross-tab / cross-server races are blocked by the unique
   // index on (company_id, ticket_no) added in migration 0017.
-  return runUnderTicketLock(String(input.ticketNo).trim(), () =>
+  const result = await runUnderTicketLock(String(input.ticketNo).trim(), () =>
     upsertTicketFromServicePowerImpl(input),
   );
+  invalidateCompanyTicketsCache();
+  return result;
 }
 
 async function upsertTicketFromServicePowerImpl(

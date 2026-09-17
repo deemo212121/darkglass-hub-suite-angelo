@@ -1525,10 +1525,23 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   // which stay visible regardless of this filter. Also team-scoped, same
   // as visibleProfiles/visiblePtoRequests above — a manager-tier viewer
   // only ever sees corrections for their own team, never the whole company.
+  //
+  // teamScopedIds itself is a live, name-matched set (p.manager_name ===
+  // viewer's display_name) shared with Daily Attendance/PTO — it crosses
+  // over whenever two managers share a display name, or an employee's
+  // manager_name has drifted since the correction was submitted. Each
+  // correction row instead carries its own managerId, resolved ONCE at
+  // submission time (resolveTeamLeadOrManager, in EmployeeSelfServicePage /
+  // AttendanceMonitoringPage's own submit handler) and never recomputed —
+  // trust that over the live name match whenever it's set, so a manager-tier
+  // viewer only ever sees corrections actually routed to them. Legacy rows
+  // from before managerId was captured (null) still fall back to the
+  // broader name-matched set rather than being hidden outright.
   const filteredCorrections = useMemo(() => {
     const q = correctionSearch.trim().toLowerCase();
     return corrections.filter((c) => {
       if (teamScopedIds !== null && !teamScopedIds.has(c.profileId)) return false;
+      if (teamScopedIds !== null && c.managerId && c.managerId !== myProfileId) return false;
       if (correctionStatusFilter !== "all" && c.status !== correctionStatusFilter) return false;
       if (correctionDepartmentFilter !== "all") {
         const p = allProfileById.get(c.profileId);
@@ -1554,6 +1567,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     profileName,
     teamScopedIds,
     allProfileById,
+    myProfileId,
   ]);
   // Pending count among whatever's currently filtered/listed above — not
   // the whole company's pending total — so it stays meaningful once a
@@ -1563,15 +1577,19 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     [filteredCorrections]
   );
 
-  // Correction History panel — same team scoping as filteredCorrections
-  // above, via each history entry's related correction's profileId.
+  // Correction History panel — same team scoping (and the same managerId
+  // preference over the live name-matched set) as filteredCorrections above,
+  // via each history entry's related correction.
   const visibleCorrectionHistory = useMemo(() => {
     if (teamScopedIds === null) return correctionHistory;
     return correctionHistory.filter((h) => {
       const related = corrections.find((c) => c.id === h.correctionId);
-      return related ? teamScopedIds.has(related.profileId) : false;
+      if (!related) return false;
+      if (!teamScopedIds.has(related.profileId)) return false;
+      if (related.managerId && related.managerId !== myProfileId) return false;
+      return true;
     });
-  }, [correctionHistory, corrections, teamScopedIds]);
+  }, [correctionHistory, corrections, teamScopedIds, myProfileId]);
 
   const tabConfig = [
     { id: "corrections", label: "Corrections", Icon: FileText },
