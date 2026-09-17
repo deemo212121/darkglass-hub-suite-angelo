@@ -89,6 +89,17 @@ const checkbox = (checked: boolean) => (checked ? "☑" : "☐");
 
 const fmtDate = (iso: string) => {
   if (!iso) return "";
+  // A date-only string ("2026-09-17", e.g. Warning Date) parses as UTC
+  // midnight; formatting it back out in the browser's local timezone
+  // (anything behind UTC, i.e. all of the US) rolls it back a day —
+  // "9/17" printing as "9/16". Parsing the y/m/d parts directly into a
+  // local Date avoids that. A full timestamp (e.g. a signature's
+  // signedAt) has no such ambiguity and is left to the normal Date parse.
+  const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  if (dateOnly) {
+    const [, y, m, d] = dateOnly;
+    return new Date(Number(y), Number(m) - 1, Number(d)).toLocaleDateString();
+  }
   const d = new Date(iso);
   return isNaN(d.getTime()) ? iso : d.toLocaleDateString();
 };
@@ -118,7 +129,7 @@ export const warningFormStyles = `
   .warn-sign-name { flex: 2; }
   .warn-sign-sig { flex: 1; display: flex; align-items: flex-end; }
   .warn-sign-date { flex: 1; }
-  .warn-sig-img { max-height: 36px; max-width: 140px; object-fit: contain; }
+  .warn-sig-img { max-height: 56px; max-width: 190px; object-fit: contain; }
 `;
 
 /** A signed slot's captured name always wins (it's the real signer); otherwise falls back to that slot's own remembered pre-fill name, then (for documents saved before recipientNames existed) the legacy single current-recipient field. */
