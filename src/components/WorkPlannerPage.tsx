@@ -1782,12 +1782,12 @@ export function WorkPlannerPage({ mod, sub }: Props) {
                         onChange={(event) => void handleChangeSelectedTicketTechnician(event.target.value)}
                       >
                         <option value="Unassigned">Unassigned</option>
-                        {/* Keep the current value selectable even if it isn't a real technician profile — e.g. a branch's catch-all default (see getSelectedTechRoster). */}
-                        {selectedTicket.technician && selectedTicket.technician !== "Unassigned" && !liveTechnicians.some((t) => t.name === selectedTicket.technician) && (
+                        {/* Scoped to the currently SELECTED branch(es)' own roster (same list the map legend/schedule columns show) — not every technician company-wide — so this can't accidentally assign someone from a branch that isn't even in view. Keep the current value selectable even if it falls outside that roster (e.g. a branch's catch-all default, or a tech covering from elsewhere today). */}
+                        {selectedTicket.technician && selectedTicket.technician !== "Unassigned" && !selectedTechRoster.includes(selectedTicket.technician) && (
                           <option value={selectedTicket.technician}>{selectedTicket.technician}</option>
                         )}
-                        {liveTechnicians.map((t) => (
-                          <option key={t.id} value={t.name}>{t.name}</option>
+                        {selectedTechRoster.map((name) => (
+                          <option key={name} value={name}>{name}</option>
                         ))}
                       </select>
                     </div>
