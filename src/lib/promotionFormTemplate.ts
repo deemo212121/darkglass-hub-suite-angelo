@@ -98,9 +98,9 @@ export const promotionFormStyles = `
   .promo-other-row { padding-top: 2px; }
   .promo-sign-row { display: flex; gap: 24px; align-items: flex-end; border-bottom: 1px solid #9ca3af; padding: 10px 2px; margin-top: 6px; }
   .promo-sign-name { flex: 2; }
-  .promo-sign-sig { flex: 1; display: flex; align-items: flex-end; }
+  .promo-sign-sig { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; overflow: hidden; }
   .promo-sign-date { flex: 1; }
-  .promo-sig-img { max-height: 56px; max-width: 190px; object-fit: contain; }
+  .promo-sig-img { max-height: 44px; max-width: 100%; object-fit: contain; object-position: left; }
   .promo-approver-block { margin-top: 14px; }
   .promo-approver-title { font-weight: 700; font-size: 12px; margin-bottom: 4px; }
 `;

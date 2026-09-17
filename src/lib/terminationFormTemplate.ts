@@ -74,9 +74,9 @@ export const terminationFormStyles = `
   .term-container .ack { margin: 18px 0 10px; }
   .term-container .sign-row { display: flex; gap: 24px; align-items: flex-end; border-bottom: 1px solid #9ca3af; padding: 10px 2px; margin-top: 6px; }
   .term-container .sign-name { flex: 2; }
-  .term-container .sign-sig { flex: 1; display: flex; align-items: flex-end; }
+  .term-container .sign-sig { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; overflow: hidden; }
   .term-container .sign-date { flex: 1; }
-  .term-container .sig-img { max-height: 56px; max-width: 190px; object-fit: contain; }
+  .term-container .sig-img { max-height: 44px; max-width: 100%; object-fit: contain; object-position: left; }
   .term-container .footer-wrap { margin-top: 40px; }
   .term-container .footer-graphic img { display: block; width: 100%; height: auto; }
 `;

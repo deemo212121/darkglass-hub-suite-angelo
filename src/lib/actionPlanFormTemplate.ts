@@ -95,9 +95,9 @@ export const actionPlanFormStyles = `
   .aplan-container .ack { margin: 18px 0 10px; font-style: italic; }
   .aplan-container .sign-row { display: flex; gap: 24px; align-items: flex-end; border-bottom: 1px solid #9ca3af; padding: 10px 2px; margin-top: 6px; }
   .aplan-container .sign-name { flex: 2; }
-  .aplan-container .sign-sig { flex: 1; display: flex; align-items: flex-end; }
+  .aplan-container .sign-sig { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; overflow: hidden; }
   .aplan-container .sign-date { flex: 1; }
-  .aplan-container .sig-img { max-height: 56px; max-width: 190px; object-fit: contain; }
+  .aplan-container .sig-img { max-height: 44px; max-width: 100%; object-fit: contain; object-position: left; }
   .aplan-container .footer-wrap { margin-top: 40px; }
   .aplan-container .footer-graphic img { display: block; width: 100%; height: auto; }
 `;
