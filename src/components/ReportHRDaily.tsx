@@ -3041,17 +3041,17 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // and "capture this exact DOM node for sending" — stay pixel-identical).
   const coeStyles = `
     .coe-container * { margin: 0; padding: 0; box-sizing: border-box; }
-    .coe-container { width: 816px; min-height: 1056px; background: white; padding: 96px; position: relative; font-family: Arial, Helvetica, sans-serif; color: #1f2937; }
+    .coe-container { width: 816px; min-height: 1056px; background: white; padding: 56px 72px; position: relative; font-family: Arial, Helvetica, sans-serif; color: #1f2937; }
     .coe-container .header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 10px; }
     .coe-container .header img.logo { width: 115px; height: 115px; object-fit: contain; }
     .coe-container .header img.ribbon { width: 260px; height: auto; }
-    .coe-container h1 { text-align: center; font-size: 20px; letter-spacing: 0.3px; margin-bottom: 22px; }
-    .coe-container p { font-size: 13.5px; line-height: 1.3; margin-bottom: 17px; text-align: justify; }
-    .coe-container .date-line { margin-bottom: 17px; }
+    .coe-container h1 { text-align: center; font-size: 20px; letter-spacing: 0.3px; margin-bottom: 16px; }
+    .coe-container p { font-size: 13.5px; line-height: 1.3; margin-bottom: 14px; text-align: justify; }
+    .coe-container .date-line { margin-bottom: 14px; }
     .coe-container .sign-block { margin-top: 4px; }
     .coe-container .sign-block p { text-align: left; margin-bottom: 2px; }
     .coe-container .sign-line { margin-bottom: 6px; font-weight: 600; }
-    .coe-container .office-use { margin-top: 58px; }
+    .coe-container .office-use { margin-top: 34px; }
     .coe-container .office-use-rule { border: none; border-top: 1.5px solid #9ca3af; margin: 0 0 14px; }
     .coe-container .office-use-rule.bottom { margin: 14px 0 0; }
     .coe-container .office-use p { font-size: 13.5px; line-height: 1.3; margin-bottom: 8px; text-align: left; }
@@ -3060,7 +3060,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     .coe-container .office-use .row p { margin-bottom: 8px; }
     .coe-container .office-use-col:last-child p { margin-bottom: 0; }
     .coe-container .office-use u { text-decoration: underline; font-style: italic; }
-    .coe-container .footer-wrap { margin-top: 70px; }
+    .coe-container .footer-wrap { margin-top: 36px; }
     .coe-container .footer-graphic img { display: block; width: 100%; height: auto; }
   `;
 
