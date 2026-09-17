@@ -85,8 +85,6 @@ export interface ProfileRow {
   /** HR-initiated freeze (migration 0223) — see roleLabels.ts's isSubmoduleAllowedForFrozen. Same best-effort fetch pattern as employment_type; defaults to false. */
   frozen: boolean;
   is_active: boolean;
-  /** When is_active last flipped — kept current by a DB trigger, not app code. See migration 0271. Null for an account never toggled since that migration ran. */
-  status_changed_at: string | null;
   /** Set by AdminUserManagementPage.tsx's Reset Password actions — see migration 0103. Forces a redirect to /profile until they change it (__root.tsx). */
   must_change_password: boolean;
   /** Consecutive failed sign-in attempts — see migration 0122 / loginLockoutBridge.ts. Resets to 0 on a successful login. */
@@ -579,22 +577,6 @@ async function fetchCompanyUsersUncached(): Promise<ProfileRow[]> {
     }
   }
 
-  // Same best-effort pattern again — status_changed_at (migration 0271) is newer/optional too.
-  for (const row of rows) row.status_changed_at = null;
-  if (rows.length > 0) {
-    const { data: statusRows, error: statusError } = await supabase
-      .from("profiles")
-      .select("id, status_changed_at")
-      .in("id", rows.map((r) => r.id));
-    if (statusError) {
-      console.error("getCompanyUsers (status_changed_at) error:", statusError.message);
-    } else {
-      const statusById = new Map((statusRows ?? []).map((r: any) => [r.id, r.status_changed_at]));
-      for (const row of rows) {
-        row.status_changed_at = statusById.get(row.id) ?? null;
-      }
-    }
-  }
   return rows;
 }
 
@@ -961,6 +943,35 @@ export async function getAccountCreatorsByEmail(): Promise<Map<string, { created
     const key = email.trim().toLowerCase();
     if (result.has(key)) continue;
     result.set(key, { createdByName: entry.actorName, createdAt: entry.createdAt });
+  }
+  return result;
+}
+
+/**
+ * Most recent Activate/Deactivate timestamp per profile, sourced from the
+ * User Management Activity Log (module_activity_log) rather than a DB
+ * column — that log has already been recording every real toggle since
+ * handleToggleUserActive started calling logModuleActivity, so this gives
+ * real history for accounts deactivated long before this lookup existed,
+ * not just ones toggled from now on. Unlike user_created's targetId (a
+ * Firebase uid — see getAccountCreatorsByEmail above), user_activated/
+ * user_deactivated's targetId is the Supabase profile id (row.profileId in
+ * AdminUserManagementPage.tsx's handleToggleUserActive), so this keys
+ * straight off profileId with no email/uid indirection needed.
+ */
+export async function getUserStatusChangeDates(): Promise<Map<string, string>> {
+  const result = new Map<string, string>();
+  const [activated, deactivated] = await Promise.all([
+    getModuleActivityLogByAction("user-management", "user_activated"),
+    getModuleActivityLogByAction("user-management", "user_deactivated"),
+  ]);
+  // Merge both action lists and keep only the latest entry seen per
+  // profile — whichever of the two actions happened most recently is when
+  // the account's CURRENT status took effect.
+  const merged = [...activated, ...deactivated].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  for (const entry of merged) {
+    if (!entry.targetId || result.has(entry.targetId)) continue;
+    result.set(entry.targetId, entry.createdAt);
   }
   return result;
 }
