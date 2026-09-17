@@ -167,6 +167,21 @@ import {
   buildCoeBodyMarkup,
   type CoeFormData,
 } from "@/lib/certificateOfEmploymentTemplate";
+// A unified COE Sent History row — merges hr_coe_documents (legacy self-sign,
+// always "signed") and hr_signable_documents certificate_of_employment rows
+// (the send-to-a-signer path, status-aware) into one shape the table and
+// preview modal render without caring which table a row actually came from.
+interface CoeHistoryRow {
+  id: string;
+  employeeName: string;
+  status: "signed" | "awaiting_signature";
+  /** Legacy row: who the finished PDF was sent to. Signable row: who's signing (or signed) it. */
+  withName: string | null;
+  sentByName: string | null;
+  createdAt: string;
+  documentUrl: string | null;
+  source: "legacy" | "signable";
+}
 import { subscribeTableChanges } from "@/lib/supabase/realtime";
 import { getCompanyPtoRequests, ptoYearWindow, ptoDaysUsed, sickYearWindow, sickDaysUsed, reviewPtoStage, canReviewPtoStage, type PtoRequestRow, type PtoType, type PtoStage } from "@/lib/supabase/pto";
 import { getAttendanceNotes, type AttendanceNoteRow } from "@/lib/supabase/attendanceNotes";
@@ -2326,6 +2341,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     master_w2_office_agreement: "masterW2OfficeAgreement",
     master_ph_contractor_agreement: "masterPhContractorAgreement",
     master_w2_executive_agreement: "masterW2ExecutiveAgreement",
+    certificate_of_employment: "coe",
   };
 
   // Forms popup — checkbox list of every SignableDocumentType, letting HR
@@ -3059,15 +3075,43 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // sits behind this full-screen overlay, so a failure here would otherwise
   // happen silently as far as the user watching this modal can tell.
   const [coeSendError, setCoeSendError] = useState<string | null>(null);
+  // "self" = today's behavior unchanged (HR signs with the pad below, the
+  // finished PDF goes straight to Recipient). "delegate" = the pad is
+  // skipped; instead the certificate goes out as a real signable document
+  // to a chosen teammate, who signs it on /sign-coe-form and it comes back
+  // to whoever generated it — same round-trip every other document type uses.
+  const [coeSignerMode, setCoeSignerMode] = useState<"self" | "delegate">("self");
+  const [coeSignerId, setCoeSignerId] = useState("");
+  const [coeSignerSearch, setCoeSignerSearch] = useState("");
+  const [coeSignerDropdownOpen, setCoeSignerDropdownOpen] = useState(false);
+  // Same eligibility as the Office Use signer suggestions above — "someone
+  // like a manager", not just anyone in the company.
+  const filteredCoeSignerOptions = (query: string) => {
+    const q = query.trim().toLowerCase();
+    const candidates = employees
+      .filter((e) => [e.position, ...e.extraRoles].some((r) => isCoeOfficeUseEligible(normalizeRole(r))))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    return q ? candidates.filter((e) => e.name.toLowerCase().includes(q)) : candidates;
+  };
 
-  // ── COE Sent History ──
+  // ── COE Sent History ── merges two sources: hr_coe_documents (legacy,
+  // one row per self-sign send — always effectively "Signed") and
+  // hr_signable_documents rows of document_type=certificate_of_employment
+  // (the new "send to someone to sign" path — status-aware).
   const [coeDocuments, setCoeDocuments] = useState<CoeDocument[]>([]);
   const [coeDocumentsLoading, setCoeDocumentsLoading] = useState(true);
-  const [coeDocumentPreview, setCoeDocumentPreview] = useState<CoeDocument | null>(null);
+  const [coeSignableDocs, setCoeSignableDocs] = useState<SignableDocument[]>([]);
+  const [coeDocumentPreview, setCoeDocumentPreview] = useState<CoeHistoryRow | null>(null);
+  const [coeSendToRow, setCoeSendToRow] = useState<CoeHistoryRow | null>(null);
+  const [coeSendToId, setCoeSendToId] = useState("");
+  const [coeSendToSearch, setCoeSendToSearch] = useState("");
+  const [coeSendToDropdownOpen, setCoeSendToDropdownOpen] = useState(false);
   const loadCoeDocuments = async () => {
     setCoeDocumentsLoading(true);
     try {
-      setCoeDocuments(await getCompanyCoeDocuments());
+      const [legacy, signable] = await Promise.all([getCompanyCoeDocuments(), getSignableDocuments("certificate_of_employment")]);
+      setCoeDocuments(legacy);
+      setCoeSignableDocs(signable);
     } catch (err) {
       console.error("Failed to load COE sent history:", err);
     } finally {
@@ -3084,6 +3128,38 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     return subscribeTableChanges("hr_coe_documents", () => void loadCoeDocuments(), `company_id=eq.${companyId}`);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, companyId]);
+  useEffect(() => {
+    if (!ready || !companyId) return;
+    return subscribeTableChanges("hr_signable_documents", () => void loadCoeDocuments(), `company_id=eq.${companyId}`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, companyId]);
+  const coeHistoryRows = useMemo((): CoeHistoryRow[] => {
+    const legacyRows: CoeHistoryRow[] = coeDocuments.map((doc) => ({
+      id: `legacy-${doc.id}`,
+      employeeName: doc.employeeName,
+      status: "signed",
+      withName: doc.recipientName,
+      sentByName: doc.sentByName,
+      createdAt: doc.createdAt,
+      documentUrl: doc.documentUrl,
+      source: "legacy",
+    }));
+    const signableRows: CoeHistoryRow[] = coeSignableDocs.map((doc) => {
+      const formData = doc.formData as unknown as CoeFormData;
+      const signerName = (doc.recipientId && employees.find((e) => e.id === doc.recipientId)?.name) || doc.recipientName || "—";
+      return {
+        id: `signable-${doc.id}`,
+        employeeName: formData?.employeeName || "—",
+        status: doc.status === "signed" || doc.status === "confirmed" ? "signed" : "awaiting_signature",
+        withName: signerName,
+        sentByName: doc.createdByName,
+        createdAt: doc.createdAt,
+        documentUrl: doc.pdfUrl,
+        source: "signable",
+      };
+    });
+    return [...legacyRows, ...signableRows].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }, [coeDocuments, coeSignableDocs, employees]);
   const filteredCoeRecipients = useMemo(() => {
     const q = coeRecipientSearch.trim().toLowerCase();
     const sorted = [...employees].sort((a, b) => a.name.localeCompare(b.name));
@@ -3104,6 +3180,9 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       setCoeImages({ logo: logoDataUrl, ribbon: ribbonDataUrl, footer: footerDataUrl });
       setCoeRecipientId("");
       setCoeRecipientSearch("");
+      setCoeSignerMode("self");
+      setCoeSignerId("");
+      setCoeSignerSearch("");
       setCoeSendError(null);
       setCoePreviewOpen(true);
     } finally {
@@ -3161,6 +3240,81 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       setCoeSendError(err instanceof Error ? err.message : "Failed to send certificate.");
     } finally {
       setCoeSending(false);
+    }
+  };
+
+  // "Send to someone to sign first" — the certificate goes out unsigned as a
+  // real signable document instead of a finished PDF; the chosen teammate
+  // signs it on /sign-coe-form/$docId and it comes straight back to whoever
+  // generated it (see SignCoeFormPage.tsx), same round-trip every other
+  // document type in this app already uses.
+  const handleSendCoeToSigner = async () => {
+    if (!coeSignerId || !uid) return;
+    setCoeSending(true);
+    setCoeSendError(null);
+    try {
+      const myProfileId = await getMyProfileId(uid);
+      if (!myProfileId) throw new Error("Could not resolve your profile.");
+      const employeeLabel = coeForm.employeeName.trim() || "Certificate";
+
+      const doc = await createSignableDocument({
+        documentType: "certificate_of_employment",
+        formData: { ...coeForm, bodyTemplate: coeBodyTemplate } as unknown as Record<string, any>,
+        recipientId: coeSignerId,
+        recipientSlot: "manager",
+        pdfUrl: "",
+      });
+
+      const thread = await getOrCreateDmThread(myProfileId, coeSignerId);
+      const fillLink = `${getAppUrl()}/sign-coe-form/${doc.id}`;
+      const signerName = employees.find((e) => e.id === coeSignerId)?.name;
+      await sendMessage({
+        dmThreadId: thread.id,
+        senderId: myProfileId,
+        senderName: displayName || "HR",
+        body: `📄 Certificate of Employment for ${employeeLabel} needs your signature: [Sign here](${fillLink})`,
+      });
+
+      void logActivity({ action: "coe_sent", targetType: "employee", targetLabel: employeeLabel, details: { to: signerName ?? "", forSignature: true } });
+      void loadCoeDocuments();
+
+      setCoePreviewOpen(false);
+      setCoeSignerId("");
+      setCoeSignerSearch("");
+    } catch (err) {
+      setCoeSendError(err instanceof Error ? err.message : "Failed to send for signature.");
+    } finally {
+      setCoeSending(false);
+    }
+  };
+
+  // "Send" on a Sent History row — DMs the already-finished PDF (self-signed
+  // or come back from a signer) to whoever actually needs the certificate
+  // (the employee, a visa office, etc.) — distinct from the sign-routing
+  // step above, and usable any time after a row reaches "signed".
+  const [coeFinalSending, setCoeFinalSending] = useState(false);
+  const handleSendCoeFinalPdf = async () => {
+    if (!coeSendToRow?.documentUrl || !uid || !coeSendToId) return;
+    setCoeFinalSending(true);
+    try {
+      const myProfileId = await getMyProfileId(uid);
+      if (!myProfileId) throw new Error("Could not resolve your profile.");
+      const thread = await getOrCreateDmThread(myProfileId, coeSendToId);
+      const filename = `Certificate of Employment - ${coeSendToRow.employeeName}.pdf`;
+      await sendMessage({
+        dmThreadId: thread.id,
+        senderId: myProfileId,
+        senderName: displayName || "HR",
+        body: `📄 Certificate of Employment — ${coeSendToRow.employeeName}: [${filename}](${coeSendToRow.documentUrl})`,
+      });
+      void logActivity({ action: "coe_sent", targetType: "employee", targetLabel: coeSendToRow.employeeName, details: { to: employees.find((e) => e.id === coeSendToId)?.name ?? "" } });
+      setCoeSendToRow(null);
+      setCoeSendToId("");
+      setCoeSendToSearch("");
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Failed to send certificate.");
+    } finally {
+      setCoeFinalSending(false);
     }
   };
 
@@ -18709,14 +18863,15 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       <div className="panel p-0 overflow-hidden mt-4">
         <div className="px-4 py-4 border-b border-white/10">
           <h2 className="font-semibold text-sm">COE Sent History</h2>
-          <p className="text-[10px] text-muted-foreground mt-0.5">Every Certificate of Employment sent from this tab, with a link back to the exact PDF that went out.</p>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Every Certificate of Employment sent from this tab, with a link back to the exact PDF and whether it's been signed yet.</p>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-white/10 bg-white/5">
                 <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Employee</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent To</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Status</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">With</th>
                 <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent By</th>
                 <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Date</th>
                 <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Document</th>
@@ -18724,24 +18879,50 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             </thead>
             <tbody>
               {coeDocumentsLoading ? (
-                <tr><td colSpan={5} className="px-4 py-8 text-center text-muted-foreground text-sm">Loading…</td></tr>
-              ) : coeDocuments.length === 0 ? (
-                <tr><td colSpan={5} className="px-4 py-8 text-center text-muted-foreground text-sm">No COEs sent yet.</td></tr>
+                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">Loading…</td></tr>
+              ) : coeHistoryRows.length === 0 ? (
+                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">No COEs sent yet.</td></tr>
               ) : (
-                coeDocuments.map((doc) => (
-                  <tr key={doc.id} className="border-b border-white/5 hover:bg-white/5">
+                coeHistoryRows.map((row) => (
+                  <tr key={row.id} className="border-b border-white/5 hover:bg-white/5">
                     <td className="px-4 py-3 font-medium">
-                      <button type="button" onClick={() => setCoeDocumentPreview(doc)} className="hover:text-blue-300 hover:underline text-left">
-                        {doc.employeeName}
-                      </button>
+                      {row.documentUrl ? (
+                        <button type="button" onClick={() => setCoeDocumentPreview(row)} className="hover:text-blue-300 hover:underline text-left">
+                          {row.employeeName}
+                        </button>
+                      ) : row.employeeName}
                     </td>
-                    <td className="px-4 py-3 text-muted-foreground">{doc.recipientName ?? "—"}</td>
-                    <td className="px-4 py-3 text-muted-foreground">{doc.sentByName ?? "—"}</td>
-                    <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{new Date(doc.createdAt).toLocaleString()}</td>
+                    <td className="px-4 py-3">
+                      {row.status === "signed" ? (
+                        <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-green-500/15 text-green-300 border border-green-500/30">
+                          <CheckCircle className="h-3 w-3" /> Signed
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30">
+                          Awaiting Signature
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-muted-foreground">{row.withName ?? "—"}</td>
+                    <td className="px-4 py-3 text-muted-foreground">{row.sentByName ?? "—"}</td>
+                    <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{new Date(row.createdAt).toLocaleString()}</td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-1.5">
-                        <button type="button" onClick={() => setCoeDocumentPreview(doc)} className="btn text-xs px-2.5 py-1.5 flex items-center gap-1 w-fit">View PDF</button>
-                        <a href={doc.documentUrl} download className="btn text-xs px-2.5 py-1.5 flex items-center gap-1 w-fit"><Download className="h-3 w-3" /> Download</a>
+                        {row.documentUrl ? (
+                          <>
+                            <button type="button" onClick={() => setCoeDocumentPreview(row)} className="btn text-xs px-2.5 py-1.5 flex items-center gap-1 w-fit">View PDF</button>
+                            <a href={row.documentUrl} download className="btn text-xs px-2.5 py-1.5 flex items-center gap-1 w-fit"><Download className="h-3 w-3" /> Download</a>
+                            <button
+                              type="button"
+                              onClick={() => { setCoeSendToRow(row); setCoeSendToId(""); setCoeSendToSearch(""); }}
+                              className="btn text-xs px-2.5 py-1.5 flex items-center gap-1 w-fit"
+                            >
+                              Send
+                            </button>
+                          </>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">Waiting on signer…</span>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -18754,6 +18935,67 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       </>
       )}
 
+      {/* Send the finished COE PDF to whoever needs it (employee, visa office, etc.) */}
+      {coeSendToRow && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" onClick={() => setCoeSendToRow(null)}>
+          <div className="bg-slate-800 border border-white/10 rounded-lg w-full max-w-sm" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
+              <h3 className="text-sm font-bold">Send Certificate</h3>
+              <button onClick={() => setCoeSendToRow(null)} className="text-muted-foreground hover:text-foreground">✕</button>
+            </div>
+            <div className="p-4 flex flex-col gap-3">
+              <p className="text-xs text-muted-foreground">Send {coeSendToRow.employeeName}'s signed certificate to:</p>
+              <div className="relative">
+                <input
+                  type="text"
+                  value={coeSendToSearch}
+                  onChange={(e) => { setCoeSendToSearch(e.target.value); setCoeSendToId(""); setCoeSendToDropdownOpen(true); }}
+                  onFocus={() => setCoeSendToDropdownOpen(true)}
+                  onBlur={() => setTimeout(() => setCoeSendToDropdownOpen(false), 150)}
+                  placeholder="Search a teammate…"
+                  className="glass-input text-sm py-1.5 px-3 rounded-md w-full"
+                />
+                {coeSendToDropdownOpen && (
+                  <div className="absolute z-10 mt-1 w-full max-h-48 overflow-y-auto rounded-md border border-white/15 bg-slate-800 shadow-lg">
+                    {(() => {
+                      const q = coeSendToSearch.trim().toLowerCase();
+                      const sorted = [...employees].sort((a, b) => a.name.localeCompare(b.name));
+                      const opts = q ? sorted.filter((e) => e.name.toLowerCase().includes(q)) : sorted;
+                      return opts.length === 0 ? (
+                        <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+                      ) : (
+                        opts.map((e) => (
+                          <button
+                            key={e.id}
+                            type="button"
+                            onMouseDown={(ev) => ev.preventDefault()}
+                            onClick={() => {
+                              setCoeSendToId(e.id);
+                              setCoeSendToSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`);
+                              setCoeSendToDropdownOpen(false);
+                            }}
+                            className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${coeSendToId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                          >
+                            {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
+                          </button>
+                        ))
+                      );
+                    })()}
+                  </div>
+                )}
+              </div>
+              <button
+                onClick={handleSendCoeFinalPdf}
+                disabled={!coeSendToId || coeFinalSending}
+                className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white flex items-center justify-center gap-1.5 disabled:opacity-50"
+              >
+                {coeFinalSending ? "Sending…" : "Send via Team Messenger"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* COE Sent History — PDF preview, same inline-frame pattern used elsewhere in this dashboard */}
       {coeDocumentPreview && (
         <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => setCoeDocumentPreview(null)}>
@@ -18761,15 +19003,19 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between gap-3">
               <div>
                 <p className="text-sm font-semibold">{coeDocumentPreview.employeeName}</p>
-                <p className="text-[10px] text-muted-foreground">Sent to {coeDocumentPreview.recipientName ?? "—"} — {new Date(coeDocumentPreview.createdAt).toLocaleString()}</p>
+                <p className="text-[10px] text-muted-foreground">With {coeDocumentPreview.withName ?? "—"} — {new Date(coeDocumentPreview.createdAt).toLocaleString()}</p>
               </div>
               <div className="flex items-center gap-2">
-                <a href={coeDocumentPreview.documentUrl} target="_blank" rel="noopener noreferrer" className="btn text-xs px-2.5 py-1.5 flex items-center gap-1"><Download className="h-3 w-3" /> Download</a>
+                {coeDocumentPreview.documentUrl && (
+                  <a href={coeDocumentPreview.documentUrl} target="_blank" rel="noopener noreferrer" className="btn text-xs px-2.5 py-1.5 flex items-center gap-1"><Download className="h-3 w-3" /> Download</a>
+                )}
                 <button type="button" onClick={() => setCoeDocumentPreview(null)} className="btn text-xs px-2.5 py-1.5">Close</button>
               </div>
             </div>
             <div className="flex-1 overflow-hidden bg-slate-950">
-              <iframe src={coeDocumentPreview.documentUrl} title="Certificate of Employment" className="w-full h-full min-h-[70vh] border-0" />
+              {coeDocumentPreview.documentUrl && (
+                <iframe src={coeDocumentPreview.documentUrl} title="Certificate of Employment" className="w-full h-full min-h-[70vh] border-0" />
+              )}
             </div>
           </div>
         </div>
@@ -18841,61 +19087,137 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                 </div>
               </div>
 
-              {/* Recipient + actions */}
+              {/* Signer mode + recipient/signer + actions */}
               <div className="flex flex-col gap-3">
                 <div>
-                  <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient</label>
-                  <div className="relative mt-1">
-                    <input
-                      type="text"
-                      value={coeRecipientSearch}
-                      onChange={(e) => {
-                        setCoeRecipientSearch(e.target.value);
-                        setCoeRecipientId("");
-                        setCoeRecipientDropdownOpen(true);
-                      }}
-                      onFocus={() => setCoeRecipientDropdownOpen(true)}
-                      onBlur={() => setTimeout(() => setCoeRecipientDropdownOpen(false), 150)}
-                      placeholder="Search a teammate…"
-                      className="glass-input text-sm py-1.5 px-3 rounded-md w-full"
-                    />
-                    {coeRecipientDropdownOpen && (
-                      <div className="absolute z-10 mt-1 w-full max-h-48 overflow-y-auto rounded-md border border-white/15 bg-slate-800 shadow-lg">
-                        {filteredCoeRecipients.length === 0 ? (
-                          <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
-                        ) : (
-                          filteredCoeRecipients.map((e) => (
-                            <button
-                              key={e.id}
-                              type="button"
-                              onMouseDown={(ev) => ev.preventDefault()}
-                              onClick={() => {
-                                setCoeRecipientId(e.id);
-                                setCoeRecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`);
-                                setCoeRecipientDropdownOpen(false);
-                              }}
-                              className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${coeRecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
-                            >
-                              {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
-                            </button>
-                          ))
-                        )}
-                      </div>
-                    )}
+                  <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Who signs the Office Use signature?</label>
+                  <div className="mt-1 grid grid-cols-2 gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setCoeSignerMode("self")}
+                      className={`text-xs px-2.5 py-2 rounded-md border ${coeSignerMode === "self" ? "border-blue-400 bg-blue-500/20 text-blue-200" : "border-white/15 text-muted-foreground hover:bg-white/5"}`}
+                    >
+                      I'll sign it now
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCoeSignerMode("delegate")}
+                      className={`text-xs px-2.5 py-2 rounded-md border ${coeSignerMode === "delegate" ? "border-blue-400 bg-blue-500/20 text-blue-200" : "border-white/15 text-muted-foreground hover:bg-white/5"}`}
+                    >
+                      Send to someone to sign
+                    </button>
                   </div>
                 </div>
+
+                {coeSignerMode === "self" ? (
+                  <div>
+                    <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient</label>
+                    <p className="text-[10px] text-muted-foreground mb-1">Who the finished, signed PDF gets sent to.</p>
+                    <div className="relative mt-1">
+                      <input
+                        type="text"
+                        value={coeRecipientSearch}
+                        onChange={(e) => {
+                          setCoeRecipientSearch(e.target.value);
+                          setCoeRecipientId("");
+                          setCoeRecipientDropdownOpen(true);
+                        }}
+                        onFocus={() => setCoeRecipientDropdownOpen(true)}
+                        onBlur={() => setTimeout(() => setCoeRecipientDropdownOpen(false), 150)}
+                        placeholder="Search a teammate…"
+                        className="glass-input text-sm py-1.5 px-3 rounded-md w-full"
+                      />
+                      {coeRecipientDropdownOpen && (
+                        <div className="absolute z-10 mt-1 w-full max-h-48 overflow-y-auto rounded-md border border-white/15 bg-slate-800 shadow-lg">
+                          {filteredCoeRecipients.length === 0 ? (
+                            <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+                          ) : (
+                            filteredCoeRecipients.map((e) => (
+                              <button
+                                key={e.id}
+                                type="button"
+                                onMouseDown={(ev) => ev.preventDefault()}
+                                onClick={() => {
+                                  setCoeRecipientId(e.id);
+                                  setCoeRecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`);
+                                  setCoeRecipientDropdownOpen(false);
+                                }}
+                                className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${coeRecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                              >
+                                {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
+                              </button>
+                            ))
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <div>
+                    <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Sign as</label>
+                    <p className="text-[10px] text-muted-foreground mb-1">They'll get a link to review, sign, and it'll come back to you.</p>
+                    <div className="relative mt-1">
+                      <input
+                        type="text"
+                        value={coeSignerSearch}
+                        onChange={(e) => {
+                          setCoeSignerSearch(e.target.value);
+                          setCoeSignerId("");
+                          setCoeSignerDropdownOpen(true);
+                        }}
+                        onFocus={() => setCoeSignerDropdownOpen(true)}
+                        onBlur={() => setTimeout(() => setCoeSignerDropdownOpen(false), 150)}
+                        placeholder="Search a manager/HR staffer…"
+                        className="glass-input text-sm py-1.5 px-3 rounded-md w-full"
+                      />
+                      {coeSignerDropdownOpen && (
+                        <div className="absolute z-10 mt-1 w-full max-h-48 overflow-y-auto rounded-md border border-white/15 bg-slate-800 shadow-lg">
+                          {filteredCoeSignerOptions(coeSignerSearch).length === 0 ? (
+                            <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+                          ) : (
+                            filteredCoeSignerOptions(coeSignerSearch).map((e) => (
+                              <button
+                                key={e.id}
+                                type="button"
+                                onMouseDown={(ev) => ev.preventDefault()}
+                                onClick={() => {
+                                  setCoeSignerId(e.id);
+                                  setCoeSignerSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`);
+                                  setCoeSignerDropdownOpen(false);
+                                }}
+                                className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${coeSignerId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                              >
+                                {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
+                              </button>
+                            ))
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
 
                 <div className="flex flex-col gap-2 mt-auto">
                   {coeSendError && (
                     <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{coeSendError}</p>
                   )}
-                  <button
-                    onClick={handleSendCoe}
-                    disabled={!coeRecipientId || coeSending}
-                    className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white flex items-center justify-center gap-1.5 disabled:opacity-50"
-                  >
-                    {coeSending ? "Sending…" : "Send via Team Messenger"}
-                  </button>
+                  {coeSignerMode === "self" ? (
+                    <button
+                      onClick={handleSendCoe}
+                      disabled={!coeRecipientId || coeSending}
+                      className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white flex items-center justify-center gap-1.5 disabled:opacity-50"
+                    >
+                      {coeSending ? "Sending…" : "Send via Team Messenger"}
+                    </button>
+                  ) : (
+                    <button
+                      onClick={handleSendCoeToSigner}
+                      disabled={!coeSignerId || coeSending}
+                      className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white flex items-center justify-center gap-1.5 disabled:opacity-50"
+                    >
+                      {coeSending ? "Sending…" : "Send for Signature"}
+                    </button>
+                  )}
                   <button onClick={handleDownloadCoe} className="btn text-sm px-4 py-2 flex items-center justify-center gap-1.5">
                     <Download className="h-3.5 w-3.5" /> Download PDF instead
                   </button>
