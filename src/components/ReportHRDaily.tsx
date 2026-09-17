@@ -2941,10 +2941,14 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     authorizedRepPhone: "800-779-3579",
     officeUseName: "",
     officeUseTitle: "",
-    officeUseSignature: "",
     officeUseNumber: "800-779-3579",
   });
   const [coeGenerating, setCoeGenerating] = useState(false);
+  // Same type-a-cursive-signature/draw pad every other document's employer/
+  // HR signature uses (e.g. wageAckEmployerSigPad below) — was a plain
+  // "typed name as text" input before, the only signature on any generated
+  // HR document that didn't actually look like a signature.
+  const coeOfficeUseSigPad = useSignaturePad({ width: 300, height: 90 });
   const updateCoeField = (field: keyof typeof coeForm, value: string) =>
     setCoeForm((prev) => ({ ...prev, [field]: value }));
 
@@ -3062,6 +3066,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
   const buildCoeBodyMarkup = (logoDataUrl: string, ribbonDataUrl: string, footerDataUrl: string) => {
     const f = coeForm;
+    const officeUseSignatureDataUrl = coeOfficeUseSigPad.toDataURL();
     const blank = (v: string) => (v.trim() ? escapeHtml(v) : "&nbsp;");
     // "Ms."/"Mrs." both read as female for pronoun purposes; anything else
     // (including "Mr.") defaults to male since it's the only other option
@@ -3109,7 +3114,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               <p>Title: ${blank(f.officeUseTitle)}</p>
             </div>
             <div class="office-use-col">
-              <p>Signature: <u>${blank(f.officeUseSignature)}</u></p>
+              <p>Signature:</p>
+              ${officeUseSignatureDataUrl ? `<img src="${officeUseSignatureDataUrl}" alt="Signature" style="height:44px;display:block;" />` : `<p><u>&nbsp;</u></p>`}
             </div>
           </div>
           <p>Contact Number: ${blank(f.officeUseNumber)}</p>
@@ -18779,12 +18785,18 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             <input type="text" value={coeForm.officeUseTitle} onChange={(e) => updateCoeField("officeUseTitle", e.target.value)} placeholder="e.g. CSR Manager" className="glass-input text-sm py-1.5 px-3 rounded-md" />
           </div>
           <div className="flex flex-col gap-1">
-            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Signature</label>
-            <input type="text" value={coeForm.officeUseSignature} onChange={(e) => updateCoeField("officeUseSignature", e.target.value)} placeholder="Typed name as signature" className="glass-input text-sm py-1.5 px-3 rounded-md" />
-          </div>
-          <div className="flex flex-col gap-1">
             <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Contact Number</label>
             <input type="text" value={coeForm.officeUseNumber} onChange={(e) => updateCoeField("officeUseNumber", e.target.value)} placeholder="e.g. 800-779-3579" className="glass-input text-sm py-1.5 px-3 rounded-md" />
+          </div>
+          <div className="flex flex-col gap-1 md:col-span-2">
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Signature</label>
+            <canvas
+              {...coeOfficeUseSigPad.canvasProps}
+              className={`bg-white rounded-md border border-white/15 ${coeOfficeUseSigPad.canvasProps.className}`}
+            />
+            <div className="mt-1">
+              <SignaturePadControls pad={coeOfficeUseSigPad} />
+            </div>
           </div>
         </div>
 
