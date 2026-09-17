@@ -341,7 +341,7 @@ export function FloatingMessenger() {
             setOpen(true);
             void openThread(knock.threadId, knock.otherProfileId, knock.name);
           }}
-          className="fixed bottom-[132px] right-5 z-[70] flex w-72 items-start gap-3 rounded-xl border border-white/10 bg-slate-800 p-3 text-left shadow-2xl transition-transform hover:-translate-y-0.5"
+          className="fixed bottom-[132px] right-5 z-30 flex w-72 items-start gap-3 rounded-xl border border-white/10 bg-slate-800 p-3 text-left shadow-2xl transition-transform hover:-translate-y-0.5"
         >
           <span className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-full bg-blue-500/20 text-blue-200 text-[11px] font-bold">
             {initials(knock.name)}
@@ -354,7 +354,7 @@ export function FloatingMessenger() {
       )}
 
       {open && (
-        <div className="fixed bottom-[132px] right-5 z-[65] flex h-[520px] max-h-[70vh] w-[360px] flex-col overflow-hidden rounded-2xl border border-white/10 bg-slate-900 shadow-2xl">
+        <div className="fixed bottom-[132px] right-5 z-30 flex h-[520px] max-h-[70vh] w-[360px] flex-col overflow-hidden rounded-2xl border border-white/10 bg-slate-900 shadow-2xl">
           <div className="flex shrink-0 items-center gap-2 border-b border-white/10 bg-slate-800/80 px-4 py-3">
             {view === "thread" && (
               <button onClick={() => { setView("list"); setActiveThread(null); }} className="text-slate-400 hover:text-white transition p-0.5 -ml-1">
@@ -518,7 +518,7 @@ export function FloatingMessenger() {
         }}
         aria-label="Messages"
         title={unreadTotal > 0 ? `Messages (${unreadTotal} unread)` : "Messages"}
-        className="fixed bottom-16 right-20 z-[65] grid h-14 w-14 place-items-center rounded-full bg-blue-600 text-white shadow-[0_12px_30px_rgba(0,0,0,0.35)] transition-transform hover:scale-105 hover:bg-blue-500"
+        className="fixed bottom-16 right-20 z-30 grid h-14 w-14 place-items-center rounded-full bg-blue-600 text-white shadow-[0_12px_30px_rgba(0,0,0,0.35)] transition-transform hover:scale-105 hover:bg-blue-500"
       >
         {open ? <X className="h-5 w-5" /> : <MessageCircle className="h-5 w-5" />}
         {!open && unreadTotal > 0 && (
