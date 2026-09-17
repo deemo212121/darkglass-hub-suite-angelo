@@ -11,10 +11,20 @@
  * browsers, and Storage doesn't always serve Content-Disposition:
  * attachment). This never opens a new tab on the success path.
  *
- * The only case this can't force a download is when the fetch itself
- * fails — Storage's CORS config not including the exact origin the app is
- * being viewed from (confirmed live 2026-09 for a LAN dev-server origin)
- * is the real-world cause. That's rare enough to treat as a true fallback:
+ * Fetches through this app's own /api/image-proxy
+ * (src/lib/server/imageProxyBridge.ts) rather than a direct browser
+ * fetch() straight to Firebase Storage — a direct fetch() is a
+ * cross-origin request the browser silently blocks unless the bucket
+ * itself has CORS configured for the exact origin the app is being viewed
+ * from (confirmed NOT configured for a LAN dev-server origin — every
+ * "Download PDF" click there was silently falling straight to the
+ * tab-opening fallback below). The proxy fetches server-to-server, where
+ * browser CORS doesn't apply at all, so the real download works
+ * regardless of which origin the app is viewed from.
+ *
+ * The only case this can't force a download now is the proxy request
+ * itself failing (its own network hiccup, or the server being
+ * unreachable) — rare enough to treat as a true last-resort fallback:
  * open the file directly so the user can at least view/save it manually,
  * and tell them if even that gets popup-blocked (browsers only allow
  * window.open() to bypass popup blocking when it's still considered part
@@ -24,7 +34,7 @@
  */
 export async function downloadSignableDocumentPdf(url: string, filename: string): Promise<void> {
   try {
-    const res = await fetch(url);
+    const res = await fetch(`/api/image-proxy?url=${encodeURIComponent(url)}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const blob = await res.blob();
     const blobUrl = URL.createObjectURL(blob);

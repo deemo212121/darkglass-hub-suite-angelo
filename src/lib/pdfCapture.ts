@@ -169,12 +169,21 @@ export async function blobToBase64(blob: Blob): Promise<string> {
  * the actual exported/downloaded PDF — every earlier signer's line came
  * out blank.
  *
- * Fetches each earlier signature and converts it to its own data: URL
- * too, so the whole composited image is 100% local by the time
- * html2canvas runs. Best-effort per entry — a slot whose fetch fails
- * (the same rare CORS-gap case captureHtmlToPdfBlob's useCORS already
- * accepted as a risk) just keeps its original URL rather than failing
- * the whole capture.
+ * Fetches each earlier signature through this app's own /api/image-proxy
+ * (src/lib/server/imageProxyBridge.ts) — same technique
+ * documentTemplates/generate.ts already relies on — instead of a direct
+ * browser fetch() straight to Firebase Storage: that's a cross-origin
+ * request the browser silently blocks unless the bucket itself has CORS
+ * configured for the exact origin the app is being viewed from (confirmed
+ * NOT configured for a LAN dev-server origin — a direct fetch() there
+ * fails exactly like html2canvas's useCORS does, so the "repaired" PDF
+ * came out just as broken as before). The proxy fetches server-to-server,
+ * where browser CORS doesn't apply at all, then hands the bytes back
+ * same-origin — reliable regardless of which origin the app is viewed
+ * from. Converts the proxied response to its own data: URL so the whole
+ * composited image is 100% local by the time html2canvas runs.
+ * Best-effort per entry — a slot whose proxied fetch still fails just
+ * keeps its original URL rather than failing the whole capture.
  */
 export async function resolveSignaturesForCapture<T extends { url: string }>(
   signatures: Partial<Record<string, T>>,
@@ -186,7 +195,7 @@ export async function resolveSignaturesForCapture<T extends { url: string }>(
       if (!entry) return [slot, entry] as const;
       if (slot === freshSlot) return [slot, { ...entry, url: freshDataUrl }] as const;
       try {
-        const res = await fetch(entry.url);
+        const res = await fetch(`/api/image-proxy?url=${encodeURIComponent(entry.url)}`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const blob = await res.blob();
         const dataUrl = await new Promise<string>((resolve, reject) => {
