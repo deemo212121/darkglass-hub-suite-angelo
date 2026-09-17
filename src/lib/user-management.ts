@@ -12,6 +12,8 @@ export interface UserManagementRecord {
   locations: string;
   /** Undefined for the legacy mock CORE_USERS rows below - only real Supabase profiles carry this. */
   isActive?: boolean;
+  /** When isActive was last toggled — see migration 0271. Undefined for the legacy mock rows; null for a real profile never toggled since that migration ran. */
+  statusChangedAt?: string | null;
 }
 
 const ALL_LOCATIONS = LOCATIONS.join(",");

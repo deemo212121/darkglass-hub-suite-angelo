@@ -420,6 +420,7 @@ function mapProfilesToRecords(profiles: ProfileRow[]): UserRow[] {
     office: p.assigned_branch || "",
     locations: p.branch_access || "",
     isActive: p.is_active,
+    statusChangedAt: p.status_changed_at,
   }));
 }
 
@@ -1626,6 +1627,12 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
                         >
                           {record.isActive === false ? "Deactivated" : "Active"}
                         </span>
+                        {record.statusChangedAt && (
+                          <div className="mt-1 text-[10px] text-slate-400 whitespace-nowrap">
+                            {record.isActive === false ? "on " : "since "}
+                            {new Date(record.statusChangedAt).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })}
+                          </div>
+                        )}
                       </td>
                       <td className="px-2.5 py-2 align-top">
                         <div className="flex flex-wrap items-center justify-end gap-1">

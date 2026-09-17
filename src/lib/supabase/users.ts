@@ -85,6 +85,8 @@ export interface ProfileRow {
   /** HR-initiated freeze (migration 0223) — see roleLabels.ts's isSubmoduleAllowedForFrozen. Same best-effort fetch pattern as employment_type; defaults to false. */
   frozen: boolean;
   is_active: boolean;
+  /** When is_active last flipped — kept current by a DB trigger, not app code. See migration 0271. Null for an account never toggled since that migration ran. */
+  status_changed_at: string | null;
   /** Set by AdminUserManagementPage.tsx's Reset Password actions — see migration 0103. Forces a redirect to /profile until they change it (__root.tsx). */
   must_change_password: boolean;
   /** Consecutive failed sign-in attempts — see migration 0122 / loginLockoutBridge.ts. Resets to 0 on a successful login. */
@@ -573,6 +575,23 @@ async function fetchCompanyUsersUncached(): Promise<ProfileRow[]> {
       const frozenById = new Map((frozenRows ?? []).map((r: any) => [r.id, r.frozen]));
       for (const row of rows) {
         row.frozen = frozenById.get(row.id) === true;
+      }
+    }
+  }
+
+  // Same best-effort pattern again — status_changed_at (migration 0271) is newer/optional too.
+  for (const row of rows) row.status_changed_at = null;
+  if (rows.length > 0) {
+    const { data: statusRows, error: statusError } = await supabase
+      .from("profiles")
+      .select("id, status_changed_at")
+      .in("id", rows.map((r) => r.id));
+    if (statusError) {
+      console.error("getCompanyUsers (status_changed_at) error:", statusError.message);
+    } else {
+      const statusById = new Map((statusRows ?? []).map((r: any) => [r.id, r.status_changed_at]));
+      for (const row of rows) {
+        row.status_changed_at = statusById.get(row.id) ?? null;
       }
     }
   }
