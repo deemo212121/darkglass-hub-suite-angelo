@@ -28085,7 +28085,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                   <option value="senior_manager">Senior Manager</option>
                   <option value="hr_staff">HR</option>
                   <option value="executive">Executive</option>
-                  <option value="executive_2">Executive (2nd Signer)</option>
                   <option value="employee">Employee</option>
                 </select>
                 {promoActionError && (
@@ -28248,7 +28247,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                     <option value="senior_manager">Senior Manager</option>
                     <option value="hr_staff">HR</option>
                     <option value="executive">Executive</option>
-                    <option value="executive_2">Executive (2nd Signer)</option>
                     <option value="employee">Employee</option>
                   </select>
                 </div>

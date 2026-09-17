@@ -35,7 +35,6 @@ const SLOT_LABEL: Record<string, string> = {
   senior_manager: "Senior Manager",
   hr_staff: "HR",
   executive: "Executive",
-  executive_2: "Executive (2nd Signer)",
 };
 
 export function SignPromotionFormPage({ docId }: Props) {
