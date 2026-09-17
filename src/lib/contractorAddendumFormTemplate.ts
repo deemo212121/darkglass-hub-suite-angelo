@@ -35,6 +35,10 @@ export const CONTRACTOR_ADDENDUM_SLOT_LABEL: Record<SignatureSlot, string> = {
   manager: "Managerial Witness 1 — Technical COO",
   senior_manager: "Managerial Witness 2 — Technical Director",
   executive: "Managerial Witness 3 — CEO",
+  // executive_2 (migration 0272) only ever applies to promotion_form
+  // documents — never actually reached here, just needed to satisfy the
+  // shared SignatureSlot union this Record is keyed on exhaustively.
+  executive_2: "Managerial Witness 3 — CEO",
 };
 
 /**

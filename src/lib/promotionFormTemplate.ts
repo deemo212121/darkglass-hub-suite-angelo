@@ -7,12 +7,15 @@
  * rendering visually different documents). Field layout matches
  * src/assets/Employee Promotion or Role Change.pdf exactly.
  *
- * One more signature slot than the Warning Form (5, not 4) — Employee,
- * Direct Manager, Senior Manager, HR, and Executive — see migration 0165
- * for the matching hr_signable_documents.recipient_slot widening.
+ * One more signature slot than the Warning Form (6, not 4) — Employee,
+ * Direct Manager, Senior Manager, HR, Executive, and a second Executive
+ * (migration 0166 for the first, 0272 for the second — both Executives
+ * must sign, routed one after the other the same way HR already routes
+ * between every other slot) — see those migrations for the matching
+ * hr_signable_documents.recipient_slot widening.
  */
 
-export type PromotionSignatureSlot = "employee" | "manager" | "senior_manager" | "hr_staff" | "executive";
+export type PromotionSignatureSlot = "employee" | "manager" | "senior_manager" | "hr_staff" | "executive" | "executive_2";
 
 export interface PromotionRoleChangeType {
   promotion: boolean;
@@ -188,6 +191,10 @@ export function buildPromotionFormBodyMarkup(data: PromotionFormData, logoDataUr
         <div class="promo-approver-block">
           <div class="promo-approver-title">Executive</div>
           ${signRow("Name", resolvedSignerName(data, "executive", signatures), signatures.executive)}
+        </div>
+        <div class="promo-approver-block">
+          <div class="promo-approver-title">Executive (2nd Signer)</div>
+          ${signRow("Name", resolvedSignerName(data, "executive_2", signatures), signatures.executive_2)}
         </div>
       </div>
     </div>
