@@ -96,7 +96,7 @@ export function TicketSearchFab() {
       <button
         type="button"
         onClick={() => setSearchOpen(true)}
-        className="fixed bottom-16 right-5 z-50 inline-flex h-11 w-11 items-center justify-center rounded-full border border-[var(--color-panel-border)] bg-[var(--color-card)] text-foreground shadow-[0_12px_30px_rgba(0,0,0,0.28)] backdrop-blur-md transition-transform hover:scale-105 hover:bg-[var(--color-secondary)] focus:outline-none"
+        className="fixed bottom-16 right-5 z-30 inline-flex h-11 w-11 items-center justify-center rounded-full border border-[var(--color-panel-border)] bg-[var(--color-card)] text-foreground shadow-[0_12px_30px_rgba(0,0,0,0.28)] backdrop-blur-md transition-transform hover:scale-105 hover:bg-[var(--color-secondary)] focus:outline-none"
         aria-label="Search tickets"
       >
         <Search className="h-5 w-5" />
