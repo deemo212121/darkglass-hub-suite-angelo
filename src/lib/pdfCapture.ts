@@ -151,6 +151,59 @@ export async function blobToBase64(blob: Blob): Promise<string> {
   });
 }
 
+/**
+ * Resolves every signature in a multi-signer document to something
+ * guaranteed to actually render when html2canvas rasterizes it for
+ * captureHtmlToPdfBlob — not just the signer who just signed.
+ *
+ * The signer who just signed gets their fresh local data: URL directly
+ * (already in hand, no network needed). Every OTHER slot that was signed
+ * earlier is still a real firebasestorage.googleapis.com URL at this
+ * point — cross-origin, and html2canvas's `useCORS: true` option isn't
+ * reliable enough across every origin this app is viewed from (confirmed
+ * broken for a LAN dev-server origin) to trust alone; it silently skips
+ * whatever it can't load rather than erroring. That's exactly why a
+ * termination/promotion/action-plan form signed by 2-3 people in sequence
+ * could show every signature fine in the live browser preview (plain
+ * <img> tags need no CORS to just display) but only the LAST signer's in
+ * the actual exported/downloaded PDF — every earlier signer's line came
+ * out blank.
+ *
+ * Fetches each earlier signature and converts it to its own data: URL
+ * too, so the whole composited image is 100% local by the time
+ * html2canvas runs. Best-effort per entry — a slot whose fetch fails
+ * (the same rare CORS-gap case captureHtmlToPdfBlob's useCORS already
+ * accepted as a risk) just keeps its original URL rather than failing
+ * the whole capture.
+ */
+export async function resolveSignaturesForCapture<T extends { url: string }>(
+  signatures: Partial<Record<string, T>>,
+  freshSlot: string,
+  freshDataUrl: string
+): Promise<Partial<Record<string, T>>> {
+  const entries = await Promise.all(
+    Object.entries(signatures).map(async ([slot, entry]) => {
+      if (!entry) return [slot, entry] as const;
+      if (slot === freshSlot) return [slot, { ...entry, url: freshDataUrl }] as const;
+      try {
+        const res = await fetch(entry.url);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const blob = await res.blob();
+        const dataUrl = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(reader.result as string);
+          reader.onerror = () => reject(reader.error ?? new Error("Failed to read blob"));
+          reader.readAsDataURL(blob);
+        });
+        return [slot, { ...entry, url: dataUrl }] as const;
+      } catch {
+        return [slot, entry] as const;
+      }
+    })
+  );
+  return Object.fromEntries(entries) as Partial<Record<string, T>>;
+}
+
 /** Loads a bundled asset (imported via `@/assets/...`) as a data URL, so a print/capture document never depends on a live network fetch. Returns "" (graceful no-image) if the asset is missing. */
 export async function loadAssetDataUrl(importFn: () => Promise<{ default: string }>): Promise<string> {
   try {

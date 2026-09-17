@@ -15,7 +15,7 @@ import { FillFormSignInRequired } from "@/components/FillFormSignInRequired";
 import { getMyProfileId } from "@/lib/supabase/users";
 import { getSignableDocument, signDocument, type SignableDocument } from "@/lib/supabase/signableDocuments";
 import { uploadSignableDocumentSignature, uploadWarningForm, refreshStorageAuthToken } from "@/lib/firebase/storage";
-import { captureHtmlToPdfBlob, loadAssetDataUrl } from "@/lib/pdfCapture";
+import { captureHtmlToPdfBlob, loadAssetDataUrl, resolveSignaturesForCapture } from "@/lib/pdfCapture";
 import { buildWarningFormBodyMarkup, warningFormStyles, type WarningFormData } from "@/lib/warningFormTemplate";
 import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
 import { logActivity } from "@/lib/supabase/hrActivityLog";
@@ -107,7 +107,12 @@ export function SignDocumentPage({ docId }: Props) {
       // same-origin-safe) but silently fails to draw a cross-origin
       // firebasestorage.googleapis.com URL, leaving that signature blank.
       const signatures = { ...doc.signatures, [doc.recipientSlot]: entry };
-      const captureSignatures = { ...doc.signatures, [doc.recipientSlot]: { ...entry, url: dataUrl } };
+      // Every signature (not just this one) needs to be a local data: URL
+      // for capture — see resolveSignaturesForCapture's doc comment for
+      // why an earlier signer's already-uploaded Firebase URL alone
+      // silently fails to render into the composited PDF even though it
+      // displays fine in the live browser preview.
+      const captureSignatures = await resolveSignaturesForCapture(signatures, doc.recipientSlot, dataUrl);
       const pdfBlob = await captureHtmlToPdfBlob(buildWarningFormBodyMarkup(formData, logoDataUrl, captureSignatures), warningFormStyles);
       const pdfUrl = await uploadWarningForm(companyId, formData.employeeName, pdfBlob);
 

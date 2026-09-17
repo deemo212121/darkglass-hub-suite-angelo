@@ -17,7 +17,7 @@ import { FillFormSignInRequired } from "@/components/FillFormSignInRequired";
 import { getMyProfileId } from "@/lib/supabase/users";
 import { getSignableDocument, signDocument, type SignableDocument } from "@/lib/supabase/signableDocuments";
 import { uploadSignableDocumentSignature, uploadActionPlanForm, refreshStorageAuthToken } from "@/lib/firebase/storage";
-import { captureHtmlToPdfBlob, loadAssetDataUrl } from "@/lib/pdfCapture";
+import { captureHtmlToPdfBlob, loadAssetDataUrl, resolveSignaturesForCapture } from "@/lib/pdfCapture";
 import { buildActionPlanFormBodyMarkup, actionPlanFormStyles, type ActionPlanFormData } from "@/lib/actionPlanFormTemplate";
 import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
 import { logActivity } from "@/lib/supabase/hrActivityLog";
@@ -140,7 +140,12 @@ export function SignActionPlanFormPage({ docId }: Props) {
         : (doc.formData as unknown as ActionPlanFormData);
 
       const signatures = { ...doc.signatures, [doc.recipientSlot]: entry };
-      const captureSignatures = { ...doc.signatures, [doc.recipientSlot]: { ...entry, url: dataUrl } };
+      // Every signature (not just this one) needs to be a local data: URL
+      // for capture — see resolveSignaturesForCapture's doc comment for
+      // why an earlier signer's already-uploaded Firebase URL alone
+      // silently fails to render into the composited PDF even though it
+      // displays fine in the live browser preview.
+      const captureSignatures = await resolveSignaturesForCapture(signatures, doc.recipientSlot, dataUrl);
       const pdfBlob = await captureHtmlToPdfBlob(buildActionPlanFormBodyMarkup(formData, images.logo, images.ribbon, images.footer, captureSignatures), actionPlanFormStyles);
       const pdfUrl = await uploadActionPlanForm(companyId, formData.employeeName, pdfBlob);
 
