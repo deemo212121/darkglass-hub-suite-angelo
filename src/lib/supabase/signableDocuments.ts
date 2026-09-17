@@ -431,8 +431,16 @@ export async function signDocument(id: string, slot: SignatureSlot, entry: Signa
 export async function updateSignableDocumentPdfUrl(id: string, pdfUrl: string, formData?: Record<string, any>): Promise<void> {
   const update: Record<string, any> = { pdf_url: pdfUrl };
   if (formData) update.form_data = formData;
-  const { error } = await supabase.from("hr_signable_documents").update(update).eq("id", id);
+  // .select("id") so a zero-row result (RLS silently filtered the row out
+  // rather than raising an error — see 0201_hr_signable_documents_admin_
+  // update.sql's own comment on this exact failure mode) is actually
+  // detectable — without it, a blocked write looks identical to a
+  // successful one to the caller, which is exactly what made the
+  // multi-signer PDF repair tool report "Repaired" for documents whose
+  // pdf_url never actually changed.
+  const { data, error } = await supabase.from("hr_signable_documents").update(update).eq("id", id).select("id");
   if (error) throw new Error(error.message);
+  if (!data || data.length === 0) throw new Error("Couldn't save the regenerated PDF — you may not have permission to update this document.");
 }
 
 /** Patches form_data alone, no pdf_url/regeneration involved — e.g. Staff Form Checklist's "mark this ID photo reviewed" toggle. */
