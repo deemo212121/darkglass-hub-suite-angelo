@@ -1555,6 +1555,13 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     teamScopedIds,
     allProfileById,
   ]);
+  // Pending count among whatever's currently filtered/listed above — not
+  // the whole company's pending total — so it stays meaningful once a
+  // manager/branch/date filter narrows the table down.
+  const correctionPendingCount = useMemo(
+    () => filteredCorrections.filter((c) => c.status === "pending").length,
+    [filteredCorrections]
+  );
 
   // Correction History panel — same team scoping as filteredCorrections
   // above, via each history entry's related correction's profileId.
@@ -2607,6 +2614,16 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                       />
                     </div>
                   </div>
+                  <div className="flex items-end justify-end gap-2 md:col-span-2">
+                    <div className="rounded-lg border border-yellow-500/30 bg-yellow-500/10 px-4 py-2 text-sm">
+                      <span className="text-yellow-300/80">Pending: </span>
+                      <span className="font-semibold text-yellow-300">{correctionPendingCount}</span>
+                    </div>
+                    <div className="rounded-lg border border-white/10 bg-slate-800/50 px-4 py-2 text-sm">
+                      <span className="text-slate-400">Listed: </span>
+                      <span className="font-semibold text-white">{filteredCorrections.length}</span>
+                    </div>
+                  </div>
                 </div>
                 <table className="w-full text-sm">
                   <thead>
@@ -3182,9 +3199,9 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                 </div>
               </div>
 
-              {/* Action Buttons — the manager reviews first; HR/Accounting only
-                  unlock once the manager has approved, and either one alone
-                  is enough for final approval. */}
+              {/* Action Buttons — Manager, HR, and Accounting can each review
+                  independently at any time (none gated behind another going
+                  first); any 2 of the 3 approving finalizes the request. */}
               {(() => {
               // One level further up — the requester's manager's own
               // manager (a senior manager, in practice), so they can also
@@ -3234,11 +3251,19 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                 )}
                 {!(selectedCorrection.managerStatus === "pending" && canReviewCorrectionStage(selectedCorrection, "manager", myProfileId, role, extraRoles, displayName, correctionRequesterManagersManagerName)) &&
                  !(selectedCorrection.hrStatus === "pending" && canReviewCorrectionStage(selectedCorrection, "hr", myProfileId, role, extraRoles)) &&
-                 !(selectedCorrection.accountingStatus === "pending" && canReviewCorrectionStage(selectedCorrection, "accounting", myProfileId, role, extraRoles)) && (
-                  <p className="text-xs text-slate-500">
-                    {selectedCorrection.managerStatus === "pending" ? "Awaiting manager review." : "Awaiting HR or Accounting review."}
-                  </p>
-                )}
+                 !(selectedCorrection.accountingStatus === "pending" && canReviewCorrectionStage(selectedCorrection, "accounting", myProfileId, role, extraRoles)) && (() => {
+                    const stillPending = [
+                      selectedCorrection.managerStatus === "pending" ? "Manager" : null,
+                      selectedCorrection.hrStatus === "pending" ? "HR" : null,
+                      selectedCorrection.accountingStatus === "pending" ? "Accounting" : null,
+                    ].filter((s): s is string => s !== null);
+                    if (stillPending.length === 0) return null;
+                    return (
+                      <p className="text-xs text-slate-500">
+                        Awaiting {stillPending.join(" / ")} review — any 2 of 3 approvals will finalize it.
+                      </p>
+                    );
+                  })()}
               </div>
               );
               })()}
