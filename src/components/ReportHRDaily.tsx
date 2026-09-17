@@ -18845,7 +18845,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                     <td className="px-4 py-3 text-muted-foreground">{doc.sentByName ?? "—"}</td>
                     <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{new Date(doc.createdAt).toLocaleString()}</td>
                     <td className="px-4 py-3">
-                      <a href={doc.documentUrl} target="_blank" rel="noopener noreferrer" className="btn text-xs px-2.5 py-1.5 flex items-center gap-1 w-fit"><Download className="h-3 w-3" /> View PDF</a>
+                      <div className="flex items-center gap-1.5">
+                        <button type="button" onClick={() => setCoeDocumentPreview(doc)} className="btn text-xs px-2.5 py-1.5 flex items-center gap-1 w-fit">View PDF</button>
+                        <a href={doc.documentUrl} download className="btn text-xs px-2.5 py-1.5 flex items-center gap-1 w-fit"><Download className="h-3 w-3" /> Download</a>
+                      </div>
                     </td>
                   </tr>
                 ))
