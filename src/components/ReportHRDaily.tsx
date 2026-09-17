@@ -70,6 +70,7 @@ import {
 import { uploadCoeCertificate, uploadWarningForm, uploadPromotionForm, uploadActionPlanForm, uploadTerminationForm, uploadW8benForm, uploadW4Form, uploadW4RForm, uploadI9Form, uploadWageAckForm, uploadCarIqAgreementForm, uploadVehicleAgreementForm, uploadEmployeeConfidentialityForm, uploadMealRestBreakForm, uploadPtoAckForm, uploadPartsResponsibilityForm, uploadMileageFuelForm, uploadLocationConsentForm, uploadDamageForm, uploadContractorDataForm, uploadDirectDepositForm, uploadSubstanceScreeningForm, uploadFlashTechnicianTravelForm, uploadContractorAddendumForm, uploadMasterW2AgreementForm, uploadMasterW2OfficeAgreementForm, uploadMasterPhContractorAgreementForm, uploadMasterW2ExecutiveAgreementForm, uploadSignableDocumentSignature, refreshStorageAuthToken } from "@/lib/firebase/storage";
 import { captureHtmlToPdfBlob, captureHtmlPagesToPdfBlob, loadAssetDataUrl as loadImageDataUrl } from "@/lib/pdfCapture";
 import { downloadSignableDocumentPdf } from "@/lib/downloadSignableDocumentPdf";
+import { repairMultiSignerPdfs } from "@/lib/repairMultiSignerSignatures";
 import { useSortableSearchTable } from "@/hooks/useSortableSearchTable";
 import { masterW2AgreementStyles, buildMasterW2AgreementBodyMarkup, type MasterW2AgreementFormData } from "@/lib/masterW2AgreementFormTemplate";
 import { masterW2OfficeAgreementStyles, buildMasterW2OfficeAgreementBodyMarkup, type MasterW2OfficeAgreementFormData } from "@/lib/masterW2OfficeAgreementFormTemplate";
@@ -11916,6 +11917,31 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     await downloadSignableDocumentPdf(doc.pdfUrl, `Termination Notice - ${employeeName}.pdf`);
   };
 
+  // ONE-TIME repair for documents signed before resolveSignaturesForCapture
+  // existed — see repairMultiSignerSignatures.ts's doc comment. Remove this
+  // button + handler once confirmed there's nothing left to fix.
+  const [repairingSignatures, setRepairingSignatures] = useState(false);
+  const handleRepairMultiSignerSignatures = async () => {
+    if (!window.confirm("Re-generate the PDF for every warning/promotion/action-plan/termination form with 2+ signatures, so no signature is missing from the file? This can take a while and re-uploads a new PDF for each affected record.")) return;
+    setRepairingSignatures(true);
+    try {
+      const result = await repairMultiSignerPdfs();
+      void loadSentTerminationForms();
+      const lines = [
+        `Checked: ${result.checked}`,
+        `Repaired: ${result.repaired.length}`,
+        ...(result.repaired.length ? result.repaired.map((r) => `  • ${r}`) : []),
+        `Failed: ${result.failed.length}`,
+        ...(result.failed.length ? result.failed.map((f) => `  • ${f.type} ${f.id}: ${f.error}`) : []),
+      ];
+      alert(lines.join("\n"));
+    } catch (err) {
+      alert(`Repair failed: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setRepairingSignatures(false);
+    }
+  };
+
   const handleCopyTerminationFormLink = async (doc: SignableDocument) => {
     try {
       const path = doc.recipientId ? "sign-termination-form" : "sign-termination-external";
@@ -20130,9 +20156,21 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
       {/* ── Sent Termination Forms tracking ── */}
       <div className="panel p-0 overflow-hidden mt-4">
-        <div className="px-4 py-4 border-b border-white/10">
-          <h2 className="font-semibold text-sm">Sent Termination Forms</h2>
-          <p className="text-[10px] text-muted-foreground mt-0.5">Track signature status. Confirming finalizes the record as signed; cancelling voids it. Document-only — nothing here changes the employee's Status automatically.</p>
+        <div className="px-4 py-4 border-b border-white/10 flex items-start justify-between gap-3">
+          <div>
+            <h2 className="font-semibold text-sm">Sent Termination Forms</h2>
+            <p className="text-[10px] text-muted-foreground mt-0.5">Track signature status. Confirming finalizes the record as signed; cancelling voids it. Document-only — nothing here changes the employee's Status automatically.</p>
+          </div>
+          {/* ONE-TIME repair for PDFs signed before the multi-signer capture fix — remove once confirmed clean. Sweeps warning/promotion/action-plan/termination forms company-wide, not just this table. */}
+          <button
+            type="button"
+            disabled={repairingSignatures}
+            onClick={handleRepairMultiSignerSignatures}
+            className="btn text-[10px] px-2 py-1 shrink-0 whitespace-nowrap disabled:opacity-50"
+            title="Re-generate the PDF for any signed form (warning/promotion/action-plan/termination) that's missing a signature it should have"
+          >
+            {repairingSignatures ? "Repairing…" : "Repair Missing Signatures"}
+          </button>
         </div>
         {terminationActionError && (
           <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{terminationActionError}</p>
