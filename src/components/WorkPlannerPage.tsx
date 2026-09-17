@@ -15,7 +15,6 @@ import {
   getLatestVisitTechnicianByTicketIds,
   getLatestVisitTriageNoteByTicketIds,
 } from "@/lib/supabase/tickets";
-import { getRepairStatuses, type RepairStatus } from "@/lib/supabase/repairStatuses";
 import { getLocations as sbGetLocations } from "@/lib/supabase/locationManagement";
 import { getCompanyTechnicians, type TechnicianOption, type TechnicianHome } from "@/lib/supabase/users";
 import { lookupZip } from "@/lib/zipCoverage";
@@ -84,6 +83,34 @@ function shortAddress(t: { city?: string; state?: string; zip?: string; location
 }
 
 const LOCATION_OPTIONS = LOCATIONS;
+// Same real repair-status codes ticket.$ticketNo.tsx's own Visit Log editor
+// offers (tickets.status, NOT the unrelated admin-configurable
+// repair_statuses table RepairStatusesPage.tsx manages — those are
+// different short codes for a different purpose). Kept in sync by hand
+// since ticket.$ticketNo.tsx's own list is inline JSX, not an exported
+// constant; CL-Cancelled is appended separately, gated the same way that
+// page gates it (BizOps Manager+ only — see CANCEL_ROLES there).
+const REPAIR_STATUS_CODES = [
+  "CL-Claimed",
+  "CL-Data-Closed",
+  "CL-Need Cancel",
+  "CL-Parts Back Ordered",
+  "CL-Ready to Complete",
+  "CSR-Acknowledged",
+  "CSR-Assigned to ASC",
+  "CSR-Left Message for Cx",
+  "CSR-Needs Scheduling",
+  "OP-Ready for Service",
+  "OP-Reschedule Follow up",
+  "OP-UPDATE HOLD",
+  "OP-Waiting for Part",
+  "PT-Need PreAuthorization",
+  "TR-Need PO",
+  "TR-Need Triage",
+] as const;
+// Same role gate as ticket.$ticketNo.tsx's CANCEL_ROLES — only these roles
+// may set a ticket to CL-Cancelled from here either.
+const CANCEL_STATUS_ROLES = new Set(["BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER", "ADMIN", "SUPERADMIN"]);
 // Daily schedule columns: each time frame, plus an ANYTIME catch-all.
 const TIME_SLOTS: Array<PlannerTicket["slot"]> = [...TIME_FRAMES, "ANYTIME"];
 const SLOT_TIMES: Record<string, string> = FRAME_START_TIME;
@@ -362,7 +389,7 @@ function LocationMultiSelect({ options, selected, onChange }: { options: string[
 export function WorkPlannerPage({ mod, sub }: Props) {
   const navigate = useNavigate();
   const goBackToTickets = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
-  const { email, ready, allowedLocations } = useAuth();
+  const { email, ready, allowedLocations, role, extraRoles } = useAuth();
   const locationChoices = allowedLocations === null
     ? (LOCATION_OPTIONS as unknown as string[])
     : (LOCATION_OPTIONS as unknown as string[]).filter((l) => allowedLocations.includes(l));
@@ -401,16 +428,17 @@ export function WorkPlannerPage({ mod, sub }: Props) {
       .then(setLiveTechnicians)
       .catch((err) => console.error("Work Planner: failed to load technician roster:", err));
   }, []);
-  // Company-configured status codes (RepairStatusesPage.tsx / migration
-  // 0146) — the same option list the rest of the app uses, so the ticket
-  // detail popup's Repair Status dropdown never drifts from what's
-  // actually valid to set on tickets.status.
-  const [repairStatuses, setRepairStatuses] = useState<RepairStatus[]>([]);
-  useEffect(() => {
-    getRepairStatuses()
-      .then(setRepairStatuses)
-      .catch((err) => console.error("Work Planner: failed to load repair statuses:", err));
-  }, []);
+  // Same real status codes + cancellation permission gate as
+  // ticket.$ticketNo.tsx's own Visit Log editor — see REPAIR_STATUS_CODES
+  // above.
+  const canSetCancelledStatus = useMemo(() => {
+    const heldRoles = [role, ...extraRoles].map((r) => String(r || "").toUpperCase());
+    return heldRoles.some((r) => CANCEL_STATUS_ROLES.has(r));
+  }, [role, extraRoles]);
+  const repairStatusOptions = useMemo(
+    () => (canSetCancelledStatus ? ["CL-Cancelled", ...REPAIR_STATUS_CODES] : [...REPAIR_STATUS_CODES]),
+    [canSetCancelledStatus],
+  );
   const [plannerDate, setPlannerDate] = useState(() => getLocalDateStr());
   const [showRescheduled, setShowRescheduled] = useState(false);
   // Technician columns/rows with zero tickets for the selected day are
@@ -1774,12 +1802,12 @@ export function WorkPlannerPage({ mod, sub }: Props) {
                         disabled={updatingTicketField === "status"}
                         onChange={(event) => void handleChangeSelectedTicketStatus(event.target.value)}
                       >
-                        {/* Keep the current value selectable even if it isn't (or is no longer) a configured Repair Status. */}
-                        {selectedTicket.status && !repairStatuses.some((s) => s.code === selectedTicket.status) && (
+                        {/* Keep the current value selectable even if it's a status this list doesn't otherwise offer (e.g. CL-Cancelled when the viewer isn't eligible to set it, or a legacy value). */}
+                        {selectedTicket.status && !repairStatusOptions.includes(selectedTicket.status) && (
                           <option value={selectedTicket.status}>{selectedTicket.status}</option>
                         )}
-                        {repairStatuses.map((s) => (
-                          <option key={s.id} value={s.code}>{s.code}</option>
+                        {repairStatusOptions.map((code) => (
+                          <option key={code} value={code}>{code}</option>
                         ))}
                       </select>
                     </div>
