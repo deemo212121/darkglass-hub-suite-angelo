@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { CalendarDays, ChevronLeft, ChevronRight, ChevronDown, MapPin, X } from "lucide-react";
 import { useNavigate } from "@tanstack/react-router";
 import type * as Leaflet from "leaflet";
@@ -202,25 +203,157 @@ function createPlannerTickets(rows: TicketRecord[], liveTechnicians: TechnicianO
   });
 }
 
-// defaultTechName is the branch's resolved catch-all technician (Location
+// defaultTechFor(loc) resolves that branch's catch-all technician (Location
 // Management's Rep Tech, falling back to the company-wide default) -- it
 // often isn't a real technician profile at all (e.g. "Memphis Admin"), so
 // it wouldn't otherwise be found by liveTechnicians and would vanish from
 // the planner the moment its tickets get reassigned elsewhere. Always
 // pinning it to the roster keeps that branch's catch-all column visible
 // even with zero tickets right now.
-function getSelectedTechRoster(location: string, liveTechnicians: TechnicianOption[], defaultTechName: string) {
-  if (!location) return [];
-  // No "show every technician in the company" fallback here anymore -- a
-  // branch with zero technicians on assigned_branch (e.g. Dallas, which has
-  // none) used to dump all 95+ company-wide technicians into its roster,
-  // which is exactly the wrong list for that branch. defaultTechName above
-  // already guarantees a non-empty, branch-appropriate roster on its own.
-  const base = liveTechnicians.filter((t) => t.branch === location).map((t) => t.name);
-  if (defaultTechName && !base.includes(defaultTechName)) {
-    return [defaultTechName, ...base];
+//
+// Takes every SELECTED branch at once (the Location control is a
+// multi-select — see LocationMultiSelect below) so picking 2+ branches
+// merges their rosters into one board rather than only ever showing one.
+function getSelectedTechRoster(locations: readonly string[], liveTechnicians: TechnicianOption[], defaultTechFor: (loc: string) => string) {
+  if (locations.length === 0) return [];
+  const seen = new Set<string>();
+  const ordered: string[] = [];
+  for (const loc of locations) {
+    // No "show every technician in the company" fallback here anymore -- a
+    // branch with zero technicians on assigned_branch (e.g. Dallas, which
+    // has none) used to dump all 95+ company-wide technicians into its
+    // roster, which is exactly the wrong list for that branch.
+    // defaultTechFor(loc) above already guarantees a non-empty,
+    // branch-appropriate roster on its own.
+    const base = liveTechnicians.filter((t) => t.branch === loc).map((t) => t.name);
+    const defaultTechName = defaultTechFor(loc);
+    const names = defaultTechName && !base.includes(defaultTechName) ? [defaultTechName, ...base] : base;
+    for (const name of names) {
+      if (!seen.has(name)) {
+        seen.add(name);
+        ordered.push(name);
+      }
+    }
   }
-  return base;
+  return ordered;
+}
+
+// Location control — a checkbox multi-select so dispatch can pick 2+
+// branches at once and see them merged onto one board, instead of the old
+// single-branch `<select>`. Portaled to <body> (like TicketColumnFilter's
+// funnel dropdowns) since .work-planner-header scrolls horizontally
+// (overflow-x: auto), which per the CSS spec forces overflow-y: auto too
+// and would otherwise clip the dropdown.
+function LocationMultiSelect({ options, selected, onChange }: { options: string[]; selected: Set<string>; onChange: (next: Set<string>) => void }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const wrapperRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+
+  const updatePos = useCallback(() => {
+    if (!buttonRef.current) return;
+    const rect = buttonRef.current.getBoundingClientRect();
+    setPos({ top: rect.bottom + 4, left: rect.left });
+  }, []);
+
+  useLayoutEffect(() => {
+    if (open) updatePos();
+  }, [open, updatePos]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDocClick = (e: MouseEvent) => {
+      const target = e.target as Node;
+      if (wrapperRef.current?.contains(target)) return;
+      if (dropdownRef.current?.contains(target)) return;
+      setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onDocClick);
+    document.addEventListener("keydown", onKey);
+    window.addEventListener("scroll", updatePos, true);
+    window.addEventListener("resize", updatePos);
+    return () => {
+      document.removeEventListener("mousedown", onDocClick);
+      document.removeEventListener("keydown", onKey);
+      window.removeEventListener("scroll", updatePos, true);
+      window.removeEventListener("resize", updatePos);
+    };
+  }, [open, updatePos]);
+
+  const filteredOptions = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return q ? options.filter((opt) => opt.toLowerCase().includes(q)) : options;
+  }, [options, query]);
+
+  const toggle = (value: string) => {
+    const next = new Set(selected);
+    if (next.has(value)) next.delete(value);
+    else next.add(value);
+    onChange(next);
+  };
+
+  const buttonLabel = selected.size === 0 ? "Select location(s)" : selected.size === 1 ? Array.from(selected)[0] : `${selected.size} locations`;
+
+  return (
+    <div ref={wrapperRef} className="control-select-wrap">
+      <button
+        ref={buttonRef}
+        type="button"
+        id="locationSelect"
+        className="control-select"
+        style={{ textAlign: "left" }}
+        onClick={() => setOpen((o) => !o)}
+        aria-haspopup="true"
+        aria-expanded={open}
+      >
+        {buttonLabel}
+      </button>
+      <ChevronDown className="control-select-chevron h-3.5 w-3.5" />
+      {open && pos ? createPortal(
+        <div
+          ref={dropdownRef}
+          style={{ position: "fixed", top: pos.top, left: pos.left, zIndex: 9999 }}
+          className="w-60 rounded-md border border-[var(--color-panel-border)] bg-[var(--color-card)] p-2 text-xs text-foreground shadow-2xl"
+        >
+          <input
+            type="text"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search…"
+            className="mb-1 w-full rounded border border-[var(--color-panel-border)] bg-[var(--color-background)] px-2 py-1 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-blue-500"
+            autoFocus
+          />
+          {selected.size > 0 && (
+            <button
+              type="button"
+              onClick={() => onChange(new Set())}
+              className="mb-1 w-full rounded border border-[var(--color-panel-border)] bg-[var(--color-background)] px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-foreground hover:bg-[var(--color-secondary)]"
+            >
+              Clear selection
+            </button>
+          )}
+          <div className="max-h-56 overflow-y-auto">
+            {filteredOptions.length === 0 ? (
+              <div className="px-2 py-2 text-muted-foreground italic">No matches</div>
+            ) : (
+              filteredOptions.map((opt) => (
+                <label key={opt} className="flex items-center gap-2 rounded px-2 py-1 hover:bg-[var(--color-secondary)] cursor-pointer">
+                  <input type="checkbox" checked={selected.has(opt)} onChange={() => toggle(opt)} className="accent-blue-500" />
+                  <span className="truncate" title={opt}>{opt}</span>
+                </label>
+              ))
+            )}
+          </div>
+        </div>,
+        document.body,
+      ) : null}
+    </div>
+  );
 }
 
 export function WorkPlannerPage({ mod, sub }: Props) {
@@ -230,12 +363,18 @@ export function WorkPlannerPage({ mod, sub }: Props) {
   const locationChoices = allowedLocations === null
     ? (LOCATION_OPTIONS as unknown as string[])
     : (LOCATION_OPTIONS as unknown as string[]).filter((l) => allowedLocations.includes(l));
-  const [location, setLocation] = useState("");
+  // Multi-select: HR/dispatch can pick 2+ branches at once and see their
+  // rosters/tickets merged onto one board instead of switching one at a
+  // time. Empty set = nothing picked yet (the page's own empty state),
+  // NOT "show every branch" — unlike TicketColumnFilter's convention
+  // elsewhere in the app, so that component isn't reused here.
+  const [locations, setLocations] = useState<Set<string>>(new Set());
+  const locationsList = useMemo(() => Array.from(locations), [locations]);
   // Per-branch default/catch-all technician: Location Management's Rep Tech
   // field, falling back to the company-wide default technician (same
   // resolution NewTicketPage.tsx uses for new-ticket auto-assignment). A
   // branch can be flagged forceUnassigned to stay blank regardless of the
-  // company default. Keyed by normalizeBranch so it matches `location`.
+  // company default. Keyed by normalizeBranch so it matches each entry in `locations`.
   const [locationOverrides, setLocationOverrides] = useState<Map<string, { repTech: string; forceUnassigned: boolean }>>(new Map());
   const [companyDefaultTechnician, setCompanyDefaultTechnician] = useState("");
   useEffect(() => {
@@ -243,12 +382,12 @@ export function WorkPlannerPage({ mod, sub }: Props) {
       .then(setCompanyDefaultTechnician)
       .catch((err) => console.error("Work Planner: failed to load company default technician:", err));
   }, []);
-  const branchDefaultTechnician = useMemo(() => {
-    if (!location) return "";
-    const override = locationOverrides.get(normalizeBranch(location));
+  const defaultTechnicianFor = useCallback((loc: string) => {
+    if (!loc) return "";
+    const override = locationOverrides.get(normalizeBranch(loc));
     if (override?.forceUnassigned) return "";
     return override?.repTech || companyDefaultTechnician;
-  }, [location, locationOverrides, companyDefaultTechnician]);
+  }, [locationOverrides, companyDefaultTechnician]);
   // Real, active technicians (role=TECHNICIAN, primary or secondary) — the
   // planner's technician columns, map markers/colors, and auto-assignment
   // fallback all read from this instead of the old hand-maintained static
@@ -468,11 +607,11 @@ export function WorkPlannerPage({ mod, sub }: Props) {
       if (!ticketDate) return false;
       if (ticketDate !== selectedDate) return false;
       if (isPreScheduleStatus(ticket.status)) return false;
-      if (location && normalizeBranch(ticket.location || ticket.city || ticket.branch) !== location) return false;
+      if (locations.size > 0 && !locations.has(normalizeBranch(ticket.location || ticket.city || ticket.branch))) return false;
       if (!showRescheduled && String(ticket.status || "").toLowerCase().includes("resched")) return false;
       return true;
     });
-  }, [plannerTickets, plannerDate, location, showRescheduled]);
+  }, [plannerTickets, plannerDate, locations, showRescheduled]);
 
   // Map-only filter — unchecking a technician in the legend hides their
   // pins/route from the "Assigned Locations Map" without touching the
@@ -490,10 +629,10 @@ export function WorkPlannerPage({ mod, sub }: Props) {
   // branch today" instead of Work Planner only ever showing the roster and
   // silently missing cross-branch coverage.
   const selectedTechRoster = useMemo(() => {
-    const base = getSelectedTechRoster(location, liveTechnicians, branchDefaultTechnician);
+    const base = getSelectedTechRoster(locationsList, liveTechnicians, defaultTechnicianFor);
     const ticketTechs = visibleTickets.map((t) => t.technician).filter(Boolean);
     return Array.from(new Set([...base, ...ticketTechs]));
-  }, [location, liveTechnicians, branchDefaultTechnician, visibleTickets]);
+  }, [locationsList, liveTechnicians, defaultTechnicianFor, visibleTickets]);
 
   const groupedTickets = useMemo(() => {
     // Apply the manual per-cell order (date, tech, slot) on top of the
@@ -921,26 +1060,31 @@ export function WorkPlannerPage({ mod, sub }: Props) {
         addRoutePolyline(ordered.map((p) => p.position), techColor(selectedTechRoster, techName));
       });
 
-      // Pin the OFFICE for the selected branch — large dark pin with 🏢 label.
-      if (location) {
-        geocodeOfficeLocation(location).then((officePos) => {
-          if (cancelled || !officePos || !activeMap) return;
-          addOfficeMarker(officePos, `${location} Office`);
-        });
-      }
+      // Pin the OFFICE for every SELECTED branch — large dark pin with 🏢
+      // label, one per branch when 2+ are picked at once.
+      const officePositionsPromise = Promise.all(
+        locationsList.map((loc) =>
+          geocodeOfficeLocation(loc).then((officePos) => {
+            if (cancelled || !officePos || !activeMap) return null;
+            addOfficeMarker(officePos, `${loc} Office`);
+            extendBounds(officePos);
+            return { loc, position: officePos };
+          }),
+        ),
+      );
 
-      // Pin each technician's HOUSE. Match the tech to the selected branch
+      // Pin each technician's HOUSE. Match the tech to any SELECTED branch
       // leniently: their assigned_branch, their home city, or the branch their
       // home ZIP belongs to (zip coverage) — so minor naming/branch gaps still
       // resolve to the right location.
       const homesToShow = techHomes.filter((h) => {
-        if (!location) return false; // only show houses when a branch is picked
+        if (locations.size === 0) return false; // only show houses once at least one branch is picked
         const candidates = [h.branch, h.city];
         if (h.zip) {
           const cov = lookupZip(h.zip);
           if (cov?.location) candidates.push(cov.location);
         }
-        return candidates.some((c) => c && normalizeBranch(c) === location);
+        return candidates.some((c) => c && locations.has(normalizeBranch(c)));
       });
       homesToShow.forEach((home) => {
         const homeAddr = [home.address, home.city, [home.state, home.zip].filter(Boolean).join(" ")]
@@ -956,35 +1100,38 @@ export function WorkPlannerPage({ mod, sub }: Props) {
         });
       });
 
-      if (location) {
-        geocodeOfficeLocation(location).then((position) => {
-          if (cancelled) return;
-          if (position && activeMap) {
-            setMapCenterZoom(position, 10);
-            return;
-          }
-          if (mapProvider === "google" ? !bounds.isEmpty() : bounds.isValid()) {
-            if (activeMap) fitMapBounds();
-          }
-        });
-      } else if (mapProvider === "google" ? !bounds.isEmpty() : bounds.isValid()) {
-        fitMapBounds();
-      } else {
-        const fallbackLocation = mapVisibleTickets[0]?.location || selectedTechRoster[0] || location;
-        geocodeOfficeLocation(fallbackLocation).then((position) => {
-          if (cancelled || !activeMap) return;
-          if (position) {
-            setMapCenterZoom(position, 10);
-          } else {
-            setMapCenterZoom({ lat: 37.0902, lng: -95.7129 }, 4);
-          }
-        });
-      }
+      officePositionsPromise.then((officeResults) => {
+        if (cancelled) return;
+        const resolvedOffices = officeResults.filter((r): r is { loc: string; position: { lat: number; lng: number } } => Boolean(r));
+        if (resolvedOffices.length === 1) {
+          // Exactly one branch selected (and its office resolved) — center
+          // and zoom tightly on it, same as always.
+          if (activeMap) setMapCenterZoom(resolvedOffices[0].position, 10);
+        } else if (mapProvider === "google" ? !bounds.isEmpty() : bounds.isValid()) {
+          // Two or more branches (or the lone one didn't resolve) — fit
+          // everything plotted (every office + every ticket pin) into view.
+          if (activeMap) fitMapBounds();
+        } else {
+          const fallbackLocation = mapVisibleTickets[0]?.location || selectedTechRoster[0] || locationsList[0] || "";
+          geocodeOfficeLocation(fallbackLocation).then((position) => {
+            if (cancelled || !activeMap) return;
+            if (position) {
+              setMapCenterZoom(position, 10);
+            } else {
+              setMapCenterZoom({ lat: 37.0902, lng: -95.7129 }, 4);
+            }
+          });
+        }
+      });
       });
     });
 
     return () => { cancelled = true; };
-  }, [mapReady, mapProvider, mapVisibleTickets, techHomes, L]);
+    // locationsList drives the office pins/centering directly now (multi-
+    // select), not just transitively through mapVisibleTickets, so it must
+    // be in this list or switching branches with the same (often zero)
+    // ticket count wouldn't re-plot the office pins.
+  }, [mapReady, mapProvider, mapVisibleTickets, techHomes, L, locationsList]);
 
   // Pin navigator (prev/next buttons) — pans the map to whichever plotted
   // ticket selectedMarkerIndex now points at. Previously nothing consumed
@@ -1009,12 +1156,17 @@ export function WorkPlannerPage({ mod, sub }: Props) {
     mapRef.current.setMapTypeId(mapMode === "satellite" ? maps.MapTypeId.SATELLITE : maps.MapTypeId.ROADMAP);
   }, [mapMode, mapReady, mapProvider]);
 
+  // Fast first-paint center/zoom the instant exactly one branch is picked,
+  // before tickets even load/geocode. With 2+ branches selected there's no
+  // single obvious point to snap to — the marker-drawing effect above
+  // fits the map to every selected branch's office once they resolve instead.
   useEffect(() => {
-    if (!mapReady || !mapProvider || !location) return;
+    if (!mapReady || !mapProvider || locationsList.length !== 1) return;
+    const singleLocation = locationsList[0];
     const activeMap = mapProvider === "google" ? mapRef.current : leafletMapRef.current;
     if (!activeMap) return;
 
-    const explicitCoords = getLocationManagementCoordinates(location);
+    const explicitCoords = getLocationManagementCoordinates(singleLocation);
     const setCenterZoom = (pos: { lat: number; lng: number }) => {
       if (mapProvider === "google") {
         activeMap.setCenter(pos);
@@ -1027,10 +1179,10 @@ export function WorkPlannerPage({ mod, sub }: Props) {
       setCenterZoom(explicitCoords);
       return;
     }
-    makeGeocoder(mapProvider)(getLocationManagementZoomAddress(location)).then((pos) => {
+    makeGeocoder(mapProvider)(getLocationManagementZoomAddress(singleLocation)).then((pos) => {
       if (pos) setCenterZoom(pos);
     });
-  }, [location, mapReady, mapProvider]);
+  }, [locationsList, mapReady, mapProvider]);
 
   const handleDragStart = (ticketNo: string, slot: PlannerTicket["slot"], technician: string) => {
     dragSourceRef.current = { ticketNo, slot, technician };
@@ -1137,7 +1289,11 @@ export function WorkPlannerPage({ mod, sub }: Props) {
     mapSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
   };
 
-  const currentLocationLabel = location || "Select a location";
+  const currentLocationLabel = locationsList.length === 0
+    ? "Select a location"
+    : locationsList.length === 1
+      ? locationsList[0]
+      : `${locationsList.length} locations`;
 
   return (
     <main className="w-full px-6 py-6 flex-none">
@@ -1156,13 +1312,7 @@ export function WorkPlannerPage({ mod, sub }: Props) {
           <div className="work-planner-header">
             <div className="control-group">
               <label className="control-label" htmlFor="locationSelect">Location</label>
-              <div className="control-select-wrap">
-                <select id="locationSelect" className="control-select" value={location} onChange={(event) => setLocation(event.target.value)}>
-                  <option value="" disabled>Select location</option>
-                  {locationChoices.map((option) => <option key={option} value={option}>{option}</option>)}
-                </select>
-                <ChevronDown className="control-select-chevron h-3.5 w-3.5" />
-              </div>
+              <LocationMultiSelect options={locationChoices} selected={locations} onChange={setLocations} />
             </div>
 
             <div className="control-group">
