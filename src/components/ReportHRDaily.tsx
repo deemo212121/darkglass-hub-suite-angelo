@@ -19869,6 +19869,13 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                               Revert
                             </button>
                           )}
+                          <button
+                            type="button"
+                            onClick={() => handleViewPromoForm(doc)}
+                            className="btn text-[10px] px-2 py-1"
+                          >
+                            View
+                          </button>
                           {doc.pdfUrl && (
                             <button
                               type="button"
@@ -28122,7 +28129,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             </div>
             <div className="px-5 py-3 border-t border-white/10 flex justify-end gap-2">
               {promoViewDoc.pdfUrl && (
-                <a href={promoViewDoc.pdfUrl} target="_blank" rel="noreferrer noopener" className="btn text-sm px-4 py-2">Open PDF</a>
+                <button type="button" onClick={() => handleDownloadPromoFormPdf(promoViewDoc)} className="btn text-sm px-4 py-2">Download PDF</button>
               )}
               <button onClick={() => setPromoViewDoc(null)} className="btn text-sm px-4 py-2">Close</button>
             </div>
