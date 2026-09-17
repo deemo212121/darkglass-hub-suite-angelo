@@ -159,6 +159,14 @@ import { logActivity, getActivityLog, activityActionLabel, type HrActivityLogEnt
 import { HrActivityLogPanel } from "@/components/HrActivityLogPage";
 import { InterviewCalendarTab, type InterviewCalendarCandidate } from "@/components/InterviewCalendarTab";
 import { AttachmentPreviewModal } from "@/components/AttachmentPreviewModal";
+import {
+  DEFAULT_COE_BODY_TEMPLATE,
+  COE_BODY_PLACEHOLDERS,
+  coeStyles,
+  renderCoeBodyHtml,
+  buildCoeBodyMarkup,
+  type CoeFormData,
+} from "@/lib/certificateOfEmploymentTemplate";
 import { subscribeTableChanges } from "@/lib/supabase/realtime";
 import { getCompanyPtoRequests, ptoYearWindow, ptoDaysUsed, sickYearWindow, sickDaysUsed, reviewPtoStage, canReviewPtoStage, type PtoRequestRow, type PtoType, type PtoStage } from "@/lib/supabase/pto";
 import { getAttendanceNotes, type AttendanceNoteRow } from "@/lib/supabase/attendanceNotes";
@@ -207,29 +215,10 @@ function isAwaitingEmployerStep(doc: { status: string; recipientSlot: string }):
 // logic for its own new/old checklist tabs, so it moved to the shared
 // registry file instead of staying a local-only helper here.
 
-// Certificate of Employment's editable body — the prose paragraphs between
-// the greeting and the signature block (see companySettings.ts's
-// getCompanyCoeBodyTemplate/setCompanyCoeBodyTemplate, migration 0063).
-// Placeholders are substituted in at generation time; this default matches
-// the original hardcoded text exactly, so nothing changes until an Admin
-// edits it. Paragraphs are separated by a blank line.
-const COE_BODY_PLACEHOLDERS = ["honorific", "employeeName", "startDate", "jobTitle", "reason", "he", "his"] as const;
-// This is the free-flowing letter prose only — Admin-editable via "Edit
-// Template" — everything here is plain text/placeholders, no HTML, so
-// editing it never means touching markup. The "For Office Use Only" stamp
-// that follows it on the actual certificate is NOT part of this template —
-// it's a fixed-layout box built directly in buildCoeBodyMarkup from the
-// Generate COE form's own office-use fields (Name/Title/Signature/Number),
-// matching the reference certificate's 2-column layout exactly; letting an
-// Admin freely rearrange that structured stamp via free text isn't
-// meaningful the way editing prose paragraphs is.
-const DEFAULT_COE_BODY_TEMPLATE = `This is to certify that {{employeeName}} has been employed with US IN HOME SERVICES since {{startDate}}.
-
-{{honorific}} {{employeeName}} is currently employed as a {{jobTitle}}. Throughout {{his}} employment, {{he}} has demonstrated professionalism and has remained a valued employee in good standing with our organization.
-
-This certification is issued upon {{his}} request for {{reason}}.
-
-Should you require any additional information or verification regarding {{his}} employment, please do not hesitate to contact us.`;
+// Certificate of Employment's shared template (styles + body markup +
+// default prose + placeholders) now lives in certificateOfEmploymentTemplate.ts
+// — shared with SignCoeFormPage.tsx so the generator and the sign page can
+// never drift into rendering visually different documents.
 
 const PTO_TYPE_LABEL: Record<PtoType, string> = {
   vacation: "Vacation",
@@ -2975,17 +2964,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       setCoeTemplateSaving(false);
     }
   };
-  /** Substitutes {{placeholders}} into the (already-escaped) template text and wraps blank-line-separated paragraphs in <p> tags. */
-  const renderCoeBodyHtml = (template: string, values: Record<string, string>): string => {
-    const escaped = escapeHtml(template);
-    const substituted = escaped.replace(/\{\{(\w+)\}\}/g, (_, key: string) => values[key] ?? "");
-    return substituted
-      .split(/\n\s*\n/)
-      .map((para) => para.trim())
-      .filter(Boolean)
-      .map((para) => `<p>${para.replace(/\n/g, "<br/>")}</p>`)
-      .join("\n");
-  };
   // Employee Name, Job Title, and Authorized Representative are all
   // typeable filters — the input's value doubles as both the filter query
   // and the field's final text (so a name/title not in either suggestion
@@ -3036,100 +3014,16 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     return q ? candidates.filter((e) => e.name.toLowerCase().includes(q)) : candidates;
   };
 
-  // CSS shared by both the print-window document and the live in-app
-  // preview (rendered via dangerouslySetInnerHTML so both paths — download
-  // and "capture this exact DOM node for sending" — stay pixel-identical).
-  const coeStyles = `
-    .coe-container * { margin: 0; padding: 0; box-sizing: border-box; }
-    .coe-container { width: 816px; min-height: 1056px; background: white; padding: 56px 72px; position: relative; font-family: Arial, Helvetica, sans-serif; color: #1f2937; }
-    .coe-container .header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 10px; }
-    .coe-container .header img.logo { width: 115px; height: 115px; object-fit: contain; }
-    .coe-container .header img.ribbon { width: 260px; height: auto; }
-    .coe-container h1 { text-align: center; font-size: 20px; letter-spacing: 0.3px; margin-bottom: 16px; }
-    .coe-container p { font-size: 13.5px; line-height: 1.3; margin-bottom: 14px; text-align: justify; }
-    .coe-container .date-line { margin-bottom: 14px; }
-    .coe-container .sign-block { margin-top: 4px; }
-    .coe-container .sign-block p { text-align: left; margin-bottom: 2px; }
-    .coe-container .sign-line { margin-bottom: 6px; font-weight: 600; }
-    .coe-container .office-use { margin-top: 34px; }
-    .coe-container .office-use-rule { border: none; border-top: 1.5px solid #9ca3af; margin: 0 0 14px; }
-    .coe-container .office-use-rule.bottom { margin: 14px 0 0; }
-    .coe-container .office-use p { font-size: 13.5px; line-height: 1.3; margin-bottom: 8px; text-align: left; }
-    .coe-container .office-use-heading { font-weight: 700; margin-bottom: 10px; }
-    .coe-container .office-use .row { display: flex; gap: 90px; align-items: flex-start; margin-bottom: 8px; }
-    .coe-container .office-use .row p { margin-bottom: 8px; }
-    .coe-container .office-use-col:last-child p { margin-bottom: 0; }
-    .coe-container .office-use u { text-decoration: underline; font-style: italic; }
-    .coe-container .footer-wrap { margin-top: 36px; }
-    .coe-container .footer-graphic img { display: block; width: 100%; height: auto; }
-  `;
-
-  const buildCoeBodyMarkup = (logoDataUrl: string, ribbonDataUrl: string, footerDataUrl: string) => {
-    const f = coeForm;
-    const officeUseSignatureDataUrl = coeOfficeUseSigPad.toDataURL();
-    const blank = (v: string) => (v.trim() ? escapeHtml(v) : "&nbsp;");
-    // "Ms."/"Mrs." both read as female for pronoun purposes; anything else
-    // (including "Mr.") defaults to male since it's the only other option
-    // in the Honorific dropdown.
-    const isFemale = f.honorific === "Ms." || f.honorific === "Mrs.";
-    const values = {
-      honorific: blank(f.honorific),
-      employeeName: blank(f.employeeName),
-      startDate: blank(f.employeeStartDate ? formatDateOnlyLong(f.employeeStartDate) : ""),
-      jobTitle: blank(f.jobTitle),
-      reason: blank(f.reason),
-      he: isFemale ? "she" : "he",
-      his: isFemale ? "her" : "his",
-    };
-    return `
-      <div class="coe-container">
-        <div class="header">
-          ${logoDataUrl ? `<img class="logo" src="${logoDataUrl}" alt="US In Home Services" />` : `<div style="font-weight:800;font-size:14px;color:#1e3a8a;max-width:120px;">US IN HOME SERVICES</div>`}
-          ${ribbonDataUrl ? `<img class="ribbon" src="${ribbonDataUrl}" alt="" />` : ""}
-        </div>
-
-        <h1>CERTIFICATE OF EMPLOYMENT<br/>US IN HOME SERVICES</h1>
-
-        <p class="date-line">Date: ${escapeHtml(new Date().toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" }))}</p>
-
-        <p>To Whom It May Concern,</p>
-
-        ${renderCoeBodyHtml(coeBodyTemplate, values)}
-
-        <div class="sign-block">
-          <p>Sincerely,</p>
-          <p class="sign-line">${blank(f.authorizedRep)}</p>
-          <p>Authorized Representative</p>
-          <p>US IN HOME SERVICES</p>
-          <p>Email: ${blank(f.authorizedRepEmail)}</p>
-          <p>Phone: ${blank(f.authorizedRepPhone)}</p>
-        </div>
-
-        <div class="office-use">
-          <hr class="office-use-rule" />
-          <p class="office-use-heading">For Office Use Only:</p>
-          <div class="row">
-            <div class="office-use-col">
-              <p>Name: ${blank(f.officeUseName)}</p>
-              <p>Title: ${blank(f.officeUseTitle)}</p>
-            </div>
-            <div class="office-use-col">
-              <p>Signature:</p>
-              ${officeUseSignatureDataUrl ? `<img src="${officeUseSignatureDataUrl}" alt="Signature" style="height:44px;display:block;" />` : `<p><u>&nbsp;</u></p>`}
-            </div>
-          </div>
-          <p>Contact Number: ${blank(f.officeUseNumber)}</p>
-          <hr class="office-use-rule bottom" />
-        </div>
-
-        <div class="footer-wrap">
-          <div class="footer-graphic">
-            ${footerDataUrl ? `<img src="${footerDataUrl}" alt="" />` : ""}
-          </div>
-        </div>
-      </div>
-    `;
-  };
+  // Thin wrapper keeping every existing call site's signature unchanged —
+  // the real markup lives in certificateOfEmploymentTemplate.ts now, shared
+  // with SignCoeFormPage.tsx.
+  const buildCoeBodyMarkupHere = (logoDataUrl: string, ribbonDataUrl: string, footerDataUrl: string) =>
+    buildCoeBodyMarkup(
+      coeForm as CoeFormData,
+      coeBodyTemplate,
+      { logo: logoDataUrl, ribbon: ribbonDataUrl, footer: footerDataUrl },
+      coeOfficeUseSigPad.toDataURL()
+    );
 
   const buildCoeHtml = (logoDataUrl: string, ribbonDataUrl: string, footerDataUrl: string) => `
     <!DOCTYPE html>
@@ -3149,7 +3043,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         </style>
       </head>
       <body>
-        ${buildCoeBodyMarkup(logoDataUrl, ribbonDataUrl, footerDataUrl)}
+        ${buildCoeBodyMarkupHere(logoDataUrl, ribbonDataUrl, footerDataUrl)}
       </body>
     </html>
   `;
@@ -3226,7 +3120,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     setCoeSending(true);
     setCoeSendError(null);
     try {
-      const pdfBlob = await captureHtmlToPdfBlob(buildCoeBodyMarkup(coeImages.logo, coeImages.ribbon, coeImages.footer), coeStyles);
+      const pdfBlob = await captureHtmlToPdfBlob(buildCoeBodyMarkupHere(coeImages.logo, coeImages.ribbon, coeImages.footer), coeStyles);
 
       const employeeLabel = coeForm.employeeName.trim() || "Certificate";
       const url = await uploadCoeCertificate(companyId ?? "", employeeLabel, pdfBlob);
@@ -18943,7 +18837,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               <div className="lg:col-span-2 overflow-x-auto bg-white/5 rounded-md p-4 flex justify-center">
                 <div style={{ transform: "scale(0.85)", transformOrigin: "top center" }}>
                   <style dangerouslySetInnerHTML={{ __html: coeStyles }} />
-                  <div ref={coePreviewRef} dangerouslySetInnerHTML={{ __html: buildCoeBodyMarkup(coeImages.logo, coeImages.ribbon, coeImages.footer) }} />
+                  <div ref={coePreviewRef} dangerouslySetInnerHTML={{ __html: buildCoeBodyMarkupHere(coeImages.logo, coeImages.ribbon, coeImages.footer) }} />
                 </div>
               </div>
 
