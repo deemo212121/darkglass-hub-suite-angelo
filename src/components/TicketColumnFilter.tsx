@@ -22,6 +22,12 @@ interface Props {
 }
 
 const EMPTY_LABEL = "(blank)";
+// Marks "every item explicitly unchecked" — distinct from the empty set,
+// which means "no filter, show all" everywhere this Set is consumed
+// (`selected.size === 0` → match everything). Never matches a real ticket
+// field value, so a caller filtering with `selected.has(value)` naturally
+// shows zero rows for this state without needing any special-case code.
+const NONE_SELECTED_SENTINEL = "__ticket_column_filter_none_selected__";
 
 export function TicketColumnFilter({ options, selected, onChange, label, className }: Props) {
   const [open, setOpen] = useState(false);
@@ -88,24 +94,40 @@ export function TicketColumnFilter({ options, selected, onChange, label, classNa
   }, [sortedOptions, query]);
 
   const allSelected = selected.size === 0; // empty = show all
+  const noneSelected = selected.size === 1 && selected.has(NONE_SELECTED_SENTINEL);
   const hasFilter = selected.size > 0;
 
   const toggle = (value: string) => {
     // "Select All" is checked (empty set) but every individual box also
     // reads as checked (see isChecked below) — unchecking one from that
     // state means "everything except this one", not "just this one", so
-    // start from every currently-visible option rather than the empty set.
-    const next = allSelected ? new Set(sortedOptions) : new Set(selected);
+    // start from every currently-visible option. Likewise starting from
+    // "none selected" (the sentinel) means starting from a real empty set,
+    // not one that still carries the sentinel around.
+    const next = allSelected ? new Set(sortedOptions) : noneSelected ? new Set<string>() : new Set(selected);
     if (next.has(value)) next.delete(value);
     else next.add(value);
-    // Re-checking back up to literally every visible option collapses to
-    // "no filter" (empty set) instead of an explicit full list, so a value
-    // that shows up in this column later (not visible right now) isn't
-    // silently excluded just because it didn't exist when this was set.
-    onChange(next.size === sortedOptions.length ? new Set() : next);
+    if (next.size === sortedOptions.length) {
+      // Re-checking back up to literally every visible option collapses to
+      // "no filter" (empty set) instead of an explicit full list, so a value
+      // that shows up in this column later (not visible right now) isn't
+      // silently excluded just because it didn't exist when this was set.
+      onChange(new Set());
+    } else if (next.size === 0) {
+      // Unchecked the last remaining item — this must read as "explicitly
+      // none", never as the empty set (which means "show all" everywhere
+      // this filter is consumed).
+      onChange(new Set([NONE_SELECTED_SENTINEL]));
+    } else {
+      onChange(next);
+    }
   };
 
-  const selectAll = () => onChange(new Set()); // clear filter
+  // A real toggle, like Excel's own header checkbox: checked (everything
+  // shown) → click clears every box and filters down to zero rows; anything
+  // else (a partial selection, or already explicitly none) → click goes
+  // back to showing everything.
+  const selectAll = () => onChange(allSelected ? new Set([NONE_SELECTED_SENTINEL]) : new Set());
 
   return (
     <span ref={wrapperRef} className={`relative inline-flex items-center ${className ?? ""}`}>
