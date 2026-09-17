@@ -12,7 +12,7 @@ import { uploadFlashTechTripReceiptFile, deleteAttachmentByUrl } from "@/lib/fir
 /** Tier Level values — kept identical to Master List's own Current
  *  Technicians tier dropdown (ReportHRDaily.tsx, profiles.tier_level) so
  *  the two never drift apart; this is the single source of truth for both. */
-export const FLASH_TECH_TIER_LEVELS = ["Tier 1", "Tier 2", "Tier 3", "SBM", "BM", "TR", "DR", "TM"];
+export const FLASH_TECH_TIER_LEVELS = ["Tier 1", "Tier 2", "Tier 3", "SBM", "BM", "ADR", "DR", "TM"];
 export const FLASH_TECH_TRIP_TYPES = ["Flashtech", "Education", "Inspection"] as const;
 export type FlashTechTripType = (typeof FLASH_TECH_TRIP_TYPES)[number];
 /** Upcoming/Open/Closed are auto-computed from the travel dates (see
