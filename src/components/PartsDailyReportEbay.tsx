@@ -1,4 +1,5 @@
 ﻿import { useState, useEffect, useCallback, useMemo, useRef, Fragment } from "react";
+import { createPortal } from "react-dom";
 import { useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
 import { ChevronLeft, ChevronDown, Plus, Trash2, Loader2, Printer, History, Download, FileSpreadsheet, Package, DollarSign, Tag, CheckCircle2, Users, CreditCard, ListChecks, ClipboardList, Pencil } from "lucide-react";
@@ -180,7 +181,34 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
   const [tab, setTab] = useState<Tab>("summary");
   const [startDate, setStartDate] = useState(daysAgoIso(6));
   const [endDate, setEndDate] = useState(todayIso());
-  const [branchFilter, setBranchFilter] = useState("");
+  const [branchFilter, setBranchFilter] = useState<string[]>([]);
+  const [branchFilterOpen, setBranchFilterOpen] = useState(false);
+  const [branchFilterPos, setBranchFilterPos] = useState<{ top: number; left: number; width: number } | null>(null);
+  const branchFilterBtnRef = useRef<HTMLButtonElement>(null);
+  const branchFilterPanelRef = useRef<HTMLDivElement>(null);
+  const updateBranchFilterPos = useCallback(() => {
+    const rect = branchFilterBtnRef.current?.getBoundingClientRect();
+    if (rect) setBranchFilterPos({ top: rect.bottom + 4, left: rect.left, width: rect.width });
+  }, []);
+  useEffect(() => {
+    if (!branchFilterOpen) return;
+    updateBranchFilterPos();
+    const onClick = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (!branchFilterBtnRef.current?.contains(t) && !branchFilterPanelRef.current?.contains(t)) setBranchFilterOpen(false);
+    };
+    document.addEventListener("mousedown", onClick);
+    window.addEventListener("scroll", updateBranchFilterPos, true);
+    window.addEventListener("resize", updateBranchFilterPos);
+    return () => {
+      document.removeEventListener("mousedown", onClick);
+      window.removeEventListener("scroll", updateBranchFilterPos, true);
+      window.removeEventListener("resize", updateBranchFilterPos);
+    };
+  }, [branchFilterOpen, updateBranchFilterPos]);
+  const toggleBranchFilter = (branch: string) => {
+    setBranchFilter((prev) => (prev.includes(branch) ? prev.filter((b) => b !== branch) : [...prev, branch]));
+  };
 
   const [orders, setOrders] = useState<EbayOrderRow[]>([]);
   const [listings, setListings] = useState<EbayListingRow[]>([]);
@@ -432,11 +460,11 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
   useEffect(() => { load(); }, [load]);
 
   const filteredOrders = useMemo(
-    () => (branchFilter ? orders.filter((o) => o.branch === branchFilter) : orders),
+    () => (branchFilter.length === 0 ? orders : orders.filter((o) => branchFilter.includes(o.branch))),
     [orders, branchFilter]
   );
   const filteredListings = useMemo(
-    () => (branchFilter ? listings.filter((l) => l.branch === branchFilter) : listings),
+    () => (branchFilter.length === 0 ? listings : listings.filter((l) => branchFilter.includes(l.branch))),
     [listings, branchFilter]
   );
 
@@ -525,7 +553,7 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
   // Regroups branches by whoever's currently assigned (Assignments tab),
   // so reassigning a branch there is all it takes — no code change needed.
   const dynamicGroups = useMemo(() => {
-    const branches = branchFilter ? EBAY_BRANCHES.filter((b) => b === branchFilter) : EBAY_BRANCHES;
+    const branches = branchFilter.length === 0 ? EBAY_BRANCHES : EBAY_BRANCHES.filter((b) => branchFilter.includes(b));
     const map = new Map<string, string[]>();
     for (const b of branches) {
       const assigned = (settingsByBranch.get(b)?.assignedTo || "").trim();
@@ -541,6 +569,14 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
     });
     return entries.map(([label, branches]) => ({ label, branches }));
   }, [settingsByBranch, branchFilter]);
+
+  // The Daily Branch Report lists branches alphabetically (not clustered
+  // by assigned person — that grouping lives in "By Assigned Person"
+  // instead). EBAY_BRANCHES is already alphabetical.
+  const dailyReportBranches = useMemo(
+    () => (branchFilter.length === 0 ? EBAY_BRANCHES : EBAY_BRANCHES.filter((b) => branchFilter.includes(b))),
+    [branchFilter, EBAY_BRANCHES]
+  );
 
   // Same totals as "By Branch" (orders/earnings/listed), just regrouped by
   // whoever's assigned to each branch instead of by branch itself. Keeps
@@ -933,7 +969,7 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
   const th = (content: string, align: "left" | "right" | "center" = "left") =>
     `<th style="background:#1e40af;color:white;font-weight:bold;border:1px solid #1e40af;padding:6px;font-size:11px;text-align:${align};">${escapeHtml(content)}</th>`;
 
-  const periodLabel = () => `${startDate} to ${endDate}${branchFilter ? ` · ${branchFilter}` : ""}`;
+  const periodLabel = () => `${startDate} to ${endDate}${branchFilter.length > 0 ? ` · ${branchFilter.join(", ")}` : ""}`;
   const REPORT_COLS = 5 + EBAY_ORDER_STATUSES.length; // widest section (By Assigned Person) sets the banner colspan
 
   const byPersonRowsHtml = (): string => {
@@ -966,28 +1002,27 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
       let dayTotals = { salesQty: 0, salesValue: 0, returnQty: 0, returnsValue: 0 };
       const dateLabel = new Date(date + "T00:00:00").toLocaleDateString(undefined, { year: "numeric", month: "2-digit", day: "2-digit" });
       let rows = "";
-      for (const group of dynamicGroups) {
-        for (const branch of group.branches) {
-          const t = dailyBranchTotals.get(`${branch}|${date}`) || { salesQty: 0, salesValue: 0, returnQty: 0, returnsValue: 0 };
-          dayTotals = {
-            salesQty: dayTotals.salesQty + t.salesQty,
-            salesValue: dayTotals.salesValue + t.salesValue,
-            returnQty: dayTotals.returnQty + t.returnQty,
-            returnsValue: dayTotals.returnsValue + t.returnsValue,
-          };
-          const note = getBranchNote(branch, date);
-          rows +=
-            `<tr>` +
-            td(escapeHtml(branch), "left", "font-weight:bold;") +
-            td(escapeHtml(group.label === "Unassigned" ? "—" : group.label)) +
-            td(escapeHtml(resolveListingsStatus(branch, date))) +
-            td(String(t.salesQty), "center") +
-            td(`$${t.salesValue.toFixed(2)}`, "right", "color:#16a34a;font-weight:bold;") +
-            td(String(t.returnQty), "center") +
-            td(`$${t.returnsValue.toFixed(2)}`, "right", t.returnsValue < 0 ? "color:#dc2626;" : "") +
-            td(escapeHtml(note || "—")) +
-            `</tr>`;
-        }
+      for (const branch of dailyReportBranches) {
+        const t = dailyBranchTotals.get(`${branch}|${date}`) || { salesQty: 0, salesValue: 0, returnQty: 0, returnsValue: 0 };
+        dayTotals = {
+          salesQty: dayTotals.salesQty + t.salesQty,
+          salesValue: dayTotals.salesValue + t.salesValue,
+          returnQty: dayTotals.returnQty + t.returnQty,
+          returnsValue: dayTotals.returnsValue + t.returnsValue,
+        };
+        const note = getBranchNote(branch, date);
+        const assignedTo = settingsByBranch.get(branch)?.assignedTo || "";
+        rows +=
+          `<tr>` +
+          td(escapeHtml(branch), "left", "font-weight:bold;") +
+          td(escapeHtml(assignedTo || "—")) +
+          td(escapeHtml(resolveListingsStatus(branch, date))) +
+          td(String(t.salesQty), "center") +
+          td(`$${t.salesValue.toFixed(2)}`, "right", "color:#16a34a;font-weight:bold;") +
+          td(String(t.returnQty), "center") +
+          td(`$${t.returnsValue.toFixed(2)}`, "right", t.returnsValue < 0 ? "color:#dc2626;" : "") +
+          td(escapeHtml(note || "—")) +
+          `</tr>`;
       }
       const totalsRow =
         `<tr style="background:#f3f4f6;font-weight:bold;">` +
@@ -1155,14 +1190,46 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
               <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">End Date</label>
               <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="glass-input text-sm py-1.5 px-2 rounded-md" />
             </div>
-            <div className="flex flex-col gap-1 min-w-[180px]">
+            <div className="flex flex-col gap-1 min-w-[220px]">
               <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Branch</label>
-              <select value={branchFilter} onChange={(e) => setBranchFilter(e.target.value)} className="glass-input text-sm py-1.5 px-2 rounded-md">
-                <option value="">— All Branches —</option>
-                {EBAY_BRANCHES.map((l) => (
-                  <option key={l} value={l}>{l}</option>
-                ))}
-              </select>
+              <button
+                ref={branchFilterBtnRef}
+                type="button"
+                onClick={() => setBranchFilterOpen((o) => !o)}
+                className="glass-input text-sm py-1.5 px-2 rounded-md flex items-center justify-between gap-2"
+              >
+                <span className="truncate">
+                  {branchFilter.length === 0
+                    ? "— All Branches —"
+                    : branchFilter.length <= 2
+                    ? branchFilter.join(", ")
+                    : `${branchFilter.length} branches selected`}
+                </span>
+                <ChevronDown className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${branchFilterOpen ? "rotate-180" : ""}`} />
+              </button>
+              {branchFilterOpen && branchFilterPos && createPortal(
+                <div
+                  ref={branchFilterPanelRef}
+                  style={{ position: "fixed", top: branchFilterPos.top, left: branchFilterPos.left, width: branchFilterPos.width, zIndex: 999999 }}
+                  className="max-h-72 overflow-y-auto rounded-md border border-white/10 bg-slate-900 shadow-2xl"
+                >
+                  <button
+                    type="button"
+                    onClick={() => setBranchFilter([])}
+                    className={`w-full text-left px-3 py-2 text-sm hover:bg-white/5 flex items-center gap-2 border-b border-white/10 ${branchFilter.length === 0 ? "text-blue-300 font-semibold" : ""}`}
+                  >
+                    <input type="checkbox" readOnly checked={branchFilter.length === 0} className="accent-blue-500" />
+                    — All Branches —
+                  </button>
+                  {EBAY_BRANCHES.map((b) => (
+                    <label key={b} className="w-full text-left px-3 py-2 text-sm hover:bg-white/5 flex items-center gap-2 cursor-pointer">
+                      <input type="checkbox" checked={branchFilter.includes(b)} onChange={() => toggleBranchFilter(b)} className="accent-blue-500" />
+                      {b}
+                    </label>
+                  ))}
+                </div>,
+                document.body
+              )}
             </div>
           </div>
         </div>
@@ -1287,19 +1354,16 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
               ) : (
                 <div className="space-y-4">
                   {dateList.map((date) => {
-                    const groups = dynamicGroups;
                     let dayTotals = { salesQty: 0, salesValue: 0, returnQty: 0, returnsValue: 0 };
-                    for (const g of groups) {
-                      for (const b of g.branches) {
-                        const t = dailyBranchTotals.get(`${b}|${date}`);
-                        if (t) {
-                          dayTotals = {
-                            salesQty: dayTotals.salesQty + t.salesQty,
-                            salesValue: dayTotals.salesValue + t.salesValue,
-                            returnQty: dayTotals.returnQty + t.returnQty,
-                            returnsValue: dayTotals.returnsValue + t.returnsValue,
-                          };
-                        }
+                    for (const b of dailyReportBranches) {
+                      const t = dailyBranchTotals.get(`${b}|${date}`);
+                      if (t) {
+                        dayTotals = {
+                          salesQty: dayTotals.salesQty + t.salesQty,
+                          salesValue: dayTotals.salesValue + t.salesValue,
+                          returnQty: dayTotals.returnQty + t.returnQty,
+                          returnsValue: dayTotals.returnsValue + t.returnsValue,
+                        };
                       }
                     }
                     return (
@@ -1326,55 +1390,47 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
                               </tr>
                             </thead>
                             <tbody>
-                              {groups.length === 0 ? (
+                              {dailyReportBranches.length === 0 ? (
                                 <tr><td colSpan={8} className="px-3 py-6 text-center text-muted-foreground">No branches match this filter.</td></tr>
                               ) : (
-                                groups.map((group, gi) => (
-                                  <Fragment key={`${date}-group-${gi}`}>
-                                    {group.branches.map((branch) => {
-                                      const t = dailyBranchTotals.get(`${branch}|${date}`) || { salesQty: 0, salesValue: 0, returnQty: 0, returnsValue: 0 };
-                                      return (
-                                        <tr key={branch} className="border-b border-white/5 hover:bg-white/5">
-                                          <td className="px-2 py-2 font-medium whitespace-nowrap">{branch}</td>
-                                          <td className="px-2 py-2 whitespace-nowrap text-muted-foreground">
-                                            {group.label === "Unassigned" ? "—" : group.label}
-                                          </td>
-                                          <td className="px-2 py-2">
-                                            <select
-                                              value={resolveListingsStatus(branch, date)}
-                                              onChange={(e) => saveDailyListingsStatus(branch, date, e.target.value)}
-                                              className="glass-input text-xs py-0.5 px-1.5 rounded"
-                                              title="Applies to this day only"
-                                            >
-                                              {EBAY_LISTINGS_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
-                                            </select>
-                                          </td>
-                                          <td className="px-2 py-2 text-center">{t.salesQty}</td>
-                                          <td className="px-2 py-2 text-right font-medium text-green-400">${t.salesValue.toFixed(2)}</td>
-                                          <td className="px-2 py-2 text-center">{t.returnQty}</td>
-                                          <td className={`px-2 py-2 text-right font-medium ${t.returnsValue < 0 ? "text-red-400" : "text-muted-foreground"}`}>${t.returnsValue.toFixed(2)}</td>
-                                          <td className="px-2 py-2">
-                                            <input
-                                              value={getBranchNote(branch, date)}
-                                              placeholder="—"
-                                              onChange={(e) => setLocalBranchNote(branch, date, e.target.value)}
-                                              onBlur={(e) => saveBranchNote(branch, date, e.target.value)}
-                                              className="glass-input text-xs py-0.5 px-2 rounded w-full min-w-[160px]"
-                                            />
-                                          </td>
-                                        </tr>
-                                      );
-                                    })}
-                                    {gi < groups.length - 1 && (
-                                      <tr key={`${date}-spacer-${gi}`} className="h-3">
-                                        <td colSpan={8}></td>
-                                      </tr>
-                                    )}
-                                  </Fragment>
-                                ))
+                                dailyReportBranches.map((branch) => {
+                                  const t = dailyBranchTotals.get(`${branch}|${date}`) || { salesQty: 0, salesValue: 0, returnQty: 0, returnsValue: 0 };
+                                  const assignedTo = settingsByBranch.get(branch)?.assignedTo || "";
+                                  return (
+                                    <tr key={branch} className="border-b border-white/5 hover:bg-white/5">
+                                      <td className="px-2 py-2 font-medium whitespace-nowrap">{branch}</td>
+                                      <td className="px-2 py-2 whitespace-nowrap text-muted-foreground">
+                                        {assignedTo || "—"}
+                                      </td>
+                                      <td className="px-2 py-2">
+                                        <select
+                                          value={resolveListingsStatus(branch, date)}
+                                          onChange={(e) => saveDailyListingsStatus(branch, date, e.target.value)}
+                                          className="glass-input text-xs py-0.5 px-1.5 rounded"
+                                          title="Applies to this day only"
+                                        >
+                                          {EBAY_LISTINGS_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
+                                        </select>
+                                      </td>
+                                      <td className="px-2 py-2 text-center">{t.salesQty}</td>
+                                      <td className="px-2 py-2 text-right font-medium text-green-400">${t.salesValue.toFixed(2)}</td>
+                                      <td className="px-2 py-2 text-center">{t.returnQty}</td>
+                                      <td className={`px-2 py-2 text-right font-medium ${t.returnsValue < 0 ? "text-red-400" : "text-muted-foreground"}`}>${t.returnsValue.toFixed(2)}</td>
+                                      <td className="px-2 py-2">
+                                        <input
+                                          value={getBranchNote(branch, date)}
+                                          placeholder="—"
+                                          onChange={(e) => setLocalBranchNote(branch, date, e.target.value)}
+                                          onBlur={(e) => saveBranchNote(branch, date, e.target.value)}
+                                          className="glass-input text-xs py-0.5 px-2 rounded w-full min-w-[160px]"
+                                        />
+                                      </td>
+                                    </tr>
+                                  );
+                                })
                               )}
                             </tbody>
-                            {groups.length > 0 && (
+                            {dailyReportBranches.length > 0 && (
                               <tfoot>
                                 <tr className="border-t border-white/10 bg-white/5 font-semibold">
                                   <td className="px-2 py-2">Totals</td>
