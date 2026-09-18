@@ -28045,18 +28045,18 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                 <div>
                   <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Report Category (optional)</label>
                   <p className="text-[10px] text-muted-foreground mt-0.5 mb-1">Not shown on the document — only used to count this warning in the HR Hiring Report.</p>
-                  <div className="flex rounded-md overflow-hidden border border-white/15 text-sm">
+                  <div className="flex rounded-md overflow-hidden border border-white/15 text-[11px] leading-tight">
                     <button
                       type="button"
                       onClick={() => setWarnWarningCategory((prev) => (prev === "time_card_warning" ? "" : "time_card_warning"))}
-                      className={`flex-1 px-2.5 py-1.5 ${warnWarningCategory === "time_card_warning" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground"}`}
+                      className={`flex-1 px-1.5 py-1 ${warnWarningCategory === "time_card_warning" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground"}`}
                     >
                       Time Card Warning
                     </button>
                     <button
                       type="button"
                       onClick={() => setWarnWarningCategory((prev) => (prev === "employee_error_manipulation" ? "" : "employee_error_manipulation"))}
-                      className={`flex-1 px-2.5 py-1.5 border-l border-white/15 ${warnWarningCategory === "employee_error_manipulation" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground"}`}
+                      className={`flex-1 px-1.5 py-1 border-l border-white/15 ${warnWarningCategory === "employee_error_manipulation" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground"}`}
                     >
                       Employee Error/Manipulation
                     </button>
