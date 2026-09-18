@@ -307,7 +307,7 @@ export interface EmployeePayrollRow {
   techHourlyPay: number;
   /**
    * The flat company-rate Hourly + OT figure BEFORE any State-mode override
-   * (see payroll_hourly_ot_overrides, migration 0281) — always the plain
+   * (see payroll_hourly_ot_overrides, migration 0289) — always the plain
    * hours×rate (+ OT×rate×1.5) calc, even when techHourlyPay above has been
    * overridden to the State-matched amount. Kept only so the Tech Activity
    * Report can show "Company vs. Applied" for transparency; every real
@@ -1095,7 +1095,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   const [wizardStep, setWizardStep] = useState<"detail" | "activity">("detail");
   const [reviewMarks, setReviewMarks] = useState<Map<string, PayrollReviewMark>>(new Map());
   const [reviewBusy, setReviewBusy] = useState(false);
-  /** Per-technician "State" pay-mode overrides for the picked period — see payroll_hourly_ot_overrides (migration 0281) and the payrollRows flatMap below, which substitutes this in place of the flat company-rate techHourlyPay when present. */
+  /** Per-technician "State" pay-mode overrides for the picked period — see payroll_hourly_ot_overrides (migration 0289) and the payrollRows flatMap below, which substitutes this in place of the flat company-rate techHourlyPay when present. */
   const [hourlyOtOverrides, setHourlyOtOverrides] = useState<Map<string, HourlyOtOverride>>(new Map());
   const [nextBusy, setNextBusy] = useState(false);
   // One connection per region (US/PH each send payslips from their own
@@ -1802,7 +1802,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   useEffect(() => { void loadReviewMarks(); }, [loadReviewMarks]);
 
   // Per-technician "State" pay-mode overrides for the picked period (see
-  // payroll_hourly_ot_overrides, migration 0281) — same period-scoped
+  // payroll_hourly_ot_overrides, migration 0289) — same period-scoped
   // load-on-change pattern as loadReviewMarks above.
   const loadHourlyOtOverrides = useCallback(async () => {
     if (!genStart || !genEnd || genStart > genEnd) {
@@ -2131,7 +2131,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     // moment Finance sets any hourly rate for them, surfacing as an
     // identical-looking "duplicate" row alongside their real office row.
     const techHourlyPayCompanyOnly = includeTech && isTechRole(emp) ? hours.regular * hourlyRate + hours.overtime * hourlyRate * 1.5 : 0;
-    // A State-mode override (payroll_hourly_ot_overrides, migration 0281,
+    // A State-mode override (payroll_hourly_ot_overrides, migration 0289,
     // set from the payroll detail step's Compliant/"State" toggle) replaces
     // the flat company-rate figure everywhere pay actually flows — gross
     // pay, Total Payment, CSV export, payslip/Send. techHourlyPayCompanyOnly
