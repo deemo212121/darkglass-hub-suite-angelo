@@ -66,6 +66,7 @@ import { PartDailyPickup } from "@/components/PartDailyPickup";
 import { PartDailyCollection } from "@/components/PartDailyCollection";
 import { PartReturn } from "@/components/PartReturn";
 import { ReservedPartList } from "@/components/ReservedPartList";
+import { PartsDailyReportEbay } from "@/components/PartsDailyReportEbay";
 import { PartsDashboard } from "@/components/PartsDashboard";
 import { PartsOrderDashboard } from "@/components/PartsOrderDashboard";
 import { TicketList } from "@/components/TicketList";
@@ -747,6 +748,8 @@ function SubModule() {
         ? <OperationsDashboard mod={mod} sub={sub} />
         : sub.custom === "reserved-part-list-custom"
         ? <ReservedPartList mod={mod} sub={sub} />
+        : (sub as any).custom === "part-daily-report-ebay"
+        ? <PartsDailyReportEbay mod={mod} sub={sub} />
         : sub.slug === "po-status"
         ? <PoStatusPage />
         : sub.slug === "part-collection"

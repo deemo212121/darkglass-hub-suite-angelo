@@ -19,7 +19,7 @@ export interface SubModuleDef {
   // Custom seed generator; receives index
   seed: (i: number) => Record<string, unknown>;
   count?: number;
-  custom?: "part-return" | "part-return-status" | "claims-pipeline" | "work-map" | "part-order" | "part-receive" | "return-pickup" | "repair-statuses" | "ticket-list" | "user-management" | "account-management" | "location-management" | "csr-main-dashboard" | "csr-team-daily-report" | "csr-daily-report" | "call-tracker" | "csr-status-summary" | "reserved-part-list-custom" | "parts-dashboard" | "claims-dashboard" | "staff-list" | "it-tickets" | "company-settings" | "universal-activity-log"; // hook for special pages
+  custom?: "part-return" | "part-return-status" | "claims-pipeline" | "work-map" | "part-order" | "part-receive" | "return-pickup" | "repair-statuses" | "ticket-list" | "user-management" | "account-management" | "location-management" | "csr-main-dashboard" | "csr-team-daily-report" | "csr-daily-report" | "call-tracker" | "csr-status-summary" | "reserved-part-list-custom" | "part-daily-report-ebay" | "parts-dashboard" | "claims-dashboard" | "staff-list" | "it-tickets" | "company-settings" | "universal-activity-log"; // hook for special pages
   /** Still a real, routable submodule (role gates, custom dispatch — everything works) — just excluded from the module's own tile grid because another page links to it directly instead (e.g. Flash Tech Calendar via a button on Expense Tracking). Keeps the tile grid from accumulating every niche page. */
   hiddenFromGrid?: boolean;
 }
@@ -741,6 +741,14 @@ const partsMod: ModuleDef = {
       fields: [],
       seed: () => ({}),
       custom: "reserved-part-list-custom",
+    },
+    {
+      slug: "part-daily-report-ebay",
+      title: "Parts Daily Report eBAY",
+      description: "Daily eBay orders, listings & branch totals.",
+      fields: [],
+      seed: () => ({}),
+      custom: "part-daily-report-ebay",
     },
   ],
 };
