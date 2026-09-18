@@ -149,13 +149,19 @@ export function BranchDailyReportPage({ mod }: { mod: ModuleDef; sub: SubModuleD
     return entries;
   }, [sbmByBranch, users]);
 
+  const techsFor = (branch: string) =>
+    users
+      .filter((u) => u.is_active && u.assigned_branch === branch && TECHNICIAN_PAY_ROLES.has(normalizeRole(u.role)))
+      .map((u) => u.display_name || u.email)
+      .sort((a, b) => a.localeCompare(b));
+
   const countsFor = (branch: string) => {
     const pendingTickets = tickets.filter((t) => t.location === branch && statusGroupOf(t.status) === "open").length;
-    const numberOfTechs = users.filter(
-      (u) => u.is_active && u.assigned_branch === branch && TECHNICIAN_PAY_ROLES.has(normalizeRole(u.role)),
-    ).length;
+    const numberOfTechs = techsFor(branch).length;
     return { pendingTickets, numberOfTechs };
   };
+
+  const [techListBranch, setTechListBranch] = useState<string | null>(null);
 
   const handleAddNote = async (branch: string) => {
     const text = (noteDrafts[branch] || "").trim();
@@ -347,7 +353,13 @@ export function BranchDailyReportPage({ mod }: { mod: ModuleDef; sub: SubModuleD
                             </div>
                             <div>
                               <div className="text-muted-foreground text-[10px] uppercase">Techs</div>
-                              <div className="font-semibold">{counts.numberOfTechs}</div>
+                              <button
+                                type="button"
+                                onClick={() => setTechListBranch(branch)}
+                                className="font-semibold text-blue-300 hover:text-blue-200 hover:underline"
+                              >
+                                {counts.numberOfTechs}
+                              </button>
                             </div>
                           </div>
                           {isToday && editableNotes && (
@@ -377,6 +389,28 @@ export function BranchDailyReportPage({ mod }: { mod: ModuleDef; sub: SubModuleD
           onClose={() => setAssignOpen(false)}
           onChanged={load}
         />
+      )}
+
+      {techListBranch && (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => setTechListBranch(null)}>
+          <div className="panel w-full max-w-sm p-0" onClick={(e) => e.stopPropagation()}>
+            <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between">
+              <h3 className="font-semibold text-sm">{techListBranch} — Technicians</h3>
+              <button onClick={() => setTechListBranch(null)} className="text-muted-foreground hover:text-foreground"><X className="h-4 w-4" /></button>
+            </div>
+            <div className="p-4">
+              {techsFor(techListBranch).length === 0 ? (
+                <p className="text-xs text-muted-foreground">No active technicians assigned to this branch.</p>
+              ) : (
+                <ul className="space-y-1.5">
+                  {techsFor(techListBranch).map((name) => (
+                    <li key={name} className="text-sm">{name}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
