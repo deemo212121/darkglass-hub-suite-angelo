@@ -1,5 +1,5 @@
 -- =====================================================================
--- 0273 — Manual entries (Budget, Sponsored, Others) for the rebuilt
+-- 0278 — Manual entries (Budget, Sponsored, Others) for the rebuilt
 -- EOD/EOM Hiring Report (ReportHRDaily.tsx's "Generate Report" tab) — the
 -- report is now 3 sections (Technician / Parts Manager / Philippine
 -- Staff), each row a branch (Technician/Parts Manager) or department
@@ -13,8 +13,8 @@
 -- month.
 --
 -- Company-scoped via RLS, company_id auto-stamped from the caller's
--- session — same pattern as csr_daily_report_entries (0270).
--- Run once in the Supabase SQL Editor, after 0272.
+-- session — same pattern as csr_daily_report_entries (0275).
+-- Run once in the Supabase SQL Editor, after 0277.
 -- =====================================================================
 
 create table if not exists hr_hiring_report_manual_entries (

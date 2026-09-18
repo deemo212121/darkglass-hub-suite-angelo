@@ -1,5 +1,5 @@
 -- =====================================================================
--- 0272 — CSR Daily Report: the Mistake Log at the bottom of the page
+-- 0277 — CSR Daily Report: the Mistake Log at the bottom of the page
 -- (CSRTeamDailyReport.tsx) — a running, company-wide list of incidents
 -- (Name/Reason/Action Taken), NOT scoped to a single report date like the
 -- rest of the page. Deliberately a plain flat log with no approval
@@ -11,9 +11,9 @@
 -- as the main grid's computed Month/summary-panel totals.
 --
 -- Company-scoped via RLS, company_id auto-stamped from the caller's
--- session — same pattern as csr_daily_report_entries (0270); reuses that
--- migration's csr_daily_report_extras_stamp() trigger function (0271).
--- Run once in the Supabase SQL Editor, after 0271.
+-- session — same pattern as csr_daily_report_entries (0275); reuses that
+-- migration's csr_daily_report_extras_stamp() trigger function (0276).
+-- Run once in the Supabase SQL Editor, after 0276.
 -- =====================================================================
 
 create table if not exists csr_mistake_log_entries (

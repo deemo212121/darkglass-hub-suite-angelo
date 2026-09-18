@@ -1,5 +1,5 @@
 -- =====================================================================
--- 0271 — CSR Daily Report: Extension call-volume table, the Extension
+-- 0276 — CSR Daily Report: Extension call-volume table, the Extension
 -- legend, and the daily summary panel (CSRTeamDailyReport.tsx).
 --
 -- csr_extensions             company-wide roster of extension codes (e.g.
@@ -21,8 +21,8 @@
 --
 -- Company-scoped via RLS, company_id auto-stamped from the caller's
 -- session — same pattern as csr_teams (0031) and csr_daily_report_entries
--- (0270).
--- Run once in the Supabase SQL Editor, after 0270.
+-- (0275).
+-- Run once in the Supabase SQL Editor, after 0275.
 -- =====================================================================
 
 create table if not exists csr_extensions (

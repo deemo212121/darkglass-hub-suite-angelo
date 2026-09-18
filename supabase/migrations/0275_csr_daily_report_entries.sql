@@ -1,5 +1,5 @@
 -- =====================================================================
--- 0270 — CSR Daily Report (the editable per-agent worksheet on the new
+-- 0275 — CSR Daily Report (the editable per-agent worksheet on the new
 -- CSR module's "Daily Report" page — src/components/CSRTeamDailyReport.tsx).
 --
 -- One row per (profile_id, report_date): everything on it that isn't
@@ -13,7 +13,7 @@
 --
 -- Company-scoped via RLS, company_id auto-stamped from the caller's
 -- session — identical pattern to csr_teams/csr_team_members (0031).
--- Run once in the Supabase SQL Editor, after 0269.
+-- Run once in the Supabase SQL Editor, after 0274.
 -- =====================================================================
 
 create table if not exists csr_daily_report_entries (
