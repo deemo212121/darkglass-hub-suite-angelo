@@ -14677,22 +14677,22 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     { key: "w8ben", label: "W-8 / W-9 / W-4 / W-4R Forms", count: 0, icon: Landmark },
   ] as const;
 
-  // "New Automation Forms"' own General column — the same first 7 of
-  // automatedFormsGeneralTabs above, minus Form I-9/Manager's Action Plan
-  // Form/W-8ben — those 3 live directly under New Technician Forms instead
-  // (see newAutomationFormsTechnicianTabs below), so listing them here too
-  // would just be a duplicate. Termination Notice Form IS included here —
-  // same "terminationForm" tab key as the old General column, just reachable
-  // from both places, same as every other tab this column reuses as-is.
-  // "combineForms" (Bulk Form Send) gets its own distinct tab here rather
-  // than being reused as-is — the old one's checkbox list is the legacy
-  // 20-item breakdown (11 individual technician forms, etc.); this one
-  // needs to show only the new consolidated form types (Master W-2
-  // Technician/Office Agreement, Master PH Contractor Agreement, W-4, I-9,
-  // Direct Deposit, W-8BEN), grouped by New Technician/New Office/PH Staff
-  // — see the "newCombineForms" render block below.
+  // "New Automation Forms"' own General column — the same automatedFormsGeneralTabs
+  // list above, minus Form I-9/W-8ben — those 2 live directly under New
+  // Technician Forms instead (see newAutomationFormsTechnicianTabs below),
+  // so listing them here too would just be a duplicate. Manager's Action
+  // Plan Form and Termination Notice Form ARE included here — same
+  // "actionPlanForm"/"terminationForm" tab keys as the old General column,
+  // just reachable from both places, same as every other tab this column
+  // reuses as-is. "combineForms" (Bulk Form Send) gets its own distinct tab
+  // here rather than being reused as-is — the old one's checkbox list is
+  // the legacy 20-item breakdown (11 individual technician forms, etc.);
+  // this one needs to show only the new consolidated form types (Master
+  // W-2 Technician/Office Agreement, Master PH Contractor Agreement, W-4,
+  // I-9, Direct Deposit, W-8BEN), grouped by New Technician/New Office/PH
+  // Staff — see the "newCombineForms" render block below.
   const newAutomationFormsGeneralTabs: NavTabDef[] = [
-    ...automatedFormsGeneralTabs.filter((t) => !["i9", "actionPlanForm", "w8ben", "combineForms"].includes(t.key)),
+    ...automatedFormsGeneralTabs.filter((t) => !["i9", "w8ben", "combineForms"].includes(t.key)),
     { key: "newCombineForms", label: "Bulk Form Send", count: 0, icon: Link2 },
   ];
 
