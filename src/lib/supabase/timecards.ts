@@ -633,7 +633,7 @@ export function calcWorkedHours(entry: UITimeEntry): number {
   return Math.max(0, hrs);
 }
 
-/** Flat paid-meal credit for a meal-always-paid role — see computeMealTimeCredit. */
+/** Policy meal-break length (30 min) for meal-always-paid roles — no longer used to size the pay credit itself (see computeMealTimeCredit), only as the threshold a real punched meal duration is flagged against as running long. */
 export const MEAL_ALWAYS_PAID_DEFAULT_HOURS = 0.5;
 
 /**
@@ -643,9 +643,21 @@ export const MEAL_ALWAYS_PAID_DEFAULT_HOURS = 0.5;
  * Director/Assistant Director) aren't required to punch Meal In/Out, but
  * their meal break is still paid time.
  *
- * A flat MEAL_ALWAYS_PAID_DEFAULT_HOURS whenever the day is meal-eligible,
- * regardless of whether Meal In/Out was punched or how long that punch was
- * — a policy of "30 minutes paid meal, period."
+ * Credits back exactly the real punched meal duration (Meal Out − Meal In)
+ * — not a flat 30 minutes. calcWorkedHours above already SUBTRACTS that
+ * same real duration from the raw Check In-to-Check Out span (meal time
+ * isn't worked time), so adding it straight back here nets to "the whole
+ * clock-in-to-clock-out span is paid," whatever the break actually ran —
+ * 20 minutes, 30, or 45. A flat 30-minute credit used to sit here instead,
+ * which either over- or under-paid depending on how the real punch compared
+ * to that fixed number; a real punch's own length is what actually
+ * happened, so that's what gets paid. No punch at all (mealStart/mealEnd
+ * empty) credits 0 — calcWorkedHours never subtracted anything for a break
+ * that was never taken, so there's nothing to add back, and this doesn't
+ * additionally reward not taking one. A break that runs over the 30-minute
+ * policy length isn't capped or penalized here — see the "Meal Time" column
+ * in EmployeePayrollDetailModal.tsx, which flags (not deducts) an
+ * over-length break instead.
  *
  * Callers add this directly into the day's raw hours BEFORE running the
  * regular/overtime weekly split (splitRegularOvertimeWeekly) — not folded
@@ -661,7 +673,8 @@ export function computeMealTimeCredit(
   mealAlwaysPaid: boolean
 ): number {
   if (!mealEligible || !mealAlwaysPaid) return 0;
-  return MEAL_ALWAYS_PAID_DEFAULT_HOURS;
+  if (!entry.mealStart || !entry.mealEnd) return 0;
+  return Math.max(0, hoursBetween(entry.mealStart, entry.mealEnd));
 }
 
 /** Public helper for components that need the raw HH:MM diff. */
