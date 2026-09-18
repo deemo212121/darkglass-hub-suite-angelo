@@ -12,7 +12,7 @@ function roleDisplay(role: string | null | undefined): string {
 /**
  * Required Check-In/Check-Out editor for a department roster, scoped by
  * `filterProfile` (e.g. Technical Support on TriageDashboardPage.tsx, CSR
- * Associates/Team Leaders on CSRDashboard.tsx). Writes straight to
+ * Associates/Team Leaders on CSRMainDashboard.tsx's Team Composition tab). Writes straight to
  * profiles.required_check_in/required_check_out (+ schedule_timezone) via
  * updateCompanyUser — the SAME columns HR's Master List "Hours of Work"
  * column edits (ReportHRDaily.tsx) and the SAME columns the employee's own

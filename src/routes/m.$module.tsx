@@ -4,7 +4,7 @@ import { AppHeader } from "@/components/Header";
 import { Footer } from "@/components/Footer";
 import { MapProviderToggle } from "@/components/MapProviderToggle";
 import { useAuth } from "@/lib/auth";
-import { getModule, DASHBOARD_GRID_EXCLUDED_SLUGS, type ModuleDef, type SubModuleDef } from "@/lib/modules";
+import { getModule, type ModuleDef, type SubModuleDef } from "@/lib/modules";
 import { hasDashboardAccess } from "@/lib/dashboardAccess";
 import { getModuleRoleGate } from "@/lib/moduleAccess";
 import { isModuleAllowed, isModuleAllowedForTrainee, isModuleAllowedForFrozen } from "@/lib/roleLabels";
@@ -650,7 +650,6 @@ function ModuleIndex() {
         {m.slug === "dashboard" ? (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             {submodules
-              .filter((s: SubModuleDef) => !DASHBOARD_GRID_EXCLUDED_SLUGS.has(s.slug))
               // Full gate (see submoduleAccess.ts) — the same check the
               // submodule route itself enforces, so a restricted tile is
               // never shown here only to land on "Access restricted" once
