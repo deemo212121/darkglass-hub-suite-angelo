@@ -90,6 +90,26 @@ function FullTimecardPage({ uid, ready }: { uid: string | null; ready: boolean }
   const [workingHours, setWorkingHours] = useState<number | null>(null);
   const [mealMinutes, setMealMinutes] = useState<number | null>(null);
   const [scheduleTimezone, setScheduleTimezone] = useState<ScheduleTimezone>("CST");
+  // Server-verified "today" for the calendar's own blue "today" highlight —
+  // NOT the viewer's device clock/timezone. A device set to a different
+  // zone (e.g. Philippines) than the employee's scheduled one (CST/EST) used
+  // to make this highlight land on the wrong cell for a large chunk of every
+  // shift, which then blocked punching once the server-side gate (see
+  // handleTimeToggle/handleMealToggle below) correctly refused to save under
+  // that mismatched day. Refreshed periodically so the highlight still
+  // rolls over correctly for a tab left open across midnight.
+  const [serverTodayKey, setServerTodayKey] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = () => {
+      getServerNow()
+        .then((d) => { if (!cancelled) setServerTodayKey(zonedDateKey(d, scheduleTimezone)); })
+        .catch((err) => console.error("Failed to load server-verified today:", err));
+    };
+    refresh();
+    const interval = setInterval(refresh, 60000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [scheduleTimezone]);
   const [editingDate, setEditingDate] = useState<string | null>(null);
   const [modalEntry, setModalEntry] = useState<TimeEntry | null>(null);
   // True once ANY punch action (Time In/Out or Meal In/Out) has fired during
@@ -539,7 +559,6 @@ function FullTimecardPage({ uid, ready }: { uid: string | null; ready: boolean }
 
   const firstDay = new Date(currentYear, currentMonth, 1);
   const lastDay = new Date(currentYear, currentMonth + 1, 0);
-  const today = new Date();
 
   // Build calendar
   let cursor = new Date(firstDay);
@@ -667,7 +686,7 @@ function FullTimecardPage({ uid, ready }: { uid: string | null; ready: boolean }
                         const dateKey = toKey(day);
                         const entry = entries[dateKey];
                         const pto = ptoForDate(dateKey);
-                        const isToday = day.toDateString() === today.toDateString();
+                        const isToday = dateKey === serverTodayKey;
                         const isOtherMonth = day.getMonth() !== currentMonth;
                         const hrs = entry ? calcHours(entry) : 0;
 
