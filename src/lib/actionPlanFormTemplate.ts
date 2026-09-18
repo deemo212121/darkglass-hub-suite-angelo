@@ -17,14 +17,17 @@
  * down the signature chain, only review and countersign — they never edit
  * the content.
  *
- * 4 signature slots (Manager, Senior Manager, HR, CEO) — no Employee slot
- * (this document is directed at management, not the employee). Manager/
- * Senior Manager/HR are valid recipient_slot values as of migration 0050;
- * the CEO row reuses the 'executive' slot value widened in migration 0166
- * for the Promotion Form, so no new migration is needed here either.
+ * 5 signature slots (Manager, Senior Manager, HR, CEO, Employee) — Employee
+ * was added later so the warned employee can acknowledge the finalized
+ * plan; a plain sign-only slot like Senior Manager/HR/CEO, never fills any
+ * content. Manager/Senior Manager/HR/Employee are valid recipient_slot
+ * values as of migration 0050; the CEO row reuses the 'executive' slot
+ * value widened in migration 0166 for the Promotion Form — every slot here
+ * was already valid table-wide before this form used it, so no new
+ * migration is needed for any of them.
  */
 
-export type ActionPlanSignatureSlot = "manager" | "senior_manager" | "hr_staff" | "executive";
+export type ActionPlanSignatureSlot = "manager" | "senior_manager" | "hr_staff" | "executive" | "employee";
 
 export interface ActionPlanFormData {
   /** The employee whose conduct this action plan addresses — kept for consistency with the other forms' shape; this form never writes back to the profile (document-only, no auto profile/warning-record update). */
@@ -182,6 +185,7 @@ export function buildActionPlanFormBodyMarkup(
       ${signRow("Senior Manager's Name", resolvedSignerName(data, "senior_manager", signatures), signatures.senior_manager)}
       ${signRow("HR/Management's Name", resolvedSignerName(data, "hr_staff", signatures), signatures.hr_staff)}
       ${signRow("CEO Name", resolvedSignerName(data, "executive", signatures), signatures.executive)}
+      ${signRow("Employee Signature", resolvedSignerName(data, "employee", signatures), signatures.employee)}
 
       <div class="footer-wrap">
         <div class="footer-graphic">

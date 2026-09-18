@@ -35,6 +35,7 @@ const SLOT_LABEL: Record<string, string> = {
   senior_manager: "Senior Manager",
   hr_staff: "HR/Management",
   executive: "CEO",
+  employee: "Employee",
 };
 
 const PLAN_FIELDS = [

@@ -90,7 +90,7 @@ export async function buildActionPlanFormDocxBlob(
   const ribbonBytes = ribbonDataUrl ? await dataUrlToBytes(ribbonDataUrl) : null;
   const footerBytes = footerDataUrl ? await dataUrlToBytes(footerDataUrl) : null;
   const sigBytes: Partial<Record<keyof ActionPlanFormSignatures, Uint8Array>> = {};
-  for (const slot of ["manager", "senior_manager", "hr_staff", "executive"] as const) {
+  for (const slot of ["manager", "senior_manager", "hr_staff", "executive", "employee"] as const) {
     const entry = signatures[slot];
     if (entry) sigBytes[slot] = await dataUrlToBytes(entry.url);
   }
@@ -174,6 +174,7 @@ export async function buildActionPlanFormDocxBlob(
           signatureRow("Senior Manager's Name", data.recipientSlot === "senior_manager" ? data.recipientName : "", signatures.senior_manager, sigBytes.senior_manager ?? null),
           signatureRow("HR/Management's Name", data.recipientSlot === "hr_staff" ? data.recipientName : "", signatures.hr_staff, sigBytes.hr_staff ?? null),
           signatureRow("CEO Name", data.recipientSlot === "executive" ? data.recipientName : "", signatures.executive, sigBytes.executive ?? null),
+          signatureRow("Employee Signature", data.recipientSlot === "employee" ? data.recipientName : "", signatures.employee, sigBytes.employee ?? null),
           ...(footerBytes ? [new Paragraph({ spacing: { before: 240 }, alignment: AlignmentType.CENTER, children: [new ImageRun({ type: "png", data: footerBytes, transformation: { width: 500, height: 70 } })] })] : []),
         ],
       },
