@@ -23,7 +23,7 @@ import { ChevronLeft, Pencil, RefreshCw, Settings, Trash2, X } from "lucide-reac
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { BrandedLoader } from "@/components/BrandedLoader";
-import { LOCATIONS } from "@/lib/locations";
+import { ACTIVE_LOCATIONS } from "@/lib/locations";
 import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
 import { getCompanyTickets } from "@/lib/supabase/tickets";
 import { statusGroupOf } from "@/lib/ticketData";
@@ -133,7 +133,7 @@ export function BranchDailyReportPage({ mod }: { mod: ModuleDef; sub: SubModuleD
   const groups = useMemo(() => {
     const byManager = new Map<string, { managerName: string; branches: string[] }>();
     const unassigned: string[] = [];
-    for (const branch of LOCATIONS) {
+    for (const branch of ACTIVE_LOCATIONS) {
       const sbmId = sbmByBranch.get(branch);
       const sbm = sbmId ? users.find((u) => u.id === sbmId) : null;
       if (sbm) {
@@ -484,7 +484,7 @@ function AssignmentsModal({
         </div>
         {error && <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{error}</p>}
         <div className="p-4 space-y-2">
-          {LOCATIONS.map((branch) => (
+          {ACTIVE_LOCATIONS.map((branch) => (
             <div key={branch} className="flex items-center gap-3">
               <span className="text-sm flex-1">{branch}</span>
               <select

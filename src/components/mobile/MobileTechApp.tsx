@@ -68,7 +68,7 @@ import { resolveTeamLeadOrManager } from "@/lib/notifyRouting";
 import { visibleAttendanceProfileIds } from "@/lib/notifyRouting";
 import { getCsrTeamComposition, type CsrTeamComposition } from "@/lib/supabase/csrTeams";
 import { isAttendanceFullAccessRole, isAttendanceManagerTierRole, normalizeRole, ROLE_LABELS, TECHNICIAN_PAY_ROLES } from "@/lib/roleLabels";
-import { LOCATIONS } from "@/lib/locations";
+import { LOCATIONS, ACTIVE_LOCATIONS } from "@/lib/locations";
 import { timezoneForBranch, nowInTimezone } from "@/lib/attendanceGrace";
 import { getServerNow, zonedDateKey, zonedTimeString, zonedWallClockToUtcIso, TIME_ZONES, type ScheduleTimezone } from "@/lib/serverTime";
 import { getTicketComments, addTicketComment, type TicketComment } from "@/lib/supabase/comments";
@@ -6998,7 +6998,7 @@ function MobileBranchDailyReportView({
       ]);
       const me = users.find((u) => u.id === profileId) ?? null;
       let myBranches: string[] = [];
-      if (isHrAndAbove) myBranches = [...LOCATIONS];
+      if (isHrAndAbove) myBranches = [...ACTIVE_LOCATIONS];
       else if (isSbm) myBranches = assignments.filter((a) => a.profileId === profileId).map((a) => a.branch);
       else if (isBm && me?.assigned_branch) myBranches = [me.assigned_branch];
       setBranches(myBranches);

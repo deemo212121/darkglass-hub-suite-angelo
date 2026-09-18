@@ -66,6 +66,19 @@ export const LOCATIONS = [
   "Wilmington",
 ] as const;
 
+/**
+ * Branches that exist in LOCATIONS (so old records still resolve/display
+ * correctly) but aren't real active branches — excluded from anything
+ * that lists "our branches" as a full roster/checklist (Hiring Report,
+ * Branch Daily Report, etc). Single source of truth for this exclusion —
+ * originally just the Hiring Report's own call (hrCandidates.ts), now
+ * shared so it doesn't drift into two different Sets over time.
+ */
+export const INACTIVE_BRANCHES = new Set(["Dallas", "Louisville"]);
+
+/** LOCATIONS with INACTIVE_BRANCHES filtered out — the actual roster of real, active branches. */
+export const ACTIVE_LOCATIONS = LOCATIONS.filter((l) => !INACTIVE_BRANCHES.has(l));
+
 // Region groupings for branch-level reporting (Operations Daily Report).
 // Keyed on the canonical LOCATIONS spellings above, since that's what's
 // actually stored in tickets.location — not the loosely-formatted names a
