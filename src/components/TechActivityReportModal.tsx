@@ -21,6 +21,7 @@ import {
   type TechCustomPayItem,
 } from "@/lib/supabase/techPayroll";
 import { getCompanyEmployeeRequests, type EmployeeRequestRow } from "@/lib/supabase/employeeRequests";
+import { getMileageEntries, mileageEffectiveTotal } from "@/lib/supabase/mileage";
 
 interface Props {
   row: EmployeePayrollRow;
@@ -113,6 +114,11 @@ export function TechActivityReportModal({
   const [assistedTickets, setAssistedTickets] = useState<TechAssistedTicket[]>([]);
   const [secondTechTickets, setSecondTechTickets] = useState<TechSecondTechTicket[]>([]);
   const [customItems, setCustomItems] = useState<TechCustomPayItem[]>([]);
+  // One number per distinct work_date this technician drove in the period
+  // (mileageEffectiveTotal — a day's several mileage_entries rows, one per
+  // ticket, all share the same day total, so this is deduped by date, not
+  // a raw entry count) — feeds the >200/>300/>400 mile day-count panel.
+  const [mileageDayTotals, setMileageDayTotals] = useState<number[]>([]);
   const [loadingExtras, setLoadingExtras] = useState(true);
 
   useEffect(() => {
@@ -125,19 +131,33 @@ export function TechActivityReportModal({
       getTechAssistedTickets(periodStart, periodEnd),
       getTechSecondTechTickets(periodStart, periodEnd),
       getTechCustomPayItems(employee.id, periodStart, periodEnd),
+      getMileageEntries(branch),
     ])
-      .then(([redoByTech, onHoldByTech, assistedByTech, secondTechByTech, custom]) => {
+      .then(([redoByTech, onHoldByTech, assistedByTech, secondTechByTech, custom, mileageEntries]) => {
         if (cancelled) return;
         setRedoTickets(redoByTech.get(nameKey) ?? []);
         setOnHoldTickets(onHoldByTech.get(nameKey) ?? []);
         setAssistedTickets(assistedByTech.get(nameKey) ?? []);
         setSecondTechTickets(secondTechByTech.get(nameKey) ?? []);
         setCustomItems(custom);
+        const totalByDate = new Map<string, number>();
+        for (const e of mileageEntries) {
+          if (e.deletedAt) continue;
+          if (e.profileId ? e.profileId !== employee.id : (e.technicianName || "").trim().toLowerCase() !== nameKey) continue;
+          if (e.workDate < periodStart || e.workDate > periodEnd) continue;
+          totalByDate.set(e.workDate, mileageEffectiveTotal(e));
+        }
+        setMileageDayTotals(Array.from(totalByDate.values()));
       })
       .catch((err) => console.error("Failed to load Tech Activity Report extras:", err))
       .finally(() => { if (!cancelled) setLoadingExtras(false); });
     return () => { cancelled = true; };
-  }, [employee.id, employee.full_name, periodStart, periodEnd]);
+  }, [employee.id, employee.full_name, periodStart, periodEnd, branch]);
+
+  const mileageThresholdCounts = useMemo(
+    () => [200, 300, 400].map((threshold) => ({ threshold, count: mileageDayTotals.filter((m) => m > threshold).length })),
+    [mileageDayTotals],
+  );
 
   // Approved Dispute Tickets — every payroll_dispute approved for THIS
   // technician, regardless of the period currently selected above. Shown
@@ -702,6 +722,22 @@ export function TechActivityReportModal({
                 <p className="text-xs text-slate-300">
                   {hireDate ? new Date(`${hireDate}T00:00:00`).toLocaleDateString("en-US") : "Not on file"}
                 </p>
+              </div>
+
+              <div className="bg-slate-800/50 border border-white/10 rounded-lg px-3 py-2.5" title="How many days in this period this technician's total drive that day (Mileage tab's Total Mileage, adjustments/overrides included) exceeded each threshold — not a raw mileage_entries row count, since a day with several tickets still shares one day total.">
+                <p className="text-[10px] text-slate-400 uppercase tracking-wide mb-1.5">Days Over Mileage Threshold</p>
+                {loadingExtras ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin text-slate-400" />
+                ) : (
+                  <div className="flex flex-col gap-1">
+                    {mileageThresholdCounts.map(({ threshold, count }) => (
+                      <div key={threshold} className="flex items-center justify-between text-xs">
+                        <span className="text-slate-400">&gt;{threshold} miles</span>
+                        <span className={count > 0 ? "text-amber-300 font-semibold" : "text-slate-300"}>{count}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           </div>
