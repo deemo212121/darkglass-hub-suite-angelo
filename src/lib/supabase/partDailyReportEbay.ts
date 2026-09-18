@@ -32,6 +32,31 @@ export async function deleteEbayAccount(id: string): Promise<void> {
   if (error) throw error;
 }
 
+// The branches this feature offers everywhere (Orders/Listings branch
+// pickers, Assignments, Daily Branch Report) are exactly the branches
+// with a row here — each one's "cent value" is the fixed cents a
+// listing price for that branch always ends in (e.g. Atlanta -> $X.97).
+export interface EbayBranchCent {
+  branch: string;
+  cents: number;
+}
+
+export async function getEbayBranchCents(): Promise<EbayBranchCent[]> {
+  const { data, error } = await supabase.from("ebay_branch_cents").select("branch, cents").order("branch", { ascending: true });
+  if (error) throw error;
+  return (data || []).map((r: any) => ({ branch: r.branch, cents: r.cents }));
+}
+
+export async function upsertEbayBranchCent(branch: string, cents: number): Promise<void> {
+  const { error } = await supabase.from("ebay_branch_cents").upsert({ branch, cents }, { onConflict: "company_id,branch" });
+  if (error) throw error;
+}
+
+export async function deleteEbayBranchCent(branch: string): Promise<void> {
+  const { error } = await supabase.from("ebay_branch_cents").delete().eq("branch", branch);
+  if (error) throw error;
+}
+
 export interface EbayOrderRow {
   id: string;
   orderExtId: string;
@@ -132,12 +157,17 @@ export async function createEbayOrder(input: {
 
 export async function updateEbayOrder(
   id: string,
-  patch: Partial<Pick<EbayOrderRow, "quantity" | "status" | "orderEarnings" | "notes">>
+  patch: Partial<Pick<EbayOrderRow, "orderExtId" | "partNo" | "quantity" | "status" | "orderEarnings" | "salesAccount" | "branch" | "orderDate" | "notes">>
 ): Promise<void> {
   const payload: Record<string, unknown> = {};
+  if (patch.orderExtId !== undefined) payload.order_ext_id = patch.orderExtId || null;
+  if (patch.partNo !== undefined) payload.part_no = patch.partNo || null;
   if (patch.quantity !== undefined) payload.quantity = patch.quantity;
   if (patch.status !== undefined) payload.status = patch.status;
   if (patch.orderEarnings !== undefined) payload.order_earnings = patch.orderEarnings;
+  if (patch.salesAccount !== undefined) payload.sales_account = patch.salesAccount;
+  if (patch.branch !== undefined) payload.branch = patch.branch;
+  if (patch.orderDate !== undefined) payload.order_date = patch.orderDate;
   if (patch.notes !== undefined) payload.notes = patch.notes || null;
   const { error } = await supabase.from("ebay_orders").update(payload).eq("id", id);
   if (error) throw error;
@@ -198,11 +228,15 @@ export async function createEbayListing(input: {
 
 export async function updateEbayListing(
   id: string,
-  patch: Partial<Pick<EbayListingRow, "price" | "quantity" | "status">>
+  patch: Partial<Pick<EbayListingRow, "partNo" | "ebayAccount" | "branch" | "price" | "quantity" | "listedDate" | "status">>
 ): Promise<void> {
   const payload: Record<string, unknown> = {};
+  if (patch.partNo !== undefined) payload.part_no = patch.partNo || null;
+  if (patch.ebayAccount !== undefined) payload.ebay_account = patch.ebayAccount;
+  if (patch.branch !== undefined) payload.branch = patch.branch;
   if (patch.price !== undefined) payload.price = patch.price;
   if (patch.quantity !== undefined) payload.quantity = patch.quantity;
+  if (patch.listedDate !== undefined) payload.listed_date = patch.listedDate;
   if (patch.status !== undefined) payload.status = patch.status;
   const { error } = await supabase.from("ebay_listings").update(payload).eq("id", id);
   if (error) throw error;

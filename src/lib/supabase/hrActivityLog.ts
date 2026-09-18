@@ -112,6 +112,8 @@ export const ACTIVITY_ACTION_LABELS: Record<string, string> = {
   ebay_listing_deleted: "Deleted eBay listing",
   ebay_branch_assigned: "Changed branch assignment",
   ebay_branch_daily_status_changed: "Changed a day's Listings status",
+  ebay_order_edited: "Edited order",
+  ebay_listing_edited: "Edited listing",
 };
 
 export function activityActionLabel(action: string): string {
