@@ -42,9 +42,18 @@ const CLOCK_ZONES: { key: string; label: string; timeZone: string }[] = [
 function CentralClock({ zoneKey }: { zoneKey: string }) {
   const zone = CLOCK_ZONES.find((z) => z.key === zoneKey) ?? CLOCK_ZONES[0];
   const [time, setTime] = useState<string | null>(null);
+  // Same Intl.DateTimeFormat + explicit timeZone as the time below — always
+  // reads as the correct CST/EST calendar date regardless of the viewer's
+  // own device timezone, which is the whole point: a viewer whose device is
+  // set to a different zone (e.g. Philippines) can see at a glance which
+  // calendar day it actually is here, instead of trusting their own device's
+  // date — see the confusion that prompted this (My Timecard's "today"
+  // highlight following the device clock instead of this same source).
+  const [date, setDate] = useState<string | null>(null);
 
   useEffect(() => {
     const update = () => {
+      const now = new Date();
       setTime(
         new Intl.DateTimeFormat("en-US", {
           timeZone: zone.timeZone,
@@ -52,7 +61,15 @@ function CentralClock({ zoneKey }: { zoneKey: string }) {
           minute: "2-digit",
           second: "2-digit",
           hour12: true,
-        }).format(new Date())
+        }).format(now)
+      );
+      setDate(
+        new Intl.DateTimeFormat("en-US", {
+          timeZone: zone.timeZone,
+          month: "short",
+          day: "numeric",
+          year: "numeric",
+        }).format(now)
       );
     };
     update();
@@ -68,6 +85,8 @@ function CentralClock({ zoneKey }: { zoneKey: string }) {
       title={zone.label}
     >
       <Clock className="h-3.5 w-3.5" />
+      <span className="font-mono tabular-nums">{date}</span>
+      <span className="text-muted-foreground/50">·</span>
       <span className="font-mono tabular-nums">{time}</span>
       <span className="font-semibold">{zone.key}</span>
     </div>
