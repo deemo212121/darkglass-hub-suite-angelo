@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { X, Plus, Pencil, Check, Loader2, ExternalLink, ChevronDown, ChevronRight, Trash2 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
-import { getAttendanceForRange, saveEntry, getProfileIdByFirebaseUid, computeScheduledDutyHours, resolveScheduledShiftHours, computeMealTimeCredit, startOfWeekSunday, splitRegularOvertimeWeekly, CSR_WEEKLY_OVERTIME_THRESHOLD, type AttendanceRow } from "@/lib/supabase/timecards";
+import { getAttendanceForRange, saveEntry, getProfileIdByFirebaseUid, computeScheduledDutyHours, resolveScheduledShiftHours, computeMealTimeCredit, startOfWeekSunday, splitRegularOvertimeWeekly, CSR_WEEKLY_OVERTIME_THRESHOLD, hoursDiff, MEAL_ALWAYS_PAID_DEFAULT_HOURS, type AttendanceRow } from "@/lib/supabase/timecards";
 import { isMealAlwaysPaidRole, usesFlatWeeklyOvertimeThreshold } from "@/lib/roleLabels";
 import { getCompanyHolidaysInRange } from "@/lib/supabase/companyHolidays";
 import { getPendingCorrectionsInRange, type TimecardCorrectionRow } from "@/lib/supabase/timecardCorrections";
@@ -124,7 +124,7 @@ const STATUS_LABEL: Record<AttendanceRow["status"], string> = {
   absent: "Absent",
   "missing-in": "Missing Clock In",
   "missing-out": "Missing Clock Out",
-  "missing-meal": "Meal Not Taken",
+  "missing-meal": "Paid Meal Included",
   "day-off": "Rest Day",
   holiday: "Holiday",
   "pending-correction": "Pending Time Correction Request",
@@ -135,7 +135,7 @@ const STATUS_COLOR: Record<AttendanceRow["status"], string> = {
   absent: "text-red-300",
   "missing-in": "text-yellow-300",
   "missing-out": "text-yellow-300",
-  "missing-meal": "text-orange-300",
+  "missing-meal": "text-sky-300",
   "day-off": "text-slate-400",
   holiday: "text-purple-300",
   "pending-correction": "text-amber-300",
@@ -1299,7 +1299,7 @@ export function EmployeePayrollDetailModal({
                       <th className="text-left py-1.5">Meal Out</th>
                       <th className="text-left py-1.5">Check Out</th>
                       <th className="text-right py-1.5">Regular Hour(s)</th>
-                      <th className="text-right py-1.5" title="Paid meal credit (30 min) for meal-always-paid roles (Technician, Branch/Senior Branch Manager, Tech Manager, Technical Director/Assistant Director). Added on top of Regular Hour(s) — but only whatever still fits under that week's overtime threshold; once the threshold's used up (in full, or partway through this day), the rest shows in Overtime instead, paid at the OT rate.">Meal Time</th>
+                      <th className="text-right py-1.5" title="Actual Meal In-to-Meal Out duration for meal-always-paid roles (Technician, Branch/Senior Branch Manager, Tech Manager, Technical Director/Assistant Director) — fully paid whatever it runs, since the break happens inside the clock-in-to-clock-out span and isn't deducted from it. Flagged red past 30 minutes as a conduct flag, not a pay cut. No punch at all pays nothing extra, but also deducts nothing.">Meal Time</th>
                       <th className="text-right py-1.5">Overtime</th>
                       <th className="text-right py-1.5" title="Regular Hour(s) + Meal Time + Overtime">Total Hours</th>
                       <th className="text-right py-1.5">Status</th>
@@ -1325,31 +1325,33 @@ export function EmployeePayrollDetailModal({
                       // merged into the raw hours BEFORE the weekly cap runs, so the cap
                       // trips on the right day even when credit is what pushes a day over)
                       // but folds credit invisibly into whichever bucket it landed in. For
-                      // display, decompose that folded split back into three columns that
-                      // reconcile exactly to the folded total:
+                      // display, decompose that folded split back into two columns that
+                      // reconcile to the folded total:
                       //   Regular   = min(realHours, folded.regular) — real hours fill the
                       //               regular bucket first; only less than realHours if
                       //               real hours alone already used up the day's room.
                       //   Overtime  = folded.overtime, unclipped — the true overtime,
                       //               including any credit that spilled past the cap.
-                      //   Meal Time = folded.regular - Regular — whatever regular-bucket
-                      //               room the credit still fits into. On a day well under
-                      //               the cap this is the full flat credit; on the exact
-                      //               day the cap is crossed it's only the leftover room
-                      //               (e.g. 14 of 30 min, with the other 16 showing in
-                      //               Overtime instead); once the cap's fully used up by an
-                      //               earlier day, it's 0 (credit is entirely inside OT).
-                      // Regular + Meal Time + Overtime === folded.regular + folded.overtime
-                      // always, since adding hours to a day never changes its total, only
-                      // where the split boundary falls. Payment keeps using the folded
-                      // split directly, so credit that spills past the threshold is still
-                      // paid at the OT rate.
+                      // Regular + Overtime === folded.regular + folded.overtime always,
+                      // since adding hours to a day never changes its total, only where the
+                      // split boundary falls. Payment keeps using the folded split directly,
+                      // so credit that spills past the threshold is still paid at the OT
+                      // rate. The Meal Time column below is independent of this split — it
+                      // shows the real punched break duration, not a derived credit amount
+                      // (see actualMealHours).
                       const folded = dailyHoursSplitByDate.get(row.date) ?? { regular: 0, overtime: 0 };
                       const realHours = row.hoursWorked;
                       const regularHours = Math.min(realHours, folded.regular);
                       const overtimeHours = folded.overtime;
-                      const mealCreditForDisplay = folded.regular - regularHours;
                       const totalDayHours = folded.regular + folded.overtime;
+                      // The real punched meal duration, purely for display/monitoring —
+                      // no longer tied to the pay credit (computeMealTimeCredit already
+                      // credits back this exact same duration, so it's fully paid whatever
+                      // it is; see timecards.ts). Flagged red past the 30-minute policy
+                      // length as a conduct flag, not a pay deduction — the technician is
+                      // still paid for the whole clock-in-to-clock-out span either way.
+                      const actualMealHours = row.mealStart && row.mealEnd ? Math.max(0, hoursDiff(row.mealStart, row.mealEnd)) : 0;
+                      const mealOverPolicy = actualMealHours > MEAL_ALWAYS_PAID_DEFAULT_HOURS;
                       const dayPay = dailyPayByDate.get(row.date);
                       const dayTicketStates = ticketStateByDate.get(row.date);
                       const dayPayment = payView === "compliant" ? dayPay?.compliantPay ?? 0 : dayPay?.calculatedPay ?? 0;
@@ -1433,8 +1435,11 @@ export function EmployeePayrollDetailModal({
                           </>
                         )}
                         <td className="py-1.5 text-right text-slate-200">{row.hoursWorked ? fmtClock(regularHours) : "—"}</td>
-                        <td className="py-1.5 text-right text-sky-300" title="Paid on top of Regular Hour(s)/Overtime — see Total Hours for the sum.">
-                          {mealCreditForDisplay > 0 ? fmtClock(mealCreditForDisplay) : "—"}
+                        <td
+                          className={`py-1.5 text-right ${mealOverPolicy ? "text-red-400 font-semibold" : "text-sky-300"}`}
+                          title={mealOverPolicy ? "Over the 30-minute paid meal policy — flagged for review. Still fully paid; this isn't a pay deduction." : "Actual meal break taken — fully paid regardless of length (see computeMealTimeCredit)."}
+                        >
+                          {actualMealHours > 0 ? fmtClock(actualMealHours) : "—"}
                         </td>
                         <td className={`py-1.5 text-right ${overtimeHours > 0 ? "text-orange-300 font-semibold" : "text-slate-500"}`}>
                           {overtimeHours > 0 ? fmtClock(overtimeHours) : "—"}
@@ -1459,6 +1464,16 @@ export function EmployeePayrollDetailModal({
                         <td className="py-1.5 text-right" onClick={(e) => e.stopPropagation()}>
                           {dayIsFixed ? (
                             <span className="text-slate-500" title="Fixed-salary pay doesn't vary by day — edit it from Salary History above instead">Fixed Salary</span>
+                          ) : payView === "compliant" && dayPay?.isMatched ? (
+                            <div className="flex items-center justify-end gap-1">
+                              <span className="text-slate-500">$</span>
+                              <span
+                                title={`This day's pay uses ${row.state}'s minimum wage ($${dayPay.effectiveRate.toFixed(2)}/hr) since it's higher than the company rate ($${dayPay.companyRate.toFixed(2)}/hr) — not editable here. Switch to Company view to edit the base rate.`}
+                                className="w-16 text-right text-amber-300 font-semibold"
+                              >
+                                {dayPay.effectiveRate.toFixed(2)}
+                              </span>
+                            </div>
                           ) : (
                             <div className="flex items-center justify-end gap-1">
                               <span className="text-slate-500">$</span>
