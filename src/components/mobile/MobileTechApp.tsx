@@ -407,11 +407,14 @@ export function MobileTechApp() {
   const [users, setUsers] = useState<ProfileRow[]>([]);
   const [csrComposition, setCsrComposition] = useState<CsrTeamComposition | null>(null);
   const isSelfRole = [role, ...extraRoles].some((r) => r && SELF_ROLES.has(r.toUpperCase()));
-  // Branch Daily Report bottom tab — only Branch Manager / Senior Branch
-  // Manager get it; everyone else's daily update is out of scope for this
-  // feature (see BranchDailyReportPage.tsx / branchDailyReports.ts).
+  // Branch Daily Report bottom tab — Branch Manager / Senior Branch Manager
+  // (their own update), plus HR-and-above who can view (and, matching
+  // their desktop rights, edit) every branch — see
+  // BranchDailyReportPage.tsx / branchDailyReports.ts.
   const isBranchReportRole = [role, ...extraRoles].some(
-    (r) => r && (r.toUpperCase() === "BRANCH_MANAGER" || r.toUpperCase() === "SENIOR_BRANCH_MANAGER"),
+    (r) =>
+      r &&
+      ["BRANCH_MANAGER", "SENIOR_BRANCH_MANAGER", "HR", "ADMIN", "SUPERADMIN", "SUPERSUPERADMIN"].includes(r.toUpperCase()),
   );
 
   // Resolved once for the whole app shell — needed by DetailView to know
@@ -6968,6 +6971,9 @@ function MobileBranchDailyReportView({
 }) {
   const isSbm = [role, ...extraRoles].some((r) => r && r.toUpperCase() === "SENIOR_BRANCH_MANAGER");
   const isBm = [role, ...extraRoles].some((r) => r && r.toUpperCase() === "BRANCH_MANAGER");
+  const isHrAndAbove = [role, ...extraRoles].some(
+    (r) => r && ["HR", "ADMIN", "SUPERADMIN", "SUPERSUPERADMIN"].includes(r.toUpperCase()),
+  );
   const reportDate = branchReportTodayKey();
 
   const [branches, setBranches] = useState<string[]>([]);
@@ -6992,7 +6998,8 @@ function MobileBranchDailyReportView({
       ]);
       const me = users.find((u) => u.id === profileId) ?? null;
       let myBranches: string[] = [];
-      if (isSbm) myBranches = assignments.filter((a) => a.profileId === profileId).map((a) => a.branch);
+      if (isHrAndAbove) myBranches = [...LOCATIONS];
+      else if (isSbm) myBranches = assignments.filter((a) => a.profileId === profileId).map((a) => a.branch);
       else if (isBm && me?.assigned_branch) myBranches = [me.assigned_branch];
       setBranches(myBranches);
       setReportByBranch(new Map(reports.map((r) => [r.branch, r])));
@@ -7073,7 +7080,11 @@ function MobileBranchDailyReportView({
       <div className="mtech-payroll-heading">
         <div className="mtech-payroll-name">Branch Daily Report</div>
         <div className="mtech-payroll-sub">
-          {isSbm ? "Review your branches, add updates, set urgency" : "Add today's update for your branch"}
+          {isHrAndAbove
+            ? "Every branch — review updates, set urgency"
+            : isSbm
+            ? "Review your branches, add updates, set urgency"
+            : "Add today's update for your branch"}
         </div>
       </div>
 
@@ -7170,7 +7181,7 @@ function MobileBranchDailyReportView({
                 {busy ? "Saving…" : "Add Update"}
               </button>
 
-              {isSbm && (
+              {(isSbm || isHrAndAbove) && (
                 <>
                   <div className="mtech-section-title">Urgency</div>
                   <select
