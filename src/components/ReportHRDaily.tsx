@@ -12442,12 +12442,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   };
 
   // ── Generate Report: EOD / EOM Hiring Grid — same Position → Branch table
-  // shown on the EOD/EOM Reports tab, exportable independently of whatever
-  // date/month is currently open there. Fetches fresh on demand rather than
-  // reusing that tab's state, since a user may want to export a different
-  // day/month than the one they're currently viewing. ──
-  const [genEodDate, setGenEodDate] = useState(todayStr);
-  const [genEomMonth, setGenEomMonth] = useState(todayStr.slice(0, 7));
+  // shown on the EOD/EOM Reports tab. Exports whatever day/month is
+  // currently open there (eodDate/eomMonth, declared further down) — a
+  // separate export-only date picker used to exist here but just
+  // duplicated that one, letting the two drift out of sync. ──
   const [genEodBusy, setGenEodBusy] = useState<"excel" | "pdf" | null>(null);
   const [genEomBusy, setGenEomBusy] = useState<"excel" | "pdf" | null>(null);
 
@@ -12610,9 +12608,9 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const downloadEodHiringReport = async (format: "excel" | "pdf") => {
     setGenEodBusy(format);
     try {
-      const sections = await getHiringReportSections("eod", genEodDate);
-      if (format === "excel") downloadHiringGridExcel(sections, "EOD HIRING REPORT", genEodDate, `eod-hiring-report-${genEodDate}.xls`);
-      else await downloadHiringGridPdf(sections, "EOD Hiring Report", genEodDate);
+      const sections = await getHiringReportSections("eod", eodDate);
+      if (format === "excel") downloadHiringGridExcel(sections, "EOD HIRING REPORT", eodDate, `eod-hiring-report-${eodDate}.xls`);
+      else await downloadHiringGridPdf(sections, "EOD Hiring Report", eodDate);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to generate EOD hiring report.");
     } finally {
@@ -12623,9 +12621,9 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const downloadEomHiringReport = async (format: "excel" | "pdf") => {
     setGenEomBusy(format);
     try {
-      const sections = await getHiringReportSections("eom", genEomMonth);
-      if (format === "excel") downloadHiringGridExcel(sections, "EOM HIRING REPORT", genEomMonth, `eom-hiring-report-${genEomMonth}.xls`);
-      else await downloadHiringGridPdf(sections, "EOM Hiring Report", genEomMonth);
+      const sections = await getHiringReportSections("eom", eomMonth);
+      if (format === "excel") downloadHiringGridExcel(sections, "EOM HIRING REPORT", eomMonth, `eom-hiring-report-${eomMonth}.xls`);
+      else await downloadHiringGridPdf(sections, "EOM Hiring Report", eomMonth);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to generate EOM hiring report.");
     } finally {
@@ -18584,12 +18582,12 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <p className="text-[10px] text-muted-foreground mt-0.5">Grouped by Position → Branch. Staff Needed is manually entered and moves ±1 automatically when a candidate is hired or a hire is reversed. Export the grid below for a specific day or month.</p>
         </div>
 
-        <div className="px-4 py-3 border-b border-white/10 bg-white/5 flex flex-wrap items-end gap-6">
-          <div className="flex items-end gap-3">
-            <div className="flex flex-col gap-1">
-              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">EOD Date</label>
-              <input type="date" value={genEodDate} onChange={(e) => setGenEodDate(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
-            </div>
+        <div className="px-4 py-3 border-b border-white/10 bg-white/5 flex flex-wrap items-center gap-6">
+          {/* Both export groups read the single Date/Month picker next to the
+              EOD (Daily)/EOM (Monthly) toggle below — no separate export-only
+              date field here anymore, so there's nothing to fall out of sync. */}
+          <div className="flex items-center gap-3">
+            <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">EOD ({eodDate || "—"})</span>
             <button
               onClick={() => downloadEodHiringReport("excel")}
               disabled={genEodBusy !== null}
@@ -18606,11 +18604,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             </button>
           </div>
 
-          <div className="flex items-end gap-3">
-            <div className="flex flex-col gap-1">
-              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">EOM Month</label>
-              <input type="month" value={genEomMonth} onChange={(e) => setGenEomMonth(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
-            </div>
+          <div className="flex items-center gap-3">
+            <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">EOM ({eomMonth || "—"})</span>
             <button
               onClick={() => downloadEomHiringReport("excel")}
               disabled={genEomBusy !== null}
