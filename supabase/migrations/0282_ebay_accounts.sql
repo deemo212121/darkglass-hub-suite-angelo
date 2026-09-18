@@ -1,5 +1,5 @@
 -- =====================================================================
--- 0276 — eBay seller accounts for the "Parts Daily Report eBAY" feature.
+-- 0282 — eBay seller accounts for the "Parts Daily Report eBAY" feature.
 -- Was a hardcoded 2-value list ("Ebay (warehouse_101)", "Ebay
 -- (tekp07)") baked into the app; now company-managed from the
 -- Assignments tab so a new account doesn't need a code change, and the
@@ -7,8 +7,8 @@
 -- list is actually managed there.
 --
 -- Company-scoped via RLS, company_id auto-stamped from the caller's
--- session — same pattern as ebay_orders/ebay_listings (0274).
--- Run once in the Supabase SQL Editor, after 0275.
+-- session — same pattern as ebay_orders/ebay_listings (0280).
+-- Run once in the Supabase SQL Editor, after 0281.
 -- =====================================================================
 
 create table if not exists ebay_accounts (
@@ -35,7 +35,7 @@ drop trigger if exists trg_ebay_accounts_stamp on ebay_accounts;
 create trigger trg_ebay_accounts_stamp before insert or update on ebay_accounts
   for each row execute function ebay_accounts_stamp();
 
--- ---------- RLS: company-scoped, same pattern as ebay_orders (0274) ----------
+-- ---------- RLS: company-scoped, same pattern as ebay_orders (0280) ----------
 alter table ebay_accounts enable row level security;
 alter table ebay_accounts force row level security;
 

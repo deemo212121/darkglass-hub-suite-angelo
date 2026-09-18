@@ -1,11 +1,11 @@
 -- =====================================================================
--- 0275 — Per-branch settings + daily comments for the "Parts Daily
+-- 0281 — Per-branch settings + daily comments for the "Parts Daily
 -- Report eBAY" Summary tab, matching the team's existing daily branch
 -- rollup (BRANCH / ASSIGNED / LISTINGS / SALES QTY / SALES / RETURN QTY
 -- / RETURNS VALUE / COMMENTS, stacked one block per day with a Totals
 -- row) that isn't in the "Ebay Daily Reports.xlsx" workbook itself.
 --
--- Sales/Returns qty+value are computed live from ebay_orders (0274) —
+-- Sales/Returns qty+value are computed live from ebay_orders (0280) —
 -- only the things with no other source are stored here:
 --   ebay_branch_settings      — Assigned staff, shared per branch group
 --                                (edited on the Assignments tab).
@@ -24,8 +24,8 @@
 --                                explicit entry defaults to "All Listed".
 --
 -- Company-scoped via RLS, company_id auto-stamped from the caller's
--- session — same pattern as ebay_orders/ebay_listings (0274).
--- Run once in the Supabase SQL Editor, after 0274.
+-- session — same pattern as ebay_orders/ebay_listings (0280).
+-- Run once in the Supabase SQL Editor, after 0280.
 -- =====================================================================
 
 create table if not exists ebay_branch_settings (
@@ -80,7 +80,7 @@ drop trigger if exists trg_ebay_branch_daily_notes_stamp on ebay_branch_daily_no
 create trigger trg_ebay_branch_daily_notes_stamp before insert or update on ebay_branch_daily_notes
   for each row execute function ebay_branch_daily_notes_stamp();
 
--- ---------- RLS: company-scoped, same pattern as ebay_orders (0274) ----------
+-- ---------- RLS: company-scoped, same pattern as ebay_orders (0280) ----------
 alter table ebay_branch_settings enable row level security;
 alter table ebay_branch_settings force row level security;
 
