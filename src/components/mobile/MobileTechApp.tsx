@@ -20,6 +20,8 @@ import {
   X,
   WifiOff,
   FileText,
+  Pencil,
+  Trash2,
 } from "lucide-react";
 // Mobile shell is an isolated surface — no navigation to desktop routes,
 // no device-override toggle. The desktop UI is available only from an
@@ -82,9 +84,13 @@ import { getTechnicianTodayRoute, type TechnicianRouteStop } from "@/lib/supabas
 import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
 import {
   getBranchDailyReports,
-  appendBranchDailyReportNote,
+  getBranchDailyReportNotes,
+  addBranchDailyReportNote,
+  updateBranchDailyReportNote,
+  deleteBranchDailyReportNote,
   setBranchDailyReportUrgency,
   type BranchDailyReport,
+  type BranchDailyReportNote,
   type BranchReportUrgency,
 } from "@/lib/supabase/branchDailyReports";
 import { getSeniorBranchManagerAssignments } from "@/lib/supabase/seniorBranchManagerAssignments";
@@ -6966,9 +6972,12 @@ function MobileBranchDailyReportView({
 
   const [branches, setBranches] = useState<string[]>([]);
   const [reportByBranch, setReportByBranch] = useState<Map<string, BranchDailyReport>>(new Map());
+  const [notesByReport, setNotesByReport] = useState<Map<string, BranchDailyReportNote[]>>(new Map());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [noteDrafts, setNoteDrafts] = useState<Record<string, string>>({});
+  const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState("");
   const [busyBranch, setBusyBranch] = useState<string | null>(null);
 
   const load = async () => {
@@ -6987,6 +6996,10 @@ function MobileBranchDailyReportView({
       else if (isBm && me?.assigned_branch) myBranches = [me.assigned_branch];
       setBranches(myBranches);
       setReportByBranch(new Map(reports.map((r) => [r.branch, r])));
+      const notes = await getBranchDailyReportNotes(reports.map((r) => r.id));
+      const grouped = new Map<string, BranchDailyReportNote[]>();
+      for (const n of notes) grouped.set(n.reportId, [...(grouped.get(n.reportId) ?? []), n]);
+      setNotesByReport(grouped);
     } catch (e) {
       console.error("MobileBranchDailyReportView: load failed", e);
       setError(e instanceof Error ? e.message : "Failed to load your branch report.");
@@ -7002,14 +7015,42 @@ function MobileBranchDailyReportView({
 
   const handleAddNote = async (branch: string) => {
     const text = (noteDrafts[branch] || "").trim();
-    if (!text) return;
+    if (!text || !profileId) return;
     setBusyBranch(branch);
     try {
-      await appendBranchDailyReportNote(branch, reportDate, userName, text);
+      await addBranchDailyReportNote(branch, reportDate, profileId, userName, text);
       setNoteDrafts((prev) => ({ ...prev, [branch]: "" }));
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to save your update.");
+    } finally {
+      setBusyBranch(null);
+    }
+  };
+
+  const handleSaveEdit = async (branch: string, noteId: string) => {
+    const text = editDraft.trim();
+    if (!text) return;
+    setBusyBranch(branch);
+    try {
+      await updateBranchDailyReportNote(noteId, text);
+      setEditingNoteId(null);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to update your note.");
+    } finally {
+      setBusyBranch(null);
+    }
+  };
+
+  const handleDeleteNote = async (branch: string, noteId: string) => {
+    if (!window.confirm("Delete this note?")) return;
+    setBusyBranch(branch);
+    try {
+      await deleteBranchDailyReportNote(noteId);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to delete note.");
     } finally {
       setBusyBranch(null);
     }
@@ -7070,11 +7111,48 @@ function MobileBranchDailyReportView({
                 </div>
               )}
 
-              {report?.notes && (
-                <div style={{ whiteSpace: "pre-wrap", fontSize: "0.8rem", background: "rgba(255,255,255,0.05)", borderRadius: 8, padding: "0.5rem", marginBottom: "0.5rem" }}>
-                  {report.notes}
-                </div>
-              )}
+              {(report ? notesByReport.get(report.id) ?? [] : []).map((note) => {
+                const time = new Date(note.createdAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+                const isMine = note.authorId === profileId;
+                if (editingNoteId === note.id) {
+                  return (
+                    <div key={note.id} style={{ background: "rgba(255,255,255,0.05)", borderRadius: 8, padding: "0.5rem", marginBottom: "0.5rem" }}>
+                      <textarea
+                        className="mtech-bill-input full"
+                        rows={2}
+                        value={editDraft}
+                        onChange={(e) => setEditDraft(e.target.value)}
+                      />
+                      <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.35rem" }}>
+                        <button type="button" className="mtech-save-btn" style={{ padding: "0.35rem 0.75rem" }} disabled={busy || !editDraft.trim()} onClick={() => void handleSaveEdit(branch, note.id)}>
+                          Save
+                        </button>
+                        <button type="button" className="mtech-save-btn" style={{ padding: "0.35rem 0.75rem", background: "transparent" }} onClick={() => setEditingNoteId(null)}>
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  );
+                }
+                return (
+                  <div key={note.id} style={{ display: "flex", alignItems: "flex-start", gap: "0.5rem", whiteSpace: "pre-wrap", fontSize: "0.8rem", background: "rgba(255,255,255,0.05)", borderRadius: 8, padding: "0.5rem", marginBottom: "0.5rem" }}>
+                    <div style={{ flex: 1 }}>
+                      <strong>{note.authorName}</strong>{" "}
+                      <span style={{ color: "#94a3b8" }}>({time}{note.edited ? ", edited" : ""}):</span> {note.body}
+                    </div>
+                    {isMine && (
+                      <div style={{ display: "flex", gap: "0.4rem", flexShrink: 0 }}>
+                        <button type="button" onClick={() => { setEditingNoteId(note.id); setEditDraft(note.body); }} disabled={busy} style={{ background: "none", border: "none", color: "#94a3b8", padding: 0 }}>
+                          <Pencil className="mtech-bottom-tab-svg" style={{ width: "0.9rem", height: "0.9rem" }} />
+                        </button>
+                        <button type="button" onClick={() => void handleDeleteNote(branch, note.id)} disabled={busy} style={{ background: "none", border: "none", color: "#94a3b8", padding: 0 }}>
+                          <Trash2 className="mtech-bottom-tab-svg" style={{ width: "0.9rem", height: "0.9rem" }} />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
 
               <textarea
                 className="mtech-bill-input full"

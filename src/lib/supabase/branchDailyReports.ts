@@ -1,12 +1,11 @@
 /**
  * Branch Daily Report (Reports module) — one row per (branch, date). See
- * migration 0284 for the full data-shape rationale: `notes` is a single
- * shared growing text field (appendNote below appends "Name (time): ..."
- * to whatever's already there, same as people taking turns typing into
- * one spreadsheet cell), `urgency` is Senior-Branch-Manager-set, and
- * pendingTickets/numberOfTechs are a frozen per-day snapshot — only
- * refreshCounts() (called for TODAY's row only, never a past date) ever
- * recomputes them.
+ * migration 0284/0285 for the full data-shape rationale: `urgency` is
+ * Senior-Branch-Manager-set, pendingTickets/numberOfTechs are a frozen
+ * per-day snapshot (only refreshCounts() — TODAY's row only, never a past
+ * date — ever recomputes them), and notes are individual rows in
+ * branch_daily_report_notes (0285), each editable/deletable only by its
+ * own author (enforced by RLS, not just the UI).
  */
 import { supabase } from "./client";
 
@@ -17,7 +16,6 @@ export interface BranchDailyReport {
   branch: string;
   reportDate: string; // "YYYY-MM-DD"
   urgency: BranchReportUrgency | null;
-  notes: string;
   pendingTickets: number | null;
   numberOfTechs: number | null;
   countsCapturedAt: string | null;
@@ -25,7 +23,19 @@ export interface BranchDailyReport {
   updatedAt: string;
 }
 
-const SELECT = "id, branch, report_date, urgency, notes, pending_tickets, number_of_techs, counts_captured_at, updated_by_name, updated_at";
+export interface BranchDailyReportNote {
+  id: string;
+  reportId: string;
+  authorId: string | null;
+  authorName: string;
+  body: string;
+  edited: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+const SELECT = "id, branch, report_date, urgency, pending_tickets, number_of_techs, counts_captured_at, updated_by_name, updated_at";
+const NOTE_SELECT = "id, report_id, author_id, author_name, body, edited, created_at, updated_at";
 
 function fromRow(r: any): BranchDailyReport {
   return {
@@ -33,11 +43,23 @@ function fromRow(r: any): BranchDailyReport {
     branch: r.branch,
     reportDate: r.report_date,
     urgency: r.urgency,
-    notes: r.notes || "",
     pendingTickets: r.pending_tickets,
     numberOfTechs: r.number_of_techs,
     countsCapturedAt: r.counts_captured_at,
     updatedByName: r.updated_by_name,
+    updatedAt: r.updated_at,
+  };
+}
+
+function fromNoteRow(r: any): BranchDailyReportNote {
+  return {
+    id: r.id,
+    reportId: r.report_id,
+    authorId: r.author_id,
+    authorName: r.author_name,
+    body: r.body,
+    edited: r.edited,
+    createdAt: r.created_at,
     updatedAt: r.updated_at,
   };
 }
@@ -52,32 +74,67 @@ export async function getBranchDailyReports(reportDate: string): Promise<BranchD
   return (data ?? []).map(fromRow);
 }
 
-async function getRow(branch: string, reportDate: string): Promise<any | null> {
+/** Every note attached to any of the given report rows (e.g. every branch's report id for one date) — keyed by reportId by the caller. Empty array in, empty array out (no query round trip wasted on a still-loading caller). */
+export async function getBranchDailyReportNotes(reportIds: string[]): Promise<BranchDailyReportNote[]> {
+  if (reportIds.length === 0) return [];
   const { data, error } = await supabase
+    .from("branch_daily_report_notes")
+    .select(NOTE_SELECT)
+    .in("report_id", reportIds)
+    .order("created_at", { ascending: true });
+  if (error) throw new Error(error.message);
+  return (data ?? []).map(fromNoteRow);
+}
+
+async function getOrCreateReportId(branch: string, reportDate: string): Promise<string> {
+  const { data: existing, error: selErr } = await supabase
     .from("branch_daily_reports")
-    .select(SELECT)
+    .select("id")
     .eq("branch", branch)
     .eq("report_date", reportDate)
     .maybeSingle();
+  if (selErr) throw new Error(selErr.message);
+  if (existing) return existing.id;
+  const { data, error } = await supabase
+    .from("branch_daily_reports")
+    .insert({ branch, report_date: reportDate })
+    .select("id")
+    .single();
   if (error) throw new Error(error.message);
-  return data;
+  return data.id;
 }
 
-/** Appends one note to the branch/day's shared notes box (creating the row if it doesn't exist yet). */
-export async function appendBranchDailyReportNote(
+/** Adds one note to the branch/day's report (creating the report row if it doesn't exist yet). */
+export async function addBranchDailyReportNote(
   branch: string,
   reportDate: string,
+  authorId: string,
   authorName: string,
   text: string,
 ): Promise<void> {
   const trimmed = text.trim();
   if (!trimmed) return;
-  const existing = await getRow(branch, reportDate);
-  const time = new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-  const entry = `${authorName} (${time}): ${trimmed}`;
-  const notes = existing?.notes ? `${existing.notes}\n\n${entry}` : entry;
-  const patch = { branch, report_date: reportDate, notes, updated_by_name: authorName, updated_at: new Date().toISOString() };
-  const { error } = await supabase.from("branch_daily_reports").upsert(patch, { onConflict: "company_id,branch,report_date" });
+  const reportId = await getOrCreateReportId(branch, reportDate);
+  const { error } = await supabase
+    .from("branch_daily_report_notes")
+    .insert({ report_id: reportId, branch, author_id: authorId, author_name: authorName, body: trimmed });
+  if (error) throw new Error(error.message);
+}
+
+/** Only the note's own author can call this successfully — RLS rejects anyone else's edit. */
+export async function updateBranchDailyReportNote(noteId: string, text: string): Promise<void> {
+  const trimmed = text.trim();
+  if (!trimmed) return;
+  const { error } = await supabase
+    .from("branch_daily_report_notes")
+    .update({ body: trimmed, edited: true, updated_at: new Date().toISOString() })
+    .eq("id", noteId);
+  if (error) throw new Error(error.message);
+}
+
+/** The note's own author, or HR-and-above for moderation — RLS rejects anyone else. */
+export async function deleteBranchDailyReportNote(noteId: string): Promise<void> {
+  const { error } = await supabase.from("branch_daily_report_notes").delete().eq("id", noteId);
   if (error) throw new Error(error.message);
 }
 

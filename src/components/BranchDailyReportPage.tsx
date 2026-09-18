@@ -19,7 +19,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
-import { ChevronLeft, RefreshCw, Settings, X } from "lucide-react";
+import { ChevronLeft, Pencil, RefreshCw, Settings, Trash2, X } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { BrandedLoader } from "@/components/BrandedLoader";
@@ -30,10 +30,14 @@ import { statusGroupOf } from "@/lib/ticketData";
 import { TECHNICIAN_PAY_ROLES, normalizeRole } from "@/lib/roleLabels";
 import {
   getBranchDailyReports,
-  appendBranchDailyReportNote,
+  getBranchDailyReportNotes,
+  addBranchDailyReportNote,
+  updateBranchDailyReportNote,
+  deleteBranchDailyReportNote,
   setBranchDailyReportUrgency,
   refreshBranchDailyReportCounts,
   type BranchDailyReport,
+  type BranchDailyReportNote,
   type BranchReportUrgency,
 } from "@/lib/supabase/branchDailyReports";
 import {
@@ -64,6 +68,7 @@ export function BranchDailyReportPage({ mod }: { mod: ModuleDef; sub: SubModuleD
   const [users, setUsers] = useState<ProfileRow[]>([]);
   const [assignments, setAssignments] = useState<{ id: string; profileId: string; branch: string }[]>([]);
   const [reports, setReports] = useState<BranchDailyReport[]>([]);
+  const [notesByReport, setNotesByReport] = useState<Map<string, BranchDailyReportNote[]>>(new Map());
   const [tickets, setTickets] = useState<Awaited<ReturnType<typeof getCompanyTickets>>>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -85,6 +90,10 @@ export function BranchDailyReportPage({ mod }: { mod: ModuleDef; sub: SubModuleD
       setAssignments(a);
       setReports(r);
       setTickets(t);
+      const notes = await getBranchDailyReportNotes(r.map((row) => row.id));
+      const grouped = new Map<string, BranchDailyReportNote[]>();
+      for (const n of notes) grouped.set(n.reportId, [...(grouped.get(n.reportId) ?? []), n]);
+      setNotesByReport(grouped);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load branch daily reports.");
     } finally {
@@ -150,14 +159,39 @@ export function BranchDailyReportPage({ mod }: { mod: ModuleDef; sub: SubModuleD
 
   const handleAddNote = async (branch: string) => {
     const text = (noteDrafts[branch] || "").trim();
-    if (!text) return;
+    if (!text || !me) return;
     setBusyBranch(branch);
     try {
-      await appendBranchDailyReportNote(branch, date, myDisplayName, text);
+      await addBranchDailyReportNote(branch, date, me.id, myDisplayName, text);
       setNoteDrafts((prev) => ({ ...prev, [branch]: "" }));
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save note.");
+    } finally {
+      setBusyBranch(null);
+    }
+  };
+
+  const handleEditNote = async (branch: string, noteId: string, text: string) => {
+    setBusyBranch(branch);
+    try {
+      await updateBranchDailyReportNote(noteId, text);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update note.");
+    } finally {
+      setBusyBranch(null);
+    }
+  };
+
+  const handleDeleteNote = async (branch: string, noteId: string) => {
+    if (!window.confirm("Delete this note?")) return;
+    setBusyBranch(branch);
+    try {
+      await deleteBranchDailyReportNote(noteId);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to delete note.");
     } finally {
       setBusyBranch(null);
     }
@@ -252,10 +286,27 @@ export function BranchDailyReportPage({ mod }: { mod: ModuleDef; sub: SubModuleD
                               </span>
                             )}
                           </div>
-                          {report?.notes && (
-                            <p className="text-xs whitespace-pre-wrap bg-white/5 border border-white/10 rounded-md px-3 py-2 mb-2">{report.notes}</p>
-                          )}
-                          {editableNotes ? (
+                          {(() => {
+                            const notes = report ? notesByReport.get(report.id) ?? [] : [];
+                            return notes.length > 0 ? (
+                              <div className="space-y-1.5 mb-2">
+                                {notes.map((note) => (
+                                  <NoteRow
+                                    key={note.id}
+                                    note={note}
+                                    isMine={!!me && note.authorId === me.id}
+                                    canModerate={isHrAndAbove}
+                                    busy={busy}
+                                    onSave={(text) => handleEditNote(branch, note.id, text)}
+                                    onDelete={() => handleDeleteNote(branch, note.id)}
+                                  />
+                                ))}
+                              </div>
+                            ) : !editableNotes ? (
+                              <p className="text-xs text-muted-foreground mb-2">No update yet.</p>
+                            ) : null;
+                          })()}
+                          {editableNotes && (
                             <div className="flex flex-col sm:flex-row gap-2">
                               <textarea
                                 value={noteDrafts[branch] || ""}
@@ -272,9 +323,7 @@ export function BranchDailyReportPage({ mod }: { mod: ModuleDef; sub: SubModuleD
                                 Add
                               </button>
                             </div>
-                          ) : !report?.notes ? (
-                            <p className="text-xs text-muted-foreground">No update yet.</p>
-                          ) : null}
+                          )}
                         </div>
                         <div className="flex flex-row lg:flex-col gap-3 lg:w-44">
                           <div className="flex-1 lg:flex-none">
@@ -328,6 +377,70 @@ export function BranchDailyReportPage({ mod }: { mod: ModuleDef; sub: SubModuleD
           onClose={() => setAssignOpen(false)}
           onChanged={load}
         />
+      )}
+    </div>
+  );
+}
+
+function NoteRow({
+  note,
+  isMine,
+  canModerate,
+  busy,
+  onSave,
+  onDelete,
+}: {
+  note: BranchDailyReportNote;
+  isMine: boolean;
+  canModerate: boolean;
+  busy: boolean;
+  onSave: (text: string) => void;
+  onDelete: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(note.body);
+  const time = new Date(note.createdAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+
+  if (editing) {
+    return (
+      <div className="bg-white/5 border border-white/10 rounded-md px-3 py-2">
+        <textarea
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          rows={2}
+          className="glass-input text-xs py-1.5 px-2 rounded-md w-full resize-y mb-1.5"
+        />
+        <div className="flex gap-2">
+          <button
+            onClick={() => { onSave(draft); setEditing(false); }}
+            disabled={busy || !draft.trim()}
+            className="btn text-[10px] px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+          >
+            Save
+          </button>
+          <button onClick={() => { setDraft(note.body); setEditing(false); }} className="btn text-[10px] px-2 py-1">Cancel</button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="bg-white/5 border border-white/10 rounded-md px-3 py-2 flex items-start gap-2">
+      <p className="text-xs whitespace-pre-wrap flex-1">
+        <span className="font-semibold">{note.authorName}</span>{" "}
+        <span className="text-muted-foreground">({time}{note.edited ? ", edited" : ""}):</span> {note.body}
+      </p>
+      {(isMine || canModerate) && (
+        <div className="flex gap-1 shrink-0">
+          {isMine && (
+            <button onClick={() => setEditing(true)} disabled={busy} title="Edit" className="text-muted-foreground hover:text-foreground disabled:opacity-50">
+              <Pencil className="h-3 w-3" />
+            </button>
+          )}
+          <button onClick={onDelete} disabled={busy} title="Delete" className="text-muted-foreground hover:text-red-300 disabled:opacity-50">
+            <Trash2 className="h-3 w-3" />
+          </button>
+        </div>
       )}
     </div>
   );
