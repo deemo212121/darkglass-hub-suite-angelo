@@ -1,7 +1,7 @@
-import { useState, useEffect, useCallback, useMemo, Fragment } from "react";
+﻿import { useState, useEffect, useCallback, useMemo, useRef, Fragment } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
-import { ChevronLeft, Plus, Trash2, Loader2, Printer, History, Download, FileSpreadsheet, Package, DollarSign, Tag, CheckCircle2, Building2, Users, CreditCard, ListChecks, ClipboardList } from "lucide-react";
+import { ChevronLeft, ChevronDown, Plus, Trash2, Loader2, Printer, History, Download, FileSpreadsheet, Package, DollarSign, Tag, CheckCircle2, Users, CreditCard, ListChecks, ClipboardList, Pencil } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { normalizeRole } from "@/lib/roleLabels";
 import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
@@ -28,13 +28,18 @@ import {
   getEbayAccounts,
   createEbayAccount,
   deleteEbayAccount,
+  getEbayBranchCents,
+  upsertEbayBranchCent,
+  deleteEbayBranchCent,
   type EbayOrderRow,
   type EbayListingRow,
   type EbayBranchSetting,
   type EbayBranchDailyNote,
   type EbayBranchStatusChange,
   type EbayAccount,
+  type EbayBranchCent,
 } from "@/lib/supabase/partDailyReportEbay";
+import { LOCATIONS } from "@/lib/locations";
 
 // Color coding per order status, reused for status chips/dropdown-adjacent
 // badges wherever a status shows up on this page.
@@ -46,34 +51,32 @@ const ORDER_STATUS_TONE: Record<string, { border: string; bg: string; text: stri
   Pending: { border: "border-amber-500/30", bg: "bg-amber-500/5", text: "text-amber-400" },
 };
 
-// Each branch's assigned "cent value" — the fixed cents a listing price
-// always ends in for that branch (e.g. Atlanta always prices at $X.97).
-// Whenever the branch or the dollar amount changes, the cents get
-// auto-set from here so listings never need it typed by hand.
-const EBAY_BRANCH_CENT_VALUES: Record<string, number> = {
-  "Atlanta": 97,
-  "Columbus": 96,
-  "Jackson, TN": 86,
-  "Jonesboro": 82,
-  "Jacksonville": 80,
-  "Jackson, MS": 76,
-  "Chattanooga": 74,
-  "Memphis": 93,
-  "Tallahassee": 95,
-  "Savannah": 92,
-  "Raleigh": 78,
-  "Mobile": 89,
-  "Nashville": 91,
-  "Knoxville": 88,
+// Human-readable labels for every editable field, shared by the inline
+// quick-edit inputs and the full-row Edit modal — both log per-field
+// changes to the activity log using these same names.
+const ORDER_FIELD_LABELS: Record<string, string> = {
+  orderExtId: "Order ID", partNo: "Part #", quantity: "Qty", status: "Status",
+  orderEarnings: "Earnings", salesAccount: "Account", branch: "Branch", orderDate: "Order Date", notes: "Notes",
+};
+const LISTING_FIELD_LABELS: Record<string, string> = {
+  partNo: "Part #", ebayAccount: "Account", branch: "Branch", price: "Price", quantity: "Qty", listedDate: "Listed Date", status: "Status",
 };
 
-// The branches that actually do eBay listings — exactly the ones with a
-// cent value assigned above. Who covers each one is NOT hardcoded — it's
-// the per-branch "Assigned To" setting on the Assignments tab.
-const EBAY_BRANCHES: string[] = Object.keys(EBAY_BRANCH_CENT_VALUES);
+// `err instanceof Error` silently misses plain objects with a `message`
+// field (Supabase surfaces some failures that way), which was hiding the
+// real cause behind a generic fallback string. This checks for `.message`
+// on anything, and always logs the full raw error so hint/code/details
+// (the actually useful part of a Postgres error) aren't lost either.
+function errMsg(err: unknown, fallback: string): string {
+  console.error(fallback, err);
+  if (err && typeof err === "object" && "message" in err && typeof (err as any).message === "string" && (err as any).message) {
+    return (err as any).message;
+  }
+  if (typeof err === "string" && err) return err;
+  return fallback;
+}
 
-function applyBranchCents(price: number, branch: string): number {
-  const cents = EBAY_BRANCH_CENT_VALUES[branch];
+function applyCents(price: number, cents: number | undefined): number {
   if (cents === undefined || !Number.isFinite(price)) return price;
   const whole = Math.floor(Math.max(0, price));
   return Number((whole + cents / 100).toFixed(2));
@@ -156,14 +159,14 @@ const emptyOrderDraft = () => ({
   orderEarnings: 0,
   orderDate: todayIso(),
   salesAccount: EBAY_SALES_ACCOUNTS[0] as string,
-  branch: (EBAY_BRANCHES[0] || "") as string,
+  branch: "", // backfilled once the company's branch/cents list loads — see the effect near the other loaders
   notes: "",
 });
 
 const emptyListingDraft = () => ({
   partNo: "",
   ebayAccount: EBAY_SALES_ACCOUNTS[0] as string,
-  branch: (EBAY_BRANCHES[0] || "") as string,
+  branch: "",
   price: 0,
   quantity: 1,
   listedDate: todayIso(),
@@ -212,7 +215,7 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
       setEbayAccounts((prev) => [...prev, created].sort((a, b) => a.name.localeCompare(b.name)));
       setNewAccountName("");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to add eBay account");
+      setError(errMsg(err, "Failed to add eBay account"));
     } finally {
       setAddingAccount(false);
     }
@@ -224,8 +227,68 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
     try {
       await deleteEbayAccount(id);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to delete eBay account");
+      setError(errMsg(err, "Failed to delete eBay account"));
       loadEbayAccounts();
+    }
+  };
+
+  // The branches this whole feature offers (Orders/Listings branch pickers,
+  // Assignments, Daily Branch Report, Total Listed by Branch) are exactly
+  // the branches with a cent value here — company-managed on the
+  // Assignments tab instead of a hardcoded list.
+  const [branchCents, setBranchCents] = useState<EbayBranchCent[]>([]);
+  const [newCentBranch, setNewCentBranch] = useState("");
+  const [newCentValue, setNewCentValue] = useState<number>(0);
+  const [addingBranchCent, setAddingBranchCent] = useState(false);
+
+  const loadBranchCents = useCallback(() => {
+    getEbayBranchCents()
+      .then(setBranchCents)
+      .catch((err) => console.error("Failed to load branch cent pricing:", err));
+  }, []);
+  useEffect(() => { loadBranchCents(); }, [loadBranchCents]);
+
+  const branchCentMap = useMemo(() => Object.fromEntries(branchCents.map((b) => [b.branch, b.cents])), [branchCents]);
+  const EBAY_BRANCHES = useMemo(() => branchCents.map((b) => b.branch).sort((a, b) => a.localeCompare(b)), [branchCents]);
+  const branchesAvailableToAdd = useMemo(() => LOCATIONS.filter((l) => !(l in branchCentMap)), [branchCentMap]);
+
+  const applyBranchCents = useCallback((price: number, branch: string) => applyCents(price, branchCentMap[branch]), [branchCentMap]);
+
+  const handleAddBranchCent = async () => {
+    const branch = newCentBranch || branchesAvailableToAdd[0];
+    if (!branch) return;
+    setAddingBranchCent(true);
+    setError(null);
+    try {
+      await upsertEbayBranchCent(branch, newCentValue);
+      setBranchCents((prev) => [...prev.filter((b) => b.branch !== branch), { branch, cents: newCentValue }].sort((a, b) => a.branch.localeCompare(b.branch)));
+      setNewCentBranch("");
+      setNewCentValue(0);
+    } catch (err) {
+      setError(errMsg(err, "Failed to add branch"));
+    } finally {
+      setAddingBranchCent(false);
+    }
+  };
+
+  const handleUpdateBranchCent = async (branch: string, cents: number) => {
+    setBranchCents((prev) => prev.map((b) => (b.branch === branch ? { ...b, cents } : b)));
+    try {
+      await upsertEbayBranchCent(branch, cents);
+    } catch (err) {
+      setError(errMsg(err, "Failed to update branch cents"));
+      loadBranchCents();
+    }
+  };
+
+  const handleDeleteBranchCent = async (branch: string) => {
+    if (!confirm(`Remove ${branch}? It will no longer appear in the branch pickers.`)) return;
+    setBranchCents((prev) => prev.filter((b) => b.branch !== branch));
+    try {
+      await deleteEbayBranchCent(branch);
+    } catch (err) {
+      setError(errMsg(err, "Failed to remove branch"));
+      loadBranchCents();
     }
   };
 
@@ -246,7 +309,7 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
   const totalListedByBranch = useMemo(() => {
     const map = new Map<string, number>();
     for (const l of allActiveListings) map.set(l.branch, (map.get(l.branch) || 0) + 1);
-    // Union with EBAY_BRANCHES so the 14 known branches always show (even
+    // Union with EBAY_BRANCHES so every managed branch always shows (even
     // at 0), but any branch that actually has listings shows up too —
     // never silently drop real data just because it's outside that list.
     const allBranches = new Set([...EBAY_BRANCHES, ...map.keys()]);
@@ -269,9 +332,41 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
 
   const [orderDraft, setOrderDraft] = useState(emptyOrderDraft);
   const [listingDraft, setListingDraft] = useState(emptyListingDraft);
+
+  // Once the real branch list loads, backfill the Add Order/Listing forms'
+  // default branch (they start blank since this list isn't known yet at
+  // module load time — see emptyOrderDraft/emptyListingDraft).
+  useEffect(() => {
+    if (EBAY_BRANCHES.length === 0) return;
+    setOrderDraft((d) => (d.branch ? d : { ...d, branch: EBAY_BRANCHES[0] }));
+    setListingDraft((d) => (d.branch ? d : { ...d, branch: EBAY_BRANCHES[0], price: applyBranchCents(0, EBAY_BRANCHES[0]) }));
+  }, [EBAY_BRANCHES, applyBranchCents]);
+
   const [addingOrder, setAddingOrder] = useState(false);
   const [addingListing, setAddingListing] = useState(false);
   const [savingRowId, setSavingRowId] = useState<string | null>(null);
+
+  // Clicking a row's "Changed By" cell shows that row's full change
+  // history — every field edit, newest first, each with its own
+  // from/to values, actor, and timestamp.
+  const [rowHistoryTarget, setRowHistoryTarget] = useState<{ id: string; label: string } | null>(null);
+  const [rowHistoryEntries, setRowHistoryEntries] = useState<HrActivityLogEntry[]>([]);
+  const [rowHistoryLoading, setRowHistoryLoading] = useState(false);
+  const [rowHistoryError, setRowHistoryError] = useState<string | null>(null);
+  const openRowHistory = (id: string, label: string) => {
+    setRowHistoryTarget({ id, label });
+    setRowHistoryLoading(true);
+    setRowHistoryError(null);
+    getActivityLog({ targetId: id, targetType: EBAY_ACTIVITY_TARGET_TYPE, limit: 100 })
+      .then(setRowHistoryEntries)
+      .catch((err) => setRowHistoryError(errMsg(err, "Failed to load history")))
+      .finally(() => setRowHistoryLoading(false));
+  };
+  const rowHistoryFieldLabel = (entry: HrActivityLogEntry): string => {
+    if (entry.action === "ebay_order_status_changed" || entry.action === "ebay_listing_status_changed") return "Status";
+    const m = entry.targetLabel?.match(/\(([^)]+)\)\s*$/);
+    return m?.[1] || activityActionLabel(entry.action);
+  };
 
   const [activityLogOpen, setActivityLogOpen] = useState(false);
   const [activityLogEntries, setActivityLogEntries] = useState<HrActivityLogEntry[]>([]);
@@ -283,9 +378,35 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
     setActivityLogError(null);
     getActivityLog({ targetType: EBAY_ACTIVITY_TARGET_TYPE, limit: 200 })
       .then(setActivityLogEntries)
-      .catch((err) => setActivityLogError(err instanceof Error ? err.message : "Failed to load activity log"))
+      .catch((err) => setActivityLogError(errMsg(err, "Failed to load activity log")))
       .finally(() => setActivityLogLoading(false));
   };
+
+  // Who most recently touched each Order/Listing row — one activity-log
+  // fetch (already ordered newest-first), collapsed to the first entry
+  // seen per row id, feeds the "Changed By" column on both tables.
+  const [rowActivity, setRowActivity] = useState<HrActivityLogEntry[]>([]);
+  const loadRowActivity = useCallback(() => {
+    getActivityLog({ targetType: EBAY_ACTIVITY_TARGET_TYPE, limit: 500 })
+      .then(setRowActivity)
+      .catch((err) => console.error("Failed to load row activity:", err));
+  }, []);
+  useEffect(() => { loadRowActivity(); }, [loadRowActivity]);
+  const changedByRowId = useMemo(() => {
+    const map = new Map<string, HrActivityLogEntry>();
+    for (const e of rowActivity) {
+      if (e.targetId && !map.has(e.targetId)) map.set(e.targetId, e);
+    }
+    return map;
+  }, [rowActivity]);
+
+  // Snapshots of what's currently saved on the server, keyed by id — every
+  // inline edit diffs against this (not the row object handed to the
+  // onBlur handler, which by then already reflects the newly-typed value)
+  // so "Changed By" logging compares the real before/after instead of a
+  // value against itself.
+  const originalOrdersRef = useRef<Map<string, EbayOrderRow>>(new Map());
+  const originalListingsRef = useRef<Map<string, EbayListingRow>>(new Map());
 
   const load = useCallback(() => {
     setLoading(true);
@@ -301,8 +422,10 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
         setListings(l);
         setBranchSettings(bs);
         setBranchNotes(bn);
+        originalOrdersRef.current = new Map(o.map((r) => [r.id, r]));
+        originalListingsRef.current = new Map(l.map((r) => [r.id, r]));
       })
-      .catch((err) => setError(err instanceof Error ? err.message : String(err)))
+      .catch((err) => setError(errMsg(err, String(err))))
       .finally(() => setLoading(false));
   }, [startDate, endDate]);
 
@@ -371,13 +494,11 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
   }, [branchStatusHistory]);
 
   const resolveListingsStatus = useCallback((branch: string, date: string): string => {
-    const history = statusHistoryByBranch.get(branch);
-    if (history) {
-      for (let i = history.length - 1; i >= 0; i--) {
-        if (history[i].date <= date) return history[i].status;
-      }
-    }
-    return "All Listed";
+    // Each day is independent — a status set on one date must never leak
+    // into another date that was never explicitly set, so this looks for
+    // an exact (branch, date) match only, no carrying forward.
+    const exact = statusHistoryByBranch.get(branch)?.find((h) => h.date === date);
+    return exact?.status || "All Listed";
   }, [statusHistoryByBranch]);
 
   const saveDailyListingsStatus = async (branch: string, date: string, status: string) => {
@@ -396,7 +517,7 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
         details: { to: status },
       });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save listings status");
+      setError(errMsg(err, "Failed to save listings status"));
       loadBranchStatusHistory();
     }
   };
@@ -420,6 +541,48 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
     });
     return entries.map(([label, branches]) => ({ label, branches }));
   }, [settingsByBranch, branchFilter]);
+
+  // Same totals as "By Branch" (orders/earnings/listed), just regrouped by
+  // whoever's assigned to each branch instead of by branch itself. Keeps
+  // each person's own branch rows too, so the table can expand to show
+  // the per-branch breakdown behind a person's total.
+  const byPersonBreakdown = useMemo(() => {
+    const branchByName = new Map(branchBreakdown.map((b) => [b.branch, b]));
+    type StatusCounts = Record<string, number>;
+    return dynamicGroups
+      .map(({ label, branches }) => {
+        const statuses: StatusCounts = {};
+        for (const s of EBAY_ORDER_STATUSES) statuses[s] = 0;
+        const row = { person: label, branches: branches.length, orders: 0, earnings: 0, listed: 0, statuses, branchRows: [] as { branch: string; orders: number; earnings: number; listed: number; statuses: StatusCounts }[] };
+        for (const b of branches) {
+          const stats = branchByName.get(b);
+          const branchStatuses: StatusCounts = {};
+          for (const s of EBAY_ORDER_STATUSES) {
+            const v = stats?.[s] || 0;
+            branchStatuses[s] = v;
+            row.statuses[s] += v;
+          }
+          const branchRow = { branch: b, orders: stats?.orders || 0, earnings: stats?.earnings || 0, listed: stats?.listed || 0, statuses: branchStatuses };
+          row.branchRows.push(branchRow);
+          row.orders += branchRow.orders;
+          row.earnings += branchRow.earnings;
+          row.listed += branchRow.listed;
+        }
+        row.branchRows.sort((a, b) => b.earnings - a.earnings);
+        return row;
+      })
+      .filter((r) => r.orders > 0 || r.earnings > 0 || r.listed > 0 || r.person !== "Unassigned")
+      .sort((a, b) => b.earnings - a.earnings);
+  }, [dynamicGroups, branchBreakdown]);
+
+  const [expandedPersons, setExpandedPersons] = useState<Set<string>>(new Set());
+  const togglePersonExpanded = (person: string) => {
+    setExpandedPersons((prev) => {
+      const next = new Set(prev);
+      if (next.has(person)) next.delete(person); else next.add(person);
+      return next;
+    });
+  };
 
   const dailyBranchTotals = useMemo(() => {
     const map = new Map<string, { salesQty: number; salesValue: number; returnQty: number; returnsValue: number }>();
@@ -466,7 +629,7 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
         });
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save branch setting");
+      setError(errMsg(err, "Failed to save branch setting"));
     }
   };
 
@@ -486,7 +649,7 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
     try {
       await upsertEbayBranchDailyNote(branch, date, { comment });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save comment");
+      setError(errMsg(err, "Failed to save comment"));
     }
   };
 
@@ -497,15 +660,17 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
       const created = await createEbayOrder(orderDraft);
       setOrders((prev) => [created, ...prev]);
       setOrderDraft({ ...emptyOrderDraft(), branch: orderDraft.branch });
-      logActivity({
+      originalOrdersRef.current.set(created.id, created);
+      await logActivity({
         action: "ebay_order_added",
         targetType: EBAY_ACTIVITY_TARGET_TYPE,
         targetId: created.id,
         targetLabel: `${created.branch} — ${created.partNo || created.orderExtId || created.id}`,
         details: { branch: created.branch, orderDate: created.orderDate, earnings: created.orderEarnings },
       });
+      loadRowActivity();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to add order");
+      setError(errMsg(err, "Failed to add order"));
     } finally {
       setAddingOrder(false);
     }
@@ -519,15 +684,17 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
       setListings((prev) => [created, ...prev]);
       setListingDraft({ ...emptyListingDraft(), branch: listingDraft.branch, price: applyBranchCents(0, listingDraft.branch) });
       loadActiveListings();
-      logActivity({
+      originalListingsRef.current.set(created.id, created);
+      await logActivity({
         action: "ebay_listing_added",
         targetType: EBAY_ACTIVITY_TARGET_TYPE,
         targetId: created.id,
         targetLabel: `${created.branch} — ${created.partNo || created.id}`,
         details: { branch: created.branch, listedDate: created.listedDate, price: created.price },
       });
+      loadRowActivity();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to add listing");
+      setError(errMsg(err, "Failed to add listing"));
     } finally {
       setAddingListing(false);
     }
@@ -544,17 +711,27 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
     setSavingRowId(row.id);
     try {
       await updateEbayOrder(row.id, patch);
-      if (patch.status !== undefined && patch.status !== row.status) {
-        logActivity({
-          action: "ebay_order_status_changed",
-          targetType: EBAY_ACTIVITY_TARGET_TYPE,
-          targetId: row.id,
-          targetLabel: `${row.branch} — ${row.partNo || row.orderExtId || row.id}`,
-          details: { from: row.status, to: patch.status },
-        });
+      const before = originalOrdersRef.current.get(row.id) || row;
+      const changes: { field: string; from: any; to: any }[] = [];
+      for (const f of Object.keys(patch) as (keyof EbayOrderRow)[]) {
+        const to = (patch as any)[f];
+        if (before[f] !== to) changes.push({ field: f as string, from: before[f], to });
+      }
+      originalOrdersRef.current.set(row.id, { ...before, ...patch });
+      if (changes.length > 0) {
+        await Promise.all(changes.map((c) =>
+          logActivity({
+            action: c.field === "status" ? "ebay_order_status_changed" : "ebay_order_edited",
+            targetType: EBAY_ACTIVITY_TARGET_TYPE,
+            targetId: row.id,
+            targetLabel: `${row.branch} — ${row.partNo || row.orderExtId || row.id}${c.field === "status" ? "" : ` (${ORDER_FIELD_LABELS[c.field] || c.field})`}`,
+            details: { from: c.from, to: c.to },
+          })
+        ));
+        loadRowActivity();
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save order");
+      setError(errMsg(err, "Failed to save order"));
     } finally {
       setSavingRowId(null);
     }
@@ -564,17 +741,27 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
     try {
       await updateEbayListing(row.id, patch);
       if (patch.status !== undefined || patch.quantity !== undefined) loadActiveListings();
-      if (patch.status !== undefined && patch.status !== row.status) {
-        logActivity({
-          action: "ebay_listing_status_changed",
-          targetType: EBAY_ACTIVITY_TARGET_TYPE,
-          targetId: row.id,
-          targetLabel: `${row.branch} — ${row.partNo || row.id}`,
-          details: { from: row.status, to: patch.status },
-        });
+      const before = originalListingsRef.current.get(row.id) || row;
+      const changes: { field: string; from: any; to: any }[] = [];
+      for (const f of Object.keys(patch) as (keyof EbayListingRow)[]) {
+        const to = (patch as any)[f];
+        if (before[f] !== to) changes.push({ field: f as string, from: before[f], to });
+      }
+      originalListingsRef.current.set(row.id, { ...before, ...patch });
+      if (changes.length > 0) {
+        await Promise.all(changes.map((c) =>
+          logActivity({
+            action: c.field === "status" ? "ebay_listing_status_changed" : "ebay_listing_edited",
+            targetType: EBAY_ACTIVITY_TARGET_TYPE,
+            targetId: row.id,
+            targetLabel: `${row.branch} — ${row.partNo || row.id}${c.field === "status" ? "" : ` (${LISTING_FIELD_LABELS[c.field] || c.field})`}`,
+            details: { from: c.from, to: c.to },
+          })
+        ));
+        loadRowActivity();
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save listing");
+      setError(errMsg(err, "Failed to save listing"));
     } finally {
       setSavingRowId(null);
     }
@@ -595,7 +782,7 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
         });
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to delete order");
+      setError(errMsg(err, "Failed to delete order"));
       load();
     }
   };
@@ -615,8 +802,95 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
         });
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to delete listing");
+      setError(errMsg(err, "Failed to delete listing"));
       load();
+    }
+  };
+
+  // ---------- Edit modals — full-row edit with a per-field audit trail.
+  // Each changed field gets its own activity log entry (from -> to), so
+  // "who changed it" is answered by the existing View Activity log
+  // instead of needing a new UI surface. ----------
+  const [editingOrder, setEditingOrder] = useState<EbayOrderRow | null>(null);
+  const [orderEditDraft, setOrderEditDraft] = useState<EbayOrderRow | null>(null);
+  const [savingOrderEdit, setSavingOrderEdit] = useState(false);
+  const openEditOrder = (o: EbayOrderRow) => { setEditingOrder(o); setOrderEditDraft({ ...o }); };
+
+  const handleSaveOrderEdit = async () => {
+    if (!editingOrder || !orderEditDraft) return;
+    const fields = Object.keys(ORDER_FIELD_LABELS) as (keyof EbayOrderRow)[];
+    const patch: Partial<EbayOrderRow> = {};
+    const changes: { field: string; from: any; to: any }[] = [];
+    for (const f of fields) {
+      if (editingOrder[f] !== orderEditDraft[f]) {
+        (patch as any)[f] = orderEditDraft[f];
+        changes.push({ field: f as string, from: editingOrder[f], to: orderEditDraft[f] });
+      }
+    }
+    if (changes.length === 0) { setEditingOrder(null); return; }
+    setSavingOrderEdit(true);
+    setError(null);
+    try {
+      await updateEbayOrder(editingOrder.id, patch);
+      setOrders((prev) => prev.map((o) => (o.id === editingOrder.id ? { ...o, ...patch } : o)));
+      originalOrdersRef.current.set(editingOrder.id, { ...editingOrder, ...patch });
+      await Promise.all(changes.map((c) =>
+        logActivity({
+          action: "ebay_order_edited",
+          targetType: EBAY_ACTIVITY_TARGET_TYPE,
+          targetId: editingOrder.id,
+          targetLabel: `${orderEditDraft.branch} — ${orderEditDraft.partNo || orderEditDraft.orderExtId || editingOrder.id} (${ORDER_FIELD_LABELS[c.field]})`,
+          details: { from: c.from, to: c.to },
+        })
+      ));
+      loadRowActivity();
+      setEditingOrder(null);
+    } catch (err) {
+      setError(errMsg(err, "Failed to save order"));
+    } finally {
+      setSavingOrderEdit(false);
+    }
+  };
+
+  const [editingListing, setEditingListing] = useState<EbayListingRow | null>(null);
+  const [listingEditDraft, setListingEditDraft] = useState<EbayListingRow | null>(null);
+  const [savingListingEdit, setSavingListingEdit] = useState(false);
+  const openEditListing = (l: EbayListingRow) => { setEditingListing(l); setListingEditDraft({ ...l }); };
+
+  const handleSaveListingEdit = async () => {
+    if (!editingListing || !listingEditDraft) return;
+    const fields = Object.keys(LISTING_FIELD_LABELS) as (keyof EbayListingRow)[];
+    const patch: Partial<EbayListingRow> = {};
+    const changes: { field: string; from: any; to: any }[] = [];
+    for (const f of fields) {
+      if (editingListing[f] !== listingEditDraft[f]) {
+        (patch as any)[f] = listingEditDraft[f];
+        changes.push({ field: f as string, from: editingListing[f], to: listingEditDraft[f] });
+      }
+    }
+    if (changes.length === 0) { setEditingListing(null); return; }
+    setSavingListingEdit(true);
+    setError(null);
+    try {
+      await updateEbayListing(editingListing.id, patch);
+      setListings((prev) => prev.map((l) => (l.id === editingListing.id ? { ...l, ...patch } : l)));
+      if (patch.status !== undefined) loadActiveListings();
+      originalListingsRef.current.set(editingListing.id, { ...editingListing, ...patch });
+      await Promise.all(changes.map((c) =>
+        logActivity({
+          action: "ebay_listing_edited",
+          targetType: EBAY_ACTIVITY_TARGET_TYPE,
+          targetId: editingListing.id,
+          targetLabel: `${listingEditDraft.branch} — ${listingEditDraft.partNo || editingListing.id} (${LISTING_FIELD_LABELS[c.field]})`,
+          details: { from: c.from, to: c.to },
+        })
+      ));
+      loadRowActivity();
+      setEditingListing(null);
+    } catch (err) {
+      setError(errMsg(err, "Failed to save listing"));
+    } finally {
+      setSavingListingEdit(false);
     }
   };
 
@@ -660,28 +934,29 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
     `<th style="background:#1e40af;color:white;font-weight:bold;border:1px solid #1e40af;padding:6px;font-size:11px;text-align:${align};">${escapeHtml(content)}</th>`;
 
   const periodLabel = () => `${startDate} to ${endDate}${branchFilter ? ` · ${branchFilter}` : ""}`;
-  const REPORT_COLS = 4 + EBAY_ORDER_STATUSES.length; // widest section (By Branch) sets the banner colspan
+  const REPORT_COLS = 5 + EBAY_ORDER_STATUSES.length; // widest section (By Assigned Person) sets the banner colspan
 
-  const byBranchRowsHtml = (): string => {
-    let rows = `<tr>${th("Branch")}${th("Orders", "right")}${th("Earnings", "right")}${EBAY_ORDER_STATUSES.map((s) => th(s, "right")).join("")}${th("Listed", "right")}</tr>`;
-    if (branchBreakdown.length === 0) {
+  const byPersonRowsHtml = (): string => {
+    let rows = `<tr>${th("Person")}${th("Branches", "right")}${th("Orders", "right")}${th("Earnings", "right")}${EBAY_ORDER_STATUSES.map((s) => th(s, "right")).join("")}${th("Listed", "right")}</tr>`;
+    if (byPersonBreakdown.length === 0) {
       rows += `<tr>${td("No data for this date range.", "center", "color:#6b7280;", REPORT_COLS)}</tr>`;
     } else {
-      branchBreakdown.forEach((b, i) => {
+      byPersonBreakdown.forEach((p, i) => {
         const bg = i % 2 === 1 ? "background:#f9fafb;" : "";
         rows +=
           `<tr>` +
-          td(escapeHtml(b.branch), "left", `${bg}font-weight:bold;`) +
-          td(String(b.orders), "right", bg) +
-          td(`$${b.earnings.toFixed(2)}`, "right", `${bg}color:#16a34a;font-weight:bold;`) +
-          EBAY_ORDER_STATUSES.map((s) => td(String(b[s]), "right", bg)).join("") +
-          td(String(b.listed), "right", bg) +
+          td(escapeHtml(p.person), "left", `${bg}font-weight:bold;`) +
+          td(String(p.branches), "right", bg) +
+          td(String(p.orders), "right", bg) +
+          td(`$${p.earnings.toFixed(2)}`, "right", `${bg}color:#16a34a;font-weight:bold;`) +
+          EBAY_ORDER_STATUSES.map((s) => td(String(p.statuses[s]), "right", bg)).join("") +
+          td(String(p.listed), "right", `${bg}color:#0891b2;font-weight:bold;`) +
           `</tr>`;
       });
     }
     return rows;
   };
-  const byBranchTableHtml = (): string => `<table style="width:100%;border-collapse:collapse;margin-bottom:16px;">${byBranchRowsHtml()}</table>`;
+  const byPersonTableHtml = (): string => `<table style="width:100%;border-collapse:collapse;margin-bottom:16px;">${byPersonRowsHtml()}</table>`;
 
   // Shared by both PDF (wrapped per-date in its own <table>) and Excel
   // (all dates folded into the one master <table>) — `perDateTable`
@@ -749,8 +1024,8 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
     rows += `<tr>${td("Period", "left", "font-weight:bold;color:#1e40af;")}${td(escapeHtml(periodLabel()), "left", "", REPORT_COLS - 1)}</tr>`;
     rows += `<tr>${td("Generated", "left", "font-weight:bold;color:#1e40af;")}${td(escapeHtml(new Date().toLocaleString()), "left", "", REPORT_COLS - 1)}</tr>`;
     rows += `<tr>${td("&nbsp;", "left", "", REPORT_COLS)}</tr>`;
-    rows += `<tr>${td("By Branch (Totals for Range)", "left", "background:#1e40af;color:white;font-weight:bold;padding:8px;font-size:13px;", REPORT_COLS)}</tr>`;
-    rows += byBranchRowsHtml();
+    rows += `<tr>${td("By Assigned Person (Totals for Range)", "left", "background:#1e40af;color:white;font-weight:bold;padding:8px;font-size:13px;", REPORT_COLS)}</tr>`;
+    rows += byPersonRowsHtml();
     rows += `<tr>${td("&nbsp;", "left", "", REPORT_COLS)}</tr>`;
     rows += `<tr>${td("Daily Branch Report", "left", "background:#1e40af;color:white;font-weight:bold;padding:8px;font-size:13px;", REPORT_COLS)}</tr>`;
     if (dates.length === 0) {
@@ -820,8 +1095,8 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
               <label>Period</label>
               <span>${escapeHtml(periodLabel())}</span>
             </div>
-            <h2 class="section-title">By Branch (Totals for Range)</h2>
-            ${byBranchTableHtml()}
+            <h2 class="section-title">By Assigned Person (Totals for Range)</h2>
+            ${byPersonTableHtml()}
             <h2 class="section-title">Daily Branch Report</h2>
             ${dailyBranchReportHtml()}
             <div class="footer">Generated by AHS System &middot; ${escapeHtml(new Date().toLocaleString())}</div>
@@ -838,7 +1113,7 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
       if (format === "excel") downloadEbayReportExcel();
       else await downloadEbayReportPdf();
     } catch (err) {
-      setError(err instanceof Error ? err.message : `Failed to generate ${format === "excel" ? "Excel" : "PDF"} report`);
+      setError(errMsg(err, `Failed to generate ${format === "excel" ? "Excel" : "PDF"} report`));
     } finally {
       setExportBusy(null);
     }
@@ -945,13 +1220,14 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
               </div>
             </div>
 
-            <div className="panel p-0 border-l-4 border-l-indigo-500">
-              <h2 className="text-sm font-semibold px-4 pt-4 mb-2 text-indigo-300 flex items-center gap-2"><Building2 className="h-4 w-4" /> By Branch (totals for range)</h2>
+            <div className="panel p-0 border-l-4 border-l-pink-500">
+              <h2 className="text-sm font-semibold px-4 pt-4 mb-2 text-pink-300 flex items-center gap-2"><Users className="h-4 w-4" /> By Assigned Person (totals for range)</h2>
               <div className="overflow-x-auto">
                 <table className="w-full text-xs">
                   <thead>
                     <tr className="border-b border-white/10 bg-white/5">
-                      <th className="px-3 py-2 text-left font-semibold text-muted-foreground uppercase tracking-wide">Branch</th>
+                      <th className="px-3 py-2 text-left font-semibold text-muted-foreground uppercase tracking-wide">Person</th>
+                      <th className="px-3 py-2 text-right font-semibold text-muted-foreground uppercase tracking-wide">Branches</th>
                       <th className="px-3 py-2 text-right font-semibold text-muted-foreground uppercase tracking-wide">Orders</th>
                       <th className="px-3 py-2 text-right font-semibold text-muted-foreground uppercase tracking-wide">Earnings</th>
                       {EBAY_ORDER_STATUSES.map((s) => (
@@ -961,20 +1237,43 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
                     </tr>
                   </thead>
                   <tbody>
-                    {branchBreakdown.length === 0 ? (
-                      <tr><td colSpan={4 + EBAY_ORDER_STATUSES.length} className="px-3 py-6 text-center text-muted-foreground">No data for this date range.</td></tr>
+                    {byPersonBreakdown.length === 0 ? (
+                      <tr><td colSpan={5 + EBAY_ORDER_STATUSES.length} className="px-3 py-6 text-center text-muted-foreground">No data for this date range.</td></tr>
                     ) : (
-                      branchBreakdown.map((b) => (
-                        <tr key={b.branch} className="border-b border-white/5">
-                          <td className="px-3 py-2 font-medium">{b.branch}</td>
-                          <td className="px-3 py-2 text-right">{b.orders}</td>
-                          <td className="px-3 py-2 text-right font-medium text-green-400">${b.earnings.toFixed(2)}</td>
-                          {EBAY_ORDER_STATUSES.map((s) => (
-                            <td key={s} className="px-3 py-2 text-right">{b[s]}</td>
-                          ))}
-                          <td className="px-3 py-2 text-right">{b.listed}</td>
-                        </tr>
-                      ))
+                      byPersonBreakdown.map((p) => {
+                        const isOpen = expandedPersons.has(p.person);
+                        return (
+                          <Fragment key={p.person}>
+                            <tr className="border-b border-white/5 hover:bg-white/5 cursor-pointer select-none" onClick={() => togglePersonExpanded(p.person)}>
+                              <td className="px-3 py-2 font-medium">
+                                <span className="inline-flex items-center gap-1.5">
+                                  <ChevronDown className={`h-3.5 w-3.5 text-muted-foreground transition-transform ${isOpen ? "rotate-180" : ""}`} />
+                                  {p.person === "Unassigned" ? <span className="text-muted-foreground">Unassigned</span> : p.person}
+                                </span>
+                              </td>
+                              <td className="px-3 py-2 text-right text-muted-foreground">{p.branches}</td>
+                              <td className="px-3 py-2 text-right">{p.orders}</td>
+                              <td className="px-3 py-2 text-right font-medium text-green-400">${p.earnings.toFixed(2)}</td>
+                              {EBAY_ORDER_STATUSES.map((s) => (
+                                <td key={s} className="px-3 py-2 text-right">{p.statuses[s]}</td>
+                              ))}
+                              <td className="px-3 py-2 text-right font-medium text-cyan-400">{p.listed}</td>
+                            </tr>
+                            {isOpen && p.branchRows.map((b) => (
+                              <tr key={`${p.person}-${b.branch}`} className="border-b border-white/5 bg-white/[0.02]">
+                                <td className="px-3 py-2 pl-10 text-muted-foreground">{b.branch}</td>
+                                <td className="px-3 py-2 text-right"></td>
+                                <td className="px-3 py-2 text-right text-muted-foreground">{b.orders}</td>
+                                <td className="px-3 py-2 text-right text-green-400/80">${b.earnings.toFixed(2)}</td>
+                                {EBAY_ORDER_STATUSES.map((s) => (
+                                  <td key={s} className="px-3 py-2 text-right text-muted-foreground">{b.statuses[s]}</td>
+                                ))}
+                                <td className="px-3 py-2 text-right text-cyan-400/80">{b.listed}</td>
+                              </tr>
+                            ))}
+                          </Fragment>
+                        );
+                      })
                     )}
                   </tbody>
                 </table>
@@ -1166,6 +1465,7 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
                         { h: "Branch", align: "text-left" },
                         { h: "Notes", align: "text-left" },
                         { h: "Date Added", align: "text-left" },
+                        { h: "Changed By", align: "text-left" },
                         { h: "", align: "text-center" },
                       ].map(({ h, align }) => (
                         <th key={h || "actions"} className={`px-2 py-3 ${align} text-[11px] font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap`}>{h}</th>
@@ -1174,7 +1474,7 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
                   </thead>
                   <tbody>
                     {filteredOrders.length === 0 ? (
-                      <tr><td colSpan={11} className="px-3 py-6 text-center text-muted-foreground">No orders match these filters.</td></tr>
+                      <tr><td colSpan={12} className="px-3 py-6 text-center text-muted-foreground">No orders match these filters.</td></tr>
                     ) : (
                       filteredOrders.map((o) => (
                         <tr key={o.id} className="border-b border-white/5 hover:bg-white/5">
@@ -1209,9 +1509,24 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
                             <input value={o.notes} onChange={(e) => patchOrder(o.id, { notes: e.target.value })} onBlur={() => saveOrderField(o, { notes: o.notes })} className="glass-input text-xs py-0.5 px-2 rounded w-28" />
                           </td>
                           <td className="px-2 py-2 whitespace-nowrap text-muted-foreground">{formatDateAdded(o.createdAt)}</td>
-                          <td className="px-2 py-2 text-center">
+                          <td className="px-2 py-2 whitespace-nowrap">
+                            {(() => {
+                              const entry = changedByRowId.get(o.id);
+                              return entry ? (
+                                <button type="button" onClick={() => openRowHistory(o.id, `${o.branch} — ${o.partNo || o.orderExtId || o.id}`)} className="text-blue-300 hover:text-blue-200 hover:underline" title={`${activityActionLabel(entry.action)} · ${new Date(entry.createdAt).toLocaleString()}`}>
+                                  {entry.actorName || "Unknown"}
+                                </button>
+                              ) : (
+                                <span className="text-muted-foreground">—</span>
+                              );
+                            })()}
+                          </td>
+                          <td className="px-2 py-2 text-center whitespace-nowrap">
                             {savingRowId === o.id ? <Loader2 className="h-3.5 w-3.5 animate-spin inline" /> : (
-                              <button onClick={() => removeOrder(o.id)} className="text-red-400 hover:text-red-300"><Trash2 className="h-3.5 w-3.5" /></button>
+                              <span className="inline-flex items-center gap-2">
+                                <button onClick={() => openEditOrder(o)} className="text-blue-400 hover:text-blue-300" title="Edit this order"><Pencil className="h-3.5 w-3.5" /></button>
+                                <button onClick={() => removeOrder(o.id)} className="text-red-400 hover:text-red-300" title="Delete this order"><Trash2 className="h-3.5 w-3.5" /></button>
+                              </span>
                             )}
                           </td>
                         </tr>
@@ -1242,11 +1557,11 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
                     {EBAY_BRANCHES.map((l) => <option key={l} value={l}>{l}</option>)}
                   </select>
                 </Field>
-                <Field label={EBAY_BRANCH_CENT_VALUES[listingDraft.branch] !== undefined ? `Price ($ — cents auto-set to .${EBAY_BRANCH_CENT_VALUES[listingDraft.branch]})` : "Price ($)"}>
+                <Field label={branchCentMap[listingDraft.branch] !== undefined ? `Price ($ — cents auto-set to .${branchCentMap[listingDraft.branch]})` : "Price ($)"}>
                   <input type="number" step="0.01" value={listingDraft.price} onChange={(e) => setListingDraft((d) => ({ ...d, price: applyBranchCents(Number(e.target.value), d.branch) }))} className="glass-input text-sm py-1.5 px-2 rounded-md w-24 text-green-400 font-medium" />
                 </Field>
                 <Field label="Qty">
-                  <input type="number" min={1} value={listingDraft.quantity} onChange={(e) => setListingDraft((d) => ({ ...d, quantity: Number(e.target.value) }))} className="glass-input text-sm py-1.5 px-2 rounded-md w-20" />
+                  <input type="number" min={1} value={listingDraft.quantity} onChange={(e) => setListingDraft((d) => ({ ...d, quantity: Number(e.target.value) }))} className="glass-input text-sm py-1.5 px-2 rounded-md w-20 text-cyan-400 font-medium" />
                 </Field>
                 <Field label="Listed Date">
                   <input type="date" value={listingDraft.listedDate} onChange={(e) => setListingDraft((d) => ({ ...d, listedDate: e.target.value }))} className="glass-input text-sm py-1.5 px-2 rounded-md" />
@@ -1291,6 +1606,7 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
                         { h: "Qty", align: "text-center" },
                         { h: "Status", align: "text-left" },
                         { h: "Date Added", align: "text-left" },
+                        { h: "Changed By", align: "text-left" },
                         { h: "", align: "text-center" },
                       ].map(({ h, align }) => (
                         <th key={h || "actions"} className={`px-2 py-3 ${align} text-[11px] font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap`}>{h}</th>
@@ -1299,7 +1615,7 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
                   </thead>
                   <tbody>
                     {filteredListings.length === 0 ? (
-                      <tr><td colSpan={9} className="px-3 py-6 text-center text-muted-foreground">No listings match these filters.</td></tr>
+                      <tr><td colSpan={10} className="px-3 py-6 text-center text-muted-foreground">No listings match these filters.</td></tr>
                     ) : (
                       filteredListings.map((l) => (
                         <tr key={l.id} className="border-b border-white/5 hover:bg-white/5">
@@ -1308,10 +1624,10 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
                           <td className="px-2 py-2 whitespace-nowrap">{l.ebayAccount}</td>
                           <td className="px-2 py-2 whitespace-nowrap">{l.branch}</td>
                           <td className="px-2 py-2 text-right">
-                            <input type="number" step="0.01" value={l.price} onChange={(e) => patchListing(l.id, { price: applyBranchCents(Number(e.target.value), l.branch) })} onBlur={() => saveListingField(l, { price: l.price })} className="glass-input text-xs py-0.5 px-1.5 rounded w-20 text-right font-medium text-green-400" title={EBAY_BRANCH_CENT_VALUES[l.branch] !== undefined ? `Cents auto-set to .${EBAY_BRANCH_CENT_VALUES[l.branch]} for ${l.branch}` : undefined} />
+                            <input type="number" step="0.01" value={l.price} onChange={(e) => patchListing(l.id, { price: applyBranchCents(Number(e.target.value), l.branch) })} onBlur={() => saveListingField(l, { price: l.price })} className="glass-input text-xs py-0.5 px-1.5 rounded w-20 text-right font-medium text-green-400" title={branchCentMap[l.branch] !== undefined ? `Cents auto-set to .${branchCentMap[l.branch]} for ${l.branch}` : undefined} />
                           </td>
                           <td className="px-2 py-2 text-center">
-                            <input type="number" value={l.quantity} onChange={(e) => patchListing(l.id, { quantity: Number(e.target.value) })} onBlur={() => saveListingField(l, { quantity: l.quantity })} className="glass-input text-xs py-0.5 px-1.5 rounded w-14 text-center" />
+                            <input type="number" value={l.quantity} onChange={(e) => patchListing(l.id, { quantity: Number(e.target.value) })} onBlur={() => saveListingField(l, { quantity: l.quantity })} className="glass-input text-xs py-0.5 px-1.5 rounded w-14 text-center text-cyan-400 font-medium" />
                           </td>
                           <td className="px-2 py-2">
                             <select value={l.status} onChange={(e) => { patchListing(l.id, { status: e.target.value }); saveListingField(l, { status: e.target.value }); }} className="glass-input text-xs py-0.5 px-1.5 rounded">
@@ -1319,9 +1635,24 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
                             </select>
                           </td>
                           <td className="px-2 py-2 whitespace-nowrap text-muted-foreground">{formatDateAdded(l.createdAt)}</td>
-                          <td className="px-2 py-2 text-center">
+                          <td className="px-2 py-2 whitespace-nowrap">
+                            {(() => {
+                              const entry = changedByRowId.get(l.id);
+                              return entry ? (
+                                <button type="button" onClick={() => openRowHistory(l.id, `${l.branch} — ${l.partNo || l.id}`)} className="text-blue-300 hover:text-blue-200 hover:underline" title={`${activityActionLabel(entry.action)} · ${new Date(entry.createdAt).toLocaleString()}`}>
+                                  {entry.actorName || "Unknown"}
+                                </button>
+                              ) : (
+                                <span className="text-muted-foreground">—</span>
+                              );
+                            })()}
+                          </td>
+                          <td className="px-2 py-2 text-center whitespace-nowrap">
                             {savingRowId === l.id ? <Loader2 className="h-3.5 w-3.5 animate-spin inline" /> : (
-                              <button onClick={() => removeListing(l.id)} className="text-red-400 hover:text-red-300"><Trash2 className="h-3.5 w-3.5" /></button>
+                              <span className="inline-flex items-center gap-2">
+                                <button onClick={() => openEditListing(l)} className="text-blue-400 hover:text-blue-300" title="Edit this listing"><Pencil className="h-3.5 w-3.5" /></button>
+                                <button onClick={() => removeListing(l.id)} className="text-red-400 hover:text-red-300" title="Delete this listing"><Trash2 className="h-3.5 w-3.5" /></button>
+                              </span>
                             )}
                           </td>
                         </tr>
@@ -1377,6 +1708,71 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
               </table>
             </div>
 
+            <div className="border-t border-white/10 px-4 py-4 bg-cyan-500/5">
+              <h2 className="text-sm font-semibold text-cyan-300 flex items-center gap-2"><DollarSign className="h-4 w-4" /> Branches &amp; Cent Pricing</h2>
+              <p className="text-xs text-muted-foreground mt-1">The branches this page offers everywhere (pickers, Assignments, Daily Branch Report) — each one's cent value is the fixed cents a Listing price always ends in for that branch. Add or remove a branch here and it updates everywhere.</p>
+              <div className="overflow-x-auto mt-3 rounded-md border border-white/10">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b border-white/10 bg-white/5">
+                      <th className="px-3 py-2 text-left text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Branch</th>
+                      <th className="px-3 py-2 text-left text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Cents (.XX)</th>
+                      <th className="px-3 py-2 text-left text-[11px] font-semibold text-muted-foreground uppercase tracking-wide"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {branchCents.length === 0 ? (
+                      <tr><td colSpan={3} className="px-3 py-4 text-center text-muted-foreground">Loading…</td></tr>
+                    ) : (
+                      branchCents.map((b) => (
+                        <tr key={b.branch} className="border-b border-white/5 hover:bg-white/5">
+                          <td className="px-3 py-2 font-medium whitespace-nowrap">{b.branch}</td>
+                          <td className="px-3 py-2">
+                            <div className="flex items-center gap-1">
+                              <span className="text-muted-foreground">.</span>
+                              <input
+                                type="number"
+                                min={0}
+                                max={99}
+                                value={b.cents}
+                                onChange={(e) => setBranchCents((prev) => prev.map((x) => (x.branch === b.branch ? { ...x, cents: Number(e.target.value) } : x)))}
+                                onBlur={(e) => handleUpdateBranchCent(b.branch, Number(e.target.value))}
+                                className="glass-input text-xs py-1 px-2 rounded w-16"
+                              />
+                            </div>
+                          </td>
+                          <td className="px-3 py-2 text-right">
+                            <button type="button" onClick={() => handleDeleteBranchCent(b.branch)} className="text-red-400 hover:text-red-300" title="Remove this branch">
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+              <div className="flex items-end gap-2 mt-3">
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Add Branch</label>
+                  <select value={newCentBranch} onChange={(e) => setNewCentBranch(e.target.value)} className="glass-input text-sm py-1.5 px-2 rounded-md w-56">
+                    {branchesAvailableToAdd.length === 0 ? (
+                      <option value="">All branches already added</option>
+                    ) : (
+                      branchesAvailableToAdd.map((l) => <option key={l} value={l}>{l}</option>)
+                    )}
+                  </select>
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Cents (.XX)</label>
+                  <input type="number" min={0} max={99} value={newCentValue} onChange={(e) => setNewCentValue(Number(e.target.value))} className="glass-input text-sm py-1.5 px-2 rounded-md w-20" />
+                </div>
+                <button onClick={handleAddBranchCent} disabled={addingBranchCent || branchesAvailableToAdd.length === 0} className="btn flex items-center gap-2 px-4 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50">
+                  {addingBranchCent ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />} Add
+                </button>
+              </div>
+            </div>
+
             <div className="border-t border-white/10 px-4 py-4 bg-amber-500/5">
               <h2 className="text-sm font-semibold text-amber-300 flex items-center gap-2"><CreditCard className="h-4 w-4" /> eBay Accounts</h2>
               <p className="text-xs text-muted-foreground mt-1">The eBay Account choices offered on the Orders and Listings tabs. Add or remove one here and it updates everywhere.</p>
@@ -1413,6 +1809,146 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
           </div>
         )}
       </main>
+
+      {editingOrder && orderEditDraft && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setEditingOrder(null)}>
+          <div className="w-full max-w-2xl rounded-lg border border-white/10 bg-slate-900 p-6" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-bold text-white flex items-center gap-2"><Pencil className="h-4 w-4 text-blue-400" /> Edit Order</h3>
+              <button type="button" onClick={() => setEditingOrder(null)} className="text-slate-400 hover:text-white text-xl leading-none">×</button>
+            </div>
+            <div className="flex flex-wrap gap-3">
+              <Field label="Order ID (or pasted eBay link)">
+                <input value={orderEditDraft.orderExtId} onChange={(e) => setOrderEditDraft((d) => d && ({ ...d, orderExtId: e.target.value }))} className="glass-input text-sm py-1.5 px-2 rounded-md w-40" />
+              </Field>
+              <Field label="Part #">
+                <input value={orderEditDraft.partNo} onChange={(e) => setOrderEditDraft((d) => d && ({ ...d, partNo: e.target.value }))} className="glass-input text-sm py-1.5 px-2 rounded-md w-32" />
+              </Field>
+              <Field label="Qty">
+                <input type="number" min={1} value={orderEditDraft.quantity} onChange={(e) => setOrderEditDraft((d) => d && ({ ...d, quantity: Number(e.target.value) }))} className="glass-input text-sm py-1.5 px-2 rounded-md w-20" />
+              </Field>
+              <Field label="Status">
+                <select value={orderEditDraft.status} onChange={(e) => setOrderEditDraft((d) => d && ({ ...d, status: e.target.value }))} className="glass-input text-sm py-1.5 px-2 rounded-md">
+                  {EBAY_ORDER_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </Field>
+              <Field label="Earnings ($)">
+                <input type="number" step="0.01" value={orderEditDraft.orderEarnings} onChange={(e) => setOrderEditDraft((d) => d && ({ ...d, orderEarnings: Number(e.target.value) }))} className="glass-input text-sm py-1.5 px-2 rounded-md w-28" />
+              </Field>
+              <Field label="Order Date">
+                <input type="date" value={orderEditDraft.orderDate} onChange={(e) => setOrderEditDraft((d) => d && ({ ...d, orderDate: e.target.value }))} className="glass-input text-sm py-1.5 px-2 rounded-md" />
+              </Field>
+              <Field label="eBay Account">
+                <select value={orderEditDraft.salesAccount} onChange={(e) => setOrderEditDraft((d) => d && ({ ...d, salesAccount: e.target.value }))} className="glass-input text-sm py-1.5 px-2 rounded-md">
+                  {ebayAccountNames.map((a) => <option key={a} value={a}>{a}</option>)}
+                </select>
+              </Field>
+              <Field label="Branch">
+                <select value={orderEditDraft.branch} onChange={(e) => setOrderEditDraft((d) => d && ({ ...d, branch: e.target.value }))} className="glass-input text-sm py-1.5 px-2 rounded-md">
+                  {EBAY_BRANCHES.map((b) => <option key={b} value={b}>{b}</option>)}
+                </select>
+              </Field>
+            </div>
+            <div className="flex justify-end gap-2 mt-5">
+              <button onClick={() => setEditingOrder(null)} className="btn px-4 text-sm">Cancel</button>
+              <button onClick={handleSaveOrderEdit} disabled={savingOrderEdit} className="btn flex items-center gap-2 px-4 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 text-sm">
+                {savingOrderEdit ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null} {savingOrderEdit ? "Saving…" : "Save Changes"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {editingListing && listingEditDraft && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setEditingListing(null)}>
+          <div className="w-full max-w-2xl rounded-lg border border-white/10 bg-slate-900 p-6" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-bold text-white flex items-center gap-2"><Pencil className="h-4 w-4 text-purple-400" /> Edit Listing</h3>
+              <button type="button" onClick={() => setEditingListing(null)} className="text-slate-400 hover:text-white text-xl leading-none">×</button>
+            </div>
+            <div className="flex flex-wrap gap-3">
+              <Field label="Part #">
+                <input value={listingEditDraft.partNo} onChange={(e) => setListingEditDraft((d) => d && ({ ...d, partNo: e.target.value }))} className="glass-input text-sm py-1.5 px-2 rounded-md w-32" />
+              </Field>
+              <Field label="eBay Account">
+                <select value={listingEditDraft.ebayAccount} onChange={(e) => setListingEditDraft((d) => d && ({ ...d, ebayAccount: e.target.value }))} className="glass-input text-sm py-1.5 px-2 rounded-md">
+                  {ebayAccountNames.map((a) => <option key={a} value={a}>{a}</option>)}
+                </select>
+              </Field>
+              <Field label="Branch">
+                <select value={listingEditDraft.branch} onChange={(e) => setListingEditDraft((d) => d && ({ ...d, branch: e.target.value, price: applyBranchCents(d.price, e.target.value) }))} className="glass-input text-sm py-1.5 px-2 rounded-md">
+                  {EBAY_BRANCHES.map((b) => <option key={b} value={b}>{b}</option>)}
+                </select>
+              </Field>
+              <Field label={branchCentMap[listingEditDraft.branch] !== undefined ? `Price ($ — cents auto-set to .${branchCentMap[listingEditDraft.branch]})` : "Price ($)"}>
+                <input type="number" step="0.01" value={listingEditDraft.price} onChange={(e) => setListingEditDraft((d) => d && ({ ...d, price: applyBranchCents(Number(e.target.value), d.branch) }))} className="glass-input text-sm py-1.5 px-2 rounded-md w-28" />
+              </Field>
+              <Field label="Qty">
+                <input type="number" min={1} value={listingEditDraft.quantity} onChange={(e) => setListingEditDraft((d) => d && ({ ...d, quantity: Number(e.target.value) }))} className="glass-input text-sm py-1.5 px-2 rounded-md w-20" />
+              </Field>
+              <Field label="Listed Date">
+                <input type="date" value={listingEditDraft.listedDate} onChange={(e) => setListingEditDraft((d) => d && ({ ...d, listedDate: e.target.value }))} className="glass-input text-sm py-1.5 px-2 rounded-md" />
+              </Field>
+              <Field label="Status">
+                <select value={listingEditDraft.status} onChange={(e) => setListingEditDraft((d) => d && ({ ...d, status: e.target.value }))} className="glass-input text-sm py-1.5 px-2 rounded-md">
+                  {EBAY_LISTING_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </Field>
+            </div>
+            <div className="flex justify-end gap-2 mt-5">
+              <button onClick={() => setEditingListing(null)} className="btn px-4 text-sm">Cancel</button>
+              <button onClick={handleSaveListingEdit} disabled={savingListingEdit} className="btn flex items-center gap-2 px-4 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 text-sm">
+                {savingListingEdit ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null} {savingListingEdit ? "Saving…" : "Save Changes"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {rowHistoryTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setRowHistoryTarget(null)}>
+          <div className="w-full max-w-lg max-h-[80vh] flex flex-col rounded-lg border border-white/10 bg-slate-900 p-6" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-1">
+              <h3 className="text-lg font-bold text-white">Change History</h3>
+              <button type="button" onClick={() => setRowHistoryTarget(null)} className="text-slate-400 hover:text-white text-xl leading-none">×</button>
+            </div>
+            <p className="text-xs text-muted-foreground mb-4">{rowHistoryTarget.label}</p>
+            {rowHistoryLoading ? (
+              <p className="text-sm text-muted-foreground">Loading…</p>
+            ) : rowHistoryError ? (
+              <p className="text-sm text-red-400">{rowHistoryError}</p>
+            ) : rowHistoryEntries.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No history for this row.</p>
+            ) : (
+              <div className="overflow-y-auto flex-1 -mx-2 px-2">
+                <ul className="space-y-2">
+                  {rowHistoryEntries.map((entry) => {
+                    const isStatus = entry.action === "ebay_order_status_changed" || entry.action === "ebay_listing_status_changed";
+                    const isAdded = entry.action === "ebay_order_added" || entry.action === "ebay_listing_added";
+                    const isDeleted = entry.action === "ebay_order_deleted" || entry.action === "ebay_listing_deleted";
+                    return (
+                      <li key={entry.id} className="rounded border border-white/10 bg-white/5 px-3 py-2 text-sm">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-semibold text-slate-200">{isStatus ? "Status" : isAdded || isDeleted ? activityActionLabel(entry.action) : rowHistoryFieldLabel(entry)}</span>
+                          <span className="text-xs text-slate-500 whitespace-nowrap">{new Date(entry.createdAt).toLocaleString()}</span>
+                        </div>
+                        {(entry.details?.from !== undefined || entry.details?.to !== undefined) && (
+                          <div className="text-xs mt-0.5">
+                            <span className="text-red-300">{String(entry.details?.from ?? "—")}</span>
+                            <span className="text-muted-foreground"> → </span>
+                            <span className="text-green-300">{String(entry.details?.to ?? "—")}</span>
+                          </div>
+                        )}
+                        <div className="text-xs text-slate-500 mt-0.5">{entry.actorName || "Unknown"}</div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {activityLogOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setActivityLogOpen(false)}>
