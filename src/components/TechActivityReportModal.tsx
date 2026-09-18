@@ -91,6 +91,16 @@ export function TechActivityReportModal({
   const { employee, techManual, techCategoryCounts, techCarryover, ticketsAssigned, ticketsCompleted, workingDays, twoTechCount, hoursWorked, overtimeHours, hourlyRate, techHourlyPay } = row;
   const branch = employee.assigned_branch || "";
 
+  // Temporary, NOT persisted — lets HR type in a what-if Completed Tickets
+  // count to sanity-check the payroll math (Payment column, Ratio,
+  // Avg Daily Completion, Subtotal/Total) without needing real ticket data
+  // to produce a non-zero count. Resets whenever this modal moves to a
+  // different technician/period so a test number never bleeds across
+  // reports.
+  const [completedTicketsOverride, setCompletedTicketsOverride] = useState<number | null>(null);
+  useEffect(() => setCompletedTicketsOverride(null), [employee.id, row]);
+  const effectiveTicketsCompleted = completedTicketsOverride ?? ticketsCompleted;
+
   const techRateFor = (category: string): number => {
     const exact = techRepairRates.find((r) => r.repairType === category && r.branch === branch);
     if (exact) return exact.amount;
@@ -202,11 +212,6 @@ export function TechActivityReportModal({
     }
   };
 
-  const mcaThreshold = techRateFor("MCA Threshold");
-  const mcaBonusRate = techRateFor("MCA Bonus");
-  const mcaMet = mcaThreshold > 0 && ticketsCompleted >= mcaThreshold;
-  const mcaPayment = mcaMet ? mcaBonusRate : 0;
-
   // Includes DEFAULT_REPAIR_TYPE so its $ still counts toward the totals below
   // (it was already part of Total Net before this report existed) — just not
   // rendered as its own row, since almost every completed ticket falls into
@@ -221,7 +226,7 @@ export function TechActivityReportModal({
   const customLinesTotal = customItems.reduce((s, i) => s + i.value * i.rate, 0);
   // Confirmed late ticket completions (see late_ticket_completions /
   // LateTicketCompletionModal.tsx) not yet paid out — already folded into
-  // ticketsCompleted above (so MCA/Completed Tickets treat them like any
+  // ticketsCompleted above (so Completed Tickets treats them like any
   // other completed ticket), priced here at today's rate and shown ONE ROW
   // PER TICKET below (never grouped by repair type) so it's obvious both
   // which specific ticket this is and that it came from an earlier,
@@ -238,7 +243,7 @@ export function TechActivityReportModal({
   // is this row's own gross, and only the on-hold subtraction shows here.
   const completedBeforeHold = ticketsCompleted + onHoldTickets.length;
   const completedTicketsRate = techRateFor("Completed Tickets");
-  const completedTicketsPayment = ticketsCompleted * completedTicketsRate;
+  const completedTicketsPayment = effectiveTicketsCompleted * completedTicketsRate;
   // 0 by default (see BASE_RATE_TYPES) — only pays anything once a rate is
   // configured for a company that wants a consolation amount per redo.
   const redoReductionRate = techRateFor("Redo Reduction");
@@ -246,13 +251,13 @@ export function TechActivityReportModal({
 
   const subtotal =
     categoryPayments.reduce((s, c) => s + c.payment, 0) +
-    techManual.ldtPay + techManual.mileagePay + techManual.trainingPay +
-    twoTechPayment + mcaPayment + completedTicketsPayment + redoReductionPayment + customLinesTotal + carryoverTotal + row.techHourlyPay;
+    techManual.mileagePay + techManual.trainingPay +
+    twoTechPayment + completedTicketsPayment + redoReductionPayment + customLinesTotal + carryoverTotal + row.techHourlyPay;
   const owIncentivePay = (techManual.owIncentivePct / 100) * subtotal;
   const totalPayment = subtotal + owIncentivePay;
 
-  const ratioPct = ticketsAssigned > 0 ? (ticketsCompleted / ticketsAssigned) * 100 : 0;
-  const avgDailyCompletion = ticketsCompleted / Math.max(1, workingDays);
+  const ratioPct = ticketsAssigned > 0 ? (effectiveTicketsCompleted / ticketsAssigned) * 100 : 0;
+  const avgDailyCompletion = effectiveTicketsCompleted / Math.max(1, workingDays);
   const avgDailyMiles = techManual.mileage / Math.max(1, workingDays);
 
   // [appearance:textfield] + the two ::-webkit-*-spin-button rules hide the
@@ -311,7 +316,23 @@ export function TechActivityReportModal({
                   <tr title="Completed, non-redo tickets minus any currently On Hold for payroll via the Mileage tab — a manual hold, or the automatic rule that holds pay until mileage photos are uploaded. This rate is paid flat on every remaining one, in addition to each ticket's own repair-type rate below. See the On Hold panel on the right for exactly which tickets those are — a hold is reversible and moves back into this count once released.">
                     <td className="px-3 py-2 text-slate-300">Completed Tickets</td>
                     <td className="px-3 py-2 text-right text-slate-300">
-                      <div>{completedBeforeHold} − {onHoldTickets.length} = {ticketsCompleted}</div>
+                      <div className="flex items-center justify-end gap-1.5">
+                        <input
+                          type="number" min={0} step={1}
+                          value={completedTicketsOverride ?? ticketsCompleted}
+                          onChange={(e) => setCompletedTicketsOverride(e.target.value === "" ? 0 : Number(e.target.value))}
+                          className={`${rateCellClass} ${completedTicketsOverride !== null ? "border-amber-500/60 text-amber-300" : ""}`}
+                        />
+                        {completedTicketsOverride !== null && (
+                          <button type="button" onClick={() => setCompletedTicketsOverride(null)} className="text-[10px] text-slate-500 hover:text-slate-300 underline">
+                            reset
+                          </button>
+                        )}
+                      </div>
+                      <div className="text-[10px] text-slate-500 mt-0.5">
+                        real: {completedBeforeHold} − {onHoldTickets.length} = {ticketsCompleted}
+                        {completedTicketsOverride !== null && <span className="text-amber-400"> (testing {completedTicketsOverride}, not saved)</span>}
+                      </div>
                       {onHoldTickets.length > 0 && (
                         <div className="text-[10px] text-slate-500 mt-0.5">
                           {onHoldTickets.length} on hold — missing photos or a manual hold
@@ -343,9 +364,8 @@ export function TechActivityReportModal({
                     <td className="px-3 py-2 text-right text-slate-200">{fmt(techHourlyPay)}</td>
                   </tr>
 
-                  {(["ldtCount", "mileage", "trainingValue"] as const).map((field) => {
+                  {(["mileage", "trainingValue"] as const).map((field) => {
                     const meta = {
-                      ldtCount: { label: "LDT", rateKey: "LDT", value: techManual.ldtCount, pay: techManual.ldtPay },
                       mileage: { label: "Mileage", rateKey: "Mileage", value: techManual.mileage, pay: techManual.mileagePay },
                       trainingValue: { label: "Training Paid", rateKey: "Training Paid", value: techManual.trainingValue, pay: techManual.trainingPay },
                     }[field];
@@ -473,41 +493,6 @@ export function TechActivityReportModal({
                       </div>
                     </td>
                     <td className="px-3 py-2 text-right text-slate-200">{fmt(twoTechPayment)}</td>
-                  </tr>
-
-                  <tr title="Flat bonus paid when Completed Tickets meets the configured minimum for the period.">
-                    <td className="px-3 py-2 text-slate-300">MCA (Min. Complete Achievement)</td>
-                    <td className="px-3 py-2 text-right">
-                      <div className="flex items-center justify-end gap-1 text-xs text-slate-400">
-                        {savingRateKey === "MCA Threshold" && <Loader2 className="h-3 w-3 animate-spin text-slate-400" />}
-                        <input
-                          key={`MCA Threshold:${mcaThreshold}`}
-                          type="number" min={0}
-                          defaultValue={mcaThreshold || ""}
-                          placeholder="0"
-                          disabled={savingRateKey === "MCA Threshold"}
-                          onBlur={(e) => handleRateBlur("MCA Threshold", e.target.value)}
-                          className="w-14 bg-slate-800/50 border border-white/10 rounded px-1.5 py-1 text-right text-xs text-white focus:border-blue-500 focus:outline-none disabled:opacity-50 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                        />
-                        <span>req.</span>
-                      </div>
-                    </td>
-                    <td className="px-3 py-2 text-right">
-                      <div className="flex items-center justify-end gap-1.5">
-                        {savingRateKey === "MCA Bonus" && <Loader2 className="h-3 w-3 animate-spin text-slate-400" />}
-                        <input
-                          key={`MCA Bonus:${mcaBonusRate}`}
-                          type="number" min={0} step={0.01}
-                          defaultValue={mcaBonusRate}
-                          disabled={savingRateKey === "MCA Bonus"}
-                          onBlur={(e) => handleRateBlur("MCA Bonus", e.target.value)}
-                          className={rateCellClass}
-                        />
-                      </div>
-                    </td>
-                    <td className={`px-3 py-2 text-right ${mcaMet ? "text-green-300" : "text-slate-500"}`}>
-                      {mcaThreshold > 0 ? (mcaMet ? fmt(mcaPayment) : "Not met") : "—"}
-                    </td>
                   </tr>
 
                   {customItems.map((item) => (
