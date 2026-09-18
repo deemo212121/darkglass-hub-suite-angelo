@@ -9,26 +9,26 @@
  *
  * `parts.created_by` isn't populated in this data set (same gap
  * PartsDashboard.tsx already documents), so there's no real field to
- * attribute an individual part line to a specific staff member — the Staff
- * Detail table shows real PARTS/PARTS_MANAGER profiles with their real
- * Warnings/Mistakes record instead of a fabricated per-person collections
- * count. Collections/RA/Receives stay branch-level, which is what the
- * charts actually emphasize anyway.
+ * attribute an individual part line to a specific staff member —
+ * Collections/Pickups/RA/Receives stay branch-level, which is what the
+ * charts and the Daily Branch Activity table actually emphasize anyway.
+ * Issues/Lost are the one manually-entered pair, tracked per branch per
+ * day in parts_daily_issues_log (see partsDailyIssuesLog.ts).
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useSearch, useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
-import { ChevronLeft, Loader2, LayoutDashboard, CheckCheck, Building2, ClipboardList, RotateCcw, Download } from "lucide-react";
+import { ChevronLeft, Loader2, LayoutDashboard, CheckCheck, Building2, ClipboardList, RotateCcw, Download, Package, Truck, Inbox, AlertTriangle, DollarSign, ShieldCheck, PackageX, Users } from "lucide-react";
 import { BrandedLoader } from "@/components/BrandedLoader";
-import { Bar, BarChart, ResponsiveContainer, Tooltip, XAxis, YAxis, Legend } from "recharts";
+import { Bar, BarChart, CartesianGrid, Pie, PieChart, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis, Legend } from "recharts";
 import * as XLSX from "xlsx";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { getPartsInventoryRows, type PartInventoryRow } from "@/lib/supabase/partsInventory";
 import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
-import { getAllAgentNotes, type CsrAgentNote } from "@/lib/supabase/csrAgentNotes";
-import { normalizeRole } from "@/lib/roleLabels";
+import { getPartsDailyIssues, upsertPartsDailyIssue, type PartsDailyIssueEntry } from "@/lib/supabase/partsDailyIssuesLog";
+import { normalizeRole, ROLE_LABELS } from "@/lib/roleLabels";
 import { getPartsDoneActivity, type PartsDoneActivityRow } from "@/lib/supabase/partsDoneActivityLog";
 import { getBranchProgress, type BranchProgress } from "@/lib/partsBranchProgress";
 import { getPartReturns as getRaCreatedRows, type PartReturnRow as RaCreatedRow } from "@/lib/supabase/partReturnStatus";
@@ -37,9 +37,35 @@ import { getPartsForDailyCollection, type PartCollectionRow } from "@/lib/supaba
 import { getPartsToReceive, type PartReceiveRow } from "@/lib/supabase/partReceive";
 
 const PARTS_ROLES = new Set(["PARTS", "PARTS_MANAGER"]);
+// Same buckets PartsDashboard.tsx already established — Back Order and
+// Cancelled are deliberately their own buckets, not folded into Pending.
+const PENDING_STATUSES = new Set(["Need PO", "PO Made"]);
+const READY_STATUSES = new Set(["Part Ready", "Tech Pickup"]);
 const DONE_STATUSES = new Set(["Used", "Claimed"]);
 const TOOLTIP_STYLE = { background: "#ffffff", border: "1px solid #cbd5e1", borderRadius: 6, color: "#0f172a", fontSize: 12, fontWeight: 600, boxShadow: "0 4px 12px rgba(0,0,0,0.3)" } as const;
 const LEGEND_STYLE = { fontSize: 11, color: "#94a3b8" } as const;
+const STATUS_BUCKET_COLORS: Record<string, string> = {
+  Pending: "#facc15",
+  Ready: "#3b82f6",
+  Done: "#34d399",
+  "Back Order": "#fb923c",
+  Cancelled: "#f87171",
+};
+// Full literal class strings (not built with `${color}` template
+// interpolation) — Tailwind's build-time scanner only picks up classes
+// that appear as complete strings in the source, so a dynamic
+// `border-l-${color}-500` would silently compile to nothing.
+// Tailwind's -400 shade for each is the literal hex the chart bars use
+// (emerald-400 #34d399, violet-400 #a78bfa, orange-400 #fb923c, red-400
+// #f87171, rose-400 #fb7185) — picked to match, not just "close enough".
+const KPI_TILE_COLORS = {
+  emerald: { border: "border-l-emerald-500", bg: "bg-emerald-500/5", iconBg: "bg-emerald-500/15", text: "text-emerald-400" },
+  violet: { border: "border-l-violet-500", bg: "bg-violet-500/5", iconBg: "bg-violet-500/15", text: "text-violet-400" },
+  orange: { border: "border-l-orange-500", bg: "bg-orange-500/5", iconBg: "bg-orange-500/15", text: "text-orange-400" },
+  blue: { border: "border-l-blue-500", bg: "bg-blue-500/5", iconBg: "bg-blue-500/15", text: "text-blue-400" },
+  red: { border: "border-l-red-500", bg: "bg-red-500/5", iconBg: "bg-red-500/15", text: "text-red-400" },
+  rose: { border: "border-l-rose-500", bg: "bg-rose-500/5", iconBg: "bg-rose-500/15", text: "text-rose-400" },
+} as const;
 
 // Shared by this page's "Download XLSX" button — same shape as
 // PartsOrderDashboard.tsx's own copy (kept local rather than a shared
@@ -181,9 +207,19 @@ function inRange(v: string | undefined | null, from: string, to: string): boolea
 }
 const todayIso = () => new Date().toISOString().slice(0, 10);
 const daysAgoIso = (n: number) => { const d = new Date(); d.setDate(d.getDate() - n); return d.toISOString().slice(0, 10); };
-/** Add (or subtract, with a negative n) n days to an ISO date string. */
-const addDaysToIso = (iso: string, n: number) => { const d = new Date(iso); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
-const fmtShort = (iso: string) => { const [, m, d] = iso.split("-"); return `${Number(m)}/${Number(d)}`; };
+// Same day-by-day expansion as the eBay report's Daily Branch Report —
+// capped so a wide date range doesn't render hundreds of blocks.
+function dateRangeList(start: string, end: string, max = 31): string[] {
+  const out: string[] = [];
+  const d = new Date(start + "T00:00:00");
+  const endD = new Date(end + "T00:00:00");
+  if (Number.isNaN(d.getTime()) || Number.isNaN(endD.getTime()) || d > endD) return out;
+  while (d <= endD && out.length < max) {
+    out.push(d.toISOString().slice(0, 10));
+    d.setDate(d.getDate() + 1);
+  }
+  return out;
+}
 
 export function ReportPartsDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
   const navigate = useNavigate();
@@ -192,7 +228,7 @@ export function ReportPartsDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
   const [error, setError] = useState<string | null>(null);
   const [rows, setRows] = useState<PartInventoryRow[]>([]);
   const [staff, setStaff] = useState<ProfileRow[]>([]);
-  const [notes, setNotes] = useState<CsrAgentNote[]>([]);
+  const [issuesLog, setIssuesLog] = useState<PartsDailyIssueEntry[]>([]);
 
   const [dateFrom, setDateFrom] = useState(daysAgoIso(29));
   const [dateTo, setDateTo] = useState(todayIso());
@@ -240,7 +276,10 @@ export function ReportPartsDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
   const [raReturnTypeFilter, setRaReturnTypeFilter] = useState<Set<string>>(new Set());
 
   useEffect(() => {
-    if (tab !== "ra-returns" || raReturnsLoaded) return;
+    // Also loaded for Overview now — the Staff Changes Counter's RA
+    // Created column needs raCreatedRows too, so widen the trigger
+    // instead of fetching it twice.
+    if ((tab !== "ra-returns" && tab !== "overview") || raReturnsLoaded) return;
     setRaReturnsLoading(true);
     Promise.all([
       getRaCreatedRows().catch((err) => { console.error("Failed to load RA Created rows:", err); return []; }),
@@ -297,15 +336,13 @@ export function ReportPartsDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
       try {
         setLoading(true);
         setError(null);
-        const [partRows, profiles, allNotes] = await Promise.all([
+        const [partRows, profiles] = await Promise.all([
           getPartsInventoryRows(),
           getCompanyUsers(),
-          getAllAgentNotes().catch((err) => { console.error("Failed to load agent notes:", err); return []; }),
         ]);
         if (cancelled) return;
         setRows(partRows);
         setStaff(profiles.filter((p) => p.is_active && isPartsProfile(p)));
-        setNotes(allNotes);
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load Part Daily Report.");
       } finally {
@@ -316,6 +353,16 @@ export function ReportPartsDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
   }, []);
 
   const branchOptions = useMemo(() => Array.from(new Set(rows.map((r) => r.location).filter(Boolean))).sort(), [rows]);
+
+  // Manual Issues/Lost tally, re-fetched whenever the date range changes —
+  // same "scoped to the picker" convention as the rest of Overview.
+  useEffect(() => {
+    let cancelled = false;
+    getPartsDailyIssues(dateFrom, dateTo)
+      .then((entries) => { if (!cancelled) setIssuesLog(entries); })
+      .catch((err) => console.error("Failed to load Issues/Lost log:", err));
+    return () => { cancelled = true; };
+  }, [dateFrom, dateTo]);
 
   useEffect(() => {
     if (tab !== "pending-queue" || branchProgressLoaded || branchOptions.length === 0) return;
@@ -369,56 +416,156 @@ export function ReportPartsDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
     [rows, dateFrom, dateTo, branchFilter],
   );
 
-  const warningCountByProfile = useMemo(() => {
-    const map = new Map<string, number>();
-    for (const n of notes) { if (n.status !== "approved" || n.type !== "warning") continue; map.set(n.agentProfileId, (map.get(n.agentProfileId) ?? 0) + 1); }
-    return map;
-  }, [notes]);
-  const mistakeCountByProfile = useMemo(() => {
-    const map = new Map<string, number>();
-    for (const n of notes) { if (n.status !== "approved" || n.type !== "mistake") continue; map.set(n.agentProfileId, (map.get(n.agentProfileId) ?? 0) + 1); }
-    return map;
-  }, [notes]);
-
   const kpi = {
     collections: collectionsRows.length,
     pickups: pickupRows.length,
     ra: raRows.length,
     receives: receivesRows.length,
-    warnings: staff.reduce((s, p) => s + (warningCountByProfile.get(p.id) ?? 0), 0),
-    staffCount: staff.length,
   };
 
   const branchChartData = useMemo(() => {
-    const map = new Map<string, { collections: number; pickups: number; ra: number; receives: number }>();
-    const bump = (loc: string, key: "collections" | "pickups" | "ra" | "receives") => {
+    const map = new Map<string, { collections: number; pickups: number; ra: number; receives: number; issues: number; lost: number }>();
+    const ensure = (loc: string) => {
       const b = loc || "Unspecified";
-      if (!map.has(b)) map.set(b, { collections: 0, pickups: 0, ra: 0, receives: 0 });
-      map.get(b)![key]++;
+      if (!map.has(b)) map.set(b, { collections: 0, pickups: 0, ra: 0, receives: 0, issues: 0, lost: 0 });
+      return map.get(b)!;
     };
-    for (const r of collectionsRows) bump(r.location, "collections");
-    for (const r of pickupRows) bump(r.location, "pickups");
-    for (const r of raRows) bump(r.location, "ra");
-    for (const r of receivesRows) bump(r.location, "receives");
-    return Array.from(map.entries()).map(([name, v]) => ({ name, ...v })).sort((a, b) => b.collections - a.collections).slice(0, 12);
-  }, [collectionsRows, pickupRows, raRows, receivesRows]);
-
-  // Real day-by-day Collections count for the 10 days ending at Date To —
-  // not the real "today" — so this stays consistent with the KPI tiles when
-  // looking at a past date range instead of the current one. One pass.
-  const trendData = useMemo(() => {
-    const dates = Array.from({ length: 10 }, (_, i) => addDaysToIso(dateTo, i - 9));
-    const collected = new Map(dates.map((d) => [d, 0]));
-    const received = new Map(dates.map((d) => [d, 0]));
-    const branchScoped = rows.filter((r) => branchFilter.size === 0 || branchFilter.has(r.location));
-    for (const r of branchScoped) {
-      if (DONE_STATUSES.has(r.status)) { const d = dateOnly(r.createdAt); if (collected.has(d)) collected.set(d, (collected.get(d) ?? 0) + 1); }
-      if (r.inTracking.trim()) { const d = dateOnly(r.createdAt); if (received.has(d)) received.set(d, (received.get(d) ?? 0) + 1); }
+    for (const r of collectionsRows) ensure(r.location).collections++;
+    for (const r of pickupRows) ensure(r.location).pickups++;
+    for (const r of raRows) ensure(r.location).ra++;
+    for (const r of receivesRows) ensure(r.location).receives++;
+    for (const e of issuesLog) {
+      if (branchFilter.size > 0 && !branchFilter.has(e.branch)) continue;
+      const row = ensure(e.branch);
+      row.issues += e.issues;
+      row.lost += e.lost;
     }
-    return dates.map((d) => ({ date: fmtShort(d), collections: collected.get(d) ?? 0, receives: received.get(d) ?? 0 }));
-  }, [rows, branchFilter, dateTo]);
+    return Array.from(map.entries()).map(([name, v]) => ({ name, ...v })).sort((a, b) => b.collections - a.collections).slice(0, 12);
+  }, [collectionsRows, pickupRows, raRows, receivesRows, issuesLog, branchFilter]);
 
-  const totalMistakes = staff.reduce((s, p) => s + (mistakeCountByProfile.get(p.id) ?? 0), 0);
+  // Same 4 automated metrics as branchChartData, but keyed per (branch, day)
+  // instead of summed per branch — feeds the "Daily Branch Activity" table,
+  // where these 4 columns are read-only next to the 2 manual ones.
+  const dailyBranchStats = useMemo(() => {
+    const map = new Map<string, { collections: number; pickups: number; ra: number; receives: number }>();
+    const bump = (loc: string, dateStr: string, key: "collections" | "pickups" | "ra" | "receives") => {
+      const b = loc || "Unspecified";
+      const k = `${b}|${dateOnly(dateStr)}`;
+      if (!map.has(k)) map.set(k, { collections: 0, pickups: 0, ra: 0, receives: 0 });
+      map.get(k)![key]++;
+    };
+    for (const r of collectionsRows) bump(r.location, r.createdAt, "collections");
+    for (const r of pickupRows) bump(r.location, r.pickedUpDate || r.createdAt, "pickups");
+    for (const r of raRows) bump(r.location, r.raDate || r.createdAt, "ra");
+    for (const r of receivesRows) bump(r.location, r.createdAt, "receives");
+    return map;
+  }, [collectionsRows, pickupRows, raRows, receivesRows]);
+  const getDailyBranchStats = (branch: string, date: string) =>
+    dailyBranchStats.get(`${branch}|${date}`) || { collections: 0, pickups: 0, ra: 0, receives: 0 };
+
+  // $ value of parts collected this period — partPrice * quantity is
+  // already on every row, just never summed anywhere on this page before.
+  const dollarCollected = useMemo(
+    () => collectionsRows.reduce((sum, r) => sum + (r.partPrice || 0) * (r.quantity || 1), 0),
+    [collectionsRows]
+  );
+
+  // Live pipeline snapshot — everything in `inWindow` that hasn't reached a
+  // DONE status yet, bucketed the same way PartsDashboard.tsx already does.
+  const statusDistribution = useMemo(() => {
+    const counts: Record<string, number> = { Pending: 0, Ready: 0, Done: 0, "Back Order": 0, Cancelled: 0 };
+    for (const r of inWindow) {
+      if (PENDING_STATUSES.has(r.status)) counts.Pending++;
+      else if (READY_STATUSES.has(r.status)) counts.Ready++;
+      else if (DONE_STATUSES.has(r.status)) counts.Done++;
+      else if (r.status === "Back Order") counts["Back Order"]++;
+      else if (r.status === "Cancelled") counts.Cancelled++;
+    }
+    return Object.entries(counts).filter(([, v]) => v > 0).map(([name, value]) => ({ name, value }));
+  }, [inWindow]);
+
+  const agingStats = useMemo(() => {
+    const pending = inWindow.filter((r) => !DONE_STATUSES.has(r.status) && r.status !== "Cancelled");
+    if (pending.length === 0) return { avgDays: 0, oldest: null as PartInventoryRow | null };
+    const avgDays = Math.round(pending.reduce((s, r) => s + r.agingDays, 0) / pending.length);
+    const oldest = pending.reduce((a, b) => (b.agingDays > a.agingDays ? b : a));
+    return { avgDays, oldest };
+  }, [inWindow]);
+
+  // `warranty` is free text off the tickets table (not a fixed enum) —
+  // same "group by whatever real values exist" approach PartsDashboard.tsx's
+  // own Warranty panel already uses, rather than guessing an in/out split.
+  const warrantyBreakdown = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const r of inWindow) {
+      const key = r.warranty || "Unspecified";
+      map.set(key, (map.get(key) ?? 0) + 1);
+    }
+    return Array.from(map.entries()).map(([label, count]) => ({ label, count })).sort((a, b) => b.count - a.count).slice(0, 5);
+  }, [inWindow]);
+
+  // Staff Changes Counter — Collections/Pickups/Receives are driven by
+  // `technician` on the parts rows, which is the TICKET's field
+  // technician, not a Parts/Parts Manager staffer, so there's no real way
+  // to attribute those three to someone in `staff`; they stay blank
+  // rather than show a number attributed to the wrong person. RA Created
+  // is the one genuine case — `returned_by` (free text, set when someone
+  // processes a return) is matched by name against the Parts Staff roster.
+  const staffChangesCounter = useMemo(() => {
+    const byNameLower = new Map(staff.map((p) => [(p.display_name || p.email || "").trim().toLowerCase(), p]));
+    const raCountByProfile = new Map<string, number>();
+    for (const r of raCreatedRows) {
+      const name = (r.returnedBy || "").trim();
+      if (!name) continue;
+      const match = byNameLower.get(name.toLowerCase());
+      if (!match) continue;
+      if (branchFilter.size > 0 && !branchFilter.has(r.location)) continue;
+      const d = (r.raDate || "").slice(0, 10);
+      if (!d || d < dateFrom || d > dateTo) continue;
+      raCountByProfile.set(match.id, (raCountByProfile.get(match.id) ?? 0) + 1);
+    }
+    return staff
+      .map((p) => ({
+        id: p.id,
+        name: p.display_name || p.email || "—",
+        role: ROLE_LABELS[normalizeRole(p.role)] || p.role,
+        branch: p.assigned_branch || p.department || "—",
+        ra: raCountByProfile.get(p.id) ?? 0,
+      }))
+      .filter((s) => s.ra > 0)
+      .sort((a, b) => b.ra - a.ra || a.name.localeCompare(b.name));
+  }, [staff, raCreatedRows, branchFilter, dateFrom, dateTo]);
+
+  // Manual Issues/Lost tally — branch-filtered the same way every other
+  // Overview number already is, so the top tiles and the per-day table
+  // below always agree with the picker.
+  const issuesDateList = useMemo(() => dateRangeList(dateFrom, dateTo), [dateFrom, dateTo]);
+  const filteredIssuesLog = useMemo(
+    () => (branchFilter.size === 0 ? issuesLog : issuesLog.filter((e) => branchFilter.has(e.branch))),
+    [issuesLog, branchFilter]
+  );
+  const issuesByKey = useMemo(() => new Map(filteredIssuesLog.map((e) => [`${e.branch}|${e.date}`, e])), [filteredIssuesLog]);
+  const issuesTotals = useMemo(
+    () => filteredIssuesLog.reduce((acc, e) => ({ issues: acc.issues + e.issues, lost: acc.lost + e.lost }), { issues: 0, lost: 0 }),
+    [filteredIssuesLog]
+  );
+  const getIssueEntry = (branch: string, date: string) => issuesByKey.get(`${branch}|${date}`) || { branch, date, issues: 0, lost: 0 };
+  const updateIssueField = (branch: string, date: string, field: "issues" | "lost", value: number) => {
+    setIssuesLog((prev) => {
+      const idx = prev.findIndex((e) => e.branch === branch && e.date === date);
+      if (idx === -1) return [...prev, { branch, date, issues: 0, lost: 0, [field]: value }];
+      const next = [...prev];
+      next[idx] = { ...next[idx], [field]: value };
+      return next;
+    });
+  };
+  const saveIssueField = async (branch: string, date: string, field: "issues" | "lost", value: number) => {
+    try {
+      await upsertPartsDailyIssue(branch, date, { [field]: value });
+    } catch (err) {
+      console.error("Failed to save Issues/Lost entry:", err);
+    }
+  };
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -462,104 +609,317 @@ export function ReportPartsDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
           <div className="panel p-8 mb-6"><BrandedLoader label="Loading Part Daily Report…" /></div>
         ) : (
         <>
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-6">
           {[
-            ["Collections", kpi.collections, "text-green-300"],
-            ["Pickups", kpi.pickups, "text-purple-300"],
-            ["RA Created", kpi.ra, "text-yellow-300"],
-            ["Receives", kpi.receives, "text-blue-300"],
-            ["Warnings", kpi.warnings, "text-red-300"],
-          ].map(([l, v, c]) => (
-            <div key={l as string} className="panel p-4 text-center"><p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">{l}</p><p className={`text-3xl font-bold ${c}`}>{v}</p></div>
+            { l: "Collections", v: kpi.collections, icon: Package, cls: KPI_TILE_COLORS.emerald },
+            { l: "Pickups", v: kpi.pickups, icon: Truck, cls: KPI_TILE_COLORS.violet },
+            { l: "RA Created", v: kpi.ra, icon: RotateCcw, cls: KPI_TILE_COLORS.orange },
+            { l: "Receives", v: kpi.receives, icon: Inbox, cls: KPI_TILE_COLORS.blue },
+            { l: "Issues", v: issuesTotals.issues, icon: AlertTriangle, cls: KPI_TILE_COLORS.red },
+            { l: "Lost", v: issuesTotals.lost, icon: PackageX, cls: KPI_TILE_COLORS.rose },
+          ].map(({ l, v, icon: Icon, cls }) => (
+            <div key={l} className={`panel p-4 border-l-4 ${cls.border} ${cls.bg} flex items-center gap-3`}>
+              <div className={`rounded-full ${cls.iconBg} p-2 shrink-0`}><Icon className={`h-4 w-4 ${cls.text}`} /></div>
+              <div className="min-w-0">
+                <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5 truncate">{l}</p>
+                <p className={`text-2xl font-bold ${cls.text}`}>{v}</p>
+              </div>
+            </div>
           ))}
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
-          <div className="panel p-4">
-            <div className="flex items-center justify-between mb-4">
-              <p className="text-sm font-semibold">Collections / Pickups / RA / Receives by Branch</p>
-              <button
-                onClick={() => downloadSheetXlsx(
-                  `parts-daily-branch-breakdown_${dateFrom}_to_${dateTo}.xlsx`,
-                  "Branch Breakdown",
-                  [
-                    ["Branch", "Collections", "Pickups", "RA Created", "Receives"],
-                    ...branchChartData.map((b) => [b.name, b.collections, b.pickups, b.ra, b.receives]),
-                  ],
-                )}
-                disabled={branchChartData.length === 0}
-                className="btn text-xs px-2.5 py-1 flex items-center gap-1.5 disabled:opacity-50"
-              >
-                <Download className="h-3 w-3" /> Download XLSX
-              </button>
-            </div>
-            {branchChartData.length === 0 ? (
-              <p className="text-xs text-muted-foreground py-16 text-center">No part activity in this date range.</p>
-            ) : (
-              <>
-              <ResponsiveContainer width="100%" height={220} debounce={200}>
-                <BarChart data={branchChartData} margin={{ left: -10 }}>
-                  <XAxis dataKey="name" tick={{ fill: "#94a3b8", fontSize: 9 }} angle={-25} textAnchor="end" height={50} />
-                  <YAxis tick={{ fill: "#94a3b8", fontSize: 11 }} allowDecimals={false} />
-                  <Tooltip contentStyle={TOOLTIP_STYLE} />
-                  <Legend wrapperStyle={LEGEND_STYLE} />
-                  <Bar dataKey="collections" fill="#34d399" radius={[4, 4, 0, 0]} name="Collections" />
-                  <Bar dataKey="pickups" fill="#a78bfa" radius={[4, 4, 0, 0]} name="Pickups" />
-                  <Bar dataKey="receives" fill="#3b82f6" radius={[4, 4, 0, 0]} name="Receives" />
-                  <Bar dataKey="ra" fill="#fb923c" radius={[4, 4, 0, 0]} name="RA Created" />
-                </BarChart>
-              </ResponsiveContainer>
-              {/* Raw data under the graph, per the same numbers the chart plots. */}
-              <div className="mt-4 overflow-x-auto">
-                <table className="w-full text-xs">
-                  <thead>
-                    <tr className="border-b border-white/10 text-muted-foreground">
-                      <th className="text-left font-semibold px-2 py-1.5">Branch</th>
-                      <th className="text-right font-semibold px-2 py-1.5">Collections</th>
-                      <th className="text-right font-semibold px-2 py-1.5">Pickups</th>
-                      <th className="text-right font-semibold px-2 py-1.5">RA Created</th>
-                      <th className="text-right font-semibold px-2 py-1.5">Receives</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {branchChartData.map((b) => (
-                      <tr key={b.name} className="border-b border-white/5">
-                        <td className="px-2 py-1.5 font-medium">{b.name}</td>
-                        <td className="px-2 py-1.5 text-right">{b.collections}</td>
-                        <td className="px-2 py-1.5 text-right">{b.pickups}</td>
-                        <td className="px-2 py-1.5 text-right">{b.ra}</td>
-                        <td className="px-2 py-1.5 text-right">{b.receives}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              </>
-            )}
+        <div className="panel p-4 border-l-4 border-l-indigo-500 mb-4">
+          <div className="flex items-center justify-between mb-4">
+            <p className="text-sm font-semibold text-indigo-300 flex items-center gap-2"><Building2 className="h-4 w-4" /> Collections / Pickups / RA / Receives / Issues / Lost by Branch</p>
+            <button
+              onClick={() => downloadSheetXlsx(
+                `parts-daily-branch-breakdown_${dateFrom}_to_${dateTo}.xlsx`,
+                "Branch Breakdown",
+                [
+                  ["Branch", "Collections", "Pickups", "RA Created", "Receives", "Issues", "Lost"],
+                  ...branchChartData.map((b) => [b.name, b.collections, b.pickups, b.ra, b.receives, b.issues, b.lost]),
+                ],
+              )}
+              disabled={branchChartData.length === 0}
+              className="btn text-xs px-2.5 py-1 flex items-center gap-1.5 disabled:opacity-50"
+            >
+              <Download className="h-3 w-3" /> Download XLSX
+            </button>
           </div>
-          <div className="panel p-4">
-            <p className="text-sm font-semibold mb-4">Collections Trend — Last 10 Days</p>
-            <ResponsiveContainer width="100%" height={220} debounce={200}>
-              <BarChart data={trendData} margin={{ left: -10 }}>
-                <XAxis dataKey="date" tick={{ fill: "#94a3b8", fontSize: 10 }} />
-                <YAxis tick={{ fill: "#94a3b8", fontSize: 11 }} allowDecimals={false} />
-                <Tooltip contentStyle={TOOLTIP_STYLE} />
-                <Legend wrapperStyle={LEGEND_STYLE} />
-                <Bar dataKey="collections" fill="#34d399" radius={[4, 4, 0, 0]} name="Collections" />
-                <Bar dataKey="receives" fill="#3b82f6" radius={[4, 4, 0, 0]} name="Receives" />
+          {branchChartData.length === 0 ? (
+            <p className="text-xs text-muted-foreground py-16 text-center">No part activity in this date range.</p>
+          ) : (
+            <>
+            <ResponsiveContainer width="100%" height={280} debounce={200}>
+              <BarChart data={branchChartData} margin={{ left: -10, top: 4 }} barCategoryGap="20%">
+                <defs>
+                  <linearGradient id="gradCollections" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#34d399" stopOpacity={1} /><stop offset="100%" stopColor="#34d399" stopOpacity={0.55} /></linearGradient>
+                  <linearGradient id="gradPickups" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#a78bfa" stopOpacity={1} /><stop offset="100%" stopColor="#a78bfa" stopOpacity={0.55} /></linearGradient>
+                  <linearGradient id="gradReceives" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#3b82f6" stopOpacity={1} /><stop offset="100%" stopColor="#3b82f6" stopOpacity={0.55} /></linearGradient>
+                  <linearGradient id="gradRa" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#fb923c" stopOpacity={1} /><stop offset="100%" stopColor="#fb923c" stopOpacity={0.55} /></linearGradient>
+                  <linearGradient id="gradIssues" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#f87171" stopOpacity={1} /><stop offset="100%" stopColor="#f87171" stopOpacity={0.55} /></linearGradient>
+                  <linearGradient id="gradLost" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#fb7185" stopOpacity={1} /><stop offset="100%" stopColor="#fb7185" stopOpacity={0.55} /></linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.12)" vertical={false} />
+                <XAxis dataKey="name" tick={{ fill: "#94a3b8", fontSize: 9 }} angle={-25} textAnchor="end" height={50} axisLine={{ stroke: "rgba(148,163,184,0.2)" }} tickLine={false} />
+                <YAxis tick={{ fill: "#94a3b8", fontSize: 11 }} allowDecimals={false} axisLine={false} tickLine={false} />
+                <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: "rgba(148,163,184,0.08)" }} />
+                <Legend wrapperStyle={LEGEND_STYLE} iconType="circle" iconSize={8} />
+                <Bar dataKey="collections" fill="url(#gradCollections)" radius={[4, 4, 0, 0]} name="Collections" maxBarSize={24} />
+                <Bar dataKey="pickups" fill="url(#gradPickups)" radius={[4, 4, 0, 0]} name="Pickups" maxBarSize={24} />
+                <Bar dataKey="receives" fill="url(#gradReceives)" radius={[4, 4, 0, 0]} name="Receives" maxBarSize={24} />
+                <Bar dataKey="ra" fill="url(#gradRa)" radius={[4, 4, 0, 0]} name="RA Created" maxBarSize={24} />
+                <Bar dataKey="issues" fill="url(#gradIssues)" radius={[4, 4, 0, 0]} name="Issues" maxBarSize={24} />
+                <Bar dataKey="lost" fill="url(#gradLost)" radius={[4, 4, 0, 0]} name="Lost" maxBarSize={24} />
               </BarChart>
             </ResponsiveContainer>
+            {/* Raw data under the graph, per the same numbers the chart plots. */}
+            <div className="mt-4 overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-white/10 text-muted-foreground">
+                    <th className="text-left font-semibold px-2 py-1.5">Branch</th>
+                    <th className="text-right font-semibold px-2 py-1.5">Collections</th>
+                    <th className="text-right font-semibold px-2 py-1.5">Pickups</th>
+                    <th className="text-right font-semibold px-2 py-1.5">RA Created</th>
+                    <th className="text-right font-semibold px-2 py-1.5">Receives</th>
+                    <th className="text-right font-semibold px-2 py-1.5">Issues</th>
+                    <th className="text-right font-semibold px-2 py-1.5">Lost</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {branchChartData.map((b) => (
+                    <tr key={b.name} className="border-b border-white/5">
+                      <td className="px-2 py-1.5 font-medium">{b.name}</td>
+                      <td className="px-2 py-1.5 text-right text-emerald-300">{b.collections}</td>
+                      <td className="px-2 py-1.5 text-right text-violet-300">{b.pickups}</td>
+                      <td className="px-2 py-1.5 text-right text-orange-300">{b.ra}</td>
+                      <td className="px-2 py-1.5 text-right text-blue-300">{b.receives}</td>
+                      <td className="px-2 py-1.5 text-right text-red-300">{b.issues}</td>
+                      <td className="px-2 py-1.5 text-right text-rose-300">{b.lost}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            </>
+          )}
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+          <div className="panel p-4 border-l-4 border-l-green-500">
+            <p className="text-sm font-semibold mb-3 text-green-300 flex items-center gap-2"><DollarSign className="h-4 w-4" /> Value &amp; Aging</p>
+            <div className="space-y-3">
+              <div>
+                <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Value Collected</p>
+                <p className="text-2xl font-bold text-green-400">${dollarCollected.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+              </div>
+              <div className="flex items-center justify-between border-t border-white/10 pt-3">
+                <div>
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Avg Aging (pending)</p>
+                  <p className="text-lg font-bold text-amber-300">{agingStats.avgDays}d</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Oldest Pending</p>
+                  <p className="text-sm font-semibold text-red-300">
+                    {agingStats.oldest ? `${agingStats.oldest.ticketNo || "—"} · ${agingStats.oldest.agingDays}d` : "—"}
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="panel p-4 border-l-4 border-l-purple-500">
+            <p className="text-sm font-semibold mb-2 text-purple-300">Status Distribution</p>
+            {statusDistribution.length === 0 ? (
+              <p className="text-xs text-muted-foreground py-10 text-center">No parts in this date range.</p>
+            ) : (
+              <div className="flex items-center gap-3">
+                <ResponsiveContainer width="55%" height={160}>
+                  <PieChart>
+                    <Pie data={statusDistribution} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={38} outerRadius={62} paddingAngle={2} stroke="none">
+                      {statusDistribution.map((d) => <Cell key={d.name} fill={STATUS_BUCKET_COLORS[d.name] || "#94a3b8"} />)}
+                    </Pie>
+                    <Tooltip contentStyle={TOOLTIP_STYLE} />
+                  </PieChart>
+                </ResponsiveContainer>
+                <div className="flex-1 space-y-1.5">
+                  {statusDistribution.map((d) => (
+                    <div key={d.name} className="flex items-center justify-between text-xs">
+                      <span className="flex items-center gap-1.5 text-muted-foreground"><span className="h-2 w-2 rounded-full shrink-0" style={{ background: STATUS_BUCKET_COLORS[d.name] || "#94a3b8" }} />{d.name}</span>
+                      <span className="font-semibold text-slate-200">{d.value}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="panel p-4 border-l-4 border-l-cyan-500">
+            <p className="text-sm font-semibold mb-3 text-cyan-300 flex items-center gap-2"><ShieldCheck className="h-4 w-4" /> Warranty</p>
+            {warrantyBreakdown.length === 0 ? (
+              <p className="text-xs text-muted-foreground py-10 text-center">No parts in this date range.</p>
+            ) : (
+              <div className="space-y-2.5">
+                {warrantyBreakdown.map((b) => {
+                  const max = Math.max(1, ...warrantyBreakdown.map((x) => x.count));
+                  return (
+                    <div key={b.label}>
+                      <div className="flex justify-between text-xs mb-1">
+                        <span className="text-muted-foreground truncate">{b.label}</span>
+                        <span className="text-cyan-300 font-semibold">{b.count}</span>
+                      </div>
+                      <div className="h-2 rounded-full bg-white/5 overflow-hidden">
+                        <div className="h-full rounded-full bg-cyan-400" style={{ width: `${(b.count / max) * 100}%` }} />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </div>
 
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-          {[
-            ["Parts Staff", kpi.staffCount, "text-blue-300"],
-            ["Warnings (Company-wide)", kpi.warnings, "text-yellow-300"],
-            ["Mistakes (Company-wide)", totalMistakes, "text-red-300"],
-          ].map(([l, v, c]) => (
-            <div key={l as string} className="panel p-3 text-center"><p className={`text-lg font-bold ${c}`}>{v}</p><p className="text-[10px] text-muted-foreground uppercase tracking-wide mt-0.5">{l}</p></div>
-          ))}
+        <div className="panel p-0 border-l-4 border-l-blue-500 mb-4">
+          <div className="px-4 pt-4 pb-2 flex items-center justify-between">
+            <p className="text-sm font-semibold text-blue-300 flex items-center gap-2"><Users className="h-4 w-4" /> Staff Changes Counter</p>
+            <span className="text-xs text-muted-foreground">{staffChangesCounter.length} of {staff.length} Parts Staff</span>
+          </div>
+          <p className="text-xs text-muted-foreground px-4 pb-3">Only RA Created is attributable to a Parts Staff member (via who processed the return) — Collections/Pickups/Receives are tied to the ticket's field technician, not Parts Staff, so they stay blank here.</p>
+          {staffChangesCounter.length === 0 ? (
+            <p className="text-xs text-muted-foreground px-4 pb-4">No Parts staff have an RA Created attributed to them in this date range.</p>
+          ) : (
+            <div className="overflow-x-auto max-h-96 overflow-y-auto">
+              <table className="w-full text-xs">
+                <thead className="sticky top-0 bg-slate-900">
+                  <tr className="border-b border-white/10 text-muted-foreground">
+                    <th className="text-left font-semibold px-4 py-2">Name</th>
+                    <th className="text-left font-semibold px-2 py-2">Role</th>
+                    <th className="text-left font-semibold px-2 py-2">Branch</th>
+                    <th className="text-right font-semibold px-2 py-2">Collections</th>
+                    <th className="text-right font-semibold px-2 py-2">Pickups</th>
+                    <th className="text-right font-semibold px-2 py-2">RA Created</th>
+                    <th className="text-right font-semibold px-4 py-2">Receives</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {staffChangesCounter.map((s) => (
+                    <tr key={s.id} className="border-b border-white/5 hover:bg-white/5">
+                      <td className="px-4 py-2 font-medium">{s.name}</td>
+                      <td className="px-2 py-2 text-muted-foreground">{s.role}</td>
+                      <td className="px-2 py-2 text-muted-foreground">{s.branch}</td>
+                      <td className="px-2 py-2 text-right text-muted-foreground">—</td>
+                      <td className="px-2 py-2 text-right text-muted-foreground">—</td>
+                      <td className="px-2 py-2 text-right font-semibold text-orange-300">{s.ra}</td>
+                      <td className="px-4 py-2 text-right text-muted-foreground">—</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        <div className="mt-4">
+          <p className="text-sm font-semibold mb-2 text-red-300 flex items-center gap-2"><PackageX className="h-4 w-4" /> Daily Branch Activity</p>
+          <p className="text-xs text-muted-foreground mb-3">Collections/Pickups/RA/Receives are automated — same counts as the charts above, just broken out per branch per day. Issues and Lost are the only manual columns; the tiles above sum whatever's entered here for the selected date range.</p>
+          {branchOptions.length === 0 ? (
+            <p className="text-xs text-muted-foreground">No branches yet — add a part record first.</p>
+          ) : (
+            <div className="space-y-4">
+              {issuesDateList.map((date) => {
+                const dayTotals = branchOptions.reduce(
+                  (acc, b) => {
+                    const e = getIssueEntry(b, date);
+                    const s = getDailyBranchStats(b, date);
+                    return {
+                      collections: acc.collections + s.collections,
+                      pickups: acc.pickups + s.pickups,
+                      ra: acc.ra + s.ra,
+                      receives: acc.receives + s.receives,
+                      issues: acc.issues + e.issues,
+                      lost: acc.lost + e.lost,
+                    };
+                  },
+                  { collections: 0, pickups: 0, ra: 0, receives: 0, issues: 0, lost: 0 }
+                );
+                return (
+                  <div key={date} className="panel p-0 overflow-hidden border-l-4 border-l-red-500">
+                    <div className="px-4 py-2 bg-red-500/10 border-b border-white/10 font-semibold text-sm text-red-300">
+                      {new Date(date + "T00:00:00").toLocaleDateString(undefined, { year: "numeric", month: "2-digit", day: "2-digit" })}
+                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="border-b border-white/10 bg-white/5">
+                            <th className="px-2 py-2 text-left text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Branch</th>
+                            <th className="px-2 py-2 text-center text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Collections</th>
+                            <th className="px-2 py-2 text-center text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Pickups</th>
+                            <th className="px-2 py-2 text-center text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">RA Created</th>
+                            <th className="px-2 py-2 text-center text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Receives</th>
+                            <th className="px-2 py-2 text-center text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Issues</th>
+                            <th className="px-2 py-2 text-center text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Lost</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {branchOptions.map((branch) => {
+                            const entry = getIssueEntry(branch, date);
+                            const stats = getDailyBranchStats(branch, date);
+                            return (
+                              <tr key={branch} className="border-b border-white/5 hover:bg-white/5">
+                                <td className="px-2 py-2 font-medium whitespace-nowrap">{branch}</td>
+                                <td className="px-2 py-2 text-center text-emerald-300">{stats.collections}</td>
+                                <td className="px-2 py-2 text-center text-violet-300">{stats.pickups}</td>
+                                <td className="px-2 py-2 text-center text-orange-300">{stats.ra}</td>
+                                <td className="px-2 py-2 text-center text-blue-300">{stats.receives}</td>
+                                <td className="px-2 py-2 text-center">
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    value={entry.issues}
+                                    onChange={(e) => updateIssueField(branch, date, "issues", Number(e.target.value))}
+                                    onBlur={(e) => saveIssueField(branch, date, "issues", Number(e.target.value))}
+                                    className="glass-input text-xs py-0.5 px-1.5 rounded w-16 text-center text-red-300 font-medium"
+                                  />
+                                </td>
+                                <td className="px-2 py-2 text-center">
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    value={entry.lost}
+                                    onChange={(e) => updateIssueField(branch, date, "lost", Number(e.target.value))}
+                                    onBlur={(e) => saveIssueField(branch, date, "lost", Number(e.target.value))}
+                                    className="glass-input text-xs py-0.5 px-1.5 rounded w-16 text-center text-rose-300 font-medium"
+                                  />
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                        <tfoot>
+                          <tr className="border-t border-white/10 bg-white/5 font-semibold">
+                            <td className="px-2 py-2">Totals</td>
+                            <td className="px-2 py-2 text-center text-emerald-300">{dayTotals.collections}</td>
+                            <td className="px-2 py-2 text-center text-violet-300">{dayTotals.pickups}</td>
+                            <td className="px-2 py-2 text-center text-orange-300">{dayTotals.ra}</td>
+                            <td className="px-2 py-2 text-center text-blue-300">{dayTotals.receives}</td>
+                            <td className="px-2 py-2 text-center text-red-300">{dayTotals.issues}</td>
+                            <td className="px-2 py-2 text-center text-rose-300">{dayTotals.lost}</td>
+                          </tr>
+                        </tfoot>
+                      </table>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          {(() => {
+            const fullRange = Math.round((new Date(dateTo).getTime() - new Date(dateFrom).getTime()) / 86400000) + 1;
+            return fullRange > issuesDateList.length ? (
+              <p className="text-xs text-muted-foreground mt-2">Showing the first {issuesDateList.length} days of this range — narrow the dates to see the rest.</p>
+            ) : null;
+          })()}
         </div>
         </>
         )}
