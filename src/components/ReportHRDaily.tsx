@@ -11433,6 +11433,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     branch: "",
     position: "",
     date: todayStr,
+    employeeIsManager: false,
   });
   const updateActionPlanField = <K extends keyof typeof actionPlanForm>(field: K, value: (typeof actionPlanForm)[K]) =>
     setActionPlanForm((prev) => ({ ...prev, [field]: value }));
@@ -11450,6 +11451,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       employeeName: employee.name,
       position: ROLE_LABELS[normalizeRole(employee.position)] ?? employee.position,
       branch: employee.branch,
+      // Same "MANAGER" substring check as isCoeOfficeUseEligible above —
+      // drives which signer slots may edit the plan/comments, see
+      // ActionPlanFormData.employeeIsManager's doc comment.
+      employeeIsManager: normalizeRole(employee.position).includes("MANAGER"),
     }));
     setActionPlanEmployeeDropdownOpen(false);
   };
@@ -11460,6 +11465,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     branch: actionPlanForm.branch,
     position: actionPlanForm.position,
     date: actionPlanForm.date,
+    employeeIsManager: actionPlanForm.employeeIsManager,
     coachingPlan: "",
     monitoringPlan: "",
     additionalTraining: "",
@@ -11661,7 +11667,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const handleCloseActionPlanPreview = () => {
     setActionPlanPreviewOpen(false);
     setActionPlanSentLink(null);
-    setActionPlanForm({ employeeId: "", employeeName: "", branch: "", position: "", date: todayStr });
+    setActionPlanForm({ employeeId: "", employeeName: "", branch: "", position: "", date: todayStr, employeeIsManager: false });
   };
 
   // ── Sent Action Plan Forms tracking table actions ──

@@ -33,6 +33,20 @@ export interface ActionPlanFormData {
   branch: string;
   position: string;
   date: string;
+  /**
+   * Whether the warned employee's own role is manager-tier (role code
+   * contains "MANAGER") — computed by HR when the employee is selected,
+   * since the sign pages only have this document's form_data, not the
+   * employee roster, to check it themselves. Governs which signer slots
+   * may edit the plan sections / Manager Comments (see
+   * SignActionPlanFormPage.tsx's canEditPlanItems/canEditManagerComments):
+   * when the warned employee IS a manager, the "manager" slot (often that
+   * same person, or their direct peer) may still fill in the plan itself
+   * but is excluded from Manager Comments — Senior Manager and CEO cover
+   * that instead. For a non-manager employee, Manager and Senior Manager
+   * both cover the plan and comments, and CEO can always add comments too.
+   */
+  employeeIsManager: boolean;
   /** Filled by the "manager" recipient on their sign page, not by HR at send time — see this file's header comment. */
   coachingPlan: string;
   monitoringPlan: string;

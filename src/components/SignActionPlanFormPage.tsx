@@ -110,7 +110,19 @@ export function SignActionPlanFormPage({ docId }: Props) {
     return () => { cancelled = true; };
   }, [ready, uid, docId]);
 
-  const isManagerSlot = doc?.recipientSlot === "manager";
+  // Who may edit what — see ActionPlanFormData.employeeIsManager's doc
+  // comment for the full rationale. Manager and Senior Manager always
+  // cover the 5 plan items; Manager Comments is covered by Senior Manager
+  // and CEO always, plus Manager too UNLESS the warned employee is
+  // themselves manager-tier (in which case Manager is excluded from
+  // commenting on their own warning, leaving Senior Manager/CEO to do it).
+  const employeeIsManager = !!(doc?.formData as unknown as ActionPlanFormData | undefined)?.employeeIsManager;
+  const canEditPlanItems = doc?.recipientSlot === "manager" || doc?.recipientSlot === "senior_manager";
+  const canEditManagerComments =
+    doc?.recipientSlot === "senior_manager" ||
+    doc?.recipientSlot === "executive" ||
+    (doc?.recipientSlot === "manager" && !employeeIsManager);
+  const canEditAnything = canEditPlanItems || canEditManagerComments;
 
   const handleConfirmSign = async () => {
     if (!doc || !myProfileId) return;
@@ -136,7 +148,12 @@ export function SignActionPlanFormPage({ docId }: Props) {
 
       // Only the Manager slot's typed-in plan actually changes form_data â
       // Senior Manager/HR sign what's already there, unmodified.
-      const formData: ActionPlanFormData = isManagerSlot
+      // Only a slot with edit rights on at least one field actually changes
+      // form_data — planFields is seeded from doc.formData for every
+      // slot, so spreading the whole object back is a no-op for whichever
+      // fields THIS slot couldn't edit (their textareas were never
+      // rendered, so their values never changed).
+      const formData: ActionPlanFormData = canEditAnything
         ? { ...(doc.formData as unknown as ActionPlanFormData), ...planFields }
         : (doc.formData as unknown as ActionPlanFormData);
 
@@ -150,7 +167,7 @@ export function SignActionPlanFormPage({ docId }: Props) {
       const pdfBlob = await captureHtmlToPdfBlob(buildActionPlanFormBodyMarkup(formData, images.logo, images.ribbon, images.footer, captureSignatures), actionPlanFormStyles);
       const pdfUrl = await uploadActionPlanForm(companyId, formData.employeeName, pdfBlob);
 
-      await signDocument(doc.id, doc.recipientSlot, entry, pdfUrl, isManagerSlot ? (formData as unknown as Record<string, any>) : undefined);
+      await signDocument(doc.id, doc.recipientSlot, entry, pdfUrl, canEditAnything ? (formData as unknown as Record<string, any>) : undefined);
 
       if (doc.createdBy) {
         const thread = await getOrCreateDmThread(myProfileId, doc.createdBy);
@@ -219,35 +236,50 @@ export function SignActionPlanFormPage({ docId }: Props) {
         ) : (
           <div className="panel p-0 overflow-hidden">
             <div className="px-4 py-4 border-b border-white/10">
-              <h2 className="font-semibold text-sm">Manager's Action Plan Form â {isManagerSlot ? "Input & Signature Requested" : "Signature Requested"}</h2>
+              <h2 className="font-semibold text-sm">Manager's Action Plan Form — {canEditAnything ? "Input & Signature Requested" : "Signature Requested"}</h2>
               <p className="text-[10px] text-muted-foreground mt-0.5">
-                {isManagerSlot
-                  ? "Fill in the action plan below, then sign as Manager."
+                {canEditPlanItems && canEditManagerComments
+                  ? `Fill in the action plan and comments below, then sign as ${SLOT_LABEL[doc.recipientSlot] ?? doc.recipientSlot}.`
+                  : canEditPlanItems
+                  ? `Fill in the action plan below, then sign as ${SLOT_LABEL[doc.recipientSlot] ?? doc.recipientSlot}.`
+                  : canEditManagerComments
+                  ? `Add your comments below, then sign as ${SLOT_LABEL[doc.recipientSlot] ?? doc.recipientSlot}.`
                   : `Review the plan below, then sign as ${SLOT_LABEL[doc.recipientSlot] ?? doc.recipientSlot}.`}
               </p>
             </div>
 
-            {isManagerSlot ? (
+            {canEditAnything ? (
               <div className="p-4 space-y-3">
-                {PLAN_FIELDS.map(({ key, label }) => (
-                  <div key={key} className="flex flex-col gap-1">
-                    <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">{label}</label>
-                    <textarea
-                      value={planFields[key]}
-                      onChange={(e) => setPlanFields((prev) => ({ ...prev, [key]: e.target.value }))}
-                      rows={2}
-                      className="glass-input text-sm py-1.5 px-3 rounded-md resize-y"
-                    />
-                  </div>
-                ))}
+                {PLAN_FIELDS.map(({ key, label }) =>
+                  canEditPlanItems ? (
+                    <div key={key} className="flex flex-col gap-1">
+                      <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">{label}</label>
+                      <textarea
+                        value={planFields[key]}
+                        onChange={(e) => setPlanFields((prev) => ({ ...prev, [key]: e.target.value }))}
+                        rows={2}
+                        className="glass-input text-sm py-1.5 px-3 rounded-md resize-y"
+                      />
+                    </div>
+                  ) : (
+                    <div key={key} className="flex flex-col gap-1">
+                      <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">{label}</label>
+                      <p className="text-sm bg-white/5 border border-white/10 rounded-md px-3 py-1.5 whitespace-pre-wrap">{planFields[key] || "—"}</p>
+                    </div>
+                  )
+                )}
                 <div className="flex flex-col gap-1">
                   <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Manager Comments</label>
-                  <textarea
-                    value={planFields.managerComments}
-                    onChange={(e) => setPlanFields((prev) => ({ ...prev, managerComments: e.target.value }))}
-                    rows={3}
-                    className="glass-input text-sm py-1.5 px-3 rounded-md resize-y"
-                  />
+                  {canEditManagerComments ? (
+                    <textarea
+                      value={planFields.managerComments}
+                      onChange={(e) => setPlanFields((prev) => ({ ...prev, managerComments: e.target.value }))}
+                      rows={3}
+                      className="glass-input text-sm py-1.5 px-3 rounded-md resize-y"
+                    />
+                  ) : (
+                    <p className="text-sm bg-white/5 border border-white/10 rounded-md px-3 py-1.5 whitespace-pre-wrap">{planFields.managerComments || "—"}</p>
+                  )}
                 </div>
               </div>
             ) : (
