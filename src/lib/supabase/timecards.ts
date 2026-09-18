@@ -13,6 +13,10 @@ export interface UITimeEntry {
   mealStart: string;
   mealEnd: string;
   notes: string;
+  /** State the technician is assigned to for this specific day — technicians
+   * hop between states job to job, so this is independently set per day
+   * rather than one value carried on the profile. Omit to leave unchanged. */
+  state?: string;
 }
 
 /** True only for a genuine network-level failure (the request never reached
@@ -463,6 +467,10 @@ export async function saveEntry(
           meal_end: entry.mealEnd || null,
           notes: entry.notes || null,
           ...(opts?.clockedInBy ? { clocked_in_by: opts.clockedInBy } : {}),
+          // Only included when the caller explicitly sets it — otherwise a
+          // punch-only save (clock in/out, corrections, etc.) would null out
+          // whatever state was already assigned to this day.
+          ...(entry.state !== undefined ? { state: entry.state || null } : {}),
         },
         { onConflict: "profile_id,work_date" }
       );
@@ -706,6 +714,8 @@ export interface AttendanceRow {
   status: "present" | "absent" | "missing-in" | "missing-out" | "missing-meal" | "day-off" | "holiday" | "pending-correction" | "paid-leave";
   /** Only set when status is "paid-leave" — which kind of paid PTO covers this day. */
   leaveType?: PtoType;
+  /** State the technician was assigned to for this day, if set. */
+  state?: string;
 }
 
 /**
@@ -735,7 +745,7 @@ export async function getAttendanceForRange(
 ): Promise<AttendanceRow[]> {
   const { data, error } = await supabase
     .from("timecard_entries")
-    .select("work_date, check_in, check_out, meal_start, meal_end")
+    .select("work_date, check_in, check_out, meal_start, meal_end, state")
     .eq("profile_id", profileId)
     .gte("work_date", startDate)
     .lte("work_date", endDate)
@@ -829,6 +839,7 @@ export async function getAttendanceForRange(
       mealEnd: entry.mealEnd,
       hoursWorked: calcWorkedHours(entry),
       status,
+      ...(row.state ? { state: row.state as string } : {}),
     });
   }
   return rows;

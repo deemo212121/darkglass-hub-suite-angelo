@@ -38,8 +38,8 @@ import {
 import * as XLSX from "xlsx";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { supabase } from "@/lib/supabase/client";
-import { LOCATIONS } from "@/lib/locations";
 import { getBranchRates, upsertBranchRate, type BranchRate } from "@/lib/supabase/branchRates";
+import { STATE_MIN_WAGE_2026 } from "@/lib/stateMinWage";
 import { EmployeePayrollDetailModal } from "@/components/EmployeePayrollDetailModal";
 import { getRepairStatuses, type RepairStatus } from "@/lib/supabase/repairStatuses";
 import { TicketColumnFilter } from "@/components/TicketColumnFilter";
@@ -92,6 +92,7 @@ import { setTicketOnsiteCheckIn } from "@/lib/supabase/tickets";
 import { TIME_ZONES, type ScheduleTimezone } from "@/lib/serverTime";
 import { perCutoffSalary } from "@/lib/supabase/salary";
 import { getPayrollReviewMarks, markPayrollReviewed, clearPayrollReviewMark, type PayrollReviewMark } from "@/lib/supabase/payrollReviewMarks";
+import { getHourlyOtOverrides, setHourlyOtOverride, clearHourlyOtOverride, type HourlyOtOverride } from "@/lib/supabase/payrollHourlyOtOverrides";
 import { useAuth } from "@/lib/auth";
 import { getGmailConnectionStatus, disconnectGmail, sendPayslipEmail, type GmailConnectionStatus, type GmailRegion } from "@/lib/supabase/gmailConnection";
 import { auth as firebaseAuth } from "@/lib/firebase/config";
@@ -304,6 +305,15 @@ export interface EmployeePayrollRow {
    * 0 for Office/fixed-salary rows.
    */
   techHourlyPay: number;
+  /**
+   * The flat company-rate Hourly + OT figure BEFORE any State-mode override
+   * (see payroll_hourly_ot_overrides, migration 0281) — always the plain
+   * hours×rate (+ OT×rate×1.5) calc, even when techHourlyPay above has been
+   * overridden to the State-matched amount. Kept only so the Tech Activity
+   * Report can show "Company vs. Applied" for transparency; every real
+   * payment figure (grossPay, Total Payment, payslip) uses techHourlyPay.
+   */
+  techHourlyPayCompanyOnly: number;
   /**
    * True for a row representing the tech-portion of someone's pay (piece-
    * rate ticket/mileage/category totals), false/undefined for their office-
@@ -818,9 +828,9 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   const [activityLogFrom, setActivityLogFrom] = useState("");
   const [activityLogTo, setActivityLogTo] = useState("");
 
-  // Branch Rates tab — one reference $ rate per branch (migration 0245),
-  // seeded from the full canonical branch list (LOCATIONS) rather than only
-  // branches with a saved row yet, so every branch shows up even before
+  // Branch Rates tab — one reference $ rate per row (migration 0245),
+  // seeded from the full STATE_MIN_WAGE_2026 reference table rather than
+  // only states with a saved row yet, so every state shows up even before
   // Finance has touched it. Lazy-loaded only once the tab is opened.
   const [branchRatesByName, setBranchRatesByName] = useState<Map<string, BranchRate>>(new Map());
   const [branchRatesLoading, setBranchRatesLoading] = useState(false);
@@ -864,10 +874,16 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       setBranchRateSaving(null);
     }
   };
+  // Rows are US states (from the state-minimum-wage reference table), not
+  // company branches — despite the tab/table still being called "Branch
+  // Rates" (the `branch_rates` table itself is just a generic label+$rate
+  // store, so a state name works as the "branch" value with no schema
+  // change needed).
+  const branchRateStateNames = STATE_MIN_WAGE_2026.map((s) => s.state);
   const branchRateFilteredLocations = branchRateSearch.trim()
-    ? LOCATIONS.filter((b) => b.toLowerCase().includes(branchRateSearch.trim().toLowerCase()))
-    : LOCATIONS;
-  // "Prefill from Technician Rates" state — the derived count and the
+    ? branchRateStateNames.filter((s) => s.toLowerCase().includes(branchRateSearch.trim().toLowerCase()))
+    : branchRateStateNames;
+  // "Prefill from State Minimum Wage" state — the derived count and the
   // handler itself live further down (see suggestedBranchRateByName's own
   // comment), since they depend on data derived later in this component.
   const [branchRatePrefilling, setBranchRatePrefilling] = useState(false);
@@ -1079,6 +1095,9 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   const [wizardStep, setWizardStep] = useState<"detail" | "activity">("detail");
   const [reviewMarks, setReviewMarks] = useState<Map<string, PayrollReviewMark>>(new Map());
   const [reviewBusy, setReviewBusy] = useState(false);
+  /** Per-technician "State" pay-mode overrides for the picked period — see payroll_hourly_ot_overrides (migration 0281) and the payrollRows flatMap below, which substitutes this in place of the flat company-rate techHourlyPay when present. */
+  const [hourlyOtOverrides, setHourlyOtOverrides] = useState<Map<string, HourlyOtOverride>>(new Map());
+  const [nextBusy, setNextBusy] = useState(false);
   // One connection per region (US/PH each send payslips from their own
   // connected Gmail account) — keyed the same way as the currency toggle.
   // Deliberately narrower than GmailRegion itself (which also allows
@@ -1782,6 +1801,22 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   }, [genStart, genEnd]);
   useEffect(() => { void loadReviewMarks(); }, [loadReviewMarks]);
 
+  // Per-technician "State" pay-mode overrides for the picked period (see
+  // payroll_hourly_ot_overrides, migration 0281) — same period-scoped
+  // load-on-change pattern as loadReviewMarks above.
+  const loadHourlyOtOverrides = useCallback(async () => {
+    if (!genStart || !genEnd || genStart > genEnd) {
+      setHourlyOtOverrides(new Map());
+      return;
+    }
+    try {
+      setHourlyOtOverrides(await getHourlyOtOverrides(genStart, genEnd));
+    } catch (err) {
+      console.error("Failed to load hourly + OT pay-mode overrides:", err);
+    }
+  }, [genStart, genEnd]);
+  useEffect(() => { void loadHourlyOtOverrides(); }, [loadHourlyOtOverrides]);
+
   // ── Derived data ─────────────────────────────────────────────────────────────
   // Latest salary entry per employee. salaryEntries is ordered by
   // effective_date desc then created_at desc, but re-compared explicitly
@@ -1819,47 +1854,32 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // office hourly row.
   const isTechRole = (emp: SupabaseEmployee) => TECHNICIAN_PAY_ROLES.has(normalizeRole(emp.role));
 
-  // Suggested per-branch rate for Branch Rates' "Prefill from Technician
-  // Rates" button — derived from each branch's own field technicians'
-  // current effective hourly rate (same comp?.hourly_rate ?? emp.hourly_rate
-  // lookup payroll rows use). Only suggests a rate when every technician at
-  // that branch with a real (>0) rate on file agrees on the SAME value — a
-  // branch with technicians on different rates, or none with a rate on file
-  // at all, is left out entirely rather than guessing which one should
-  // represent the whole branch.
+  // Suggested rate for Branch Rates' "Prefill from State Minimum Wage"
+  // button — straight from the STATE_MIN_WAGE_2026 reference table. States
+  // whose minimum wage is set by county rather than statewide (rate: null —
+  // New York, Oregon) have no suggestion; Finance enters the correct
+  // county-specific number by hand for those.
   const suggestedBranchRateByName = new Map<string, number>();
-  {
-    const ratesByBranch = new Map<string, Set<number>>();
-    for (const emp of employees) {
-      if (!emp.isActive || !isTechRole(emp) || !emp.assigned_branch) continue;
-      const comp = latestCompMap.get(emp.id);
-      const rate = comp?.hourly_rate ?? emp.hourly_rate ?? 0;
-      if (!(rate > 0)) continue;
-      const set = ratesByBranch.get(emp.assigned_branch) ?? new Set<number>();
-      set.add(rate);
-      ratesByBranch.set(emp.assigned_branch, set);
-    }
-    for (const [branch, rates] of ratesByBranch) {
-      if (rates.size === 1) suggestedBranchRateByName.set(branch, [...rates][0]);
-    }
+  for (const { state, rate } of STATE_MIN_WAGE_2026) {
+    if (rate != null) suggestedBranchRateByName.set(state, rate);
   }
-  // "Prefill from Technician Rates" — fills every branch that (a) doesn't
+  // "Prefill from State Minimum Wage" — fills every state that (a) doesn't
   // already have a saved rate (never overwrites a value Finance already set,
-  // even $0) and (b) has a suggestion in suggestedBranchRateByName above.
-  // Branches failing either check are left alone — "skip those data not
+  // even $0) and (b) has a numeric rate in the reference table above.
+  // States failing either check are left alone — "skip those data not
   // available" — rather than guessed at.
-  const branchRatePrefillCount = LOCATIONS.filter((b) => !branchRatesByName.has(b) && suggestedBranchRateByName.has(b)).length;
+  const branchRatePrefillCount = branchRateStateNames.filter((s) => !branchRatesByName.has(s) && suggestedBranchRateByName.has(s)).length;
   const handlePrefillBranchRates = async () => {
-    const toFill = LOCATIONS.filter((b) => !branchRatesByName.has(b) && suggestedBranchRateByName.has(b));
+    const toFill = branchRateStateNames.filter((s) => !branchRatesByName.has(s) && suggestedBranchRateByName.has(s));
     if (toFill.length === 0) return;
     setBranchRatePrefilling(true);
     try {
-      for (const branch of toFill) {
-        const rate = suggestedBranchRateByName.get(branch)!;
-        await upsertBranchRate(branch, rate);
+      for (const state of toFill) {
+        const rate = suggestedBranchRateByName.get(state)!;
+        await upsertBranchRate(state, rate);
         setBranchRatesByName((prev) => {
           const next = new Map(prev);
-          next.set(branch, { id: branch, branch, rate, updatedAt: new Date().toISOString() });
+          next.set(state, { id: state, branch: state, rate, updatedAt: new Date().toISOString() });
           return next;
         });
       }
@@ -1868,11 +1888,11 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         actorName: displayName || email || "Admin",
         action: "branch_rate_saved",
         targetType: "branch",
-        targetLabel: `${toFill.length} branch${toFill.length === 1 ? "" : "es"} (prefilled from technician rates)`,
-        details: { branches: toFill },
+        targetLabel: `${toFill.length} state${toFill.length === 1 ? "" : "s"} (prefilled from state minimum wage)`,
+        details: { states: toFill },
       });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to prefill branch rates.");
+      setError(err instanceof Error ? err.message : "Failed to prefill state minimum wage rates.");
     } finally {
       setBranchRatePrefilling(false);
     }
@@ -2110,7 +2130,14 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     // them for. Without this gate they'd be paid twice for one shift the
     // moment Finance sets any hourly rate for them, surfacing as an
     // identical-looking "duplicate" row alongside their real office row.
-    const techHourlyPay = includeTech && isTechRole(emp) ? hours.regular * hourlyRate + hours.overtime * hourlyRate * 1.5 : 0;
+    const techHourlyPayCompanyOnly = includeTech && isTechRole(emp) ? hours.regular * hourlyRate + hours.overtime * hourlyRate * 1.5 : 0;
+    // A State-mode override (payroll_hourly_ot_overrides, migration 0281,
+    // set from the payroll detail step's Compliant/"State" toggle) replaces
+    // the flat company-rate figure everywhere pay actually flows — gross
+    // pay, Total Payment, CSV export, payslip/Send. techHourlyPayCompanyOnly
+    // above stays the un-overridden flat calc, purely for the Tech Activity
+    // Report's "Company vs. Applied" comparison.
+    const techHourlyPay = hourlyOtOverrides.get(emp.id)?.amount ?? techHourlyPayCompanyOnly;
     // Gated on includeTech, not on `tech` — a technician with zero
     // completed tickets this period (so techGrossByProfile has no entry
     // for them) can still have real pay owed via manual LDT/Mileage/
@@ -2150,6 +2177,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
               owIncentivePct: manual?.owIncentivePct ?? 0,
             },
             techHourlyPay,
+            techHourlyPayCompanyOnly,
             dutyHours,
             grossPay: techGrossPay,
             grossPayUSD: techGrossPay,
@@ -2181,6 +2209,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       twoTechCount: 0,
       techManual: { ldtCount: 0, ldtPay: 0, mileage: 0, mileagePay: 0, trainingValue: 0, trainingPay: 0, owIncentivePct: 0 },
       techHourlyPay: 0,
+      techHourlyPayCompanyOnly: 0,
       dutyHours,
       grossPay: officeGrossPay,
       grossPayUSD: officeGrossPay,
@@ -5199,7 +5228,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
             <div className="px-4 py-4 border-b border-white/10 flex items-center justify-between gap-3">
               <div>
                 <h2 className="font-semibold text-sm">Branch Rates</h2>
-                <p className="text-[10px] text-muted-foreground mt-0.5">Reference rate per branch — for Finance's own use, not tied to any payroll calculation.</p>
+                <p className="text-[10px] text-muted-foreground mt-0.5">State minimum wage reference (2026) — for Finance's own use, not tied to any payroll calculation.</p>
               </div>
               <div className="flex items-center gap-2 shrink-0">
                 {branchRatesLoading && <Loader2 className="h-4 w-4 animate-spin text-slate-400" />}
@@ -5209,13 +5238,13 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                   disabled={branchRatePrefilling || branchRatePrefillCount === 0}
                   title={
                     branchRatePrefillCount === 0
-                      ? "No branch has an unset rate with a clear technician rate to suggest"
-                      : `Fills the ${branchRatePrefillCount} branch${branchRatePrefillCount === 1 ? "" : "es"} with no rate saved yet from their own technicians' current hourly rate — branches with no clear technician rate on file are left as-is`
+                      ? "No state has an unset rate left to prefill"
+                      : `Fills the ${branchRatePrefillCount} state${branchRatePrefillCount === 1 ? "" : "s"} with no rate saved yet from the state minimum wage table — states set by county (New York, Oregon) are left as-is`
                   }
                   className="text-xs px-3 py-1.5 rounded-md border border-white/10 text-slate-300 hover:text-white hover:bg-white/5 disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-1.5"
                 >
                   {branchRatePrefilling ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-                  Prefill from Technician Rates{branchRatePrefillCount > 0 ? ` (${branchRatePrefillCount})` : ""}
+                  Prefill from State Minimum Wage{branchRatePrefillCount > 0 ? ` (${branchRatePrefillCount})` : ""}
                 </button>
               </div>
             </div>
@@ -5227,11 +5256,11 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                   type="text"
                   value={branchRateSearch}
                   onChange={(e) => setBranchRateSearch(e.target.value)}
-                  placeholder="Branch…"
+                  placeholder="State…"
                   className="glass-input text-sm py-1.5 pl-8 pr-3 rounded-md w-56"
                 />
               </div>
-              <span className="ml-auto text-[10px] text-muted-foreground">{branchRateFilteredLocations.length} branch{branchRateFilteredLocations.length === 1 ? "" : "es"}</span>
+              <span className="ml-auto text-[10px] text-muted-foreground">{branchRateFilteredLocations.length} state{branchRateFilteredLocations.length === 1 ? "" : "s"}</span>
             </div>
 
             {error && (
@@ -5242,38 +5271,43 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
               <table className="w-full text-sm">
                 <thead className="sticky top-0">
                   <tr className="border-b border-white/10 bg-slate-900">
-                    <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Branch</th>
+                    <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">State</th>
                     <th className="px-4 py-3 text-right text-xs text-muted-foreground uppercase">Rate</th>
                     <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Last Updated</th>
                   </tr>
                 </thead>
                 <tbody>
                   {branchRateFilteredLocations.length === 0 ? (
-                    <tr><td colSpan={3} className="px-4 py-8 text-center text-muted-foreground text-sm">No branch matches "{branchRateSearch}".</td></tr>
+                    <tr><td colSpan={3} className="px-4 py-8 text-center text-muted-foreground text-sm">No state matches "{branchRateSearch}".</td></tr>
                   ) : (
-                    branchRateFilteredLocations.map((branch) => {
-                      const existing = branchRatesByName.get(branch);
-                      const saving = branchRateSaving === branch;
-                      const suggested = suggestedBranchRateByName.get(branch);
+                    branchRateFilteredLocations.map((state) => {
+                      const existing = branchRatesByName.get(state);
+                      const saving = branchRateSaving === state;
+                      const suggested = suggestedBranchRateByName.get(state);
+                      // The two states set by county rather than a single
+                      // statewide number (rate: null in STATE_MIN_WAGE_2026)
+                      // have no numeric suggestion — Finance has to look up
+                      // and enter the right county's figure by hand.
+                      const isCountyBased = !suggested && !existing;
                       return (
-                        <tr key={branch} className="border-b border-white/5 hover:bg-white/5">
-                          <td className="px-4 py-3 font-medium whitespace-nowrap">{branch}</td>
+                        <tr key={state} className="border-b border-white/5 hover:bg-white/5">
+                          <td className="px-4 py-3 font-medium whitespace-nowrap">{state}</td>
                           <td className="px-4 py-3 text-right">
                             <div className="flex items-center justify-end gap-1.5">
                               {saving && <Loader2 className="h-3.5 w-3.5 animate-spin text-slate-400" />}
                               <span className="text-muted-foreground">$</span>
                               <input
-                                // Keyed on the saved rate (not just branch) so
+                                // Keyed on the saved rate (not just state) so
                                 // this uncontrolled input remounts and picks
                                 // up the new defaultValue after "Prefill from
-                                // Technician Rates" updates it out from under
-                                // an already-mounted row.
-                                key={`${branch}:${existing?.rate ?? 0}`}
+                                // State Minimum Wage" updates it out from
+                                // under an already-mounted row.
+                                key={`${state}:${existing?.rate ?? 0}`}
                                 type="number"
                                 step="0.01"
                                 min="0"
                                 defaultValue={existing?.rate ?? 0}
-                                onBlur={(e) => void handleBranchRateBlur(branch, e.target.value)}
+                                onBlur={(e) => void handleBranchRateBlur(state, e.target.value)}
                                 disabled={saving}
                                 className="glass-input text-sm py-1 px-2 rounded-md w-28 text-right disabled:opacity-50"
                               />
@@ -5284,7 +5318,9 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                               ? new Date(existing.updatedAt).toLocaleString()
                               : suggested
                               ? <span className="text-slate-500 italic">Suggested: ${suggested.toFixed(2)}</span>
-                              : <span className="text-slate-600 italic">No technician rate on file</span>}
+                              : isCountyBased
+                              ? <span className="text-slate-600 italic">Based on county — enter manually</span>
+                              : <span className="text-slate-600 italic">No rate on file</span>}
                           </td>
                         </tr>
                       );
@@ -5332,6 +5368,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
           department={detailEmployee.department ?? undefined}
           role={detailEmployee.role}
           extraRoles={detailEmployee.extraRoles}
+          tierLevel={detailEmployee.tierLevel}
           requiredCheckIn={detailEmployee.requiredCheckIn}
           requiredCheckOut={detailEmployee.requiredCheckOut}
           workingHours={detailEmployee.workingHours}
@@ -5342,7 +5379,27 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
           initialEnd={genEnd || undefined}
           onClose={() => { setDetailEmployee(null); setWizardStep("detail"); }}
           onRateChanged={() => { fetchData(); reloadTimecardEntries(); }}
-          onNext={isTechRole(detailEmployee) ? () => setWizardStep("activity") : undefined}
+          nextBusy={nextBusy}
+          onNext={
+            isTechRole(detailEmployee)
+              ? async (mode, stateTotal) => {
+                  setNextBusy(true);
+                  try {
+                    if (mode === "state") {
+                      await setHourlyOtOverride(detailEmployee.id, genStart, genEnd, stateTotal, displayName || email || null);
+                    } else {
+                      await clearHourlyOtOverride(detailEmployee.id, genStart, genEnd);
+                    }
+                    await loadHourlyOtOverrides();
+                    setWizardStep("activity");
+                  } catch (err) {
+                    setError(err instanceof Error ? err.message : "Failed to save the pay mode for this technician.");
+                  } finally {
+                    setNextBusy(false);
+                  }
+                }
+              : undefined
+          }
         />
       )}
 
