@@ -56,6 +56,15 @@ export interface WarningFormData {
    * only ever the pre-signature placeholder.
    */
   recipientNames?: Partial<Record<SignatureSlot, string>>;
+  /**
+   * HR-internal classification of the warning for the EOD/EOM Hiring
+   * Report's separate "Time Card Warning" / "Employee Error/Manipulation"
+   * counters (hrCandidates.ts) — before this existed, both columns just
+   * showed the same total warning count with no way to tell them apart.
+   * Not part of the "Reason(s) for Warning" shown on the printed document
+   * itself — chosen separately by HR as report-only metadata.
+   */
+  warningCategory: "" | "time_card_warning" | "employee_error_manipulation";
 }
 
 export interface SignatureEntry {
@@ -89,6 +98,17 @@ const checkbox = (checked: boolean) => (checked ? "☑" : "☐");
 
 const fmtDate = (iso: string) => {
   if (!iso) return "";
+  // A date-only string ("2026-09-17", e.g. Warning Date) parses as UTC
+  // midnight; formatting it back out in the browser's local timezone
+  // (anything behind UTC, i.e. all of the US) rolls it back a day —
+  // "9/17" printing as "9/16". Parsing the y/m/d parts directly into a
+  // local Date avoids that. A full timestamp (e.g. a signature's
+  // signedAt) has no such ambiguity and is left to the normal Date parse.
+  const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  if (dateOnly) {
+    const [, y, m, d] = dateOnly;
+    return new Date(Number(y), Number(m) - 1, Number(d)).toLocaleDateString();
+  }
   const d = new Date(iso);
   return isNaN(d.getTime()) ? iso : d.toLocaleDateString();
 };
@@ -116,9 +136,9 @@ export const warningFormStyles = `
   .warn-notice { margin-top: 22px; font-style: italic; }
   .warn-sign-row { display: flex; gap: 24px; align-items: flex-end; border-bottom: 1px solid #9ca3af; padding: 10px 2px; margin-top: 6px; }
   .warn-sign-name { flex: 2; }
-  .warn-sign-sig { flex: 1; display: flex; align-items: flex-end; }
+  .warn-sign-sig { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; overflow: hidden; }
   .warn-sign-date { flex: 1; }
-  .warn-sig-img { max-height: 36px; max-width: 140px; object-fit: contain; }
+  .warn-sig-img { max-height: 44px; max-width: 100%; object-fit: contain; object-position: left; }
 `;
 
 /** A signed slot's captured name always wins (it's the real signer); otherwise falls back to that slot's own remembered pre-fill name, then (for documents saved before recipientNames existed) the legacy single current-recipient field. */

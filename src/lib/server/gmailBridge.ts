@@ -87,7 +87,7 @@ export function readEnv(env?: Record<string, string | undefined>): EnvBag | { er
 // "HR_HIRING" (migration 0249) is the Hiring panel's own connect-only slot —
 // connected ahead of an actual candidate-emailing feature, so there's no
 // send action for it here yet, just connect/disconnect/status.
-// "FLASH_TECH" (migration 0267) sends the "trip turned Open" alert — same
+// "FLASH_TECH" (migration 0267/0268) sends the "trip turned Open" alert — same
 // as ATTENDANCE, only ever sent by flashTechOpenAlerts.ts's cron job
 // directly, not via an action= branch here.
 export type Region = "US" | "PH" | "PARTS" | "IT_1" | "IT_2" | "IT_3" | "ATTENDANCE" | "HR_HIRING" | "FLASH_TECH";

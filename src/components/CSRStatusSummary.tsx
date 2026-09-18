@@ -18,7 +18,7 @@ import { getCompanyTickets } from "@/lib/supabase/tickets";
 import { LOCATIONS, mergeLocationOptions } from "@/lib/locations";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 
-const STATUS_COLORS: Record<string, string> = {
+export const STATUS_COLORS: Record<string, string> = {
   "CSR-Assigned to ASC": "#3b82f6",
   "CSR-Left Message for Cx": "#f59e0b",
   "CSR-Needs Scheduling": "#a78bfa",
@@ -42,7 +42,7 @@ const STATUS_COLORS: Record<string, string> = {
   Completed: "#16a34a",
 };
 
-const colorFor = (status: string) => STATUS_COLORS[status] || "#94a3b8";
+export const colorFor = (status: string) => STATUS_COLORS[status] || "#94a3b8";
 
 const HIDDEN_STATUSES = new Set(["CL-Cancelled", "CL-Claimed", "CL-Data-Closed"]);
 

@@ -1060,6 +1060,14 @@ const ticketsMod: ModuleDef = {
       fields: [],
       seed: () => ({}),
     },
+    {
+      slug: "operation",
+      title: "Operation",
+      description: "Live ticket counts per status, company-wide — includes backorder & cancel tracking.",
+      custom: "ticket-operation-report" as any,
+      fields: [],
+      seed: () => ({}),
+    },
   ],
 };
 
@@ -1535,6 +1543,15 @@ const reportMod: ModuleDef = {
       title: "Accounting Report",
       description: "Payroll runs, US/PH split, and employee time tracking.",
       custom: "report-accounting" as any,
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
+    {
+      slug: "report-branch-daily",
+      title: "Branch Daily Report",
+      description: "Branch notes, urgency, pending tickets & tech counts, by Senior Branch Manager.",
+      custom: "report-branch-daily" as any,
       fields: [],
       count: 0,
       seed: () => ({}),

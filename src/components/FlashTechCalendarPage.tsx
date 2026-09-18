@@ -196,7 +196,7 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
 
   // ── Connect Gmail + "trip turned Open" alert recipient — same
   // connect-flow/region idiom as ReportHRDaily.tsx's Hiring Gmail block
-  // (migration 0267, src/lib/server/flashTechOpenAlerts.ts's hourly cron
+  // (migration 0267/0268, src/lib/server/flashTechOpenAlerts.ts's hourly cron
   // job is what actually sends the alert; this page only connects the
   // mailbox and sets who receives it). ──
   const [flashTechGmailStatus, setFlashTechGmailStatus] = useState<GmailConnectionStatus | null>(null);
@@ -334,7 +334,6 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
       setTestingFlashTechAlerts(false);
     }
   };
-
   const [view, setView] = useState<"calendar" | "tracker" | "availability">("calendar");
   // Which Check-Out Alert tile (0-7 days left) the Tracker is currently
   // filtered to, if any — click a tile to narrow the table to just those
@@ -380,6 +379,7 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
   // modal's full-form save. `savingCellKey` is `${tripId}:${field}`, just
   // for the small inline spinner on whichever cell is mid-save. ──
   const [savingCellKey, setSavingCellKey] = useState<string | null>(null);
+  const [deletingTripId, setDeletingTripId] = useState<string | null>(null);
   const [uploadingReceiptId, setUploadingReceiptId] = useState<string | null>(null);
   const [previewReceiptUrl, setPreviewReceiptUrl] = useState<string | null>(null);
   // The trip a freshly-created Schedule Trip save just landed in the
@@ -397,11 +397,41 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
     setSavingCellKey(key);
     try {
       await updateFlashTechTripTrackerFields(tripId, patch);
-      setTrips((prev) => prev.map((t) => (t.id === tripId ? { ...t, ...patch } as FlashTechTrip : t)));
+      setTrips((prev) =>
+        prev.map((t) => {
+          if (t.id !== tripId) return t;
+          const merged = { ...t, ...patch } as FlashTechTrip;
+          // `status` (what the Tracker's dropdown actually displays) isn't
+          // itself one of updateFlashTechTripTrackerFields' patchable
+          // fields — only statusOverride is. Without recomputing it here,
+          // picking "Cancelled" would save fine but the dropdown would
+          // keep showing the old auto-computed value until the next full
+          // reload — same precedence mapTripRow uses server-side.
+          merged.status = merged.statusOverride || computeFlashTechTripStatus(merged.startDate, merged.endDate);
+          return merged;
+        })
+      );
     } catch (err) {
       alert(`Failed to save: ${err instanceof Error ? err.message : "Unknown error"}`);
     } finally {
       setSavingCellKey((k) => (k === key ? null : k));
+    }
+  };
+
+  // Row-level delete directly from the Tracker (separate from handleDelete
+  // above, which only runs from inside the Edit Trip modal) — same confirm
+  // + backend call, but removes the row from local state on success instead
+  // of closing a modal / doing a full reload.
+  const handleDeleteTrip = async (tripId: string) => {
+    if (!window.confirm("Remove this trip from the calendar? Any linked expense rows stay in Expense Tracking, just unlinked.")) return;
+    setDeletingTripId(tripId);
+    try {
+      await deleteFlashTechTrip(tripId);
+      setTrips((prev) => prev.filter((t) => t.id !== tripId));
+    } catch (err) {
+      alert(`Failed to delete trip: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setDeletingTripId((id) => (id === tripId ? null : id));
     }
   };
 
@@ -1145,9 +1175,11 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
             loading={loading}
             canEdit={canEditTracker}
             savingCellKey={savingCellKey}
+            deletingTripId={deletingTripId}
             uploadingReceiptId={uploadingReceiptId}
             highlightTripId={highlightTripId}
             onPatch={patchTrip}
+            onDelete={handleDeleteTrip}
             onChangeTechnician={handleChangeTechnician}
             onChangeDates={handleChangeDates}
             onUploadReceipt={handleUploadReceipt}
@@ -1901,9 +1933,11 @@ function FlashTechTrackerTable({
   loading,
   canEdit,
   savingCellKey,
+  deletingTripId,
   uploadingReceiptId,
   highlightTripId,
   onPatch,
+  onDelete,
   onChangeTechnician,
   onChangeDates,
   onUploadReceipt,
@@ -1915,10 +1949,12 @@ function FlashTechTrackerTable({
   loading: boolean;
   canEdit: boolean;
   savingCellKey: string | null;
+  deletingTripId: string | null;
   uploadingReceiptId: string | null;
   /** A just-created trip to scroll to and briefly highlight — see handleSave's "jump into the Tracker" follow-through. */
   highlightTripId: string | null;
   onPatch: (tripId: string, field: string, patch: TrackerPatch) => void;
+  onDelete: (tripId: string) => void;
   onChangeTechnician: (tripId: string, technicianProfileId: string | null, technicianName: string) => void;
   onChangeDates: (tripId: string, field: "startDate" | "endDate", value: string) => void;
   onUploadReceipt: (trip: FlashTechTrip, file: File) => void;
@@ -2160,15 +2196,16 @@ function FlashTechTrackerTable({
                 selected={columnFilters[h] || []}
                 onToggleValue={(v) => toggleColumnFilterValue(h, v)}
                 onClear={() => clearColumnFilter(h)}
-                className="last:border-r-0"
               />
             ))}
+            {/* Not a filterable data column — a plain header, rendered outside the generic HEADERS.map loop above. */}
+            <th className="px-2 py-2 text-[10px] font-semibold uppercase tracking-wide last:border-r-0">Actions</th>
           </tr>
         </thead>
         <tbody>
           {filteredTrips.length === 0 && (
             <tr>
-              <td colSpan={HEADERS.length + ALT_HEADERS.length} className="px-4 py-8 text-center text-slate-500">
+              <td colSpan={HEADERS.length + ALT_HEADERS.length + 1} className="px-4 py-8 text-center text-slate-500">
                 No trips match these filters.
               </td>
             </tr>
@@ -2390,7 +2427,7 @@ function FlashTechTrackerTable({
                 <td className="p-0.5 border-r border-white/10">
                   <TrackerSelectCell value={trip.tripType} disabled={!canEdit} options={FLASH_TECH_TRIP_TYPES} onSave={(v) => patch("tripType", { tripType: v as FlashTechTrip["tripType"] })} />
                 </td>
-                <td className="p-0.5">
+                <td className="p-0.5 border-r border-white/10">
                   <select
                     value={trip.status}
                     disabled={!canEdit}
@@ -2404,6 +2441,17 @@ function FlashTechTrackerTable({
                       </option>
                     ))}
                   </select>
+                </td>
+                <td className="p-0.5 text-center">
+                  <button
+                    type="button"
+                    disabled={!canEdit || deletingTripId === trip.id}
+                    onClick={() => onDelete(trip.id)}
+                    title="Delete this trip"
+                    className="inline-flex h-7 w-7 items-center justify-center rounded-md text-slate-400 hover:text-red-300 hover:bg-red-500/10 disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
                 </td>
               </tr>
             );

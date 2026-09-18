@@ -9,6 +9,7 @@
 import { supabase } from "./client";
 import { createNotification } from "./notifications";
 import { LOCATIONS_DATA } from "@/lib/zipCoverage";
+import { INACTIVE_BRANCHES } from "@/lib/locations";
 
 // "training" and "on_hold" added for EOD/EOM hiring reports (0048); "phone_screening",
 // "withdrawn", and "cancelled" added (and "on_hold" removed) by 0221_hr_candidates_status_update.sql.
@@ -1054,15 +1055,17 @@ export async function getEomHiringReport(yearMonth: string): Promise<EodHiringRo
 //     ('terminated','resigned') with employmentStatusDate inside the
 //     period, grouped by the person's CURRENT assigned_branch (or
 //     department if their branch is in the Philippines).
-//   - Warning (Time Card Warning / Employee Error/Manipulation -- both
-//     columns show the same count for now: the Warning Form has no
-//     category distinguishing the two yet, per the user's own call on
-//     this): hr_signable_documents where document_type='warning_form' and
-//     created_at falls inside the period, grouped by the WARNED
-//     EMPLOYEE's (form_data->>employeeId, not whichever signature slot
-//     currently holds recipient_id) CURRENT assigned_branch/department --
-//     explicitly the recipient's own branch, not the sender's, per the
-//     user's own instruction.
+//   - Warning (Time Card Warning / Employee Error/Manipulation -- counted
+//     separately based on the HR-only classification chosen in the
+//     "Preview & Send" panel when the Warning Form was sent,
+//     WarningFormData.warningCategory -- NOT part of the "Reason(s) for
+//     Warning" shown on the document itself; a warning with no category
+//     chosen counts toward neither column): hr_signable_documents
+//     where document_type='warning_form' and created_at falls inside the
+//     period, grouped by the WARNED EMPLOYEE's (form_data->>employeeId,
+//     not whichever signature slot currently holds recipient_id) CURRENT
+//     assigned_branch/department -- explicitly the recipient's own branch,
+//     not the sender's, per the user's own instruction.
 //   - Budget/Sponsored/Others: hr_hiring_report_manual_entries (migration
 //     0273), typed in by hand per (period, section, row).
 //   - New Hire: same count as Hired (no separate source found for it as
@@ -1074,11 +1077,11 @@ export type HiringReportPeriodType = "eod" | "eom";
 export type HiringReportSection = "technician" | "parts_manager" | "philippine_staff";
 
 const PH_BRANCH_SET = new Set(LOCATIONS_DATA.filter((l) => l.isPhilippines).map((l) => l.location));
-// Dallas and Louisville exist in the app's full location list but are
-// explicitly excluded from this report's Technician/US Staff branch rows
-// per the user's own call — not every known branch is a hiring branch.
-const HIRING_REPORT_EXCLUDED_BRANCHES = new Set(["Dallas", "Louisville"]);
-const US_BRANCH_NAMES = LOCATIONS_DATA.filter((l) => !l.isPhilippines && !HIRING_REPORT_EXCLUDED_BRANCHES.has(l.location)).map((l) => l.location).sort();
+// Dallas and Louisville exist in the app's full location list but aren't
+// real active branches — INACTIVE_BRANCHES (src/lib/locations.ts) is the
+// shared source of truth for this exclusion, also used by the Branch
+// Daily Report, so it can't drift into two different Sets over time.
+const US_BRANCH_NAMES = LOCATIONS_DATA.filter((l) => !l.isPhilippines && !INACTIVE_BRANCHES.has(l.location)).map((l) => l.location).sort();
 const PH_DEPARTMENT_DEFAULTS = ["Claims", "CSR", "Tech Support", "PO", "Operation", "IT"];
 // Same real department, different spelling depending on who typed it in —
 // normalized to the canonical PH_DEPARTMENT_DEFAULTS name so "CSR" and
@@ -1101,13 +1104,16 @@ export interface HiringReportRow {
   cvsSentToBm: CvForwardDetail[];
   cvsSentToBmMonthly: CvForwardDetail[];
   terminatedResigned: number;
-  warningCount: number;
+  /** Counted separately per warning_form's warningCategory (HR-only classification, not the document's printed reasons) — a warning with no category chosen counts toward neither column. */
+  timeCardWarningCount: number;
+  employeeErrorManipulationCount: number;
   budget: number | null;
   sponsored: number | null;
   others: number | null;
 }
 
 export interface HiringReportSummary {
+  /** Combined Time Card Warning + Employee Error/Manipulation total — see HiringReportRow for the two counted separately. */
   warning: number;
   terminatedResigned: number;
   daySponsored: number;
@@ -1146,7 +1152,8 @@ function blankHiringReportRow(groupKey: string): HiringReportRow {
     cvsSentToBm: [],
     cvsSentToBmMonthly: [],
     terminatedResigned: 0,
-    warningCount: 0,
+    timeCardWarningCount: 0,
+    employeeErrorManipulationCount: 0,
     budget: null,
     sponsored: null,
     others: null,
@@ -1288,16 +1295,27 @@ export async function getHiringReportSections(periodType: HiringReportPeriodType
   }
 
   // ---- Warning: hr_signable_documents(warning_form), grouped by the WARNED employee's current branch/department ----
+  // Time Card Warning and Employee Error/Manipulation are counted
+  // separately based on the HR-only classification chosen when the
+  // Warning Form was sent (WarningFormData.warningCategory) — not one of
+  // the "Reason(s) for Warning" shown on the printed document. A warning
+  // sent with no category chosen doesn't count toward either column.
   for (const w of warnings) {
     const employeeId = w.form_data?.employeeId;
     const profile = employeeId ? profileById.get(employeeId) : null;
     if (!profile) continue; // no profile to attribute the branch to -- skip rather than guess
-    if (isPhBranch((profile as any).assigned_branch)) {
-      ensure("philippine_staff", normalizePhDepartment((profile as any).department)).warningCount += 1;
-    } else {
-      const section = ((profile as any).role || "").toString().toLowerCase() === "parts_manager" ? "parts_manager" : "technician";
-      ensure(section, (profile as any).assigned_branch || UNSET_LABEL).warningCount += 1;
-    }
+    const category = w.form_data?.warningCategory;
+    const isTimeCard = category === "time_card_warning";
+    const isEmployeeError = category === "employee_error_manipulation";
+    if (!isTimeCard && !isEmployeeError) continue;
+    const row = isPhBranch((profile as any).assigned_branch)
+      ? ensure("philippine_staff", normalizePhDepartment((profile as any).department))
+      : ensure(
+          ((profile as any).role || "").toString().toLowerCase() === "parts_manager" ? "parts_manager" : "technician",
+          (profile as any).assigned_branch || UNSET_LABEL,
+        );
+    if (isTimeCard) row.timeCardWarningCount += 1;
+    if (isEmployeeError) row.employeeErrorManipulationCount += 1;
   }
 
   // ---- Manual entries (Budget/Sponsored/Others) ----
@@ -1315,7 +1333,7 @@ export async function getHiringReportSections(periodType: HiringReportPeriodType
 
   const allRows = [...technician, ...partsManager, ...philippineStaff];
   const summary: HiringReportSummary = {
-    warning: allRows.reduce((s, r) => s + r.warningCount, 0),
+    warning: allRows.reduce((s, r) => s + r.timeCardWarningCount + r.employeeErrorManipulationCount, 0),
     terminatedResigned: allRows.reduce((s, r) => s + r.terminatedResigned, 0),
     daySponsored: allRows.reduce((s, r) => s + (r.sponsored ?? 0), 0),
     budget: allRows.reduce((s, r) => s + (r.budget ?? 0), 0),
@@ -1328,7 +1346,7 @@ export async function getHiringReportSections(periodType: HiringReportPeriodType
 
 // =====================================================================
 // Manual entries (Budget/Sponsored/Others) for the report above --
-// migration 0273.
+// migration 0273/0278.
 // =====================================================================
 
 export interface HiringReportManualEntry {

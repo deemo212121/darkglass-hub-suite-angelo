@@ -1,5 +1,5 @@
 -- =====================================================================
--- 0278 — Company-managed branch cent-pricing for the "Parts Daily
+-- 0287 — Company-managed branch cent-pricing for the "Parts Daily
 -- Report eBAY" feature. Was a hardcoded 14-branch table baked into the
 -- app (each branch's listing price always ends in a fixed cents value,
 -- e.g. Atlanta -> $X.97); now editable from the Assignments tab.
@@ -10,8 +10,8 @@
 -- to make a branch show up, delete one to remove it.
 --
 -- Company-scoped via RLS, company_id auto-stamped from the caller's
--- session — same pattern as ebay_orders/ebay_listings (0274).
--- Run once in the Supabase SQL Editor, after 0277.
+-- session — same pattern as ebay_orders/ebay_listings (0280).
+-- Run once in the Supabase SQL Editor, after 0286.
 -- =====================================================================
 
 create table if not exists ebay_branch_cents (
@@ -39,7 +39,7 @@ drop trigger if exists trg_ebay_branch_cents_stamp on ebay_branch_cents;
 create trigger trg_ebay_branch_cents_stamp before insert or update on ebay_branch_cents
   for each row execute function ebay_branch_cents_stamp();
 
--- ---------- RLS: company-scoped, same pattern as ebay_orders (0274) ----------
+-- ---------- RLS: company-scoped, same pattern as ebay_orders (0280) ----------
 alter table ebay_branch_cents enable row level security;
 alter table ebay_branch_cents force row level security;
 

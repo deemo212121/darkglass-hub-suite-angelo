@@ -421,6 +421,12 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   const [correctionSearch, setCorrectionSearch] = useState("");
   const [correctionStatusFilter, setCorrectionStatusFilter] = useState<"all" | CorrectionStatus>("all");
   const [correctionDepartmentFilter, setCorrectionDepartmentFilter] = useState<string>("all");
+  const [correctionBranchFilter, setCorrectionBranchFilter] = useState<string>("all");
+  // Filters the correction's own workDate (the date the correction is FOR),
+  // not createdAt (when it was submitted) — a correction filed today for a
+  // shift two weeks ago should show up under that shift's date, not today's.
+  const [correctionWorkDateFrom, setCorrectionWorkDateFrom] = useState("");
+  const [correctionWorkDateTo, setCorrectionWorkDateTo] = useState("");
   const [correctionTimecardData, setCorrectionTimecardData] = useState<{ checkIn: string; checkOut: string; mealStart: string; mealEnd: string }>({ checkIn: "", checkOut: "", mealStart: "", mealEnd: "" });
   const [notesData, setNotesData] = useState<Record<string, { content: string; notifyIndividual: boolean; notifyTeamLead: boolean; createdBy: string | null }>>({});
   const [branchRoles, setBranchRoles] = useState<BranchRoles[]>([]);
@@ -1519,29 +1525,71 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   // which stay visible regardless of this filter. Also team-scoped, same
   // as visibleProfiles/visiblePtoRequests above — a manager-tier viewer
   // only ever sees corrections for their own team, never the whole company.
+  //
+  // teamScopedIds itself is a live, name-matched set (p.manager_name ===
+  // viewer's display_name) shared with Daily Attendance/PTO — it crosses
+  // over whenever two managers share a display name, or an employee's
+  // manager_name has drifted since the correction was submitted. Each
+  // correction row instead carries its own managerId, resolved ONCE at
+  // submission time (resolveTeamLeadOrManager, in EmployeeSelfServicePage /
+  // AttendanceMonitoringPage's own submit handler) and never recomputed —
+  // trust that over the live name match whenever it's set, so a manager-tier
+  // viewer only ever sees corrections actually routed to them. Legacy rows
+  // from before managerId was captured (null) still fall back to the
+  // broader name-matched set rather than being hidden outright.
   const filteredCorrections = useMemo(() => {
     const q = correctionSearch.trim().toLowerCase();
     return corrections.filter((c) => {
       if (teamScopedIds !== null && !teamScopedIds.has(c.profileId)) return false;
+      if (teamScopedIds !== null && c.managerId && c.managerId !== myProfileId) return false;
       if (correctionStatusFilter !== "all" && c.status !== correctionStatusFilter) return false;
       if (correctionDepartmentFilter !== "all") {
         const p = allProfileById.get(c.profileId);
         if (!p || profileDepartment(p) !== correctionDepartmentFilter) return false;
       }
+      if (correctionBranchFilter !== "all") {
+        const p = allProfileById.get(c.profileId);
+        if (!p || p.assigned_branch !== correctionBranchFilter) return false;
+      }
+      if (correctionWorkDateFrom && c.workDate < correctionWorkDateFrom) return false;
+      if (correctionWorkDateTo && c.workDate > correctionWorkDateTo) return false;
       if (q && !profileName(c.profileId).toLowerCase().includes(q)) return false;
       return true;
     });
-  }, [corrections, correctionSearch, correctionStatusFilter, correctionDepartmentFilter, profileName, teamScopedIds, allProfileById]);
+  }, [
+    corrections,
+    correctionSearch,
+    correctionStatusFilter,
+    correctionDepartmentFilter,
+    correctionBranchFilter,
+    correctionWorkDateFrom,
+    correctionWorkDateTo,
+    profileName,
+    teamScopedIds,
+    allProfileById,
+    myProfileId,
+  ]);
+  // Pending count among whatever's currently filtered/listed above — not
+  // the whole company's pending total — so it stays meaningful once a
+  // manager/branch/date filter narrows the table down.
+  const correctionPendingCount = useMemo(
+    () => filteredCorrections.filter((c) => c.status === "pending").length,
+    [filteredCorrections]
+  );
 
-  // Correction History panel — same team scoping as filteredCorrections
-  // above, via each history entry's related correction's profileId.
+  // Correction History panel — same team scoping (and the same managerId
+  // preference over the live name-matched set) as filteredCorrections above,
+  // via each history entry's related correction.
   const visibleCorrectionHistory = useMemo(() => {
     if (teamScopedIds === null) return correctionHistory;
     return correctionHistory.filter((h) => {
       const related = corrections.find((c) => c.id === h.correctionId);
-      return related ? teamScopedIds.has(related.profileId) : false;
+      if (!related) return false;
+      if (!teamScopedIds.has(related.profileId)) return false;
+      if (related.managerId && related.managerId !== myProfileId) return false;
+      return true;
     });
-  }, [correctionHistory, corrections, teamScopedIds]);
+  }, [correctionHistory, corrections, teamScopedIds, myProfileId]);
 
   const tabConfig = [
     { id: "corrections", label: "Corrections", Icon: FileText },
@@ -2503,7 +2551,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
 
               <div className="bg-slate-900/50 border border-white/10 rounded-lg p-6 overflow-x-auto">
                 <h2 className="text-lg font-bold text-white mb-4">Attendance Corrections</h2>
-                <div className="grid gap-3 md:grid-cols-3 mb-4">
+                <div className="grid gap-3 md:grid-cols-4 mb-4">
                   <div>
                     <label className="block text-xs text-slate-400 uppercase mb-2">Search Employee</label>
                     <input
@@ -2540,6 +2588,60 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                       ))}
                     </select>
                   </div>
+                  <div>
+                    <label className="block text-xs text-slate-400 uppercase mb-2">Filter by Branch</label>
+                    <select
+                      value={correctionBranchFilter}
+                      onChange={(e) => setCorrectionBranchFilter(e.target.value)}
+                      className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none"
+                    >
+                      <option value="all">All Branches</option>
+                      {locations.map((loc) => (
+                        <option key={loc} value={loc}>{loc}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="md:col-span-2">
+                    <label className="block text-xs text-slate-400 uppercase mb-2">
+                      Filter by Work Date
+                      {(correctionWorkDateFrom || correctionWorkDateTo) && (
+                        <button
+                          type="button"
+                          onClick={() => { setCorrectionWorkDateFrom(""); setCorrectionWorkDateTo(""); }}
+                          className="ml-2 text-blue-400 hover:text-blue-300 normal-case"
+                        >
+                          Clear
+                        </button>
+                      )}
+                    </label>
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="date"
+                        value={correctionWorkDateFrom}
+                        max={correctionWorkDateTo || undefined}
+                        onChange={(e) => setCorrectionWorkDateFrom(e.target.value)}
+                        className="flex-1 min-w-0 bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none"
+                      />
+                      <span className="text-slate-500 text-xs shrink-0">to</span>
+                      <input
+                        type="date"
+                        value={correctionWorkDateTo}
+                        min={correctionWorkDateFrom || undefined}
+                        onChange={(e) => setCorrectionWorkDateTo(e.target.value)}
+                        className="flex-1 min-w-0 bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none"
+                      />
+                    </div>
+                  </div>
+                  <div className="flex items-end justify-end gap-2 md:col-span-2">
+                    <div className="rounded-lg border border-yellow-500/30 bg-yellow-500/10 px-4 py-2 text-sm">
+                      <span className="text-yellow-300/80">Pending: </span>
+                      <span className="font-semibold text-yellow-300">{correctionPendingCount}</span>
+                    </div>
+                    <div className="rounded-lg border border-white/10 bg-slate-800/50 px-4 py-2 text-sm">
+                      <span className="text-slate-400">Listed: </span>
+                      <span className="font-semibold text-white">{filteredCorrections.length}</span>
+                    </div>
+                  </div>
                 </div>
                 <table className="w-full text-sm">
                   <thead>
@@ -2556,7 +2658,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                     {loading ? (
                       <tr><td colSpan={6} className="px-3 py-8 text-center text-slate-400">Loading…</td></tr>
                     ) : filteredCorrections.length === 0 ? (
-                      <tr><td colSpan={6} className="px-3 py-8 text-center text-slate-400">{correctionSearch.trim() || correctionStatusFilter !== "all" || correctionDepartmentFilter !== "all" ? "No correction requests match your search/filter." : "No correction requests yet."}</td></tr>
+                      <tr><td colSpan={6} className="px-3 py-8 text-center text-slate-400">{correctionSearch.trim() || correctionStatusFilter !== "all" || correctionDepartmentFilter !== "all" || correctionBranchFilter !== "all" || correctionWorkDateFrom || correctionWorkDateTo ? "No correction requests match your search/filter." : "No correction requests yet."}</td></tr>
                     ) : filteredCorrections.map((correction) => (
                       <tr key={correction.id} className="border-b border-white/5 hover:bg-white/5 transition">
                         <td className="px-3 py-3 text-white font-medium">
@@ -3115,9 +3217,9 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                 </div>
               </div>
 
-              {/* Action Buttons — the manager reviews first; HR/Accounting only
-                  unlock once the manager has approved, and either one alone
-                  is enough for final approval. */}
+              {/* Action Buttons — Manager, HR, and Accounting can each review
+                  independently at any time (none gated behind another going
+                  first); any 2 of the 3 approving finalizes the request. */}
               {(() => {
               // One level further up — the requester's manager's own
               // manager (a senior manager, in practice), so they can also
@@ -3167,11 +3269,19 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                 )}
                 {!(selectedCorrection.managerStatus === "pending" && canReviewCorrectionStage(selectedCorrection, "manager", myProfileId, role, extraRoles, displayName, correctionRequesterManagersManagerName)) &&
                  !(selectedCorrection.hrStatus === "pending" && canReviewCorrectionStage(selectedCorrection, "hr", myProfileId, role, extraRoles)) &&
-                 !(selectedCorrection.accountingStatus === "pending" && canReviewCorrectionStage(selectedCorrection, "accounting", myProfileId, role, extraRoles)) && (
-                  <p className="text-xs text-slate-500">
-                    {selectedCorrection.managerStatus === "pending" ? "Awaiting manager review." : "Awaiting HR or Accounting review."}
-                  </p>
-                )}
+                 !(selectedCorrection.accountingStatus === "pending" && canReviewCorrectionStage(selectedCorrection, "accounting", myProfileId, role, extraRoles)) && (() => {
+                    const stillPending = [
+                      selectedCorrection.managerStatus === "pending" ? "Manager" : null,
+                      selectedCorrection.hrStatus === "pending" ? "HR" : null,
+                      selectedCorrection.accountingStatus === "pending" ? "Accounting" : null,
+                    ].filter((s): s is string => s !== null);
+                    if (stillPending.length === 0) return null;
+                    return (
+                      <p className="text-xs text-slate-500">
+                        Awaiting {stillPending.join(" / ")} review — any 2 of 3 approvals will finalize it.
+                      </p>
+                    );
+                  })()}
               </div>
               );
               })()}

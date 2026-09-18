@@ -84,7 +84,7 @@ export interface ProfileRow {
   employment_type: "trainee" | "regular";
   /** HR-initiated freeze (migration 0223) — see roleLabels.ts's isSubmoduleAllowedForFrozen. Same best-effort fetch pattern as employment_type; defaults to false. */
   frozen: boolean;
-  /** HR override (migration 0268) — a trainee with this set gets full access to their real role's modules/submodules despite employment_type still being "trainee" (see getProfileForLogin's isTrainee). Same best-effort fetch pattern as employment_type/frozen; defaults to false. */
+  /** HR override (migration 0268/0271) — a trainee with this set gets full access to their real role's modules/submodules despite employment_type still being "trainee" (see getProfileForLogin's isTrainee). Same best-effort fetch pattern as employment_type/frozen; defaults to false. */
   trainee_access_granted: boolean;
   is_active: boolean;
   /** Set by AdminUserManagementPage.tsx's Reset Password actions — see migration 0103. Forces a redirect to /profile until they change it (__root.tsx). */
@@ -140,8 +140,8 @@ export async function getProfileForLogin(firebaseUid: string): Promise<{
     .maybeSingle();
 
   // 42703 = "a selected column doesn't exist" — either migration 0223
-  // (frozen) or 0268 (trainee_access_granted) hasn't been run yet. This runs
-  // on every login, so falling back to the pre-0223/0268 SELECT (both
+  // (frozen) or 0268/0271 (trainee_access_granted) hasn't been run yet. This runs
+  // on every login, so falling back to the pre-0223/0268/0271 SELECT (both
   // default to false) has to work, not just degrade — a broken login for
   // the entire company is a much worse failure than one missing feature.
   if (error?.code === "42703") {
@@ -173,7 +173,7 @@ export async function getProfileForLogin(firebaseUid: string): Promise<{
     workPlan: (data as any).work_plan ?? null,
     branchAccess: (data as any).branch_access ?? null,
     mustChangePassword: (data as any).must_change_password ?? false,
-    // A trainee with trainee_access_granted set (migration 0268, HR's "Grant
+    // A trainee with trainee_access_granted set (migration 0268/0271, HR's "Grant
     // Access" button on Master List's Trainee tab) gets full access to their
     // real role despite employment_type still reading "trainee" — the
     // restriction itself (roleLabels.ts's isModuleAllowedForTrainee) never
@@ -220,7 +220,7 @@ export async function setProfileFrozen(profileId: string, frozen: boolean, actor
 
 /**
  * Grants (or revokes) a trainee's full access to their real role — see
- * migration 0268. Only lifts the access restriction (roleLabels.ts's
+ * migration 0268/0271. Only lifts the access restriction (roleLabels.ts's
  * isModuleAllowedForTrainee/isSubmoduleAllowedForTrainee, via
  * getProfileForLogin's isTrainee); employment_type itself is left alone, so
  * Master List's Employment Status column keeps reading "Trainee" for
@@ -609,7 +609,7 @@ async function fetchCompanyUsersUncached(): Promise<ProfileRow[]> {
     }
   }
 
-  // Same best-effort pattern again — trainee_access_granted (migration 0268) is newer/optional too.
+  // Same best-effort pattern again — trainee_access_granted (migration 0268/0271) is newer/optional too.
   for (const row of rows) row.trainee_access_granted = false;
   if (rows.length > 0) {
     const { data: grantRows, error: grantError } = await supabase
@@ -862,6 +862,8 @@ export async function createCompanyUser(input: {
   workingHours?: number;
   mealMinutes?: number;
   employmentType?: "trainee" | "regular";
+  /** Date.getDay() indices (0=Sunday..6=Saturday) — see AdminUserManagementPage.tsx's DAYS_OF_WEEK_INDEX comment for why this isn't just display position. */
+  offDays?: number[];
 }): Promise<{ uid: string; profileId: string }> {
   // --- 1. Create the Firebase Auth credential on a SECONDARY app ---
   const primaryApp = getApps()[0];
@@ -924,6 +926,7 @@ export async function createCompanyUser(input: {
     po_initials: input.poInitials ?? "",
     required_check_in: input.requiredCheckIn ?? "",
     required_check_out: input.requiredCheckOut ?? "",
+    off_days: input.offDays ?? [],
     working_hours: input.workingHours ?? null,
     meal_minutes: input.mealMinutes ?? null,
     is_active: true,
@@ -988,6 +991,35 @@ export async function getAccountCreatorsByEmail(): Promise<Map<string, { created
     const key = email.trim().toLowerCase();
     if (result.has(key)) continue;
     result.set(key, { createdByName: entry.actorName, createdAt: entry.createdAt });
+  }
+  return result;
+}
+
+/**
+ * Most recent Activate/Deactivate timestamp per profile, sourced from the
+ * User Management Activity Log (module_activity_log) rather than a DB
+ * column — that log has already been recording every real toggle since
+ * handleToggleUserActive started calling logModuleActivity, so this gives
+ * real history for accounts deactivated long before this lookup existed,
+ * not just ones toggled from now on. Unlike user_created's targetId (a
+ * Firebase uid — see getAccountCreatorsByEmail above), user_activated/
+ * user_deactivated's targetId is the Supabase profile id (row.profileId in
+ * AdminUserManagementPage.tsx's handleToggleUserActive), so this keys
+ * straight off profileId with no email/uid indirection needed.
+ */
+export async function getUserStatusChangeDates(): Promise<Map<string, string>> {
+  const result = new Map<string, string>();
+  const [activated, deactivated] = await Promise.all([
+    getModuleActivityLogByAction("user-management", "user_activated"),
+    getModuleActivityLogByAction("user-management", "user_deactivated"),
+  ]);
+  // Merge both action lists and keep only the latest entry seen per
+  // profile — whichever of the two actions happened most recently is when
+  // the account's CURRENT status took effect.
+  const merged = [...activated, ...deactivated].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  for (const entry of merged) {
+    if (!entry.targetId || result.has(entry.targetId)) continue;
+    result.set(entry.targetId, entry.createdAt);
   }
   return result;
 }

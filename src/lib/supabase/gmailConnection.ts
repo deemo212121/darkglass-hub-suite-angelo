@@ -14,7 +14,7 @@
  * "HR_HIRING" (the Hiring panel's own connection, see migration 0249 —
  * connected ahead of an actual candidate-emailing feature, so there's
  * nothing to send through it yet), and "FLASH_TECH" (the Flash Tech
- * page's own connection, see migration 0267 — sends the "a trip just
+ * page's own connection, see migration 0267/0268 — sends the "a trip just
  * turned Open" alert, src/lib/server/flashTechOpenAlerts.ts, to the
  * company's editable recipient address, same as ATTENDANCE only by the
  * server-side cron job, not from any client action here).

@@ -40,7 +40,7 @@
  * genuinely-still-pending trips instead of growing forever.
  *
  * Silently does nothing for a company with no FLASH_TECH Gmail connected,
- * or no recipient address configured (migration 0267,
+ * or no recipient address configured (migration 0267/0268,
  * companySettings.ts's getFlashTechOpenAlertEmail) — same tolerance
  * attendanceAlerts.ts's grace-warning emails already have for "nothing to
  * send to".

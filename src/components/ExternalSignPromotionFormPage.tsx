@@ -9,7 +9,7 @@
 import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 import logo from "@/assets/Admin Hub Solutions Logo no Text.png";
-import { captureHtmlToPdfBlob, loadAssetDataUrl } from "@/lib/pdfCapture";
+import { captureHtmlToPdfBlob, loadAssetDataUrl, resolveSignaturesForCapture } from "@/lib/pdfCapture";
 import { buildPromotionFormBodyMarkup, promotionFormStyles, type PromotionFormData, type PromotionSignatureSlot } from "@/lib/promotionFormTemplate";
 import { useSignaturePad } from "@/hooks/useSignaturePad";
 import { SignaturePadControls } from "@/components/SignaturePad";
@@ -89,7 +89,16 @@ export function ExternalSignPromotionFormPage({ docId }: Props) {
     try {
       const signatureBlob = await (await fetch(dataUrl)).blob();
       const signedAt = new Date().toISOString();
-      const captureSignatures = { ...doc.signatures, [doc.recipientSlot]: { name: doc.recipientName ?? "Signed", url: dataUrl, signedAt } };
+      // Every signature (not just this one) needs to be a local data: URL
+      // for capture — see resolveSignaturesForCapture's doc comment for
+      // why an earlier signer's already-uploaded Firebase URL alone
+      // silently fails to render into the composited PDF even though it
+      // displays fine in the live browser preview.
+      const captureSignatures = await resolveSignaturesForCapture(
+        { ...doc.signatures, [doc.recipientSlot]: { name: doc.recipientName ?? "Signed", url: dataUrl, signedAt } },
+        doc.recipientSlot,
+        dataUrl,
+      );
       const pdfBlob = await captureHtmlToPdfBlob(buildPromotionFormBodyMarkup(doc.formData, logoDataUrl, captureSignatures), promotionFormStyles);
 
       const body = new FormData();

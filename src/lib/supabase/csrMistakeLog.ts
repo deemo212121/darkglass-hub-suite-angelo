@@ -1,7 +1,7 @@
 /**
  * CSR Daily Report — the Mistake Log at the bottom of the page (a running,
  * company-wide list of incidents, not scoped to one report date). See
- * migration 0272.
+ * migration 0272/0277.
  */
 
 import { supabase } from "./client";

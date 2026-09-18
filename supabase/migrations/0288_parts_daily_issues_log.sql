@@ -1,5 +1,5 @@
 -- =====================================================================
--- 0279 — Manual "Issues" and "Lost" tally for the Part Daily Report's
+-- 0288 — Manual "Issues" and "Lost" tally for the Part Daily Report's
 -- Overview tab (src/components/ReportPartsDaily.tsx). These aren't
 -- derivable from any existing table — they're a per-branch, per-day
 -- count someone types in by hand (parts lost in the field, issues
@@ -11,8 +11,8 @@
 -- section at the bottom edits one row directly.
 --
 -- Company-scoped via RLS, company_id auto-stamped from the caller's
--- session — same pattern as ebay_branch_daily_notes (0275/0277).
--- Run once in the Supabase SQL Editor, after 0278.
+-- session — same pattern as ebay_branch_daily_notes (0281/0286).
+-- Run once in the Supabase SQL Editor, after 0287.
 -- =====================================================================
 
 create table if not exists parts_daily_issues_log (

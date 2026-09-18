@@ -34,6 +34,11 @@ export function TriageDashboardPage({ mod, sub, companyId }: { mod: ModuleDef; s
   const navigate = useNavigate();
   const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
   const [tab, setTab] = useState<"activity" | "attendance" | "workHours">("activity");
+  // Tracks which tabs have ever been opened this visit, so a tab's first
+  // open still fetches on demand (nothing wasted on tabs the user never
+  // clicks) while every open after that reuses the already-mounted, already-
+  // loaded instance instead of remounting — see the render below.
+  const [visitedTabs, setVisitedTabs] = useState<Set<typeof tab>>(new Set(["activity"]));
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -57,7 +62,7 @@ export function TriageDashboardPage({ mod, sub, companyId }: { mod: ModuleDef; s
           ].map((t) => (
             <button
               key={t.id}
-              onClick={() => setTab(t.id)}
+              onClick={() => { setTab(t.id); setVisitedTabs((prev) => (prev.has(t.id) ? prev : new Set(prev).add(t.id))); }}
               className={`px-4 py-2 border-b-2 transition whitespace-nowrap flex items-center gap-2 text-sm ${tab === t.id ? "border-blue-500 text-blue-300" : "border-transparent text-slate-400 hover:text-slate-300"}`}
             >
               <t.Icon className="h-4 w-4" />
@@ -66,12 +71,28 @@ export function TriageDashboardPage({ mod, sub, companyId }: { mod: ModuleDef; s
           ))}
         </div>
 
-        {tab === "activity" ? (
+        {/* Each tab stays mounted once visited instead of being torn down on
+            switch — DailyActivityPage and ReportAttendanceMonitoring each
+            fire several full-table fetches (getCompanyTickets, the ticket
+            audit log, timecard entries...) on mount, so re-mounting them
+            every time the user flips tabs was refetching all of that from
+            scratch on every click. `hidden` just toggles display: none,
+            keeping each tab's already-loaded state (and its own effects/
+            auto-refresh) alive underneath. A tab that's never been opened
+            is skipped entirely so the page's first paint still only pays
+            for the Activity tab. */}
+        <div hidden={tab !== "activity"}>
           <DailyActivityPage mod={mod} sub={sub} companyId={companyId} filterProfile={isTriageProfileFilter} pendingStatusFilter={isNeedTriageStatus} embedded />
-        ) : tab === "attendance" ? (
-          <ReportAttendanceMonitoring mod={mod} sub={sub} filterProfile={isTriageProfileFilter} groupBy="employee" embedded />
-        ) : (
-          <WorkHoursPanel filterProfile={isTriageProfileFilter} emptyMessage="No active Technical Support employees found." />
+        </div>
+        {visitedTabs.has("attendance") && (
+          <div hidden={tab !== "attendance"}>
+            <ReportAttendanceMonitoring mod={mod} sub={sub} filterProfile={isTriageProfileFilter} groupBy="employee" embedded />
+          </div>
+        )}
+        {visitedTabs.has("workHours") && (
+          <div hidden={tab !== "workHours"}>
+            <WorkHoursPanel filterProfile={isTriageProfileFilter} emptyMessage="No active Technical Support employees found." />
+          </div>
         )}
       </main>
     </div>

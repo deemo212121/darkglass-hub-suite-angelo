@@ -4,7 +4,7 @@
  * Warning/Abs-Em./hr for one person on one date). Everything else on that
  * page (Full Name, Start Date, Month, Sick Day, Vacation Day, team/roster)
  * is fetched live from profiles/employee_info/pto_requests/csr_teams —
- * see migration 0270.
+ * see migration 0270/0275.
  */
 
 import { supabase } from "./client";

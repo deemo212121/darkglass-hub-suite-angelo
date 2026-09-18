@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect, useRef, Fragment } from "react";
 import { createPortal } from "react-dom";
 import { Link, useSearch, useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
-import { ChevronLeft, ChevronDown, ChevronUp, ChevronRight, Plus, Trash2, AlertTriangle, CheckCircle, XCircle, Paperclip, Users, Clock, UserCheck, UserX, UserMinus, Search, Bell, Download, Forward, History, FileText, ClipboardList, Landmark, GripVertical, FileCheck, Link2, Copy, Calendar, Check, Pencil, Filter, Columns3, Mail, PenLine, X, ExternalLink, Loader2, Send, ShieldCheck, GraduationCap, LogOut } from "lucide-react";
+import { ChevronLeft, ChevronDown, ChevronUp, ChevronRight, Plus, Trash2, AlertTriangle, CheckCircle, XCircle, Paperclip, Users, Clock, UserCheck, UserX, UserMinus, Search, Bell, Download, Forward, History, FileText, ClipboardList, Landmark, GripVertical, FileCheck, Link2, Copy, Calendar, Check, Pencil, Filter, Columns3, Mail, PenLine, X, ExternalLink, Loader2, Send, ShieldCheck, GraduationCap, LogOut, PhoneCall } from "lucide-react";
 import { useSignaturePad } from "@/hooks/useSignaturePad";
 import { SignaturePadControls } from "@/components/SignaturePad";
 import { StickyHorizontalScrollbar } from "@/components/StickyHorizontalScrollbar";
@@ -73,6 +73,7 @@ import {
 import { uploadCoeCertificate, uploadWarningForm, uploadPromotionForm, uploadActionPlanForm, uploadTerminationForm, uploadW8benForm, uploadW4Form, uploadW4RForm, uploadI9Form, uploadWageAckForm, uploadCarIqAgreementForm, uploadVehicleAgreementForm, uploadEmployeeConfidentialityForm, uploadMealRestBreakForm, uploadPtoAckForm, uploadPartsResponsibilityForm, uploadMileageFuelForm, uploadLocationConsentForm, uploadDamageForm, uploadContractorDataForm, uploadDirectDepositForm, uploadSubstanceScreeningForm, uploadFlashTechnicianTravelForm, uploadContractorAddendumForm, uploadMasterW2AgreementForm, uploadMasterW2OfficeAgreementForm, uploadMasterPhContractorAgreementForm, uploadMasterW2ExecutiveAgreementForm, uploadSignableDocumentSignature, refreshStorageAuthToken } from "@/lib/firebase/storage";
 import { captureHtmlToPdfBlob, captureHtmlPagesToPdfBlob, loadAssetDataUrl as loadImageDataUrl } from "@/lib/pdfCapture";
 import { downloadSignableDocumentPdf } from "@/lib/downloadSignableDocumentPdf";
+import { repairMultiSignerPdfs, type RepairResult } from "@/lib/repairMultiSignerSignatures";
 import { useSortableSearchTable } from "@/hooks/useSortableSearchTable";
 import { masterW2AgreementStyles, buildMasterW2AgreementBodyMarkup, type MasterW2AgreementFormData } from "@/lib/masterW2AgreementFormTemplate";
 import { masterW2OfficeAgreementStyles, buildMasterW2OfficeAgreementBodyMarkup, type MasterW2OfficeAgreementFormData } from "@/lib/masterW2OfficeAgreementFormTemplate";
@@ -162,6 +163,29 @@ import { logActivity, getActivityLog, activityActionLabel, type HrActivityLogEnt
 import { HrActivityLogPanel } from "@/components/HrActivityLogPage";
 import { InterviewCalendarTab, type InterviewCalendarCandidate } from "@/components/InterviewCalendarTab";
 import { AttachmentPreviewModal } from "@/components/AttachmentPreviewModal";
+import {
+  DEFAULT_COE_BODY_TEMPLATE,
+  COE_BODY_PLACEHOLDERS,
+  coeStyles,
+  renderCoeBodyHtml,
+  buildCoeBodyMarkup,
+  type CoeFormData,
+} from "@/lib/certificateOfEmploymentTemplate";
+// A unified COE Sent History row — merges hr_coe_documents (legacy self-sign,
+// always "signed") and hr_signable_documents certificate_of_employment rows
+// (the send-to-a-signer path, status-aware) into one shape the table and
+// preview modal render without caring which table a row actually came from.
+interface CoeHistoryRow {
+  id: string;
+  employeeName: string;
+  status: "signed" | "awaiting_signature";
+  /** Legacy row: who the finished PDF was sent to. Signable row: who's signing (or signed) it. */
+  withName: string | null;
+  sentByName: string | null;
+  createdAt: string;
+  documentUrl: string | null;
+  source: "legacy" | "signable";
+}
 import { subscribeTableChanges } from "@/lib/supabase/realtime";
 import { getCompanyPtoRequests, ptoYearWindow, ptoDaysUsed, sickYearWindow, sickDaysUsed, reviewPtoStage, canReviewPtoStage, type PtoRequestRow, type PtoType, type PtoStage } from "@/lib/supabase/pto";
 import { getAttendanceNotes, type AttendanceNoteRow } from "@/lib/supabase/attendanceNotes";
@@ -210,29 +234,10 @@ function isAwaitingEmployerStep(doc: { status: string; recipientSlot: string }):
 // logic for its own new/old checklist tabs, so it moved to the shared
 // registry file instead of staying a local-only helper here.
 
-// Certificate of Employment's editable body — the prose paragraphs between
-// the greeting and the signature block (see companySettings.ts's
-// getCompanyCoeBodyTemplate/setCompanyCoeBodyTemplate, migration 0063).
-// Placeholders are substituted in at generation time; this default matches
-// the original hardcoded text exactly, so nothing changes until an Admin
-// edits it. Paragraphs are separated by a blank line.
-const COE_BODY_PLACEHOLDERS = ["honorific", "employeeName", "startDate", "jobTitle", "reason", "he", "his"] as const;
-// This is the free-flowing letter prose only — Admin-editable via "Edit
-// Template" — everything here is plain text/placeholders, no HTML, so
-// editing it never means touching markup. The "For Office Use Only" stamp
-// that follows it on the actual certificate is NOT part of this template —
-// it's a fixed-layout box built directly in buildCoeBodyMarkup from the
-// Generate COE form's own office-use fields (Name/Title/Signature/Number),
-// matching the reference certificate's 2-column layout exactly; letting an
-// Admin freely rearrange that structured stamp via free text isn't
-// meaningful the way editing prose paragraphs is.
-const DEFAULT_COE_BODY_TEMPLATE = `This is to certify that {{employeeName}} has been employed with US IN HOME SERVICES since {{startDate}}.
-
-{{honorific}} {{employeeName}} is currently employed as a {{jobTitle}}. Throughout {{his}} employment, {{he}} has demonstrated professionalism and has remained a valued employee in good standing with our organization.
-
-This certification is issued upon {{his}} request for {{reason}}.
-
-Should you require any additional information or verification regarding {{his}} employment, please do not hesitate to contact us.`;
+// Certificate of Employment's shared template (styles + body markup +
+// default prose + placeholders) now lives in certificateOfEmploymentTemplate.ts
+// — shared with SignCoeFormPage.tsx so the generator and the sign page can
+// never drift into rendering visually different documents.
 
 const PTO_TYPE_LABEL: Record<PtoType, string> = {
   vacation: "Vacation",
@@ -341,7 +346,7 @@ interface Employee {
   status: EmploymentStatus;
   /** Trainee vs Regular — a separate classification from `status` (Account Status) above. See migration 0152. */
   employmentType: "trainee" | "regular";
-  /** HR override (migration 0268) — a trainee with this set gets full access to their real role despite employmentType still being "trainee". See users.ts's setTraineeAccessGranted. */
+  /** HR override (migration 0268/0271) — a trainee with this set gets full access to their real role despite employmentType still being "trainee". See users.ts's setTraineeAccessGranted. */
   traineeAccessGranted: boolean;
   /** profiles.tier_level (migration 0162) — same field Staff List's own "Tier Level" tab edits; Current Technicians' own column here just narrows the dropdown to Tier 1/2/3. */
   tierLevel: string | null;
@@ -1818,7 +1823,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // documentVerified's own manual check/X toggle in the table body.
   const [hiringDocumentVerifiedFilter, setHiringDocumentVerifiedFilter] = useState<HiringTriState>("all");
   const [hiringScreeningDateFilter, setHiringScreeningDateFilter] = useState<Set<string>>(new Set());
-  const [hiringInterviewDateFilter, setHiringInterviewDateFilter] = useState<HiringTriState>("all");
+  const [hiringInterviewDateFilter, setHiringInterviewDateFilter] = useState<Set<string>>(new Set());
   // Screening Date column sort — null (default) leaves candidates in their
   // natural load order; clicking the header cycles null -> desc (soonest/
   // most-recent screening date first) -> asc -> null again. Undated
@@ -1828,6 +1833,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [hiringScreeningDateSortDir, setHiringScreeningDateSortDir] = useState<"asc" | "desc" | null>(null);
   const cycleHiringScreeningDateSort = () => {
     setHiringScreeningDateSortDir((cur) => (cur === null ? "desc" : cur === "desc" ? "asc" : null));
+  };
+  // Same sort behavior as Screening Date above, independent toggle.
+  const [hiringInterviewDateSortDir, setHiringInterviewDateSortDir] = useState<"asc" | "desc" | null>(null);
+  const cycleHiringInterviewDateSort = () => {
+    setHiringInterviewDateSortDir((cur) => (cur === null ? "desc" : cur === "desc" ? "asc" : null));
   };
 
   // Column visibility (persisted) — Candidate/Actions always show; the rest
@@ -2344,6 +2354,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     master_w2_office_agreement: "masterW2OfficeAgreement",
     master_ph_contractor_agreement: "masterPhContractorAgreement",
     master_w2_executive_agreement: "masterW2ExecutiveAgreement",
+    certificate_of_employment: "coe",
   };
 
   // Forms popup — checkbox list of every SignableDocumentType, letting HR
@@ -2636,6 +2647,14 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     const labels = isoDates.map((iso) => new Date(iso + "T00:00:00").toLocaleDateString());
     return visibleCandidates.some((c) => !c.screeningDate) ? [...labels, "No date"] : labels;
   }, [visibleCandidates]);
+  // Same checklist-of-actual-dates convention as Screening Date above.
+  const hiringInterviewDateLabel = (c: Candidate): string =>
+    c.interviewDate ? new Date(c.interviewDate + "T00:00:00").toLocaleDateString() : "No date";
+  const hiringInterviewDateOptions = useMemo(() => {
+    const isoDates = Array.from(new Set(visibleCandidates.filter((c) => c.interviewDate).map((c) => c.interviewDate as string))).sort();
+    const labels = isoDates.map((iso) => new Date(iso + "T00:00:00").toLocaleDateString());
+    return visibleCandidates.some((c) => !c.interviewDate) ? [...labels, "No date"] : labels;
+  }, [visibleCandidates]);
 
   // Search/Status filters narrow what the table shows — KPI tiles and the
   // tab badge count stay based on visibleCandidates (unfiltered) above.
@@ -2690,8 +2709,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     if (hiringScreeningDateFilter.size > 0) {
       result = result.filter((c) => hiringScreeningDateFilter.has(hiringScreeningDateLabel(c)));
     }
-    if (hiringInterviewDateFilter !== "all") {
-      result = result.filter((c) => (hiringInterviewDateFilter === "has" ? !!c.interviewDate : !c.interviewDate));
+    if (hiringInterviewDateFilter.size > 0) {
+      result = result.filter((c) => hiringInterviewDateFilter.has(hiringInterviewDateLabel(c)));
     }
     if (hiringScreeningDateSortDir) {
       const dir = hiringScreeningDateSortDir === "asc" ? 1 : -1;
@@ -2700,6 +2719,15 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         if (!a.screeningDate) return 1; // undated always last, either direction
         if (!b.screeningDate) return -1;
         return dir * a.screeningDate.localeCompare(b.screeningDate);
+      });
+    }
+    if (hiringInterviewDateSortDir) {
+      const dir = hiringInterviewDateSortDir === "asc" ? 1 : -1;
+      result = [...result].sort((a, b) => {
+        if (!a.interviewDate && !b.interviewDate) return 0;
+        if (!a.interviewDate) return 1; // undated always last, either direction
+        if (!b.interviewDate) return -1;
+        return dir * a.interviewDate.localeCompare(b.interviewDate);
       });
     }
     return result;
@@ -2720,6 +2748,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     hiringScreeningDateFilter,
     hiringInterviewDateFilter,
     hiringScreeningDateSortDir,
+    hiringInterviewDateSortDir,
     employeeEmailSet,
   ]);
 
@@ -2744,6 +2773,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const kpi = useMemo(() => ({
     candidates: visibleCandidates.length,
     applied: visibleCandidates.filter((c) => c.status === "applied").length,
+    attempt: visibleCandidates.filter((c) => c.status === "attempt").length,
     scheduled: visibleCandidates.filter((c) => c.status === "interviewing").length,
     training: visibleCandidates.filter((c) => c.status === "training").length,
     hired: visibleCandidates.filter((c) => c.status === "hired").length,
@@ -2929,10 +2959,14 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     authorizedRepPhone: "800-779-3579",
     officeUseName: "",
     officeUseTitle: "",
-    officeUseSignature: "",
     officeUseNumber: "800-779-3579",
   });
   const [coeGenerating, setCoeGenerating] = useState(false);
+  // Same type-a-cursive-signature/draw pad every other document's employer/
+  // HR signature uses (e.g. wageAckEmployerSigPad below) — was a plain
+  // "typed name as text" input before, the only signature on any generated
+  // HR document that didn't actually look like a signature.
+  const coeOfficeUseSigPad = useSignaturePad({ width: 260, height: 70 });
   const updateCoeField = (field: keyof typeof coeForm, value: string) =>
     setCoeForm((prev) => ({ ...prev, [field]: value }));
 
@@ -2959,17 +2993,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       setCoeTemplateSaving(false);
     }
   };
-  /** Substitutes {{placeholders}} into the (already-escaped) template text and wraps blank-line-separated paragraphs in <p> tags. */
-  const renderCoeBodyHtml = (template: string, values: Record<string, string>): string => {
-    const escaped = escapeHtml(template);
-    const substituted = escaped.replace(/\{\{(\w+)\}\}/g, (_, key: string) => values[key] ?? "");
-    return substituted
-      .split(/\n\s*\n/)
-      .map((para) => para.trim())
-      .filter(Boolean)
-      .map((para) => `<p>${para.replace(/\n/g, "<br/>")}</p>`)
-      .join("\n");
-  };
   // Employee Name, Job Title, and Authorized Representative are all
   // typeable filters — the input's value doubles as both the filter query
   // and the field's final text (so a name/title not in either suggestion
@@ -2978,7 +3001,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [coeEmployeeNameDropdownOpen, setCoeEmployeeNameDropdownOpen] = useState(false);
   const filteredCoeEmployeeOptions = (query: string) => {
     const q = query.trim().toLowerCase();
-    const sorted = [...employees].sort((a, b) => a.name.localeCompare(b.name));
+    const sorted = employees.filter((e) => e.status !== "inactive").sort((a, b) => a.name.localeCompare(b.name));
     return q ? sorted.filter((e) => e.name.toLowerCase().includes(q)) : sorted;
   };
 
@@ -3020,98 +3043,16 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     return q ? candidates.filter((e) => e.name.toLowerCase().includes(q)) : candidates;
   };
 
-  // CSS shared by both the print-window document and the live in-app
-  // preview (rendered via dangerouslySetInnerHTML so both paths — download
-  // and "capture this exact DOM node for sending" — stay pixel-identical).
-  const coeStyles = `
-    .coe-container * { margin: 0; padding: 0; box-sizing: border-box; }
-    .coe-container { width: 816px; min-height: 1056px; background: white; padding: 96px; position: relative; font-family: Arial, Helvetica, sans-serif; color: #1f2937; }
-    .coe-container .header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 10px; }
-    .coe-container .header img.logo { width: 115px; height: 115px; object-fit: contain; }
-    .coe-container .header img.ribbon { width: 260px; height: auto; }
-    .coe-container h1 { text-align: center; font-size: 20px; letter-spacing: 0.3px; margin-bottom: 22px; }
-    .coe-container p { font-size: 13.5px; line-height: 1.3; margin-bottom: 17px; text-align: justify; }
-    .coe-container .date-line { margin-bottom: 17px; }
-    .coe-container .sign-block { margin-top: 4px; }
-    .coe-container .sign-block p { text-align: left; margin-bottom: 2px; }
-    .coe-container .sign-line { margin-bottom: 6px; font-weight: 600; }
-    .coe-container .office-use { margin-top: 58px; }
-    .coe-container .office-use-rule { border: none; border-top: 1.5px solid #9ca3af; margin: 0 0 14px; }
-    .coe-container .office-use-rule.bottom { margin: 14px 0 0; }
-    .coe-container .office-use p { font-size: 13.5px; line-height: 1.3; margin-bottom: 8px; text-align: left; }
-    .coe-container .office-use-heading { font-weight: 700; margin-bottom: 10px; }
-    .coe-container .office-use .row { display: flex; gap: 90px; align-items: flex-start; margin-bottom: 8px; }
-    .coe-container .office-use .row p { margin-bottom: 8px; }
-    .coe-container .office-use-col:last-child p { margin-bottom: 0; }
-    .coe-container .office-use u { text-decoration: underline; font-style: italic; }
-    .coe-container .footer-wrap { margin-top: 70px; }
-    .coe-container .footer-graphic img { display: block; width: 100%; height: auto; }
-  `;
-
-  const buildCoeBodyMarkup = (logoDataUrl: string, ribbonDataUrl: string, footerDataUrl: string) => {
-    const f = coeForm;
-    const blank = (v: string) => (v.trim() ? escapeHtml(v) : "&nbsp;");
-    // "Ms."/"Mrs." both read as female for pronoun purposes; anything else
-    // (including "Mr.") defaults to male since it's the only other option
-    // in the Honorific dropdown.
-    const isFemale = f.honorific === "Ms." || f.honorific === "Mrs.";
-    const values = {
-      honorific: blank(f.honorific),
-      employeeName: blank(f.employeeName),
-      startDate: blank(f.employeeStartDate ? formatDateOnlyLong(f.employeeStartDate) : ""),
-      jobTitle: blank(f.jobTitle),
-      reason: blank(f.reason),
-      he: isFemale ? "she" : "he",
-      his: isFemale ? "her" : "his",
-    };
-    return `
-      <div class="coe-container">
-        <div class="header">
-          ${logoDataUrl ? `<img class="logo" src="${logoDataUrl}" alt="US In Home Services" />` : `<div style="font-weight:800;font-size:14px;color:#1e3a8a;max-width:120px;">US IN HOME SERVICES</div>`}
-          ${ribbonDataUrl ? `<img class="ribbon" src="${ribbonDataUrl}" alt="" />` : ""}
-        </div>
-
-        <h1>CERTIFICATE OF EMPLOYMENT<br/>US IN HOME SERVICES</h1>
-
-        <p class="date-line">Date: ${escapeHtml(new Date().toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" }))}</p>
-
-        <p>To Whom It May Concern,</p>
-
-        ${renderCoeBodyHtml(coeBodyTemplate, values)}
-
-        <div class="sign-block">
-          <p>Sincerely,</p>
-          <p class="sign-line">${blank(f.authorizedRep)}</p>
-          <p>Authorized Representative</p>
-          <p>US IN HOME SERVICES</p>
-          <p>Email: ${blank(f.authorizedRepEmail)}</p>
-          <p>Phone: ${blank(f.authorizedRepPhone)}</p>
-        </div>
-
-        <div class="office-use">
-          <hr class="office-use-rule" />
-          <p class="office-use-heading">For Office Use Only:</p>
-          <div class="row">
-            <div class="office-use-col">
-              <p>Name: ${blank(f.officeUseName)}</p>
-              <p>Title: ${blank(f.officeUseTitle)}</p>
-            </div>
-            <div class="office-use-col">
-              <p>Signature: <u>${blank(f.officeUseSignature)}</u></p>
-            </div>
-          </div>
-          <p>Contact Number: ${blank(f.officeUseNumber)}</p>
-          <hr class="office-use-rule bottom" />
-        </div>
-
-        <div class="footer-wrap">
-          <div class="footer-graphic">
-            ${footerDataUrl ? `<img src="${footerDataUrl}" alt="" />` : ""}
-          </div>
-        </div>
-      </div>
-    `;
-  };
+  // Thin wrapper keeping every existing call site's signature unchanged —
+  // the real markup lives in certificateOfEmploymentTemplate.ts now, shared
+  // with SignCoeFormPage.tsx.
+  const buildCoeBodyMarkupHere = (logoDataUrl: string, ribbonDataUrl: string, footerDataUrl: string) =>
+    buildCoeBodyMarkup(
+      coeForm as CoeFormData,
+      coeBodyTemplate,
+      { logo: logoDataUrl, ribbon: ribbonDataUrl, footer: footerDataUrl },
+      coeOfficeUseSigPad.toDataURL()
+    );
 
   const buildCoeHtml = (logoDataUrl: string, ribbonDataUrl: string, footerDataUrl: string) => `
     <!DOCTYPE html>
@@ -3131,7 +3072,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         </style>
       </head>
       <body>
-        ${buildCoeBodyMarkup(logoDataUrl, ribbonDataUrl, footerDataUrl)}
+        ${buildCoeBodyMarkupHere(logoDataUrl, ribbonDataUrl, footerDataUrl)}
       </body>
     </html>
   `;
@@ -3147,15 +3088,43 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // sits behind this full-screen overlay, so a failure here would otherwise
   // happen silently as far as the user watching this modal can tell.
   const [coeSendError, setCoeSendError] = useState<string | null>(null);
+  // "self" = today's behavior unchanged (HR signs with the pad below, the
+  // finished PDF goes straight to Recipient). "delegate" = the pad is
+  // skipped; instead the certificate goes out as a real signable document
+  // to a chosen teammate, who signs it on /sign-coe-form and it comes back
+  // to whoever generated it — same round-trip every other document type uses.
+  const [coeSignerMode, setCoeSignerMode] = useState<"self" | "delegate">("self");
+  const [coeSignerId, setCoeSignerId] = useState("");
+  const [coeSignerSearch, setCoeSignerSearch] = useState("");
+  const [coeSignerDropdownOpen, setCoeSignerDropdownOpen] = useState(false);
+  // Same eligibility as the Office Use signer suggestions above — "someone
+  // like a manager", not just anyone in the company.
+  const filteredCoeSignerOptions = (query: string) => {
+    const q = query.trim().toLowerCase();
+    const candidates = employees
+      .filter((e) => [e.position, ...e.extraRoles].some((r) => isCoeOfficeUseEligible(normalizeRole(r))))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    return q ? candidates.filter((e) => e.name.toLowerCase().includes(q)) : candidates;
+  };
 
-  // ── COE Sent History ──
+  // ── COE Sent History ── merges two sources: hr_coe_documents (legacy,
+  // one row per self-sign send — always effectively "Signed") and
+  // hr_signable_documents rows of document_type=certificate_of_employment
+  // (the new "send to someone to sign" path — status-aware).
   const [coeDocuments, setCoeDocuments] = useState<CoeDocument[]>([]);
   const [coeDocumentsLoading, setCoeDocumentsLoading] = useState(true);
-  const [coeDocumentPreview, setCoeDocumentPreview] = useState<CoeDocument | null>(null);
+  const [coeSignableDocs, setCoeSignableDocs] = useState<SignableDocument[]>([]);
+  const [coeDocumentPreview, setCoeDocumentPreview] = useState<CoeHistoryRow | null>(null);
+  const [coeSendToRow, setCoeSendToRow] = useState<CoeHistoryRow | null>(null);
+  const [coeSendToId, setCoeSendToId] = useState("");
+  const [coeSendToSearch, setCoeSendToSearch] = useState("");
+  const [coeSendToDropdownOpen, setCoeSendToDropdownOpen] = useState(false);
   const loadCoeDocuments = async () => {
     setCoeDocumentsLoading(true);
     try {
-      setCoeDocuments(await getCompanyCoeDocuments());
+      const [legacy, signable] = await Promise.all([getCompanyCoeDocuments(), getSignableDocuments("certificate_of_employment")]);
+      setCoeDocuments(legacy);
+      setCoeSignableDocs(signable);
     } catch (err) {
       console.error("Failed to load COE sent history:", err);
     } finally {
@@ -3172,9 +3141,41 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     return subscribeTableChanges("hr_coe_documents", () => void loadCoeDocuments(), `company_id=eq.${companyId}`);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, companyId]);
+  useEffect(() => {
+    if (!ready || !companyId) return;
+    return subscribeTableChanges("hr_signable_documents", () => void loadCoeDocuments(), `company_id=eq.${companyId}`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, companyId]);
+  const coeHistoryRows = useMemo((): CoeHistoryRow[] => {
+    const legacyRows: CoeHistoryRow[] = coeDocuments.map((doc) => ({
+      id: `legacy-${doc.id}`,
+      employeeName: doc.employeeName,
+      status: "signed",
+      withName: doc.recipientName,
+      sentByName: doc.sentByName,
+      createdAt: doc.createdAt,
+      documentUrl: doc.documentUrl,
+      source: "legacy",
+    }));
+    const signableRows: CoeHistoryRow[] = coeSignableDocs.map((doc) => {
+      const formData = doc.formData as unknown as CoeFormData;
+      const signerName = (doc.recipientId && employees.find((e) => e.id === doc.recipientId)?.name) || doc.recipientName || "—";
+      return {
+        id: `signable-${doc.id}`,
+        employeeName: formData?.employeeName || "—",
+        status: doc.status === "signed" || doc.status === "confirmed" ? "signed" : "awaiting_signature",
+        withName: signerName,
+        sentByName: doc.createdByName,
+        createdAt: doc.createdAt,
+        documentUrl: doc.pdfUrl,
+        source: "signable",
+      };
+    });
+    return [...legacyRows, ...signableRows].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }, [coeDocuments, coeSignableDocs, employees]);
   const filteredCoeRecipients = useMemo(() => {
     const q = coeRecipientSearch.trim().toLowerCase();
-    const sorted = [...employees].sort((a, b) => a.name.localeCompare(b.name));
+    const sorted = employees.filter((e) => e.status !== "inactive").sort((a, b) => a.name.localeCompare(b.name));
     if (!q) return sorted;
     return sorted.filter(
       (e) => e.name.toLowerCase().includes(q) || (ROLE_LABELS[normalizeRole(e.position)] ?? e.position).toLowerCase().includes(q)
@@ -3192,6 +3193,9 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       setCoeImages({ logo: logoDataUrl, ribbon: ribbonDataUrl, footer: footerDataUrl });
       setCoeRecipientId("");
       setCoeRecipientSearch("");
+      setCoeSignerMode("self");
+      setCoeSignerId("");
+      setCoeSignerSearch("");
       setCoeSendError(null);
       setCoePreviewOpen(true);
     } finally {
@@ -3208,7 +3212,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     setCoeSending(true);
     setCoeSendError(null);
     try {
-      const pdfBlob = await captureHtmlToPdfBlob(buildCoeBodyMarkup(coeImages.logo, coeImages.ribbon, coeImages.footer), coeStyles);
+      const pdfBlob = await captureHtmlToPdfBlob(buildCoeBodyMarkupHere(coeImages.logo, coeImages.ribbon, coeImages.footer), coeStyles);
 
       const employeeLabel = coeForm.employeeName.trim() || "Certificate";
       const url = await uploadCoeCertificate(companyId ?? "", employeeLabel, pdfBlob);
@@ -3252,6 +3256,81 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
 
+  // "Send to someone to sign first" — the certificate goes out unsigned as a
+  // real signable document instead of a finished PDF; the chosen teammate
+  // signs it on /sign-coe-form/$docId and it comes straight back to whoever
+  // generated it (see SignCoeFormPage.tsx), same round-trip every other
+  // document type in this app already uses.
+  const handleSendCoeToSigner = async () => {
+    if (!coeSignerId || !uid) return;
+    setCoeSending(true);
+    setCoeSendError(null);
+    try {
+      const myProfileId = await getMyProfileId(uid);
+      if (!myProfileId) throw new Error("Could not resolve your profile.");
+      const employeeLabel = coeForm.employeeName.trim() || "Certificate";
+
+      const doc = await createSignableDocument({
+        documentType: "certificate_of_employment",
+        formData: { ...coeForm, bodyTemplate: coeBodyTemplate } as unknown as Record<string, any>,
+        recipientId: coeSignerId,
+        recipientSlot: "manager",
+        pdfUrl: "",
+      });
+
+      const thread = await getOrCreateDmThread(myProfileId, coeSignerId);
+      const fillLink = `${getAppUrl()}/sign-coe-form/${doc.id}`;
+      const signerName = employees.find((e) => e.id === coeSignerId)?.name;
+      await sendMessage({
+        dmThreadId: thread.id,
+        senderId: myProfileId,
+        senderName: displayName || "HR",
+        body: `📄 Certificate of Employment for ${employeeLabel} needs your signature: [Sign here](${fillLink})`,
+      });
+
+      void logActivity({ action: "coe_sent", targetType: "employee", targetLabel: employeeLabel, details: { to: signerName ?? "", forSignature: true } });
+      void loadCoeDocuments();
+
+      setCoePreviewOpen(false);
+      setCoeSignerId("");
+      setCoeSignerSearch("");
+    } catch (err) {
+      setCoeSendError(err instanceof Error ? err.message : "Failed to send for signature.");
+    } finally {
+      setCoeSending(false);
+    }
+  };
+
+  // "Send" on a Sent History row — DMs the already-finished PDF (self-signed
+  // or come back from a signer) to whoever actually needs the certificate
+  // (the employee, a visa office, etc.) — distinct from the sign-routing
+  // step above, and usable any time after a row reaches "signed".
+  const [coeFinalSending, setCoeFinalSending] = useState(false);
+  const handleSendCoeFinalPdf = async () => {
+    if (!coeSendToRow?.documentUrl || !uid || !coeSendToId) return;
+    setCoeFinalSending(true);
+    try {
+      const myProfileId = await getMyProfileId(uid);
+      if (!myProfileId) throw new Error("Could not resolve your profile.");
+      const thread = await getOrCreateDmThread(myProfileId, coeSendToId);
+      const filename = `Certificate of Employment - ${coeSendToRow.employeeName}.pdf`;
+      await sendMessage({
+        dmThreadId: thread.id,
+        senderId: myProfileId,
+        senderName: displayName || "HR",
+        body: `📄 Certificate of Employment — ${coeSendToRow.employeeName}: [${filename}](${coeSendToRow.documentUrl})`,
+      });
+      void logActivity({ action: "coe_sent", targetType: "employee", targetLabel: coeSendToRow.employeeName, details: { to: employees.find((e) => e.id === coeSendToId)?.name ?? "" } });
+      setCoeSendToRow(null);
+      setCoeSendToId("");
+      setCoeSendToSearch("");
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Failed to send certificate.");
+    } finally {
+      setCoeFinalSending(false);
+    }
+  };
+
   // ── Generate Employee Warning Form ──────────────────────────────────
   // Fields mirror the company's real paper form exactly (see
   // warningFormTemplate.ts). "Previous Warning(s) Issued" auto-fills from
@@ -3283,6 +3362,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     description: "",
     correctiveActions: "",
   });
+  // HR-internal classification for the EOD/EOM Hiring Report's separate
+  // "Time Card Warning" / "Employee Error/Manipulation" counters — chosen
+  // by HR in the Preview & Send panel, not part of the printed document's
+  // "Reason(s) for Warning".
+  const [warnWarningCategory, setWarnWarningCategory] = useState<"" | "time_card_warning" | "employee_error_manipulation">("");
   const updateWarnField = <K extends keyof typeof warnForm>(field: K, value: (typeof warnForm)[K]) =>
     setWarnForm((prev) => ({ ...prev, [field]: value }));
   const toggleWarnReason = (key: keyof typeof warnForm.reasons) =>
@@ -3291,7 +3375,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [warnEmployeeDropdownOpen, setWarnEmployeeDropdownOpen] = useState(false);
   const filteredWarnEmployeeOptions = (query: string) => {
     const q = query.trim().toLowerCase();
-    const sorted = [...employees].sort((a, b) => a.name.localeCompare(b.name));
+    const sorted = employees.filter((e) => e.status !== "inactive").sort((a, b) => a.name.localeCompare(b.name));
     return q ? sorted.filter((e) => e.name.toLowerCase().includes(q)) : sorted;
   };
   const selectWarnEmployee = (employee: { id: string; name: string; position: string; branch: string }) => {
@@ -3365,6 +3449,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     recipientSlot,
     recipientName,
     recipientNames: recipientName ? { [recipientSlot]: recipientName } : undefined,
+    warningCategory: warnWarningCategory,
   });
 
   const [warnLogoDataUrl, setWarnLogoDataUrl] = useState("");
@@ -3390,7 +3475,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [warnSentLinkCopied, setWarnSentLinkCopied] = useState(false);
   const filteredWarnRecipients = useMemo(() => {
     const q = warnRecipientSearch.trim().toLowerCase();
-    const sorted = [...employees].sort((a, b) => a.name.localeCompare(b.name));
+    const sorted = employees.filter((e) => e.status !== "inactive").sort((a, b) => a.name.localeCompare(b.name));
     return q ? sorted.filter((e) => e.name.toLowerCase().includes(q) || (ROLE_LABELS[normalizeRole(e.position)] ?? e.position).toLowerCase().includes(q)) : sorted;
   }, [employees, warnRecipientSearch]);
 
@@ -5502,6 +5587,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [masterPhContractorAgreementSendError, setMasterPhContractorAgreementSendError] = useState<string | null>(null);
   const [masterPhContractorAgreementActionBusyId, setMasterPhContractorAgreementActionBusyId] = useState<string | null>(null);
   const [masterPhContractorAgreementActionError, setMasterPhContractorAgreementActionError] = useState<string | null>(null);
+  const [masterPhContractorAgreementIdPreview, setMasterPhContractorAgreementIdPreview] = useState<{ url: string; title: string } | null>(null);
   const [masterPhContractorAgreementDocPreview, setMasterPhContractorAgreementDocPreview] = useState<SignableDocument | null>(null);
   const [masterPhContractorAgreementPreviewExpanded, setMasterPhContractorAgreementPreviewExpanded] = useState(false);
   const [masterPhContractorAgreementPreviewPdfUrl, setMasterPhContractorAgreementPreviewPdfUrl] = useState<string | null>(null);
@@ -10651,6 +10737,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
   const handleSendWarningForm = async () => {
     if (!warnForm.employeeName.trim() || !warnRecipientId || !uid) return;
+    if (!warnWarningCategory) {
+      setWarnSendError("Select a Report Category (Time Card Warning or Employee Error/Manipulation) before sending.");
+      return;
+    }
     setWarnSending(true);
     setWarnSendError(null);
     try {
@@ -10694,6 +10784,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   /** No AHS profile to tie this to, so no DM — the link itself (shown in the same post-send confirmation view) is the only way the recipient finds out, which is why it always lands there instead of just closing. */
   const handleGenerateExternalWarningLink = async () => {
     if (!warnForm.employeeName.trim() || !warnExternalName.trim()) return;
+    if (!warnWarningCategory) {
+      setWarnSendError("Select a Report Category (Time Card Warning or Employee Error/Manipulation) before sending.");
+      return;
+    }
     setWarnSending(true);
     setWarnSendError(null);
     try {
@@ -10746,6 +10840,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       description: "",
       correctiveActions: "",
     });
+    setWarnWarningCategory("");
   };
 
   // ── Sent Warning Forms tracking table actions ──
@@ -10837,7 +10932,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [reassignSentLinkCopied, setReassignSentLinkCopied] = useState(false);
   const filteredReassignRecipients = useMemo(() => {
     const q = reassignRecipientSearch.trim().toLowerCase();
-    const sorted = [...employees].sort((a, b) => a.name.localeCompare(b.name));
+    const sorted = employees.filter((e) => e.status !== "inactive").sort((a, b) => a.name.localeCompare(b.name));
     return q ? sorted.filter((e) => e.name.toLowerCase().includes(q) || (ROLE_LABELS[normalizeRole(e.position)] ?? e.position).toLowerCase().includes(q)) : sorted;
   }, [employees, reassignRecipientSearch]);
 
@@ -10956,7 +11051,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [promoEmployeeDropdownOpen, setPromoEmployeeDropdownOpen] = useState(false);
   const filteredPromoEmployeeOptions = (query: string) => {
     const q = query.trim().toLowerCase();
-    const sorted = [...employees].sort((a, b) => a.name.localeCompare(b.name));
+    const sorted = employees.filter((e) => e.status !== "inactive").sort((a, b) => a.name.localeCompare(b.name));
     return q ? sorted.filter((e) => e.name.toLowerCase().includes(q)) : sorted;
   };
   const selectPromoEmployee = (employee: { id: string; name: string; position: string; branch: string; startDate: string }) => {
@@ -11002,7 +11097,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [promoSentLinkCopied, setPromoSentLinkCopied] = useState(false);
   const filteredPromoRecipients = useMemo(() => {
     const q = promoRecipientSearch.trim().toLowerCase();
-    const sorted = [...employees].sort((a, b) => a.name.localeCompare(b.name));
+    const sorted = employees.filter((e) => e.status !== "inactive").sort((a, b) => a.name.localeCompare(b.name));
     return q ? sorted.filter((e) => e.name.toLowerCase().includes(q) || (ROLE_LABELS[normalizeRole(e.position)] ?? e.position).toLowerCase().includes(q)) : sorted;
   }, [employees, promoRecipientSearch]);
 
@@ -11247,7 +11342,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [promoReassignSentLinkCopied, setPromoReassignSentLinkCopied] = useState(false);
   const filteredPromoReassignRecipients = useMemo(() => {
     const q = promoReassignRecipientSearch.trim().toLowerCase();
-    const sorted = [...employees].sort((a, b) => a.name.localeCompare(b.name));
+    const sorted = employees.filter((e) => e.status !== "inactive").sort((a, b) => a.name.localeCompare(b.name));
     return q ? sorted.filter((e) => e.name.toLowerCase().includes(q) || (ROLE_LABELS[normalizeRole(e.position)] ?? e.position).toLowerCase().includes(q)) : sorted;
   }, [employees, promoReassignRecipientSearch]);
 
@@ -11339,6 +11434,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     branch: "",
     position: "",
     date: todayStr,
+    employeeIsManager: false,
   });
   const updateActionPlanField = <K extends keyof typeof actionPlanForm>(field: K, value: (typeof actionPlanForm)[K]) =>
     setActionPlanForm((prev) => ({ ...prev, [field]: value }));
@@ -11346,7 +11442,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [actionPlanEmployeeDropdownOpen, setActionPlanEmployeeDropdownOpen] = useState(false);
   const filteredActionPlanEmployeeOptions = (query: string) => {
     const q = query.trim().toLowerCase();
-    const sorted = [...employees].sort((a, b) => a.name.localeCompare(b.name));
+    const sorted = employees.filter((e) => e.status !== "inactive").sort((a, b) => a.name.localeCompare(b.name));
     return q ? sorted.filter((e) => e.name.toLowerCase().includes(q)) : sorted;
   };
   const selectActionPlanEmployee = (employee: { id: string; name: string; position: string; branch: string }) => {
@@ -11356,6 +11452,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       employeeName: employee.name,
       position: ROLE_LABELS[normalizeRole(employee.position)] ?? employee.position,
       branch: employee.branch,
+      // Same "MANAGER" substring check as isCoeOfficeUseEligible above —
+      // drives which signer slots may edit the plan/comments, see
+      // ActionPlanFormData.employeeIsManager's doc comment.
+      employeeIsManager: normalizeRole(employee.position).includes("MANAGER"),
     }));
     setActionPlanEmployeeDropdownOpen(false);
   };
@@ -11366,6 +11466,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     branch: actionPlanForm.branch,
     position: actionPlanForm.position,
     date: actionPlanForm.date,
+    employeeIsManager: actionPlanForm.employeeIsManager,
     coachingPlan: "",
     monitoringPlan: "",
     additionalTraining: "",
@@ -11394,7 +11495,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [actionPlanSentLinkCopied, setActionPlanSentLinkCopied] = useState(false);
   const filteredActionPlanRecipients = useMemo(() => {
     const q = actionPlanRecipientSearch.trim().toLowerCase();
-    const sorted = [...employees].sort((a, b) => a.name.localeCompare(b.name));
+    const sorted = employees.filter((e) => e.status !== "inactive").sort((a, b) => a.name.localeCompare(b.name));
     return q ? sorted.filter((e) => e.name.toLowerCase().includes(q) || (ROLE_LABELS[normalizeRole(e.position)] ?? e.position).toLowerCase().includes(q)) : sorted;
   }, [employees, actionPlanRecipientSearch]);
 
@@ -11567,7 +11668,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const handleCloseActionPlanPreview = () => {
     setActionPlanPreviewOpen(false);
     setActionPlanSentLink(null);
-    setActionPlanForm({ employeeId: "", employeeName: "", branch: "", position: "", date: todayStr });
+    setActionPlanForm({ employeeId: "", employeeName: "", branch: "", position: "", date: todayStr, employeeIsManager: false });
   };
 
   // ── Sent Action Plan Forms tracking table actions ──
@@ -11638,7 +11739,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [actionPlanReassignSentLinkCopied, setActionPlanReassignSentLinkCopied] = useState(false);
   const filteredActionPlanReassignRecipients = useMemo(() => {
     const q = actionPlanReassignRecipientSearch.trim().toLowerCase();
-    const sorted = [...employees].sort((a, b) => a.name.localeCompare(b.name));
+    const sorted = employees.filter((e) => e.status !== "inactive").sort((a, b) => a.name.localeCompare(b.name));
     return q ? sorted.filter((e) => e.name.toLowerCase().includes(q) || (ROLE_LABELS[normalizeRole(e.position)] ?? e.position).toLowerCase().includes(q)) : sorted;
   }, [employees, actionPlanReassignRecipientSearch]);
 
@@ -11732,7 +11833,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [terminationEmployeeDropdownOpen, setTerminationEmployeeDropdownOpen] = useState(false);
   const filteredTerminationEmployeeOptions = (query: string) => {
     const q = query.trim().toLowerCase();
-    const sorted = [...employees].sort((a, b) => a.name.localeCompare(b.name));
+    const sorted = employees.filter((e) => e.status !== "inactive").sort((a, b) => a.name.localeCompare(b.name));
     return q ? sorted.filter((e) => e.name.toLowerCase().includes(q)) : sorted;
   };
   const selectTerminationEmployee = (employee: { id: string; name: string }) => {
@@ -11767,7 +11868,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [terminationSentLinkCopied, setTerminationSentLinkCopied] = useState(false);
   const filteredTerminationRecipients = useMemo(() => {
     const q = terminationRecipientSearch.trim().toLowerCase();
-    const sorted = [...employees].sort((a, b) => a.name.localeCompare(b.name));
+    const sorted = employees.filter((e) => e.status !== "inactive").sort((a, b) => a.name.localeCompare(b.name));
     return q ? sorted.filter((e) => e.name.toLowerCase().includes(q) || (ROLE_LABELS[normalizeRole(e.position)] ?? e.position).toLowerCase().includes(q)) : sorted;
   }, [employees, terminationRecipientSearch]);
 
@@ -11844,6 +11945,37 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     if (!doc.pdfUrl) return;
     const employeeName = (doc.formData as unknown as TerminationFormData).employeeName || "termination-form";
     await downloadSignableDocumentPdf(doc.pdfUrl, `Termination Notice - ${employeeName}.pdf`);
+  };
+
+  // ONE-TIME repair for documents signed before resolveSignaturesForCapture
+  // existed — see repairMultiSignerSignatures.ts's doc comment. Remove this
+  // button + handler once confirmed there's nothing left to fix.
+  //
+  // Result is shown in an inline panel (repairResult), not window.alert —
+  // after a page has triggered several alert()/confirm() dialogs in one
+  // session, Chrome silently offers (and the user can accidentally enable)
+  // "Prevent this page from creating additional dialogs", after which
+  // EVERY future alert()/confirm() on that page — including the initial
+  // confirm() this used to gate on — silently no-ops with no visible sign
+  // anything was suppressed, which looks exactly like "the button doesn't
+  // do anything." An always-visible in-page panel can't be silently
+  // dismissed that way, and also survives long enough to actually read
+  // (an alert() covering the whole screen is easy to dismiss by reflex
+  // before registering what it said).
+  const [repairingSignatures, setRepairingSignatures] = useState(false);
+  const [repairResult, setRepairResult] = useState<RepairResult | null>(null);
+  const handleRepairMultiSignerSignatures = async () => {
+    setRepairResult(null);
+    setRepairingSignatures(true);
+    try {
+      const result = await repairMultiSignerPdfs();
+      void loadSentTerminationForms();
+      setRepairResult(result);
+    } catch (err) {
+      setRepairResult({ checked: 0, repaired: [], failed: [{ id: "", type: "termination_form", error: err instanceof Error ? err.message : "Unknown error" }] });
+    } finally {
+      setRepairingSignatures(false);
+    }
   };
 
   const handleCopyTerminationFormLink = async (doc: SignableDocument) => {
@@ -12011,7 +12143,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [terminationReassignSentLinkCopied, setTerminationReassignSentLinkCopied] = useState(false);
   const filteredTerminationReassignRecipients = useMemo(() => {
     const q = terminationReassignRecipientSearch.trim().toLowerCase();
-    const sorted = [...employees].sort((a, b) => a.name.localeCompare(b.name));
+    const sorted = employees.filter((e) => e.status !== "inactive").sort((a, b) => a.name.localeCompare(b.name));
     return q ? sorted.filter((e) => e.name.toLowerCase().includes(q) || (ROLE_LABELS[normalizeRole(e.position)] ?? e.position).toLowerCase().includes(q)) : sorted;
   }, [employees, terminationReassignRecipientSearch]);
 
@@ -12332,12 +12464,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   };
 
   // ── Generate Report: EOD / EOM Hiring Grid — same Position → Branch table
-  // shown on the EOD/EOM Reports tab, exportable independently of whatever
-  // date/month is currently open there. Fetches fresh on demand rather than
-  // reusing that tab's state, since a user may want to export a different
-  // day/month than the one they're currently viewing. ──
-  const [genEodDate, setGenEodDate] = useState(todayStr);
-  const [genEomMonth, setGenEomMonth] = useState(todayStr.slice(0, 7));
+  // shown on the EOD/EOM Reports tab. Exports whatever day/month is
+  // currently open there (eodDate/eomMonth, declared further down) — a
+  // separate export-only date picker used to exist here but just
+  // duplicated that one, letting the two drift out of sync. ──
   const [genEodBusy, setGenEodBusy] = useState<"excel" | "pdf" | null>(null);
   const [genEomBusy, setGenEomBusy] = useState<"excel" | "pdf" | null>(null);
 
@@ -12400,8 +12530,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <td style="${cell}text-align:right;">${r.sponsored ?? "—"}</td>
           <td style="${cell}text-align:right;">${r.hired}</td>
           <td style="${cell}text-align:right;">${r.terminatedResigned}</td>
-          <td style="${cell}text-align:right;">${r.warningCount}</td>
-          <td style="${cell}text-align:right;">${r.warningCount}</td>
+          <td style="${cell}text-align:right;">${r.timeCardWarningCount}</td>
+          <td style="${cell}text-align:right;">${r.employeeErrorManipulationCount}</td>
         </tr>`;
       });
     }
@@ -12500,9 +12630,9 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const downloadEodHiringReport = async (format: "excel" | "pdf") => {
     setGenEodBusy(format);
     try {
-      const sections = await getHiringReportSections("eod", genEodDate);
-      if (format === "excel") downloadHiringGridExcel(sections, "EOD HIRING REPORT", genEodDate, `eod-hiring-report-${genEodDate}.xls`);
-      else await downloadHiringGridPdf(sections, "EOD Hiring Report", genEodDate);
+      const sections = await getHiringReportSections("eod", eodDate);
+      if (format === "excel") downloadHiringGridExcel(sections, "EOD HIRING REPORT", eodDate, `eod-hiring-report-${eodDate}.xls`);
+      else await downloadHiringGridPdf(sections, "EOD Hiring Report", eodDate);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to generate EOD hiring report.");
     } finally {
@@ -12513,9 +12643,9 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const downloadEomHiringReport = async (format: "excel" | "pdf") => {
     setGenEomBusy(format);
     try {
-      const sections = await getHiringReportSections("eom", genEomMonth);
-      if (format === "excel") downloadHiringGridExcel(sections, "EOM HIRING REPORT", genEomMonth, `eom-hiring-report-${genEomMonth}.xls`);
-      else await downloadHiringGridPdf(sections, "EOM Hiring Report", genEomMonth);
+      const sections = await getHiringReportSections("eom", eomMonth);
+      if (format === "excel") downloadHiringGridExcel(sections, "EOM HIRING REPORT", eomMonth, `eom-hiring-report-${eomMonth}.xls`);
+      else await downloadHiringGridPdf(sections, "EOM Hiring Report", eomMonth);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to generate EOM hiring report.");
     } finally {
@@ -13354,7 +13484,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   };
 
   // Grant (or revoke) a trainee's full access to their real role, WITHOUT
-  // touching Employment Status — see migration 0268, users.ts's
+  // touching Employment Status — see migration 0268/0271, users.ts's
   // setTraineeAccessGranted. Takes effect the trainee's next login/reload,
   // same as the Frozen toggle just above.
   const handleToggleTraineeAccessGranted = async (id: string, currentlyGranted: boolean) => {
@@ -14639,22 +14769,22 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     { key: "w8ben", label: "W-8 / W-9 / W-4 / W-4R Forms", count: 0, icon: Landmark },
   ] as const;
 
-  // "New Automation Forms"' own General column — the same first 7 of
-  // automatedFormsGeneralTabs above, minus Form I-9/Manager's Action Plan
-  // Form/W-8ben — those 3 live directly under New Technician Forms instead
-  // (see newAutomationFormsTechnicianTabs below), so listing them here too
-  // would just be a duplicate. Termination Notice Form IS included here —
-  // same "terminationForm" tab key as the old General column, just reachable
-  // from both places, same as every other tab this column reuses as-is.
-  // "combineForms" (Bulk Form Send) gets its own distinct tab here rather
-  // than being reused as-is — the old one's checkbox list is the legacy
-  // 20-item breakdown (11 individual technician forms, etc.); this one
-  // needs to show only the new consolidated form types (Master W-2
-  // Technician/Office Agreement, Master PH Contractor Agreement, W-4, I-9,
-  // Direct Deposit, W-8BEN), grouped by New Technician/New Office/PH Staff
-  // — see the "newCombineForms" render block below.
+  // "New Automation Forms"' own General column — the same automatedFormsGeneralTabs
+  // list above, minus Form I-9/W-8ben — those 2 live directly under New
+  // Technician Forms instead (see newAutomationFormsTechnicianTabs below),
+  // so listing them here too would just be a duplicate. Manager's Action
+  // Plan Form and Termination Notice Form ARE included here — same
+  // "actionPlanForm"/"terminationForm" tab keys as the old General column,
+  // just reachable from both places, same as every other tab this column
+  // reuses as-is. "combineForms" (Bulk Form Send) gets its own distinct tab
+  // here rather than being reused as-is — the old one's checkbox list is
+  // the legacy 20-item breakdown (11 individual technician forms, etc.);
+  // this one needs to show only the new consolidated form types (Master
+  // W-2 Technician/Office Agreement, Master PH Contractor Agreement, W-4,
+  // I-9, Direct Deposit, W-8BEN), grouped by New Technician/New Office/PH
+  // Staff — see the "newCombineForms" render block below.
   const newAutomationFormsGeneralTabs: NavTabDef[] = [
-    ...automatedFormsGeneralTabs.filter((t) => !["i9", "actionPlanForm", "w8ben", "combineForms"].includes(t.key)),
+    ...automatedFormsGeneralTabs.filter((t) => !["i9", "w8ben", "combineForms"].includes(t.key)),
     { key: "newCombineForms", label: "Bulk Form Send", count: 0, icon: Link2 },
   ];
 
@@ -15073,11 +15203,12 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       {activeTab === "hiring" && (
         <>
           <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-1.5">Candidate Pipeline</p>
-          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2 mb-4">
+          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2 mb-4">
             {[
               { label: "Candidates", value: kpi.candidates, color: "text-blue-300", icon: <Users className="h-4 w-4" />, onClick: () => setHiringStatusFilter(new Set()) },
               { label: "Applied", value: kpi.applied, color: "text-blue-300", icon: <FileText className="h-4 w-4" />, onClick: () => setHiringStatusFilter(new Set([CANDIDATE_STATUS_LABEL.applied])) },
               { label: "Scheduled for Interview", value: kpi.scheduled, color: "text-yellow-300", icon: <Clock className="h-4 w-4" />, onClick: () => setHiringStatusFilter(new Set([CANDIDATE_STATUS_LABEL.interviewing])) },
+              { label: "Attempt", value: kpi.attempt, color: "text-orange-300", icon: <PhoneCall className="h-4 w-4" />, onClick: () => setHiringStatusFilter(new Set([CANDIDATE_STATUS_LABEL.attempt])) },
               { label: "Training", value: kpi.training, color: "text-cyan-300", icon: <GraduationCap className="h-4 w-4" />, onClick: () => setHiringStatusFilter(new Set([CANDIDATE_STATUS_LABEL.training])) },
               { label: "Hired", value: kpi.hired, color: "text-green-300", icon: <UserCheck className="h-4 w-4" />, onClick: () => setHiringStatusFilter(new Set([CANDIDATE_STATUS_LABEL.hired])) },
               { label: "Withdrawn", value: kpi.withdrawn, color: "text-orange-300", icon: <LogOut className="h-4 w-4" />, onClick: () => setHiringStatusFilter(new Set([CANDIDATE_STATUS_LABEL.withdrawn])) },
@@ -15366,7 +15497,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                 <input value={hiringSearch} onChange={(e) => setHiringSearch(e.target.value)} placeholder="Name, position, or branch…" className="glass-input text-sm py-1.5 pl-8 pr-3 rounded-md w-56" />
               </div>
             </div>
-            {(hiringSearch || hiringStatusFilter.size > 0 || hiringPositionFilter.size > 0 || hiringBranchFilter.size > 0 || hiringBranchManagerFilter.size > 0 || hiringAssignedInterviewerFilter.size > 0 || hiringOutreachFilter.size > 0 || hiringCvFilter !== "all" || hiringAccountStatusFilter !== "all" || hiringNoteFilter !== "all" || hiringContactFilter !== "all" || hiringDocumentVerifiedFilter !== "all" || hiringScreeningDateFilter.size > 0 || hiringInterviewDateFilter !== "all") && (
+            {(hiringSearch || hiringStatusFilter.size > 0 || hiringPositionFilter.size > 0 || hiringBranchFilter.size > 0 || hiringBranchManagerFilter.size > 0 || hiringAssignedInterviewerFilter.size > 0 || hiringOutreachFilter.size > 0 || hiringCvFilter !== "all" || hiringAccountStatusFilter !== "all" || hiringNoteFilter !== "all" || hiringContactFilter !== "all" || hiringDocumentVerifiedFilter !== "all" || hiringScreeningDateFilter.size > 0 || hiringInterviewDateFilter.size > 0) && (
               <button
                 onClick={() => {
                   setHiringSearch("");
@@ -15382,7 +15513,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                   setHiringContactFilter("all");
                   setHiringDocumentVerifiedFilter("all");
                   setHiringScreeningDateFilter(new Set());
-                  setHiringInterviewDateFilter("all");
+                  setHiringInterviewDateFilter(new Set());
                 }}
                 className="btn text-sm px-3 mb-0.5"
               >
@@ -15674,7 +15805,25 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                 )}
                 {isHiringColVisible("interviewDate") && (
                   <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase relative whitespace-nowrap">
-                    {renderHiringTriStateHeader("interviewDate", "Interview Date", hiringInterviewDateFilter, setHiringInterviewDateFilter, "Has date", "No date")}
+                    {renderHiringMultiSelectHeader("interviewDate", "Interview Date", hiringInterviewDateOptions, hiringInterviewDateFilter, setHiringInterviewDateFilter)}
+                    <button
+                      type="button"
+                      onClick={cycleHiringInterviewDateSort}
+                      title={
+                        hiringInterviewDateSortDir === "desc"
+                          ? "Sorted newest first — click for oldest first"
+                          : hiringInterviewDateSortDir === "asc"
+                          ? "Sorted oldest first — click to clear sort"
+                          : "Sort by Interview Date"
+                      }
+                      className={`ml-1 inline-flex align-middle ${hiringInterviewDateSortDir ? "text-blue-400" : "text-muted-foreground hover:text-slate-300"}`}
+                    >
+                      {hiringInterviewDateSortDir === "asc" ? (
+                        <ChevronUp className="h-3 w-3" />
+                      ) : (
+                        <ChevronDown className="h-3 w-3" />
+                      )}
+                    </button>
                   </th>
                 )}
                 {isHiringColVisible("accountStatus") && (
@@ -18165,7 +18314,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                       </div>
                     )}
                     {!canCorrManagerAct && !canCorrHrAct && !canCorrAccountingAct && (
-                      <span className="text-xs text-muted-foreground">{r.managerStatus === "pending" ? "Awaiting manager" : "Awaiting HR/Accounting"}</span>
+                      <span className="text-xs text-muted-foreground">Awaiting review (any 2 of Manager/HR/Accounting)</span>
                     )}
                   </div>
                   </div>
@@ -18572,12 +18721,12 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <p className="text-[10px] text-muted-foreground mt-0.5">Grouped by Position → Branch. Staff Needed is manually entered and moves ±1 automatically when a candidate is hired or a hire is reversed. Export the grid below for a specific day or month.</p>
         </div>
 
-        <div className="px-4 py-3 border-b border-white/10 bg-white/5 flex flex-wrap items-end gap-6">
-          <div className="flex items-end gap-3">
-            <div className="flex flex-col gap-1">
-              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">EOD Date</label>
-              <input type="date" value={genEodDate} onChange={(e) => setGenEodDate(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
-            </div>
+        <div className="px-4 py-3 border-b border-white/10 bg-white/5 flex flex-wrap items-center gap-6">
+          {/* Both export groups read the single Date/Month picker next to the
+              EOD (Daily)/EOM (Monthly) toggle below — no separate export-only
+              date field here anymore, so there's nothing to fall out of sync. */}
+          <div className="flex items-center gap-3">
+            <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">EOD ({eodDate || "—"})</span>
             <button
               onClick={() => downloadEodHiringReport("excel")}
               disabled={genEodBusy !== null}
@@ -18594,11 +18743,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             </button>
           </div>
 
-          <div className="flex items-end gap-3">
-            <div className="flex flex-col gap-1">
-              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">EOM Month</label>
-              <input type="month" value={genEomMonth} onChange={(e) => setGenEomMonth(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
-            </div>
+          <div className="flex items-center gap-3">
+            <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">EOM ({eomMonth || "—"})</span>
             <button
               onClick={() => downloadEomHiringReport("excel")}
               disabled={genEomBusy !== null}
@@ -18719,8 +18865,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                             <HiringManualCell value={r.sponsored} saving={hiringSectionsSavingKey === `${savingPrefix}sponsored`} onSave={(v) => handleHiringManualEntrySave(sectionKey, r.groupKey, "sponsored", v)} />
                             <td className="px-3 py-2 text-center font-semibold">{r.hired || <span className="text-muted-foreground font-normal">—</span>}</td>
                             <td className="px-3 py-2 text-center">{r.terminatedResigned || <span className="text-muted-foreground">—</span>}</td>
-                            <td className="px-3 py-2 text-center">{r.warningCount || <span className="text-muted-foreground">—</span>}</td>
-                            <td className="px-3 py-2 text-center">{r.warningCount || <span className="text-muted-foreground">—</span>}</td>
+                            <td className="px-3 py-2 text-center">{r.timeCardWarningCount || <span className="text-muted-foreground">—</span>}</td>
+                            <td className="px-3 py-2 text-center">{r.employeeErrorManipulationCount || <span className="text-muted-foreground">—</span>}</td>
                           </tr>
                         );
                       })
@@ -19052,12 +19198,18 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             <input type="text" value={coeForm.officeUseTitle} onChange={(e) => updateCoeField("officeUseTitle", e.target.value)} placeholder="e.g. CSR Manager" className="glass-input text-sm py-1.5 px-3 rounded-md" />
           </div>
           <div className="flex flex-col gap-1">
-            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Signature</label>
-            <input type="text" value={coeForm.officeUseSignature} onChange={(e) => updateCoeField("officeUseSignature", e.target.value)} placeholder="Typed name as signature" className="glass-input text-sm py-1.5 px-3 rounded-md" />
-          </div>
-          <div className="flex flex-col gap-1">
             <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Contact Number</label>
             <input type="text" value={coeForm.officeUseNumber} onChange={(e) => updateCoeField("officeUseNumber", e.target.value)} placeholder="e.g. 800-779-3579" className="glass-input text-sm py-1.5 px-3 rounded-md" />
+          </div>
+          <div className="flex flex-col gap-1 md:col-span-2">
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Signature</label>
+            <canvas
+              {...coeOfficeUseSigPad.canvasProps}
+              className={`bg-white rounded-md border border-white/15 w-[260px] max-w-full self-start ${coeOfficeUseSigPad.canvasProps.className}`}
+            />
+            <div className="mt-1">
+              <SignaturePadControls pad={coeOfficeUseSigPad} />
+            </div>
           </div>
         </div>
 
@@ -19076,14 +19228,15 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       <div className="panel p-0 overflow-hidden mt-4">
         <div className="px-4 py-4 border-b border-white/10">
           <h2 className="font-semibold text-sm">COE Sent History</h2>
-          <p className="text-[10px] text-muted-foreground mt-0.5">Every Certificate of Employment sent from this tab, with a link back to the exact PDF that went out.</p>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Every Certificate of Employment sent from this tab, with a link back to the exact PDF and whether it's been signed yet.</p>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-white/10 bg-white/5">
                 <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Employee</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent To</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Status</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">With</th>
                 <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent By</th>
                 <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Date</th>
                 <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Document</th>
@@ -19091,22 +19244,51 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             </thead>
             <tbody>
               {coeDocumentsLoading ? (
-                <tr><td colSpan={5} className="px-4 py-8 text-center text-muted-foreground text-sm">Loading…</td></tr>
-              ) : coeDocuments.length === 0 ? (
-                <tr><td colSpan={5} className="px-4 py-8 text-center text-muted-foreground text-sm">No COEs sent yet.</td></tr>
+                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">Loading…</td></tr>
+              ) : coeHistoryRows.length === 0 ? (
+                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">No COEs sent yet.</td></tr>
               ) : (
-                coeDocuments.map((doc) => (
-                  <tr key={doc.id} className="border-b border-white/5 hover:bg-white/5">
+                coeHistoryRows.map((row) => (
+                  <tr key={row.id} className="border-b border-white/5 hover:bg-white/5">
                     <td className="px-4 py-3 font-medium">
-                      <button type="button" onClick={() => setCoeDocumentPreview(doc)} className="hover:text-blue-300 hover:underline text-left">
-                        {doc.employeeName}
-                      </button>
+                      {row.documentUrl ? (
+                        <button type="button" onClick={() => setCoeDocumentPreview(row)} className="hover:text-blue-300 hover:underline text-left">
+                          {row.employeeName}
+                        </button>
+                      ) : row.employeeName}
                     </td>
-                    <td className="px-4 py-3 text-muted-foreground">{doc.recipientName ?? "—"}</td>
-                    <td className="px-4 py-3 text-muted-foreground">{doc.sentByName ?? "—"}</td>
-                    <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{new Date(doc.createdAt).toLocaleString()}</td>
                     <td className="px-4 py-3">
-                      <a href={doc.documentUrl} target="_blank" rel="noopener noreferrer" className="btn text-xs px-2.5 py-1.5 flex items-center gap-1 w-fit"><Download className="h-3 w-3" /> View PDF</a>
+                      {row.status === "signed" ? (
+                        <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-green-500/15 text-green-300 border border-green-500/30">
+                          <CheckCircle className="h-3 w-3" /> Signed
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30">
+                          Awaiting Signature
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-muted-foreground">{row.withName ?? "—"}</td>
+                    <td className="px-4 py-3 text-muted-foreground">{row.sentByName ?? "—"}</td>
+                    <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{new Date(row.createdAt).toLocaleString()}</td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-1.5">
+                        {row.documentUrl ? (
+                          <>
+                            <button type="button" onClick={() => setCoeDocumentPreview(row)} className="btn text-xs px-2.5 py-1.5 flex items-center gap-1 w-fit">View PDF</button>
+                            <a href={row.documentUrl} download className="btn text-xs px-2.5 py-1.5 flex items-center gap-1 w-fit"><Download className="h-3 w-3" /> Download</a>
+                            <button
+                              type="button"
+                              onClick={() => { setCoeSendToRow(row); setCoeSendToId(""); setCoeSendToSearch(""); }}
+                              className="btn text-xs px-2.5 py-1.5 flex items-center gap-1 w-fit"
+                            >
+                              Send
+                            </button>
+                          </>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">Waiting on signer…</span>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))
@@ -19118,6 +19300,67 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       </>
       )}
 
+      {/* Send the finished COE PDF to whoever needs it (employee, visa office, etc.) */}
+      {coeSendToRow && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" onClick={() => setCoeSendToRow(null)}>
+          <div className="bg-slate-800 border border-white/10 rounded-lg w-full max-w-sm" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
+              <h3 className="text-sm font-bold">Send Certificate</h3>
+              <button onClick={() => setCoeSendToRow(null)} className="text-muted-foreground hover:text-foreground">✕</button>
+            </div>
+            <div className="p-4 flex flex-col gap-3">
+              <p className="text-xs text-muted-foreground">Send {coeSendToRow.employeeName}'s signed certificate to:</p>
+              <div className="relative">
+                <input
+                  type="text"
+                  value={coeSendToSearch}
+                  onChange={(e) => { setCoeSendToSearch(e.target.value); setCoeSendToId(""); setCoeSendToDropdownOpen(true); }}
+                  onFocus={() => setCoeSendToDropdownOpen(true)}
+                  onBlur={() => setTimeout(() => setCoeSendToDropdownOpen(false), 150)}
+                  placeholder="Search a teammate…"
+                  className="glass-input text-sm py-1.5 px-3 rounded-md w-full"
+                />
+                {coeSendToDropdownOpen && (
+                  <div className="absolute z-10 mt-1 w-full max-h-48 overflow-y-auto rounded-md border border-white/15 bg-slate-800 shadow-lg">
+                    {(() => {
+                      const q = coeSendToSearch.trim().toLowerCase();
+                      const sorted = employees.filter((e) => e.status !== "inactive").sort((a, b) => a.name.localeCompare(b.name));
+                      const opts = q ? sorted.filter((e) => e.name.toLowerCase().includes(q)) : sorted;
+                      return opts.length === 0 ? (
+                        <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+                      ) : (
+                        opts.map((e) => (
+                          <button
+                            key={e.id}
+                            type="button"
+                            onMouseDown={(ev) => ev.preventDefault()}
+                            onClick={() => {
+                              setCoeSendToId(e.id);
+                              setCoeSendToSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`);
+                              setCoeSendToDropdownOpen(false);
+                            }}
+                            className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${coeSendToId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                          >
+                            {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
+                          </button>
+                        ))
+                      );
+                    })()}
+                  </div>
+                )}
+              </div>
+              <button
+                onClick={handleSendCoeFinalPdf}
+                disabled={!coeSendToId || coeFinalSending}
+                className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white flex items-center justify-center gap-1.5 disabled:opacity-50"
+              >
+                {coeFinalSending ? "Sending…" : "Send via Team Messenger"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* COE Sent History — PDF preview, same inline-frame pattern used elsewhere in this dashboard */}
       {coeDocumentPreview && (
         <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => setCoeDocumentPreview(null)}>
@@ -19125,15 +19368,19 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between gap-3">
               <div>
                 <p className="text-sm font-semibold">{coeDocumentPreview.employeeName}</p>
-                <p className="text-[10px] text-muted-foreground">Sent to {coeDocumentPreview.recipientName ?? "—"} — {new Date(coeDocumentPreview.createdAt).toLocaleString()}</p>
+                <p className="text-[10px] text-muted-foreground">With {coeDocumentPreview.withName ?? "—"} — {new Date(coeDocumentPreview.createdAt).toLocaleString()}</p>
               </div>
               <div className="flex items-center gap-2">
-                <a href={coeDocumentPreview.documentUrl} target="_blank" rel="noopener noreferrer" className="btn text-xs px-2.5 py-1.5 flex items-center gap-1"><Download className="h-3 w-3" /> Download</a>
+                {coeDocumentPreview.documentUrl && (
+                  <a href={coeDocumentPreview.documentUrl} target="_blank" rel="noopener noreferrer" className="btn text-xs px-2.5 py-1.5 flex items-center gap-1"><Download className="h-3 w-3" /> Download</a>
+                )}
                 <button type="button" onClick={() => setCoeDocumentPreview(null)} className="btn text-xs px-2.5 py-1.5">Close</button>
               </div>
             </div>
             <div className="flex-1 overflow-hidden bg-slate-950">
-              <iframe src={coeDocumentPreview.documentUrl} title="Certificate of Employment" className="w-full h-full min-h-[70vh] border-0" />
+              {coeDocumentPreview.documentUrl && (
+                <iframe src={coeDocumentPreview.documentUrl} title="Certificate of Employment" className="w-full h-full min-h-[70vh] border-0" />
+              )}
             </div>
           </div>
         </div>
@@ -19201,65 +19448,141 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               <div className="lg:col-span-2 overflow-x-auto bg-white/5 rounded-md p-4 flex justify-center">
                 <div style={{ transform: "scale(0.85)", transformOrigin: "top center" }}>
                   <style dangerouslySetInnerHTML={{ __html: coeStyles }} />
-                  <div ref={coePreviewRef} dangerouslySetInnerHTML={{ __html: buildCoeBodyMarkup(coeImages.logo, coeImages.ribbon, coeImages.footer) }} />
+                  <div ref={coePreviewRef} dangerouslySetInnerHTML={{ __html: buildCoeBodyMarkupHere(coeImages.logo, coeImages.ribbon, coeImages.footer) }} />
                 </div>
               </div>
 
-              {/* Recipient + actions */}
+              {/* Signer mode + recipient/signer + actions */}
               <div className="flex flex-col gap-3">
                 <div>
-                  <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient</label>
-                  <div className="relative mt-1">
-                    <input
-                      type="text"
-                      value={coeRecipientSearch}
-                      onChange={(e) => {
-                        setCoeRecipientSearch(e.target.value);
-                        setCoeRecipientId("");
-                        setCoeRecipientDropdownOpen(true);
-                      }}
-                      onFocus={() => setCoeRecipientDropdownOpen(true)}
-                      onBlur={() => setTimeout(() => setCoeRecipientDropdownOpen(false), 150)}
-                      placeholder="Search a teammate…"
-                      className="glass-input text-sm py-1.5 px-3 rounded-md w-full"
-                    />
-                    {coeRecipientDropdownOpen && (
-                      <div className="absolute z-10 mt-1 w-full max-h-48 overflow-y-auto rounded-md border border-white/15 bg-slate-800 shadow-lg">
-                        {filteredCoeRecipients.length === 0 ? (
-                          <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
-                        ) : (
-                          filteredCoeRecipients.map((e) => (
-                            <button
-                              key={e.id}
-                              type="button"
-                              onMouseDown={(ev) => ev.preventDefault()}
-                              onClick={() => {
-                                setCoeRecipientId(e.id);
-                                setCoeRecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`);
-                                setCoeRecipientDropdownOpen(false);
-                              }}
-                              className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${coeRecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
-                            >
-                              {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
-                            </button>
-                          ))
-                        )}
-                      </div>
-                    )}
+                  <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Who signs the Office Use signature?</label>
+                  <div className="mt-1 grid grid-cols-2 gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setCoeSignerMode("self")}
+                      className={`text-xs px-2.5 py-2 rounded-md border ${coeSignerMode === "self" ? "border-blue-400 bg-blue-500/20 text-blue-200" : "border-white/15 text-muted-foreground hover:bg-white/5"}`}
+                    >
+                      I'll sign it now
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCoeSignerMode("delegate")}
+                      className={`text-xs px-2.5 py-2 rounded-md border ${coeSignerMode === "delegate" ? "border-blue-400 bg-blue-500/20 text-blue-200" : "border-white/15 text-muted-foreground hover:bg-white/5"}`}
+                    >
+                      Send to someone to sign
+                    </button>
                   </div>
                 </div>
+
+                {coeSignerMode === "self" ? (
+                  <div>
+                    <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient</label>
+                    <p className="text-[10px] text-muted-foreground mb-1">Who the finished, signed PDF gets sent to.</p>
+                    <div className="relative mt-1">
+                      <input
+                        type="text"
+                        value={coeRecipientSearch}
+                        onChange={(e) => {
+                          setCoeRecipientSearch(e.target.value);
+                          setCoeRecipientId("");
+                          setCoeRecipientDropdownOpen(true);
+                        }}
+                        onFocus={() => setCoeRecipientDropdownOpen(true)}
+                        onBlur={() => setTimeout(() => setCoeRecipientDropdownOpen(false), 150)}
+                        placeholder="Search a teammate…"
+                        className="glass-input text-sm py-1.5 px-3 rounded-md w-full"
+                      />
+                      {coeRecipientDropdownOpen && (
+                        <div className="absolute z-10 mt-1 w-full max-h-48 overflow-y-auto rounded-md border border-white/15 bg-slate-800 shadow-lg">
+                          {filteredCoeRecipients.length === 0 ? (
+                            <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+                          ) : (
+                            filteredCoeRecipients.map((e) => (
+                              <button
+                                key={e.id}
+                                type="button"
+                                onMouseDown={(ev) => ev.preventDefault()}
+                                onClick={() => {
+                                  setCoeRecipientId(e.id);
+                                  setCoeRecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`);
+                                  setCoeRecipientDropdownOpen(false);
+                                }}
+                                className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${coeRecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                              >
+                                {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
+                              </button>
+                            ))
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <div>
+                    <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Sign as</label>
+                    <p className="text-[10px] text-muted-foreground mb-1">They'll get a link to review, sign, and it'll come back to you.</p>
+                    <div className="relative mt-1">
+                      <input
+                        type="text"
+                        value={coeSignerSearch}
+                        onChange={(e) => {
+                          setCoeSignerSearch(e.target.value);
+                          setCoeSignerId("");
+                          setCoeSignerDropdownOpen(true);
+                        }}
+                        onFocus={() => setCoeSignerDropdownOpen(true)}
+                        onBlur={() => setTimeout(() => setCoeSignerDropdownOpen(false), 150)}
+                        placeholder="Search a manager/HR staffer…"
+                        className="glass-input text-sm py-1.5 px-3 rounded-md w-full"
+                      />
+                      {coeSignerDropdownOpen && (
+                        <div className="absolute z-10 mt-1 w-full max-h-48 overflow-y-auto rounded-md border border-white/15 bg-slate-800 shadow-lg">
+                          {filteredCoeSignerOptions(coeSignerSearch).length === 0 ? (
+                            <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+                          ) : (
+                            filteredCoeSignerOptions(coeSignerSearch).map((e) => (
+                              <button
+                                key={e.id}
+                                type="button"
+                                onMouseDown={(ev) => ev.preventDefault()}
+                                onClick={() => {
+                                  setCoeSignerId(e.id);
+                                  setCoeSignerSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`);
+                                  setCoeSignerDropdownOpen(false);
+                                }}
+                                className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${coeSignerId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                              >
+                                {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
+                              </button>
+                            ))
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
 
                 <div className="flex flex-col gap-2 mt-auto">
                   {coeSendError && (
                     <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{coeSendError}</p>
                   )}
-                  <button
-                    onClick={handleSendCoe}
-                    disabled={!coeRecipientId || coeSending}
-                    className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white flex items-center justify-center gap-1.5 disabled:opacity-50"
-                  >
-                    {coeSending ? "Sending…" : "Send via Team Messenger"}
-                  </button>
+                  {coeSignerMode === "self" ? (
+                    <button
+                      onClick={handleSendCoe}
+                      disabled={!coeRecipientId || coeSending}
+                      className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white flex items-center justify-center gap-1.5 disabled:opacity-50"
+                    >
+                      {coeSending ? "Sending…" : "Send via Team Messenger"}
+                    </button>
+                  ) : (
+                    <button
+                      onClick={handleSendCoeToSigner}
+                      disabled={!coeSignerId || coeSending}
+                      className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white flex items-center justify-center gap-1.5 disabled:opacity-50"
+                    >
+                      {coeSending ? "Sending…" : "Send for Signature"}
+                    </button>
+                  )}
                   <button onClick={handleDownloadCoe} className="btn text-sm px-4 py-2 flex items-center justify-center gap-1.5">
                     <Download className="h-3.5 w-3.5" /> Download PDF instead
                   </button>
@@ -19826,6 +20149,13 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                               Revert
                             </button>
                           )}
+                          <button
+                            type="button"
+                            onClick={() => handleViewPromoForm(doc)}
+                            className="btn text-[10px] px-2 py-1"
+                          >
+                            View
+                          </button>
                           {doc.pdfUrl && (
                             <button
                               type="button"
@@ -20119,10 +20449,42 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
       {/* ── Sent Termination Forms tracking ── */}
       <div className="panel p-0 overflow-hidden mt-4">
-        <div className="px-4 py-4 border-b border-white/10">
-          <h2 className="font-semibold text-sm">Sent Termination Forms</h2>
-          <p className="text-[10px] text-muted-foreground mt-0.5">Track signature status. Confirming finalizes the record as signed; cancelling voids it. Document-only — nothing here changes the employee's Status automatically.</p>
+        <div className="px-4 py-4 border-b border-white/10 flex items-start justify-between gap-3">
+          <div>
+            <h2 className="font-semibold text-sm">Sent Termination Forms</h2>
+            <p className="text-[10px] text-muted-foreground mt-0.5">Track signature status. Confirming finalizes the record as signed; cancelling voids it. Document-only — nothing here changes the employee's Status automatically.</p>
+          </div>
+          {/* ONE-TIME repair for PDFs signed before the multi-signer capture fix — remove once confirmed clean. Sweeps warning/promotion/action-plan/termination forms company-wide, not just this table. */}
+          <button
+            type="button"
+            disabled={repairingSignatures}
+            onClick={handleRepairMultiSignerSignatures}
+            className="btn text-[10px] px-2 py-1 shrink-0 whitespace-nowrap disabled:opacity-50"
+            title="Re-generate the PDF for any signed form (warning/promotion/action-plan/termination) that's missing a signature it should have"
+          >
+            {repairingSignatures ? "Repairing…" : "Repair Missing Signatures"}
+          </button>
         </div>
+        {repairResult && (
+          <div className="mx-4 mt-3 text-xs bg-slate-800/60 border border-white/10 rounded-md px-3 py-2.5">
+            <div className="flex items-center justify-between gap-3">
+              <p className="font-semibold">
+                Checked {repairResult.checked} · Repaired {repairResult.repaired.length} · Failed {repairResult.failed.length}
+              </p>
+              <button type="button" onClick={() => setRepairResult(null)} className="text-muted-foreground hover:text-foreground shrink-0">✕</button>
+            </div>
+            {repairResult.repaired.length > 0 && (
+              <ul className="mt-1.5 text-green-300 list-disc list-inside">
+                {repairResult.repaired.map((r) => <li key={r}>{r}</li>)}
+              </ul>
+            )}
+            {repairResult.failed.length > 0 && (
+              <ul className="mt-1.5 text-red-300 list-disc list-inside">
+                {repairResult.failed.map((f, i) => <li key={f.id || i}>{f.type} {f.id}: {f.error}</li>)}
+              </ul>
+            )}
+          </div>
+        )}
         {terminationActionError && (
           <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{terminationActionError}</p>
         )}
@@ -20215,6 +20577,13 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                               Revert
                             </button>
                           )}
+                          <button
+                            type="button"
+                            onClick={() => handleViewTerminationForm(doc)}
+                            className="btn text-[10px] px-2 py-1"
+                          >
+                            View
+                          </button>
                           {doc.pdfUrl && (
                             <button
                               type="button"
@@ -24567,7 +24936,16 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                         {data.governmentIdPhotoPath ? (
                           <button
                             type="button"
-                            onClick={() => getTechnicianIdDocumentUrl(data.governmentIdPhotoPath!).then((url) => window.open(url, "_blank", "noopener,noreferrer")).catch((err) => setMasterPhContractorAgreementActionError(err instanceof Error ? err.message : "Failed to open ID photo."))}
+                            onClick={() =>
+                              getTechnicianIdDocumentUrl(data.governmentIdPhotoPath!)
+                                .then((url) =>
+                                  setMasterPhContractorAgreementIdPreview({
+                                    url,
+                                    title: `${data.employeeName || recipient?.name || doc.recipientName || "ID Document"} — Government ID`,
+                                  })
+                                )
+                                .catch((err) => setMasterPhContractorAgreementActionError(err instanceof Error ? err.message : "Failed to open ID photo."))
+                            }
                             className="text-blue-300 hover:text-blue-200 underline text-xs"
                           >
                             View ID
@@ -24684,6 +25062,14 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             </div>
           </div>
         </div>
+      )}
+
+      {masterPhContractorAgreementIdPreview && (
+        <AttachmentPreviewModal
+          url={masterPhContractorAgreementIdPreview.url}
+          title={masterPhContractorAgreementIdPreview.title}
+          onClose={() => setMasterPhContractorAgreementIdPreview(null)}
+        />
       )}
 
       {activeTab === "flashTechnicianTravel" && (
@@ -27854,6 +28240,27 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                   </select>
                 </div>
 
+                <div>
+                  <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Report Category (required)</label>
+                  <p className="text-[10px] text-muted-foreground mt-0.5 mb-1">Not shown on the document — only used to count this warning in the HR Hiring Report.</p>
+                  <div className={`flex rounded-md overflow-hidden border text-[11px] leading-tight ${warnWarningCategory ? "border-white/15" : "border-red-500/50"}`}>
+                    <button
+                      type="button"
+                      onClick={() => setWarnWarningCategory("time_card_warning")}
+                      className={`flex-1 px-1.5 py-1 ${warnWarningCategory === "time_card_warning" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground"}`}
+                    >
+                      Time Card Warning
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setWarnWarningCategory("employee_error_manipulation")}
+                      className={`flex-1 px-1.5 py-1 border-l border-white/15 ${warnWarningCategory === "employee_error_manipulation" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground"}`}
+                    >
+                      Employee Error/Manipulation
+                    </button>
+                  </div>
+                </div>
+
                 <div className="flex flex-col gap-2 mt-auto">
                   {warnSendError && (
                     <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{warnSendError}</p>
@@ -27861,7 +28268,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                   {warnSendMode === "teammate" ? (
                     <button
                       onClick={handleSendWarningForm}
-                      disabled={!warnRecipientId || warnSending}
+                      disabled={!warnRecipientId || !warnWarningCategory || warnSending}
                       className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white flex items-center justify-center gap-1.5 disabled:opacity-50"
                     >
                       {warnSending ? "Sending…" : "Send for Signature"}
@@ -27869,7 +28276,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                   ) : (
                     <button
                       onClick={handleGenerateExternalWarningLink}
-                      disabled={!warnExternalName.trim() || warnSending}
+                      disabled={!warnExternalName.trim() || !warnWarningCategory || warnSending}
                       className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white flex items-center justify-center gap-1.5 disabled:opacity-50"
                     >
                       {warnSending ? "Generating…" : "Generate Link"}
@@ -28023,7 +28430,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             </div>
             <div className="px-5 py-3 border-t border-white/10 flex justify-end gap-2">
               {promoViewDoc.pdfUrl && (
-                <a href={promoViewDoc.pdfUrl} target="_blank" rel="noreferrer noopener" className="btn text-sm px-4 py-2">Open PDF</a>
+                <button type="button" onClick={() => handleDownloadPromoFormPdf(promoViewDoc)} className="btn text-sm px-4 py-2">Download PDF</button>
               )}
               <button onClick={() => setPromoViewDoc(null)} className="btn text-sm px-4 py-2">Close</button>
             </div>
@@ -28269,6 +28676,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                   <option value="manager">Manager</option>
                   <option value="senior_manager">Senior Manager</option>
                   <option value="hr_staff">HR/Management</option>
+                  <option value="executive">CEO</option>
                 </select>
                 {actionPlanActionError && (
                   <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2 mb-3">{actionPlanActionError}</p>
@@ -28431,6 +28839,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                     <option value="manager">Manager</option>
                     <option value="senior_manager">Senior Manager</option>
                     <option value="hr_staff">HR/Management</option>
+                    <option value="executive">CEO</option>
                   </select>
                   {actionPlanRecipientSlot === "manager" && (
                     <p className="text-[10px] text-muted-foreground mt-1">The Manager slot is the one who fills in the actual coaching/monitoring/consequences plan — send this one first.</p>
@@ -28605,7 +29014,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             </div>
             <div className="px-5 py-3 border-t border-white/10 flex justify-end gap-2">
               {terminationViewDoc.pdfUrl && (
-                <a href={terminationViewDoc.pdfUrl} target="_blank" rel="noreferrer noopener" className="btn text-sm px-4 py-2">Open PDF</a>
+                <button type="button" onClick={() => handleDownloadTerminationFormPdf(terminationViewDoc)} className="btn text-sm px-4 py-2">Download PDF</button>
               )}
               <button onClick={() => setTerminationViewDoc(null)} className="btn text-sm px-4 py-2">Close</button>
             </div>

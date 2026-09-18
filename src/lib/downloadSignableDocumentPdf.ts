@@ -1,48 +1,52 @@
 /**
- * Downloads/opens a signable-document PDF from Firebase Storage with a
- * friendly filename, working around two real failure modes every
- * "Download PDF" button in ReportHRDaily.tsx used to hit:
+ * Forces a real browser download (save-to-disk) of a signable-document PDF
+ * from Firebase Storage, under a friendly filename — every "Download PDF"
+ * button in ReportHRDaily.tsx uses this.
  *
- * 1. fetch()-ing the file to rename it via a blob needs Storage's CORS
- *    config to include the exact origin the app is being viewed from —
- *    an origin not explicitly allow-listed (confirmed live 2026-09 for a
- *    LAN dev-server origin, fetching real substance-screening PDFs) throws
- *    a CORS error instead of a response.
- * 2. The old fallback called window.open() from inside an async catch
- *    block, AFTER an awaited fetch had already failed — by then the
- *    click's original synchronous "user gesture" window has closed in
- *    most browsers, so that window.open() is itself silently popup-
- *    blocked. Net effect: the download does nothing at all, with no
- *    visible error to the user — this is what "some files aren't showing"
- *    turned out to be.
+ * fetch()-ing the file into a blob and driving an `<a download>` click off
+ * that blob: URL is the only technique that reliably forces a real
+ * download rather than just navigating to/opening the file (a plain
+ * `<a href=... download>` pointed straight at the Firebase Storage URL is
+ * NOT enough — cross-origin `download` attributes are unreliable across
+ * browsers, and Storage doesn't always serve Content-Disposition:
+ * attachment). This never opens a new tab on the success path.
  *
- * Opening a blank tab SYNCHRONOUSLY, before any await, sidesteps #2 (that
- * window.open is still inside the click's gesture and is never blocked),
- * then redirecting that already-open tab to either the renamed blob (if
- * the fetch succeeds) or the original URL (if it doesn't) sidesteps #1 by
- * degrading to "just open the file" instead of downloading nothing.
+ * Fetches through this app's own /api/image-proxy
+ * (src/lib/server/imageProxyBridge.ts) rather than a direct browser
+ * fetch() straight to Firebase Storage — a direct fetch() is a
+ * cross-origin request the browser silently blocks unless the bucket
+ * itself has CORS configured for the exact origin the app is being viewed
+ * from (confirmed NOT configured for a LAN dev-server origin — every
+ * "Download PDF" click there was silently falling straight to the
+ * tab-opening fallback below). The proxy fetches server-to-server, where
+ * browser CORS doesn't apply at all, so the real download works
+ * regardless of which origin the app is viewed from.
+ *
+ * The only case this can't force a download now is the proxy request
+ * itself failing (its own network hiccup, or the server being
+ * unreachable) — rare enough to treat as a true last-resort fallback:
+ * open the file directly so the user can at least view/save it manually,
+ * and tell them if even that gets popup-blocked (browsers only allow
+ * window.open() to bypass popup blocking when it's still considered part
+ * of the original click — by the time an awaited fetch has failed, a
+ * strict browser like Safari may no longer count it as one, so silently
+ * doing nothing here was a real, previously-reported bug).
  */
 export async function downloadSignableDocumentPdf(url: string, filename: string): Promise<void> {
-  const win = window.open("", "_blank", "noopener,noreferrer");
   try {
-    const res = await fetch(url);
+    const res = await fetch(`/api/image-proxy?url=${encodeURIComponent(url)}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const blob = await res.blob();
     const blobUrl = URL.createObjectURL(blob);
-    if (win) {
-      win.location.href = blobUrl;
-    } else {
-      // Popup blocked even for the synchronous open (rare) — fall back to
-      // a same-page forced download, which still works since the fetch
-      // itself succeeded here.
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = filename;
-      a.click();
-      URL.revokeObjectURL(blobUrl);
-    }
+    const a = document.createElement("a");
+    a.href = blobUrl;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(blobUrl);
   } catch {
-    if (win) win.location.href = url;
-    else window.open(url, "_blank", "noopener,noreferrer");
+    const win = window.open(url, "_blank", "noopener,noreferrer");
+    if (!win) {
+      alert("Couldn't open the file automatically — your browser may have blocked the pop-up. Please allow pop-ups for this site and try again.");
+    }
   }
 }

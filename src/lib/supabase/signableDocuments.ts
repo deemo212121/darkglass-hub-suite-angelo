@@ -10,7 +10,7 @@ import {
   pickAuthoritativeDocument,
 } from "@/lib/signableDocumentRegistry";
 
-export type SignableDocumentType = "warning_form" | "w8ben" | "w4" | "w9" | "w4r" | "i9" | "wage_ack" | "car_iq_agreement" | "vehicle_agreement" | "employee_confidentiality" | "meal_rest_break" | "pto_ack" | "parts_responsibility" | "mileage_fuel" | "location_consent" | "damage" | "contractor_data" | "contractor_data_us" | "direct_deposit" | "promotion_form" | "action_plan_form" | "termination_form" | "substance_screening" | "flash_technician_travel" | "nda_form" | "vehicle_use_agreement" | "contractor_addendum" | "master_w2_agreement" | "master_w2_office_agreement" | "master_ph_contractor_agreement" | "master_w2_executive_agreement";
+export type SignableDocumentType = "warning_form" | "w8ben" | "w4" | "w9" | "w4r" | "i9" | "wage_ack" | "car_iq_agreement" | "vehicle_agreement" | "employee_confidentiality" | "meal_rest_break" | "pto_ack" | "parts_responsibility" | "mileage_fuel" | "location_consent" | "damage" | "contractor_data" | "contractor_data_us" | "direct_deposit" | "promotion_form" | "action_plan_form" | "termination_form" | "substance_screening" | "flash_technician_travel" | "nda_form" | "vehicle_use_agreement" | "contractor_addendum" | "master_w2_agreement" | "master_w2_office_agreement" | "master_ph_contractor_agreement" | "master_w2_executive_agreement" | "certificate_of_employment";
 /** "executive" only applies to promotion_form documents (see migration 0166) — every other document type just never uses that slot. */
 export type SignatureSlot = "employee" | "manager" | "senior_manager" | "hr_staff" | "executive";
 export type SignableDocumentStatus = "pending_signature" | "signed" | "confirmed" | "cancelled";
@@ -431,7 +431,21 @@ export async function signDocument(id: string, slot: SignatureSlot, entry: Signa
 export async function updateSignableDocumentPdfUrl(id: string, pdfUrl: string, formData?: Record<string, any>): Promise<void> {
   const update: Record<string, any> = { pdf_url: pdfUrl };
   if (formData) update.form_data = formData;
-  const { error } = await supabase.from("hr_signable_documents").update(update).eq("id", id);
+  // .select("id") so a zero-row result (RLS silently filtered the row out
+  // rather than raising an error — see 0201_hr_signable_documents_admin_
+  // update.sql's own comment on this exact failure mode) is actually
+  // detectable — without it, a blocked write looks identical to a
+  // successful one to the caller, which is exactly what made the
+  // multi-signer PDF repair tool report "Repaired" for documents whose
+  // pdf_url never actually changed.
+  const { data, error } = await supabase.from("hr_signable_documents").update(update).eq("id", id).select("id");
+  if (error) throw new Error(error.message);
+  if (!data || data.length === 0) throw new Error("Couldn't save the regenerated PDF — you may not have permission to update this document.");
+}
+
+/** Patches form_data alone, no pdf_url/regeneration involved — e.g. Staff Form Checklist's "mark this ID photo reviewed" toggle. */
+export async function updateSignableDocumentFormData(id: string, formData: Record<string, any>): Promise<void> {
+  const { error } = await supabase.from("hr_signable_documents").update({ form_data: formData }).eq("id", id);
   if (error) throw new Error(error.message);
 }
 

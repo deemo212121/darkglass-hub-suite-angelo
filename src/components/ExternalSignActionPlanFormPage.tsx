@@ -10,7 +10,7 @@
 import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 import logo from "@/assets/Admin Hub Solutions Logo no Text.png";
-import { captureHtmlToPdfBlob, loadAssetDataUrl } from "@/lib/pdfCapture";
+import { captureHtmlToPdfBlob, loadAssetDataUrl, resolveSignaturesForCapture } from "@/lib/pdfCapture";
 import { buildActionPlanFormBodyMarkup, actionPlanFormStyles, type ActionPlanFormData, type ActionPlanSignatureSlot } from "@/lib/actionPlanFormTemplate";
 import { useSignaturePad } from "@/hooks/useSignaturePad";
 import { SignaturePadControls } from "@/components/SignaturePad";
@@ -33,6 +33,7 @@ const SLOT_LABEL: Record<string, string> = {
   manager: "Manager",
   senior_manager: "Senior Manager",
   hr_staff: "HR/Management",
+  executive: "CEO",
 };
 
 const PLAN_FIELDS = [
@@ -100,7 +101,15 @@ export function ExternalSignActionPlanFormPage({ docId }: Props) {
     return () => { cancelled = true; };
   }, [docId]);
 
-  const isManagerSlot = doc?.recipientSlot === "manager";
+  // Same permission rules as SignActionPlanFormPage.tsx — see
+  // ActionPlanFormData.employeeIsManager's doc comment.
+  const employeeIsManager = !!doc?.formData.employeeIsManager;
+  const canEditPlanItems = doc?.recipientSlot === "manager" || doc?.recipientSlot === "senior_manager";
+  const canEditManagerComments =
+    doc?.recipientSlot === "senior_manager" ||
+    doc?.recipientSlot === "executive" ||
+    (doc?.recipientSlot === "manager" && !employeeIsManager);
+  const canEditAnything = canEditPlanItems || canEditManagerComments;
 
   const handleConfirmSign = async () => {
     if (!doc) return;
@@ -116,17 +125,26 @@ export function ExternalSignActionPlanFormPage({ docId }: Props) {
     setSigning(true);
     setError(null);
     try {
-      const formData: ActionPlanFormData = isManagerSlot ? { ...doc.formData, ...planFields } : doc.formData;
+      const formData: ActionPlanFormData = canEditAnything ? { ...doc.formData, ...planFields } : doc.formData;
 
       const signatureBlob = await (await fetch(dataUrl)).blob();
       const signedAt = new Date().toISOString();
-      const captureSignatures = { ...doc.signatures, [doc.recipientSlot]: { name: doc.recipientName ?? "Signed", url: dataUrl, signedAt } };
+      // Every signature (not just this one) needs to be a local data: URL
+      // for capture — see resolveSignaturesForCapture's doc comment for
+      // why an earlier signer's already-uploaded Firebase URL alone
+      // silently fails to render into the composited PDF even though it
+      // displays fine in the live browser preview.
+      const captureSignatures = await resolveSignaturesForCapture(
+        { ...doc.signatures, [doc.recipientSlot]: { name: doc.recipientName ?? "Signed", url: dataUrl, signedAt } },
+        doc.recipientSlot,
+        dataUrl,
+      );
       const pdfBlob = await captureHtmlToPdfBlob(buildActionPlanFormBodyMarkup(formData, images.logo, images.ribbon, images.footer, captureSignatures), actionPlanFormStyles);
 
       const body = new FormData();
       body.set("signatureFile", signatureBlob, "signature.png");
       body.set("pdfFile", pdfBlob, "signed.pdf");
-      if (isManagerSlot) body.set("formData", JSON.stringify(formData));
+      if (canEditAnything) body.set("formData", JSON.stringify(formData));
       const res = await fetch(`/api/signable-documents?id=${encodeURIComponent(docId)}&action=sign`, { method: "POST", body });
       if (!res.ok) {
         const errBody = await res.json().catch(() => ({}));
@@ -163,35 +181,50 @@ export function ExternalSignActionPlanFormPage({ docId }: Props) {
         ) : (
           <div className="panel p-0 overflow-hidden">
             <div className="px-4 py-4 border-b border-white/10">
-              <h2 className="font-semibold text-sm">Manager's Action Plan Form — {isManagerSlot ? "Input & Signature Requested" : "Signature Requested"}</h2>
+              <h2 className="font-semibold text-sm">Manager's Action Plan Form — {canEditAnything ? "Input & Signature Requested" : "Signature Requested"}</h2>
               <p className="text-[10px] text-muted-foreground mt-0.5">
-                {isManagerSlot
-                  ? "Fill in the action plan below, then sign as Manager."
+                {canEditPlanItems && canEditManagerComments
+                  ? `Fill in the action plan and comments below, then sign as ${SLOT_LABEL[doc.recipientSlot] ?? doc.recipientSlot}${doc.recipientName ? ` (${doc.recipientName})` : ""}.`
+                  : canEditPlanItems
+                  ? `Fill in the action plan below, then sign as ${SLOT_LABEL[doc.recipientSlot] ?? doc.recipientSlot}${doc.recipientName ? ` (${doc.recipientName})` : ""}.`
+                  : canEditManagerComments
+                  ? `Add your comments below, then sign as ${SLOT_LABEL[doc.recipientSlot] ?? doc.recipientSlot}${doc.recipientName ? ` (${doc.recipientName})` : ""}.`
                   : `Review the plan below, then sign as ${SLOT_LABEL[doc.recipientSlot] ?? doc.recipientSlot}${doc.recipientName ? ` (${doc.recipientName})` : ""}.`}
               </p>
             </div>
 
-            {isManagerSlot ? (
+            {canEditAnything ? (
               <div className="p-4 space-y-3">
-                {PLAN_FIELDS.map(({ key, label }) => (
-                  <div key={key} className="flex flex-col gap-1">
-                    <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">{label}</label>
-                    <textarea
-                      value={planFields[key]}
-                      onChange={(e) => setPlanFields((prev) => ({ ...prev, [key]: e.target.value }))}
-                      rows={2}
-                      className="glass-input text-sm py-1.5 px-3 rounded-md resize-y"
-                    />
-                  </div>
-                ))}
+                {PLAN_FIELDS.map(({ key, label }) =>
+                  canEditPlanItems ? (
+                    <div key={key} className="flex flex-col gap-1">
+                      <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">{label}</label>
+                      <textarea
+                        value={planFields[key]}
+                        onChange={(e) => setPlanFields((prev) => ({ ...prev, [key]: e.target.value }))}
+                        rows={2}
+                        className="glass-input text-sm py-1.5 px-3 rounded-md resize-y"
+                      />
+                    </div>
+                  ) : (
+                    <div key={key} className="flex flex-col gap-1">
+                      <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">{label}</label>
+                      <p className="text-sm bg-white/5 border border-white/10 rounded-md px-3 py-1.5 whitespace-pre-wrap">{planFields[key] || "—"}</p>
+                    </div>
+                  )
+                )}
                 <div className="flex flex-col gap-1">
                   <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Manager Comments</label>
-                  <textarea
-                    value={planFields.managerComments}
-                    onChange={(e) => setPlanFields((prev) => ({ ...prev, managerComments: e.target.value }))}
-                    rows={3}
-                    className="glass-input text-sm py-1.5 px-3 rounded-md resize-y"
-                  />
+                  {canEditManagerComments ? (
+                    <textarea
+                      value={planFields.managerComments}
+                      onChange={(e) => setPlanFields((prev) => ({ ...prev, managerComments: e.target.value }))}
+                      rows={3}
+                      className="glass-input text-sm py-1.5 px-3 rounded-md resize-y"
+                    />
+                  ) : (
+                    <p className="text-sm bg-white/5 border border-white/10 rounded-md px-3 py-1.5 whitespace-pre-wrap">{planFields.managerComments || "—"}</p>
+                  )}
                 </div>
               </div>
             ) : (

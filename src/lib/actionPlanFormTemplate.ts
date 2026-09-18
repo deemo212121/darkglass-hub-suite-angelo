@@ -17,13 +17,14 @@
  * down the signature chain, only review and countersign — they never edit
  * the content.
  *
- * Only 3 signature slots (Manager, Senior Manager, HR) — no Employee slot
- * (this document is directed at management, not the employee) and no
- * Executive slot (unlike the Promotion Form) — all three already valid
- * recipient_slot values as of migration 0050, so no new migration needed.
+ * 4 signature slots (Manager, Senior Manager, HR, CEO) — no Employee slot
+ * (this document is directed at management, not the employee). Manager/
+ * Senior Manager/HR are valid recipient_slot values as of migration 0050;
+ * the CEO row reuses the 'executive' slot value widened in migration 0166
+ * for the Promotion Form, so no new migration is needed here either.
  */
 
-export type ActionPlanSignatureSlot = "manager" | "senior_manager" | "hr_staff";
+export type ActionPlanSignatureSlot = "manager" | "senior_manager" | "hr_staff" | "executive";
 
 export interface ActionPlanFormData {
   /** The employee whose conduct this action plan addresses — kept for consistency with the other forms' shape; this form never writes back to the profile (document-only, no auto profile/warning-record update). */
@@ -32,6 +33,20 @@ export interface ActionPlanFormData {
   branch: string;
   position: string;
   date: string;
+  /**
+   * Whether the warned employee's own role is manager-tier (role code
+   * contains "MANAGER") — computed by HR when the employee is selected,
+   * since the sign pages only have this document's form_data, not the
+   * employee roster, to check it themselves. Governs which signer slots
+   * may edit the plan sections / Manager Comments (see
+   * SignActionPlanFormPage.tsx's canEditPlanItems/canEditManagerComments):
+   * when the warned employee IS a manager, the "manager" slot (often that
+   * same person, or their direct peer) may still fill in the plan itself
+   * but is excluded from Manager Comments — Senior Manager and CEO cover
+   * that instead. For a non-manager employee, Manager and Senior Manager
+   * both cover the plan and comments, and CEO can always add comments too.
+   */
+  employeeIsManager: boolean;
   /** Filled by the "manager" recipient on their sign page, not by HR at send time — see this file's header comment. */
   coachingPlan: string;
   monitoringPlan: string;
@@ -61,6 +76,17 @@ const blank = (v: string) => (v && v.trim() ? escapeHtml(v) : "&nbsp;");
 
 const fmtDate = (iso: string) => {
   if (!iso) return "";
+  // A date-only string ("2026-09-17", e.g. the plan's own Date field)
+  // parses as UTC midnight; formatting it back out in the browser's local
+  // timezone (anything behind UTC, i.e. all of the US) rolls it back a
+  // day — "9/17" printing as "9/16". Parsing the y/m/d parts directly into
+  // a local Date avoids that. A full timestamp (e.g. a signature's
+  // signedAt) has no such ambiguity and is left to the normal Date parse.
+  const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  if (dateOnly) {
+    const [, y, m, d] = dateOnly;
+    return new Date(Number(y), Number(m) - 1, Number(d)).toLocaleDateString();
+  }
   const d = new Date(iso);
   return isNaN(d.getTime()) ? iso : d.toLocaleDateString();
 };
@@ -84,9 +110,9 @@ export const actionPlanFormStyles = `
   .aplan-container .ack { margin: 18px 0 10px; font-style: italic; }
   .aplan-container .sign-row { display: flex; gap: 24px; align-items: flex-end; border-bottom: 1px solid #9ca3af; padding: 10px 2px; margin-top: 6px; }
   .aplan-container .sign-name { flex: 2; }
-  .aplan-container .sign-sig { flex: 1; display: flex; align-items: flex-end; }
+  .aplan-container .sign-sig { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; overflow: hidden; }
   .aplan-container .sign-date { flex: 1; }
-  .aplan-container .sig-img { max-height: 36px; max-width: 140px; object-fit: contain; }
+  .aplan-container .sig-img { max-height: 44px; max-width: 100%; object-fit: contain; object-position: left; }
   .aplan-container .footer-wrap { margin-top: 40px; }
   .aplan-container .footer-graphic img { display: block; width: 100%; height: auto; }
 `;
@@ -155,6 +181,7 @@ export function buildActionPlanFormBodyMarkup(
       ${signRow("Manager's Name", resolvedSignerName(data, "manager", signatures), signatures.manager)}
       ${signRow("Senior Manager's Name", resolvedSignerName(data, "senior_manager", signatures), signatures.senior_manager)}
       ${signRow("HR/Management's Name", resolvedSignerName(data, "hr_staff", signatures), signatures.hr_staff)}
+      ${signRow("CEO Name", resolvedSignerName(data, "executive", signatures), signatures.executive)}
 
       <div class="footer-wrap">
         <div class="footer-graphic">
