@@ -17,13 +17,14 @@
  * down the signature chain, only review and countersign — they never edit
  * the content.
  *
- * Only 3 signature slots (Manager, Senior Manager, HR) — no Employee slot
- * (this document is directed at management, not the employee) and no
- * Executive slot (unlike the Promotion Form) — all three already valid
- * recipient_slot values as of migration 0050, so no new migration needed.
+ * 4 signature slots (Manager, Senior Manager, HR, CEO) — no Employee slot
+ * (this document is directed at management, not the employee). Manager/
+ * Senior Manager/HR are valid recipient_slot values as of migration 0050;
+ * the CEO row reuses the 'executive' slot value widened in migration 0166
+ * for the Promotion Form, so no new migration is needed here either.
  */
 
-export type ActionPlanSignatureSlot = "manager" | "senior_manager" | "hr_staff";
+export type ActionPlanSignatureSlot = "manager" | "senior_manager" | "hr_staff" | "executive";
 
 export interface ActionPlanFormData {
   /** The employee whose conduct this action plan addresses — kept for consistency with the other forms' shape; this form never writes back to the profile (document-only, no auto profile/warning-record update). */
@@ -166,6 +167,7 @@ export function buildActionPlanFormBodyMarkup(
       ${signRow("Manager's Name", resolvedSignerName(data, "manager", signatures), signatures.manager)}
       ${signRow("Senior Manager's Name", resolvedSignerName(data, "senior_manager", signatures), signatures.senior_manager)}
       ${signRow("HR/Management's Name", resolvedSignerName(data, "hr_staff", signatures), signatures.hr_staff)}
+      ${signRow("CEO Name", resolvedSignerName(data, "executive", signatures), signatures.executive)}
 
       <div class="footer-wrap">
         <div class="footer-graphic">

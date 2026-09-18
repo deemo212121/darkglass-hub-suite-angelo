@@ -28486,6 +28486,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                   <option value="manager">Manager</option>
                   <option value="senior_manager">Senior Manager</option>
                   <option value="hr_staff">HR/Management</option>
+                  <option value="executive">CEO</option>
                 </select>
                 {actionPlanActionError && (
                   <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2 mb-3">{actionPlanActionError}</p>
@@ -28648,6 +28649,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                     <option value="manager">Manager</option>
                     <option value="senior_manager">Senior Manager</option>
                     <option value="hr_staff">HR/Management</option>
+                    <option value="executive">CEO</option>
                   </select>
                   {actionPlanRecipientSlot === "manager" && (
                     <p className="text-[10px] text-muted-foreground mt-1">The Manager slot is the one who fills in the actual coaching/monitoring/consequences plan — send this one first.</p>
