@@ -207,6 +207,8 @@ export interface TicketAttendanceRow {
   statusGroup: ReturnType<typeof statusGroupOf>;
   timeSlot: string | null;
   address: string;
+  /** Raw customer.state value (usually a 2-letter abbreviation, e.g. "GA") — kept separate from the formatted `address` string so callers can resolve it against a state name list without parsing. */
+  state: string | null;
   /** Real On-Site Check-In timestamps (migration 0202) — see TechnicianRouteStop above. */
   arrivedAt: string | null;
   doneAt: string | null;
@@ -233,6 +235,7 @@ function mapTicketAttendanceRow(row: any): TicketAttendanceRow {
     statusGroup: statusGroupOf(row.status),
     timeSlot: row.time_slot as string | null,
     address: formatAddress(row.customer ?? {}),
+    state: (row.customer?.state as string | null) ?? null,
     arrivedAt: row.onsite_arrived_at as string | null,
     doneAt: row.onsite_done_at as string | null,
   };

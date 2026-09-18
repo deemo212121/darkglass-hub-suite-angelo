@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { X, Plus, Pencil, Check, Loader2, ExternalLink, ChevronDown, ChevronRight, Trash2 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { getAttendanceForRange, saveEntry, getProfileIdByFirebaseUid, computeScheduledDutyHours, resolveScheduledShiftHours, computeMealTimeCredit, startOfWeekSunday, splitRegularOvertimeWeekly, CSR_WEEKLY_OVERTIME_THRESHOLD, type AttendanceRow } from "@/lib/supabase/timecards";
@@ -13,6 +13,7 @@ import { getTicketAttendanceForTechnician, slotSortKey, type TicketAttendanceRow
 import { getCompanyEmployeeRequests } from "@/lib/supabase/employeeRequests";
 import { getVisitDiagnosisByTicketIds } from "@/lib/supabase/tickets";
 import { getMileageEntries, setMileageEstimateTime, setMileageLegMileage, type MileageEntry } from "@/lib/supabase/mileage";
+import { STATE_MIN_WAGE_2026, normalizeStateName, highestRateAmong } from "@/lib/stateMinWage";
 import {
   getSalaryHistory,
   addSalaryEntry,
@@ -33,6 +34,8 @@ interface Props {
   /** Used only to decide the flat-40-hrs/week overtime exception (usesFlatWeeklyOvertimeThreshold) — see dailyHoursSplitByDate below. */
   role?: string;
   extraRoles?: string[] | null;
+  /** profiles.tier_level (migration 0162) — same field Master List's "Current Technicians" tab and Staff List's "Tier Level" tab edit. Shown in the Current Rate tile; "Unassigned" when blank. */
+  tierLevel?: string | null;
   requiredCheckIn?: string;
   requiredCheckOut?: string;
   workingHours?: number | null;
@@ -52,8 +55,10 @@ interface Props {
   onClose: () => void;
   /** Called after a rate change is saved, so the caller can refresh its own aggregate payroll view. */
   onRateChanged?: () => void;
-  /** When set (Office Payroll's per-technician review wizard), a "Next →" button appears in the footer — advances to the Tech Activity Report. Omitted for office employees and other callers. */
-  onNext?: () => void;
+  /** When set (Office Payroll's per-technician review wizard), a "Next →" button appears in the footer — advances to the Tech Activity Report. Omitted for office employees and other callers. Called with which toggle was active ("company"/"state") and this modal's own State-matched Hourly + OT total (payViewTotals.compliant.total) — the caller persists that choice as this technician's actual Hourly + OT pay for the period (see payroll_hourly_ot_overrides), since this modal is the only place that computes the state-floor comparison. May return a Promise; the Next button disables (see nextBusy) until it resolves. */
+  onNext?: (mode: "company" | "state", stateHourlyOtTotal: number) => void | Promise<void>;
+  /** True while the caller's onNext is still saving — disables the Next button so a second click can't race the first (e.g. double-submitting the pay-mode override). */
+  nextBusy?: boolean;
 }
 
 function addDaysISO(dateStr: string, days: number): string {
@@ -156,6 +161,7 @@ export function EmployeePayrollDetailModal({
   department,
   role,
   extraRoles,
+  tierLevel,
   requiredCheckIn,
   requiredCheckOut,
   workingHours,
@@ -167,6 +173,7 @@ export function EmployeePayrollDetailModal({
   onClose,
   onRateChanged,
   onNext,
+  nextBusy,
 }: Props) {
   // Named myRole/myExtraRoles (not role/extraRoles) — those names are
   // already taken by this component's own props above, which describe the
@@ -233,6 +240,17 @@ export function EmployeePayrollDetailModal({
   const [attendanceEditing, setAttendanceEditing] = useState(false);
   const [attendanceEdits, setAttendanceEdits] = useState<Record<string, { checkIn: string; mealStart: string; mealEnd: string; checkOut: string }>>({});
   const [savingAttendanceEdits, setSavingAttendanceEdits] = useState(false);
+  // Per-day State assignment — independent per day (technicians hop between
+  // states job to job), saved immediately on change rather than staged
+  // behind a "Done"/"Save" button like Rate or the punch edits above.
+  const [stateEdits, setStateEdits] = useState<Record<string, string>>({});
+  const [savingStateFor, setSavingStateFor] = useState<string | null>(null);
+  // Calculated = company rate as-is. Compliant = the higher of company rate
+  // vs. that day's assigned state's minimum wage — not an equally-valid
+  // alternative view, but the legally required number whenever a day's
+  // state floor exceeds the company rate. Defaults to Compliant since that's
+  // the number that's actually safe to pay.
+  const [payView, setPayView] = useState<"calculated" | "compliant">("compliant");
 
   useEffect(() => {
     if (!uid) return;
@@ -452,6 +470,73 @@ export function EmployeePayrollDetailModal({
     return map;
   }, [ticketRows]);
 
+  // Distinct state(s) actually worked that day, from the customer address of
+  // whichever tickets the technician actually checked into (arrivedAt set —
+  // a merely scheduled-but-not-visited ticket doesn't say where they really
+  // were). When a day spans more than one state, `bestState` is whichever of
+  // them has the higher minimum wage — not the most precise answer (that
+  // would split pay by which hours landed in which state), but a
+  // conservative one: a technician never gets floored to the lower of two
+  // states just because that's where they happened to check in first. States
+  // with no fixed rate (county-based, e.g. NY/Oregon) are skipped when
+  // picking `bestState` since they can't be compared numerically; the
+  // "Multi-State" badge below still lists them so a human can review.
+  const ticketStateByDate = useMemo(() => {
+    const map = new Map<string, { bestState: string | null; states: string[] }>();
+    for (const [date, rows] of ticketRowsByDate) {
+      const states = Array.from(
+        new Set(
+          rows
+            .filter((r) => r.arrivedAt)
+            .map((r) => normalizeStateName(r.state))
+            .filter((s): s is string => s != null)
+        )
+      );
+      map.set(date, { bestState: highestRateAmong(states), states });
+    }
+    return map;
+  }, [ticketRowsByDate]);
+
+  // Auto-fills a blank day's State from its tickets — the single state when
+  // unambiguous, or the higher-rate one when the day spans more than one
+  // (see ticketStateByDate's bestState above). A manual value, once saved —
+  // whether by this effect or by hand — is never overwritten again; it
+  // becomes authoritative for that day. Self-terminating: once a day's
+  // `state` is persisted, `load()`'s next attendance refetch makes that row
+  // no longer blank, so this stops touching it.
+  const autoFillingStateDates = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (loading) return;
+    const toFill = attendance.filter(
+      (row) => !row.state && !autoFillingStateDates.current.has(row.date) && ticketStateByDate.get(row.date)?.bestState != null
+    );
+    if (toFill.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      for (const row of toFill) autoFillingStateDates.current.add(row.date);
+      try {
+        for (const row of toFill) {
+          const derived = ticketStateByDate.get(row.date)!.bestState!;
+          await saveEntry(profileId, row.date, {
+            checkIn: row.clockIn,
+            checkOut: row.clockOut,
+            mealStart: row.mealStart,
+            mealEnd: row.mealEnd,
+            notes: "",
+            state: derived,
+          });
+        }
+        if (!cancelled) await load({ current: false });
+      } catch (err) {
+        console.error("Auto-fill state from tickets failed:", err instanceof Error ? err.message : err);
+        for (const row of toFill) autoFillingStateDates.current.delete(row.date);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [attendance, ticketStateByDate, loading, profileId]);
+
   // Estimate Time column — inline pencil-icon edit, same pattern Ticket
   // Attendance itself uses (one free-text field on mileage_entries, no
   // formula/source).
@@ -578,22 +663,67 @@ export function EmployeePayrollDetailModal({
   // summing that column by hand. Paid meal credit is merged into `regular`/
   // `overtime` before the split runs, so it's already paid at whichever rate
   // that day's hours land in — no separate meal pay term needed here.
-  const computedPay = useMemo(() => {
+  // Per-day Calculated (company rate as-is) vs. Compliant (state-floor-
+  // matched) pay. The state's minimum wage is a legal floor, not a second
+  // equally-valid number: whenever THIS DAY's own assigned state's minimum
+  // wage exceeds the company rate, the OT premium also has to ride on that
+  // higher rate, not just the straight-time hours. Deliberately kept
+  // per-day, not blended across the week — a higher-paying state one day
+  // shouldn't float the whole week's OT; a technician who hit California on
+  // the 27th and Georgia on the 29th gets each day matched against its own
+  // state, not the week's single "winning" one. Skips fixed-salary days
+  // (rateEffectiveOn returns 0 for those — no per-day hourly rate to compare
+  // against a floor; fixed salary is handled as its own flat branch in
+  // payViewTotals below).
+  const dailyPayByDate = useMemo(() => {
+    const map = new Map<string, { companyRate: number; effectiveRate: number; isMatched: boolean; calculatedPay: number; compliantPay: number }>();
+    for (const row of attendance) {
+      const companyRate = rateEffectiveOn(history, row.date);
+      const folded = dailyHoursSplitByDate.get(row.date) ?? { regular: 0, overtime: 0 };
+      if (companyRate <= 0) {
+        map.set(row.date, { companyRate: 0, effectiveRate: 0, isMatched: false, calculatedPay: 0, compliantPay: 0 });
+        continue;
+      }
+      const stateFloor = row.state ? STATE_MIN_WAGE_2026.find((s) => s.state === row.state)?.rate ?? null : null;
+      const isMatched = stateFloor != null && stateFloor > companyRate;
+      const effectiveRate = isMatched ? (stateFloor as number) : companyRate;
+      map.set(row.date, {
+        companyRate,
+        effectiveRate,
+        isMatched,
+        calculatedPay: folded.regular * companyRate + folded.overtime * companyRate * OVERTIME_MULTIPLIER,
+        compliantPay: folded.regular * effectiveRate + folded.overtime * effectiveRate * OVERTIME_MULTIPLIER,
+      });
+    }
+    return map;
+  }, [attendance, history, dailyHoursSplitByDate]);
+
+  const payViewTotals = useMemo(() => {
     if (isCurrentlyFixed && currentEntry?.annualSalary) {
       const fixed = monthlySalary(currentEntry.annualSalary);
-      return { regularPay: fixed, overtimePay: 0, total: fixed };
+      return {
+        calculated: { regularPay: fixed, overtimePay: 0, total: fixed },
+        compliant: { regularPay: fixed, overtimePay: 0, total: fixed },
+      };
     }
-    return attendance.reduce(
-      (acc, r) => {
-        const rate = rateEffectiveOn(history, r.date);
-        const { regular, overtime } = dailyHoursSplitByDate.get(r.date) ?? { regular: 0, overtime: 0 };
-        const regularPay = regular * rate;
-        const overtimePay = overtime * rate * OVERTIME_MULTIPLIER;
-        return { regularPay: acc.regularPay + regularPay, overtimePay: acc.overtimePay + overtimePay, total: acc.total + regularPay + overtimePay };
-      },
-      { regularPay: 0, overtimePay: 0, total: 0 }
-    );
-  }, [attendance, history, isCurrentlyFixed, currentEntry, dailyHoursSplitByDate]);
+    const totals = {
+      calculated: { regularPay: 0, overtimePay: 0, total: 0 },
+      compliant: { regularPay: 0, overtimePay: 0, total: 0 },
+    };
+    for (const row of attendance) {
+      const rate = rateEffectiveOn(history, row.date);
+      const { regular, overtime } = dailyHoursSplitByDate.get(row.date) ?? { regular: 0, overtime: 0 };
+      const effectiveRate = dailyPayByDate.get(row.date)?.effectiveRate ?? rate;
+      totals.calculated.regularPay += regular * rate;
+      totals.calculated.overtimePay += overtime * rate * OVERTIME_MULTIPLIER;
+      totals.compliant.regularPay += regular * effectiveRate;
+      totals.compliant.overtimePay += overtime * effectiveRate * OVERTIME_MULTIPLIER;
+    }
+    totals.calculated.total = totals.calculated.regularPay + totals.calculated.overtimePay;
+    totals.compliant.total = totals.compliant.regularPay + totals.compliant.overtimePay;
+    return totals;
+  }, [attendance, history, dailyHoursSplitByDate, dailyPayByDate, isCurrentlyFixed, currentEntry]);
+  const displayedPay = payViewTotals[payView];
   // Regular/overtime split of totalHours above — same dailyHoursSplitByDate
   // computedPay itself sums (already meal-credit-inclusive, via the raw
   // hours merge above), so this tile's breakdown line always agrees with
@@ -634,6 +764,33 @@ export function EmployeePayrollDetailModal({
         overtime: hrs.overtime,
         total: hrs.regular + hrs.overtime,
       }));
+  }, [attendance, dailyHoursSplitByDate]);
+  // Per-state OT subtotal within a week, e.g. "11:38 OT · California" +
+  // "8:20 OT · Georgia" — since the floor check is per-day (not blended
+  // across the week, see dailyPayByDate), a week's total OT can legitimately
+  // be split across more than one state's floor. Days assigned to the same
+  // state sum together; a day with OT but no assigned state groups under
+  // "Unassigned" so a gap in the data stays visible instead of silently
+  // dropping those hours from the breakdown.
+  const weeklyOtByState = useMemo(() => {
+    const byWeek = new Map<string, Map<string, number>>();
+    for (const row of attendance) {
+      const overtime = dailyHoursSplitByDate.get(row.date)?.overtime ?? 0;
+      if (overtime <= 0) continue;
+      const weekStart = startOfWeekSunday(row.date);
+      if (!byWeek.has(weekStart)) byWeek.set(weekStart, new Map());
+      const byState = byWeek.get(weekStart)!;
+      const state = row.state || "Unassigned";
+      byState.set(state, (byState.get(state) ?? 0) + overtime);
+    }
+    const map = new Map<string, Array<{ state: string; hours: number }>>();
+    for (const [weekStart, byState] of byWeek) {
+      map.set(
+        weekStart,
+        Array.from(byState, ([state, hours]) => ({ state, hours })).sort((a, b) => b.hours - a.hours)
+      );
+    }
+    return map;
   }, [attendance, dailyHoursSplitByDate]);
   const rateNow = useMemo(() => currentRate(history), [history]);
 
@@ -781,6 +938,36 @@ export function EmployeePayrollDetailModal({
     }
   };
 
+  // State is independently editable per day (unlike Rate, which is
+  // effective-dated) — saves immediately on selection rather than being
+  // staged behind a "Done"/"Save" button. Existing punches for that day are
+  // passed through unchanged so this save doesn't null them out (saveEntry
+  // always writes check_in/check_out/meal_start/meal_end from what's given).
+  const handleStateChange = async (row: AttendanceRow, value: string) => {
+    setStateEdits((prev) => ({ ...prev, [row.date]: value }));
+    setSavingStateFor(row.date);
+    try {
+      await saveEntry(profileId, row.date, {
+        checkIn: row.clockIn,
+        checkOut: row.clockOut,
+        mealStart: row.mealStart,
+        mealEnd: row.mealEnd,
+        notes: "",
+        state: value,
+      });
+      await load({ current: false });
+    } catch (err) {
+      alert(`Failed to save state: ${err instanceof Error ? err.message : "Unknown error"}`);
+      setStateEdits((prev) => {
+        const next = { ...prev };
+        delete next[row.date];
+        return next;
+      });
+    } finally {
+      setSavingStateFor(null);
+    }
+  };
+
   return (
     <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={onClose}>
       <div
@@ -828,25 +1015,55 @@ export function EmployeePayrollDetailModal({
               </p>
             </div>
             <div className="bg-slate-800/50 border border-white/10 rounded-lg p-3">
+              <div className="flex items-stretch gap-3">
+                <div>
+                  <p className="text-xs text-slate-400 uppercase">Current Rate</p>
+                  {isCurrentlyFixed && currentEntry?.annualSalary ? (
+                    <p className="text-xl font-bold text-white mt-1">
+                      ${currentEntry.annualSalary.toLocaleString()}/yr <span className="text-xs font-normal text-slate-400">(${perCutoffSalary(currentEntry.annualSalary).toFixed(2)}/cutoff)</span>
+                    </p>
+                  ) : (
+                    <p className="text-xl font-bold text-white mt-1">${rateNow.toFixed(2)}/hr</p>
+                  )}
+                </div>
+                <div className="border-l border-white/10 pl-3">
+                  <p className="text-xs text-slate-400 uppercase">Tier Level</p>
+                  <p className="text-xl font-bold text-white mt-1">{tierLevel || "Unassigned"}</p>
+                </div>
+              </div>
+            </div>
+            <div className="bg-slate-800/50 border border-white/10 rounded-lg p-3">
               <p className="text-xs text-slate-400 uppercase">Warnings</p>
               <p className="text-xl font-bold text-yellow-300 mt-1">{warnings.length}</p>
             </div>
             <div className="bg-slate-800/50 border border-white/10 rounded-lg p-3">
-              <p className="text-xs text-slate-400 uppercase">Current Rate</p>
-              {isCurrentlyFixed && currentEntry?.annualSalary ? (
-                <p className="text-xl font-bold text-white mt-1">
-                  ${currentEntry.annualSalary.toLocaleString()}/yr <span className="text-xs font-normal text-slate-400">(${perCutoffSalary(currentEntry.annualSalary).toFixed(2)}/cutoff)</span>
-                </p>
-              ) : (
-                <p className="text-xl font-bold text-white mt-1">${rateNow.toFixed(2)}/hr</p>
-              )}
-            </div>
-            <div className="bg-slate-800/50 border border-white/10 rounded-lg p-3">
-              <p className="text-xs text-slate-400 uppercase">Est. Pay ({rangeStart} – {rangeEnd})</p>
-              <p className="text-xl font-bold text-green-300 mt-1">${computedPay.total.toFixed(2)}</p>
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs text-slate-400 uppercase">Hourly + OT Pay ({rangeStart} – {rangeEnd})</p>
+                {!isCurrentlyFixed && (
+                  <div className="flex items-center rounded-full bg-slate-900 border border-white/10 p-0.5 text-[10px]">
+                    <button
+                      type="button"
+                      onClick={() => setPayView("calculated")}
+                      title="Company rate as-is, ignoring any state minimum wage floor"
+                      className={`px-2 py-0.5 rounded-full transition ${payView === "calculated" ? "bg-slate-700 text-white" : "text-slate-500 hover:text-slate-300"}`}
+                    >
+                      Company
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPayView("compliant")}
+                      title="Company rate, matched up to each day's assigned state's minimum wage when it's higher — the number that's actually safe to pay"
+                      className={`px-2 py-0.5 rounded-full transition ${payView === "compliant" ? "bg-emerald-700 text-white" : "text-slate-500 hover:text-slate-300"}`}
+                    >
+                      State
+                    </button>
+                  </div>
+                )}
+              </div>
+              <p className="text-xl font-bold text-green-300 mt-1">${displayedPay.total.toFixed(2)}</p>
               {!isCurrentlyFixed && (
                 <p className="text-xs text-slate-400 mt-0.5">
-                  ${computedPay.regularPay.toFixed(2)} regular + ${computedPay.overtimePay.toFixed(2)} overtime = ${computedPay.total.toFixed(2)}
+                  ${displayedPay.regularPay.toFixed(2)} regular + ${displayedPay.overtimePay.toFixed(2)} overtime = ${displayedPay.total.toFixed(2)}
                 </p>
               )}
             </div>
@@ -985,19 +1202,31 @@ export function EmployeePayrollDetailModal({
               <ul className="space-y-1">
                 {weeklyBreakdown.map((w, i, arr) => {
                   const change = i > 0 ? fmtWeekOverWeekChange(w.total, arr[i - 1].total) : null;
+                  const otByState = payView === "compliant" ? weeklyOtByState.get(w.weekStart) ?? [] : [];
                   return (
-                    <li key={w.weekStart} className="text-xs text-slate-300 flex items-baseline gap-1.5 flex-wrap">
-                      <span className="text-slate-400">
-                        Week of {fmtShortDate(w.weekStart)}–{fmtShortDate(w.weekEnd)}:
-                      </span>
-                      <span className="font-semibold text-white">{fmtClock(w.total)} hours</span>
-                      <span className="text-slate-500">
-                        ({fmtClock(w.regular)} Reg{w.overtime > 0 ? ` + ${fmtClock(w.overtime)} OT` : ""})
-                      </span>
-                      {change && (
-                        <span className={change.direction === "more" ? "text-orange-300" : change.direction === "less" ? "text-emerald-400" : "text-slate-500"}>
-                          ({change.text})
+                    <li key={w.weekStart} className="text-xs text-slate-300">
+                      <div className="flex items-baseline gap-1.5 flex-wrap">
+                        <span className="text-slate-400">
+                          Week of {fmtShortDate(w.weekStart)}–{fmtShortDate(w.weekEnd)}:
                         </span>
+                        <span className="font-semibold text-white">{fmtClock(w.total)} hours</span>
+                        <span className="text-slate-500">
+                          ({fmtClock(w.regular)} Reg{w.overtime > 0 ? ` + ${fmtClock(w.overtime)} OT` : ""})
+                        </span>
+                        {change && (
+                          <span className={change.direction === "more" ? "text-orange-300" : change.direction === "less" ? "text-emerald-400" : "text-slate-500"}>
+                            ({change.text})
+                          </span>
+                        )}
+                      </div>
+                      {otByState.length > 0 && (
+                        <div className="mt-1 pl-4 flex flex-col gap-0.5">
+                          {otByState.map((e) => (
+                            <span key={e.state} className="text-[11px] text-amber-300/80">
+                              {fmtClock(e.hours)} OT · {e.state}
+                            </span>
+                          ))}
+                        </div>
                       )}
                     </li>
                   );
@@ -1073,8 +1302,11 @@ export function EmployeePayrollDetailModal({
                       <th className="text-right py-1.5" title="Paid meal credit (30 min) for meal-always-paid roles (Technician, Branch/Senior Branch Manager, Tech Manager, Technical Director/Assistant Director). Added on top of Regular Hour(s) — but only whatever still fits under that week's overtime threshold; once the threshold's used up (in full, or partway through this day), the rest shows in Overtime instead, paid at the OT rate.">Meal Time</th>
                       <th className="text-right py-1.5">Overtime</th>
                       <th className="text-right py-1.5" title="Regular Hour(s) + Meal Time + Overtime">Total Hours</th>
-                      <th className="text-right py-1.5">Rate</th>
                       <th className="text-right py-1.5">Status</th>
+                      <th className="text-right py-1.5">Rate</th>
+                      {payView === "compliant" && (
+                        <th className="text-left py-1.5" title="State the technician was assigned to for this day — technicians hop between states job to job, so this is set per day, independently of every other day.">State</th>
+                      )}
                       <th className="text-right py-1.5">Payment</th>
                       <th className="text-center py-1.5">Scheduled</th>
                       <th className="text-center py-1.5" title="Tickets with both an Arrived and a Done on-site stamp">Completed</th>
@@ -1118,8 +1350,9 @@ export function EmployeePayrollDetailModal({
                       const overtimeHours = folded.overtime;
                       const mealCreditForDisplay = folded.regular - regularHours;
                       const totalDayHours = folded.regular + folded.overtime;
-                      const dayRate = rateEffectiveOn(history, row.date);
-                      const dayPayment = folded.regular * dayRate + folded.overtime * dayRate * OVERTIME_MULTIPLIER;
+                      const dayPay = dailyPayByDate.get(row.date);
+                      const dayTicketStates = ticketStateByDate.get(row.date);
+                      const dayPayment = payView === "compliant" ? dayPay?.compliantPay ?? 0 : dayPay?.calculatedPay ?? 0;
                       const ticketStats = ticketStatsByDate.get(row.date);
                       const dayTicketRows = ticketRowsByDate.get(row.date) || [];
                       // The day's own drive-home leg (mileage.ts migration 0237) — set on
@@ -1207,6 +1440,22 @@ export function EmployeePayrollDetailModal({
                           {overtimeHours > 0 ? fmtClock(overtimeHours) : "—"}
                         </td>
                         <td className="py-1.5 text-right text-slate-200">{row.hoursWorked ? fmtClock(totalDayHours) : "—"}</td>
+                        <td className={`py-1.5 text-right font-semibold ${STATUS_COLOR[row.status]}`}>
+                          {row.status === "pending-correction" && pendingCorrectionByDate.has(row.date) ? (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setPendingDetailModal({ date: row.date, item: { type: "correction", data: pendingCorrectionByDate.get(row.date)! } });
+                              }}
+                              className="underline decoration-dotted underline-offset-2 hover:text-amber-200"
+                            >
+                              {statusLabelFor(row)}
+                            </button>
+                          ) : (
+                            statusLabelFor(row)
+                          )}
+                        </td>
                         <td className="py-1.5 text-right" onClick={(e) => e.stopPropagation()}>
                           {dayIsFixed ? (
                             <span className="text-slate-500" title="Fixed-salary pay doesn't vary by day — edit it from Salary History above instead">Fixed Salary</span>
@@ -1225,22 +1474,38 @@ export function EmployeePayrollDetailModal({
                             </div>
                           )}
                         </td>
-                        <td className={`py-1.5 text-right font-semibold ${STATUS_COLOR[row.status]}`}>
-                          {row.status === "pending-correction" && pendingCorrectionByDate.has(row.date) ? (
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setPendingDetailModal({ date: row.date, item: { type: "correction", data: pendingCorrectionByDate.get(row.date)! } });
-                              }}
-                              className="underline decoration-dotted underline-offset-2 hover:text-amber-200"
+                        {payView === "compliant" && (
+                          <td className="py-1.5" onClick={(e) => e.stopPropagation()}>
+                            <select
+                              value={stateEdits[row.date] ?? row.state ?? ""}
+                              onChange={(e) => handleStateChange(row, e.target.value)}
+                              disabled={savingStateFor === row.date}
+                              className="bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-slate-100 focus:outline-none focus:border-blue-500 disabled:opacity-50"
                             >
-                              {statusLabelFor(row)}
-                            </button>
-                          ) : (
-                            statusLabelFor(row)
-                          )}
-                        </td>
+                              <option value="">—</option>
+                              {STATE_MIN_WAGE_2026.map((s) => (
+                                <option key={s.state} value={s.state}>{s.state}</option>
+                              ))}
+                            </select>
+                            {savingStateFor === row.date && <Loader2 className="inline-block h-3 w-3 ml-1 animate-spin text-slate-400" />}
+                            {dayPay?.isMatched && (
+                              <span
+                                title={`State minimum wage ($${dayPay.effectiveRate.toFixed(2)}/hr) is higher than the company rate ($${dayPay.companyRate.toFixed(2)}/hr) — pay must be matched up to it for this day.`}
+                                className="inline-flex items-center gap-0.5 ml-1 px-1 py-0.5 rounded bg-amber-500/20 text-amber-300 text-[10px] font-semibold align-middle"
+                              >
+                                ▲ Floor
+                              </span>
+                            )}
+                            {dayTicketStates && dayTicketStates.states.length > 1 && (
+                              <span
+                                title={`This day's checked-into tickets span more than one state (${dayTicketStates.states.join(", ")}) — auto-filled with the higher-rate one${dayTicketStates.bestState ? ` (${dayTicketStates.bestState})` : ""}. Review and pick a different one by hand if that's not right.`}
+                                className="inline-flex items-center gap-0.5 ml-1 px-1 py-0.5 rounded bg-red-500/20 text-red-300 text-[10px] font-semibold align-middle"
+                              >
+                                ⚠ Multi-State
+                              </span>
+                            )}
+                          </td>
+                        )}
                         <td className="py-1.5 text-right font-semibold text-green-300">
                           {dayIsFixed ? (
                             <span className="text-slate-500 font-normal" title="Fixed-salary pay doesn't vary by day">—</span>
@@ -1458,10 +1723,11 @@ export function EmployeePayrollDetailModal({
             <p className="text-xs text-slate-500">Review the clock-in/out and ticket detail above, then continue to the Tech Activity Report.</p>
             <button
               type="button"
-              onClick={onNext}
-              className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold transition shrink-0"
+              disabled={nextBusy}
+              onClick={() => onNext(payView === "compliant" ? "state" : "company", payViewTotals.compliant.total)}
+              className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-semibold transition shrink-0"
             >
-              Next →
+              {nextBusy ? "Saving…" : "Next →"}
             </button>
           </div>
         )}

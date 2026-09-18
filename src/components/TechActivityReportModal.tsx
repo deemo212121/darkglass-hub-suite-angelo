@@ -718,6 +718,37 @@ export function TechActivityReportModal({
                   {hireDate ? new Date(`${hireDate}T00:00:00`).toLocaleDateString("en-US") : "Not on file"}
                 </p>
               </div>
+
+              {row.techHourlyPayCompanyOnly > 0 && (() => {
+                const companyTotal = row.techHourlyPayCompanyOnly;
+                const appliedTotal = row.techHourlyPay;
+                const diff = appliedTotal - companyTotal;
+                const diffPct = (diff / companyTotal) * 100;
+                const isOverridden = diff > 0.005;
+                return (
+                  <div className="bg-slate-800/50 border border-white/10 rounded-lg px-3 py-2.5">
+                    <p className="text-[10px] text-slate-400 uppercase tracking-wide mb-1.5" title="Hourly + OT only, from the payroll detail step's Company/State toggle — not the full grossPay total below.">
+                      Company vs. Applied (Hourly + OT)
+                    </p>
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-slate-400">Company</span>
+                      <span className="text-slate-200 font-semibold">{fmt(companyTotal)}</span>
+                    </div>
+                    <div className="flex items-center justify-between text-xs mt-0.5">
+                      <span className="text-slate-400">Applied (State)</span>
+                      <span className={isOverridden ? "text-emerald-300 font-semibold" : "text-slate-500"}>
+                        {isOverridden ? fmt(appliedTotal) : "Not applied"}
+                      </span>
+                    </div>
+                    {isOverridden && (
+                      <div className="flex items-center justify-between text-xs mt-1 pt-1 border-t border-white/10">
+                        <span className="text-slate-400">Difference</span>
+                        <span className="text-orange-300 font-semibold">+{fmt(diff)} (+{diffPct.toFixed(1)}%)</span>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
           </div>
         </div>
