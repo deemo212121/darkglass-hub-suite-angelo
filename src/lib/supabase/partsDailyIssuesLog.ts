@@ -2,7 +2,7 @@ import { supabase } from "./client";
 
 // Manual per-branch, per-day "Issues" and "Lost" tally for the Part Daily
 // Report's Overview tab — not derivable from any existing table, someone
-// types it in by hand. See migration 0279.
+// types it in by hand. See migration 0290.
 
 export interface PartsDailyIssueEntry {
   branch: string;

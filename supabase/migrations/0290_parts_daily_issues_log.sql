@@ -1,5 +1,5 @@
 -- =====================================================================
--- 0279 — Manual "Issues" and "Lost" tally for the Part Daily Report's
+-- 0290 — Manual "Issues" and "Lost" tally for the Part Daily Report's
 -- Overview tab (src/components/ReportPartsDaily.tsx). These aren't
 -- derivable from any existing table — they're a per-branch, per-day
 -- count someone types in by hand (parts lost in the field, issues
