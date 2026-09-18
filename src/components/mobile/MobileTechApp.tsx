@@ -19,7 +19,6 @@ import {
   Home,
   X,
   WifiOff,
-  FileText,
   Pencil,
   Trash2,
 } from "lucide-react";
@@ -407,7 +406,7 @@ export function MobileTechApp() {
   const [users, setUsers] = useState<ProfileRow[]>([]);
   const [csrComposition, setCsrComposition] = useState<CsrTeamComposition | null>(null);
   const isSelfRole = [role, ...extraRoles].some((r) => r && SELF_ROLES.has(r.toUpperCase()));
-  // Branch Daily Report bottom tab — Branch Manager / Senior Branch Manager
+  // Branch Daily Report home tile — Branch Manager / Senior Branch Manager
   // (their own update), plus HR-and-above who can view (and, matching
   // their desktop rights, edit) every branch — see
   // BranchDailyReportPage.tsx / branchDailyReports.ts.
@@ -1272,8 +1271,6 @@ export function MobileTechApp() {
       ? "onhold"
       : effectiveView === "payroll"
       ? "payroll"
-      : effectiveView === "branchreport"
-      ? "branchreport"
       : effectiveView === "map"
       ? "route"
       : effectiveView === "home" ||
@@ -1286,7 +1283,8 @@ export function MobileTechApp() {
         effectiveView === "tickettimedispute" ||
         effectiveView === "correction" ||
         effectiveView === "notifications" ||
-        effectiveView === "announcements"
+        effectiveView === "announcements" ||
+        effectiveView === "branchreport"
       ? "home" // Home's own quick-action tiles reach all of these sub-pages
       : "tickets"; // tickets, roster, detail, parts all highlight Tickets
 
@@ -1586,6 +1584,8 @@ export function MobileTechApp() {
             onOpenCorrection={() => { setCorrectionPrefillDate(null); setView("correction"); }}
             onOpenTimecard={() => setView("timecard")}
             onOpenTicketAttendance={() => setView("ticketattendance")}
+            showBranchReport={isBranchReportRole}
+            onOpenBranchReport={() => setView("branchreport")}
             arrivedAt={arrivedAt}
             setArrivedAt={setArrivedAt}
             doneAt={doneAt}
@@ -1612,13 +1612,7 @@ export function MobileTechApp() {
         active={activeBottomTab}
         unreadDmCount={unreadDmCount}
         missingTimestampCount={missingTimestampTicketNos.size}
-        tabs={
-          isFrozen
-            ? BOTTOM_TABS.filter((t) => t.id === "chat")
-            : isBranchReportRole
-            ? BOTTOM_TABS
-            : BOTTOM_TABS.filter((t) => t.id !== "branchreport")
-        }
+        tabs={isFrozen ? BOTTOM_TABS.filter((t) => t.id === "chat") : BOTTOM_TABS}
         onSelect={(tab) => {
           if (isFrozen) return; // account frozen — Chat is the only reachable tab
           if (tab === "tickets") setView(isSelfRole ? "tickets" : "roster");
@@ -1923,7 +1917,7 @@ function AppHeaderMobile({
 }
 
 // ── Persistent bottom navigation bar ────────────────────────────────────
-type BottomTab = "home" | "tickets" | "route" | "chat" | "onhold" | "payroll" | "branchreport";
+type BottomTab = "home" | "tickets" | "route" | "chat" | "onhold" | "payroll";
 const BOTTOM_TABS: Array<{ id: BottomTab; label: string; icon: React.ReactNode }> = [
   { id: "home",    label: "Home",      icon: <Home        className="mtech-bottom-tab-svg" /> },
   { id: "tickets", label: "Tickets",   icon: <TicketIcon  className="mtech-bottom-tab-svg" /> },
@@ -1931,9 +1925,6 @@ const BOTTOM_TABS: Array<{ id: BottomTab; label: string; icon: React.ReactNode }
   { id: "chat",    label: "Chat",      icon: <MessageCircle className="mtech-bottom-tab-svg" /> },
   { id: "onhold",  label: "On Hold",   icon: <PauseCircle className="mtech-bottom-tab-svg" /> },
   { id: "payroll", label: "Payroll",   icon: <DollarSign  className="mtech-bottom-tab-svg" /> },
-  // Branch Manager / Senior Branch Manager only — filtered out of `tabs`
-  // for everyone else where <BottomNav> is rendered below.
-  { id: "branchreport", label: "Daily Report", icon: <FileText className="mtech-bottom-tab-svg" /> },
 ];
 
 function BottomNav({
@@ -5871,6 +5862,8 @@ function MobileHomeView({
   onOpenCorrection,
   onOpenTimecard,
   onOpenTicketAttendance,
+  showBranchReport,
+  onOpenBranchReport,
   arrivedAt,
   setArrivedAt,
   doneAt,
@@ -5899,6 +5892,8 @@ function MobileHomeView({
   onOpenCorrection: () => void;
   onOpenTimecard: () => void;
   onOpenTicketAttendance: () => void;
+  showBranchReport: boolean;
+  onOpenBranchReport: () => void;
   arrivedAt: Record<string, string>;
   setArrivedAt: Dispatch<SetStateAction<Record<string, string>>>;
   doneAt: Record<string, string>;
@@ -6254,6 +6249,11 @@ function MobileHomeView({
       key: "ticketattendance", label: "Ticket Attendance",
       description: "Who checked into their scheduled tickets today",
       onClick: onOpenTicketAttendance, show: true,
+    },
+    {
+      key: "branchreport", label: "Daily Report",
+      description: "Branch notes and urgency, updated daily",
+      onClick: onOpenBranchReport, show: showBranchReport,
     },
   ].filter((t) => t.show);
 
