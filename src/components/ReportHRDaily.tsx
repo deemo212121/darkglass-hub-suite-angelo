@@ -3355,6 +3355,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       insubordination: false,
       policyViolation: false,
       equipmentDamage: false,
+      timeCardWarning: false,
+      employeeErrorManipulation: false,
       other: false,
     },
     otherReasonText: "",
@@ -10820,7 +10822,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       branch: "",
       warningDate: todayStr,
       level: "",
-      reasons: { absence: false, tardiness: false, inappropriateBehavior: false, insubordination: false, policyViolation: false, equipmentDamage: false, other: false },
+      reasons: { absence: false, tardiness: false, inappropriateBehavior: false, insubordination: false, policyViolation: false, equipmentDamage: false, timeCardWarning: false, employeeErrorManipulation: false, other: false },
       otherReasonText: "",
       description: "",
       correctiveActions: "",
@@ -12508,8 +12510,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <td style="${cell}text-align:right;">${r.sponsored ?? "—"}</td>
           <td style="${cell}text-align:right;">${r.hired}</td>
           <td style="${cell}text-align:right;">${r.terminatedResigned}</td>
-          <td style="${cell}text-align:right;">${r.warningCount}</td>
-          <td style="${cell}text-align:right;">${r.warningCount}</td>
+          <td style="${cell}text-align:right;">${r.timeCardWarningCount}</td>
+          <td style="${cell}text-align:right;">${r.employeeErrorManipulationCount}</td>
         </tr>`;
       });
     }
@@ -18726,8 +18728,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                             <HiringManualCell value={r.sponsored} saving={hiringSectionsSavingKey === `${savingPrefix}sponsored`} onSave={(v) => handleHiringManualEntrySave(sectionKey, r.groupKey, "sponsored", v)} />
                             <td className="px-3 py-2 text-center font-semibold">{r.hired || <span className="text-muted-foreground font-normal">—</span>}</td>
                             <td className="px-3 py-2 text-center">{r.terminatedResigned || <span className="text-muted-foreground">—</span>}</td>
-                            <td className="px-3 py-2 text-center">{r.warningCount || <span className="text-muted-foreground">—</span>}</td>
-                            <td className="px-3 py-2 text-center">{r.warningCount || <span className="text-muted-foreground">—</span>}</td>
+                            <td className="px-3 py-2 text-center">{r.timeCardWarningCount || <span className="text-muted-foreground">—</span>}</td>
+                            <td className="px-3 py-2 text-center">{r.employeeErrorManipulationCount || <span className="text-muted-foreground">—</span>}</td>
                           </tr>
                         );
                       })
@@ -19473,6 +19475,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                 ["insubordination", "Insubordination"],
                 ["policyViolation", "Policy Violation"],
                 ["equipmentDamage", "Equipment Damage"],
+                ["timeCardWarning", "Time Card Warning"],
+                ["employeeErrorManipulation", "Employee Error/Manipulation"],
               ] as const).map(([key, label]) => (
                 <button key={key} type="button" onClick={() => toggleWarnReason(key)} className="flex items-center gap-1.5 text-sm text-left">
                   <span className="text-base">{warnForm.reasons[key] ? "☑" : "☐"}</span> {label}
