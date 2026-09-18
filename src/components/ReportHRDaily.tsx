@@ -3355,14 +3355,17 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       insubordination: false,
       policyViolation: false,
       equipmentDamage: false,
-      timeCardWarning: false,
-      employeeErrorManipulation: false,
       other: false,
     },
     otherReasonText: "",
     description: "",
     correctiveActions: "",
   });
+  // HR-internal classification for the EOD/EOM Hiring Report's separate
+  // "Time Card Warning" / "Employee Error/Manipulation" counters — chosen
+  // by HR in the Preview & Send panel, not part of the printed document's
+  // "Reason(s) for Warning".
+  const [warnWarningCategory, setWarnWarningCategory] = useState<"" | "time_card_warning" | "employee_error_manipulation">("");
   const updateWarnField = <K extends keyof typeof warnForm>(field: K, value: (typeof warnForm)[K]) =>
     setWarnForm((prev) => ({ ...prev, [field]: value }));
   const toggleWarnReason = (key: keyof typeof warnForm.reasons) =>
@@ -3445,6 +3448,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     recipientSlot,
     recipientName,
     recipientNames: recipientName ? { [recipientSlot]: recipientName } : undefined,
+    warningCategory: warnWarningCategory,
   });
 
   const [warnLogoDataUrl, setWarnLogoDataUrl] = useState("");
@@ -10822,11 +10826,12 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       branch: "",
       warningDate: todayStr,
       level: "",
-      reasons: { absence: false, tardiness: false, inappropriateBehavior: false, insubordination: false, policyViolation: false, equipmentDamage: false, timeCardWarning: false, employeeErrorManipulation: false, other: false },
+      reasons: { absence: false, tardiness: false, inappropriateBehavior: false, insubordination: false, policyViolation: false, equipmentDamage: false, other: false },
       otherReasonText: "",
       description: "",
       correctiveActions: "",
     });
+    setWarnWarningCategory("");
   };
 
   // ── Sent Warning Forms tracking table actions ──
@@ -19475,8 +19480,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                 ["insubordination", "Insubordination"],
                 ["policyViolation", "Policy Violation"],
                 ["equipmentDamage", "Equipment Damage"],
-                ["timeCardWarning", "Time Card Warning"],
-                ["employeeErrorManipulation", "Employee Error/Manipulation"],
               ] as const).map(([key, label]) => (
                 <button key={key} type="button" onClick={() => toggleWarnReason(key)} className="flex items-center gap-1.5 text-sm text-left">
                   <span className="text-base">{warnForm.reasons[key] ? "☑" : "☐"}</span> {label}
@@ -28037,6 +28040,27 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                     <option value="executive">Executive</option>
                     <option value="employee">Employee</option>
                   </select>
+                </div>
+
+                <div>
+                  <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Report Category (optional)</label>
+                  <p className="text-[10px] text-muted-foreground mt-0.5 mb-1">Not shown on the document — only used to count this warning in the HR Hiring Report.</p>
+                  <div className="flex rounded-md overflow-hidden border border-white/15 text-sm">
+                    <button
+                      type="button"
+                      onClick={() => setWarnWarningCategory((prev) => (prev === "time_card_warning" ? "" : "time_card_warning"))}
+                      className={`flex-1 px-2.5 py-1.5 ${warnWarningCategory === "time_card_warning" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground"}`}
+                    >
+                      Time Card Warning
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setWarnWarningCategory((prev) => (prev === "employee_error_manipulation" ? "" : "employee_error_manipulation"))}
+                      className={`flex-1 px-2.5 py-1.5 border-l border-white/15 ${warnWarningCategory === "employee_error_manipulation" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground"}`}
+                    >
+                      Employee Error/Manipulation
+                    </button>
+                  </div>
                 </div>
 
                 <div className="flex flex-col gap-2 mt-auto">

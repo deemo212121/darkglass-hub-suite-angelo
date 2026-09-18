@@ -1055,10 +1055,11 @@ export async function getEomHiringReport(yearMonth: string): Promise<EodHiringRo
 //     period, grouped by the person's CURRENT assigned_branch (or
 //     department if their branch is in the Philippines).
 //   - Warning (Time Card Warning / Employee Error/Manipulation -- counted
-//     separately based on which of those two reasons was checked on the
-//     actual Warning Form, WarningFormReasons.timeCardWarning/
-//     .employeeErrorManipulation -- a warning checking neither one (e.g.
-//     just "Absence") counts toward neither column): hr_signable_documents
+//     separately based on the HR-only classification chosen in the
+//     "Preview & Send" panel when the Warning Form was sent,
+//     WarningFormData.warningCategory -- NOT part of the "Reason(s) for
+//     Warning" shown on the document itself; a warning with no category
+//     chosen counts toward neither column): hr_signable_documents
 //     where document_type='warning_form' and created_at falls inside the
 //     period, grouped by the WARNED EMPLOYEE's (form_data->>employeeId,
 //     not whichever signature slot currently holds recipient_id) CURRENT
@@ -1102,7 +1103,7 @@ export interface HiringReportRow {
   cvsSentToBm: CvForwardDetail[];
   cvsSentToBmMonthly: CvForwardDetail[];
   terminatedResigned: number;
-  /** Counted separately per warning_form's reasons.timeCardWarning / reasons.employeeErrorManipulation — a warning with neither checked counts toward neither column. */
+  /** Counted separately per warning_form's warningCategory (HR-only classification, not the document's printed reasons) — a warning with no category chosen counts toward neither column. */
   timeCardWarningCount: number;
   employeeErrorManipulationCount: number;
   budget: number | null;
@@ -1294,17 +1295,17 @@ export async function getHiringReportSections(periodType: HiringReportPeriodType
 
   // ---- Warning: hr_signable_documents(warning_form), grouped by the WARNED employee's current branch/department ----
   // Time Card Warning and Employee Error/Manipulation are counted
-  // separately based on which of those two reasons HR checked on the
-  // actual Warning Form (WarningFormReasons.timeCardWarning /
-  // .employeeErrorManipulation) — a warning with neither checked (e.g.
-  // just "Absence") doesn't count toward either column.
+  // separately based on the HR-only classification chosen when the
+  // Warning Form was sent (WarningFormData.warningCategory) — not one of
+  // the "Reason(s) for Warning" shown on the printed document. A warning
+  // sent with no category chosen doesn't count toward either column.
   for (const w of warnings) {
     const employeeId = w.form_data?.employeeId;
     const profile = employeeId ? profileById.get(employeeId) : null;
     if (!profile) continue; // no profile to attribute the branch to -- skip rather than guess
-    const reasons = w.form_data?.reasons ?? {};
-    const isTimeCard = reasons.timeCardWarning === true;
-    const isEmployeeError = reasons.employeeErrorManipulation === true;
+    const category = w.form_data?.warningCategory;
+    const isTimeCard = category === "time_card_warning";
+    const isEmployeeError = category === "employee_error_manipulation";
     if (!isTimeCard && !isEmployeeError) continue;
     const row = isPhBranch((profile as any).assigned_branch)
       ? ensure("philippine_staff", normalizePhDepartment((profile as any).department))

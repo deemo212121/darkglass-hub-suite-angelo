@@ -18,12 +18,6 @@ export interface WarningFormReasons {
   insubordination: boolean;
   policyViolation: boolean;
   equipmentDamage: boolean;
-  /** Drives the EOD/EOM Hiring Report's separate "Time Card Warning" /
-   *  "Employee Error/Manipulation" counters (hrCandidates.ts) — before
-   *  these existed, both columns just showed the same total warning
-   *  count with no way to tell them apart. */
-  timeCardWarning: boolean;
-  employeeErrorManipulation: boolean;
   other: boolean;
   otherText: string;
 }
@@ -62,6 +56,15 @@ export interface WarningFormData {
    * only ever the pre-signature placeholder.
    */
   recipientNames?: Partial<Record<SignatureSlot, string>>;
+  /**
+   * HR-internal classification of the warning for the EOD/EOM Hiring
+   * Report's separate "Time Card Warning" / "Employee Error/Manipulation"
+   * counters (hrCandidates.ts) — before this existed, both columns just
+   * showed the same total warning count with no way to tell them apart.
+   * Not part of the "Reason(s) for Warning" shown on the printed document
+   * itself — chosen separately by HR as report-only metadata.
+   */
+  warningCategory: "" | "time_card_warning" | "employee_error_manipulation";
 }
 
 export interface SignatureEntry {
@@ -81,8 +84,6 @@ export function buildWarnNoteText(data: Pick<WarningFormData, "level" | "reasons
   if (data.reasons.insubordination) reasonLabels.push("Insubordination");
   if (data.reasons.policyViolation) reasonLabels.push("Policy Violation");
   if (data.reasons.equipmentDamage) reasonLabels.push("Equipment Damage");
-  if (data.reasons.timeCardWarning) reasonLabels.push("Time Card Warning");
-  if (data.reasons.employeeErrorManipulation) reasonLabels.push("Employee Error/Manipulation");
   if (data.reasons.other && data.reasons.otherText?.trim()) reasonLabels.push(data.reasons.otherText.trim());
   const levelLabel = data.level ? `${data.level} Warning` : "Warning";
   return `${levelLabel}${reasonLabels.length ? ` — ${reasonLabels.join(", ")}` : ""}${data.description.trim() ? `. ${data.description.trim()}` : ""}`;
@@ -194,7 +195,6 @@ export function buildWarningFormBodyMarkup(data: WarningFormData, logoDataUrl: s
             <span>${checkbox(r.absence)} Absence</span><span>${checkbox(r.tardiness)} Tardiness</span>
             <span>${checkbox(r.inappropriateBehavior)} Inappropriate Behavior</span><span>${checkbox(r.insubordination)} Insubordination</span>
             <span>${checkbox(r.policyViolation)} Policy Violation</span><span>${checkbox(r.equipmentDamage)} Equipment Damage</span>
-            <span>${checkbox(r.timeCardWarning)} Time Card Warning</span><span>${checkbox(r.employeeErrorManipulation)} Employee Error/Manipulation</span>
           </div>
           <div class="warn-other-row">${checkbox(r.other)} Other: <span>${escapeHtml(r.otherText)}</span></div>
 
