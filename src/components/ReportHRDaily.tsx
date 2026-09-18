@@ -3000,7 +3000,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [coeEmployeeNameDropdownOpen, setCoeEmployeeNameDropdownOpen] = useState(false);
   const filteredCoeEmployeeOptions = (query: string) => {
     const q = query.trim().toLowerCase();
-    const sorted = [...employees].sort((a, b) => a.name.localeCompare(b.name));
+    const sorted = employees.filter((e) => e.status !== "inactive").sort((a, b) => a.name.localeCompare(b.name));
     return q ? sorted.filter((e) => e.name.toLowerCase().includes(q)) : sorted;
   };
 
@@ -3174,7 +3174,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   }, [coeDocuments, coeSignableDocs, employees]);
   const filteredCoeRecipients = useMemo(() => {
     const q = coeRecipientSearch.trim().toLowerCase();
-    const sorted = [...employees].sort((a, b) => a.name.localeCompare(b.name));
+    const sorted = employees.filter((e) => e.status !== "inactive").sort((a, b) => a.name.localeCompare(b.name));
     if (!q) return sorted;
     return sorted.filter(
       (e) => e.name.toLowerCase().includes(q) || (ROLE_LABELS[normalizeRole(e.position)] ?? e.position).toLowerCase().includes(q)
@@ -3369,7 +3369,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [warnEmployeeDropdownOpen, setWarnEmployeeDropdownOpen] = useState(false);
   const filteredWarnEmployeeOptions = (query: string) => {
     const q = query.trim().toLowerCase();
-    const sorted = [...employees].sort((a, b) => a.name.localeCompare(b.name));
+    const sorted = employees.filter((e) => e.status !== "inactive").sort((a, b) => a.name.localeCompare(b.name));
     return q ? sorted.filter((e) => e.name.toLowerCase().includes(q)) : sorted;
   };
   const selectWarnEmployee = (employee: { id: string; name: string; position: string; branch: string }) => {
@@ -3468,7 +3468,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [warnSentLinkCopied, setWarnSentLinkCopied] = useState(false);
   const filteredWarnRecipients = useMemo(() => {
     const q = warnRecipientSearch.trim().toLowerCase();
-    const sorted = [...employees].sort((a, b) => a.name.localeCompare(b.name));
+    const sorted = employees.filter((e) => e.status !== "inactive").sort((a, b) => a.name.localeCompare(b.name));
     return q ? sorted.filter((e) => e.name.toLowerCase().includes(q) || (ROLE_LABELS[normalizeRole(e.position)] ?? e.position).toLowerCase().includes(q)) : sorted;
   }, [employees, warnRecipientSearch]);
 
@@ -10916,7 +10916,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [reassignSentLinkCopied, setReassignSentLinkCopied] = useState(false);
   const filteredReassignRecipients = useMemo(() => {
     const q = reassignRecipientSearch.trim().toLowerCase();
-    const sorted = [...employees].sort((a, b) => a.name.localeCompare(b.name));
+    const sorted = employees.filter((e) => e.status !== "inactive").sort((a, b) => a.name.localeCompare(b.name));
     return q ? sorted.filter((e) => e.name.toLowerCase().includes(q) || (ROLE_LABELS[normalizeRole(e.position)] ?? e.position).toLowerCase().includes(q)) : sorted;
   }, [employees, reassignRecipientSearch]);
 
@@ -11035,7 +11035,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [promoEmployeeDropdownOpen, setPromoEmployeeDropdownOpen] = useState(false);
   const filteredPromoEmployeeOptions = (query: string) => {
     const q = query.trim().toLowerCase();
-    const sorted = [...employees].sort((a, b) => a.name.localeCompare(b.name));
+    const sorted = employees.filter((e) => e.status !== "inactive").sort((a, b) => a.name.localeCompare(b.name));
     return q ? sorted.filter((e) => e.name.toLowerCase().includes(q)) : sorted;
   };
   const selectPromoEmployee = (employee: { id: string; name: string; position: string; branch: string; startDate: string }) => {
@@ -11081,7 +11081,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [promoSentLinkCopied, setPromoSentLinkCopied] = useState(false);
   const filteredPromoRecipients = useMemo(() => {
     const q = promoRecipientSearch.trim().toLowerCase();
-    const sorted = [...employees].sort((a, b) => a.name.localeCompare(b.name));
+    const sorted = employees.filter((e) => e.status !== "inactive").sort((a, b) => a.name.localeCompare(b.name));
     return q ? sorted.filter((e) => e.name.toLowerCase().includes(q) || (ROLE_LABELS[normalizeRole(e.position)] ?? e.position).toLowerCase().includes(q)) : sorted;
   }, [employees, promoRecipientSearch]);
 
@@ -11326,7 +11326,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [promoReassignSentLinkCopied, setPromoReassignSentLinkCopied] = useState(false);
   const filteredPromoReassignRecipients = useMemo(() => {
     const q = promoReassignRecipientSearch.trim().toLowerCase();
-    const sorted = [...employees].sort((a, b) => a.name.localeCompare(b.name));
+    const sorted = employees.filter((e) => e.status !== "inactive").sort((a, b) => a.name.localeCompare(b.name));
     return q ? sorted.filter((e) => e.name.toLowerCase().includes(q) || (ROLE_LABELS[normalizeRole(e.position)] ?? e.position).toLowerCase().includes(q)) : sorted;
   }, [employees, promoReassignRecipientSearch]);
 
@@ -11425,7 +11425,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [actionPlanEmployeeDropdownOpen, setActionPlanEmployeeDropdownOpen] = useState(false);
   const filteredActionPlanEmployeeOptions = (query: string) => {
     const q = query.trim().toLowerCase();
-    const sorted = [...employees].sort((a, b) => a.name.localeCompare(b.name));
+    const sorted = employees.filter((e) => e.status !== "inactive").sort((a, b) => a.name.localeCompare(b.name));
     return q ? sorted.filter((e) => e.name.toLowerCase().includes(q)) : sorted;
   };
   const selectActionPlanEmployee = (employee: { id: string; name: string; position: string; branch: string }) => {
@@ -11473,7 +11473,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [actionPlanSentLinkCopied, setActionPlanSentLinkCopied] = useState(false);
   const filteredActionPlanRecipients = useMemo(() => {
     const q = actionPlanRecipientSearch.trim().toLowerCase();
-    const sorted = [...employees].sort((a, b) => a.name.localeCompare(b.name));
+    const sorted = employees.filter((e) => e.status !== "inactive").sort((a, b) => a.name.localeCompare(b.name));
     return q ? sorted.filter((e) => e.name.toLowerCase().includes(q) || (ROLE_LABELS[normalizeRole(e.position)] ?? e.position).toLowerCase().includes(q)) : sorted;
   }, [employees, actionPlanRecipientSearch]);
 
@@ -11717,7 +11717,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [actionPlanReassignSentLinkCopied, setActionPlanReassignSentLinkCopied] = useState(false);
   const filteredActionPlanReassignRecipients = useMemo(() => {
     const q = actionPlanReassignRecipientSearch.trim().toLowerCase();
-    const sorted = [...employees].sort((a, b) => a.name.localeCompare(b.name));
+    const sorted = employees.filter((e) => e.status !== "inactive").sort((a, b) => a.name.localeCompare(b.name));
     return q ? sorted.filter((e) => e.name.toLowerCase().includes(q) || (ROLE_LABELS[normalizeRole(e.position)] ?? e.position).toLowerCase().includes(q)) : sorted;
   }, [employees, actionPlanReassignRecipientSearch]);
 
@@ -11811,7 +11811,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [terminationEmployeeDropdownOpen, setTerminationEmployeeDropdownOpen] = useState(false);
   const filteredTerminationEmployeeOptions = (query: string) => {
     const q = query.trim().toLowerCase();
-    const sorted = [...employees].sort((a, b) => a.name.localeCompare(b.name));
+    const sorted = employees.filter((e) => e.status !== "inactive").sort((a, b) => a.name.localeCompare(b.name));
     return q ? sorted.filter((e) => e.name.toLowerCase().includes(q)) : sorted;
   };
   const selectTerminationEmployee = (employee: { id: string; name: string }) => {
@@ -11846,7 +11846,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [terminationSentLinkCopied, setTerminationSentLinkCopied] = useState(false);
   const filteredTerminationRecipients = useMemo(() => {
     const q = terminationRecipientSearch.trim().toLowerCase();
-    const sorted = [...employees].sort((a, b) => a.name.localeCompare(b.name));
+    const sorted = employees.filter((e) => e.status !== "inactive").sort((a, b) => a.name.localeCompare(b.name));
     return q ? sorted.filter((e) => e.name.toLowerCase().includes(q) || (ROLE_LABELS[normalizeRole(e.position)] ?? e.position).toLowerCase().includes(q)) : sorted;
   }, [employees, terminationRecipientSearch]);
 
@@ -12121,7 +12121,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [terminationReassignSentLinkCopied, setTerminationReassignSentLinkCopied] = useState(false);
   const filteredTerminationReassignRecipients = useMemo(() => {
     const q = terminationReassignRecipientSearch.trim().toLowerCase();
-    const sorted = [...employees].sort((a, b) => a.name.localeCompare(b.name));
+    const sorted = employees.filter((e) => e.status !== "inactive").sort((a, b) => a.name.localeCompare(b.name));
     return q ? sorted.filter((e) => e.name.toLowerCase().includes(q) || (ROLE_LABELS[normalizeRole(e.position)] ?? e.position).toLowerCase().includes(q)) : sorted;
   }, [employees, terminationReassignRecipientSearch]);
 
@@ -19119,7 +19119,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                   <div className="absolute z-10 mt-1 w-full max-h-48 overflow-y-auto rounded-md border border-white/15 bg-slate-800 shadow-lg">
                     {(() => {
                       const q = coeSendToSearch.trim().toLowerCase();
-                      const sorted = [...employees].sort((a, b) => a.name.localeCompare(b.name));
+                      const sorted = employees.filter((e) => e.status !== "inactive").sort((a, b) => a.name.localeCompare(b.name));
                       const opts = q ? sorted.filter((e) => e.name.toLowerCase().includes(q)) : sorted;
                       return opts.length === 0 ? (
                         <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
