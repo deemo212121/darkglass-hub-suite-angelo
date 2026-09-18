@@ -276,16 +276,22 @@ function everyHeldRoleIn(roleSet: Set<string>, role: string | null | undefined, 
  */
 const CSR_RESTRICTED_ROLES = new Set(["CSR_AGENT", "CSR_TEAM_LEADER", "CSR_MANAGER"]);
 
-/** Top-level modules the CSR department may open. */
-const CSR_ALLOWED_MODULES = new Set(["dashboard", "tickets"]);
+/**
+ * Top-level modules the CSR department may open. "csr" is fully open once
+ * allowed (same as "tickets" below — see isSubmoduleAllowed's fallback) now
+ * that daily-report/team-composition/csr-daily-report/call-tracker/
+ * csr-status-summary all live there instead of under "dashboard" (see
+ * modules.ts) — there's no need for a narrower per-submodule allow-list
+ * the way "dashboard" itself still has below, since every submodule in
+ * the CSR module is already CSR-department content.
+ */
+const CSR_ALLOWED_MODULES = new Set(["dashboard", "tickets", "csr"]);
 
 /** Within the Dashboard module, the only submodules the CSR department may open. */
 const CSR_ALLOWED_DASHBOARD_SUBMODULES = new Set([
   "daily-activity",
   "overall-status",
   "employee-self-service",
-  "csr-dashboard", // redirects them to their own csr-team-leader-dashboard
-  "csr-team-leader-dashboard", // the personal dashboard that redirect lands on
   "live-chat-support",
 ]);
 
@@ -323,7 +329,7 @@ export function isSubmoduleAllowed(role: string | null | undefined, moduleSlug: 
   if (moduleSlug === "admin" && CSR_EXEMPT_ADMIN_SUBMODULES.has(submoduleSlug)) return true;
   if (!isModuleAllowed(role, moduleSlug, extraRoles)) return false;
   if (moduleSlug === "dashboard") return CSR_ALLOWED_DASHBOARD_SUBMODULES.has(submoduleSlug);
-  return true; // tickets: fully open once the module itself is allowed
+  return true; // tickets, csr: fully open once the module itself is allowed
 }
 
 /**

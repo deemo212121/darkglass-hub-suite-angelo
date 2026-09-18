@@ -26,7 +26,7 @@ const isNeedTriageStatus = (status: string) => String(status || "").trim().toLow
  *   - Attendance: the Attendance Monitoring Report's present/absent/late
  *     breakdown for a date range.
  *   - Work Hours: edit each Triage employee's Required Check-In/Check-Out
- *     (see WorkHoursPanel.tsx, shared with CSRDashboard.tsx).
+ *     (see WorkHoursPanel.tsx, shared with CSRMainDashboard.tsx's Team Composition tab).
  * The Activity/Attendance pages render `embedded` (no own back-link/title/
  * page shell) — this page provides that chrome once, for all three tabs.
  */

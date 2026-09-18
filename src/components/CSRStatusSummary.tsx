@@ -471,7 +471,7 @@ export function CSRStatusSummary({ sub }: { mod: ModuleDef; sub: SubModuleDef })
         <div className="flex items-center gap-3 mb-6">
           <Link
             to="/m/$module/$submodule"
-            params={{ module: "dashboard", submodule: "csr-dashboard" }}
+            params={{ module: "csr", submodule: "daily-report" }}
             className="btn hover:bg-white/15"
           >
             <ChevronLeft className="h-4 w-4" />

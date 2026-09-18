@@ -75,7 +75,7 @@ export function CSRCallTracker({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
     <div className="min-h-screen flex flex-col">
       <main className="flex-1 max-w-[1400px] mx-auto w-full px-6 py-8">
         <div className="flex items-center gap-3 mb-6">
-          <Link to="/m/$module/$submodule" params={{ module: "dashboard", submodule: "csr-dashboard" }} className="btn hover:bg-white/15"><ChevronLeft className="h-4 w-4" /></Link>
+          <Link to="/m/$module/$submodule" params={{ module: "csr", submodule: "daily-report" }} className="btn hover:bg-white/15"><ChevronLeft className="h-4 w-4" /></Link>
           <div className="flex items-center gap-2"><Phone className="h-5 w-5 text-pink-400" /><h1 className="text-2xl font-bold">{sub.title}</h1></div>
         </div>
 

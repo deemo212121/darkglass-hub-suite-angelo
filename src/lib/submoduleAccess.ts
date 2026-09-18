@@ -40,11 +40,12 @@ export function canAccessSubmodule(
 
   const explicitModuleOverride = getModuleRoleGate(moduleSlug, sub.slug);
   // Kept in sync with m.$module.$submodule.tsx's identical moduleAllowedRoles
-  // line — "accounting" is included alongside "dashboard"/"hr" so
-  // accounting-dashboard's hardcoded ADMIN/FINANCE default still applies
-  // here (the floating quick-nav) even though it moved out of the
-  // Dashboard module into its own Accounting module (see modules.ts).
-  const moduleAllowedRoles = (moduleSlug === "dashboard" || moduleSlug === "hr" || moduleSlug === "accounting") ? getDashboardRoleGate(sub.slug) : explicitModuleOverride;
+  // line — "accounting" and "csr" are included alongside "dashboard"/"hr" so
+  // accounting-dashboard's and daily-report/team-composition's hardcoded
+  // defaults still apply here (the floating quick-nav) even though they
+  // moved out of the Dashboard module into their own Accounting/CSR
+  // modules (see modules.ts).
+  const moduleAllowedRoles = (moduleSlug === "dashboard" || moduleSlug === "hr" || moduleSlug === "accounting" || moduleSlug === "csr") ? getDashboardRoleGate(sub.slug) : explicitModuleOverride;
 
   if (!explicitModuleOverride && !isSubmoduleAllowed(role, moduleSlug, sub.slug, extraRoles)) return false;
 
