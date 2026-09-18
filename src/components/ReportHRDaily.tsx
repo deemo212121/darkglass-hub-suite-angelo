@@ -10736,6 +10736,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
   const handleSendWarningForm = async () => {
     if (!warnForm.employeeName.trim() || !warnRecipientId || !uid) return;
+    if (!warnWarningCategory) {
+      setWarnSendError("Select a Report Category (Time Card Warning or Employee Error/Manipulation) before sending.");
+      return;
+    }
     setWarnSending(true);
     setWarnSendError(null);
     try {
@@ -10779,6 +10783,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   /** No AHS profile to tie this to, so no DM — the link itself (shown in the same post-send confirmation view) is the only way the recipient finds out, which is why it always lands there instead of just closing. */
   const handleGenerateExternalWarningLink = async () => {
     if (!warnForm.employeeName.trim() || !warnExternalName.trim()) return;
+    if (!warnWarningCategory) {
+      setWarnSendError("Select a Report Category (Time Card Warning or Employee Error/Manipulation) before sending.");
+      return;
+    }
     setWarnSending(true);
     setWarnSendError(null);
     try {
@@ -28043,19 +28051,19 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                 </div>
 
                 <div>
-                  <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Report Category (optional)</label>
+                  <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Report Category (required)</label>
                   <p className="text-[10px] text-muted-foreground mt-0.5 mb-1">Not shown on the document — only used to count this warning in the HR Hiring Report.</p>
-                  <div className="flex rounded-md overflow-hidden border border-white/15 text-[11px] leading-tight">
+                  <div className={`flex rounded-md overflow-hidden border text-[11px] leading-tight ${warnWarningCategory ? "border-white/15" : "border-red-500/50"}`}>
                     <button
                       type="button"
-                      onClick={() => setWarnWarningCategory((prev) => (prev === "time_card_warning" ? "" : "time_card_warning"))}
+                      onClick={() => setWarnWarningCategory("time_card_warning")}
                       className={`flex-1 px-1.5 py-1 ${warnWarningCategory === "time_card_warning" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground"}`}
                     >
                       Time Card Warning
                     </button>
                     <button
                       type="button"
-                      onClick={() => setWarnWarningCategory((prev) => (prev === "employee_error_manipulation" ? "" : "employee_error_manipulation"))}
+                      onClick={() => setWarnWarningCategory("employee_error_manipulation")}
                       className={`flex-1 px-1.5 py-1 border-l border-white/15 ${warnWarningCategory === "employee_error_manipulation" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground"}`}
                     >
                       Employee Error/Manipulation
@@ -28070,7 +28078,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                   {warnSendMode === "teammate" ? (
                     <button
                       onClick={handleSendWarningForm}
-                      disabled={!warnRecipientId || warnSending}
+                      disabled={!warnRecipientId || !warnWarningCategory || warnSending}
                       className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white flex items-center justify-center gap-1.5 disabled:opacity-50"
                     >
                       {warnSending ? "Sending…" : "Send for Signature"}
@@ -28078,7 +28086,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                   ) : (
                     <button
                       onClick={handleGenerateExternalWarningLink}
-                      disabled={!warnExternalName.trim() || warnSending}
+                      disabled={!warnExternalName.trim() || !warnWarningCategory || warnSending}
                       className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white flex items-center justify-center gap-1.5 disabled:opacity-50"
                     >
                       {warnSending ? "Generating…" : "Generate Link"}
