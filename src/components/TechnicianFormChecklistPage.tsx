@@ -40,7 +40,7 @@ import { useAuth } from "@/lib/auth";
 import { ManagerReviewPage, SUPPORTED_TYPES as EMPLOYER_SIGN_SUPPORTED_TYPES } from "@/components/ManagerReviewPage";
 import { getCompanyUsers, getMyProfileId, setProfileFrozen, type ProfileRow } from "@/lib/supabase/users";
 import { isEligibleForTechnicianFormChecklist, isBmAndUpRole, getRoleDepartmentBreakdown } from "@/lib/roleLabels";
-import { getSignableDocumentsByTypes, getExistingActiveDocumentTypes, createSignableDocument, updateSignableDocumentPdfUrl, confirmSignableDocument, type SignableDocument, type SignableDocumentType } from "@/lib/supabase/signableDocuments";
+import { getSignableDocumentsByTypes, getExistingActiveDocumentTypes, createSignableDocument, updateSignableDocumentPdfUrl, updateSignableDocumentFormData, confirmSignableDocument, type SignableDocument, type SignableDocumentType } from "@/lib/supabase/signableDocuments";
 import {
   SIGNABLE_DOCUMENT_REGISTRY,
   TECHNICIAN_FORM_TYPES,
@@ -61,6 +61,7 @@ import { getTechnicianIdDocumentUrl } from "@/lib/supabase/technicianIdDocuments
 import { getTechnicianFormExemptions, setTechnicianFormExemption } from "@/lib/supabase/technicianFormExemptions";
 import { logActivity } from "@/lib/supabase/hrActivityLog";
 import { getAppUrl } from "@/lib/appUrl";
+import { onTabVisible } from "@/lib/pageVisibility";
 import { LOCATIONS_DATA } from "@/lib/zipCoverage";
 import { uploadW4Form } from "@/lib/firebase/storage";
 import { fillW4Pdf } from "@/lib/w4PdfFill";
@@ -176,6 +177,66 @@ function isComplete(doc: SignableDocument | undefined, type: SignableDocumentTyp
   return getDocumentReviewStatus(type, doc) === "done";
 }
 
+// Optional "instant preview while refreshing" cache — same sessionStorage
+// pattern as TicketList.tsx/ReportHRDaily.tsx's own caches: always still
+// fetches for real (see loadUsers/loadDocsForActiveTab below), this just
+// paints the roster and the active tab's forms immediately on a repeat
+// visit this session instead of a blank spinner while the network round-
+// trip completes. Fully guarded — a cache failure silently falls back to
+// the normal load. Docs are cached per tab (a separate key per
+// ChecklistTabKey) since each tab pulls a different set of document types.
+const CHECKLIST_CACHE_MAX_AGE_MS = 5 * 60 * 1000;
+const CHECKLIST_CACHE_MAX_BYTES = 4 * 1024 * 1024;
+const USERS_CACHE_KEY = "ahs:staffchecklist:users-cache:v1";
+
+function readCachedUsers(): ProfileRow[] | null {
+  try {
+    const raw = sessionStorage.getItem(USERS_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { savedAt: number; users: ProfileRow[] };
+    if (!parsed?.users || Date.now() - parsed.savedAt > CHECKLIST_CACHE_MAX_AGE_MS) return null;
+    return parsed.users;
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedUsers(users: ProfileRow[]): void {
+  try {
+    const payload = JSON.stringify({ savedAt: Date.now(), users });
+    if (payload.length > CHECKLIST_CACHE_MAX_BYTES) return;
+    sessionStorage.setItem(USERS_CACHE_KEY, payload);
+  } catch {
+    /* storage full/unavailable/private mode — caching is a pure bonus */
+  }
+}
+
+function docsCacheKey(tab: ChecklistTabKey): string {
+  return `ahs:staffchecklist:docs-cache:v1:${tab}`;
+}
+
+function readCachedDocs(tab: ChecklistTabKey): Map<string, SignableDocument> | null {
+  try {
+    const raw = sessionStorage.getItem(docsCacheKey(tab));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { savedAt: number; entries: [string, SignableDocument][] };
+    if (!parsed?.entries || Date.now() - parsed.savedAt > CHECKLIST_CACHE_MAX_AGE_MS) return null;
+    return new Map(parsed.entries);
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedDocs(tab: ChecklistTabKey, entries: Map<string, SignableDocument>): void {
+  try {
+    const payload = JSON.stringify({ savedAt: Date.now(), entries: Array.from(entries.entries()) });
+    if (payload.length > CHECKLIST_CACHE_MAX_BYTES) return;
+    sessionStorage.setItem(docsCacheKey(tab), payload);
+  } catch {
+    /* storage full/unavailable/private mode — caching is a pure bonus */
+  }
+}
+
 type SortMode = "missing-desc" | "missing-asc" | "name" | "branch";
 
 export function TechnicianFormChecklistPage() {
@@ -183,8 +244,11 @@ export function TechnicianFormChecklistPage() {
   const { uid, displayName } = useAuth();
   const [myProfileId, setMyProfileId] = useState<string | null>(null);
   const [activeChecklistTab, setActiveChecklistTab] = useState<ChecklistTabKey>("technician");
-  const [allUsers, setAllUsers] = useState<ProfileRow[]>([]);
-  const [latestByKey, setLatestByKey] = useState<Map<string, SignableDocument>>(new Map());
+  // Lazy initializers so a cache hit paints the roster/active tab's forms on
+  // the very first render — see the cache helpers above loadUsers/
+  // loadDocsForActiveTab further down, which always still fetch for real.
+  const [allUsers, setAllUsers] = useState<ProfileRow[]>(() => readCachedUsers() ?? []);
+  const [latestByKey, setLatestByKey] = useState<Map<string, SignableDocument>>(() => readCachedDocs("technician") ?? new Map());
   const [exemptions, setExemptions] = useState<Set<string>>(new Set());
   const [expanded, setExpanded] = useState<string | null>(null);
   const [hideComplete, setHideComplete] = useState(false);
@@ -311,12 +375,13 @@ export function TechnicianFormChecklistPage() {
 
   // The roster doesn't vary per tab — fetched once (and on manual Refresh),
   // not re-pulled every time the active tab changes.
-  const [usersLoading, setUsersLoading] = useState(true);
+  const [usersLoading, setUsersLoading] = useState(() => readCachedUsers() === null);
   const loadUsers = useCallback(async () => {
     setUsersLoading(true);
     try {
-      const users = await getCompanyUsers();
-      setAllUsers((users as ProfileRow[]).filter((u) => u.is_active));
+      const users = (await getCompanyUsers() as ProfileRow[]).filter((u) => u.is_active);
+      setAllUsers(users);
+      writeCachedUsers(users);
     } catch (err) {
       console.error("Staff form checklist: failed to load users:", err);
     } finally {
@@ -328,9 +393,18 @@ export function TechnicianFormChecklistPage() {
   // document type in the company) — re-runs whenever the tab changes, so
   // switching tabs costs one small, targeted fetch instead of the page
   // eagerly pulling the whole company's signable-document history up front.
-  const [docsLoading, setDocsLoading] = useState(true);
+  const [docsLoading, setDocsLoading] = useState(() => readCachedDocs("technician") === null);
   const loadDocsForActiveTab = useCallback(async () => {
-    setDocsLoading(true);
+    // Paint instantly from that tab's own cached copy (if any) while the
+    // real fetch below still always runs — covers switching TO a tab
+    // visited earlier this session, not just the very first mount.
+    const cachedForTab = readCachedDocs(activeConfig.key);
+    if (cachedForTab) {
+      setLatestByKey(cachedForTab);
+      setDocsLoading(false);
+    } else {
+      setDocsLoading(true);
+    }
     try {
       const [docs, exemptionRows] = await Promise.all([
         getSignableDocumentsByTypes(activeConfig.formTypes),
@@ -376,6 +450,7 @@ export function TechnicianFormChecklistPage() {
 
       setLatestByKey(latest);
       setExemptions(exemptionRows);
+      writeCachedDocs(activeConfig.key, latest);
     } catch (err) {
       console.error("Staff form checklist: failed to load documents:", err);
     } finally {
@@ -404,6 +479,16 @@ export function TechnicianFormChecklistPage() {
   useEffect(() => {
     void loadDocsForActiveTab();
   }, [loadDocsForActiveTab]);
+
+  // A form sent/signed from somewhere else (HR Dashboard, a technician's own
+  // fill link, etc.) has no way to push an update here — this page only
+  // fetches once on mount/tab-switch, so a tab left open for a while quietly
+  // goes stale ("Not sent" for a form that's actually already signed and
+  // waiting on HR). Catching up on refocus — same fix TimeClockMenu.tsx/
+  // MessagesMenu.tsx already use for the same "long-open tab" staleness —
+  // means coming back to this tab always shows current status without
+  // needing to remember to click Refresh.
+  useEffect(() => onTabVisible(() => void load()), [load]);
 
   const rows: TechRow[] = useMemo(() => {
     return allUsers.filter(activeConfig.isEligible).map((u) => {
@@ -731,6 +816,34 @@ export function TechnicianFormChecklistPage() {
       }
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "Failed to send reminder.");
+    } finally {
+      setActionKey(null);
+    }
+  };
+
+  // HR's "reviewed this ID photo" checkbox (ID_DOC_FIELDS) — a plain flag on
+  // the document's own form_data, keyed per field so e.g. master_w2_agreement's
+  // separate License/SSN Card photos each track independently. Not part of
+  // the sign/countersign flow at all, purely a "someone on HR actually
+  // looked at this" record.
+  const handleToggleIdVerified = async (doc: SignableDocument, personId: string, type: SignableDocumentType, field: string) => {
+    const key = `${personId}|${type}|${field}`;
+    const verifiedField = `${field}Verified`;
+    const nextFormData = { ...doc.formData, [verifiedField]: !doc.formData?.[verifiedField] };
+    setActionKey(key);
+    setActionError(null);
+    try {
+      await updateSignableDocumentFormData(doc.id, nextFormData);
+      setLatestByKey((prev) => {
+        const mapKey = `${personId}|${type}`;
+        const existing = prev.get(mapKey);
+        if (!existing) return prev;
+        const next = new Map(prev);
+        next.set(mapKey, { ...existing, formData: nextFormData });
+        return next;
+      });
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Failed to update.");
     } finally {
       setActionKey(null);
     }
@@ -1173,10 +1286,23 @@ export function TechnicianFormChecklistPage() {
                               N/A
                             </label>
                           </li>
-                          {idDocFields.map(({ field, label: fieldLabel }) => (
+                          {idDocFields.map(({ field, label: fieldLabel }) => {
+                            const idKey = `${r.profileId}|${type}|${field}`;
+                            const idBusy = actionKey === idKey;
+                            const verified = !!doc!.formData?.[`${field}Verified`];
+                            return (
                             <li key={field} className="flex items-center gap-2.5 text-sm pl-6">
-                              <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded border border-white/20 bg-transparent" />
-                              <span className="flex-1 min-w-0 text-slate-400">{fieldLabel}</span>
+                              <button
+                                type="button"
+                                disabled={idBusy}
+                                onClick={() => void handleToggleIdVerified(doc!, r.profileId, type, field)}
+                                title={verified ? "Reviewed — click to unmark" : "Mark this ID photo as reviewed"}
+                                className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border disabled:opacity-40 ${verified ? "border-emerald-500 bg-emerald-500 text-slate-950" : "border-white/20 bg-transparent hover:border-white/40"}`}
+                              >
+                                {verified && <span className="text-[10px] font-bold leading-none">✓</span>}
+                              </button>
+                              <span className={`flex-1 min-w-0 ${verified ? "text-slate-500" : "text-slate-400"}`}>{fieldLabel}</span>
+                              {verified && <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wide text-emerald-400">Reviewed</span>}
                               <button
                                 type="button"
                                 onClick={() =>
@@ -1189,7 +1315,8 @@ export function TechnicianFormChecklistPage() {
                                 view <ExternalLink className="h-3 w-3" />
                               </button>
                             </li>
-                          ))}
+                            );
+                          })}
                           </Fragment>
                         );
                       })}

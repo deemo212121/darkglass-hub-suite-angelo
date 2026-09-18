@@ -23,7 +23,7 @@ import { Link } from "@tanstack/react-router";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { LayoutGrid } from "lucide-react";
-import { MODULES, DASHBOARD_GRID_EXCLUDED_SLUGS, type ModuleDef, type SubModuleDef } from "@/lib/modules";
+import { MODULES, type ModuleDef, type SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { canAccessSubmodule } from "@/lib/submoduleAccess";
 
@@ -115,7 +115,6 @@ export function ModuleNavigator() {
   const visibleSubmodulesFor = (m: ModuleDef): SubModuleDef[] =>
     m.submodules.filter((s) => {
       if (s.hiddenFromGrid) return false;
-      if (m.slug === "dashboard" && DASHBOARD_GRID_EXCLUDED_SLUGS.has(s.slug)) return false;
       return canAccessSubmodule(role, extraRoles, m.slug, s, isTrainee, isFrozen);
     });
 

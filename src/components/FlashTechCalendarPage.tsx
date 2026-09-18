@@ -1,11 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { ChevronLeft, ChevronRight, RefreshCw, Plus, X, Trash2, CalendarDays, Table2, Paperclip, Loader2, Car, Users, Check, Minus, Building2, Search, Filter } from "lucide-react";
+import { ChevronLeft, ChevronRight, RefreshCw, Plus, X, Trash2, CalendarDays, Table2, Paperclip, Loader2, Car, Users, Check, Minus, Building2, Search, Filter, Mail } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { useSmartBack } from "@/hooks/useSmartBack";
 import { normalizeRole, isEligibleForTechnicianFormChecklist } from "@/lib/roleLabels";
 import { getCompanyUsers, getMyProfileId, getTechnicianContactInfoByIds, type ProfileRow } from "@/lib/supabase/users";
+import { getGmailConnectionStatus, disconnectGmail, type GmailConnectionStatus } from "@/lib/supabase/gmailConnection";
+import { getFlashTechOpenAlertEmail, setFlashTechOpenAlertEmail } from "@/lib/supabase/companySettings";
+import { auth as firebaseAuth } from "@/lib/firebase/config";
 import {
   getCompanyFlashTechTrips,
   createFlashTechTrip,
@@ -183,7 +186,113 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
   // Tracker fields (everything beyond scheduling itself) are also editable
   // by HR — see migration 0257's widened update policy.
   const canEditTracker = canManage || [role, ...extraRoles].some((r) => normalizeRole(r) === "HR");
+  const isHrRole = [role, ...extraRoles].some((r) => normalizeRole(r) === "HR");
+  // Connect (OAuth) is Admin/SuperAdmin only — same CONNECT_ROLES gate every
+  // other Gmail slot's server-side connect action enforces. Editing WHO the
+  // "trip turned Open" alert goes to is a little wider (HR too), matching
+  // set_flash_tech_open_alert_email's own role check.
+  const canConnectFlashTechGmail = role ? ["ADMIN", "SUPERADMIN"].includes(normalizeRole(role)) : false;
+  const canEditFlashTechAlertEmail = canConnectFlashTechGmail || isHrRole;
 
+  // ── Connect Gmail + "trip turned Open" alert recipient — same
+  // connect-flow/region idiom as ReportHRDaily.tsx's Hiring Gmail block
+  // (migration 0268, src/lib/server/flashTechOpenAlerts.ts's hourly cron
+  // job is what actually sends the alert; this page only connects the
+  // mailbox and sets who receives it). ──
+  const [flashTechGmailStatus, setFlashTechGmailStatus] = useState<GmailConnectionStatus | null>(null);
+  const [connectingFlashTechGmail, setConnectingFlashTechGmail] = useState(false);
+  const [disconnectingFlashTechGmail, setDisconnectingFlashTechGmail] = useState(false);
+  const loadFlashTechGmailStatus = () => {
+    getGmailConnectionStatus("FLASH_TECH")
+      .then(setFlashTechGmailStatus)
+      .catch((err) => console.error("Failed to load Flash Tech Gmail connection status:", err));
+  };
+  const [flashTechAlertEmail, setFlashTechAlertEmailState] = useState(""); // saved, comma-separated
+  // Draft shown as individual chips — one container per email — instead of
+  // one shared text box, per HR's explicit request. flashTechAlertEmailInput
+  // holds whatever's currently being typed, not yet turned into a chip.
+  const [flashTechAlertEmailChips, setFlashTechAlertEmailChips] = useState<string[]>([]);
+  const [flashTechAlertEmailInput, setFlashTechAlertEmailInput] = useState("");
+  const commitFlashTechAlertEmailChip = () => {
+    const v = flashTechAlertEmailInput.trim().replace(/,+$/, "");
+    if (!v) { setFlashTechAlertEmailInput(""); return; }
+    setFlashTechAlertEmailChips((prev) => (prev.includes(v) ? prev : [...prev, v]));
+    setFlashTechAlertEmailInput("");
+  };
+  const removeFlashTechAlertEmailChip = (email: string) => {
+    setFlashTechAlertEmailChips((prev) => prev.filter((e) => e !== email));
+  };
+  const flashTechAlertEmailDirty = [...flashTechAlertEmailChips, flashTechAlertEmailInput.trim()].filter(Boolean).join(",") !== flashTechAlertEmail;
+  const [savingFlashTechAlertEmail, setSavingFlashTechAlertEmail] = useState(false);
+  const [flashTechAlertNotice, setFlashTechAlertNotice] = useState<string | null>(null);
+  useEffect(() => {
+    loadFlashTechGmailStatus();
+    getFlashTechOpenAlertEmail()
+      .then((email) => {
+        setFlashTechAlertEmailState(email);
+        setFlashTechAlertEmailChips(email.split(",").map((s) => s.trim()).filter(Boolean));
+      })
+      .catch((err) => console.error("Failed to load Flash Tech alert recipient:", err));
+  }, []);
+  // Google redirects back here with ?gmailConnected=1|0 after the consent
+  // screen (see gmailBridge.ts) — show the result once, then strip the
+  // param so refreshing the page doesn't re-show it.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const result = params.get("gmailConnected");
+    if (result === null) return;
+    setFlashTechAlertNotice(result === "1" ? "Gmail connected." : "Couldn't connect Gmail — please try again.");
+    if (result === "1") loadFlashTechGmailStatus();
+    params.delete("gmailConnected");
+    params.delete("gmailRegion");
+    const next = `${window.location.pathname}${params.toString() ? `?${params}` : ""}`;
+    window.history.replaceState(null, "", next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const handleConnectFlashTechGmail = async () => {
+    setConnectingFlashTechGmail(true);
+    try {
+      const idToken = await firebaseAuth?.currentUser?.getIdToken(false);
+      if (!idToken) { setFlashTechAlertNotice("You need to be logged in to connect Gmail."); return; }
+      // A real navigation (not fetch) — Google's consent screen has to run in the top-level window.
+      window.location.href = `/api/gmail?action=connect&region=FLASH_TECH&idToken=${encodeURIComponent(idToken)}`;
+    } finally {
+      setConnectingFlashTechGmail(false);
+    }
+  };
+  const handleDisconnectFlashTechGmail = async () => {
+    if (!confirm("Disconnect Gmail from the Flash Tech page?")) return;
+    setDisconnectingFlashTechGmail(true);
+    try {
+      await disconnectGmail("FLASH_TECH");
+      loadFlashTechGmailStatus();
+    } catch (err) {
+      setFlashTechAlertNotice(err instanceof Error ? err.message : "Failed to disconnect Gmail.");
+    } finally {
+      setDisconnectingFlashTechGmail(false);
+    }
+  };
+  const handleSaveFlashTechAlertEmail = async () => {
+    // Anything still sitting in the typing box counts too — saving
+    // shouldn't silently drop an email that was typed but never
+    // Enter/comma-committed into its own chip.
+    const pending = flashTechAlertEmailInput.trim().replace(/,+$/, "");
+    const all = pending && !flashTechAlertEmailChips.includes(pending) ? [...flashTechAlertEmailChips, pending] : flashTechAlertEmailChips;
+    const joined = all.join(",");
+    setSavingFlashTechAlertEmail(true);
+    setFlashTechAlertNotice(null);
+    try {
+      await setFlashTechOpenAlertEmail(joined);
+      setFlashTechAlertEmailState(joined);
+      setFlashTechAlertEmailChips(all);
+      setFlashTechAlertEmailInput("");
+      setFlashTechAlertNotice("Saved.");
+    } catch (err) {
+      setFlashTechAlertNotice(err instanceof Error ? err.message : "Failed to save.");
+    } finally {
+      setSavingFlashTechAlertEmail(false);
+    }
+  };
   const [view, setView] = useState<"calendar" | "tracker" | "availability">("calendar");
   // Which Check-Out Alert tile (0-7 days left) the Tracker is currently
   // filtered to, if any — click a tile to narrow the table to just those
@@ -229,6 +338,7 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
   // modal's full-form save. `savingCellKey` is `${tripId}:${field}`, just
   // for the small inline spinner on whichever cell is mid-save. ──
   const [savingCellKey, setSavingCellKey] = useState<string | null>(null);
+  const [deletingTripId, setDeletingTripId] = useState<string | null>(null);
   const [uploadingReceiptId, setUploadingReceiptId] = useState<string | null>(null);
   const [previewReceiptUrl, setPreviewReceiptUrl] = useState<string | null>(null);
   // The trip a freshly-created Schedule Trip save just landed in the
@@ -246,11 +356,41 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
     setSavingCellKey(key);
     try {
       await updateFlashTechTripTrackerFields(tripId, patch);
-      setTrips((prev) => prev.map((t) => (t.id === tripId ? { ...t, ...patch } as FlashTechTrip : t)));
+      setTrips((prev) =>
+        prev.map((t) => {
+          if (t.id !== tripId) return t;
+          const merged = { ...t, ...patch } as FlashTechTrip;
+          // `status` (what the Tracker's dropdown actually displays) isn't
+          // itself one of updateFlashTechTripTrackerFields' patchable
+          // fields — only statusOverride is. Without recomputing it here,
+          // picking "Cancelled" would save fine but the dropdown would
+          // keep showing the old auto-computed value until the next full
+          // reload — same precedence mapTripRow uses server-side.
+          merged.status = merged.statusOverride || computeFlashTechTripStatus(merged.startDate, merged.endDate);
+          return merged;
+        })
+      );
     } catch (err) {
       alert(`Failed to save: ${err instanceof Error ? err.message : "Unknown error"}`);
     } finally {
       setSavingCellKey((k) => (k === key ? null : k));
+    }
+  };
+
+  // Row-level delete directly from the Tracker (separate from handleDelete
+  // above, which only runs from inside the Edit Trip modal) — same confirm
+  // + backend call, but removes the row from local state on success instead
+  // of closing a modal / doing a full reload.
+  const handleDeleteTrip = async (tripId: string) => {
+    if (!window.confirm("Remove this trip from the calendar? Any linked expense rows stay in Expense Tracking, just unlinked.")) return;
+    setDeletingTripId(tripId);
+    try {
+      await deleteFlashTechTrip(tripId);
+      setTrips((prev) => prev.filter((t) => t.id !== tripId));
+    } catch (err) {
+      alert(`Failed to delete trip: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setDeletingTripId((id) => (id === tripId ? null : id));
     }
   };
 
@@ -713,6 +853,111 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
           </button>
         </div>
 
+        {/* Connect Gmail + who gets emailed when a trip auto-turns Open —
+            the actual send happens on the server's hourly cron
+            (flashTechOpenAlerts.ts), this is just connect + recipient. */}
+        <div className="panel mb-4 p-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex items-center gap-2 px-3 py-2 bg-slate-900/50 border border-white/10 rounded-lg text-sm w-fit">
+              <Mail className={`h-4 w-4 shrink-0 ${flashTechGmailStatus?.connected ? "text-green-400" : "text-slate-500"}`} />
+              <span className="text-xs text-slate-400 uppercase font-semibold">Flash Tech Gmail:</span>
+              {flashTechGmailStatus?.connected ? (
+                <>
+                  <span className="text-slate-200" title={flashTechGmailStatus.connectedByName ? `Connected by ${flashTechGmailStatus.connectedByName}` : undefined}>
+                    {flashTechGmailStatus.connectedAccountName || "Unknown"}
+                    {flashTechGmailStatus.connectedEmail && <span className="text-slate-500"> ({flashTechGmailStatus.connectedEmail})</span>}
+                  </span>
+                  {canConnectFlashTechGmail && (
+                    <button
+                      type="button"
+                      onClick={() => void handleDisconnectFlashTechGmail()}
+                      disabled={disconnectingFlashTechGmail}
+                      className="text-red-300 hover:text-red-200 disabled:opacity-40 disabled:no-underline text-xs underline ml-1"
+                    >
+                      {disconnectingFlashTechGmail ? "Disconnecting…" : "Disconnect"}
+                    </button>
+                  )}
+                </>
+              ) : canConnectFlashTechGmail ? (
+                <button
+                  type="button"
+                  onClick={() => void handleConnectFlashTechGmail()}
+                  disabled={connectingFlashTechGmail}
+                  className="text-blue-300 hover:text-blue-200 text-xs underline disabled:opacity-50"
+                >
+                  {connectingFlashTechGmail ? "Connecting…" : "Connect Gmail"}
+                </button>
+              ) : (
+                <span className="text-slate-500 text-xs">Not connected — ask an Admin</span>
+              )}
+            </div>
+
+            {canEditFlashTechAlertEmail && (
+              <div className="flex items-center gap-2">
+                <label className="text-xs text-slate-400 uppercase font-semibold whitespace-nowrap">Notify when Open:</label>
+                <div className="flex flex-wrap items-center gap-1.5 rounded-lg border border-white/10 bg-slate-900/60 px-2 py-1.5 min-w-[16rem]">
+                  {flashTechAlertEmailChips.map((email) => (
+                    <span
+                      key={email}
+                      className="inline-flex items-center gap-1 rounded-full bg-blue-500/15 border border-blue-400/30 text-blue-200 text-xs px-2 py-0.5"
+                    >
+                      {email}
+                      <button
+                        type="button"
+                        onClick={() => removeFlashTechAlertEmailChip(email)}
+                        title="Remove"
+                        className="text-blue-300 hover:text-white"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </span>
+                  ))}
+                  <input
+                    type="text"
+                    value={flashTechAlertEmailInput}
+                    onChange={(e) => {
+                      // Typing/pasting a comma commits the chip immediately —
+                      // same as pressing Enter — so pasting "a@x.com, b@x.com"
+                      // splits into two chips instead of one comma-joined blob.
+                      const v = e.target.value;
+                      if (v.includes(",")) {
+                        const parts = v.split(",");
+                        const last = parts.pop() ?? "";
+                        const newChips = parts.map((s) => s.trim()).filter(Boolean);
+                        if (newChips.length) {
+                          setFlashTechAlertEmailChips((prev) => Array.from(new Set([...prev, ...newChips])));
+                        }
+                        setFlashTechAlertEmailInput(last);
+                      } else {
+                        setFlashTechAlertEmailInput(v);
+                      }
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") { e.preventDefault(); commitFlashTechAlertEmailChip(); }
+                      else if (e.key === "Backspace" && !flashTechAlertEmailInput && flashTechAlertEmailChips.length > 0) {
+                        removeFlashTechAlertEmailChip(flashTechAlertEmailChips[flashTechAlertEmailChips.length - 1]);
+                      }
+                    }}
+                    onBlur={commitFlashTechAlertEmailChip}
+                    placeholder={flashTechAlertEmailChips.length ? "Add another…" : "email@example.com"}
+                    className="flex-1 min-w-[10rem] bg-transparent text-sm text-slate-200 placeholder:text-slate-500 outline-none py-0.5"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void handleSaveFlashTechAlertEmail()}
+                  disabled={savingFlashTechAlertEmail || !flashTechAlertEmailDirty}
+                  className="btn text-xs px-2.5 py-1.5 disabled:opacity-40"
+                >
+                  {savingFlashTechAlertEmail ? "Saving…" : "Save"}
+                </button>
+              </div>
+            )}
+
+            {flashTechAlertNotice && <span className="text-xs text-slate-400">{flashTechAlertNotice}</span>}
+          </div>
+        </div>
+
         {view === "calendar" && (
         <>
         <div className="mb-4 flex items-center gap-3">
@@ -860,9 +1105,11 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
             loading={loading}
             canEdit={canEditTracker}
             savingCellKey={savingCellKey}
+            deletingTripId={deletingTripId}
             uploadingReceiptId={uploadingReceiptId}
             highlightTripId={highlightTripId}
             onPatch={patchTrip}
+            onDelete={handleDeleteTrip}
             onChangeTechnician={handleChangeTechnician}
             onChangeDates={handleChangeDates}
             onUploadReceipt={handleUploadReceipt}
@@ -1616,9 +1863,11 @@ function FlashTechTrackerTable({
   loading,
   canEdit,
   savingCellKey,
+  deletingTripId,
   uploadingReceiptId,
   highlightTripId,
   onPatch,
+  onDelete,
   onChangeTechnician,
   onChangeDates,
   onUploadReceipt,
@@ -1630,10 +1879,12 @@ function FlashTechTrackerTable({
   loading: boolean;
   canEdit: boolean;
   savingCellKey: string | null;
+  deletingTripId: string | null;
   uploadingReceiptId: string | null;
   /** A just-created trip to scroll to and briefly highlight — see handleSave's "jump into the Tracker" follow-through. */
   highlightTripId: string | null;
   onPatch: (tripId: string, field: string, patch: TrackerPatch) => void;
+  onDelete: (tripId: string) => void;
   onChangeTechnician: (tripId: string, technicianProfileId: string | null, technicianName: string) => void;
   onChangeDates: (tripId: string, field: "startDate" | "endDate", value: string) => void;
   onUploadReceipt: (trip: FlashTechTrip, file: File) => void;
@@ -1875,15 +2126,16 @@ function FlashTechTrackerTable({
                 selected={columnFilters[h] || []}
                 onToggleValue={(v) => toggleColumnFilterValue(h, v)}
                 onClear={() => clearColumnFilter(h)}
-                className="last:border-r-0"
               />
             ))}
+            {/* Not a filterable data column — a plain header, rendered outside the generic HEADERS.map loop above. */}
+            <th className="px-2 py-2 text-[10px] font-semibold uppercase tracking-wide last:border-r-0">Actions</th>
           </tr>
         </thead>
         <tbody>
           {filteredTrips.length === 0 && (
             <tr>
-              <td colSpan={HEADERS.length + ALT_HEADERS.length} className="px-4 py-8 text-center text-slate-500">
+              <td colSpan={HEADERS.length + ALT_HEADERS.length + 1} className="px-4 py-8 text-center text-slate-500">
                 No trips match these filters.
               </td>
             </tr>
@@ -2105,7 +2357,7 @@ function FlashTechTrackerTable({
                 <td className="p-0.5 border-r border-white/10">
                   <TrackerSelectCell value={trip.tripType} disabled={!canEdit} options={FLASH_TECH_TRIP_TYPES} onSave={(v) => patch("tripType", { tripType: v as FlashTechTrip["tripType"] })} />
                 </td>
-                <td className="p-0.5">
+                <td className="p-0.5 border-r border-white/10">
                   <select
                     value={trip.status}
                     disabled={!canEdit}
@@ -2119,6 +2371,17 @@ function FlashTechTrackerTable({
                       </option>
                     ))}
                   </select>
+                </td>
+                <td className="p-0.5 text-center">
+                  <button
+                    type="button"
+                    disabled={!canEdit || deletingTripId === trip.id}
+                    onClick={() => onDelete(trip.id)}
+                    title="Delete this trip"
+                    className="inline-flex h-7 w-7 items-center justify-center rounded-md text-slate-400 hover:text-red-300 hover:bg-red-500/10 disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
                 </td>
               </tr>
             );

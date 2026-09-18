@@ -1,8 +1,9 @@
 /**
  * Company-wide settings stored in companies.settings (jsonb) — Ticket Map
  * provider, COE body template, default technician, HR notification
- * toggles, and the weekly forced password reset opt-out. See migrations
- * 0053, 0063, 0067, 0090, and 0235.
+ * toggles, the weekly forced password reset opt-out, and the Flash Tech
+ * "trip turned Open" alert recipient. See migrations 0053, 0063, 0067,
+ * 0090, 0235, and 0268.
  */
 
 import { supabase } from "./client";
@@ -147,6 +148,33 @@ export async function setNotifyAdminsTaxForms(enabled: boolean): Promise<void> {
   const { error } = await supabase.rpc("set_notify_admins_tax_forms", { p_enabled: enabled });
   if (error) {
     console.error("setNotifyAdminsTaxForms error:", error.message);
+    throw new Error(error.message);
+  }
+}
+
+/**
+ * Who gets emailed when a Flash Tech trip's status auto-flips to Open (see
+ * migration 0268, src/lib/server/flashTechOpenAlerts.ts). One editable,
+ * company-wide address — comma-separate for more than one recipient. Empty
+ * string means "no one" (the alert job silently skips a company with
+ * nothing set here, same tolerance the FLASH_TECH Gmail connection itself
+ * has for "not connected yet").
+ */
+export async function getFlashTechOpenAlertEmail(): Promise<string> {
+  const { data, error } = await supabase.from("companies").select("settings").limit(1).maybeSingle();
+  if (error || !data) {
+    if (error) console.error("getFlashTechOpenAlertEmail error:", error.message);
+    return "";
+  }
+  const value = (data.settings as Record<string, unknown> | null)?.flashTechOpenAlertEmail;
+  return typeof value === "string" ? value : "";
+}
+
+/** HR/Admin/SuperAdmin only — enforced server-side by the set_flash_tech_open_alert_email RPC. */
+export async function setFlashTechOpenAlertEmail(email: string): Promise<void> {
+  const { error } = await supabase.rpc("set_flash_tech_open_alert_email", { p_email: email });
+  if (error) {
+    console.error("setFlashTechOpenAlertEmail error:", error.message);
     throw new Error(error.message);
   }
 }

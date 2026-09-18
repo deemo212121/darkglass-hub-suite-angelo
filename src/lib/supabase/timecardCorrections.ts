@@ -4,7 +4,7 @@
  * timecard_correction_history audit trail populated by a DB trigger.
  *
  * Approval is staged (0098_timecard_correction_two_stage_approval.sql,
- * quorum rule updated by 0267_timecard_correction_two_of_three_quorum.sql):
+ * quorum rule updated by 0270_timecard_correction_two_of_three_quorum.sql):
  * Manager, HR, and Accounting (the FINANCE role app-wide) can each review
  * independently at any time — none of the three is gated behind another
  * going first, so an unavailable manager doesn't stall a correction that
@@ -180,7 +180,7 @@ export async function getPendingCorrectionsInRange(startDate: string, endDate: s
  * at any time — all three stages are open in parallel, not gated behind the
  * manager going first, so an unavailable manager doesn't block a correction
  * that needs to land fast. See sync_timecard_correction_overall_status
- * (migration 0267) for the "any 2 of 3 approve" quorum that decides overall
+ * (migration 0270) for the "any 2 of 3 approve" quorum that decides overall
  * approval from these three independent stage columns. Both SUPERADMIN (a
  * company's own top-tier admin) and SUPERSUPERADMIN (the platform-level
  * role) bypass every stage, same as PTO — a single approval from either is

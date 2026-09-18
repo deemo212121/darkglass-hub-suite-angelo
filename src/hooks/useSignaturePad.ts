@@ -131,20 +131,34 @@ export function useSignaturePad(options: UseSignaturePadOptions = {}): Signature
     const ctx = c.getContext("2d");
     if (!ctx) return;
     const font = SIGNATURE_FONTS.find((f) => f.id === fontId) ?? SIGNATURE_FONTS[0];
-    const fontSize = Math.min(Math.round(height * 0.55), 40);
-    const draw = () => {
+    const maxFontSize = Math.min(Math.round(height * 0.55), 40);
+    const minFontSize = 12;
+    // A long typed name (e.g. "Jhon Norban Rulona") at the height-derived
+    // size can be wider than the canvas itself, silently clipping the first
+    // and last letters off both edges since the text is center-aligned —
+    // shrink the font (down to minFontSize) until it actually fits the
+    // canvas width, same rendered result toDataURL() captures either way.
+    const draw = (name: string) => {
       ctx.clearRect(0, 0, c.width, c.height);
-      if (!typedName.trim()) return;
-      ctx.font = `${fontSize}px ${font.family}`;
-      ctx.fillStyle = "#0f172a";
+      if (!name) return;
+      const maxTextWidth = c.width - 16; // small side margin so it never touches the edge
+      let fontSize = maxFontSize;
       ctx.textBaseline = "middle";
       ctx.textAlign = "center";
-      ctx.fillText(typedName.trim(), c.width / 2, c.height / 2);
+      while (fontSize > minFontSize) {
+        ctx.font = `${fontSize}px ${font.family}`;
+        if (ctx.measureText(name).width <= maxTextWidth) break;
+        fontSize -= 1;
+      }
+      ctx.font = `${fontSize}px ${font.family}`;
+      ctx.fillStyle = "#0f172a";
+      ctx.fillText(name, c.width / 2, c.height / 2);
     };
+    const name = typedName.trim();
     if (typeof document !== "undefined" && document.fonts?.load) {
-      document.fonts.load(`${fontSize}px ${font.family}`).then(draw).catch(draw);
+      document.fonts.load(`${maxFontSize}px ${font.family}`).then(() => draw(name)).catch(() => draw(name));
     } else {
-      draw();
+      draw(name);
     }
   }, [mode, typedName, fontId, height]);
 

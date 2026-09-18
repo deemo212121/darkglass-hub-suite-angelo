@@ -61,6 +61,17 @@ const blank = (v: string) => (v && v.trim() ? escapeHtml(v) : "&nbsp;");
 
 const fmtDate = (iso: string) => {
   if (!iso) return "";
+  // A date-only string ("2026-09-17", e.g. the plan's own Date field)
+  // parses as UTC midnight; formatting it back out in the browser's local
+  // timezone (anything behind UTC, i.e. all of the US) rolls it back a
+  // day — "9/17" printing as "9/16". Parsing the y/m/d parts directly into
+  // a local Date avoids that. A full timestamp (e.g. a signature's
+  // signedAt) has no such ambiguity and is left to the normal Date parse.
+  const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  if (dateOnly) {
+    const [, y, m, d] = dateOnly;
+    return new Date(Number(y), Number(m) - 1, Number(d)).toLocaleDateString();
+  }
   const d = new Date(iso);
   return isNaN(d.getTime()) ? iso : d.toLocaleDateString();
 };
@@ -84,9 +95,9 @@ export const actionPlanFormStyles = `
   .aplan-container .ack { margin: 18px 0 10px; font-style: italic; }
   .aplan-container .sign-row { display: flex; gap: 24px; align-items: flex-end; border-bottom: 1px solid #9ca3af; padding: 10px 2px; margin-top: 6px; }
   .aplan-container .sign-name { flex: 2; }
-  .aplan-container .sign-sig { flex: 1; display: flex; align-items: flex-end; }
+  .aplan-container .sign-sig { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; overflow: hidden; }
   .aplan-container .sign-date { flex: 1; }
-  .aplan-container .sig-img { max-height: 36px; max-width: 140px; object-fit: contain; }
+  .aplan-container .sig-img { max-height: 44px; max-width: 100%; object-fit: contain; object-position: left; }
   .aplan-container .footer-wrap { margin-top: 40px; }
   .aplan-container .footer-graphic img { display: block; width: 100%; height: auto; }
 `;

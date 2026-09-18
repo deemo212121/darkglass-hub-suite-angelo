@@ -8,7 +8,7 @@ import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/h
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { type UserManagementRecord } from "@/lib/user-management";
 import { useAuth } from "@/lib/auth";
-import { createCompanyUser, getCompanyUsers, updateCompanyUser, setMustChangePassword, type ProfileRow } from "@/lib/supabase/users";
+import { createCompanyUser, getCompanyUsers, updateCompanyUser, setMustChangePassword, getUserStatusChangeDates, type ProfileRow } from "@/lib/supabase/users";
 import { usePersistedTab } from "@/lib/usePersistedTab";
 import { ROLE_LABELS, normalizeRole } from "@/lib/roleLabels";
 import { useAllRoleOptions } from "@/lib/customRoles";
@@ -405,7 +405,7 @@ function RoleMultiSelect({
 // this file asks "does this person hold role X" — see managerCandidates.
 type UserRow = UserManagementRecord & { profileId: string; firebaseUid: string; extraRoles: string[] };
 
-function mapProfilesToRecords(profiles: ProfileRow[]): UserRow[] {
+function mapProfilesToRecords(profiles: ProfileRow[], statusChangeDates: Map<string, string> = new Map()): UserRow[] {
   return profiles.map((p, index) => ({
     profileId: p.id,
     firebaseUid: p.firebase_uid,
@@ -420,6 +420,7 @@ function mapProfilesToRecords(profiles: ProfileRow[]): UserRow[] {
     office: p.assigned_branch || "",
     locations: p.branch_access || "",
     isActive: p.is_active,
+    statusChangedAt: statusChangeDates.get(p.id) ?? null,
   }));
 }
 
@@ -892,8 +893,8 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
       }
       try {
         setLoading(true);
-        const profiles = await getCompanyUsers();
-        setUsers(mapProfilesToRecords(profiles));
+        const [profiles, statusChangeDates] = await Promise.all([getCompanyUsers(), getUserStatusChangeDates()]);
+        setUsers(mapProfilesToRecords(profiles, statusChangeDates));
       } catch (error) {
         console.error("❌ Error loading users:", error);
         alert(`Error loading users: ${error instanceof Error ? error.message : "Unknown error"}`);
@@ -1186,9 +1187,11 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
     setTogglingActive(true);
     try {
       await updateCompanyUser(row.profileId, { isActive: reactivating });
-      const profiles = await getCompanyUsers();
-      setUsers(mapProfilesToRecords(profiles));
-      void logModuleActivity({
+      // Awaited (not fire-and-forget) — the status date shown right below
+      // now comes from this very log entry, so it must land before the
+      // re-fetch just after, or the just-toggled row would show no date
+      // until the next full reload.
+      await logModuleActivity({
         module: "user-management",
         actorName: auth.displayName || auth.email || "Admin",
         action: reactivating ? "user_activated" : "user_deactivated",
@@ -1196,6 +1199,8 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
         targetId: row.profileId,
         targetLabel: row.userName,
       });
+      const [profiles, statusChangeDates] = await Promise.all([getCompanyUsers(), getUserStatusChangeDates()]);
+      setUsers(mapProfilesToRecords(profiles, statusChangeDates));
     } catch (error) {
       console.error("Toggle active error:", error);
       alert(`Error ${reactivating ? "reactivating" : "deactivating"} user: ${error instanceof Error ? error.message : "Unknown error"}`);
@@ -1315,20 +1320,11 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
         poInitials: newUserForm.poInitials,
         requiredCheckIn: newUserForm.requiredCheckIn,
         requiredCheckOut: newUserForm.requiredCheckOut,
+        offDays: newUserForm.selectedOffDays,
         workingHours: newUserForm.workingHours.trim() ? Number(newUserForm.workingHours) : undefined,
         mealMinutes: newUserForm.mealMinutes.trim() ? Number(newUserForm.mealMinutes) : undefined,
         employmentType: newUserForm.isTrainee ? "trainee" : "regular",
       });
-
-      // Save schedule / off-days / PO initials to localStorage (until employees domain is wired)
-      localStorage.setItem(`requiredSchedule_${newUid}`, JSON.stringify({
-        requiredCheckIn: newUserForm.requiredCheckIn,
-        requiredCheckOut: newUserForm.requiredCheckOut,
-      }));
-      localStorage.setItem(`offDays_${newUid}`, JSON.stringify(newUserForm.selectedOffDays));
-      if (newUserForm.poInitials) {
-        localStorage.setItem(`poInitials_${newUid}`, newUserForm.poInitials);
-      }
 
       alert(`User ${newUserForm.userName} created successfully!\nDefault password: Welcome2024!`);
 
@@ -1353,8 +1349,8 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
       });
 
       // Reload users from Supabase
-      const profiles = await getCompanyUsers();
-      setUsers(mapProfilesToRecords(profiles));
+      const [profiles, statusChangeDates] = await Promise.all([getCompanyUsers(), getUserStatusChangeDates()]);
+      setUsers(mapProfilesToRecords(profiles, statusChangeDates));
 
       // Reset form
       setNewUserForm({
@@ -1635,6 +1631,12 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
                         >
                           {record.isActive === false ? "Deactivated" : "Active"}
                         </span>
+                        {record.statusChangedAt && (
+                          <div className="mt-1 text-[10px] text-slate-400 whitespace-nowrap">
+                            {record.isActive === false ? "on " : "since "}
+                            {new Date(record.statusChangedAt).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })}
+                          </div>
+                        )}
                       </td>
                       <td className="px-2.5 py-2 align-top">
                         <div className="flex flex-wrap items-center justify-end gap-1">
@@ -2036,8 +2038,8 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
           onClose={() => setShowWorkingHoursModal(false)}
           changedByName={auth.displayName || auth.email || "Admin"}
           onApplied={async () => {
-            const [profiles, schedules] = await Promise.all([getCompanyUsers(), getBranchRoleSchedules()]);
-            setUsers(mapProfilesToRecords(profiles));
+            const [profiles, schedules, statusChangeDates] = await Promise.all([getCompanyUsers(), getBranchRoleSchedules(), getUserStatusChangeDates()]);
+            setUsers(mapProfilesToRecords(profiles, statusChangeDates));
             setBranchSchedules(schedules);
           }}
         />

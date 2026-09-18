@@ -40,6 +40,7 @@ import { Route as SignExternalDocIdRouteImport } from './routes/sign-external.$d
 import { Route as SignDocumentDocIdRouteImport } from './routes/sign-document.$docId'
 import { Route as SignContractorAddendumDocIdRouteImport } from './routes/sign-contractor-addendum.$docId'
 import { Route as SignContractorAddendumExternalDocIdRouteImport } from './routes/sign-contractor-addendum-external.$docId'
+import { Route as SignCoeFormDocIdRouteImport } from './routes/sign-coe-form.$docId'
 import { Route as SignActionPlanFormDocIdRouteImport } from './routes/sign-action-plan-form.$docId'
 import { Route as SignActionPlanExternalDocIdRouteImport } from './routes/sign-action-plan-external.$docId'
 import { Route as MModuleRouteImport } from './routes/m.$module'
@@ -260,6 +261,11 @@ const SignContractorAddendumExternalDocIdRoute =
     path: '/sign-contractor-addendum-external/$docId',
     getParentRoute: () => rootRouteImport,
   } as any)
+const SignCoeFormDocIdRoute = SignCoeFormDocIdRouteImport.update({
+  id: '/sign-coe-form/$docId',
+  path: '/sign-coe-form/$docId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SignActionPlanFormDocIdRoute = SignActionPlanFormDocIdRouteImport.update({
   id: '/sign-action-plan-form/$docId',
   path: '/sign-action-plan-form/$docId',
@@ -661,6 +667,7 @@ export interface FileRoutesByFullPath {
   '/m/$module': typeof MModuleRouteWithChildren
   '/sign-action-plan-external/$docId': typeof SignActionPlanExternalDocIdRoute
   '/sign-action-plan-form/$docId': typeof SignActionPlanFormDocIdRoute
+  '/sign-coe-form/$docId': typeof SignCoeFormDocIdRoute
   '/sign-contractor-addendum-external/$docId': typeof SignContractorAddendumExternalDocIdRoute
   '/sign-contractor-addendum/$docId': typeof SignContractorAddendumDocIdRoute
   '/sign-document/$docId': typeof SignDocumentDocIdRoute
@@ -753,6 +760,7 @@ export interface FileRoutesByTo {
   '/m/$module': typeof MModuleRouteWithChildren
   '/sign-action-plan-external/$docId': typeof SignActionPlanExternalDocIdRoute
   '/sign-action-plan-form/$docId': typeof SignActionPlanFormDocIdRoute
+  '/sign-coe-form/$docId': typeof SignCoeFormDocIdRoute
   '/sign-contractor-addendum-external/$docId': typeof SignContractorAddendumExternalDocIdRoute
   '/sign-contractor-addendum/$docId': typeof SignContractorAddendumDocIdRoute
   '/sign-document/$docId': typeof SignDocumentDocIdRoute
@@ -846,6 +854,7 @@ export interface FileRoutesById {
   '/m/$module': typeof MModuleRouteWithChildren
   '/sign-action-plan-external/$docId': typeof SignActionPlanExternalDocIdRoute
   '/sign-action-plan-form/$docId': typeof SignActionPlanFormDocIdRoute
+  '/sign-coe-form/$docId': typeof SignCoeFormDocIdRoute
   '/sign-contractor-addendum-external/$docId': typeof SignContractorAddendumExternalDocIdRoute
   '/sign-contractor-addendum/$docId': typeof SignContractorAddendumDocIdRoute
   '/sign-document/$docId': typeof SignDocumentDocIdRoute
@@ -940,6 +949,7 @@ export interface FileRouteTypes {
     | '/m/$module'
     | '/sign-action-plan-external/$docId'
     | '/sign-action-plan-form/$docId'
+    | '/sign-coe-form/$docId'
     | '/sign-contractor-addendum-external/$docId'
     | '/sign-contractor-addendum/$docId'
     | '/sign-document/$docId'
@@ -1032,6 +1042,7 @@ export interface FileRouteTypes {
     | '/m/$module'
     | '/sign-action-plan-external/$docId'
     | '/sign-action-plan-form/$docId'
+    | '/sign-coe-form/$docId'
     | '/sign-contractor-addendum-external/$docId'
     | '/sign-contractor-addendum/$docId'
     | '/sign-document/$docId'
@@ -1124,6 +1135,7 @@ export interface FileRouteTypes {
     | '/m/$module'
     | '/sign-action-plan-external/$docId'
     | '/sign-action-plan-form/$docId'
+    | '/sign-coe-form/$docId'
     | '/sign-contractor-addendum-external/$docId'
     | '/sign-contractor-addendum/$docId'
     | '/sign-document/$docId'
@@ -1217,6 +1229,7 @@ export interface RootRouteChildren {
   MModuleRoute: typeof MModuleRouteWithChildren
   SignActionPlanExternalDocIdRoute: typeof SignActionPlanExternalDocIdRoute
   SignActionPlanFormDocIdRoute: typeof SignActionPlanFormDocIdRoute
+  SignCoeFormDocIdRoute: typeof SignCoeFormDocIdRoute
   SignContractorAddendumExternalDocIdRoute: typeof SignContractorAddendumExternalDocIdRoute
   SignContractorAddendumDocIdRoute: typeof SignContractorAddendumDocIdRoute
   SignDocumentDocIdRoute: typeof SignDocumentDocIdRoute
@@ -1449,6 +1462,13 @@ declare module '@tanstack/react-router' {
       path: '/sign-contractor-addendum-external/$docId'
       fullPath: '/sign-contractor-addendum-external/$docId'
       preLoaderRoute: typeof SignContractorAddendumExternalDocIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/sign-coe-form/$docId': {
+      id: '/sign-coe-form/$docId'
+      path: '/sign-coe-form/$docId'
+      fullPath: '/sign-coe-form/$docId'
+      preLoaderRoute: typeof SignCoeFormDocIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/sign-action-plan-form/$docId': {
@@ -1986,6 +2006,7 @@ const rootRouteChildren: RootRouteChildren = {
   MModuleRoute: MModuleRouteWithChildren,
   SignActionPlanExternalDocIdRoute: SignActionPlanExternalDocIdRoute,
   SignActionPlanFormDocIdRoute: SignActionPlanFormDocIdRoute,
+  SignCoeFormDocIdRoute: SignCoeFormDocIdRoute,
   SignContractorAddendumExternalDocIdRoute:
     SignContractorAddendumExternalDocIdRoute,
   SignContractorAddendumDocIdRoute: SignContractorAddendumDocIdRoute,

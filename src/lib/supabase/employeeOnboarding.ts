@@ -50,7 +50,7 @@ interface OnboardingContext {
 
 const HR_DASHBOARD_LINK = { to: "/m/$module/$submodule", params: { module: "hr", submodule: "hr-dashboard" } };
 const ACCOUNTING_LINK = { to: "/m/$module/$submodule", params: { module: "accounting", submodule: "accounting-dashboard" } };
-const CSR_DASHBOARD_LINK = { to: "/m/$module/$submodule", params: { module: "dashboard", submodule: "csr-dashboard" } };
+const CSR_TEAM_COMPOSITION_LINK = { to: "/m/$module/$submodule", params: { module: "csr", submodule: "csr-dashboard" } };
 const USER_MGMT_LINK = { to: "/m/$module/$submodule", params: { module: "admin", submodule: "user-management" } };
 
 /**
@@ -130,8 +130,8 @@ export const ONBOARDING_TASK_DEFS: OnboardingTaskDef[] = [
   {
     key: "csr_team_added",
     label: "Add them to a CSR team",
-    detail: "Assign the new CSR to a team so they show up in the Team Leader dashboard and call routing.",
-    link: CSR_DASHBOARD_LINK,
+    detail: "Assign the new CSR to a team on CSR Main Dashboard's Team Composition tab so they show up on Daily Report and in call routing.",
+    link: CSR_TEAM_COMPOSITION_LINK,
     applies: (c) => c.isCsr,
   },
   {

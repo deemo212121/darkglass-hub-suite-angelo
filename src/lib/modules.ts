@@ -19,7 +19,7 @@ export interface SubModuleDef {
   // Custom seed generator; receives index
   seed: (i: number) => Record<string, unknown>;
   count?: number;
-  custom?: "part-return" | "part-return-status" | "claims-pipeline" | "work-map" | "part-order" | "part-receive" | "return-pickup" | "repair-statuses" | "ticket-list" | "user-management" | "account-management" | "location-management" | "csr-daily-report" | "call-tracker" | "csr-status-summary" | "csr-team-leader-dashboard" | "reserved-part-list-custom" | "parts-dashboard" | "claims-dashboard" | "staff-list" | "it-tickets" | "company-settings" | "universal-activity-log"; // hook for special pages
+  custom?: "part-return" | "part-return-status" | "claims-pipeline" | "work-map" | "part-order" | "part-receive" | "return-pickup" | "repair-statuses" | "ticket-list" | "user-management" | "account-management" | "location-management" | "csr-main-dashboard" | "csr-team-daily-report" | "csr-daily-report" | "call-tracker" | "csr-status-summary" | "reserved-part-list-custom" | "parts-dashboard" | "claims-dashboard" | "staff-list" | "it-tickets" | "company-settings" | "universal-activity-log"; // hook for special pages
   /** Still a real, routable submodule (role gates, custom dispatch — everything works) — just excluded from the module's own tile grid because another page links to it directly instead (e.g. Flash Tech Calendar via a button on Expense Tracking). Keeps the tile grid from accumulating every niche page. */
   hiddenFromGrid?: boolean;
 }
@@ -229,51 +229,6 @@ const dashboardMod: ModuleDef = {
       hiddenFromGrid: true,
     },
     {
-      slug: "csr-dashboard",
-      title: "CSR Dashboard",
-      description: "CSR team performance metrics and real-time monitoring.",
-      custom: "csr-dashboard" as any,
-      fields: [],
-      count: 0,
-      seed: () => ({}),
-    },
-    {
-      slug: "csr-team-leader-dashboard",
-      title: "CSR Team Leader Dashboard",
-      description: "Your personal tracker plus your team's live metrics.",
-      custom: "csr-team-leader-dashboard" as any,
-      fields: [],
-      count: 0,
-      seed: () => ({}),
-    },
-    {
-      slug: "csr-daily-report",
-      title: "CSR Daily Report",
-      description: "CSR agent performance — tasks, schedule, attempts, mistakes.",
-      custom: "csr-daily-report" as any,
-      fields: [],
-      count: 0,
-      seed: () => ({}),
-    },
-    {
-      slug: "call-tracker",
-      title: "Call Tracker",
-      description: "Track and monitor incoming and outgoing calls.",
-      custom: "call-tracker" as any,
-      fields: [],
-      count: 0,
-      seed: () => ({}),
-    },
-    {
-      slug: "csr-status-summary",
-      title: "Status Summary",
-      description: "View CSR status summary and real-time metrics.",
-      custom: "csr-status-summary" as any,
-      fields: [],
-      count: 0,
-      seed: () => ({}),
-    },
-    {
       slug: "staff-list",
       title: "Staff List",
       description: "Per-branch technician roster, branch-manager summary, and tier pay rates.",
@@ -324,6 +279,79 @@ const dashboardMod: ModuleDef = {
       title: "Operations Dashboard",
       description: "Company-wide ticket overview — region breakdown, status funnel, and BizOps staff.",
       custom: "operations-dashboard" as any,
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
+  ],
+};
+
+// --- CSR ---
+// Split out of the Dashboard module (same move already made for hr-dashboard
+// and accounting-dashboard). The org-wide metrics/charts CSR Dashboard that
+// used to live at this slug was removed entirely, then the slug was
+// reused for a genuinely different page — CSRMainDashboard.tsx, a 3-tab
+// page (To Do List / Team List / Team Composition) folding in what used to
+// be two separate tiles ("To Do List" and "Team Composition"). Daily
+// Report stays its own separate tile — CSR Main Dashboard's Team List tab
+// only links out to it (a "Send Mistake" button that writes to its
+// Mistake Log then navigates there). csr-daily-report, call-tracker, and
+// csr-status-summary are real, routable pages (nothing currently links to
+// them, but they're intentionally kept rather than deleted), marked
+// hiddenFromGrid the same way flash-tech-calendar/staff-list are above —
+// routable, just not tiled. Their role gates (dashboardAccess.ts) and
+// per-company overrides moved with them from "dashboard" — see migration
+// 0269_csr_module_role_gate_rename.sql.
+const csrMod: ModuleDef = {
+  slug: "csr",
+  label: "CSR",
+  tagline: "Customer service team performance & tools",
+  accent: "#84cc16",
+  submodules: [
+    {
+      slug: "csr-dashboard",
+      title: "CSR Main Dashboard",
+      description: "To Do List, Team List, and (Manager only) Team Composition.",
+      custom: "csr-main-dashboard" as any,
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
+    {
+      slug: "daily-report",
+      title: "Daily Report",
+      description: "Editable per-agent daily worksheet, grouped by CSR team.",
+      custom: "csr-team-daily-report" as any,
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
+    {
+      slug: "csr-daily-report",
+      title: "CSR Daily Report",
+      description: "CSR agent performance — tasks, schedule, attempts, mistakes.",
+      custom: "csr-daily-report" as any,
+      hiddenFromGrid: true,
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
+    {
+      slug: "call-tracker",
+      title: "Call Tracker",
+      description: "Track and monitor incoming and outgoing calls.",
+      custom: "call-tracker" as any,
+      hiddenFromGrid: true,
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
+    {
+      slug: "csr-status-summary",
+      title: "Status Summary",
+      description: "View CSR status summary and real-time metrics.",
+      custom: "csr-status-summary" as any,
+      hiddenFromGrid: true,
       fields: [],
       count: 0,
       seed: () => ({}),
@@ -1692,26 +1720,7 @@ const adminMod: ModuleDef = {
 };
 
 
-/**
- * Dashboard submodules that are real, routable pages (role gates and all)
- * but never get their own tile on the Dashboard grid — each is reached
- * through another page instead (CSR Dashboard redirects CSR_AGENT/
- * CSR_TEAM_LEADER to csr-team-leader-dashboard; csr-daily-report,
- * call-tracker, and csr-status-summary are opened from within CSR
- * Dashboard/Team Leader Dashboard). Shared by the module's own tile grid
- * (m.$module.tsx) and the floating quick-nav (ModuleNavigator.tsx) so the
- * two stay in sync — none of these four have hiddenFromGrid set since that
- * flag also affects non-grid consumers that DO want them (e.g. direct link
- * resolution), this list is deliberately just for "don't tile it."
- */
-export const DASHBOARD_GRID_EXCLUDED_SLUGS = new Set([
-  "csr-daily-report",
-  "call-tracker",
-  "csr-status-summary",
-  "csr-team-leader-dashboard",
-]);
-
-export const MODULES: ModuleDef[] = [dashboardMod, ticketsMod, partsMod, claimsMod, reportMod, hrMod, adminMod, accountingMod];
+export const MODULES: ModuleDef[] = [dashboardMod, ticketsMod, partsMod, claimsMod, reportMod, hrMod, adminMod, accountingMod, csrMod];
 
 export function getModule(slug: string) {
   return MODULES.find((m) => m.slug === slug);

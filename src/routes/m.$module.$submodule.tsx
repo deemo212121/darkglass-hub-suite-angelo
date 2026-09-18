@@ -122,8 +122,8 @@ import { PayrollCalculationPage } from "@/components/PayrollCalculationPage";
 import { GeneralInfoPage } from "@/components/GeneralInfoPage";
 import { EmployeeSelfServicePage } from "@/components/EmployeeSelfServicePage";
 import { ItTicketsPage } from "@/components/ItTicketsPage";
-import { CSRDashboard } from "@/components/CSRDashboard";
-import { CSRTeamLeaderDashboard } from "@/components/CSRTeamLeaderDashboard";
+import { CSRMainDashboard } from "@/components/CSRMainDashboard";
+import { CSRTeamDailyReport } from "@/components/CSRTeamDailyReport";
 import { CSRCallTracker } from "@/components/CSRCallTracker";
 import { CSRStatusSummary } from "@/components/CSRStatusSummary";
 import { ExpenseTrackingPage } from "@/components/ExpenseTrackingPage";
@@ -199,19 +199,20 @@ function SubModule() {
   // user-management/company-settings gates below — it can only narrow
   // access further there, never grant access past one of those.
   //
-  // "accounting" is included alongside "dashboard"/"hr" here because
-  // accounting-dashboard's hardcoded ADMIN/FINANCE default
-  // (DASHBOARD_ROLE_GATES) lives in this same map even though it moved out
-  // of the Dashboard module into its own Accounting module (see modules.ts)
-  // — without this, a company with no explicit override configured would
-  // fall through to explicitModuleOverride's null and open the page to
-  // every signed-in role.
+  // "accounting" and "csr" are included alongside "dashboard"/"hr" here
+  // because accounting-dashboard's hardcoded ADMIN/FINANCE default and
+  // daily-report/team-composition's hardcoded ADMIN/CSR_MANAGER/etc.
+  // default (DASHBOARD_ROLE_GATES) both live in this same map even though
+  // they moved out of the Dashboard module into their own Accounting/CSR
+  // modules (see modules.ts) — without this, a company with no explicit
+  // override configured would fall through to explicitModuleOverride's
+  // null and open the page to every signed-in role.
   // "receiving-status" (Tickets module) is special-cased here rather than
   // added to the mod.slug list above — Tickets also has its own unrelated
   // "todo-list" submodule, and blanket-including "tickets" in that list
   // would make it inherit HR's "todo-list" DASHBOARD_ROLE_GATES entry too
   // (gates are keyed by submodule slug alone). See dashboardAccess.ts.
-  const moduleAllowedRoles = (mod.slug === "dashboard" || mod.slug === "hr" || mod.slug === "accounting" || (sub as any).custom === "receiving-status") ? getDashboardRoleGate(sub.slug) : explicitModuleOverride;
+  const moduleAllowedRoles = (mod.slug === "dashboard" || mod.slug === "hr" || mod.slug === "accounting" || mod.slug === "csr" || (sub as any).custom === "receiving-status") ? getDashboardRoleGate(sub.slug) : explicitModuleOverride;
   const roleGrantsQuick = !moduleAllowedRoles || hasDashboardAccess(moduleAllowedRoles, role, []);
   const adminGrantsQuick = mod.slug !== "admin" || hasDashboardAccess(ADMIN_MODULE_ROLES, role, []);
   const userMgmtGrantsQuick = sub.custom !== "user-management" || hasDashboardAccess(USER_MANAGEMENT_ROLES, role, []);
@@ -686,10 +687,10 @@ function SubModule() {
         ? <EmployeeSelfServicePage mod={mod} sub={sub} />
         : (sub as any).custom === "it-tickets"
         ? <ItTicketsPage mod={mod} sub={sub} />
-        : (sub as any).custom === "csr-dashboard"
-        ? <CSRDashboard mod={mod} sub={sub} />
-        : (sub as any).custom === "csr-team-leader-dashboard"
-        ? <CSRTeamLeaderDashboard mod={mod} sub={sub} />
+        : (sub as any).custom === "csr-main-dashboard"
+        ? <CSRMainDashboard mod={mod} sub={sub} />
+        : (sub as any).custom === "csr-team-daily-report"
+        ? <CSRTeamDailyReport mod={mod} sub={sub} />
         : (sub as any).custom === "csr-daily-report"
         ? <ReportCSRDaily mod={mod} sub={sub} />
         : (sub as any).custom === "call-tracker"

@@ -159,7 +159,7 @@ const DEPARTMENT_BY_SUBMODULE: Record<string, string> = {
   "report-claims-daily": "Claims",
   // CSR
   "csr-dashboard": "CSR",
-  "csr-team-leader-dashboard": "CSR",
+  "daily-report": "CSR",
   "csr-daily-report": "CSR",
   "csr-status-summary": "CSR",
   "call-tracker": "CSR",

@@ -12,7 +12,7 @@ import { uploadFlashTechTripReceiptFile, deleteAttachmentByUrl } from "@/lib/fir
 /** Tier Level values — kept identical to Master List's own Current
  *  Technicians tier dropdown (ReportHRDaily.tsx, profiles.tier_level) so
  *  the two never drift apart; this is the single source of truth for both. */
-export const FLASH_TECH_TIER_LEVELS = ["Tier 1", "Tier 2", "Tier 3", "SBM", "BM", "TR", "DR", "TM"];
+export const FLASH_TECH_TIER_LEVELS = ["Tier 1", "Tier 2", "Tier 3", "SBM", "BM", "ADR", "DR", "TM"];
 export const FLASH_TECH_TRIP_TYPES = ["Flashtech", "Education", "Inspection"] as const;
 export type FlashTechTripType = (typeof FLASH_TECH_TRIP_TYPES)[number];
 /** Upcoming/Open/Closed are auto-computed from the travel dates (see
@@ -21,6 +21,29 @@ export type FlashTechTripType = (typeof FLASH_TECH_TRIP_TYPES)[number];
  *  on its own, so it only ever comes from an explicit override. */
 export const FLASH_TECH_STATUSES = ["Upcoming", "Open", "Closed", "Cancelled"] as const;
 export type FlashTechStatus = (typeof FLASH_TECH_STATUSES)[number];
+
+/**
+ * "Today" in America/Chicago (CST/CDT, DST-aware) — the same local-midnight
+ * convention the rest of the app already uses for day boundaries
+ * (technicianForcedCheckout.ts, passwordResetSchedule.ts). Deliberately NOT
+ * the browser's own local date or raw UTC: a trip's Upcoming->Open flip
+ * needs to land on the company's actual midnight regardless of which
+ * timezone a particular staff member's device happens to be set to, and
+ * needs to match the same instant the server-side alert job
+ * (flashTechOpenAlerts.ts's own copy of this helper) fires on.
+ */
+function chicagoDateIso(now: Date = new Date()): string {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Chicago",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(now);
+  const y = parts.find((p) => p.type === "year")!.value;
+  const m = parts.find((p) => p.type === "month")!.value;
+  const d = parts.find((p) => p.type === "day")!.value;
+  return `${y}-${m}-${d}`;
+}
 
 /**
  * Status is derived from the trip's own Travel dates against today, not a
@@ -32,7 +55,7 @@ export type FlashTechStatus = (typeof FLASH_TECH_STATUSES)[number];
  * touches again would otherwise go stale the moment its date boundary
  * passes (e.g. "Upcoming" long after it actually started).
  */
-export function computeFlashTechTripStatus(startDate: string, endDate: string, todayIso: string = new Date().toISOString().slice(0, 10)): FlashTechStatus {
+export function computeFlashTechTripStatus(startDate: string, endDate: string, todayIso: string = chicagoDateIso()): FlashTechStatus {
   if (endDate < todayIso) return "Closed";
   if (startDate > todayIso) return "Upcoming";
   return "Open";

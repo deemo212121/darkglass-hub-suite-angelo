@@ -13,7 +13,11 @@
  * only by the server-side cron job, not from any client action here), and
  * "HR_HIRING" (the Hiring panel's own connection, see migration 0249 —
  * connected ahead of an actual candidate-emailing feature, so there's
- * nothing to send through it yet).
+ * nothing to send through it yet), and "FLASH_TECH" (the Flash Tech
+ * page's own connection, see migration 0268 — sends the "a trip just
+ * turned Open" alert, src/lib/server/flashTechOpenAlerts.ts, to the
+ * company's editable recipient address, same as ATTENDANCE only by the
+ * server-side cron job, not from any client action here).
  * Status/disconnect go through Supabase RPCs (see migration
  * 0113_hr_gmail_connections.sql), same pattern as customForms.ts's Google
  * Drive connection wrappers. The actual connect flow and sends both go
@@ -23,7 +27,7 @@
 import { supabase } from "./client";
 import { auth as firebaseAuth } from "@/lib/firebase/config";
 
-export type GmailRegion = "US" | "PH" | "PARTS" | "IT_1" | "IT_2" | "IT_3" | "ATTENDANCE" | "HR_HIRING";
+export type GmailRegion = "US" | "PH" | "PARTS" | "IT_1" | "IT_2" | "IT_3" | "ATTENDANCE" | "HR_HIRING" | "FLASH_TECH";
 export const IT_TICKET_GMAIL_REGIONS: GmailRegion[] = ["IT_1", "IT_2", "IT_3"];
 
 export interface GmailConnectionStatus {

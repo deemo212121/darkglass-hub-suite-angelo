@@ -8,6 +8,7 @@
 
 import { supabase } from "./client";
 import { createNotification } from "./notifications";
+import { LOCATIONS_DATA } from "@/lib/zipCoverage";
 
 // "training" and "on_hold" added for EOD/EOM hiring reports (0048); "phone_screening",
 // "withdrawn", and "cancelled" added (and "on_hold" removed) by 0221_hr_candidates_status_update.sql.
@@ -818,14 +819,22 @@ const UNSET_LABEL = "(Unassigned)";
  * Hold), Scheduled Interviews (live headcount of anyone currently
  * Interviewing for that branch, not filtered to a specific interview date —
  * confirmed against the reference sheet rather than assumed), and CVs Sent
- * to BM (all-time count of Forward CV actions, not date-scoped — same
- * "running counter" treatment as Staff Needed).
+ * to BM — scoped to just `dateStr`'s calendar day (same "this period's
+ * activity, not a running total" treatment getEomHiringReport already uses
+ * for its own month-scoped version), so picking a different date on the
+ * report's own date field actually changes this column instead of always
+ * showing the same all-time count.
  */
 export async function getEodHiringReport(dateStr: string): Promise<EodHiringRow[]> {
+  const dayStart = `${dateStr}T00:00:00`;
+  const nextDay = new Date(`${dateStr}T00:00:00`);
+  nextDay.setDate(nextDay.getDate() + 1);
+  const dayEnd = `${nextDay.toISOString().slice(0, 10)}T00:00:00`;
+
   let [{ data: cands, error: candErr }, targets, forwards] = await Promise.all([
     supabase.from("hr_candidates").select("full_name, position, branch, status, interview_date, training_start_date"),
     getStaffingTargets(),
-    getCvForwardDetails(),
+    getCvForwardDetails(dayStart, dayEnd),
   ]);
   if (isMissingColumnError(candErr)) {
     // training_start_date doesn't exist yet — fall back to a query without
@@ -891,6 +900,36 @@ async function getCvForwardDetails(rangeStart?: string, rangeEnd?: string): Prom
       date: r.created_at,
     });
     details.set(key, list);
+  }
+  return details;
+}
+
+/**
+ * All-time CV-forward history keyed by candidate_id — who it was sent to
+ * and when, newest first. Used by the Hiring table's own "Sent {date}"
+ * indicator (ReportHRDaily.tsx) next to the Forward button, distinct from
+ * getCvForwardDetails above (that one's grouped by Position+Branch for the
+ * EOD/EOM reports, not per-candidate). Same empty-map-if-table-missing
+ * degradation.
+ */
+export async function getCvForwardsByCandidateId(): Promise<Map<string, CvForwardDetail[]>> {
+  const details = new Map<string, CvForwardDetail[]>();
+  const { data, error } = await supabase
+    .from("hr_candidate_cv_forwards")
+    .select("candidate_id, created_at, candidate:candidate_id (full_name), recipient:recipient_id (display_name, username)")
+    .order("created_at", { ascending: false });
+  if (error) {
+    if (error.code === "42P01") return details; // table doesn't exist yet
+    throw new Error(error.message);
+  }
+  for (const r of (data ?? []) as any[]) {
+    const list = details.get(r.candidate_id) ?? [];
+    list.push({
+      candidateName: r.candidate?.full_name || "(Unknown candidate)",
+      recipientName: r.recipient?.display_name || r.recipient?.username || "(Unknown recipient)",
+      date: r.created_at,
+    });
+    details.set(r.candidate_id, list);
   }
   return details;
 }
@@ -978,4 +1017,371 @@ export async function getEomHiringReport(yearMonth: string): Promise<EodHiringRo
   }
 
   return Array.from(map.values()).sort((a, b) => a.position.localeCompare(b.position) || a.branch.localeCompare(b.branch));
+}
+
+// =====================================================================
+// Hiring Report v2 -- 3 sections (Technician / Parts Manager / Philippine
+// Staff), replacing the flat Position+Branch table above for the on-screen
+// "Generate Report" tab (ReportHRDaily.tsx). The old getEodHiringReport/
+// getEomHiringReport above are UNCHANGED and still back the existing
+// Excel/PDF export -- this is additive, not a replacement of those.
+//
+// Section rules (per the user's own spec):
+//   - Technician: every non-Philippines branch (LOCATIONS_DATA), position
+//     anything OTHER than "Parts Manager" (case-insensitive) -- the broad
+//     "everyone else" bucket so nothing at a US branch is silently dropped.
+//   - Parts Manager ("US Staff"): every non-Philippines branch, same
+//     blanket seed as Technician, scoped to position "Parts Manager".
+//   - Philippine Staff: any Philippines branch, grouped by department
+//     (Claims/CSR/Tech Support/PO/Operation/IT seeded by default, any
+//     other department value found in the data added alongside) instead
+//     of by branch -- Philippine staffing isn't tracked per-branch the way
+//     US hiring is.
+//
+// Computed pieces and where they come from:
+//   - Staff Need: hr_staffing_targets (existing).
+//   - Interview: candidates currently "interviewing" (live status, same
+//     as the v1 EOD report -- not history-based, since this is "right now").
+//   - Hired: hr_candidate_status_history rows where to_status='hired' and
+//     created_at falls inside the period -- a genuine "hired during this
+//     period" count, not a running total. Start Date is each of those
+//     candidates' own hr_candidates.start_date.
+//   - CVs Sent to BM: hr_candidate_cv_forwards, once scoped to the exact
+//     period (day for EOD, month for EOM) and once to the containing
+//     month regardless of period type ("(Monthly)" column) -- identical to
+//     the exact one for EOM, where the period already IS a month.
+//   - Terminated/Resigned: profiles.employee_info->>employmentStatus in
+//     ('terminated','resigned') with employmentStatusDate inside the
+//     period, grouped by the person's CURRENT assigned_branch (or
+//     department if their branch is in the Philippines).
+//   - Warning (Time Card Warning / Employee Error/Manipulation -- counted
+//     separately based on the HR-only classification chosen in the
+//     "Preview & Send" panel when the Warning Form was sent,
+//     WarningFormData.warningCategory -- NOT part of the "Reason(s) for
+//     Warning" shown on the document itself; a warning with no category
+//     chosen counts toward neither column): hr_signable_documents
+//     where document_type='warning_form' and created_at falls inside the
+//     period, grouped by the WARNED EMPLOYEE's (form_data->>employeeId,
+//     not whichever signature slot currently holds recipient_id) CURRENT
+//     assigned_branch/department -- explicitly the recipient's own branch,
+//     not the sender's, per the user's own instruction.
+//   - Budget/Sponsored/Others: hr_hiring_report_manual_entries (migration
+//     0273), typed in by hand per (period, section, row).
+//   - New Hire: same count as Hired (no separate source found for it as
+//     something distinct from Hired -- flagged as an assumption, easy to
+//     change if it's actually supposed to mean something else).
+// =====================================================================
+
+export type HiringReportPeriodType = "eod" | "eom";
+export type HiringReportSection = "technician" | "parts_manager" | "philippine_staff";
+
+const PH_BRANCH_SET = new Set(LOCATIONS_DATA.filter((l) => l.isPhilippines).map((l) => l.location));
+// Dallas and Louisville exist in the app's full location list but are
+// explicitly excluded from this report's Technician/US Staff branch rows
+// per the user's own call — not every known branch is a hiring branch.
+const HIRING_REPORT_EXCLUDED_BRANCHES = new Set(["Dallas", "Louisville"]);
+const US_BRANCH_NAMES = LOCATIONS_DATA.filter((l) => !l.isPhilippines && !HIRING_REPORT_EXCLUDED_BRANCHES.has(l.location)).map((l) => l.location).sort();
+const PH_DEPARTMENT_DEFAULTS = ["Claims", "CSR", "Tech Support", "PO", "Operation", "IT"];
+// Same real department, different spelling depending on who typed it in —
+// normalized to the canonical PH_DEPARTMENT_DEFAULTS name so "CSR" and
+// "Customer Service" land on one row instead of splitting the count.
+const PH_DEPARTMENT_ALIASES: Record<string, string> = {
+  "customer service": "CSR",
+};
+function normalizePhDepartment(department: string | null | undefined): string {
+  const raw = (department || "").trim();
+  if (!raw) return UNSET_LABEL;
+  return PH_DEPARTMENT_ALIASES[raw.toLowerCase()] || raw;
+}
+
+export interface HiringReportRow {
+  groupKey: string; // branch (technician/parts_manager) or department (philippine_staff)
+  staffNeeded: number;
+  scheduledInterviews: { name: string; date: string | null }[];
+  hired: number;
+  hiredStartDates: string[];
+  cvsSentToBm: CvForwardDetail[];
+  cvsSentToBmMonthly: CvForwardDetail[];
+  terminatedResigned: number;
+  /** Counted separately per warning_form's warningCategory (HR-only classification, not the document's printed reasons) — a warning with no category chosen counts toward neither column. */
+  timeCardWarningCount: number;
+  employeeErrorManipulationCount: number;
+  budget: number | null;
+  sponsored: number | null;
+  others: number | null;
+}
+
+export interface HiringReportSummary {
+  /** Combined Time Card Warning + Employee Error/Manipulation total — see HiringReportRow for the two counted separately. */
+  warning: number;
+  terminatedResigned: number;
+  daySponsored: number;
+  budget: number;
+  newHire: number;
+  schedInterview: number;
+}
+
+export interface HiringReportSections {
+  technician: HiringReportRow[];
+  partsManager: HiringReportRow[];
+  philippineStaff: HiringReportRow[];
+  summary: HiringReportSummary;
+}
+
+function hiringReportPeriodBounds(periodType: HiringReportPeriodType, periodKey: string): { start: string; end: string } {
+  if (periodType === "eod") {
+    const start = `${periodKey}T00:00:00`;
+    const next = new Date(`${periodKey}T00:00:00`);
+    next.setDate(next.getDate() + 1);
+    return { start, end: `${next.toISOString().slice(0, 10)}T00:00:00` };
+  }
+  const [y, m] = periodKey.split("-").map(Number);
+  const start = `${periodKey}-01T00:00:00`;
+  const end = m === 12 ? `${y + 1}-01-01T00:00:00` : `${y}-${String(m + 1).padStart(2, "0")}-01T00:00:00`;
+  return { start, end };
+}
+
+function blankHiringReportRow(groupKey: string): HiringReportRow {
+  return {
+    groupKey,
+    staffNeeded: 0,
+    scheduledInterviews: [],
+    hired: 0,
+    hiredStartDates: [],
+    cvsSentToBm: [],
+    cvsSentToBmMonthly: [],
+    terminatedResigned: 0,
+    timeCardWarningCount: 0,
+    employeeErrorManipulationCount: 0,
+    budget: null,
+    sponsored: null,
+    others: null,
+  };
+}
+
+export async function getHiringReportSections(periodType: HiringReportPeriodType, periodKey: string): Promise<HiringReportSections> {
+  const { start, end } = hiringReportPeriodBounds(periodType, periodKey);
+  const monthKey = periodType === "eod" ? periodKey.slice(0, 7) : periodKey;
+  const { start: monthStart, end: monthEnd } = hiringReportPeriodBounds("eom", monthKey);
+
+  const hiredHistoryPromise = (async () => {
+    const all: any[] = [];
+    const PAGE = 1000;
+    for (let from = 0; ; from += PAGE) {
+      const { data, error } = await supabase
+        .from("hr_candidate_status_history")
+        .select("candidate_id, position, branch, to_status, created_at, candidate:candidate_id (start_date)")
+        .eq("to_status", "hired")
+        .gte("created_at", start)
+        .lt("created_at", end)
+        .range(from, from + PAGE - 1);
+      if (error) {
+        if (error.code === "42P01") break; // 0048 not applied yet
+        throw new Error(error.message);
+      }
+      all.push(...(data ?? []));
+      if (!data || data.length < PAGE) break;
+    }
+    return all;
+  })();
+
+  const [
+    { data: cands, error: candErr },
+    targets,
+    forwardsExact,
+    forwardsMonthly,
+    hiredHistory,
+    manualEntries,
+    { data: allProfiles, error: profErr },
+    warningResult,
+  ] = await Promise.all([
+    supabase.from("hr_candidates").select("id, position, branch, department, status, interview_date"),
+    getStaffingTargets(),
+    getCvForwardDetails(start, end),
+    getCvForwardDetails(monthStart, monthEnd),
+    hiredHistoryPromise,
+    getHiringReportManualEntries(periodType, periodKey),
+    supabase.from("profiles").select("id, assigned_branch, department, employee_info, role"),
+    supabase.from("hr_signable_documents").select("form_data, created_at").eq("document_type", "warning_form").gte("created_at", start).lt("created_at", end),
+  ]);
+  if (candErr) throw new Error(candErr.message);
+  if (profErr) throw new Error(profErr.message);
+  const warnings: any[] = warningResult.error ? [] : (warningResult.data ?? []);
+
+  const profileById = new Map((allProfiles ?? []).map((p: any) => [p.id, p]));
+  const isPhBranch = (branch: string | null | undefined) => !!branch && PH_BRANCH_SET.has(branch);
+
+  const rows: Record<HiringReportSection, Map<string, HiringReportRow>> = {
+    technician: new Map(),
+    parts_manager: new Map(),
+    philippine_staff: new Map(),
+  };
+  const ensure = (section: HiringReportSection, groupKey: string): HiringReportRow => {
+    const map = rows[section];
+    const key = groupKey || UNSET_LABEL;
+    if (!map.has(key)) map.set(key, blankHiringReportRow(key));
+    return map.get(key)!;
+  };
+
+  // Both US sections show every known branch as a row, even with no data
+  // yet — "list branch list" for Technician AND US Staff/Parts Manager,
+  // per the user's own instruction (Parts Manager used to only show
+  // branches that already had data; now it matches Technician's full list).
+  for (const b of US_BRANCH_NAMES) ensure("technician", b);
+  for (const b of US_BRANCH_NAMES) ensure("parts_manager", b);
+  for (const d of PH_DEPARTMENT_DEFAULTS) ensure("philippine_staff", d);
+
+  const usSectionFor = (position: string | null): HiringReportSection =>
+    (position || "").trim().toLowerCase() === "parts manager" ? "parts_manager" : "technician";
+
+  for (const t of targets) {
+    if (isPhBranch(t.branch)) continue; // Staff Need targets are US-branch only in practice
+    ensure(usSectionFor(t.position), t.branch || UNSET_LABEL).staffNeeded += t.staffNeeded;
+  }
+
+  for (const c of (cands ?? []) as any[]) {
+    if (c.status !== "interviewing") continue;
+    if (isPhBranch(c.branch)) {
+      ensure("philippine_staff", normalizePhDepartment(c.department)).scheduledInterviews.push({ name: "", date: c.interview_date ?? null });
+    } else {
+      ensure(usSectionFor(c.position), c.branch || UNSET_LABEL).scheduledInterviews.push({ name: "", date: c.interview_date ?? null });
+    }
+  }
+
+  for (const r of hiredHistory as any[]) {
+    const startDate = r.candidate?.start_date ?? null;
+    if (isPhBranch(r.branch)) {
+      // Status history doesn't carry department -- an unattributed PH hire
+      // lands in "(Unassigned)" rather than being silently dropped.
+      const row = ensure("philippine_staff", UNSET_LABEL);
+      row.hired += 1;
+      if (startDate) row.hiredStartDates.push(startDate);
+    } else {
+      const row = ensure(usSectionFor(r.position), r.branch || UNSET_LABEL);
+      row.hired += 1;
+      if (startDate) row.hiredStartDates.push(startDate);
+    }
+  }
+
+  for (const [key, details] of forwardsExact) {
+    const [position, branch] = key.split("||");
+    if (isPhBranch(branch)) continue; // forwards are logged with a branch, not department -- PH forwards aren't attributable to a department here
+    ensure(usSectionFor(position), branch || UNSET_LABEL).cvsSentToBm = details;
+  }
+  for (const [key, details] of forwardsMonthly) {
+    const [position, branch] = key.split("||");
+    if (isPhBranch(branch)) continue;
+    ensure(usSectionFor(position), branch || UNSET_LABEL).cvsSentToBmMonthly = details;
+  }
+
+  // ---- Terminated/Resigned: profiles.employee_info, grouped by current branch/department ----
+  for (const p of (allProfiles ?? []) as any[]) {
+    const info = p.employee_info;
+    if (!info || typeof info !== "object") continue;
+    const status = info.employmentStatus;
+    const statusDate = info.employmentStatusDate;
+    if ((status !== "terminated" && status !== "resigned") || !statusDate) continue;
+    if (statusDate < start.slice(0, 10) || statusDate >= end.slice(0, 10)) continue;
+    if (isPhBranch(p.assigned_branch)) {
+      ensure("philippine_staff", normalizePhDepartment(p.department)).terminatedResigned += 1;
+    } else {
+      // Position isn't known for a terminated/resigned employee here (this
+      // is a profile, not a candidate) -- counted against Technician, the
+      // broad bucket, unless their role is literally Parts Manager.
+      const section = (p.role || "").toString().toLowerCase() === "parts_manager" ? "parts_manager" : "technician";
+      ensure(section, p.assigned_branch || UNSET_LABEL).terminatedResigned += 1;
+    }
+  }
+
+  // ---- Warning: hr_signable_documents(warning_form), grouped by the WARNED employee's current branch/department ----
+  // Time Card Warning and Employee Error/Manipulation are counted
+  // separately based on the HR-only classification chosen when the
+  // Warning Form was sent (WarningFormData.warningCategory) — not one of
+  // the "Reason(s) for Warning" shown on the printed document. A warning
+  // sent with no category chosen doesn't count toward either column.
+  for (const w of warnings) {
+    const employeeId = w.form_data?.employeeId;
+    const profile = employeeId ? profileById.get(employeeId) : null;
+    if (!profile) continue; // no profile to attribute the branch to -- skip rather than guess
+    const category = w.form_data?.warningCategory;
+    const isTimeCard = category === "time_card_warning";
+    const isEmployeeError = category === "employee_error_manipulation";
+    if (!isTimeCard && !isEmployeeError) continue;
+    const row = isPhBranch((profile as any).assigned_branch)
+      ? ensure("philippine_staff", normalizePhDepartment((profile as any).department))
+      : ensure(
+          ((profile as any).role || "").toString().toLowerCase() === "parts_manager" ? "parts_manager" : "technician",
+          (profile as any).assigned_branch || UNSET_LABEL,
+        );
+    if (isTimeCard) row.timeCardWarningCount += 1;
+    if (isEmployeeError) row.employeeErrorManipulationCount += 1;
+  }
+
+  // ---- Manual entries (Budget/Sponsored/Others) ----
+  for (const m of manualEntries) {
+    const row = ensure(m.section, m.groupKey);
+    row.budget = m.budget;
+    row.sponsored = m.sponsored;
+    row.others = m.others;
+  }
+
+  const sortRows = (map: Map<string, HiringReportRow>) => Array.from(map.values()).sort((a, b) => a.groupKey.localeCompare(b.groupKey));
+  const technician = sortRows(rows.technician);
+  const partsManager = sortRows(rows.parts_manager);
+  const philippineStaff = sortRows(rows.philippine_staff);
+
+  const allRows = [...technician, ...partsManager, ...philippineStaff];
+  const summary: HiringReportSummary = {
+    warning: allRows.reduce((s, r) => s + r.timeCardWarningCount + r.employeeErrorManipulationCount, 0),
+    terminatedResigned: allRows.reduce((s, r) => s + r.terminatedResigned, 0),
+    daySponsored: allRows.reduce((s, r) => s + (r.sponsored ?? 0), 0),
+    budget: allRows.reduce((s, r) => s + (r.budget ?? 0), 0),
+    newHire: allRows.reduce((s, r) => s + r.hired, 0),
+    schedInterview: allRows.reduce((s, r) => s + r.scheduledInterviews.length, 0),
+  };
+
+  return { technician, partsManager, philippineStaff, summary };
+}
+
+// =====================================================================
+// Manual entries (Budget/Sponsored/Others) for the report above --
+// migration 0278.
+// =====================================================================
+
+export interface HiringReportManualEntry {
+  section: HiringReportSection;
+  groupKey: string;
+  budget: number | null;
+  sponsored: number | null;
+  others: number | null;
+}
+
+async function getHiringReportManualEntries(periodType: HiringReportPeriodType, periodKey: string): Promise<HiringReportManualEntry[]> {
+  const { data, error } = await supabase
+    .from("hr_hiring_report_manual_entries")
+    .select("section, group_key, budget, sponsored, others")
+    .eq("period_type", periodType)
+    .eq("period_key", periodKey);
+  if (error) {
+    if (error.code === "42P01") return []; // 0273 not applied yet
+    throw new Error(error.message);
+  }
+  return (data ?? []).map((r: any) => ({ section: r.section, groupKey: r.group_key, budget: r.budget, sponsored: r.sponsored, others: r.others }));
+}
+
+export type HiringReportManualEntryFields = Partial<Pick<HiringReportManualEntry, "budget" | "sponsored" | "others">>;
+
+export async function upsertHiringReportManualEntry(
+  periodType: HiringReportPeriodType,
+  periodKey: string,
+  section: HiringReportSection,
+  groupKey: string,
+  fields: HiringReportManualEntryFields
+): Promise<void> {
+  const patch: Record<string, unknown> = { period_type: periodType, period_key: periodKey, section, group_key: groupKey };
+  if ("budget" in fields) patch.budget = fields.budget;
+  if ("sponsored" in fields) patch.sponsored = fields.sponsored;
+  if ("others" in fields) patch.others = fields.others;
+  const { error } = await supabase.from("hr_hiring_report_manual_entries").upsert(patch, { onConflict: "company_id,period_type,period_key,section,group_key" });
+  if (error) throw new Error(error.message);
 }

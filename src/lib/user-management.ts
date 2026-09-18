@@ -12,6 +12,8 @@ export interface UserManagementRecord {
   locations: string;
   /** Undefined for the legacy mock CORE_USERS rows below - only real Supabase profiles carry this. */
   isActive?: boolean;
+  /** When isActive was last toggled — sourced from the User Management Activity Log's user_activated/user_deactivated entries (see getUserStatusChangeDates), not a DB column. Undefined for the legacy mock rows; null for a real profile with no logged toggle yet. */
+  statusChangedAt?: string | null;
 }
 
 const ALL_LOCATIONS = LOCATIONS.join(",");

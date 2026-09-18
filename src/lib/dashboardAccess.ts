@@ -3,11 +3,12 @@ import { getModuleRoleGate } from "./moduleAccess";
 
 /**
  * Role gates for the Dashboard module's submodules (mod.slug === "dashboard"),
- * plus hr-dashboard and accounting-dashboard even though they now live in
- * their own HR/Accounting modules (see modules.ts and getDashboardRoleGate
- * below) — moving modules didn't change who's allowed to open them. Keyed
- * by submodule slug. A submodule with no entry here is open to every
- * signed-in user (e.g. the Employee Self-Service Portal).
+ * plus hr-dashboard, accounting-dashboard, and the CSR module's daily-report/
+ * team-composition even though they now live in their own HR/Accounting/CSR
+ * modules (see modules.ts and getDashboardRoleGate below) — moving modules
+ * didn't change who's allowed to open them. Keyed by submodule slug. A
+ * submodule with no entry here is open to every signed-in user (e.g. the
+ * Employee Self-Service Portal).
  *
  * SUPERADMIN always passes regardless of this list — same convention as the
  * admin-module gate in m.$module.$submodule.tsx.
@@ -32,11 +33,14 @@ export const DASHBOARD_ROLE_GATES: Record<string, string[]> = {
   // further restricted inside FlashTechCalendarPage.tsx itself and by the
   // flash_tech_trips RLS policies (migration 0129) to just those three.
   "flash-tech-calendar": ["ADMIN", "FINANCE"],
-  // CSR_AGENT/CSR_TEAM_LEADER are allowed in here too even though the org-wide
-  // overview is meant for CSR_MANAGER/Admin/BizOps — CSRDashboard.tsx itself
-  // redirects those two roles straight to their personal Team Leader
-  // Dashboard, so they need to pass this gate for that redirect to fire.
+  // Whole-page gate — every CSR role needs to pass this to open the page at
+  // all, since its To Do List tab is for everyone. The Team List and Team
+  // Composition tabs narrow further INSIDE CSRMainDashboard.tsx itself
+  // (Team List: Manager + Team Leader; Team Composition: Manager only) —
+  // that's UI-level tab visibility, not a second role gate here.
   "csr-dashboard": ["ADMIN", "CSR_MANAGER", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER", "CSR_AGENT", "CSR_TEAM_LEADER"],
+  // Same CSR-wide audience — every CSR role fills this in daily.
+  "daily-report": ["ADMIN", "CSR_MANAGER", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER", "CSR_AGENT", "CSR_TEAM_LEADER"],
   "hr-dashboard": ["ADMIN", "HR"],
   // HR module's Paperworks page (custom: "hr-paperworks") — the Automated
   // Forms group that used to live inside hr-dashboard's own sidebar. Same
@@ -82,16 +86,31 @@ export const DASHBOARD_ROLE_GATES: Record<string, string[]> = {
  * an override cache even exists; it just starts seeing the company's
  * customized list once auth.tsx's hydration resolves.
  */
+const CSR_MODULE_SUBMODULE_SLUGS = new Set([
+  "csr-dashboard",
+  "daily-report",
+  "csr-daily-report",
+  "call-tracker",
+  "csr-status-summary",
+]);
+
 export function getDashboardRoleGate(subSlug: string): string[] | null {
-  // hr-dashboard and accounting-dashboard each moved from the Dashboard
-  // module into their own HR/Accounting module (see modules.ts) — their
-  // per-company overrides now live under the "hr"/"accounting" namespace
-  // (migrations 0219_hr_module_role_gate_rename.sql and
-  // 0244_accounting_module_role_gate_rename.sql moved the existing rows),
-  // matching what AccessibilityManagementPage.tsx's gateRows now reports as
-  // their module. Every other submodule here still queries "dashboard" as
-  // before.
-  const overrideModuleSlug = subSlug === "hr-dashboard" ? "hr" : subSlug === "accounting-dashboard" ? "accounting" : "dashboard";
+  // hr-dashboard, accounting-dashboard, and the CSR module's submodules
+  // (CSR_MODULE_SUBMODULE_SLUGS — daily-report/team-composition were born
+  // there directly, the other three moved from the Dashboard module) each
+  // have their overrides under the "hr"/"accounting"/"csr" namespace
+  // instead of "dashboard" (see
+  // modules.ts; migrations 0219_hr_module_role_gate_rename.sql,
+  // 0249_accounting_module_role_gate_rename.sql, and
+  // 0269_csr_module_role_gate_rename.sql moved the existing rows for the
+  // ones that had any), matching what AccessibilityManagementPage.tsx's
+  // gateRows now reports as their module. Every other submodule here still
+  // queries "dashboard" as before.
+  const overrideModuleSlug =
+    subSlug === "hr-dashboard" ? "hr" :
+    subSlug === "accounting-dashboard" ? "accounting" :
+    CSR_MODULE_SUBMODULE_SLUGS.has(subSlug) ? "csr" :
+    "dashboard";
   return getModuleRoleGate(overrideModuleSlug, subSlug) ?? DASHBOARD_ROLE_GATES[subSlug] ?? null;
 }
 
