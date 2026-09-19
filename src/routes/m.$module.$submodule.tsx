@@ -66,6 +66,7 @@ import { PartDailyPickup } from "@/components/PartDailyPickup";
 import { PartDailyCollection } from "@/components/PartDailyCollection";
 import { PartReturn } from "@/components/PartReturn";
 import { ReservedPartList } from "@/components/ReservedPartList";
+import { PartsDailyReportEbay } from "@/components/PartsDailyReportEbay";
 import { PartsDashboard } from "@/components/PartsDashboard";
 import { PartsOrderDashboard } from "@/components/PartsOrderDashboard";
 import { TicketList } from "@/components/TicketList";
@@ -106,6 +107,7 @@ import { ReportPartsDaily } from "@/components/ReportPartsDaily";
 import { ReportOperationsDaily } from "@/components/ReportOperationsDaily";
 import { ReportAttendanceMonitoring } from "@/components/ReportAttendanceMonitoring";
 import { ReportAccounting } from "@/components/ReportAccounting";
+import { BranchDailyReportPage } from "@/components/BranchDailyReportPage";
 import { EncompassClaimAuditReport } from "@/components/EncompassClaimAuditReport";
 import { MonthlyPartReport } from "@/components/MonthlyPartReport";
 import { PayrollReport } from "@/components/PayrollReport";
@@ -130,6 +132,7 @@ import { ExpenseTrackingPage } from "@/components/ExpenseTrackingPage";
 import { ClaimsDashboard } from "@/components/ClaimsDashboard";
 import { OperationsDashboard } from "@/components/OperationsDashboard";
 import { ReceivingStatusPage } from "@/components/ReceivingStatusPage";
+import { TicketOperationReport } from "@/components/TicketOperationReport";
 
 export const Route = createFileRoute("/m/$module/$submodule")({
   ssr: false,
@@ -655,6 +658,8 @@ function SubModule() {
         ? <ReportAttendanceMonitoring mod={mod} sub={sub} />
         : (sub as any).custom === "report-accounting"
         ? <ReportAccounting mod={mod} sub={sub} />
+        : (sub as any).custom === "report-branch-daily"
+        ? <BranchDailyReportPage mod={mod} sub={sub} />
         : (sub as any).custom === "encompass-claim-audit-report"
         ? <EncompassClaimAuditReport mod={mod} sub={sub} />
         : (sub as any).custom === "monthly-part-report"
@@ -747,6 +752,8 @@ function SubModule() {
         ? <OperationsDashboard mod={mod} sub={sub} />
         : sub.custom === "reserved-part-list-custom"
         ? <ReservedPartList mod={mod} sub={sub} />
+        : (sub as any).custom === "part-daily-report-ebay"
+        ? <PartsDailyReportEbay mod={mod} sub={sub} />
         : sub.slug === "po-status"
         ? <PoStatusPage />
         : sub.slug === "part-collection"
@@ -769,6 +776,8 @@ function SubModule() {
         ? <TicketList mod={mod} sub={sub} />
         : (sub as any).custom === "receiving-status"
         ? <ReceivingStatusPage mod={mod} sub={sub} />
+        : (sub as any).custom === "ticket-operation-report"
+        ? <TicketOperationReport mod={mod} sub={sub} />
         : sub.slug === "new-ticket"
         ? <NewTicketPage mod={mod} sub={sub} />
         : sub.slug === "todo-list"

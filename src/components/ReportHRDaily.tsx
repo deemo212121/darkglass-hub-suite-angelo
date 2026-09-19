@@ -11433,6 +11433,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     branch: "",
     position: "",
     date: todayStr,
+    employeeIsManager: false,
   });
   const updateActionPlanField = <K extends keyof typeof actionPlanForm>(field: K, value: (typeof actionPlanForm)[K]) =>
     setActionPlanForm((prev) => ({ ...prev, [field]: value }));
@@ -11450,6 +11451,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       employeeName: employee.name,
       position: ROLE_LABELS[normalizeRole(employee.position)] ?? employee.position,
       branch: employee.branch,
+      // Same "MANAGER" substring check as isCoeOfficeUseEligible above —
+      // drives which signer slots may edit the plan/comments, see
+      // ActionPlanFormData.employeeIsManager's doc comment.
+      employeeIsManager: normalizeRole(employee.position).includes("MANAGER"),
     }));
     setActionPlanEmployeeDropdownOpen(false);
   };
@@ -11460,6 +11465,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     branch: actionPlanForm.branch,
     position: actionPlanForm.position,
     date: actionPlanForm.date,
+    employeeIsManager: actionPlanForm.employeeIsManager,
     coachingPlan: "",
     monitoringPlan: "",
     additionalTraining: "",
@@ -11661,7 +11667,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const handleCloseActionPlanPreview = () => {
     setActionPlanPreviewOpen(false);
     setActionPlanSentLink(null);
-    setActionPlanForm({ employeeId: "", employeeName: "", branch: "", position: "", date: todayStr });
+    setActionPlanForm({ employeeId: "", employeeName: "", branch: "", position: "", date: todayStr, employeeIsManager: false });
   };
 
   // ── Sent Action Plan Forms tracking table actions ──
@@ -12671,6 +12677,40 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   ];
   const wmReportColors: Record<string, string> = { "Warnings": "#ca8a04", "Mistakes": "#ea580c" };
 
+  // Who actually has the warnings/mistakes in this range, and why — the KPI
+  // tiles above only show totals, which isn't enough to act on.
+  const wmReportNotesInRange = useMemo(() => {
+    const inRange = (n: CsrAgentNote) => {
+      const d = n.createdAt.slice(0, 10);
+      return n.status === "approved" && d >= wmReportFrom && d <= wmReportTo;
+    };
+    return allNotes.filter(inRange);
+  }, [allNotes, wmReportFrom, wmReportTo]);
+
+  const wmReportByEmployee = useMemo(() => {
+    const map = new Map<string, { profileId: string; name: string; warnings: number; mistakes: number }>();
+    for (const n of wmReportNotesInRange) {
+      if (!map.has(n.agentProfileId)) {
+        const name = employees.find((e) => e.id === n.agentProfileId)?.name || "Unknown employee";
+        map.set(n.agentProfileId, { profileId: n.agentProfileId, name, warnings: 0, mistakes: 0 });
+      }
+      const row = map.get(n.agentProfileId)!;
+      if (n.type === "warning") row.warnings += 1; else row.mistakes += 1;
+    }
+    return Array.from(map.values()).sort((a, b) => (b.warnings + b.mistakes) - (a.warnings + a.mistakes) || a.name.localeCompare(b.name));
+  }, [wmReportNotesInRange, employees]);
+
+  const wmReportDetailRows = useMemo(() => {
+    return wmReportNotesInRange
+      .map((n) => ({
+        name: employees.find((e) => e.id === n.agentProfileId)?.name || "Unknown employee",
+        type: n.type,
+        date: (n.occurredAt || n.createdAt).slice(0, 10),
+        reason: n.note,
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name) || a.date.localeCompare(b.date));
+  }, [wmReportNotesInRange, employees]);
+
   const downloadWmReportExcel = () => {
     const html = `
       <html>
@@ -12690,6 +12730,36 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             <tr style="${i % 2 === 1 ? "background:#f9fafb;" : ""}">
               <td style="border:1px solid #e5e7eb;">${escapeHtml(label)}</td>
               <td style="border:1px solid #e5e7eb; text-align:right; font-weight:bold; color:${wmReportColors[label] ?? "#111827"};">${value}</td>
+            </tr>`).join("")}
+            <tr><td colspan="4">&nbsp;</td></tr>
+            <tr><td colspan="4" style="background:#1e40af; color:white; font-weight:bold; padding:8px; font-size:13px;">BY EMPLOYEE</td></tr>
+            <tr>
+              <td style="background:#1e40af; color:white; font-weight:bold; border:1px solid #1e40af;">Employee</td>
+              <td style="background:#1e40af; color:white; font-weight:bold; border:1px solid #1e40af; text-align:right;">Warnings</td>
+              <td style="background:#1e40af; color:white; font-weight:bold; border:1px solid #1e40af; text-align:right;">Mistakes</td>
+            </tr>
+            ${wmReportByEmployee.length === 0 ? `
+            <tr><td colspan="4" style="border:1px solid #e5e7eb; text-align:center; color:#6b7280;">No approved warnings or mistakes in this range.</td></tr>` : wmReportByEmployee.map((r, i) => `
+            <tr style="${i % 2 === 1 ? "background:#f9fafb;" : ""}">
+              <td style="border:1px solid #e5e7eb;">${escapeHtml(r.name)}</td>
+              <td style="border:1px solid #e5e7eb; text-align:right; font-weight:bold; color:#ca8a04;">${r.warnings}</td>
+              <td style="border:1px solid #e5e7eb; text-align:right; font-weight:bold; color:#ea580c;">${r.mistakes}</td>
+            </tr>`).join("")}
+            <tr><td colspan="4">&nbsp;</td></tr>
+            <tr><td colspan="4" style="background:#1e40af; color:white; font-weight:bold; padding:8px; font-size:13px;">DETAIL</td></tr>
+            <tr>
+              <td style="background:#1e40af; color:white; font-weight:bold; border:1px solid #1e40af;">Employee</td>
+              <td style="background:#1e40af; color:white; font-weight:bold; border:1px solid #1e40af;">Type</td>
+              <td style="background:#1e40af; color:white; font-weight:bold; border:1px solid #1e40af;">Date</td>
+              <td style="background:#1e40af; color:white; font-weight:bold; border:1px solid #1e40af;">Reason</td>
+            </tr>
+            ${wmReportDetailRows.length === 0 ? `
+            <tr><td colspan="4" style="border:1px solid #e5e7eb; text-align:center; color:#6b7280;">Nothing to show for this range.</td></tr>` : wmReportDetailRows.map((r, i) => `
+            <tr style="${i % 2 === 1 ? "background:#f9fafb;" : ""}">
+              <td style="border:1px solid #e5e7eb;">${escapeHtml(r.name)}</td>
+              <td style="border:1px solid #e5e7eb;">${escapeHtml(r.type === "warning" ? "Warning" : "Mistake")}</td>
+              <td style="border:1px solid #e5e7eb;">${escapeHtml(r.date)}</td>
+              <td style="border:1px solid #e5e7eb;">${escapeHtml(r.reason)}</td>
             </tr>`).join("")}
           </table>
         </body>
@@ -12730,7 +12800,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <style>
             * { margin: 0; padding: 0; box-sizing: border-box; }
             body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: white; padding: 10px; color: #1f2937; }
-            .container { max-width: 800px; margin: 0 auto; background: white; border: 1px solid #e5e7eb; padding: 20px; }
+            .container { max-width: 1000px; margin: 0 auto; background: white; border: 1px solid #e5e7eb; padding: 20px; }
+            h2.section-title { font-size: 13px; font-weight: bold; color: #1e40af; margin: 4px 0 8px; }
             .header { display: flex; gap: 15px; align-items: center; margin-bottom: 20px; padding: 15px; border-radius: 8px; background: linear-gradient(135deg, #1e3a8a 0%, #1e40af 100%); }
             .header img { width: 64px; height: 64px; object-fit: contain; flex-shrink: 0; }
             .header h1 { color: white; font-size: 22px; letter-spacing: 0.5px; }
@@ -12770,6 +12841,26 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               <thead><tr><th>Metric</th><th style="text-align:right;">Total</th></tr></thead>
               <tbody>
                 ${wmReportRows.map(([label, value]) => `<tr><td>${escapeHtml(label)}</td><td class="amount">${value}</td></tr>`).join("")}
+              </tbody>
+            </table>
+
+            <h2 class="section-title">By Employee</h2>
+            <table>
+              <thead><tr><th>Employee</th><th style="text-align:right;">Warnings</th><th style="text-align:right;">Mistakes</th></tr></thead>
+              <tbody>
+                ${wmReportByEmployee.length === 0
+                  ? `<tr><td colspan="3" style="text-align:center;color:#6b7280;">No approved warnings or mistakes in this range.</td></tr>`
+                  : wmReportByEmployee.map((r) => `<tr><td>${escapeHtml(r.name)}</td><td class="amount" style="color:#ca8a04;">${r.warnings}</td><td class="amount" style="color:#ea580c;">${r.mistakes}</td></tr>`).join("")}
+              </tbody>
+            </table>
+
+            <h2 class="section-title">Detail</h2>
+            <table>
+              <thead><tr><th>Employee</th><th>Type</th><th>Date</th><th>Reason</th></tr></thead>
+              <tbody>
+                ${wmReportDetailRows.length === 0
+                  ? `<tr><td colspan="4" style="text-align:center;color:#6b7280;">Nothing to show for this range.</td></tr>`
+                  : wmReportDetailRows.map((r) => `<tr><td>${escapeHtml(r.name)}</td><td>${escapeHtml(r.type === "warning" ? "Warning" : "Mistake")}</td><td>${escapeHtml(r.date)}</td><td>${escapeHtml(r.reason)}</td></tr>`).join("")}
               </tbody>
             </table>
 
@@ -14677,22 +14768,22 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     { key: "w8ben", label: "W-8 / W-9 / W-4 / W-4R Forms", count: 0, icon: Landmark },
   ] as const;
 
-  // "New Automation Forms"' own General column — the same first 7 of
-  // automatedFormsGeneralTabs above, minus Form I-9/Manager's Action Plan
-  // Form/W-8ben — those 3 live directly under New Technician Forms instead
-  // (see newAutomationFormsTechnicianTabs below), so listing them here too
-  // would just be a duplicate. Termination Notice Form IS included here —
-  // same "terminationForm" tab key as the old General column, just reachable
-  // from both places, same as every other tab this column reuses as-is.
-  // "combineForms" (Bulk Form Send) gets its own distinct tab here rather
-  // than being reused as-is — the old one's checkbox list is the legacy
-  // 20-item breakdown (11 individual technician forms, etc.); this one
-  // needs to show only the new consolidated form types (Master W-2
-  // Technician/Office Agreement, Master PH Contractor Agreement, W-4, I-9,
-  // Direct Deposit, W-8BEN), grouped by New Technician/New Office/PH Staff
-  // — see the "newCombineForms" render block below.
+  // "New Automation Forms"' own General column — the same automatedFormsGeneralTabs
+  // list above, minus Form I-9/W-8ben — those 2 live directly under New
+  // Technician Forms instead (see newAutomationFormsTechnicianTabs below),
+  // so listing them here too would just be a duplicate. Manager's Action
+  // Plan Form and Termination Notice Form ARE included here — same
+  // "actionPlanForm"/"terminationForm" tab keys as the old General column,
+  // just reachable from both places, same as every other tab this column
+  // reuses as-is. "combineForms" (Bulk Form Send) gets its own distinct tab
+  // here rather than being reused as-is — the old one's checkbox list is
+  // the legacy 20-item breakdown (11 individual technician forms, etc.);
+  // this one needs to show only the new consolidated form types (Master
+  // W-2 Technician/Office Agreement, Master PH Contractor Agreement, W-4,
+  // I-9, Direct Deposit, W-8BEN), grouped by New Technician/New Office/PH
+  // Staff — see the "newCombineForms" render block below.
   const newAutomationFormsGeneralTabs: NavTabDef[] = [
-    ...automatedFormsGeneralTabs.filter((t) => !["i9", "actionPlanForm", "w8ben", "combineForms"].includes(t.key)),
+    ...automatedFormsGeneralTabs.filter((t) => !["i9", "w8ben", "combineForms"].includes(t.key)),
     { key: "newCombineForms", label: "Bulk Form Send", count: 0, icon: Link2 },
   ];
 
@@ -18812,6 +18903,72 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             <p className="text-xl font-bold text-orange-300">{wmReportKpi.mistakes}</p>
             <p className="text-[10px] text-muted-foreground uppercase tracking-wide mt-0.5">Mistakes</p>
           </div>
+        </div>
+
+        {/* By Employee — totals per person */}
+        <div className="px-4 pb-4">
+          <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">By Employee</h3>
+          {wmReportByEmployee.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No approved warnings or mistakes in this range.</p>
+          ) : (
+            <div className="overflow-x-auto rounded-md border border-white/10">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-white/10 bg-white/5">
+                    <th className="px-3 py-2 text-left font-semibold text-muted-foreground uppercase tracking-wide">Employee</th>
+                    <th className="px-3 py-2 text-right font-semibold text-muted-foreground uppercase tracking-wide">Warnings</th>
+                    <th className="px-3 py-2 text-right font-semibold text-muted-foreground uppercase tracking-wide">Mistakes</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {wmReportByEmployee.map((r) => (
+                    <tr key={r.profileId} className="border-b border-white/5">
+                      <td className="px-3 py-2 font-medium">
+                        <a href={`/csr-agent/${r.profileId}`} target="_blank" rel="noopener noreferrer" className="hover:text-blue-300 hover:underline">{r.name}</a>
+                      </td>
+                      <td className="px-3 py-2 text-right font-semibold text-yellow-300">{r.warnings}</td>
+                      <td className="px-3 py-2 text-right font-semibold text-orange-300">{r.mistakes}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        {/* Detail — the actual reason for each one */}
+        <div className="px-4 pb-4">
+          <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Detail</h3>
+          {wmReportDetailRows.length === 0 ? (
+            <p className="text-sm text-muted-foreground">Nothing to show for this range.</p>
+          ) : (
+            <div className="overflow-x-auto rounded-md border border-white/10">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-white/10 bg-white/5">
+                    <th className="px-3 py-2 text-left font-semibold text-muted-foreground uppercase tracking-wide">Employee</th>
+                    <th className="px-3 py-2 text-left font-semibold text-muted-foreground uppercase tracking-wide">Type</th>
+                    <th className="px-3 py-2 text-left font-semibold text-muted-foreground uppercase tracking-wide">Date</th>
+                    <th className="px-3 py-2 text-left font-semibold text-muted-foreground uppercase tracking-wide">Reason</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {wmReportDetailRows.map((r, i) => (
+                    <tr key={i} className="border-b border-white/5">
+                      <td className="px-3 py-2 font-medium whitespace-nowrap">{r.name}</td>
+                      <td className="px-3 py-2 whitespace-nowrap">
+                        <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${r.type === "warning" ? "bg-yellow-500/15 text-yellow-300" : "bg-orange-500/15 text-orange-300"}`}>
+                          {r.type === "warning" ? "Warning" : "Mistake"}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">{r.date}</td>
+                      <td className="px-3 py-2">{r.reason}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       </div>
       )}
@@ -28486,6 +28643,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                   <option value="manager">Manager</option>
                   <option value="senior_manager">Senior Manager</option>
                   <option value="hr_staff">HR/Management</option>
+                  <option value="executive">CEO</option>
                 </select>
                 {actionPlanActionError && (
                   <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2 mb-3">{actionPlanActionError}</p>
@@ -28648,6 +28806,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                     <option value="manager">Manager</option>
                     <option value="senior_manager">Senior Manager</option>
                     <option value="hr_staff">HR/Management</option>
+                    <option value="executive">CEO</option>
                   </select>
                   {actionPlanRecipientSlot === "manager" && (
                     <p className="text-[10px] text-muted-foreground mt-1">The Manager slot is the one who fills in the actual coaching/monitoring/consequences plan — send this one first.</p>

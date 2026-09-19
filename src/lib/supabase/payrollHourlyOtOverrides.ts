@@ -3,7 +3,7 @@
  * figure with the State-matched amount from the payroll detail step's
  * Compliant/"State" toggle (EmployeePayrollDetailModal). Set when Finance
  * clicks Next on the detail step with "State" selected; cleared when Next
- * is clicked with "Company" selected instead. See migration 0281.
+ * is clicked with "Company" selected instead. See migration 0289.
  */
 import { supabase } from "./client";
 

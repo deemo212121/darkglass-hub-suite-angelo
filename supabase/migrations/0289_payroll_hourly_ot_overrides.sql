@@ -1,5 +1,5 @@
 -- =====================================================================
--- 0281 — payroll_hourly_ot_overrides: per-technician, per-period override
+-- 0289 — payroll_hourly_ot_overrides: per-technician, per-period override
 -- of the flat company-rate Hourly + OT figure (EmployeePayrollRow.techHourlyPay)
 -- with the State-matched amount computed on the payroll detail step
 -- (EmployeePayrollDetailModal's Compliant/"State" toggle).
@@ -12,7 +12,7 @@
 -- technician/period, reverting to the flat calc. Period-scoped like
 -- payroll_review_marks (0218) — a different pay period starts clean.
 --
--- Run once in the Supabase SQL Editor, after 0280.
+-- Run once in the Supabase SQL Editor, after 0288.
 -- =====================================================================
 
 create table if not exists payroll_hourly_ot_overrides (

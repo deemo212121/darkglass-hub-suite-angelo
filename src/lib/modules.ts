@@ -19,7 +19,7 @@ export interface SubModuleDef {
   // Custom seed generator; receives index
   seed: (i: number) => Record<string, unknown>;
   count?: number;
-  custom?: "part-return" | "part-return-status" | "claims-pipeline" | "work-map" | "part-order" | "part-receive" | "return-pickup" | "repair-statuses" | "ticket-list" | "user-management" | "account-management" | "location-management" | "csr-main-dashboard" | "csr-team-daily-report" | "csr-daily-report" | "call-tracker" | "csr-status-summary" | "reserved-part-list-custom" | "parts-dashboard" | "claims-dashboard" | "staff-list" | "it-tickets" | "company-settings" | "universal-activity-log"; // hook for special pages
+  custom?: "part-return" | "part-return-status" | "claims-pipeline" | "work-map" | "part-order" | "part-receive" | "return-pickup" | "repair-statuses" | "ticket-list" | "user-management" | "account-management" | "location-management" | "csr-main-dashboard" | "csr-team-daily-report" | "csr-daily-report" | "call-tracker" | "csr-status-summary" | "reserved-part-list-custom" | "part-daily-report-ebay" | "parts-dashboard" | "claims-dashboard" | "staff-list" | "it-tickets" | "company-settings" | "universal-activity-log"; // hook for special pages
   /** Still a real, routable submodule (role gates, custom dispatch — everything works) — just excluded from the module's own tile grid because another page links to it directly instead (e.g. Flash Tech Calendar via a button on Expense Tracking). Keeps the tile grid from accumulating every niche page. */
   hiddenFromGrid?: boolean;
 }
@@ -742,6 +742,14 @@ const partsMod: ModuleDef = {
       seed: () => ({}),
       custom: "reserved-part-list-custom",
     },
+    {
+      slug: "part-daily-report-ebay",
+      title: "Parts Daily Report eBAY",
+      description: "Daily eBay orders, listings & branch totals.",
+      fields: [],
+      seed: () => ({}),
+      custom: "part-daily-report-ebay",
+    },
   ],
 };
 const ticketsMod: ModuleDef = {
@@ -1043,6 +1051,14 @@ const ticketsMod: ModuleDef = {
       title: "Receiving Status",
       description: "Incoming tickets by Branch and 3rd-party Ticket Provider, with sync status.",
       custom: "receiving-status" as any,
+      fields: [],
+      seed: () => ({}),
+    },
+    {
+      slug: "operation",
+      title: "Operation",
+      description: "Live ticket counts per status, company-wide — includes backorder & cancel tracking.",
+      custom: "ticket-operation-report" as any,
       fields: [],
       seed: () => ({}),
     },
@@ -1521,6 +1537,15 @@ const reportMod: ModuleDef = {
       title: "Accounting Report",
       description: "Payroll runs, US/PH split, and employee time tracking.",
       custom: "report-accounting" as any,
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
+    {
+      slug: "report-branch-daily",
+      title: "Branch Daily Report",
+      description: "Branch notes, urgency, pending tickets & tech counts, by Senior Branch Manager.",
+      custom: "report-branch-daily" as any,
       fields: [],
       count: 0,
       seed: () => ({}),

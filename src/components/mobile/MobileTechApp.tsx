@@ -19,6 +19,8 @@ import {
   Home,
   X,
   WifiOff,
+  Pencil,
+  Trash2,
 } from "lucide-react";
 // Mobile shell is an isolated surface — no navigation to desktop routes,
 // no device-override toggle. The desktop UI is available only from an
@@ -66,7 +68,7 @@ import { resolveTeamLeadOrManager } from "@/lib/notifyRouting";
 import { visibleAttendanceProfileIds } from "@/lib/notifyRouting";
 import { getCsrTeamComposition, type CsrTeamComposition } from "@/lib/supabase/csrTeams";
 import { isAttendanceFullAccessRole, isAttendanceManagerTierRole, normalizeRole, ROLE_LABELS, TECHNICIAN_PAY_ROLES } from "@/lib/roleLabels";
-import { LOCATIONS } from "@/lib/locations";
+import { LOCATIONS, ACTIVE_LOCATIONS } from "@/lib/locations";
 import { timezoneForBranch, nowInTimezone } from "@/lib/attendanceGrace";
 import { getServerNow, zonedDateKey, zonedTimeString, zonedWallClockToUtcIso, TIME_ZONES, type ScheduleTimezone } from "@/lib/serverTime";
 import { getTicketComments, addTicketComment, type TicketComment } from "@/lib/supabase/comments";
@@ -79,6 +81,18 @@ import { OfflineQueueBadge } from "@/components/OfflineQueueBadge";
 import { uploadTicketSignature, uploadPayrollDisputeAttachment, uploadTicketTimeDisputeAttachment } from "@/lib/firebase/storage";
 import { getTechnicianTodayRoute, type TechnicianRouteStop } from "@/lib/supabase/technicianWhereabouts";
 import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
+import {
+  getBranchDailyReports,
+  getBranchDailyReportNotes,
+  addBranchDailyReportNote,
+  updateBranchDailyReportNote,
+  deleteBranchDailyReportNote,
+  setBranchDailyReportUrgency,
+  type BranchDailyReport,
+  type BranchDailyReportNote,
+  type BranchReportUrgency,
+} from "@/lib/supabase/branchDailyReports";
+import { getSeniorBranchManagerAssignments } from "@/lib/supabase/seniorBranchManagerAssignments";
 import { lookupZip } from "@/lib/zipCoverage";
 import { resolveTierCode } from "@/lib/tierCodes";
 import { getModelResources, saveModelResources, type ModelResources } from "@/lib/supabase/modelResources";
@@ -126,7 +140,8 @@ type View =
   | "tickettimedispute"
   | "correction"
   | "notifications"
-  | "announcements";
+  | "announcements"
+  | "branchreport";
 type DetailTab = "general" | "tracking" | "parts" | "billing";
 
 // Zero-padded "HH:MM"/"HH:MM:SS" strings sort chronologically as plain
@@ -391,6 +406,15 @@ export function MobileTechApp() {
   const [users, setUsers] = useState<ProfileRow[]>([]);
   const [csrComposition, setCsrComposition] = useState<CsrTeamComposition | null>(null);
   const isSelfRole = [role, ...extraRoles].some((r) => r && SELF_ROLES.has(r.toUpperCase()));
+  // Branch Daily Report home tile — Branch Manager / Senior Branch Manager
+  // (their own update), plus HR-and-above who can view (and, matching
+  // their desktop rights, edit) every branch — see
+  // BranchDailyReportPage.tsx / branchDailyReports.ts.
+  const isBranchReportRole = [role, ...extraRoles].some(
+    (r) =>
+      r &&
+      ["BRANCH_MANAGER", "SENIOR_BRANCH_MANAGER", "HR", "ADMIN", "SUPERADMIN", "SUPERSUPERADMIN"].includes(r.toUpperCase()),
+  );
 
   // Resolved once for the whole app shell — needed by DetailView to know
   // which technician is looking at a ticket, for the mobile alert-popup
@@ -1259,7 +1283,8 @@ export function MobileTechApp() {
         effectiveView === "tickettimedispute" ||
         effectiveView === "correction" ||
         effectiveView === "notifications" ||
-        effectiveView === "announcements"
+        effectiveView === "announcements" ||
+        effectiveView === "branchreport"
       ? "home" // Home's own quick-action tiles reach all of these sub-pages
       : "tickets"; // tickets, roster, detail, parts all highlight Tickets
 
@@ -1469,6 +1494,10 @@ export function MobileTechApp() {
           <MobilePayrollView userName={headerName} profileId={profileId} uid={uid} role={role} />
         )}
 
+        {effectiveView === "branchreport" && (
+          <MobileBranchDailyReportView userName={headerName} profileId={profileId} role={role} extraRoles={extraRoles} />
+        )}
+
         {effectiveView === "timecard" && (
           <MobileTimecardView
             uid={uid}
@@ -1555,6 +1584,8 @@ export function MobileTechApp() {
             onOpenCorrection={() => { setCorrectionPrefillDate(null); setView("correction"); }}
             onOpenTimecard={() => setView("timecard")}
             onOpenTicketAttendance={() => setView("ticketattendance")}
+            showBranchReport={isBranchReportRole}
+            onOpenBranchReport={() => setView("branchreport")}
             arrivedAt={arrivedAt}
             setArrivedAt={setArrivedAt}
             doneAt={doneAt}
@@ -5831,6 +5862,8 @@ function MobileHomeView({
   onOpenCorrection,
   onOpenTimecard,
   onOpenTicketAttendance,
+  showBranchReport,
+  onOpenBranchReport,
   arrivedAt,
   setArrivedAt,
   doneAt,
@@ -5859,6 +5892,8 @@ function MobileHomeView({
   onOpenCorrection: () => void;
   onOpenTimecard: () => void;
   onOpenTicketAttendance: () => void;
+  showBranchReport: boolean;
+  onOpenBranchReport: () => void;
   arrivedAt: Record<string, string>;
   setArrivedAt: Dispatch<SetStateAction<Record<string, string>>>;
   doneAt: Record<string, string>;
@@ -6214,6 +6249,11 @@ function MobileHomeView({
       key: "ticketattendance", label: "Ticket Attendance",
       description: "Who checked into their scheduled tickets today",
       onClick: onOpenTicketAttendance, show: true,
+    },
+    {
+      key: "branchreport", label: "Daily Report",
+      description: "Branch notes and urgency, updated daily",
+      onClick: onOpenBranchReport, show: showBranchReport,
     },
   ].filter((t) => t.show);
 
@@ -6900,6 +6940,267 @@ function MobileClockInTeamView({ profileId }: { profileId: string | null }) {
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+const branchReportTodayKey = () => {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+};
+
+/**
+ * Branch Daily Report bottom tab — Branch Manager sees just their own
+ * assigned_branch (add-update only, no Urgency control); Senior Branch
+ * Manager sees every branch assigned to them (add-update + set Urgency).
+ * Same data/RLS as the desktop BranchDailyReportPage.tsx, just a lighter
+ * "fill in today's update" view — no date picker (always today), no
+ * "Refresh Counts" action (that's a desktop admin action; Pending/Techs
+ * here just display whatever snapshot is already on the row).
+ */
+function MobileBranchDailyReportView({
+  userName,
+  profileId,
+  role,
+  extraRoles,
+}: {
+  userName: string;
+  profileId: string | null;
+  role: string | null;
+  extraRoles: string[];
+}) {
+  const isSbm = [role, ...extraRoles].some((r) => r && r.toUpperCase() === "SENIOR_BRANCH_MANAGER");
+  const isBm = [role, ...extraRoles].some((r) => r && r.toUpperCase() === "BRANCH_MANAGER");
+  const isHrAndAbove = [role, ...extraRoles].some(
+    (r) => r && ["HR", "ADMIN", "SUPERADMIN", "SUPERSUPERADMIN"].includes(r.toUpperCase()),
+  );
+  const reportDate = branchReportTodayKey();
+
+  const [branches, setBranches] = useState<string[]>([]);
+  const [reportByBranch, setReportByBranch] = useState<Map<string, BranchDailyReport>>(new Map());
+  const [notesByReport, setNotesByReport] = useState<Map<string, BranchDailyReportNote[]>>(new Map());
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [noteDrafts, setNoteDrafts] = useState<Record<string, string>>({});
+  const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState("");
+  const [busyBranch, setBusyBranch] = useState<string | null>(null);
+
+  const load = async () => {
+    if (!profileId) { setLoading(false); return; }
+    setLoading(true);
+    setError("");
+    try {
+      const [users, assignments, reports] = await Promise.all([
+        getCompanyUsers(),
+        getSeniorBranchManagerAssignments(),
+        getBranchDailyReports(reportDate),
+      ]);
+      const me = users.find((u) => u.id === profileId) ?? null;
+      let myBranches: string[] = [];
+      if (isHrAndAbove) myBranches = [...ACTIVE_LOCATIONS];
+      else if (isSbm) myBranches = assignments.filter((a) => a.profileId === profileId).map((a) => a.branch);
+      else if (isBm && me?.assigned_branch) myBranches = [me.assigned_branch];
+      setBranches(myBranches);
+      setReportByBranch(new Map(reports.map((r) => [r.branch, r])));
+      const notes = await getBranchDailyReportNotes(reports.map((r) => r.id));
+      const grouped = new Map<string, BranchDailyReportNote[]>();
+      for (const n of notes) grouped.set(n.reportId, [...(grouped.get(n.reportId) ?? []), n]);
+      setNotesByReport(grouped);
+    } catch (e) {
+      console.error("MobileBranchDailyReportView: load failed", e);
+      setError(e instanceof Error ? e.message : "Failed to load your branch report.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profileId]);
+
+  const handleAddNote = async (branch: string) => {
+    const text = (noteDrafts[branch] || "").trim();
+    if (!text || !profileId) return;
+    setBusyBranch(branch);
+    try {
+      await addBranchDailyReportNote(branch, reportDate, profileId, userName, text);
+      setNoteDrafts((prev) => ({ ...prev, [branch]: "" }));
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to save your update.");
+    } finally {
+      setBusyBranch(null);
+    }
+  };
+
+  const handleSaveEdit = async (branch: string, noteId: string) => {
+    const text = editDraft.trim();
+    if (!text) return;
+    setBusyBranch(branch);
+    try {
+      await updateBranchDailyReportNote(noteId, text);
+      setEditingNoteId(null);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to update your note.");
+    } finally {
+      setBusyBranch(null);
+    }
+  };
+
+  const handleDeleteNote = async (branch: string, noteId: string) => {
+    if (!window.confirm("Delete this note?")) return;
+    setBusyBranch(branch);
+    try {
+      await deleteBranchDailyReportNote(noteId);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to delete note.");
+    } finally {
+      setBusyBranch(null);
+    }
+  };
+
+  const handleSetUrgency = async (branch: string, urgency: BranchReportUrgency) => {
+    setBusyBranch(branch);
+    try {
+      await setBranchDailyReportUrgency(branch, reportDate, urgency, userName);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to set urgency.");
+    } finally {
+      setBusyBranch(null);
+    }
+  };
+
+  return (
+    <div className="mtech-scroll">
+      <div className="mtech-payroll-heading">
+        <div className="mtech-payroll-name">Branch Daily Report</div>
+        <div className="mtech-payroll-sub">
+          {isHrAndAbove
+            ? "Every branch — review updates, set urgency"
+            : isSbm
+            ? "Review your branches, add updates, set urgency"
+            : "Add today's update for your branch"}
+        </div>
+      </div>
+
+      {error && <div className="mtech-muted" style={{ color: "#fca5a5" }}>{error}</div>}
+
+      {loading ? (
+        <div className="mtech-muted">Loading…</div>
+      ) : branches.length === 0 ? (
+        <div className="mtech-muted">
+          {isSbm ? "No branches assigned to you yet — ask HR to assign some." : "No branch assigned to your account yet."}
+        </div>
+      ) : (
+        branches.map((branch) => {
+          const report = reportByBranch.get(branch);
+          const busy = busyBranch === branch;
+          return (
+            <div key={branch} className="mtech-panel">
+              <div className="mtech-section-title" style={{ marginTop: 0, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <span>{branch}</span>
+                {report?.urgency && (
+                  <span style={{
+                    fontSize: "0.7rem", padding: "0.15rem 0.5rem", borderRadius: 999,
+                    background: report.urgency === "high" ? "rgba(239,68,68,0.2)" : report.urgency === "moderate" ? "rgba(245,158,11,0.2)" : "rgba(34,197,94,0.2)",
+                    color: report.urgency === "high" ? "#fca5a5" : report.urgency === "moderate" ? "#fcd34d" : "#86efac",
+                  }}>
+                    {report.urgency === "high" ? "High" : report.urgency === "moderate" ? "Moderate" : "Low"}
+                  </span>
+                )}
+              </div>
+
+              {(report?.pendingTickets != null || report?.numberOfTechs != null) && (
+                <div style={{ display: "flex", gap: "1rem", fontSize: "0.75rem", color: "#94a3b8", margin: "0.25rem 0 0.5rem" }}>
+                  {report?.pendingTickets != null && <span>Pending: <strong style={{ color: "#f1f5f9" }}>{report.pendingTickets}</strong></span>}
+                  {report?.numberOfTechs != null && <span>Techs: <strong style={{ color: "#f1f5f9" }}>{report.numberOfTechs}</strong></span>}
+                </div>
+              )}
+
+              {(report ? notesByReport.get(report.id) ?? [] : []).map((note) => {
+                const time = new Date(note.createdAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+                const isMine = note.authorId === profileId;
+                if (editingNoteId === note.id) {
+                  return (
+                    <div key={note.id} style={{ background: "rgba(255,255,255,0.05)", borderRadius: 8, padding: "0.5rem", marginBottom: "0.5rem" }}>
+                      <textarea
+                        className="mtech-bill-input full"
+                        rows={2}
+                        value={editDraft}
+                        onChange={(e) => setEditDraft(e.target.value)}
+                      />
+                      <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.35rem" }}>
+                        <button type="button" className="mtech-save-btn" style={{ padding: "0.35rem 0.75rem" }} disabled={busy || !editDraft.trim()} onClick={() => void handleSaveEdit(branch, note.id)}>
+                          Save
+                        </button>
+                        <button type="button" className="mtech-save-btn" style={{ padding: "0.35rem 0.75rem", background: "transparent" }} onClick={() => setEditingNoteId(null)}>
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  );
+                }
+                return (
+                  <div key={note.id} style={{ display: "flex", alignItems: "flex-start", gap: "0.5rem", whiteSpace: "pre-wrap", fontSize: "0.8rem", background: "rgba(255,255,255,0.05)", borderRadius: 8, padding: "0.5rem", marginBottom: "0.5rem" }}>
+                    <div style={{ flex: 1 }}>
+                      <strong>{note.authorName}</strong>{" "}
+                      <span style={{ color: "#94a3b8" }}>({time}{note.edited ? ", edited" : ""}):</span> {note.body}
+                    </div>
+                    {isMine && (
+                      <div style={{ display: "flex", gap: "0.4rem", flexShrink: 0 }}>
+                        <button type="button" onClick={() => { setEditingNoteId(note.id); setEditDraft(note.body); }} disabled={busy} style={{ background: "none", border: "none", color: "#94a3b8", padding: 0 }}>
+                          <Pencil className="mtech-bottom-tab-svg" style={{ width: "0.9rem", height: "0.9rem" }} />
+                        </button>
+                        <button type="button" onClick={() => void handleDeleteNote(branch, note.id)} disabled={busy} style={{ background: "none", border: "none", color: "#94a3b8", padding: 0 }}>
+                          <Trash2 className="mtech-bottom-tab-svg" style={{ width: "0.9rem", height: "0.9rem" }} />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+
+              <textarea
+                className="mtech-bill-input full"
+                rows={2}
+                placeholder="Notes on hiring, training, issue techs, clock in times…"
+                value={noteDrafts[branch] || ""}
+                onChange={(e) => setNoteDrafts((prev) => ({ ...prev, [branch]: e.target.value }))}
+              />
+              <button
+                type="button"
+                className="mtech-save-btn"
+                disabled={busy || !(noteDrafts[branch] || "").trim()}
+                onClick={() => void handleAddNote(branch)}
+              >
+                {busy ? "Saving…" : "Add Update"}
+              </button>
+
+              {(isSbm || isHrAndAbove) && (
+                <>
+                  <div className="mtech-section-title">Urgency</div>
+                  <select
+                    className="mtech-bill-input full"
+                    value={report?.urgency || ""}
+                    disabled={busy}
+                    onChange={(e) => e.target.value && void handleSetUrgency(branch, e.target.value as BranchReportUrgency)}
+                  >
+                    <option value="">— Select —</option>
+                    <option value="low">Low</option>
+                    <option value="moderate">Moderate</option>
+                    <option value="high">High</option>
+                  </select>
+                </>
+              )}
+            </div>
+          );
+        })
+      )}
     </div>
   );
 }

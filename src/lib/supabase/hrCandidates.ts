@@ -9,6 +9,7 @@
 import { supabase } from "./client";
 import { createNotification } from "./notifications";
 import { LOCATIONS_DATA } from "@/lib/zipCoverage";
+import { INACTIVE_BRANCHES } from "@/lib/locations";
 
 // "training" and "on_hold" added for EOD/EOM hiring reports (0048); "phone_screening",
 // "withdrawn", and "cancelled" added (and "on_hold" removed) by 0221_hr_candidates_status_update.sql.
@@ -1076,11 +1077,11 @@ export type HiringReportPeriodType = "eod" | "eom";
 export type HiringReportSection = "technician" | "parts_manager" | "philippine_staff";
 
 const PH_BRANCH_SET = new Set(LOCATIONS_DATA.filter((l) => l.isPhilippines).map((l) => l.location));
-// Dallas and Louisville exist in the app's full location list but are
-// explicitly excluded from this report's Technician/US Staff branch rows
-// per the user's own call — not every known branch is a hiring branch.
-const HIRING_REPORT_EXCLUDED_BRANCHES = new Set(["Dallas", "Louisville"]);
-const US_BRANCH_NAMES = LOCATIONS_DATA.filter((l) => !l.isPhilippines && !HIRING_REPORT_EXCLUDED_BRANCHES.has(l.location)).map((l) => l.location).sort();
+// Dallas and Louisville exist in the app's full location list but aren't
+// real active branches — INACTIVE_BRANCHES (src/lib/locations.ts) is the
+// shared source of truth for this exclusion, also used by the Branch
+// Daily Report, so it can't drift into two different Sets over time.
+const US_BRANCH_NAMES = LOCATIONS_DATA.filter((l) => !l.isPhilippines && !INACTIVE_BRANCHES.has(l.location)).map((l) => l.location).sort();
 const PH_DEPARTMENT_DEFAULTS = ["Claims", "CSR", "Tech Support", "PO", "Operation", "IT"];
 // Same real department, different spelling depending on who typed it in —
 // normalized to the canonical PH_DEPARTMENT_DEFAULTS name so "CSR" and
