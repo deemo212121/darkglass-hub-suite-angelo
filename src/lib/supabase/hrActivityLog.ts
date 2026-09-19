@@ -114,6 +114,8 @@ export const ACTIVITY_ACTION_LABELS: Record<string, string> = {
   ebay_branch_daily_status_changed: "Changed a day's Listings status",
   ebay_order_edited: "Edited order",
   ebay_listing_edited: "Edited listing",
+  branch_commission_value_changed: "Changed Branch Commission value",
+  branch_commission_period_labeled: "Named commission period",
 };
 
 export function activityActionLabel(action: string): string {

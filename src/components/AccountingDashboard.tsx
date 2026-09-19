@@ -87,6 +87,7 @@ import { MileageDayRouteModal } from "@/components/MileageDayRouteModal";
 import { FlashTechCalendarPage } from "@/components/FlashTechCalendarPage";
 import { ExpenseTrackingPage } from "@/components/ExpenseTrackingPage";
 import { TicketAttendanceTab } from "@/components/TicketAttendanceTab";
+import { BranchManagerCommissionTab } from "@/components/BranchManagerCommissionTab";
 import { getCompanyEmployeeRequests, updateEmployeeRequestStatus, linkPayrollDisputeCustomPayItem, type EmployeeRequestRow } from "@/lib/supabase/employeeRequests";
 import { setTicketOnsiteCheckIn } from "@/lib/supabase/tickets";
 import { TIME_ZONES, type ScheduleTimezone } from "@/lib/serverTime";
@@ -713,7 +714,7 @@ function parseGmailRegionParam(value: string | null): GmailRegion {
   return value === "PH" ? "PH" : "US";
 }
 
-type AccountingDashboardTabId = "overview" | "payroll" | "mileage" | "payrollDisputes" | "reports" | "flashTech" | "ticketAttendance" | "ticketTimeDisputes" | "branchRates";
+type AccountingDashboardTabId = "overview" | "payroll" | "mileage" | "payrollDisputes" | "reports" | "flashTech" | "ticketAttendance" | "ticketTimeDisputes" | "branchRates" | "branchCommission";
 // Shared by the top tab row and the floating left quick-nav so the two
 // never drift out of sync.
 const ACCOUNTING_DASHBOARD_TABS: { id: AccountingDashboardTabId; label: string; Icon: typeof History }[] = [
@@ -724,6 +725,7 @@ const ACCOUNTING_DASHBOARD_TABS: { id: AccountingDashboardTabId; label: string; 
   { id: "reports", label: "Reports", Icon: FileText },
   { id: "ticketAttendance", label: "Ticket Attendance", Icon: FileText },
   { id: "branchRates", label: "Branch Rates", Icon: Building2 },
+  { id: "branchCommission", label: "Branch Commission", Icon: TrendingUp },
   { id: "ticketTimeDisputes", label: "Ticket Time Disputes", Icon: Clock },
   // Kept the label "Overview" (not "Report") since the Reports tab above
   // already owns that name — this one moved last because its content now
@@ -762,7 +764,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   };
   const [activeTab, setActiveTab] = usePersistedTab<AccountingDashboardTabId>(
     "ahs:accounting-dashboard-active-tab",
-    ["overview", "payroll", "mileage", "payrollDisputes", "flashTech", "reports", "ticketAttendance", "ticketTimeDisputes", "branchRates"],
+    ["overview", "payroll", "mileage", "payrollDisputes", "flashTech", "reports", "ticketAttendance", "ticketTimeDisputes", "branchRates", "branchCommission"],
     "overview",
   );
   // Deep link from a bell-icon notification straight into the Payroll
@@ -4759,6 +4761,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         {/* Ticket Attendance Tab — self-contained component, also rendered
             from Attendance Monitoring's own tab of the same name. */}
         {activeTab === "ticketAttendance" && <TicketAttendanceTab />}
+        {activeTab === "branchCommission" && <BranchManagerCommissionTab />}
 
 
         {/* ── Ticket Time Disputes Tab ─────────────────────────────────────── */}
