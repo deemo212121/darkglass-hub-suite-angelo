@@ -44,7 +44,7 @@ import { EmployeePayrollDetailModal } from "@/components/EmployeePayrollDetailMo
 import { getRepairStatuses, type RepairStatus } from "@/lib/supabase/repairStatuses";
 import { TicketColumnFilter } from "@/components/TicketColumnFilter";
 import { getRoleDepartmentBreakdown, normalizeRole, ROLE_LABELS, TECHNICIAN_PAY_ROLES, isMealAlwaysPaidRole, usesFlatWeeklyOvertimeThreshold } from "@/lib/roleLabels";
-import { calcWorkedHours, getMyProfileSchedule, resolveScheduledNetHours, resolveScheduledShiftHours, computeMealTimeCredit, computeScheduledDutyHours, getAttendanceForRange, startOfWeekSunday, splitRegularOvertimeWeekly, addDaysISO, CSR_WEEKLY_OVERTIME_THRESHOLD } from "@/lib/supabase/timecards";
+import { calcWorkedHours, getMyProfileSchedule, resolveScheduledNetHours, computeMealTimeCredit, computeScheduledDutyHours, getAttendanceForRange, startOfWeekSunday, splitRegularOvertimeWeekly, addDaysISO, CSR_WEEKLY_OVERTIME_THRESHOLD } from "@/lib/supabase/timecards";
 import { payGraceMinutesFor } from "@/lib/attendanceGrace";
 import { updatePayrollLineItemExtra, updatePayrollLineItemPaid } from "@/lib/supabase/payslips";
 import { getEmployeeInfoByProfileIds, getCompanyUsers, getTechnicianContactInfoByIds, type EmployeeInfo } from "@/lib/supabase/users";
@@ -315,6 +315,23 @@ export interface EmployeePayrollRow {
    */
   techHourlyPayCompanyOnly: number;
   /**
+   * techHourlyPayCompanyOnly split into its two pieces for display — the
+   * flat straight-time portion (all hours once at the base hourly rate)
+   * and the FLSA weighted-regular-rate OT premium on top of it. Their sum
+   * always equals techHourlyPayCompanyOnly; kept separate only so the Tech
+   * Activity Report can show the two as distinct line items instead of one
+   * combined figure. 0 for Office/fixed-salary rows.
+   */
+  techHourlyPayStraight: number;
+  techHourlyPayOtPremium: number;
+  /**
+   * The weighted regular rate ($/hr) the OT premium above was computed
+   * from — straight-time wages plus this period's includable incentive pay,
+   * divided by total hours worked. Equals hourlyRate when there's no
+   * overtime or no includable pay this period. Display-only.
+   */
+  techWeightedRegularRate: number;
+  /**
    * True for a row representing the tech-portion of someone's pay (piece-
    * rate ticket/mileage/category totals), false/undefined for their office-
    * portion row (hours × rate, or fixed salary). Drives the Office/Tech
@@ -437,8 +454,7 @@ function computeHoursMap(
     let mealCredit = 0;
     if (emp) {
       const mealAlwaysPaid = isMealAlwaysPaidRole(emp.role, emp.extraRoles);
-      const mealEligible = resolveScheduledShiftHours(emp.requiredCheckIn || "", emp.requiredCheckOut || "", emp.workingHours, emp.mealMinutes) > 6;
-      mealCredit = computeMealTimeCredit({ mealStart: tc.meal_start || "", mealEnd: tc.meal_end || "" }, mealEligible, mealAlwaysPaid);
+      mealCredit = computeMealTimeCredit({ checkIn: tc.check_in, checkOut: tc.check_out, mealStart: tc.meal_start || "", mealEnd: tc.meal_end || "" }, mealAlwaysPaid);
     }
     const rawHoursForDay = hours + mealCredit;
     const byDate = rawByEmployeeDate.get(key) ?? new Map<string, number>();
@@ -1726,29 +1742,38 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // of relying on whatever was last checked. Generate Payroll disables
   // itself (mileagePeriodPhotoCheckLoading below) until this settles.
   const [mileagePeriodPhotoCheckLoading, setMileagePeriodPhotoCheckLoading] = useState(false);
-  useEffect(() => {
-    if (!genStart || !genEnd || genStart > genEnd) return;
-    const ticketNos = Array.from(
+  // Keyed on the actual SET of in-period ticket numbers (not mileageEntries
+  // itself, and not just .length) — this check's own reconcile call ends
+  // with setMileageEntries(await getMileageEntries()), a fresh array of the
+  // same tickets with only their hold flags touched. Keying on the array or
+  // its length re-ran this effect off that refetch (any incidental length
+  // blip from an unrelated concurrent sync re-armed it too), so the button
+  // could re-enter "Checking photos…" indefinitely. A joined, sorted key
+  // only changes when the relevant ticket set itself actually changes.
+  const mileagePeriodPhotoCheckKey = useMemo(() => {
+    if (!genStart || !genEnd || genStart > genEnd) return "";
+    return Array.from(
       new Set(
         mileageEntries
           .filter((e) => e.source === "auto" && e.ticketNo && e.workDate >= genStart && e.workDate <= genEnd)
           .map((e) => e.ticketNo as string)
       )
-    );
-    if (ticketNos.length === 0) return;
+    ).sort().join(",");
+  }, [mileageEntries, genStart, genEnd]);
+  useEffect(() => {
+    if (!mileagePeriodPhotoCheckKey) {
+      setMileagePeriodPhotoCheckLoading(false);
+      return;
+    }
+    const ticketNos = mileagePeriodPhotoCheckKey.split(",");
     let cancelled = false;
     setMileagePeriodPhotoCheckLoading(true);
     checkAndReconcilePhotoHolds(ticketNos, true).finally(() => {
       if (!cancelled) setMileagePeriodPhotoCheckLoading(false);
     });
     return () => { cancelled = true; };
-    // mileageEntries.length (not the array itself) — re-runs once real data
-    // first arrives (0 -> N on initial load) and when new entries get
-    // synced in, but NOT on every re-render this same check's own
-    // reconcile-triggered refetch causes (same length, since reconciling
-    // only updates existing rows) — avoids re-force-checking in a loop.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [genStart, genEnd, mileageEntries.length]);
+  }, [mileagePeriodPhotoCheckKey]);
 
   // "Two Tech" auto-count (visits.second_technician) — folds into Total Net
   // the same deterministic, rate-table-driven way LDT/Mileage/Training do.
@@ -2033,8 +2058,19 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // so it feeds real grossPay below instead of only the modal's own
   // preview total.
   const techCustomTotalByProfile = new Map<string, number>();
+  // Same total, minus any line labeled as a reimbursement/mileage/
+  // allowance/stipend — those are expense reimbursements or flat per-diem
+  // stipends, not wages, so FLSA's weighted regular-rate calc
+  // (techIncludablePay below) has to leave them out even though they still
+  // count toward Total Payment via techCustomTotalByProfile above. A
+  // commission-style line (e.g. "Flash tech ticket commission") still
+  // counts as includable wages.
+  const techCustomIncludableByProfile = new Map<string, number>();
   for (const item of techCustomPayItemsAll) {
     techCustomTotalByProfile.set(item.profileId, (techCustomTotalByProfile.get(item.profileId) ?? 0) + item.value * item.rate);
+    if (!/reimburs|mileage|allowance|stipend/i.test(item.label)) {
+      techCustomIncludableByProfile.set(item.profileId, (techCustomIncludableByProfile.get(item.profileId) ?? 0) + item.value * item.rate);
+    }
   }
 
   // Build payroll rows. salary_entries.hourly_rate is always entered as a
@@ -2117,12 +2153,12 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     // on top of that ticket's own repair-type rate already in tech.grossPay.
     const completedTicketsPay = includeTech ? ticketsCompletedForEmp * techRateFor("Completed Tickets", techBranch) : 0;
     const customPay = includeTech ? techCustomTotalByProfile.get(emp.id) ?? 0 : 0;
+    const customIncludablePay = includeTech ? techCustomIncludableByProfile.get(emp.id) ?? 0 : 0;
     // Technicians are piece-rate by default, but can now ALSO earn hourly
     // pay on top of it once Finance sets a rate for them (same
-    // salary_entries hourly_rate office employees use, same regular +
-    // overtime×1.5 formula as officeGrossPay below) — a tech with no rate
-    // ever set has hourlyRate 0, so this stays $0 and existing behavior is
-    // unchanged until Finance actually enters one.
+    // salary_entries hourly_rate office employees use) — a tech with no
+    // rate ever set has hourlyRate 0, so this stays $0 and existing
+    // behavior is unchanged until Finance actually enters one.
     // Gated to isTechRole(emp) (a PRIMARY technician), not just includeTech
     // — someone who merely holds Technician as a SECONDARY role has no
     // separate field-tech punch system; `hours` here is their normal office
@@ -2130,7 +2166,31 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     // them for. Without this gate they'd be paid twice for one shift the
     // moment Finance sets any hourly rate for them, surfacing as an
     // identical-looking "duplicate" row alongside their real office row.
-    const techHourlyPayCompanyOnly = includeTech && isTechRole(emp) ? hours.regular * hourlyRate + hours.overtime * hourlyRate * 1.5 : 0;
+    //
+    // The overtime premium can't just be hourlyRate×1.5 once a tech earns
+    // piece-rate/incentive pay in the same period — FLSA requires that pay
+    // (repair-type pay, carryover, LDT/Training, Two Tech, MCA, Completed
+    // Tickets, and any commission-style custom line) to be folded into the
+    // "regular rate" the OT premium is computed from, same as a
+    // non-discretionary bonus. Mileage reimbursement (effectiveMileagePay,
+    // inside manualTotal) and any custom line labeled as a reimbursement/
+    // mileage/allowance/stipend (customIncludablePay excludes those, see
+    // techCustomIncludableByProfile) are left out — they're expense
+    // reimbursements or flat per-diem stipends, not wages, so they don't
+    // factor into the regular rate even though they still count toward
+    // Total Payment. Straight time is paid for ALL hours (regular + OT) at
+    // the base rate, then OT hours additionally earn the extra 0.5× on the
+    // weighted rate — the standard FLSA weighted-average method, not an
+    // alternative to it.
+    const techIncludablePay = includeTech && isTechRole(emp)
+      ? (tech?.grossPay ?? 0) + (carryover?.grossPay ?? 0) + (manual?.ldtPay ?? 0) + (manual?.trainingPay ?? 0) + twoTechPay + mcaBonus + completedTicketsPay + customIncludablePay
+      : 0;
+    const techTotalHours = hours.regular + hours.overtime;
+    const techStraightTimeAllHours = techTotalHours * hourlyRate;
+    const techWeightedRegularRate = techTotalHours > 0 ? (techStraightTimeAllHours + techIncludablePay) / techTotalHours : hourlyRate;
+    const techHourlyPayStraight = includeTech && isTechRole(emp) ? techStraightTimeAllHours : 0;
+    const techHourlyPayOtPremium = includeTech && isTechRole(emp) ? hours.overtime * techWeightedRegularRate * 0.5 : 0;
+    const techHourlyPayCompanyOnly = techHourlyPayStraight + techHourlyPayOtPremium;
     // A State-mode override (payroll_hourly_ot_overrides, migration 0289,
     // set from the payroll detail step's Compliant/"State" toggle) replaces
     // the flat company-rate figure everywhere pay actually flows — gross
@@ -2178,6 +2238,9 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
             },
             techHourlyPay,
             techHourlyPayCompanyOnly,
+            techHourlyPayStraight,
+            techHourlyPayOtPremium,
+            techWeightedRegularRate,
             dutyHours,
             grossPay: techGrossPay,
             grossPayUSD: techGrossPay,
@@ -2210,6 +2273,9 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       techManual: { ldtCount: 0, ldtPay: 0, mileage: 0, mileagePay: 0, trainingValue: 0, trainingPay: 0, owIncentivePct: 0 },
       techHourlyPay: 0,
       techHourlyPayCompanyOnly: 0,
+      techHourlyPayStraight: 0,
+      techHourlyPayOtPremium: 0,
+      techWeightedRegularRate: hourlyRate,
       dutyHours,
       grossPay: officeGrossPay,
       grossPayUSD: officeGrossPay,
@@ -2682,11 +2748,10 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       // merged directly into each day's raw hours BEFORE the weekly split
       // runs, same as computeHoursMap/EmployeePayrollDetailModal.
       const mealAlwaysPaid = isMealAlwaysPaidRole(emp.role, emp.extraRoles);
-      const mealEligible = resolveScheduledShiftHours(emp.requiredCheckIn || "", emp.requiredCheckOut || "", emp.workingHours, emp.mealMinutes) > 6;
       const split = splitRegularOvertimeWeekly(
         [...seedRows, ...attendanceRows].map((r) => ({
           date: r.date,
-          rawHours: r.hoursWorked + computeMealTimeCredit({ mealStart: r.mealStart, mealEnd: r.mealEnd }, mealEligible, mealAlwaysPaid),
+          rawHours: r.hoursWorked + computeMealTimeCredit({ checkIn: r.clockIn, checkOut: r.clockOut, mealStart: r.mealStart, mealEnd: r.mealEnd }, mealAlwaysPaid),
         })),
         { requiredCheckIn: emp.requiredCheckIn, requiredCheckOut: emp.requiredCheckOut, workingHours: emp.workingHours, mealMinutes: emp.mealMinutes, offDays: emp.offDays },
         8,
@@ -5385,7 +5450,20 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
               ? async (mode, stateTotal) => {
                   setNextBusy(true);
                   try {
-                    if (mode === "state") {
+                    // stateTotal is the payroll detail step's flat, per-day
+                    // state-minimum-wage-floor match — it has no visibility
+                    // into this technician's incentive/bonus pay, so it
+                    // can't know about the FLSA weighted-regular-rate OT
+                    // premium already folded into techHourlyPayCompanyOnly
+                    // below. Only save it as an override when it's actually
+                    // HIGHER than that live, already-correct company figure
+                    // — a real state-floor shortfall — otherwise saving it
+                    // would freeze a stale, lower number over the correct
+                    // one the moment any incentive pay pushes the weighted
+                    // rate up (which is most of the time), exactly the kind
+                    // of silent regression that bit Baolin Zhang's period.
+                    const companyTotal = payrollRows.find((r) => r.employee.id === detailEmployee.id && r.isTechPortion)?.techHourlyPayCompanyOnly ?? 0;
+                    if (mode === "state" && stateTotal > companyTotal + 0.005) {
                       await setHourlyOtOverride(detailEmployee.id, genStart, genEnd, stateTotal, displayName || email || null);
                     } else {
                       await clearHourlyOtOverride(detailEmployee.id, genStart, genEnd);
@@ -5421,6 +5499,26 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
             savingCategoryOverrideKey={savingCategoryOverrideKey}
             onClose={() => { setDetailEmployee(null); setWizardStep("detail"); }}
             onPrev={() => setWizardStep("detail")}
+            onSetHourlyOtMode={
+              isTechRole(detailEmployee)
+                ? async (mode, total) => {
+                    setNextBusy(true);
+                    try {
+                      if (mode === "state") {
+                        await setHourlyOtOverride(detailEmployee.id, genStart, genEnd, total, displayName || email || null);
+                      } else {
+                        await clearHourlyOtOverride(detailEmployee.id, genStart, genEnd);
+                      }
+                      await loadHourlyOtOverrides();
+                    } catch (err) {
+                      setError(err instanceof Error ? err.message : "Failed to save the pay mode for this technician.");
+                    } finally {
+                      setNextBusy(false);
+                    }
+                  }
+                : undefined
+            }
+            hourlyOtModeBusy={nextBusy}
             doneBusy={reviewBusy}
             onDone={async () => {
               setReviewBusy(true);

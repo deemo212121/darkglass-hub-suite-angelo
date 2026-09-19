@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { X, Plus, Pencil, Check, Loader2, ExternalLink, ChevronDown, ChevronRight, Trash2 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
-import { getAttendanceForRange, saveEntry, getProfileIdByFirebaseUid, computeScheduledDutyHours, resolveScheduledShiftHours, computeMealTimeCredit, startOfWeekSunday, splitRegularOvertimeWeekly, CSR_WEEKLY_OVERTIME_THRESHOLD, hoursDiff, MEAL_ALWAYS_PAID_DEFAULT_HOURS, type AttendanceRow } from "@/lib/supabase/timecards";
+import { getAttendanceForRange, saveEntry, getProfileIdByFirebaseUid, computeScheduledDutyHours, computeMealTimeCredit, startOfWeekSunday, splitRegularOvertimeWeekly, CSR_WEEKLY_OVERTIME_THRESHOLD, hoursDiff, MEAL_ALWAYS_PAID_DEFAULT_HOURS, type AttendanceRow } from "@/lib/supabase/timecards";
 import { isMealAlwaysPaidRole, usesFlatWeeklyOvertimeThreshold } from "@/lib/roleLabels";
 import { getCompanyHolidaysInRange } from "@/lib/supabase/companyHolidays";
 import { getPendingCorrectionsInRange, type TimecardCorrectionRow } from "@/lib/supabase/timecardCorrections";
@@ -91,12 +91,9 @@ function fmtShortDate(iso: string): string {
   return `${m}/${d}`;
 }
 
-/** 7.192 -> "7:12" — clock format for displayed hour quantities (Regular/Meal/Overtime/Total Hours, Weekly Breakdown). Underlying math stays full-precision decimal; only the display rounds to the nearest minute. */
-function fmtClock(hours: number): string {
-  const totalMinutes = Math.round(hours * 60);
-  const h = Math.floor(totalMinutes / 60);
-  const m = totalMinutes % 60;
-  return `${h}:${String(m).padStart(2, "0")}`;
+/** 7.192 -> "7.1920" — decimal format for displayed hour quantities (Regular/Meal/Overtime/Total Hours, Weekly Breakdown). Used to be a rounded-to-the-minute "H:MM" clock format, which silently threw away real seconds-level precision that the underlying math (used by payment calculations everywhere) already carries — 4 decimal places keeps that precision visible (0.0001hr ≈ 0.36s, well under a full second). */
+function fmtDecimal(hours: number): string {
+  return hours.toFixed(4);
 }
 
 /**
@@ -380,20 +377,22 @@ export function EmployeePayrollDetailModal({
   // separate "Meal" bucket in the totals. Kept as its own per-date map too,
   // purely so the table can still show where that 30 minutes came from.
   const mealAlwaysPaid = isMealAlwaysPaidRole(role, extraRoles);
-  const mealEligibleShift = resolveScheduledShiftHours(requiredCheckIn || "", requiredCheckOut || "", workingHours, mealMinutes) > 6;
   // Covers seedAttendance too (the partial week before rangeStart, used only
   // for the weekly carry-over below) so a seed day's meal credit correctly
   // counts toward that week's already-used regular quota — not just the
-  // displayed days.
+  // displayed days. Eligibility (shift over 6 hours) is judged per day by
+  // computeMealTimeCredit itself from that day's own Check In/Out, not a
+  // single schedule-wide flag — a short day never gets credited or flagged
+  // just because this employee's typical shift runs longer.
   const mealCreditByDate = useMemo(() => {
     const m = new Map<string, number>();
     for (const row of [...seedAttendance, ...attendance]) {
       if (row.status === "paid-leave" || row.status === "day-off" || row.status === "holiday" || !row.hoursWorked) continue;
-      const credit = computeMealTimeCredit({ mealStart: row.mealStart, mealEnd: row.mealEnd }, mealEligibleShift, mealAlwaysPaid);
+      const credit = computeMealTimeCredit({ checkIn: row.clockIn, checkOut: row.clockOut, mealStart: row.mealStart, mealEnd: row.mealEnd }, mealAlwaysPaid);
       if (credit > 0) m.set(row.date, credit);
     }
     return m;
-  }, [attendance, seedAttendance, mealEligibleShift, mealAlwaysPaid]);
+  }, [attendance, seedAttendance, mealAlwaysPaid]);
   const totalHours = useMemo(
     () => attendance.reduce((s, r) => s + r.hoursWorked + (mealCreditByDate.get(r.date) ?? 0), 0),
     [attendance, mealCreditByDate]
@@ -724,6 +723,16 @@ export function EmployeePayrollDetailModal({
     return totals;
   }, [attendance, history, dailyHoursSplitByDate, dailyPayByDate, isCurrentlyFixed, currentEntry]);
   const displayedPay = payViewTotals[payView];
+  // Flat equivalent of displayedPay — every hour at the same (regular or
+  // state-floor-matched) rate, no 1.5× overtime multiplier. This tile can't
+  // see a technician's incentive/bonus pay (that's only fetched on the Tech
+  // Activity Report step), so it can't compute the real FLSA weighted-
+  // regular-rate OT premium — showing displayedPay.total's old flat-×1.5
+  // breakdown implied it WAS the final Hourly + OT figure, which is no
+  // longer true once that step folds in incentive pay. Dividing overtimePay
+  // back down by OVERTIME_MULTIPLIER recovers the flat (1×) equivalent
+  // without duplicating the day-by-day rate loop above.
+  const displayedPayFlat = displayedPay.regularPay + displayedPay.overtimePay / OVERTIME_MULTIPLIER;
   // Regular/overtime split of totalHours above — same dailyHoursSplitByDate
   // computedPay itself sums (already meal-credit-inclusive, via the raw
   // hours merge above), so this tile's breakdown line always agrees with
@@ -1006,12 +1015,9 @@ export function EmployeePayrollDetailModal({
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <div className="bg-slate-800/50 border border-white/10 rounded-lg p-3">
               <p className="text-xs text-slate-400 uppercase">Total Hours</p>
-              {/* Clock (H:MM) format, not decimal — underlying math (used by
-                  EST. PAY and everywhere else) stays full-precision decimal;
-                  only this display rounds to the nearest minute. */}
-              <p className="text-xl font-bold text-white mt-1">{fmtClock(totalHours)}</p>
+              <p className="text-xl font-bold text-white mt-1">{fmtDecimal(totalHours)}</p>
               <p className="text-xs text-slate-400 mt-0.5">
-                {fmtClock(totalHoursSplit.regular)} regular + {fmtClock(totalHoursSplit.overtime)} overtime
+                {fmtDecimal(totalHoursSplit.regular)} regular + {fmtDecimal(totalHoursSplit.overtime)} overtime
               </p>
             </div>
             <div className="bg-slate-800/50 border border-white/10 rounded-lg p-3">
@@ -1060,10 +1066,10 @@ export function EmployeePayrollDetailModal({
                   </div>
                 )}
               </div>
-              <p className="text-xl font-bold text-green-300 mt-1">${displayedPay.total.toFixed(2)}</p>
+              <p className="text-xl font-bold text-green-300 mt-1">${displayedPayFlat.toFixed(2)}</p>
               {!isCurrentlyFixed && (
-                <p className="text-xs text-slate-400 mt-0.5">
-                  ${displayedPay.regularPay.toFixed(2)} regular + ${displayedPay.overtimePay.toFixed(2)} overtime = ${displayedPay.total.toFixed(2)}
+                <p className="text-xs text-slate-400 mt-0.5" title="Flat — every hour (regular and overtime alike) at the same rate, no 1.5× multiplier. The Tech Activity Report step computes the real Hourly + OT total, including the FLSA weighted-regular-rate overtime premium once this period's incentive/bonus pay is folded in — this tile is just the state-floor check, not that final figure.">
+                  {(totalHoursSplit.regular + totalHoursSplit.overtime).toFixed(4)} hrs flat = ${displayedPayFlat.toFixed(2)}
                 </p>
               )}
             </div>
@@ -1209,9 +1215,9 @@ export function EmployeePayrollDetailModal({
                         <span className="text-slate-400">
                           Week of {fmtShortDate(w.weekStart)}–{fmtShortDate(w.weekEnd)}:
                         </span>
-                        <span className="font-semibold text-white">{fmtClock(w.total)} hours</span>
+                        <span className="font-semibold text-white">{fmtDecimal(w.total)} hours</span>
                         <span className="text-slate-500">
-                          ({fmtClock(w.regular)} Reg{w.overtime > 0 ? ` + ${fmtClock(w.overtime)} OT` : ""})
+                          ({fmtDecimal(w.regular)} Reg{w.overtime > 0 ? ` + ${fmtDecimal(w.overtime)} OT` : ""})
                         </span>
                         {change && (
                           <span className={change.direction === "more" ? "text-orange-300" : change.direction === "less" ? "text-emerald-400" : "text-slate-500"}>
@@ -1223,7 +1229,7 @@ export function EmployeePayrollDetailModal({
                         <div className="mt-1 pl-4 flex flex-col gap-0.5">
                           {otByState.map((e) => (
                             <span key={e.state} className="text-[11px] text-amber-300/80">
-                              {fmtClock(e.hours)} OT · {e.state}
+                              {fmtDecimal(e.hours)} OT · {e.state}
                             </span>
                           ))}
                         </div>
@@ -1434,17 +1440,17 @@ export function EmployeePayrollDetailModal({
                             <td className={`py-1.5 ${row.clockOut ? "text-red-300" : "text-slate-500"}`}>{row.clockOut || "—"}</td>
                           </>
                         )}
-                        <td className="py-1.5 text-right text-slate-200">{row.hoursWorked ? fmtClock(regularHours) : "—"}</td>
+                        <td className="py-1.5 text-right text-slate-200">{row.hoursWorked ? fmtDecimal(regularHours) : "—"}</td>
                         <td
                           className={`py-1.5 text-right ${mealOverPolicy ? "text-red-400 font-semibold" : "text-sky-300"}`}
                           title={mealOverPolicy ? "Over the 30-minute paid meal policy — flagged for review. Still fully paid; this isn't a pay deduction." : "Actual meal break taken — fully paid regardless of length (see computeMealTimeCredit)."}
                         >
-                          {actualMealHours > 0 ? fmtClock(actualMealHours) : "—"}
+                          {actualMealHours > 0 ? fmtDecimal(actualMealHours) : "—"}
                         </td>
                         <td className={`py-1.5 text-right ${overtimeHours > 0 ? "text-orange-300 font-semibold" : "text-slate-500"}`}>
-                          {overtimeHours > 0 ? fmtClock(overtimeHours) : "—"}
+                          {overtimeHours > 0 ? fmtDecimal(overtimeHours) : "—"}
                         </td>
-                        <td className="py-1.5 text-right text-slate-200">{row.hoursWorked ? fmtClock(totalDayHours) : "—"}</td>
+                        <td className="py-1.5 text-right text-slate-200">{row.hoursWorked ? fmtDecimal(totalDayHours) : "—"}</td>
                         <td className={`py-1.5 text-right font-semibold ${STATUS_COLOR[row.status]}`}>
                           {row.status === "pending-correction" && pendingCorrectionByDate.has(row.date) ? (
                             <button
