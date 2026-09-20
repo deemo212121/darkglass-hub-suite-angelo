@@ -127,6 +127,7 @@ const STATUS_LABEL: Record<AttendanceRow["status"], string> = {
   holiday: "Holiday",
   "pending-correction": "Pending Time Correction Request",
   "paid-leave": "Paid Leave",
+  "unpaid-leave": "Unpaid Leave",
 };
 const STATUS_COLOR: Record<AttendanceRow["status"], string> = {
   present: "text-green-300",
@@ -138,6 +139,7 @@ const STATUS_COLOR: Record<AttendanceRow["status"], string> = {
   holiday: "text-purple-300",
   "pending-correction": "text-amber-300",
   "paid-leave": "text-sky-300",
+  "unpaid-leave": "text-orange-300",
 };
 const PTO_TYPE_LABEL: Record<string, string> = {
   vacation: "Vacation Leave",
@@ -147,9 +149,11 @@ const PTO_TYPE_LABEL: Record<string, string> = {
   bereavement: "Bereavement Leave",
   unpaid: "Unpaid Leave",
 };
-/** "Vacation Leave" etc. when the specific PTO type is known, else the generic STATUS_LABEL fallback ("Paid Leave"). */
+/** "Vacation Leave" etc. when the specific PTO type is known, else the generic STATUS_LABEL fallback ("Paid Leave"/"Unpaid Leave"). */
 function statusLabelFor(row: AttendanceRow): string {
-  if (row.status === "paid-leave" && row.leaveType) return PTO_TYPE_LABEL[row.leaveType] ?? STATUS_LABEL[row.status];
+  if ((row.status === "paid-leave" || row.status === "unpaid-leave") && row.leaveType) {
+    return PTO_TYPE_LABEL[row.leaveType] ?? STATUS_LABEL[row.status];
+  }
   return STATUS_LABEL[row.status];
 }
 
@@ -306,6 +310,26 @@ export function EmployeePayrollDetailModal({
     return map;
   }, [ptoRequests, profileId, offDays]);
 
+  // Same expansion, but for approved UNPAID (or Sick) requests — kept
+  // separate from formalPaidLeaveDates so it can WIN over any paid claim on
+  // the same date (a stale approved Vacation request that was never
+  // cancelled after an Unpaid one got approved instead, or an HR-plotted
+  // note left over from before the formal request existed). See the
+  // paidLeaveDates/unpaidLeaveDates merge in load() below.
+  const formalUnpaidLeaveDates = useMemo(() => {
+    const map = new Map<string, PtoType>();
+    const offDaySet = new Set(offDays ?? []);
+    for (const pto of ptoRequests) {
+      if (pto.profileId !== profileId || pto.status !== "approved" || isPaidPtoType(pto.ptoType)) continue;
+      for (let d = new Date(`${pto.startDate}T00:00:00`); d <= new Date(`${pto.endDate}T00:00:00`); d.setDate(d.getDate() + 1)) {
+        if (offDaySet.has(d.getDay())) continue;
+        const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+        map.set(key, pto.ptoType);
+      }
+    }
+    return map;
+  }, [ptoRequests, profileId, offDays]);
+
   const load = async (cancelledRef: { current: boolean }) => {
     setLoading(true);
     setRateEdits({});
@@ -323,17 +347,28 @@ export function EmployeePayrollDetailModal({
       ]);
       // Merge in HR-plotted leave (attendance_notes.hr_note, no formal
       // pto_requests row) — a formal request wins if one somehow also
-      // covers the same date, same precedence HrCalendarTab.tsx uses.
+      // covers the same date, same precedence HrCalendarTab.tsx uses. An
+      // UNPAID formal request wins over EVERYTHING for its date (a stale
+      // approved Vacation request that was never cancelled, or a leftover
+      // HR note) — it's deleted out of paidLeaveDates below rather than
+      // just never being added, since either of those other two sources
+      // could otherwise still be sitting in that map from before the
+      // formal Unpaid request existed.
       const paidLeaveDates = new Map<string, PtoType>();
+      const unpaidLeaveDates = new Map<string, PtoType>();
       for (const n of hrStatusNotes) {
         if (n.profileId !== profileId) continue;
         const type = HR_STATUS_TO_PTO_TYPE[n.hrNote];
-        if (!type || !isPaidPtoType(type)) continue;
-        paidLeaveDates.set(n.noteDate, type);
+        if (!type) continue;
+        (isPaidPtoType(type) ? paidLeaveDates : unpaidLeaveDates).set(n.noteDate, type);
       }
       for (const [date, type] of formalPaidLeaveDates) paidLeaveDates.set(date, type);
+      for (const [date, type] of formalUnpaidLeaveDates) {
+        unpaidLeaveDates.set(date, type);
+        paidLeaveDates.delete(date);
+      }
       const seedRows = needsSeed
-        ? await getAttendanceForRange(profileId, seedStart, seedEnd, { requiredCheckIn, requiredCheckOut, workingHours, mealMinutes, daysOff: offDays, graceMinutes, paidLeaveDates })
+        ? await getAttendanceForRange(profileId, seedStart, seedEnd, { requiredCheckIn, requiredCheckOut, workingHours, mealMinutes, daysOff: offDays, graceMinutes, paidLeaveDates, unpaidLeaveDates })
         : [];
       const attRows = await getAttendanceForRange(profileId, rangeStart, rangeEnd, {
         requiredCheckIn,
@@ -345,6 +380,7 @@ export function EmployeePayrollDetailModal({
         holidayDates: holidays.map((h) => h.date),
         pendingCorrectionDates: pendingCorrections.filter((c) => c.profileId === profileId).map((c) => c.workDate),
         paidLeaveDates,
+        unpaidLeaveDates,
       });
       if (cancelledRef.current) return;
       setAttendance(attRows);
@@ -583,6 +619,15 @@ export function EmployeePayrollDetailModal({
     }
   };
   const warnings = useMemo(() => attendance.filter((r) => r.status !== "present" && r.status !== "day-off" && r.status !== "paid-leave"), [attendance]);
+  // Worked days with no state assigned — the Min Wage Floor Check falls back
+  // to the flat company rate for these (see TechActivityReportModal.tsx's
+  // stateMinFloor), which understates the true floor whenever the real
+  // state (most likely wherever this technician normally works) has a
+  // higher minimum wage. Flagged here so Accounting can fill it in rather
+  // than the gap going unnoticed — see John Boyette's Little Rock/Arkansas
+  // case, where two blank days sat at $7.25 despite every other day that
+  // period being Arkansas ($11).
+  const unassignedStateDays = useMemo(() => attendance.filter((r) => r.clockIn && !r.state), [attendance]);
   // The entry effective as of the end of the viewed period — used to decide
   // whether this employee is currently paid hourly or a fixed salary, and
   // to show the right numbers for whichever it is.
@@ -1238,7 +1283,9 @@ export function EmployeePayrollDetailModal({
             )}
           </div>
 
-          {/* Weekly breakdown */}
+          {/* Weekly breakdown + unassigned-state flag */}
+          {(weeklyBreakdown.length > 0 || unassignedStateDays.length > 0) && (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {weeklyBreakdown.length > 0 && (
             <div className="bg-slate-800/30 border border-white/10 rounded-lg p-4">
               <h3 className="text-sm font-semibold text-white mb-2">Weekly Breakdown</h3>
@@ -1276,6 +1323,25 @@ export function EmployeePayrollDetailModal({
                 })}
               </ul>
             </div>
+          )}
+          {unassignedStateDays.length > 0 && (
+            <div className="bg-amber-950/20 border border-amber-500/30 rounded-lg p-4">
+              <h3 className="text-sm font-semibold text-amber-300 mb-2">
+                State Not Assigned — {unassignedStateDays.length} {unassignedStateDays.length === 1 ? "day" : "days"}
+              </h3>
+              <p className="text-xs text-slate-400 mb-2">
+                These worked days fall back to the flat ${rateNow.toFixed(2)}/hr company rate for the Min Wage Floor Check instead of a real state — fill in RateState below if these were worked somewhere with a higher minimum wage.
+              </p>
+              <ul className="flex flex-wrap gap-1.5">
+                {unassignedStateDays.map((r) => (
+                  <li key={r.date} className="text-xs px-2 py-0.5 rounded bg-amber-500/10 text-amber-200 border border-amber-500/20">
+                    {fmtShortDate(r.date)}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          </div>
           )}
 
           {/* Attendance table */}

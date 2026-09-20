@@ -98,7 +98,7 @@ export function TechActivityReportModal({
   onSetHourlyOtMode,
   hourlyOtModeBusy,
 }: Props) {
-  const { employee, techManual, techCategoryCounts, techCarryover, ticketsAssigned, ticketsCompleted, workingDays, twoTechCount, hoursWorked, overtimeHours, hourlyRate, techHourlyPay, techHourlyPayStraight, techHourlyPayOtPremium, techWeightedRegularRate, techGuaranteedSalaryTarget, techIncludablePay } = row;
+  const { employee, techManual, techCategoryCounts, techCarryover, ticketsAssigned, ticketsCompleted, workingDays, twoTechCount, hoursWorked, overtimeHours, hourlyRate, techHourlyPay, techHourlyPayStraight, techHourlyPayOtPremium, techWeightedRegularRate, techGuaranteedSalaryTarget, techHolidayPremium, techIncludablePay } = row;
   const branch = employee.assigned_branch || "";
 
   // Live Company-vs-State comparison for the Hourly Pay figure — fetched
@@ -360,7 +360,7 @@ export function TechActivityReportModal({
       alert(`Failed to add line: ${err instanceof Error ? err.message : "Unknown error"}`);
     }
   };
-  const handleCustomLineBlur = async (item: TechCustomPayItem, fields: { label?: string; value?: number; rate?: number }) => {
+  const handleCustomLineBlur = async (item: TechCustomPayItem, fields: { label?: string; value?: number; rate?: number; isWageIncludable?: boolean }) => {
     setSavingCustomId(item.id);
     try {
       await updateTechCustomPayItem(item.id, fields);
@@ -424,7 +424,7 @@ export function TechActivityReportModal({
   const subtotal =
     categoryPayments.reduce((s, c) => s + c.payment, 0) +
     techManual.mileagePay + techManual.trainingPay +
-    twoTechPayment + completedTicketsPayment + redoReductionPayment + customLinesTotal + carryoverTotal + row.techHourlyPay + techGuaranteedSalaryMatch;
+    twoTechPayment + completedTicketsPayment + redoReductionPayment + customLinesTotal + carryoverTotal + row.techHourlyPay + techGuaranteedSalaryMatch + techHolidayPremium;
   const owIncentivePay = (techManual.owIncentivePct / 100) * subtotal;
   const totalPayment = subtotal + owIncentivePay;
 
@@ -566,6 +566,14 @@ export function TechActivityReportModal({
                       <td className="px-3 py-2 text-right text-slate-300">—</td>
                       <td className="px-3 py-2 text-right text-slate-300">{fmt(techGuaranteedSalaryTarget)}/cutoff</td>
                       <td className="px-3 py-2 text-right text-slate-200">{fmt(techGuaranteedSalaryMatch)}</td>
+                    </tr>
+                  )}
+                  {techHolidayPremium > 0.005 && (
+                    <tr title="Extra 0.5x premium for hours actually worked on a recognized company holiday, on top of normal straight/OT pay for those hours.">
+                      <td className="px-3 py-2 text-slate-300">Holiday Premium</td>
+                      <td className="px-3 py-2 text-right text-slate-300">—</td>
+                      <td className="px-3 py-2 text-right text-slate-300">×0.5</td>
+                      <td className="px-3 py-2 text-right text-slate-200">{fmt(techHolidayPremium)}</td>
                     </tr>
                   )}
 
@@ -726,6 +734,16 @@ export function TechActivityReportModal({
                       </td>
                       <td className="px-3 py-2 text-right">
                         <div className="flex items-center justify-end gap-1.5">
+                          <select
+                            title="Includable: a real wage (commission, completed tickets) — feeds the FLSA weighted regular rate used for the OT premium. Reimbursement: a stipend, expense reimbursement, or unrelated deduction (a copay, a chargeback) paid/withheld on top of wages, not as part of them — excluded from that rate."
+                            value={item.isWageIncludable ? "includable" : "reimbursement"}
+                            disabled={savingCustomId === item.id}
+                            onChange={(e) => handleCustomLineBlur(item, { isWageIncludable: e.target.value === "includable" })}
+                            className="bg-slate-800/50 border border-white/10 rounded px-1 py-1 text-[10px] text-slate-300 focus:border-blue-500 focus:outline-none disabled:opacity-50"
+                          >
+                            <option value="includable">Includable</option>
+                            <option value="reimbursement">Reimbursement</option>
+                          </select>
                           <input
                             key={`rate:${item.id}:${item.rate}`}
                             type="number" step={0.01}

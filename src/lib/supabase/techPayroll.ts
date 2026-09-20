@@ -810,6 +810,25 @@ export interface TechCustomPayItem {
   label: string;
   value: number;
   rate: number;
+  /** Whether this line counts toward the FLSA weighted-regular-rate calc
+   *  (AccountingDashboard.tsx's techIncludablePay) — see migration 0290.
+   *  Explicitly set by whoever enters the line, not guessed from the label. */
+  isWageIncludable: boolean;
+}
+
+const CUSTOM_PAY_ITEM_COLUMNS = "id, profile_id, period_start, period_end, label, value, rate, is_wage_includable";
+
+function mapCustomPayItem(r: any): TechCustomPayItem {
+  return {
+    id: r.id,
+    profileId: r.profile_id,
+    periodStart: r.period_start,
+    periodEnd: r.period_end,
+    label: r.label ?? "",
+    value: Number(r.value) || 0,
+    rate: Number(r.rate) || 0,
+    isWageIncludable: r.is_wage_includable ?? true,
+  };
 }
 
 /** All custom pay lines for one technician's period (RLS-scoped), in display order. */
@@ -821,7 +840,7 @@ export async function getTechCustomPayItems(
   if (!profileId || !periodStart || !periodEnd) return [];
   const { data, error } = await supabase
     .from("tech_custom_pay_items")
-    .select("id, profile_id, period_start, period_end, label, value, rate")
+    .select(CUSTOM_PAY_ITEM_COLUMNS)
     .eq("profile_id", profileId)
     .eq("period_start", periodStart)
     .eq("period_end", periodEnd)
@@ -830,15 +849,7 @@ export async function getTechCustomPayItems(
     console.error("getTechCustomPayItems error:", error.message);
     return [];
   }
-  return (data ?? []).map((r: any) => ({
-    id: r.id,
-    profileId: r.profile_id,
-    periodStart: r.period_start,
-    periodEnd: r.period_end,
-    label: r.label ?? "",
-    value: Number(r.value) || 0,
-    rate: Number(r.rate) || 0,
-  }));
+  return (data ?? []).map(mapCustomPayItem);
 }
 
 /**
@@ -854,22 +865,14 @@ export async function getAllTechCustomPayItemsForPeriod(periodStart: string, per
   if (!periodStart || !periodEnd) return [];
   const { data, error } = await supabase
     .from("tech_custom_pay_items")
-    .select("id, profile_id, period_start, period_end, label, value, rate")
+    .select(CUSTOM_PAY_ITEM_COLUMNS)
     .eq("period_start", periodStart)
     .eq("period_end", periodEnd);
   if (error) {
     console.error("getAllTechCustomPayItemsForPeriod error:", error.message);
     return [];
   }
-  return (data ?? []).map((r: any) => ({
-    id: r.id,
-    profileId: r.profile_id,
-    periodStart: r.period_start,
-    periodEnd: r.period_end,
-    label: r.label ?? "",
-    value: Number(r.value) || 0,
-    rate: Number(r.rate) || 0,
-  }));
+  return (data ?? []).map(mapCustomPayItem);
 }
 
 /** Add a new blank custom pay line for a technician's period. */
@@ -882,29 +885,22 @@ export async function addTechCustomPayItem(
   const { data, error } = await supabase
     .from("tech_custom_pay_items")
     .insert({ profile_id: profileId, period_start: periodStart, period_end: periodEnd, sort_order: sortOrder })
-    .select("id, profile_id, period_start, period_end, label, value, rate")
+    .select(CUSTOM_PAY_ITEM_COLUMNS)
     .single();
   if (error) throw new Error(error.message);
-  return {
-    id: data.id,
-    profileId: data.profile_id,
-    periodStart: data.period_start,
-    periodEnd: data.period_end,
-    label: data.label ?? "",
-    value: Number(data.value) || 0,
-    rate: Number(data.rate) || 0,
-  };
+  return mapCustomPayItem(data);
 }
 
-/** Update one custom pay line's label/value/rate. */
+/** Update one custom pay line's label/value/rate/wage-includable flag. */
 export async function updateTechCustomPayItem(
   id: string,
-  fields: { label?: string; value?: number; rate?: number }
+  fields: { label?: string; value?: number; rate?: number; isWageIncludable?: boolean }
 ): Promise<void> {
   const update: Record<string, unknown> = {};
   if (fields.label !== undefined) update.label = fields.label;
   if (fields.value !== undefined) update.value = fields.value;
   if (fields.rate !== undefined) update.rate = fields.rate;
+  if (fields.isWageIncludable !== undefined) update.is_wage_includable = fields.isWageIncludable;
   if (Object.keys(update).length === 0) return;
   const { error } = await supabase.from("tech_custom_pay_items").update(update).eq("id", id);
   if (error) throw new Error(error.message);
