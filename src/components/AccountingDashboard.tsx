@@ -274,8 +274,8 @@ export interface EmployeePayrollRow {
   /**
    * Tech Payroll only — confirmed late ticket completions (see
    * late_ticket_completions) not yet paid out, priced at today's rate.
-   * Already folded into ticketsCompleted/grossPay below (so MCA/Completed
-   * Tickets flat-rate treat them like any other completed ticket this
+   * Already folded into ticketsCompleted/grossPay below (so Completed
+   * Tickets flat-rate treats them like any other completed ticket this
    * period) — kept here separately, one entry per ticket (never grouped by
    * repair type), purely so TechActivityReportModal.tsx/
    * buildTechActivityBreakdown can render them as their own "ticket # —
@@ -342,7 +342,7 @@ export interface EmployeePayrollRow {
   techGuaranteedSalaryMatch: number;
   /**
    * This period's includable incentive/bonus pay (piece-rate, carryover,
-   * LDT/Training, Two Tech, MCA, Completed Tickets, commission-style custom
+   * Training, Two Tech, Completed Tickets, commission-style custom
    * lines) — the same figure folded into techWeightedRegularRate and the
    * guarantee check above. Exposed so TechActivityReportModal.tsx can
    * recompute the guarantee against its own live, per-day state-matched
@@ -2153,8 +2153,8 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
 
   // Confirmed late ticket completions (see carryoverRepairCounts' own
   // comment) — priced at today's rate and folded into ticketsCompleted/
-  // grossPay exactly like any other completed ticket this period (so MCA and
-  // the flat Completed Tickets rate see them too), but kept in their own map
+  // grossPay exactly like any other completed ticket this period (so the
+  // flat Completed Tickets rate sees them too), but kept in their own map
   // (not merged into techGrossByProfile.categoryCounts) so techRow below can
   // still show them as distinctly-labeled, per-ticket "(carried over)" lines.
   const techCarryoverByProfile = new Map<string, { count: number; grossPay: number; tickets: TechCarryoverTicket[] }>();
@@ -2262,10 +2262,12 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     const tech = includeTech ? techGrossByProfile.get(emp.id) : undefined;
     const carryover = includeTech ? techCarryoverByProfile.get(emp.id) : undefined;
     const manual = includeTech ? techManualByProfile.get(emp.id) : undefined;
-    // "Two Tech" (auto-counted from visits.second_technician) and MCA Bonus
-    // (flat bonus for meeting a minimum completed-ticket threshold) are both
-    // rate-table-driven and deterministic, same as LDT/Mileage/Training, so
-    // they fold into Total Net the same way. Custom program lines and OW
+    // "Two Tech" (auto-counted from visits.second_technician) is
+    // rate-table-driven and deterministic, same as Mileage/Training, so
+    // it folds into Total Net the same way. MCA Bonus and LDT no longer
+    // have any editable UI anywhere in the app (their rows were removed
+    // from the Tech Activity Report) and are deliberately excluded from
+    // every pay total in this function. Custom program lines and OW
     // Incentive are ad-hoc/manual-per-open — those live on the Tech Activity
     // Report modal only and are NOT included here (see TechActivityReportModal.tsx).
     const techBranch = emp.assigned_branch || "";
@@ -2277,19 +2279,23 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     // showing for every field, not just the one just edited.
     const effectiveMileage = manual ? manual.mileage : includeTech ? techAutoMileageByProfile.get(emp.id) ?? 0 : 0;
     const effectiveMileagePay = manual ? manual.mileagePay : effectiveMileage * techRateFor("Mileage", techBranch);
-    const manualTotal = (manual?.ldtPay ?? 0) + effectiveMileagePay + (manual?.trainingPay ?? 0);
+    // LDT no longer has any editable UI anywhere in the app (its row was
+    // removed from the Tech Activity Report) — manual.ldtPay is dead going
+    // forward, deliberately left out of every pay total below so it can't
+    // silently keep paying out a stale historical value forever with no
+    // way for Finance to see or correct it.
+    const manualTotal = effectiveMileagePay + (manual?.trainingPay ?? 0);
     const twoTechCountForEmp = twoTechOverrideByProfile.get(emp.id) ?? techSecondCounts.get(emp.full_name.trim().toLowerCase()) ?? 0;
     const twoTechPay = includeTech ? twoTechCountForEmp * techRateFor("Two Tech", techBranch) : 0;
-    // Confirmed late completions count toward MCA/Completed Tickets exactly
+    // Confirmed late completions count toward Completed Tickets exactly
     // like any other completed ticket this period — they ARE completed
     // tickets, just paid a period late; only their repair-type $ amount
     // (carryover.grossPay, folded into techGrossPay below) and their own
     // labeled line items stay visibly separate from this period's own work.
+    // (MCA Bonus no longer has any editable UI anywhere in the app — its
+    // row was removed from the Tech Activity Report — so it's deliberately
+    // left out of every pay total below, same reasoning as manual.ldtPay above.)
     const ticketsCompletedForEmp = (tech?.ticketsCompleted ?? 0) + (carryover?.count ?? 0);
-    const mcaThreshold = includeTech ? techRateFor("MCA Threshold", techBranch) : 0;
-    const mcaBonus = includeTech && mcaThreshold > 0 && ticketsCompletedForEmp >= mcaThreshold
-      ? techRateFor("MCA Bonus", techBranch)
-      : 0;
     // Flat per-ticket rate paid on every completed (redo-excluded) ticket,
     // on top of that ticket's own repair-type rate already in tech.grossPay.
     const completedTicketsPay = includeTech ? ticketsCompletedForEmp * techRateFor("Completed Tickets", techBranch) : 0;
@@ -2310,8 +2316,8 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     //
     // The overtime premium can't just be hourlyRate×1.5 once a tech earns
     // piece-rate/incentive pay in the same period — FLSA requires that pay
-    // (repair-type pay, carryover, LDT/Training, Two Tech, MCA, Completed
-    // Tickets, and any commission-style custom line) to be folded into the
+    // (repair-type pay, carryover, Training, Two Tech, Completed Tickets,
+    // and any commission-style custom line) to be folded into the
     // "regular rate" the OT premium is computed from, same as a
     // non-discretionary bonus. Mileage reimbursement (effectiveMileagePay,
     // inside manualTotal) and any custom line labeled as a reimbursement/
@@ -2322,9 +2328,10 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     // Total Payment. Straight time is paid for ALL hours (regular + OT) at
     // the base rate, then OT hours additionally earn the extra 0.5× on the
     // weighted rate — the standard FLSA weighted-average method, not an
-    // alternative to it.
+    // alternative to it. (LDT and MCA are deliberately excluded — see the
+    // comments by manualTotal/ticketsCompletedForEmp above.)
     const techIncludablePay = includeTech && isTechRole(emp)
-      ? (tech?.grossPay ?? 0) + (carryover?.grossPay ?? 0) + (manual?.ldtPay ?? 0) + (manual?.trainingPay ?? 0) + twoTechPay + mcaBonus + completedTicketsPay + customIncludablePay
+      ? (tech?.grossPay ?? 0) + (carryover?.grossPay ?? 0) + (manual?.trainingPay ?? 0) + twoTechPay + completedTicketsPay + customIncludablePay
       : 0;
     // Blended per-day, not one flat rate for the whole period — a technician
     // whose hourly rate changed mid-period (salary_entries effective mid-way
@@ -2389,7 +2396,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     // Training, a custom line, or an approved Payroll Dispute; the old
     // `tech ? ... : 0` gate silently dropped all of that to $0 for them.
     const techGrossPay = includeTech
-      ? (tech?.grossPay ?? 0) + (carryover?.grossPay ?? 0) + manualTotal + twoTechPay + mcaBonus + completedTicketsPay + customPay + techHourlyPay + techGuaranteedSalaryMatch
+      ? (tech?.grossPay ?? 0) + (carryover?.grossPay ?? 0) + manualTotal + twoTechPay + completedTicketsPay + customPay + techHourlyPay + techGuaranteedSalaryMatch
       : 0;
 
     const techRow: EmployeePayrollRow | null =
