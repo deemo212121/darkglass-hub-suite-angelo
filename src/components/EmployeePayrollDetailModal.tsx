@@ -60,6 +60,22 @@ interface Props {
   onNext?: (mode: "company" | "state", stateHourlyOtTotal: number) => void | Promise<void>;
   /** True while the caller's onNext is still saving — disables the Next button so a second click can't race the first (e.g. double-submitting the pay-mode override). */
   nextBusy?: boolean;
+  /** Office-side counterpart to onNext — an office employee has no Tech Activity Report step to advance to, so this marks them reviewed directly from here instead (same payroll_review_marks row TechActivityReportModal's own onDone writes). Only rendered when onNext is unset, so a technician never sees both. */
+  onDone?: () => void | Promise<void>;
+  /** True while the caller's onDone is still saving — disables the Done button so a second click can't race the first. */
+  doneBusy?: boolean;
+  /**
+   * The actual genStart/genEnd the caller's onDone will stamp the review
+   * mark under — NOT necessarily the same as this modal's own rangeStart/
+   * rangeEnd above (that pair is just this modal's own attendance-history
+   * view window, freely adjustable here without affecting the outer page's
+   * selected payroll period). Shown next to the Mark Reviewed button so
+   * it's never ambiguous which range is actually about to get stamped.
+   */
+  reviewPeriodStart?: string;
+  reviewPeriodEnd?: string;
+  /** Sets the page's own Period (genStart/genEnd) to match whatever this modal's own rangeStart/rangeEnd currently show — an explicit, one-click fix so a wrong page period can be corrected without leaving this modal, without silently auto-syncing on every keystroke (which would shift the payroll period for every OTHER employee on the page too, not just the one being viewed here). */
+  onSyncReviewPeriod?: (start: string, end: string) => void;
 }
 
 function addDaysISO(dateStr: string, days: number): string {
@@ -176,6 +192,11 @@ export function EmployeePayrollDetailModal({
   onRateChanged,
   onNext,
   nextBusy,
+  onDone,
+  doneBusy,
+  reviewPeriodStart,
+  reviewPeriodEnd,
+  onSyncReviewPeriod,
 }: Props) {
   // Named myRole/myExtraRoles (not role/extraRoles) — those names are
   // already taken by this component's own props above, which describe the
@@ -1852,6 +1873,39 @@ export function EmployeePayrollDetailModal({
               className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-semibold transition shrink-0"
             >
               {nextBusy ? "Saving…" : "Next →"}
+            </button>
+          </div>
+        )}
+        {!onNext && onDone && (
+          <div className="flex items-center justify-between gap-3 px-5 py-3 border-t border-white/10 bg-slate-950 rounded-b-xl">
+            <p className="text-xs text-slate-500">
+              Review the hours and pay above, then mark this employee reviewed for the period.
+              {reviewPeriodStart && reviewPeriodEnd && (
+                <span className="block text-slate-400 mt-0.5">
+                  Will be stamped for:{" "}
+                  <span className={`font-semibold ${reviewPeriodStart > reviewPeriodEnd ? "text-red-300" : "text-slate-300"}`}>
+                    {reviewPeriodStart} to {reviewPeriodEnd}
+                  </span>
+                  {" "}— the page's own Period, not the date range above.
+                  {onSyncReviewPeriod && (reviewPeriodStart !== rangeStart || reviewPeriodEnd !== rangeEnd) && (
+                    <button
+                      type="button"
+                      onClick={() => onSyncReviewPeriod(rangeStart, rangeEnd)}
+                      className="ml-1.5 text-blue-400 hover:text-blue-300 underline"
+                    >
+                      Use {rangeStart} to {rangeEnd} instead
+                    </button>
+                  )}
+                </span>
+              )}
+            </p>
+            <button
+              type="button"
+              disabled={doneBusy}
+              onClick={() => onDone()}
+              className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-semibold transition shrink-0"
+            >
+              {doneBusy ? "Saving…" : "Mark Reviewed"}
             </button>
           </div>
         )}

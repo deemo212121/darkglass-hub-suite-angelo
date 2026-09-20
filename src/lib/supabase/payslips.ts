@@ -5,6 +5,7 @@
  */
 
 import { supabase } from "./client";
+import { getModuleActivityLogForTarget } from "./moduleActivityLog";
 
 /** Real payroll_runs.status values (migration 0001) — draft runs never
  * reach here since getMyPayslips only returns runs that already have a
@@ -67,11 +68,28 @@ export async function getMyPayslips(profileId: string): Promise<MyPayslipRow[]> 
     return [];
   }
 
+  // A generated run is not visible to the employee until Finance actually
+  // clicks Send (AccountingDashboard.tsx's handleSendPayslip/
+  // handleSendAllPayslips) — reuses the same "payslip_sent" module activity
+  // log entry the Accounting Dashboard's own Sent badge reads, rather than a
+  // new column, so there's one source of truth for "has this gone out".
+  const sentLog = await getModuleActivityLogForTarget("accounting", "payslip_sent", profileId, 500).catch((err) => {
+    console.error("getMyPayslips sent-log error:", err);
+    return [];
+  });
+  const sentPeriods = new Set(
+    sentLog
+      .map((e) => e.targetLabel?.match(/\((\d{4}-\d{2}-\d{2}) – (\d{4}-\d{2}-\d{2})\)$/))
+      .filter((m): m is RegExpMatchArray => !!m)
+      .map((m) => `${m[1]}_${m[2]}`)
+  );
+
   const runById = new Map((runs ?? []).map((r: any) => [r.id, r]));
   return lineItems
     .map((li: any): MyPayslipRow | null => {
       const run = runById.get(li.payroll_run_id);
       if (!run) return null;
+      if (!sentPeriods.has(`${run.period_start}_${run.period_end}`)) return null;
       return {
         runId: li.payroll_run_id,
         periodStart: run.period_start,
