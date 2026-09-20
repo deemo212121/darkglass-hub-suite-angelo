@@ -1027,6 +1027,109 @@ export function TechActivityReportModal({
                   </div>
                 )}
               </div>
+
+              {companyHourlyOtTotal > 0 && (() => {
+                // Currently applied = whichever side techHourlyPay (the
+                // real, paid figure) matches. With no override saved yet,
+                // that's always Company by construction (see
+                // AccountingDashboard.tsx), even on days State would be
+                // legally required — so also flag that case (stateIsDue)
+                // so it doesn't read as "Company is fine" when it isn't.
+                const appliedIsState = Math.abs(techHourlyPay - companyHourlyOtTotal) > 0.005;
+                const stateIsDue = !appliedIsState && stateHourlyOtTotal > companyHourlyOtTotal + 0.005;
+                return (
+                  <>
+                    <div className="bg-slate-800/50 border border-white/10 rounded-lg px-3 py-2.5" title="Regular + meal hours at each day's own assigned state minimum wage, vs. those same regular hours at the flat company rate — same Min-floor check as the reference payroll workbook. Excludes OT hours' flat pay, which would otherwise pad this comparison and hide a real regular-hours shortfall.">
+                      <p className="text-[10px] text-slate-400 uppercase tracking-wide mb-1.5">Min Wage Floor Check</p>
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-slate-400">State Req Min Floor</span>
+                        <span className="text-slate-200">{fmt(stateMinFloor)}</span>
+                      </div>
+                      <div className="flex items-center justify-between text-xs mt-0.5">
+                        <span className="text-slate-400">Company PD Min</span>
+                        <span className="text-slate-200">{fmt(companyRegularPayBlended)}</span>
+                      </div>
+                      <div className="flex items-center justify-between text-xs mt-1 pt-1 border-t border-white/10">
+                        <span className="text-slate-400">Match to pay</span>
+                        <span className={matchMin > 0.005 ? "text-amber-300 font-semibold" : "text-slate-200"}>{fmt(matchMin)}</span>
+                      </div>
+                    </div>
+
+                    <div className="bg-slate-800/50 border border-white/10 rounded-lg px-3 py-2.5" title="Once the Min-floor match above adds pay, the regular rate the OT premium is based on has to be recomputed with it folded in — this is the required premium at that recomputed rate, vs. what's already been paid. Not an independent state-OT-floor check; a cascade off the Min match.">
+                      <p className="text-[10px] text-slate-400 uppercase tracking-wide mb-1.5">
+                        OT Match After Min{loadingStateComparison ? " (loading…)" : ""}
+                      </p>
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-slate-400">Required Premium After Match</span>
+                        <span className="text-slate-200">{fmt(requiredPremiumAfterMinMatch)}</span>
+                      </div>
+                      <div className="flex items-center justify-between text-xs mt-0.5">
+                        <span className="text-slate-400">Company PD OT</span>
+                        <span className="text-slate-200">{fmt(techHourlyPayOtPremium)}</span>
+                      </div>
+                      <div className="flex items-center justify-between text-xs mt-1 pt-1 border-t border-white/10">
+                        <span className="text-slate-400">Match to pay</span>
+                        <span className={matchOt > 0.005 ? "text-amber-300 font-semibold" : "text-slate-200"}>{fmt(matchOt)}</span>
+                      </div>
+                    </div>
+
+                    <div className="bg-slate-800/50 border border-white/10 rounded-lg px-3 py-2.5">
+                      <div className="flex items-center justify-between gap-2 mb-1.5">
+                        <p className="text-[10px] text-slate-400 uppercase tracking-wide" title="Company + any Min/OT match owed above — not the full grossPay total below.">
+                          Hourly + OT Pay
+                        </p>
+                        {onSetHourlyOtMode && (
+                          <div className="flex items-center rounded-full bg-slate-900 border border-white/10 p-0.5 text-[10px] shrink-0">
+                            <button
+                              type="button"
+                              disabled={hourlyOtModeBusy}
+                              onClick={() => onSetHourlyOtMode("company", companyHourlyOtTotal)}
+                              className={`px-2 py-0.5 rounded-full transition ${!appliedIsState ? "bg-slate-700 text-white" : "text-slate-500 hover:text-slate-300"}`}
+                            >
+                              Company
+                            </button>
+                            <button
+                              type="button"
+                              disabled={hourlyOtModeBusy}
+                              onClick={() => onSetHourlyOtMode("state", stateHourlyOtTotal)}
+                              className={`px-2 py-0.5 rounded-full transition ${appliedIsState ? "bg-emerald-700 text-white" : "text-slate-500 hover:text-slate-300"}`}
+                            >
+                              State
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-slate-400">Company</span>
+                        <span className={!appliedIsState ? "text-emerald-300 font-semibold" : "text-slate-200"}>{fmt(companyHourlyOtTotal)}</span>
+                      </div>
+                      <div className="flex items-center justify-between text-xs mt-0.5">
+                        <span className="text-slate-400">State</span>
+                        <span className={appliedIsState ? "text-emerald-300 font-semibold" : "text-slate-200"}>{fmt(stateHourlyOtTotal)}</span>
+                      </div>
+                      {stateIsDue && (
+                        <p className="text-[10px] text-amber-300 mt-1 pt-1 border-t border-white/10">
+                          State pays {fmt(stateHourlyOtTotal - companyHourlyOtTotal)} more — switch to State.
+                        </p>
+                      )}
+                    </div>
+                  </>
+                );
+              })()}
+
+              {techGuaranteedSalaryTarget > 0 && (
+                <div className="bg-slate-800/50 border border-white/10 rounded-lg px-3 py-2.5" title="A fixed annual salary on file for this technician (even if not yet effective this period) acts as an ongoing floor under their hourly + incentive pay — if actual earned compensation (excluding reimbursements) falls short of that salary's per-cutoff equivalent, the shortfall is added on top, already folded into grossPay/Total Payment below.">
+                  <p className="text-[10px] text-slate-400 uppercase tracking-wide mb-1.5">Guaranteed Minimum Salary Match</p>
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-slate-400">Per-Cutoff Minimum</span>
+                    <span className="text-slate-200">{fmt(techGuaranteedSalaryTarget)}</span>
+                  </div>
+                  <div className="flex items-center justify-between text-xs mt-1 pt-1 border-t border-white/10">
+                    <span className="text-slate-400">Match to pay</span>
+                    <span className={techGuaranteedSalaryMatch > 0.005 ? "text-amber-300 font-semibold" : "text-slate-200"}>{fmt(techGuaranteedSalaryMatch)}</span>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>
