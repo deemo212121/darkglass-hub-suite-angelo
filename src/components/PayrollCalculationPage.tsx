@@ -131,7 +131,7 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
   // a mid-period raise/promotion is handled automatically instead of
   // needing one flat rate for the whole period. Fixed-salary employees
   // (migration 0118) are the exception: they're paid a flat per-cutoff
-  // amount (annual / 24) regardless of hours actually worked, with no
+  // amount (annual / 26, see perCutoffSalary) regardless of hours actually worked, with no
   // overtime — regularHours/overtimeHours are still tallied from real
   // attendance for visibility, they just don't feed into grossPay.
   //

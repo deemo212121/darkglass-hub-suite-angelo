@@ -13,6 +13,13 @@ export interface StateMinWage {
   rate: number | null;
 }
 
+/** Federal minimum wage floor (unchanged since 2009) — every state below
+ *  observes at least this, and it's the company-wide baseline hourly rate
+ *  for technician-tier roles (special case: employees on a fixed annual
+ *  salary instead of hourly pay). See EmployeePayrollDetailModal.tsx's
+ *  Add Rate Change guard. */
+export const FEDERAL_MIN_WAGE = 7.25;
+
 export const STATE_MIN_WAGE_2026: StateMinWage[] = [
   { state: "Alabama", rate: 7.25 },
   { state: "Arizona", rate: 15.15 },
