@@ -332,6 +332,25 @@ export interface EmployeePayrollRow {
    */
   techWeightedRegularRate: number;
   /**
+   * Guaranteed-minimum-salary match — see latestFixedSalaryByProfile in
+   * payrollRows. techGuaranteedSalaryTarget is that salary's per-cutoff
+   * equivalent (0 when no fixed-salary entry exists, or when this period
+   * is already being paid fixed salary); techGuaranteedSalaryMatch is the
+   * shortfall already folded into grossPay, kept separate for display.
+   */
+  techGuaranteedSalaryTarget: number;
+  techGuaranteedSalaryMatch: number;
+  /**
+   * This period's includable incentive/bonus pay (piece-rate, carryover,
+   * LDT/Training, Two Tech, MCA, Completed Tickets, commission-style custom
+   * lines) — the same figure folded into techWeightedRegularRate and the
+   * guarantee check above. Exposed so TechActivityReportModal.tsx can
+   * recompute the guarantee against its own live, per-day state-matched
+   * total (which this module can't compute for every technician — see that
+   * component) without having to re-derive it from the other fields.
+   */
+  techIncludablePay: number;
+  /**
    * True for a row representing the tech-portion of someone's pay (piece-
    * rate ticket/mileage/category totals), false/undefined for their office-
    * portion row (hours × rate, or fixed salary). Drives the Office/Tech
@@ -397,6 +416,17 @@ function computeDutyHoursByEmployee(
   return map;
 }
 
+/** One employee's per-day regular/overtime split for the period — the same
+ * granularity computeHoursMap's period totals are built from, exposed so
+ * pay math that needs to apply a DIFFERENT hourly rate per day (a mid-period
+ * rate change) can do so, instead of collapsing straight to one period total
+ * and one flat rate. See dailyHoursByEmployeeId/hourlyRateOnDate below. */
+export interface DailyHours {
+  date: string;
+  regular: number;
+  overtime: number;
+}
+
 function computeHoursMap(
   entries: TimecardEntry[],
   employees: SupabaseEmployee[],
@@ -410,8 +440,9 @@ function computeHoursMap(
   // regular/overtime totals themselves (those stay scoped to the real
   // period). See weekSeedTimecardEntries at its call site.
   seedEntries: TimecardEntry[] = []
-): Map<string, { regular: number; overtime: number }> {
+): { totals: Map<string, { regular: number; overtime: number }>; daily: Map<string, DailyHours[]> } {
   const hoursMap = new Map<string, { regular: number; overtime: number }>();
+  const dailyMap = new Map<string, DailyHours[]>();
   const punchedDates = new Map<string, Set<string>>();
   const employeeById = new Map(employees.map((e) => [e.id, e]));
 
@@ -496,6 +527,15 @@ function computeHoursMap(
     const duty = flatThreshold ? CSR_WEEKLY_OVERTIME_THRESHOLD : dutyHoursByEmployeeId.get(key) ?? 0;
     if (duty <= 0) {
       hoursMap.set(key, legacyDailyCapByEmployee.get(key) ?? { regular: 0, overtime: 0 });
+      // No configured schedule to run the weekly split against, so fall back
+      // to the same flat per-day 8-hour cap the legacy total above uses,
+      // just broken out per day instead of pre-summed.
+      const legacyDaily: DailyHours[] = [];
+      for (const [date, rawHours] of byDate) {
+        if (date < periodStart || date > periodEnd) continue;
+        legacyDaily.push({ date, regular: Math.min(rawHours, REGULAR_HOURS_PER_DAY), overtime: Math.max(0, rawHours - REGULAR_HOURS_PER_DAY) });
+      }
+      dailyMap.set(key, legacyDaily);
       continue;
     }
     const days = [...byDate.entries()].map(([date, rawHours]) => ({ date, rawHours }));
@@ -513,15 +553,18 @@ function computeHoursMap(
     );
     let regular = 0;
     let overtime = 0;
+    const dayList: DailyHours[] = [];
     for (const [date, hrs] of split) {
       if (date < periodStart || date > periodEnd) continue;
       regular += hrs.regular;
       overtime += hrs.overtime;
+      dayList.push({ date, regular: hrs.regular, overtime: hrs.overtime });
     }
     hoursMap.set(key, { regular, overtime });
+    dailyMap.set(key, dayList);
   }
 
-  if (!periodStart || !periodEnd) return hoursMap;
+  if (!periodStart || !periodEnd) return { totals: hoursMap, daily: dailyMap };
   for (const pto of ptoRequests) {
     if (pto.status !== "approved" || !isPaidPtoType(pto.ptoType)) continue;
     const emp = employeeById.get(pto.profileId);
@@ -538,9 +581,50 @@ function computeHoursMap(
       if (punched?.has(iso)) continue;
       const prev = hoursMap.get(pto.profileId) ?? { regular: 0, overtime: 0 };
       hoursMap.set(pto.profileId, { regular: prev.regular + netHours, overtime: prev.overtime });
+      const prevDaily = dailyMap.get(pto.profileId) ?? [];
+      prevDaily.push({ date: iso, regular: netHours, overtime: 0 });
+      dailyMap.set(pto.profileId, prevDaily);
     }
   }
-  return hoursMap;
+  return { totals: hoursMap, daily: dailyMap };
+}
+
+/** One employee's period totals for straight-time-all-hours pay (hours × that
+ * day's rate, at every hour) plus flat 1.5× overtime pay, blended per day so a
+ * mid-period rate change (salary_entries) is honored day-by-day instead of
+ * one flat rate applied to the whole period — same per-day lookup Attendance
+ * tables already use via rateEffectiveOn (salary.ts), now reused for payroll
+ * totals too. Falls back to a single flat rate over the period total when no
+ * daily breakdown is available (duty-less employees before their first
+ * schedule is configured, or the legacy hoursMap-only totals aggregate). */
+function blendedDailyPay(
+  dailyHours: DailyHours[] | undefined,
+  fallbackTotals: { regular: number; overtime: number },
+  rateForDate: (date: string) => number,
+  fallbackRate: number
+): { totalHours: number; straightAllHours: number; regularPay: number; overtimePayAt1_5x: number } {
+  if (!dailyHours || dailyHours.length === 0) {
+    const totalHours = fallbackTotals.regular + fallbackTotals.overtime;
+    return {
+      totalHours,
+      straightAllHours: totalHours * fallbackRate,
+      regularPay: fallbackTotals.regular * fallbackRate,
+      overtimePayAt1_5x: fallbackTotals.overtime * fallbackRate * 1.5,
+    };
+  }
+  let totalHours = 0;
+  let straightAllHours = 0;
+  let regularPay = 0;
+  let overtimePayAt1_5x = 0;
+  for (const day of dailyHours) {
+    const rate = rateForDate(day.date);
+    const dayHours = day.regular + day.overtime;
+    totalHours += dayHours;
+    straightAllHours += dayHours * rate;
+    regularPay += day.regular * rate;
+    overtimePayAt1_5x += day.overtime * rate * 1.5;
+  }
+  return { totalHours, straightAllHours, regularPay, overtimePayAt1_5x };
 }
 
 // Scheduled ("duty") hours for the period — the employee's expected net
@@ -1843,17 +1927,27 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   useEffect(() => { void loadHourlyOtOverrides(); }, [loadHourlyOtOverrides]);
 
   // ── Derived data ─────────────────────────────────────────────────────────────
-  // Latest salary entry per employee. salaryEntries is ordered by
-  // effective_date desc then created_at desc, but re-compared explicitly
-  // here rather than just taking the first hit per profile — editing a
-  // day's rate (Attendance table inline edit, or Add Rate Change) always
-  // INSERTS a new row instead of updating one in place, so the same
-  // effective_date can end up with several rows (e.g. corrected twice in
-  // one sitting). Ties on effective_date are broken by created_at (the
-  // most recently entered correction wins) so a stale duplicate can never
-  // outrank a fresh edit — same tie-break as entryEffectiveOn (salary.ts).
+  // Salary entry effective as of this payroll period (genEnd) per employee.
+  // salaryEntries is ordered by effective_date desc then created_at desc,
+  // but re-compared explicitly here rather than just taking the first hit
+  // per profile — editing a day's rate (Attendance table inline edit, or
+  // Add Rate Change) always INSERTS a new row instead of updating one in
+  // place, so the same effective_date can end up with several rows (e.g.
+  // corrected twice in one sitting). Ties on effective_date are broken by
+  // created_at (the most recently entered correction wins) so a stale
+  // duplicate can never outrank a fresh edit — same tie-break as
+  // entryEffectiveOn (salary.ts).
+  //
+  // Entries whose effective_date is AFTER this period (genEnd) are
+  // skipped — a rate change entered ahead of time (e.g. a raise or a
+  // switch to fixed salary effective next cutoff) must not retroactively
+  // override an already-elapsed period's pay. Without this, Generate
+  // Payroll for a past/current period would silently start using a future
+  // rate/compensation type the moment that future entry gets saved, same
+  // as rateEffectiveOn/entryEffectiveOn already do for per-day lookups.
   const latestCompMap = new Map<string, SalaryEntry>();
   for (const se of salaryEntries) {
+    if (genEnd && se.effective_date > genEnd) continue;
     const existing = latestCompMap.get(se.profile_id);
     if (
       !existing ||
@@ -1864,10 +1958,57 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     }
   }
 
+  // Latest fixed-salary entry ever recorded per employee, regardless of
+  // period — unlike latestCompMap above, this is NOT filtered to entries
+  // effective by genEnd. Some technicians have a fixed annual salary on
+  // file (e.g. an upcoming switch to salary, effective next cutoff) that
+  // Finance wants treated as an ongoing guaranteed-minimum floor under
+  // their hourly + incentive pay for THIS period too, even though that
+  // period is still correctly being paid hourly per latestCompMap. See
+  // techGuaranteedSalaryMatch below.
+  const latestFixedSalaryByProfile = new Map<string, SalaryEntry>();
+  for (const se of salaryEntries) {
+    if (se.compensation_type !== "fixed" || !se.annual_salary) continue;
+    const existing = latestFixedSalaryByProfile.get(se.profile_id);
+    if (
+      !existing ||
+      se.effective_date > existing.effective_date ||
+      (se.effective_date === existing.effective_date && se.created_at > existing.created_at)
+    ) {
+      latestFixedSalaryByProfile.set(se.profile_id, se);
+    }
+  }
+
   // Hours worked per employee in current period. Computed from real
   // check_in/check_out punches (see REGULAR_HOURS_PER_DAY comment above).
   const dutyHoursByEmployeeId = computeDutyHoursByEmployee(employees, genStart, genEnd);
-  const hoursMap = computeHoursMap(timecardEntries, employees, ptoRequests, genStart, genEnd, dutyHoursByEmployeeId, weekSeedTimecardEntries);
+  const { totals: hoursMap, daily: dailyHoursByEmployeeId } = computeHoursMap(timecardEntries, employees, ptoRequests, genStart, genEnd, dutyHoursByEmployeeId, weekSeedTimecardEntries);
+
+  // Every rate-change row per employee (not just the one latestCompMap picks
+  // for the whole period) — lets blendedDailyPay below apply the rate that
+  // was ACTUALLY effective on each individual day, same as the Attendance
+  // table's own per-day rateEffectiveOn lookup (salary.ts), instead of
+  // paying every hour in the period at whichever single rate happened to be
+  // latest as of genEnd. Same tie-break as entryEffectiveOn/latestCompMap:
+  // latest effective_date wins, ties broken by latest created_at.
+  const salaryEntriesByProfile = new Map<string, SalaryEntry[]>();
+  for (const se of salaryEntries) {
+    const list = salaryEntriesByProfile.get(se.profile_id);
+    if (list) list.push(se);
+    else salaryEntriesByProfile.set(se.profile_id, [se]);
+  }
+  const hourlyRateOnDate = (profileId: string, date: string, fallbackRate: number): number => {
+    const entries = salaryEntriesByProfile.get(profileId);
+    if (!entries) return fallbackRate;
+    let best: SalaryEntry | null = null;
+    for (const se of entries) {
+      if (se.effective_date > date) continue;
+      if (!best || se.effective_date > best.effective_date || (se.effective_date === best.effective_date && se.created_at > best.created_at)) {
+        best = se;
+      }
+    }
+    return best ? (best.compensation_type === "hourly" ? best.hourly_rate : 0) : fallbackRate;
+  };
 
   // Technicians are paid per completed repair ticket (Tech Payroll) instead
   // of hourly-or-fixed — any field-technician tier (TECHNICIAN,
@@ -2082,7 +2223,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // before this was standardized — see toggleRun()/Reports tab below.)
   //
   // Fixed-salary employees (migration 0118) are paid a flat per-cutoff
-  // amount (annual / 24) regardless of hours actually worked or overtime —
+  // amount (annual / 26, see perCutoffSalary) regardless of hours actually worked or overtime —
   // hoursWorked/overtimeHours/dutyHours are still computed for attendance
   // visibility, they just don't feed into grossPay for these employees.
   // Technicians (Tech Payroll) take priority over both: hoursWorked/
@@ -2185,8 +2326,14 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     const techIncludablePay = includeTech && isTechRole(emp)
       ? (tech?.grossPay ?? 0) + (carryover?.grossPay ?? 0) + (manual?.ldtPay ?? 0) + (manual?.trainingPay ?? 0) + twoTechPay + mcaBonus + completedTicketsPay + customIncludablePay
       : 0;
-    const techTotalHours = hours.regular + hours.overtime;
-    const techStraightTimeAllHours = techTotalHours * hourlyRate;
+    // Blended per-day, not one flat rate for the whole period — a technician
+    // whose hourly rate changed mid-period (salary_entries effective mid-way
+    // through genStart..genEnd) gets each day's hours paid at THAT day's
+    // rate, same as the Attendance table already shows per day. See
+    // blendedDailyPay/hourlyRateOnDate above.
+    const techDailyPay = blendedDailyPay(dailyHoursByEmployeeId.get(emp.id), hours, (date) => hourlyRateOnDate(emp.id, date, hourlyRate), hourlyRate);
+    const techTotalHours = techDailyPay.totalHours;
+    const techStraightTimeAllHours = techDailyPay.straightAllHours;
     const techWeightedRegularRate = techTotalHours > 0 ? (techStraightTimeAllHours + techIncludablePay) / techTotalHours : hourlyRate;
     const techHourlyPayStraight = includeTech && isTechRole(emp) ? techStraightTimeAllHours : 0;
     const techHourlyPayOtPremium = includeTech && isTechRole(emp) ? hours.overtime * techWeightedRegularRate * 0.5 : 0;
@@ -2198,12 +2345,52 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     // above stays the un-overridden flat calc, purely for the Tech Activity
     // Report's "Company vs. Applied" comparison.
     const techHourlyPay = hourlyOtOverrides.get(emp.id)?.amount ?? techHourlyPayCompanyOnly;
+    // Guaranteed-minimum-salary match: some technicians have a fixed
+    // annual salary on file (see latestFixedSalaryByProfile) that acts as
+    // an ongoing floor under their hourly + incentive pay even while a
+    // period is still correctly being paid hourly (isFixed false — see
+    // latestCompMap, which only looks at entries effective by genEnd — an
+    // upcoming switch to salary doesn't retroactively apply, but Finance
+    // still wants it treated as a floor going forward). If actual earned
+    // compensation this period (Company-baseline Hourly + OT, plus
+    // includable incentive pay) falls short of that salary's per-cutoff
+    // equivalent, the shortfall is topped up here. Deliberately keyed off
+    // the Company-only figure (techHourlyPayCompanyOnly), NOT techHourlyPay
+    // (whichever mode is actually applied): a state-floor match is separate,
+    // legally-owed money for hours that were underpaid relative to that
+    // state's minimum wage — it's additive on top of the guarantee, not
+    // something the guarantee gets to absorb. Keying this off techHourlyPay
+    // would let switching to State silently swallow that money back into
+    // the same $ total instead of paying it out on top. Reimbursement/
+    // mileage/allowance custom lines and mileage pay don't count toward
+    // either side of this check — they're paid on top regardless, same as
+    // the state match.
+    //
+    // NOTE (see conversation): the reference workbook's own 15-step chain
+    // implies the guarantee should really be checked against the STATE-
+    // matched earned total specifically (not Company-only) — its "FINAL
+    // TOTAL PAY DUE" already has the state match folded in before the
+    // guarantee tops it up. This module can't compute that live for every
+    // technician (the per-day state-floor match needs per-day attendance +
+    // state assignment data that's only fetched in TechActivityReportModal
+    // for whichever technician is currently open) — see that conversation
+    // for the options being weighed before changing this further.
+    const guaranteedAnnualSalary = includeTech && isTechRole(emp) && !isFixed
+      ? latestFixedSalaryByProfile.get(emp.id)?.annual_salary ?? null
+      : null;
+    const techEarnedBeforeReimbursements = techHourlyPayCompanyOnly + techIncludablePay;
+    const techGuaranteedSalaryTarget = guaranteedAnnualSalary ? perCutoffSalary(guaranteedAnnualSalary) : 0;
+    const techGuaranteedSalaryMatch = guaranteedAnnualSalary
+      ? Math.max(techGuaranteedSalaryTarget - techEarnedBeforeReimbursements, 0)
+      : 0;
     // Gated on includeTech, not on `tech` — a technician with zero
     // completed tickets this period (so techGrossByProfile has no entry
     // for them) can still have real pay owed via manual LDT/Mileage/
     // Training, a custom line, or an approved Payroll Dispute; the old
     // `tech ? ... : 0` gate silently dropped all of that to $0 for them.
-    const techGrossPay = includeTech ? (tech?.grossPay ?? 0) + (carryover?.grossPay ?? 0) + manualTotal + twoTechPay + mcaBonus + completedTicketsPay + customPay + techHourlyPay : 0;
+    const techGrossPay = includeTech
+      ? (tech?.grossPay ?? 0) + (carryover?.grossPay ?? 0) + manualTotal + twoTechPay + mcaBonus + completedTicketsPay + customPay + techHourlyPay + techGuaranteedSalaryMatch
+      : 0;
 
     const techRow: EmployeePayrollRow | null =
       includeTech && (isTechRole(emp) || techGrossPay > 0)
@@ -2241,6 +2428,9 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
             techHourlyPayStraight,
             techHourlyPayOtPremium,
             techWeightedRegularRate,
+            techGuaranteedSalaryTarget,
+            techGuaranteedSalaryMatch,
+            techIncludablePay,
             dutyHours,
             grossPay: techGrossPay,
             grossPayUSD: techGrossPay,
@@ -2252,9 +2442,13 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     // separate office row, same as before this change.
     if (isTechRole(emp)) return techRow ? [techRow] : [];
 
+    // Same per-day rate blending as techDailyPay above — an office employee's
+    // mid-period raise now pays each day at that day's own rate instead of
+    // one flat rate (whichever was latest as of genEnd) for the whole period.
+    const officeDailyPay = blendedDailyPay(dailyHoursByEmployeeId.get(emp.id), hours, (date) => hourlyRateOnDate(emp.id, date, hourlyRate), hourlyRate);
     const officeGrossPay = isFixed && annualSalary
       ? perCutoffSalary(annualSalary)
-      : hours.regular * hourlyRate + hours.overtime * hourlyRate * 1.5;
+      : officeDailyPay.regularPay + officeDailyPay.overtimePayAt1_5x;
     const officeRow: EmployeePayrollRow = {
       employee: emp,
       compensationType: isFixed ? "fixed" : "hourly",
@@ -2276,6 +2470,9 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       techHourlyPayStraight: 0,
       techHourlyPayOtPremium: 0,
       techWeightedRegularRate: hourlyRate,
+      techGuaranteedSalaryTarget: 0,
+      techGuaranteedSalaryMatch: 0,
+      techIncludablePay: 0,
       dutyHours,
       grossPay: officeGrossPay,
       grossPayUSD: officeGrossPay,

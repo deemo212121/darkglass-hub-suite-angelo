@@ -2,7 +2,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { X, Plus, Pencil, Check, Loader2, ExternalLink, ChevronDown, ChevronRight, Trash2 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { getAttendanceForRange, saveEntry, getProfileIdByFirebaseUid, computeScheduledDutyHours, computeMealTimeCredit, startOfWeekSunday, splitRegularOvertimeWeekly, CSR_WEEKLY_OVERTIME_THRESHOLD, hoursDiff, MEAL_ALWAYS_PAID_DEFAULT_HOURS, type AttendanceRow } from "@/lib/supabase/timecards";
-import { isMealAlwaysPaidRole, usesFlatWeeklyOvertimeThreshold } from "@/lib/roleLabels";
+import { isMealAlwaysPaidRole, usesFlatWeeklyOvertimeThreshold, hasAnyTechnicianPayRole } from "@/lib/roleLabels";
 import { getCompanyHolidaysInRange } from "@/lib/supabase/companyHolidays";
 import { getPendingCorrectionsInRange, type TimecardCorrectionRow } from "@/lib/supabase/timecardCorrections";
 import { PendingItemDetailModal, type PendingItem } from "@/components/PendingItemDetailModal";
@@ -13,10 +13,11 @@ import { getTicketAttendanceForTechnician, slotSortKey, type TicketAttendanceRow
 import { getCompanyEmployeeRequests } from "@/lib/supabase/employeeRequests";
 import { getVisitDiagnosisByTicketIds } from "@/lib/supabase/tickets";
 import { getMileageEntries, setMileageEstimateTime, setMileageLegMileage, type MileageEntry } from "@/lib/supabase/mileage";
-import { STATE_MIN_WAGE_2026, normalizeStateName, highestRateAmong } from "@/lib/stateMinWage";
+import { STATE_MIN_WAGE_2026, normalizeStateName, highestRateAmong, FEDERAL_MIN_WAGE } from "@/lib/stateMinWage";
 import {
   getSalaryHistory,
   addSalaryEntry,
+  deleteSalaryEntry,
   rateEffectiveOn,
   entryEffectiveOn,
   currentRate,
@@ -227,6 +228,7 @@ export function EmployeePayrollDetailModal({
     notes: "",
   });
   const [saving, setSaving] = useState(false);
+  const [deletingRateId, setDeletingRateId] = useState<string | null>(null);
   // Per-day rate overrides pending save, keyed by date ("YYYY-MM-DD") — the
   // input's raw string value while the user is editing it.
   const [rateEdits, setRateEdits] = useState<Record<string, string>>({});
@@ -815,6 +817,15 @@ export function EmployeePayrollDetailModal({
       alert(isFixed ? "Please enter a valid annual salary." : "Please enter a valid hourly rate.");
       return;
     }
+    // Company policy: every technician-tier employee (primary OR secondary
+    // role) observes at least the federal minimum wage ($7.25/hr) on their
+    // hourly rate. Fixed-salary employees are the one carve-out (isFixed is
+    // checked separately from this rate, so this only fires for an hourly
+    // entry).
+    if (!isFixed && hasAnyTechnicianPayRole(role, extraRoles) && rate < FEDERAL_MIN_WAGE) {
+      alert(`Technician-tier hourly rates can't be entered below the federal minimum wage ($${FEDERAL_MIN_WAGE.toFixed(2)}/hr).`);
+      return;
+    }
     setSaving(true);
     try {
       await addSalaryEntry({
@@ -835,6 +846,21 @@ export function EmployeePayrollDetailModal({
       alert(`Failed to save rate change: ${err instanceof Error ? err.message : "Unknown error"}`);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleDeleteRateEntry = async (h: SalaryEntryRow) => {
+    const rateLabel = h.compensationType === "fixed" && h.annualSalary ? `$${h.annualSalary.toLocaleString()}/yr` : `$${h.hourlyRate.toFixed(2)}/hr`;
+    if (!confirm(`Delete this ${rateLabel} entry effective ${h.effectiveDate}? This can't be undone.`)) return;
+    setDeletingRateId(h.id);
+    try {
+      await deleteSalaryEntry(h.id);
+      setHistory(await getSalaryHistory(profileId));
+      onRateChanged?.();
+    } catch (err) {
+      alert(`Failed to delete rate entry: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setDeletingRateId(null);
     }
   };
 
@@ -1151,7 +1177,7 @@ export function EmployeePayrollDetailModal({
                 </div>
                 {rateForm.compensationType === "fixed" && Number(rateForm.annualSalary) > 0 && (
                   <p className="text-[11px] text-slate-400">
-                    = ${monthlySalary(Number(rateForm.annualSalary)).toFixed(2)}/month · ${perCutoffSalary(Number(rateForm.annualSalary)).toFixed(2)}/cutoff (semi-monthly)
+                    = ${monthlySalary(Number(rateForm.annualSalary)).toFixed(2)}/month · ${perCutoffSalary(Number(rateForm.annualSalary)).toFixed(2)}/cutoff (bi-weekly)
                   </p>
                 )}
                 <div className="flex justify-end">
@@ -1177,6 +1203,7 @@ export function EmployeePayrollDetailModal({
                     <th className="text-left py-1.5">Changed By</th>
                     <th className="text-left py-1.5">Date Changed</th>
                     <th className="text-right py-1.5">Rate</th>
+                    <th className="w-8"></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1193,6 +1220,16 @@ export function EmployeePayrollDetailModal({
                         {h.compensationType === "fixed" && h.annualSalary
                           ? <>${h.annualSalary.toLocaleString()}/yr <span className="font-normal text-slate-400">(${perCutoffSalary(h.annualSalary).toFixed(2)}/cutoff)</span></>
                           : `$${h.hourlyRate.toFixed(2)}/hr`}
+                      </td>
+                      <td className="py-1.5 text-right">
+                        <button
+                          onClick={() => handleDeleteRateEntry(h)}
+                          disabled={deletingRateId === h.id}
+                          title="Delete this rate entry — for cleaning up a stray duplicate or mistaken entry, not routine edits"
+                          className="text-slate-500 hover:text-red-400 disabled:opacity-50"
+                        >
+                          {deletingRateId === h.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
+                        </button>
                       </td>
                     </tr>
                   ))}
