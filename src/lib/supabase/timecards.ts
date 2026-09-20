@@ -13,6 +13,10 @@ export interface UITimeEntry {
   mealStart: string;
   mealEnd: string;
   notes: string;
+  /** State the technician is assigned to for this specific day — technicians
+   * hop between states job to job, so this is independently set per day
+   * rather than one value carried on the profile. Omit to leave unchanged. */
+  state?: string;
 }
 
 /** True only for a genuine network-level failure (the request never reached
@@ -463,6 +467,10 @@ export async function saveEntry(
           meal_end: entry.mealEnd || null,
           notes: entry.notes || null,
           ...(opts?.clockedInBy ? { clocked_in_by: opts.clockedInBy } : {}),
+          // Only included when the caller explicitly sets it — otherwise a
+          // punch-only save (clock in/out, corrections, etc.) would null out
+          // whatever state was already assigned to this day.
+          ...(entry.state !== undefined ? { state: entry.state || null } : {}),
         },
         { onConflict: "profile_id,work_date" }
       );
@@ -625,7 +633,7 @@ export function calcWorkedHours(entry: UITimeEntry): number {
   return Math.max(0, hrs);
 }
 
-/** Flat paid-meal credit for a meal-always-paid role — see computeMealTimeCredit. */
+/** Policy meal-break length (30 min) for meal-always-paid roles — no longer used to size the pay credit itself (see computeMealTimeCredit), only as the threshold a real punched meal duration is flagged against as running long. */
 export const MEAL_ALWAYS_PAID_DEFAULT_HOURS = 0.5;
 
 /**
@@ -635,9 +643,21 @@ export const MEAL_ALWAYS_PAID_DEFAULT_HOURS = 0.5;
  * Director/Assistant Director) aren't required to punch Meal In/Out, but
  * their meal break is still paid time.
  *
- * A flat MEAL_ALWAYS_PAID_DEFAULT_HOURS whenever the day is meal-eligible,
- * regardless of whether Meal In/Out was punched or how long that punch was
- * — a policy of "30 minutes paid meal, period."
+ * Credits back exactly the real punched meal duration (Meal Out − Meal In)
+ * — not a flat 30 minutes. calcWorkedHours above already SUBTRACTS that
+ * same real duration from the raw Check In-to-Check Out span (meal time
+ * isn't worked time), so adding it straight back here nets to "the whole
+ * clock-in-to-clock-out span is paid," whatever the break actually ran —
+ * 20 minutes, 30, or 45. A flat 30-minute credit used to sit here instead,
+ * which either over- or under-paid depending on how the real punch compared
+ * to that fixed number; a real punch's own length is what actually
+ * happened, so that's what gets paid. No punch at all (mealStart/mealEnd
+ * empty) credits 0 — calcWorkedHours never subtracted anything for a break
+ * that was never taken, so there's nothing to add back, and this doesn't
+ * additionally reward not taking one. A break that runs over the 30-minute
+ * policy length isn't capped or penalized here — see the "Meal Time" column
+ * in EmployeePayrollDetailModal.tsx, which flags (not deducts) an
+ * over-length break instead.
  *
  * Callers add this directly into the day's raw hours BEFORE running the
  * regular/overtime weekly split (splitRegularOvertimeWeekly) — not folded
@@ -646,14 +666,24 @@ export const MEAL_ALWAYS_PAID_DEFAULT_HOURS = 0.5;
  * overtime once that quota (real hours + this credit, combined) is used up.
  * There is deliberately no separate "meal" bucket in the split output — the
  * result is just regular/overtime, same as everywhere else in this file.
+ *
+ * Eligibility (shift over 6 hours) is judged from THIS DAY's own real
+ * Check In-to-Check Out span, not the employee's generic scheduled shift
+ * length — a technician whose normal schedule is 8 hours but who only
+ * worked 4.5 hours today (left early, came in late, etc.) isn't meal-
+ * eligible today just because most of their days are longer. Callers used
+ * to pass a single mealEligible flag computed once from the schedule and
+ * reused for every day, which incorrectly credited (and flagged "missing
+ * meal" on) short days that never crossed the 6-hour line at all.
  */
 export function computeMealTimeCredit(
-  entry: Pick<UITimeEntry, "mealStart" | "mealEnd">,
-  mealEligible: boolean,
+  entry: Pick<UITimeEntry, "checkIn" | "checkOut" | "mealStart" | "mealEnd">,
   mealAlwaysPaid: boolean
 ): number {
-  if (!mealEligible || !mealAlwaysPaid) return 0;
-  return MEAL_ALWAYS_PAID_DEFAULT_HOURS;
+  if (!mealAlwaysPaid) return 0;
+  if (!entry.checkIn || !entry.checkOut || hoursBetween(entry.checkIn, entry.checkOut) <= 6) return 0;
+  if (!entry.mealStart || !entry.mealEnd) return 0;
+  return Math.max(0, hoursBetween(entry.mealStart, entry.mealEnd));
 }
 
 /** Public helper for components that need the raw HH:MM diff. */
@@ -706,6 +736,8 @@ export interface AttendanceRow {
   status: "present" | "absent" | "missing-in" | "missing-out" | "missing-meal" | "day-off" | "holiday" | "pending-correction" | "paid-leave";
   /** Only set when status is "paid-leave" — which kind of paid PTO covers this day. */
   leaveType?: PtoType;
+  /** State the technician was assigned to for this day, if set. */
+  state?: string;
 }
 
 /**
@@ -735,7 +767,7 @@ export async function getAttendanceForRange(
 ): Promise<AttendanceRow[]> {
   const { data, error } = await supabase
     .from("timecard_entries")
-    .select("work_date, check_in, check_out, meal_start, meal_end")
+    .select("work_date, check_in, check_out, meal_start, meal_end, state")
     .eq("profile_id", profileId)
     .gte("work_date", startDate)
     .lte("work_date", endDate)
@@ -754,10 +786,12 @@ export async function getAttendanceForRange(
   const pendingCorrectionDates = new Set(scheduled.pendingCorrectionDates ?? []);
   const paidLeaveDates = scheduled.paidLeaveDates ?? new Map<string, PtoType>();
   // Same rule as the timecard punch flows (TimeClockMenu.tsx / routes/timecard.tsx):
-  // a scheduled shift over 6 hours is meal-eligible. Punching no longer BLOCKS
-  // timing out without a meal — this is just where that gets recorded instead.
-  const mealEligible =
-    resolveScheduledShiftHours(scheduled.requiredCheckIn ?? "", scheduled.requiredCheckOut ?? "", scheduled.workingHours, scheduled.mealMinutes) > 6;
+  // a shift over 6 hours is meal-eligible. Punching no longer BLOCKS timing
+  // out without a meal — this is just where that gets recorded instead.
+  // Judged per day below from that day's own real Check In-to-Check Out
+  // span, not this employee's generic scheduled shift length — a short day
+  // (left early, came in late) isn't meal-eligible just because most of
+  // this employee's days are longer.
   const scheduledNetHours = resolveScheduledNetHours(scheduled.requiredCheckIn ?? "", scheduled.requiredCheckOut ?? "", scheduled.workingHours, scheduled.mealMinutes);
   for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
     const yyyy = d.getFullYear();
@@ -811,7 +845,7 @@ export async function getAttendanceForRange(
     if (!entry.checkIn && !entry.checkOut) status = isOffDay ? "day-off" : isHoliday ? "holiday" : "absent";
     else if (entry.checkIn && !entry.checkOut) status = "missing-out";
     else if (!entry.checkIn && entry.checkOut) status = "missing-in";
-    else if (entry.checkIn && entry.checkOut && mealEligible && !(entry.mealStart && entry.mealEnd)) status = "missing-meal";
+    else if (entry.checkIn && entry.checkOut && hoursBetween(entry.checkIn, entry.checkOut) > 6 && !(entry.mealStart && entry.mealEnd)) status = "missing-meal";
     if (status !== "present" && pendingCorrectionDates.has(key)) status = "pending-correction";
     // hoursWorked reflects the LITERAL punch — grace (payGraceMinutesFor/
     // applyGraceToCheckIn/roundCheckOutToSchedule, attendanceGrace.ts) is a
@@ -829,6 +863,7 @@ export async function getAttendanceForRange(
       mealEnd: entry.mealEnd,
       hoursWorked: calcWorkedHours(entry),
       status,
+      ...(row.state ? { state: row.state as string } : {}),
     });
   }
   return rows;

@@ -5,7 +5,7 @@ import { ChevronLeft, Download } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
-import { getCompanyTimecardEntries, calcWorkedHours, computeScheduledDutyHours, resolveScheduledShiftHours, computeMealTimeCredit, startOfWeekSunday, splitRegularOvertimeWeekly, CSR_WEEKLY_OVERTIME_THRESHOLD, type CompanyTimecardEntry } from "@/lib/supabase/timecards";
+import { getCompanyTimecardEntries, calcWorkedHours, computeScheduledDutyHours, computeMealTimeCredit, startOfWeekSunday, splitRegularOvertimeWeekly, CSR_WEEKLY_OVERTIME_THRESHOLD, type CompanyTimecardEntry } from "@/lib/supabase/timecards";
 import { getCompanySalaryEntries, rateEffectiveOn, entryEffectiveOn, currentRate, perCutoffSalary, type SalaryEntryRow } from "@/lib/supabase/salary";
 import { EmployeePayrollDetailModal } from "@/components/EmployeePayrollDetailModal";
 import { ActivityLogPanel } from "@/components/ActivityLogPanel";
@@ -131,7 +131,7 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
   // a mid-period raise/promotion is handled automatically instead of
   // needing one flat rate for the whole period. Fixed-salary employees
   // (migration 0118) are the exception: they're paid a flat per-cutoff
-  // amount (annual / 24) regardless of hours actually worked, with no
+  // amount (annual / 26, see perCutoffSalary) regardless of hours actually worked, with no
   // overtime — regularHours/overtimeHours are still tallied from real
   // attendance for visibility, they just don't feed into grossPay.
   //
@@ -199,11 +199,10 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
       // rawByDate BEFORE the weekly split runs below, so it naturally lands
       // as Regular or Overtime with no separate "meal" bucket in the totals.
       const mealAlwaysPaid = isMealAlwaysPaidRole(p.role, p.extra_roles);
-      const mealEligible = resolveScheduledShiftHours(p.required_check_in || "", p.required_check_out || "", p.working_hours, p.meal_minutes) > 6;
       const rawByDate = new Map<string, number>();
       for (const day of [...seedDayEntries, ...dayEntries]) {
         if (!day.checkIn || !day.checkOut) continue;
-        const credit = computeMealTimeCredit(day, mealEligible, mealAlwaysPaid);
+        const credit = computeMealTimeCredit(day, mealAlwaysPaid);
         rawByDate.set(day.workDate, (rawByDate.get(day.workDate) ?? 0) + hoursForDay(day) + credit);
       }
       const split =

@@ -12,8 +12,8 @@ import { supabase } from "./client";
 export type SalaryChangeReason = "promotion" | "demotion" | "adjustment" | "initial" | "training_rate";
 export type CompensationType = "hourly" | "fixed";
 
-/** Semi-monthly "1st–15th / 16th–end" cutoffs — 2 per month, 24 per year. Fixed-salary pay per cutoff is always annual / 24, regardless of how many days a given payroll run actually covers — see migration 0118. */
-export const CUTOFFS_PER_YEAR = 24;
+/** Bi-weekly cutoffs — every 2 weeks, 26 per year. Fixed-salary pay per cutoff is always annual / 26, regardless of how many days a given payroll run actually covers — see migration 0118 (originally written assuming semi-monthly/24; the company's actual fixed-salary cadence is bi-weekly). */
+export const CUTOFFS_PER_YEAR = 26;
 export const MONTHS_PER_YEAR = 12;
 
 export interface SalaryEntryRow {
@@ -118,6 +118,18 @@ export async function addSalaryEntry(input: {
   }
 }
 
+/** Remove a rate-change entry outright — for cleaning up a stray duplicate
+ * or a mistaken entry, not a routine edit (editing a day's rate/Add Rate
+ * Change always INSERTS a new row instead of touching an old one — see
+ * entryEffectiveOn's tie-break comment below for why duplicates can happen). */
+export async function deleteSalaryEntry(id: string): Promise<void> {
+  const { error } = await supabase.from("salary_entries").delete().eq("id", id);
+  if (error) {
+    console.error("deleteSalaryEntry error:", error.message);
+    throw new Error(error.message);
+  }
+}
+
 /**
  * The full entry effective on a given date, from a (not-necessarily-sorted)
  * history — null if nothing is effective yet. Use this (rather than
@@ -158,7 +170,7 @@ export function currentRate(history: SalaryEntryRow[]): number {
   return rateEffectiveOn(history, new Date().toISOString().slice(0, 10));
 }
 
-/** Per-cutoff pay for a fixed annual salary — always annual / 24, regardless of the exact period a payroll run covers (see migration 0118's header comment). */
+/** Per-cutoff pay for a fixed annual salary — always annual / 26, regardless of the exact period a payroll run covers (see migration 0118's header comment). */
 export function perCutoffSalary(annualSalary: number): number {
   return annualSalary / CUTOFFS_PER_YEAR;
 }
