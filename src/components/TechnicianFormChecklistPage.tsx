@@ -37,6 +37,7 @@ import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { ChevronLeft, ClipboardCheck, Loader2, ChevronDown, ExternalLink, RefreshCw, Send, Bell, Snowflake, Search, X, PenLine, Filter } from "lucide-react";
 import { useAuth } from "@/lib/auth";
+import { Switch } from "@/components/ui/switch";
 import { ManagerReviewPage, SUPPORTED_TYPES as EMPLOYER_SIGN_SUPPORTED_TYPES } from "@/components/ManagerReviewPage";
 import { getCompanyUsers, getMyProfileId, setProfileFrozen, type ProfileRow } from "@/lib/supabase/users";
 import { isEligibleForTechnicianFormChecklist, isBmAndUpRole, getRoleDepartmentBreakdown } from "@/lib/roleLabels";
@@ -981,18 +982,13 @@ export function TechnicianFormChecklistPage() {
             {tab.label}
           </button>
         ))}
-        <button
-          type="button"
-          onClick={handleToggleLegacyTab}
+        <label
           title="The original 16-form checklist — hidden by default now that Technician/Office/PH paperwork goes through the New/Office/PH Staff tabs instead"
-          className={`ml-auto px-3 py-1.5 rounded-md text-xs font-semibold border transition-colors ${
-            showLegacyTechnicianTab
-              ? "border-primary/50 bg-primary/10 text-foreground"
-              : "border-white/10 text-muted-foreground hover:text-foreground hover:bg-white/5"
-          }`}
+          className="ml-auto flex items-center gap-2 rounded-md border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-semibold text-muted-foreground cursor-pointer"
         >
-          {showLegacyTechnicianTab ? "Hide Legacy Technician Checklist" : "Show Legacy Technician Checklist"}
-        </button>
+          Show Legacy Technician Checklist
+          <Switch checked={showLegacyTechnicianTab} onCheckedChange={handleToggleLegacyTab} />
+        </label>
       </div>
 
       <div className="flex flex-wrap items-center gap-3 mb-6">
