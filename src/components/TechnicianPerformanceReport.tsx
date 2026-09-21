@@ -28,15 +28,15 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { useNavigate } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
 import { Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { ChevronDown, ChevronLeft, Download, RefreshCw } from "lucide-react";
+import { ChevronDown, ChevronLeft, Download, RefreshCw, X } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { BrandedLoader } from "@/components/BrandedLoader";
 import { getCompanyUsers, getEmployeeInfoByProfileIds, type ProfileRow } from "@/lib/supabase/users";
-import { getTechCompletedRepairCounts, getTechCompletedTicketsDaily, getTechRedoTickets } from "@/lib/supabase/techPayroll";
+import { getTechCompletedRepairCounts, getTechCompletedTicketsDaily, getTechRedoTickets, type TechCompletedTicketDaily } from "@/lib/supabase/techPayroll";
 import { getMileageEntries, mileageEffectiveTotal } from "@/lib/supabase/mileage";
 import { getCompanyTimecardEntries, calcWorkedHours, computeMealTimeCredit, startOfWeekSunday, addDaysISO } from "@/lib/supabase/timecards";
 import { getCsrTeamComposition, type CsrTeamComposition } from "@/lib/supabase/csrTeams";
@@ -195,10 +195,11 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
   const [users, setUsers] = useState<ProfileRow[]>([]);
   const [csrComposition, setCsrComposition] = useState<CsrTeamComposition | null>(null);
   const [rows, setRows] = useState<TechPerfRow[]>([]);
-  const [dailyTickets, setDailyTickets] = useState<{ date: string; technician: string }[]>([]);
+  const [dailyTickets, setDailyTickets] = useState<TechCompletedTicketDaily[]>([]);
   const [techDimensionByName, setTechDimensionByName] = useState<Map<string, { location: string; manager: string; tier: string }>>(new Map());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [ticketListFor, setTicketListFor] = useState<{ id: string; name: string } | null>(null);
 
   const [search, setSearch] = useState("");
   const [locationFilter, setLocationFilter] = useState<string[]>([]);
@@ -454,6 +455,17 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
       return entry;
     });
   }, [compareDimension, locationFilter, managerFilter, tierFilter, dailyTickets, techDimensionByName, periodStart, periodEnd]);
+
+  // The actual tickets behind a clicked Total Tickets count — same
+  // name-matched population as ticketsByName in load(), just listed
+  // instead of summed, sorted most-recent first.
+  const ticketListRows = useMemo(() => {
+    if (!ticketListFor) return [];
+    const nameKey = ticketListFor.name.trim().toLowerCase();
+    return dailyTickets
+      .filter((t) => t.technician.trim().toLowerCase() === nameKey)
+      .sort((a, b) => b.date.localeCompare(a.date));
+  }, [ticketListFor, dailyTickets]);
 
   const sortedRows = useMemo(() => {
     const dir = sortDir === "asc" ? 1 : -1;
@@ -763,7 +775,20 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                             <td className="px-3 py-2 text-muted-foreground">{r.tier}</td>
                             <td className="px-3 py-2 text-right">{r.daysWorked}</td>
                             <td className="px-3 py-2 text-right">{fmt1(r.hoursWorked)}</td>
-                            <td className="px-3 py-2 text-right">{r.totalTickets}</td>
+                            <td className="px-3 py-2 text-right">
+                              {r.totalTickets > 0 ? (
+                                <button
+                                  type="button"
+                                  onClick={() => setTicketListFor({ id: r.id, name: r.name })}
+                                  className="text-blue-400 hover:text-blue-300 hover:underline underline-offset-2"
+                                  title="View completed tickets"
+                                >
+                                  {r.totalTickets}
+                                </button>
+                              ) : (
+                                r.totalTickets
+                              )}
+                            </td>
                             <td className="px-3 py-2 text-right">{r.redoCount}</td>
                             <td className={`px-3 py-2 text-right ${r.highRedoAlert ? "text-red-300 font-semibold" : ""}`}>{r.redoRatePct != null ? `${fmt1(r.redoRatePct)}%` : "—"}</td>
                             <td className="px-3 py-2 text-right">{fmt1(r.miles)}</td>
@@ -787,6 +812,55 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
           </div>
         )}
       </main>
+
+      {ticketListFor && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={() => setTicketListFor(null)}>
+          <div
+            className="bg-slate-900 border border-white/15 rounded-xl w-full max-w-lg max-h-[80vh] flex flex-col shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-5 py-4 border-b border-white/10 bg-slate-950 rounded-t-xl">
+              <div>
+                <p className="font-semibold text-white">Completed Tickets — {ticketListFor.name}</p>
+                <p className="text-xs text-slate-400">{periodStart} – {periodEnd} · {ticketListRows.length} ticket{ticketListRows.length === 1 ? "" : "s"}</p>
+              </div>
+              <button onClick={() => setTicketListFor(null)} className="text-white/40 hover:text-white/80 transition">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="overflow-y-auto flex-1 p-2">
+              {ticketListRows.length === 0 ? (
+                <p className="text-sm text-slate-400 text-center py-8">No completed tickets in this period.</p>
+              ) : (
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-xs text-slate-400 uppercase">
+                      <th className="px-3 py-2">Ticket #</th>
+                      <th className="px-3 py-2">Date</th>
+                      <th className="px-3 py-2">Location</th>
+                      <th className="px-3 py-2">Repair Type</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5">
+                    {ticketListRows.map((t) => (
+                      <tr key={t.ticketId} className="hover:bg-white/5">
+                        <td className="px-3 py-2">
+                          <Link to="/ticket/$ticketNo" params={{ ticketNo: t.ticketNo }} target="_blank" rel="noreferrer" className="font-mono text-blue-400 hover:text-blue-300 hover:underline">
+                            {t.ticketNo || t.ticketId.slice(0, 8)}
+                          </Link>
+                        </td>
+                        <td className="px-3 py-2 text-slate-300">{t.date}</td>
+                        <td className="px-3 py-2 text-slate-300">{t.location || "—"}</td>
+                        <td className="px-3 py-2 text-slate-300">{t.repairType}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
