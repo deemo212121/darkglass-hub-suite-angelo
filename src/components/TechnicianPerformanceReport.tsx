@@ -30,13 +30,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
-import { Bar, BarChart, CartesianGrid, Cell, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { ChevronDown, ChevronLeft, Download, RefreshCw } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { BrandedLoader } from "@/components/BrandedLoader";
 import { getCompanyUsers, getEmployeeInfoByProfileIds, type ProfileRow } from "@/lib/supabase/users";
-import { getTechCompletedRepairCounts, getTechRedoTickets } from "@/lib/supabase/techPayroll";
+import { getTechCompletedRepairCounts, getTechCompletedTicketsDaily, getTechRedoTickets } from "@/lib/supabase/techPayroll";
 import { getMileageEntries, mileageEffectiveTotal } from "@/lib/supabase/mileage";
 import { getCompanyTimecardEntries, calcWorkedHours, computeMealTimeCredit, startOfWeekSunday, addDaysISO } from "@/lib/supabase/timecards";
 import { getCsrTeamComposition, type CsrTeamComposition } from "@/lib/supabase/csrTeams";
@@ -193,6 +193,8 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
   const [users, setUsers] = useState<ProfileRow[]>([]);
   const [csrComposition, setCsrComposition] = useState<CsrTeamComposition | null>(null);
   const [rows, setRows] = useState<TechPerfRow[]>([]);
+  const [dailyTickets, setDailyTickets] = useState<{ date: string; technician: string }[]>([]);
+  const [techDimensionByName, setTechDimensionByName] = useState<Map<string, { location: string; manager: string; tier: string }>>(new Map());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -212,19 +214,30 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
     setLoading(true);
     setError(null);
     try {
-      const [allUsers, composition, repairCounts, redoMap, mileageEntries, timecardEntries] = await Promise.all([
+      const [allUsers, composition, repairCounts, redoMap, mileageEntries, timecardEntries, dailyCompleted] = await Promise.all([
         getCompanyUsers(),
         getCsrTeamComposition().catch(() => null),
         getTechCompletedRepairCounts(periodStart, periodEnd),
         getTechRedoTickets(periodStart, periodEnd),
         getMileageEntries(),
         getCompanyTimecardEntries(periodStart, periodEnd),
+        getTechCompletedTicketsDaily(periodStart, periodEnd),
       ]);
       setUsers(allUsers);
       setCsrComposition(composition);
+      setDailyTickets(dailyCompleted);
 
       const techs = allUsers.filter((u) => u.is_active && TECHNICIAN_PAY_ROLES.has(normalizeRole(u.role)));
       const employeeInfoMap = await getEmployeeInfoByProfileIds(techs.map((t) => t.id));
+      const dimensionByName = new Map<string, { location: string; manager: string; tier: string }>();
+      for (const t of techs) {
+        dimensionByName.set((t.display_name || t.email).trim().toLowerCase(), {
+          location: t.assigned_branch || "—",
+          manager: t.manager_name || "—",
+          tier: t.tier_level || "—",
+        });
+      }
+      setTechDimensionByName(dimensionByName);
 
       // Total completed tickets per technician (every repair-type category
       // summed — no Minor/Major split, see this file's header comment).
@@ -368,6 +381,39 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
       };
     });
   }, [compareDimension, locationFilter, managerFilter, tierFilter, filteredRows]);
+
+  // Day-by-day Total Tickets per selected value, for the Compare line
+  // chart — same completed-ticket population as the aggregate table
+  // above (getTechCompletedTicketsDaily excludes redo/on-hold the same
+  // way getTechCompletedRepairCounts does), just bucketed per day instead
+  // of summed over the whole period.
+  const compareTimeSeries = useMemo(() => {
+    if (!compareDimension) return [];
+    const selected = compareDimension === "location" ? locationFilter : compareDimension === "manager" ? managerFilter : tierFilter;
+    if (selected.length === 0) return [];
+    const selectedSet = new Set(selected);
+
+    const dates: string[] = [];
+    for (let d = periodStart; d <= periodEnd; d = addDaysISO(d, 1)) dates.push(d);
+
+    const byDate = new Map<string, Map<string, number>>();
+    for (const t of dailyTickets) {
+      if (t.date < periodStart || t.date > periodEnd) continue;
+      const info = techDimensionByName.get(t.technician.trim().toLowerCase());
+      const groupValue = info?.[compareDimension];
+      if (!groupValue || !selectedSet.has(groupValue)) continue;
+      if (!byDate.has(t.date)) byDate.set(t.date, new Map());
+      const m = byDate.get(t.date)!;
+      m.set(groupValue, (m.get(groupValue) ?? 0) + 1);
+    }
+
+    return dates.map((date) => {
+      const entry: Record<string, string | number> = { date: `${date.slice(5, 7)}/${date.slice(8, 10)}` };
+      const m = byDate.get(date);
+      for (const g of selected) entry[g] = m?.get(g) ?? 0;
+      return entry;
+    });
+  }, [compareDimension, locationFilter, managerFilter, tierFilter, dailyTickets, techDimensionByName, periodStart, periodEnd]);
 
   const sortedRows = useMemo(() => {
     const dir = sortDir === "asc" ? 1 : -1;
@@ -520,19 +566,35 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                   Compare by {compareDimension === "location" ? "Location" : compareDimension === "manager" ? "Manager" : "Tier"}
                 </p>
                 <p className="text-[10px] text-muted-foreground mb-4">
-                  {compareGroups.length} selected — combined totals shown in the table below, side by side here.
+                  {compareGroups.length} selected — Total Tickets per day, color-coded per {compareDimension}. Period totals are in the table below.
                 </p>
-                <ResponsiveContainer width="100%" height={220} debounce={200}>
-                  <BarChart data={compareGroups} margin={{ left: -10 }}>
+                <ResponsiveContainer width="100%" height={260} debounce={200}>
+                  <LineChart data={compareTimeSeries} margin={{ left: -10, right: 12 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.15)" vertical={false} />
-                    <XAxis dataKey="value" tick={{ fill: "#94a3b8", fontSize: 11 }} />
+                    <XAxis
+                      dataKey="date"
+                      tick={{ fill: "#94a3b8", fontSize: 9 }}
+                      angle={compareTimeSeries.length > 10 ? -35 : 0}
+                      textAnchor={compareTimeSeries.length > 10 ? "end" : "middle"}
+                      height={compareTimeSeries.length > 10 ? 45 : 24}
+                      interval={compareTimeSeries.length > 20 ? Math.ceil(compareTimeSeries.length / 15) : 0}
+                    />
                     <YAxis tick={{ fill: "#94a3b8", fontSize: 11 }} allowDecimals={false} />
-                    <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: "rgba(148,163,184,0.1)" }} />
+                    <Tooltip contentStyle={TOOLTIP_STYLE} />
                     <Legend wrapperStyle={{ fontSize: 11 }} />
-                    <Bar dataKey="totalTickets" name="Total Tickets" radius={[4, 4, 0, 0]}>
-                      {compareGroups.map((_, i) => <Cell key={i} fill={COMPARE_BAR_FILLS[i % COMPARE_BAR_FILLS.length]} />)}
-                    </Bar>
-                  </BarChart>
+                    {compareGroups.map((g, i) => (
+                      <Line
+                        key={g.value}
+                        type="monotone"
+                        dataKey={g.value}
+                        name={g.value}
+                        stroke={COMPARE_BAR_FILLS[i % COMPARE_BAR_FILLS.length]}
+                        strokeWidth={2}
+                        dot={{ r: 2.5 }}
+                        activeDot={{ r: 4.5 }}
+                      />
+                    ))}
+                  </LineChart>
                 </ResponsiveContainer>
                 <div className="overflow-x-auto mt-4">
                   <table className="w-full text-sm">

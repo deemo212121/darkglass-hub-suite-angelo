@@ -206,6 +206,8 @@ interface TechCompletedCandidate {
   redo: boolean;
   /** On hold for payroll via the Mileage tab (mileage_entries.payroll_excluded, migration 0144/0148) — manual or the automatic "no photos yet" rule. */
   onHold: boolean;
+  /** tickets.schedule_date ("YYYY-MM-DD") — the day the work actually happened, see this interface's doc comment below. */
+  scheduleDate: string;
 }
 
 /**
@@ -241,7 +243,7 @@ async function getTechCompletedCandidates(startDate: string, endDate: string): P
   for (let from = 0; ; from += PAGE_SIZE) {
     const { data: page, error } = await supabase
       .from("tickets")
-      .select("id, ticket_no, technician, location, redo, status")
+      .select("id, ticket_no, technician, location, redo, status, schedule_date")
       .gte("schedule_date", startDate)
       .lte("schedule_date", endDate)
       .not("technician", "is", null)
@@ -289,6 +291,7 @@ async function getTechCompletedCandidates(startDate: string, endDate: string): P
     location: t.location || "",
     redo: !!t.redo,
     onHold: excludedTicketIds.has(t.id),
+    scheduleDate: t.schedule_date || "",
   }));
 }
 
@@ -444,6 +447,24 @@ export async function getTechRedoTickets(startDate: string, endDate: string): Pr
 export async function getTechOnHoldTickets(startDate: string, endDate: string): Promise<Map<string, TechRedoTicket[]>> {
   const candidates = await getTechCompletedCandidates(startDate, endDate);
   return groupExcludedTickets(candidates, (c) => !c.redo && c.onHold);
+}
+
+/** One completed, pay-eligible ticket, dated — the same population
+ *  getTechCompletedRepairCounts sums into Total Completed Tickets, just
+ *  broken out per day instead of aggregated over the whole period, for
+ *  building a day-by-day trend line (e.g. Technician Performance
+ *  Report's branch/manager/tier comparison chart). */
+export interface TechCompletedTicketDaily {
+  date: string;
+  technician: string;
+  location: string;
+}
+
+export async function getTechCompletedTicketsDaily(startDate: string, endDate: string): Promise<TechCompletedTicketDaily[]> {
+  const candidates = await getTechCompletedCandidates(startDate, endDate);
+  return candidates
+    .filter((c) => !c.redo && !c.onHold && c.scheduleDate)
+    .map((c) => ({ date: c.scheduleDate, technician: c.technician, location: c.location }));
 }
 
 /** Shared grouping/dedup for getTechRedoTickets / getTechOnHoldTickets — one entry per (technician, ticket), keyed by lowercased technician name. */
