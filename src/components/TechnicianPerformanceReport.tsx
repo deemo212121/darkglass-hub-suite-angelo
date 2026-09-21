@@ -257,15 +257,24 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
 
       // Mileage: one effective total per distinct (technician, work_date) —
       // several entries can share one day's total (one row per ticket that
-      // day), same dedup rule as Tech Activity Report's mileage panel.
+      // day). Matched exactly to AccountingDashboard's real Tech Activity
+      // Report modal, which builds a Map<work_date, mileageEffectiveTotal>
+      // and calls .set() on every matching entry in query order
+      // (work_date desc, id asc) — so for a day with several entries, the
+      // LAST one (highest id / most recently created — e.g. a correction
+      // row) wins, not the first. This report used to keep the FIRST
+      // entry seen per day and skip the rest, which silently picked a
+      // stale total whenever a day's entries didn't all agree — caught by
+      // comparing Chris Simpson's Miles (1,445.8 here) against Accounting's
+      // Mileage (1,683.6) for the identical technician/branch/date range.
       //
       // Also scoped to each technician's OWN assigned branch, matching how
-      // AccountingDashboard's real Tech Activity Report pulls mileage —
-      // getMileageEntries(branch) there filters server-side to the branch
-      // that payroll run is open for. Without this, a tech with a stray
-      // mileage_entries row tagged to a different branch (data entry slip,
-      // or a genuine one-off cross-branch job) shows MORE total miles here
-      // than what payroll actually counted/paid for them.
+      // the same modal pulls mileage — getMileageEntries(branch) there
+      // filters server-side to the branch that payroll run is open for.
+      // Without this, a tech with a stray mileage_entries row tagged to a
+      // different branch (data entry slip, or a genuine one-off
+      // cross-branch job) shows MORE total miles here than what payroll
+      // actually counted/paid for them.
       const branchByProfile = new Map<string, string>();
       const branchByName = new Map<string, string>();
       for (const t of techs) {
@@ -274,23 +283,27 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
         branchByName.set((t.display_name || t.email).trim().toLowerCase(), t.assigned_branch);
       }
 
-      const milesByProfile = new Map<string, number>();
-      const milesByName = new Map<string, number>();
-      const seenDayKeys = new Set<string>();
+      const dayTotalsByProfile = new Map<string, Map<string, number>>();
+      const dayTotalsByName = new Map<string, Map<string, number>>();
       for (const e of mileageEntries) {
         if (e.deletedAt) continue;
         if (e.workDate < periodStart || e.workDate > periodEnd) continue;
         const nameKey = (e.technicianName || "").trim().toLowerCase();
         const techBranch = e.profileId ? branchByProfile.get(e.profileId) : branchByName.get(nameKey);
         if (techBranch && e.branch !== techBranch) continue;
-        const identity = e.profileId ?? `name:${nameKey}`;
-        const dayKey = `${identity}|${e.workDate}`;
-        if (seenDayKeys.has(dayKey)) continue;
-        seenDayKeys.add(dayKey);
         const miles = mileageEffectiveTotal(e);
-        if (e.profileId) milesByProfile.set(e.profileId, (milesByProfile.get(e.profileId) ?? 0) + miles);
-        else milesByName.set(nameKey, (milesByName.get(nameKey) ?? 0) + miles);
+        if (e.profileId) {
+          if (!dayTotalsByProfile.has(e.profileId)) dayTotalsByProfile.set(e.profileId, new Map());
+          dayTotalsByProfile.get(e.profileId)!.set(e.workDate, miles);
+        } else {
+          if (!dayTotalsByName.has(nameKey)) dayTotalsByName.set(nameKey, new Map());
+          dayTotalsByName.get(nameKey)!.set(e.workDate, miles);
+        }
       }
+      const milesByProfile = new Map<string, number>();
+      for (const [id, days] of dayTotalsByProfile) milesByProfile.set(id, Array.from(days.values()).reduce((s, m) => s + m, 0));
+      const milesByName = new Map<string, number>();
+      for (const [name, days] of dayTotalsByName) milesByName.set(name, Array.from(days.values()).reduce((s, m) => s + m, 0));
 
       // Hours + distinct days worked per technician, from raw punches —
       // same calcWorkedHours + paid-meal-credit combination used
