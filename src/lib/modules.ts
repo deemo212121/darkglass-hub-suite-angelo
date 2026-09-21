@@ -309,6 +309,14 @@ const csrMod: ModuleDef = {
       seed: () => ({}),
     },
     {
+      slug: "self-service",
+      title: "CSR Self Service",
+      description: "Tally your own GH/Schedule/Attempt/Update for the day.",
+      custom: "csr-self-service-tally" as any,
+      fields: [],
+      seed: () => ({}),
+    },
+    {
       slug: "csr-daily-report",
       title: "CSR Daily Report",
       description: "CSR agent performance — tasks, schedule, attempts, mistakes.",
@@ -1083,6 +1091,14 @@ const claimsMod: ModuleDef = {
   tagline: "Claims pipeline and approvals",
   accent: "#f59e0b",
   submodules: [
+    {
+      slug: "claims-daily-report",
+      title: "Claims Daily Report",
+      description: "Daily brand claim counts, staff roster, and Pre-Authorization/Back Orders/Data-Closed tracking.",
+      custom: "claims-daily-report" as any,
+      fields: [],
+      seed: () => ({}),
+    },
     {
       slug: "need-claim-list",
       title: "Need Claim List",

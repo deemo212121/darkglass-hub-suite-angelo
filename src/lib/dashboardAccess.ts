@@ -41,6 +41,9 @@ export const DASHBOARD_ROLE_GATES: Record<string, string[]> = {
   "csr-dashboard": ["ADMIN", "CSR_MANAGER", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER", "CSR_AGENT", "CSR_TEAM_LEADER"],
   // Same CSR-wide audience — every CSR role fills this in daily.
   "daily-report": ["ADMIN", "CSR_MANAGER", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER", "CSR_AGENT", "CSR_TEAM_LEADER"],
+  // Self-entry counterpart to "daily-report" above — same audience, since
+  // it just tallies into the same row a lead could otherwise type in.
+  "self-service": ["ADMIN", "CSR_MANAGER", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER", "CSR_AGENT", "CSR_TEAM_LEADER"],
   "hr-dashboard": ["ADMIN", "HR"],
   // HR module's Paperworks page (custom: "hr-paperworks") — the Automated
   // Forms group that used to live inside hr-dashboard's own sidebar. Same

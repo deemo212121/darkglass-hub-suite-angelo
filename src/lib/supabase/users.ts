@@ -731,6 +731,30 @@ export async function getEmployeeInfoByProfileIds(profileIds: string[]): Promise
   return out;
 }
 
+/**
+ * Bulk-load Master List's "Total Work Hours" (profiles.working_hours) for a
+ * set of profiles in one query — same field ReportHRDaily.tsx's Master List
+ * tab edits directly, kept in sync so any page that just needs to DISPLAY
+ * it (rather than edit it) never has to duplicate that resolution logic.
+ */
+export async function getWorkingHoursByProfileIds(profileIds: string[]): Promise<Map<string, number | null>> {
+  const out = new Map<string, number | null>();
+  const uniq = Array.from(new Set(profileIds.filter(Boolean)));
+  if (uniq.length === 0) return out;
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("id, working_hours")
+    .in("id", uniq);
+  if (error) {
+    console.error("getWorkingHoursByProfileIds error:", error.message);
+    return out;
+  }
+  for (const row of data ?? []) {
+    out.set((row as any).id, (row as any).working_hours ?? null);
+  }
+  return out;
+}
+
 /** Save the employee_info JSON for a profile (by profile id). */
 export async function saveProfileEmployeeInfo(profileId: string, info: EmployeeInfo): Promise<void> {
   // .select("id") so an RLS-blocked update (returns { error: null }, 0 rows
