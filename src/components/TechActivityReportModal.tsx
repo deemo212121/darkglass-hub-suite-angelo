@@ -98,7 +98,7 @@ export function TechActivityReportModal({
   onSetHourlyOtMode,
   hourlyOtModeBusy,
 }: Props) {
-  const { employee, techManual, techCategoryCounts, techCarryover, ticketsAssigned, ticketsCompleted, workingDays, twoTechCount, hoursWorked, overtimeHours, hourlyRate, techHourlyPay, techHourlyPayStraight, techHourlyPayOtPremium, techWeightedRegularRate, techGuaranteedSalaryTarget, techHolidayPremium, techIncludablePay } = row;
+  const { employee, techManual, techCategoryCounts, techCarryover, ticketsAssigned, ticketsCompleted, workingDays, twoTechCount, hoursWorked, overtimeHours, hourlyRate, techHourlyPay, techHourlyPayStraight, techHourlyPayOtPremium, techWeightedRegularRate, techGuaranteedSalaryTarget, techHolidayPremium, techTraineeMatch, techIncludablePay } = row;
   const branch = employee.assigned_branch || "";
 
   // Live Company-vs-State comparison for the Hourly Pay figure — fetched
@@ -424,7 +424,7 @@ export function TechActivityReportModal({
   const subtotal =
     categoryPayments.reduce((s, c) => s + c.payment, 0) +
     techManual.mileagePay + techManual.trainingPay +
-    twoTechPayment + completedTicketsPayment + redoReductionPayment + customLinesTotal + carryoverTotal + row.techHourlyPay + techGuaranteedSalaryMatch + techHolidayPremium;
+    twoTechPayment + completedTicketsPayment + redoReductionPayment + customLinesTotal + carryoverTotal + row.techHourlyPay + techGuaranteedSalaryMatch + techHolidayPremium + techTraineeMatch;
   const owIncentivePay = (techManual.owIncentivePct / 100) * subtotal;
   const totalPayment = subtotal + owIncentivePay;
 
@@ -574,6 +574,14 @@ export function TechActivityReportModal({
                       <td className="px-3 py-2 text-right text-slate-300">—</td>
                       <td className="px-3 py-2 text-right text-slate-300">×0.5</td>
                       <td className="px-3 py-2 text-right text-slate-200">{fmt(techHolidayPremium)}</td>
+                    </tr>
+                  )}
+                  {techTraineeMatch > 0.005 && (
+                    <tr title="Trainee daily $100 guarantee: any day within this technician's trainee window (hireDate through Training End Date) whose actual pay fell short of $100 is topped up to $100. A day that already earned $100+ keeps its full actual pay -- this is a floor, not a flat replacement.">
+                      <td className="px-3 py-2 text-slate-300">Trainee Daily Match</td>
+                      <td className="px-3 py-2 text-right text-slate-300">—</td>
+                      <td className="px-3 py-2 text-right text-slate-300">$100/day</td>
+                      <td className="px-3 py-2 text-right text-slate-200">{fmt(techTraineeMatch)}</td>
                     </tr>
                   )}
 

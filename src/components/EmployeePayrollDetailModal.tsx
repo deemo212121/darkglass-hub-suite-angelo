@@ -13,6 +13,7 @@ import { getTicketAttendanceForTechnician, slotSortKey, type TicketAttendanceRow
 import { getCompanyEmployeeRequests } from "@/lib/supabase/employeeRequests";
 import { getVisitDiagnosisByTicketIds } from "@/lib/supabase/tickets";
 import { getMileageEntries, setMileageEstimateTime, setMileageLegMileage, type MileageEntry } from "@/lib/supabase/mileage";
+import { updateCompanyUser } from "@/lib/supabase/users";
 import { STATE_MIN_WAGE_2026, normalizeStateName, highestRateAmong, FEDERAL_MIN_WAGE } from "@/lib/stateMinWage";
 import {
   getSalaryHistory,
@@ -37,6 +38,15 @@ interface Props {
   extraRoles?: string[] | null;
   /** profiles.tier_level (migration 0162) — same field Master List's "Current Technicians" tab and Staff List's "Tier Level" tab edit. Shown in the Current Rate tile; "Unassigned" when blank. */
   tierLevel?: string | null;
+  /** profiles.training_end_date (migration 0297) — the trainee daily $100
+   *  guarantee applies to every day from this employee's hireDate through
+   *  this date, inclusive. Editable here, next to Salary History. */
+  trainingEndDate?: string | null;
+  /** profiles.employee_info.hireDate — the trainee window's start (see
+   *  trainingEndDate above). Only used to badge Attendance rows; omitting it
+   *  just means the badge shows for every day up to trainingEndDate instead
+   *  of being bounded below by hire date. */
+  hireDate?: string | null;
   requiredCheckIn?: string;
   requiredCheckOut?: string;
   workingHours?: number | null;
@@ -180,6 +190,8 @@ export function EmployeePayrollDetailModal({
   role,
   extraRoles,
   tierLevel,
+  trainingEndDate,
+  hireDate,
   requiredCheckIn,
   requiredCheckOut,
   workingHours,
@@ -269,6 +281,15 @@ export function EmployeePayrollDetailModal({
   // behind a "Done"/"Save" button like Rate or the punch edits above.
   const [stateEdits, setStateEdits] = useState<Record<string, string>>({});
   const [savingStateFor, setSavingStateFor] = useState<string | null>(null);
+  // Trainee daily $100 guarantee window — see traineeDailyMatchFor in
+  // AccountingDashboard.tsx. Local input synced from the trainingEndDate
+  // prop; re-syncs whenever the caller re-fetches with a fresh value (e.g.
+  // after this same edit round-trips through onRateChanged).
+  const [trainingEndDateInput, setTrainingEndDateInput] = useState(trainingEndDate ?? "");
+  const [savingTrainingEndDate, setSavingTrainingEndDate] = useState(false);
+  useEffect(() => {
+    setTrainingEndDateInput(trainingEndDate ?? "");
+  }, [trainingEndDate]);
   // Calculated = company rate as-is. Compliant = the higher of company rate
   // vs. that day's assigned state's minimum wage — not an equally-valid
   // alternative view, but the legally required number whenever a day's
@@ -1070,6 +1091,30 @@ export function EmployeePayrollDetailModal({
     }
   };
 
+  // Trainee daily $100 guarantee window (migration 0297) — saves immediately
+  // like State above, not staged behind a form. Same debounced onRateChanged
+  // as handleStateChange, sharing the same timer ref: whichever one fires
+  // last wins, so editing both in quick succession still only reloads the
+  // dashboard once.
+  const handleTrainingEndDateChange = async (value: string) => {
+    const prev = trainingEndDateInput;
+    setTrainingEndDateInput(value);
+    setSavingTrainingEndDate(true);
+    try {
+      await updateCompanyUser(profileId, { trainingEndDate: value || null });
+      if (rateChangedDebounceRef.current) clearTimeout(rateChangedDebounceRef.current);
+      rateChangedDebounceRef.current = setTimeout(() => {
+        rateChangedDebounceRef.current = null;
+        onRateChanged?.();
+      }, 800);
+    } catch (err) {
+      alert(`Failed to save Training End Date: ${err instanceof Error ? err.message : "Unknown error"}`);
+      setTrainingEndDateInput(prev);
+    } finally {
+      setSavingTrainingEndDate(false);
+    }
+  };
+
   return (
     <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={onClose}>
       <div
@@ -1303,6 +1348,39 @@ export function EmployeePayrollDetailModal({
                 </tbody>
               </table>
             )}
+          </div>
+
+          {/* Trainee daily $100 guarantee window */}
+          <div className="bg-slate-800/30 border border-white/10 rounded-lg p-4">
+            <h3 className="text-sm font-semibold text-white mb-2">Trainee Status</h3>
+            <div className="flex items-end gap-3 flex-wrap">
+              <div>
+                <label className="block text-[10px] text-slate-400 uppercase mb-1">Training End Date</label>
+                <input
+                  type="date"
+                  value={trainingEndDateInput}
+                  disabled={savingTrainingEndDate}
+                  onChange={(e) => handleTrainingEndDateChange(e.target.value)}
+                  title="The $100/day guarantee applies to every day from this employee's hire date through this date, inclusive. A day already earning $100+ keeps its full pay — this only tops up days that fall short."
+                  className="bg-slate-800 border border-white/10 rounded px-2 py-1 text-sm text-white disabled:opacity-50"
+                />
+              </div>
+              {trainingEndDateInput && (
+                <button
+                  onClick={() => handleTrainingEndDateChange("")}
+                  disabled={savingTrainingEndDate}
+                  className="text-xs text-slate-400 hover:text-red-400 disabled:opacity-50"
+                >
+                  Clear
+                </button>
+              )}
+              {savingTrainingEndDate && <Loader2 className="h-3 w-3 animate-spin text-slate-400" />}
+            </div>
+            <p className="text-xs text-slate-400 mt-2">
+              {trainingEndDateInput
+                ? `Days through ${trainingEndDateInput} are topped up to $100 if actual pay falls short that day; days after this date are paid normally.`
+                : "No trainee window set — the $100/day guarantee won't apply to any day this period."}
+            </p>
           </div>
 
           {/* Weekly breakdown + unassigned-state flag */}
@@ -1634,6 +1712,14 @@ export function EmployeePayrollDetailModal({
                               ))}
                             </select>
                             {savingStateFor === row.date && <Loader2 className="inline-block h-3 w-3 ml-1 animate-spin text-slate-400" />}
+                            {trainingEndDateInput && row.date <= trainingEndDateInput && (!hireDate || row.date >= hireDate) && (
+                              <span
+                                title={`Trainee day — the $100/day guarantee applies (through ${trainingEndDateInput}).`}
+                                className="inline-flex items-center gap-0.5 ml-1 px-1 py-0.5 rounded bg-sky-500/20 text-sky-300 text-[10px] font-semibold align-middle"
+                              >
+                                Trainee
+                              </span>
+                            )}
                             {dayPay?.isMatched && (
                               <span
                                 title={`State minimum wage ($${dayPay.effectiveRate.toFixed(2)}/hr) is higher than the company rate ($${dayPay.companyRate.toFixed(2)}/hr) — pay must be matched up to it for this day.`}

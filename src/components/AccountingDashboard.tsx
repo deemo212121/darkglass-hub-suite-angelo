@@ -193,6 +193,13 @@ export interface SupabaseEmployee {
    *  Technicians" tab and Staff List's own "Tier Level" tab edit; shown here
    *  as a yellow badge beside Role. */
   tierLevel: string | null;
+  /** profiles.training_end_date (migration 0297) — the trainee daily $100
+   *  guarantee applies to every day from this employee's hireDate through
+   *  this date, inclusive. Null means no trainee window is set. Distinct
+   *  from isTrainee, which is a single permanent flag with no date range —
+   *  this lets someone who graduated mid-period keep the guarantee for
+   *  their trainee days without it bleeding into days after graduation. */
+  trainingEndDate: string | null;
 }
 
 interface SalaryEntry {
@@ -346,6 +353,11 @@ export interface EmployeePayrollRow {
    * grossPay, kept separate for display. 0 when nobody worked a holiday
    * this period, or for Office/fixed-salary rows. */
   techHolidayPremium: number;
+  /** Trainee daily $100 guarantee shortfall (see traineeDailyMatchFor) —
+   * already folded into grossPay, kept separate for display. 0 outside the
+   * employee's hireDate..trainingEndDate window, or when trainingEndDate
+   * isn't set. */
+  techTraineeMatch: number;
   /**
    * This period's includable incentive/bonus pay (piece-rate, carryover,
    * Training, Two Tech, Completed Tickets, commission-style custom
@@ -1494,7 +1506,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
           for (let from = 0; ; from += PAGE_SIZE) {
             const { data, error } = await supabase
               .from("profiles")
-              .select("id,display_name,username,role,extra_roles,assigned_branch,email,off_days,required_check_in,required_check_out,payroll_excluded,is_active,schedule_timezone,employment_type,tier_level")
+              .select("id,display_name,username,role,extra_roles,assigned_branch,email,off_days,required_check_in,required_check_out,payroll_excluded,is_active,schedule_timezone,employment_type,tier_level,training_end_date")
               .neq("role", "SUPERSUPERADMIN")
               .range(from, from + PAGE_SIZE - 1);
             if (error) return { data: null, error };
@@ -1613,6 +1625,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         isActive: p.is_active ?? true,
         isTrainee: p.employment_type === "trainee",
         tierLevel: p.tier_level ?? null,
+        trainingEndDate: p.training_end_date ?? null,
         };
       }) as SupabaseEmployee[]);
       setSalaryEntries((salRes.data ?? []) as SalaryEntry[]);
@@ -2121,6 +2134,37 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     return premium;
   }
 
+  // Trainee daily $100 guarantee (migration 0297, profiles.training_end_date):
+  // every day from hireDate through trainingEndDate (inclusive) is a trainee
+  // day. If that day's actual company pay (straight + 1.5x OT, same simple
+  // per-day convention as the reference payroll workbook) falls short of
+  // $100, the shortfall is topped up — a floor, not a flat replacement, so a
+  // trainee who has a big day and already clears $100 keeps the full amount
+  // rather than being clawed back to $100 (see Bryson Baize conversation).
+  const TRAINEE_DAILY_MATCH_TARGET = 100;
+  function traineeDailyMatchFor(
+    profileId: string,
+    dailyHours: DailyHours[] | undefined,
+    fallbackRate: number,
+    hireDate: string | null,
+    trainingEndDate: string | null
+  ): number {
+    if (!dailyHours || !trainingEndDate) return 0;
+    let match = 0;
+    for (const day of dailyHours) {
+      if (hireDate && day.date < hireDate) continue;
+      if (day.date > trainingEndDate) continue;
+      const dayHours = day.regular + day.overtime;
+      if (dayHours <= 0) continue;
+      const rate = hourlyRateOnDate(profileId, day.date, fallbackRate);
+      const actualDailyPay = day.regular * rate + day.overtime * rate * 1.5;
+      if (actualDailyPay < TRAINEE_DAILY_MATCH_TARGET) {
+        match += TRAINEE_DAILY_MATCH_TARGET - actualDailyPay;
+      }
+    }
+    return match;
+  }
+
   // Technicians are paid per completed repair ticket (Tech Payroll) instead
   // of hourly-or-fixed — any field-technician tier (TECHNICIAN,
   // TECHNICIAN_MANAGER, TECHNICAL_DIRECTOR, TECHNICAL_ASSISTANT_DIRECTOR —
@@ -2474,6 +2518,15 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     // weighted rate (the reference payroll workbook computes this as its
     // own separate Step 6, independent of the Step 4 weighted-rate calc).
     const techHolidayPremium = includeTech && isTechRole(emp) ? holidayPremiumFor(emp.id, dailyHoursByEmployeeId.get(emp.id), hourlyRate) : 0;
+    const techTraineeMatch = includeTech && isTechRole(emp)
+      ? traineeDailyMatchFor(
+          emp.id,
+          dailyHoursByEmployeeId.get(emp.id),
+          hourlyRate,
+          employeeInfoByProfileId.get(emp.id)?.hireDate ?? null,
+          emp.trainingEndDate
+        )
+      : 0;
     // Guaranteed-minimum-salary match: some technicians have a fixed
     // annual salary on file (see latestFixedSalaryByProfile) that acts as
     // an ongoing floor under their hourly + incentive pay even while a
@@ -2518,7 +2571,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     // Training, a custom line, or an approved Payroll Dispute; the old
     // `tech ? ... : 0` gate silently dropped all of that to $0 for them.
     const techGrossPay = includeTech
-      ? (tech?.grossPay ?? 0) + (carryover?.grossPay ?? 0) + manualTotal + twoTechPay + completedTicketsPay + customPay + techHourlyPay + techGuaranteedSalaryMatch + techHolidayPremium
+      ? (tech?.grossPay ?? 0) + (carryover?.grossPay ?? 0) + manualTotal + twoTechPay + completedTicketsPay + customPay + techHourlyPay + techGuaranteedSalaryMatch + techHolidayPremium + techTraineeMatch
       : 0;
 
     const techRow: EmployeePayrollRow | null =
@@ -2560,6 +2613,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
             techGuaranteedSalaryTarget,
             techGuaranteedSalaryMatch,
             techHolidayPremium,
+            techTraineeMatch,
             techIncludablePay,
             dutyHours,
             grossPay: techGrossPay,
@@ -2603,6 +2657,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       techGuaranteedSalaryTarget: 0,
       techGuaranteedSalaryMatch: 0,
       techHolidayPremium: 0,
+      techTraineeMatch: 0,
       techIncludablePay: 0,
       dutyHours,
       grossPay: officeGrossPay,
@@ -5796,6 +5851,8 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
           role={detailEmployee.role}
           extraRoles={detailEmployee.extraRoles}
           tierLevel={detailEmployee.tierLevel}
+          trainingEndDate={detailEmployee.trainingEndDate}
+          hireDate={employeeInfoByProfileId.get(detailEmployee.id)?.hireDate || null}
           requiredCheckIn={detailEmployee.requiredCheckIn}
           requiredCheckOut={detailEmployee.requiredCheckOut}
           workingHours={detailEmployee.workingHours}
