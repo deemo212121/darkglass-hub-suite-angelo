@@ -176,6 +176,21 @@ interface TechPerfRow {
   lowUtilizationAlert: boolean;
 }
 
+/** One day's mileage_entries dedup result behind a technician's Miles
+ *  figure — see the Mileage breakdown popup and this file's load()
+ *  comment on the branch-scoping/last-entry-wins fixes this backs. */
+interface MileageDayDetail {
+  techKey: string;
+  isProfileId: boolean;
+  date: string;
+  miles: number;
+  branch: string;
+  /** Non-deleted entries this day whose branch matched the technician's own and contributed to (or overwrote) `miles`. */
+  entryCount: number;
+  /** Non-deleted entries this day tagged to a DIFFERENT branch than the technician's own — seen, but excluded from `miles`. */
+  excludedEntryCount: number;
+}
+
 function initialsFor(name: string): string {
   const parts = name.trim().split(/\s+/).filter(Boolean);
   if (parts.length === 0) return "?";
@@ -205,10 +220,12 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
   const [csrComposition, setCsrComposition] = useState<CsrTeamComposition | null>(null);
   const [rows, setRows] = useState<TechPerfRow[]>([]);
   const [dailyTickets, setDailyTickets] = useState<TechCompletedTicketDaily[]>([]);
+  const [mileageDaily, setMileageDaily] = useState<MileageDayDetail[]>([]);
   const [techDimensionByName, setTechDimensionByName] = useState<Map<string, { location: string; manager: string; tier: string }>>(new Map());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [ticketListFor, setTicketListFor] = useState<{ id: string; name: string } | null>(null);
+  const [mileageListFor, setMileageListFor] = useState<{ id: string; name: string } | null>(null);
 
   const [search, setSearch] = useState("");
   const [locationFilter, setLocationFilter] = useState<string[]>([]);
@@ -294,27 +311,48 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
         branchByName.set((t.display_name || t.email).trim().toLowerCase(), t.assigned_branch);
       }
 
-      const dayTotalsByProfile = new Map<string, Map<string, number>>();
-      const dayTotalsByName = new Map<string, Map<string, number>>();
+      // Also kept as a flat day-by-day breakdown (mileageDaily state) so a
+      // clicked Miles number can show exactly which days/entries it's
+      // built from — same transparency purpose as the Total Tickets
+      // popup, and how the branch/dedup fixes above were actually caught
+      // and verified in the first place.
+      const dayTotalsByProfile = new Map<string, Map<string, { miles: number; branch: string; entryCount: number; excludedEntryCount: number }>>();
+      const dayTotalsByName = new Map<string, Map<string, { miles: number; branch: string; entryCount: number; excludedEntryCount: number }>>();
       for (const e of mileageEntries) {
         if (e.deletedAt) continue;
         if (e.workDate < periodStart || e.workDate > periodEnd) continue;
         const nameKey = (e.technicianName || "").trim().toLowerCase();
         const techBranch = e.profileId ? branchByProfile.get(e.profileId) : branchByName.get(nameKey);
-        if (techBranch && e.branch !== techBranch) continue;
-        const miles = mileageEffectiveTotal(e);
-        if (e.profileId) {
-          if (!dayTotalsByProfile.has(e.profileId)) dayTotalsByProfile.set(e.profileId, new Map());
-          dayTotalsByProfile.get(e.profileId)!.set(e.workDate, miles);
-        } else {
-          if (!dayTotalsByName.has(nameKey)) dayTotalsByName.set(nameKey, new Map());
-          dayTotalsByName.get(nameKey)!.set(e.workDate, miles);
+        const byMap = e.profileId ? dayTotalsByProfile : dayTotalsByName;
+        const identity = e.profileId ?? nameKey;
+        if (!byMap.has(identity)) byMap.set(identity, new Map());
+        const days = byMap.get(identity)!;
+        if (techBranch && e.branch !== techBranch) {
+          // Doesn't count toward the total, but tracked so the breakdown
+          // popup can show it was seen and excluded (which branch it was
+          // tagged to), instead of just silently vanishing.
+          const prev = days.get(e.workDate);
+          days.set(e.workDate, prev ?? { miles: 0, branch: "", entryCount: 0, excludedEntryCount: 0 });
+          days.get(e.workDate)!.excludedEntryCount += 1;
+          continue;
         }
+        const miles = mileageEffectiveTotal(e);
+        const prev = days.get(e.workDate);
+        days.set(e.workDate, { miles, branch: e.branch, entryCount: (prev?.entryCount ?? 0) + 1, excludedEntryCount: prev?.excludedEntryCount ?? 0 });
       }
       const milesByProfile = new Map<string, number>();
-      for (const [id, days] of dayTotalsByProfile) milesByProfile.set(id, Array.from(days.values()).reduce((s, m) => s + m, 0));
+      for (const [id, days] of dayTotalsByProfile) milesByProfile.set(id, Array.from(days.values()).reduce((s, d) => s + d.miles, 0));
       const milesByName = new Map<string, number>();
-      for (const [name, days] of dayTotalsByName) milesByName.set(name, Array.from(days.values()).reduce((s, m) => s + m, 0));
+      for (const [name, days] of dayTotalsByName) milesByName.set(name, Array.from(days.values()).reduce((s, d) => s + d.miles, 0));
+
+      const mileageDailyFlat: MileageDayDetail[] = [];
+      for (const [id, days] of dayTotalsByProfile) {
+        for (const [date, d] of days) mileageDailyFlat.push({ techKey: id, isProfileId: true, date, miles: d.miles, branch: d.branch, entryCount: d.entryCount, excludedEntryCount: d.excludedEntryCount });
+      }
+      for (const [name, days] of dayTotalsByName) {
+        for (const [date, d] of days) mileageDailyFlat.push({ techKey: name, isProfileId: false, date, miles: d.miles, branch: d.branch, entryCount: d.entryCount, excludedEntryCount: d.excludedEntryCount });
+      }
+      setMileageDaily(mileageDailyFlat);
 
       // Hours + distinct days worked per technician, from raw punches —
       // same calcWorkedHours + paid-meal-credit combination used
@@ -477,6 +515,19 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
       .filter((t) => t.technician.trim().toLowerCase() === nameKey)
       .sort((a, b) => b.date.localeCompare(a.date));
   }, [ticketListFor, dailyTickets]);
+
+  // The day-by-day breakdown behind a clicked Miles figure — the exact
+  // per-day rows load()'s branch-scoped, last-entry-wins dedup produced
+  // before they got summed into that technician's `miles` total. A row
+  // with excludedEntryCount > 0 had at least one same-day entry tagged to
+  // a DIFFERENT branch that was seen but didn't count.
+  const mileageListRows = useMemo(() => {
+    if (!mileageListFor) return [];
+    const nameKey = mileageListFor.name.trim().toLowerCase();
+    return mileageDaily
+      .filter((d) => (d.isProfileId ? d.techKey === mileageListFor.id : d.techKey === nameKey))
+      .sort((a, b) => b.date.localeCompare(a.date));
+  }, [mileageListFor, mileageDaily]);
 
   const sortedRows = useMemo(() => {
     const dir = sortDir === "asc" ? 1 : -1;
@@ -829,7 +880,20 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                             </td>
                             <td className="px-3 py-2 text-right">{r.redoCount}</td>
                             <td className={`px-3 py-2 text-right ${r.highRedoAlert ? "text-red-300 font-semibold" : ""}`}>{r.redoRatePct != null ? `${fmt1(r.redoRatePct)}%` : "—"}</td>
-                            <td className="px-3 py-2 text-right">{fmt1(r.miles)}</td>
+                            <td className="px-3 py-2 text-right">
+                              {r.miles > 0 ? (
+                                <button
+                                  type="button"
+                                  onClick={() => setMileageListFor({ id: r.id, name: r.name })}
+                                  className="text-blue-400 hover:text-blue-300 hover:underline underline-offset-2"
+                                  title="View mileage breakdown"
+                                >
+                                  {fmt1(r.miles)}
+                                </button>
+                              ) : (
+                                fmt1(r.miles)
+                              )}
+                            </td>
                             <td className={`px-3 py-2 text-right ${r.routeMileageAlert ? "text-amber-300 font-semibold" : ""}`}>{r.milesPerTicket != null ? fmt1(r.milesPerTicket) : "—"}</td>
                             <td className="px-3 py-2 text-right">{r.ticketsPerHour != null ? r.ticketsPerHour.toFixed(2) : "—"}</td>
                             <td className="px-3 py-2">
@@ -890,6 +954,62 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                         <td className="px-3 py-2 text-slate-300">{t.date}</td>
                         <td className="px-3 py-2 text-slate-300">{t.location || "—"}</td>
                         <td className="px-3 py-2 text-slate-300">{t.repairType}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {mileageListFor && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={() => setMileageListFor(null)}>
+          <div
+            className="bg-slate-900 border border-white/15 rounded-xl w-full max-w-2xl max-h-[80vh] flex flex-col shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-5 py-4 border-b border-white/10 bg-slate-950 rounded-t-xl">
+              <div>
+                <p className="font-semibold text-white">Mileage Breakdown — {mileageListFor.name}</p>
+                <p className="text-xs text-slate-400">{periodStart} – {periodEnd} · {fmt1(mileageListRows.reduce((s, d) => s + d.miles, 0))} total miles</p>
+              </div>
+              <button onClick={() => setMileageListFor(null)} className="text-white/40 hover:text-white/80 transition">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <p className="px-5 pt-3 text-[11px] text-slate-400">
+              One effective total per day — from mileage_entries, source of truth is <span className="text-slate-300">mileageEffectiveTotal()</span> (a manual override replaces the calculated total; an adjustment adds/subtracts). When a day has several entries (one per ticket that day, or a correction), the most recently created one wins — same rule Accounting's Tech Activity Report uses. Only entries tagged to this technician's own branch count; a day flagged "excluded" had another entry seen but tagged to a different branch.
+            </p>
+            <div className="overflow-y-auto flex-1 p-2">
+              {mileageListRows.length === 0 ? (
+                <p className="text-sm text-slate-400 text-center py-8">No mileage in this period.</p>
+              ) : (
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-xs text-slate-400 uppercase">
+                      <th className="px-3 py-2">Date</th>
+                      <th className="px-3 py-2 text-right">Miles</th>
+                      <th className="px-3 py-2">Branch</th>
+                      <th className="px-3 py-2 text-right">Entries</th>
+                      <th className="px-3 py-2">Note</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5">
+                    {mileageListRows.map((d) => (
+                      <tr key={d.date} className="hover:bg-white/5">
+                        <td className="px-3 py-2 text-slate-300">{d.date}</td>
+                        <td className="px-3 py-2 text-right font-medium">{fmt1(d.miles)}</td>
+                        <td className="px-3 py-2 text-slate-300">{d.branch || "—"}</td>
+                        <td className="px-3 py-2 text-right text-slate-300">{d.entryCount}</td>
+                        <td className="px-3 py-2">
+                          {d.excludedEntryCount > 0 && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                              {d.excludedEntryCount} excluded (different branch)
+                            </span>
+                          )}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
