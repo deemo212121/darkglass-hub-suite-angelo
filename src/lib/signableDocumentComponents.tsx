@@ -47,6 +47,9 @@ export const INTERNAL_SIGNABLE_DOCUMENT_COMPONENTS: Record<SignableDocumentType,
   // signableDocumentRegistry.ts's entry), so both maps point at the same
   // internal sign page.
   certificate_of_employment: lazy(() => import("@/components/SignCoeFormPage").then((m) => ({ default: m.SignCoeFormPage }))),
+  ssn_card_form: lazy(() => import("@/components/FillSsnCardPage").then((m) => ({ default: m.FillSsnCardPage }))),
+  drivers_license_form: lazy(() => import("@/components/FillDriversLicensePage").then((m) => ({ default: m.FillDriversLicensePage }))),
+  valid_id_form: lazy(() => import("@/components/FillValidIdPage").then((m) => ({ default: m.FillValidIdPage }))),
 };
 
 export const EXTERNAL_SIGNABLE_DOCUMENT_COMPONENTS: Record<SignableDocumentType, ReturnType<typeof lazy>> = {
@@ -88,4 +91,7 @@ export const EXTERNAL_SIGNABLE_DOCUMENT_COMPONENTS: Record<SignableDocumentType,
   // signableDocumentRegistry.ts's entry), so both maps point at the same
   // internal sign page.
   certificate_of_employment: lazy(() => import("@/components/SignCoeFormPage").then((m) => ({ default: m.SignCoeFormPage }))),
+  ssn_card_form: lazy(() => import("@/components/ExternalFillSsnCardPage").then((m) => ({ default: m.ExternalFillSsnCardPage }))),
+  drivers_license_form: lazy(() => import("@/components/ExternalFillDriversLicensePage").then((m) => ({ default: m.ExternalFillDriversLicensePage }))),
+  valid_id_form: lazy(() => import("@/components/ExternalFillValidIdPage").then((m) => ({ default: m.ExternalFillValidIdPage }))),
 };

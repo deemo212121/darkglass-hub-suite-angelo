@@ -62,6 +62,14 @@ export const SIGNABLE_DOCUMENT_REGISTRY: Record<SignableDocumentType, SignableDo
   // company-generated certificate) — same "internal recipients only"
   // reasoning as master_w2_agreement above, no external/no-login variant.
   certificate_of_employment: { label: "Certificate of Employment", internalPath: "/sign-coe-form", externalPath: "/sign-coe-form" },
+  // Standalone ID-document submissions, split out of Contractor Data
+  // Sheet / Master W-2 Technician & Office Agreements (US) and the Master
+  // PH Contractor Agreement (PH), which used to each embed their own ID
+  // upload field — see ssnCardFormTemplate.ts/driversLicenseFormTemplate.ts/
+  // validIdFormTemplate.ts's header comments.
+  ssn_card_form: { label: "SSN Card", internalPath: "/fill-ssn-card", externalPath: "/fill-ssn-card-external" },
+  drivers_license_form: { label: "Driver's License", internalPath: "/fill-drivers-license", externalPath: "/fill-drivers-license-external" },
+  valid_id_form: { label: "Valid ID", internalPath: "/fill-valid-id", externalPath: "/fill-valid-id-external" },
 };
 
 export function signableDocumentLabel(type: SignableDocumentType): string {
