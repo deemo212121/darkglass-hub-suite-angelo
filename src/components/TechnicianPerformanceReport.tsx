@@ -149,7 +149,7 @@ function MultiSelect({
   );
 }
 
-type PeriodMode = "weekly" | "monthly";
+type PeriodMode = "weekly" | "monthly" | "custom";
 type SortKey = "techId" | "name" | "location" | "manager" | "tier" | "daysWorked" | "hoursWorked" | "totalTickets" | "redoCount" | "redoRatePct" | "miles" | "milesPerTicket" | "ticketsPerHour";
 type GroupBy = "none" | "location" | "manager" | "tier";
 
@@ -190,6 +190,8 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
 
   const [periodMode, setPeriodMode] = useState<PeriodMode>("weekly");
   const [anchor, setAnchor] = useState(todayStr());
+  const [customStart, setCustomStart] = useState(() => startOfWeekSunday(todayStr()));
+  const [customEnd, setCustomEnd] = useState(() => addDaysISO(startOfWeekSunday(todayStr()), 6));
   const [users, setUsers] = useState<ProfileRow[]>([]);
   const [csrComposition, setCsrComposition] = useState<CsrTeamComposition | null>(null);
   const [rows, setRows] = useState<TechPerfRow[]>([]);
@@ -206,8 +208,14 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
 
-  const periodStart = periodMode === "weekly" ? startOfWeekSunday(anchor) : monthStart(anchor);
-  const periodEnd = periodMode === "weekly" ? addDaysISO(periodStart, 6) : monthEnd(anchor);
+  const periodStart =
+    periodMode === "weekly" ? startOfWeekSunday(anchor)
+    : periodMode === "monthly" ? monthStart(anchor)
+    : customStart <= customEnd ? customStart : customEnd;
+  const periodEnd =
+    periodMode === "weekly" ? addDaysISO(periodStart, 6)
+    : periodMode === "monthly" ? monthEnd(anchor)
+    : customStart <= customEnd ? customEnd : customStart;
   const periodWeeks = daysBetween(periodStart, periodEnd) / 7;
 
   const load = async () => {
@@ -519,14 +527,47 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
             <div className="flex rounded-md overflow-hidden border border-white/15 text-xs">
               <button type="button" onClick={() => setPeriodMode("weekly")} className={`px-3 py-1.5 ${periodMode === "weekly" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground"}`}>Weekly</button>
               <button type="button" onClick={() => setPeriodMode("monthly")} className={`px-3 py-1.5 border-l border-white/15 ${periodMode === "monthly" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground"}`}>Monthly</button>
+              <button
+                type="button"
+                onClick={() => {
+                  // Seed the custom range from whatever's currently showing,
+                  // so switching in doesn't reset the user back to "this week".
+                  setCustomStart(periodStart);
+                  setCustomEnd(periodEnd);
+                  setPeriodMode("custom");
+                }}
+                className={`px-3 py-1.5 border-l border-white/15 ${periodMode === "custom" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground"}`}
+              >
+                Custom
+              </button>
             </div>
           </div>
-          <div className="flex items-center gap-1.5">
-            <button onClick={() => shiftPeriod(-1)} className="btn text-xs px-2 py-1.5">‹</button>
-            <div className="text-xs text-muted-foreground px-1 whitespace-nowrap">{periodStart} – {periodEnd}</div>
-            <button onClick={() => shiftPeriod(1)} className="btn text-xs px-2 py-1.5">›</button>
-            <button onClick={() => setAnchor(todayStr())} className="btn text-xs px-2 py-1.5">Today</button>
-          </div>
+          {periodMode === "custom" ? (
+            <div className="flex items-center gap-1.5">
+              <input
+                type="date"
+                value={customStart}
+                max={customEnd}
+                onChange={(e) => setCustomStart(e.target.value)}
+                className="glass-input text-xs py-1.5 px-2 rounded-md"
+              />
+              <span className="text-xs text-muted-foreground">to</span>
+              <input
+                type="date"
+                value={customEnd}
+                min={customStart}
+                onChange={(e) => setCustomEnd(e.target.value)}
+                className="glass-input text-xs py-1.5 px-2 rounded-md"
+              />
+            </div>
+          ) : (
+            <div className="flex items-center gap-1.5">
+              <button onClick={() => shiftPeriod(-1)} className="btn text-xs px-2 py-1.5">‹</button>
+              <div className="text-xs text-muted-foreground px-1 whitespace-nowrap">{periodStart} – {periodEnd}</div>
+              <button onClick={() => shiftPeriod(1)} className="btn text-xs px-2 py-1.5">›</button>
+              <button onClick={() => setAnchor(todayStr())} className="btn text-xs px-2 py-1.5">Today</button>
+            </div>
+          )}
           <div className="flex-1 min-w-[160px]">
             <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide block mb-1">Search</label>
             <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Tech name or ID…" className="glass-input text-xs py-1.5 px-3 rounded-md w-full" />
