@@ -2267,7 +2267,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // preview total.
   const techCustomTotalByProfile = new Map<string, number>();
   // Same total, minus any line NOT flagged isWageIncludable (migration
-  // 0290) — an expense reimbursement, a flat per-diem stipend, or an
+  // 0291) — an expense reimbursement, a flat per-diem stipend, or an
   // unrelated cash adjustment (a copay, a withheld deduction) isn't wages,
   // so FLSA's weighted regular-rate calc (techIncludablePay below) has to
   // leave it out even though it still counts toward Total Payment via

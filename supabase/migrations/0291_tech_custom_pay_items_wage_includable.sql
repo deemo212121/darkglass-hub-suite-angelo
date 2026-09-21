@@ -1,5 +1,5 @@
 -- =====================================================================
--- 0290 — tech_custom_pay_items.is_wage_includable
+-- 0291 — tech_custom_pay_items.is_wage_includable
 --
 -- Whether a custom pay line counts toward the FLSA weighted-regular-rate
 -- calculation (AccountingDashboard.tsx's techIncludablePay) — real wages
