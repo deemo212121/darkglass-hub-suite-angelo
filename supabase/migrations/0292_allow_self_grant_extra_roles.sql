@@ -1,5 +1,5 @@
 -- =====================================================================
--- 0291 — let a self-edit GROW extra_roles (add module access to your own
+-- 0292 — let a self-edit GROW extra_roles (add module access to your own
 -- account), and let SUPERADMIN/SUPERSUPERADMIN self-edit payroll_excluded,
 -- while still blocking every other self-edit case 0225 covers.
 --
