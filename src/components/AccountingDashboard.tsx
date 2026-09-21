@@ -1485,8 +1485,15 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   const [genEnd, setGenEnd] = useState("");
 
   // ── Data fetching ───────────────────────────────────────────────────────────
-  const fetchData = useCallback(async () => {
-    setLoading(true);
+  const fetchData = useCallback(async (options?: { silent?: boolean }) => {
+    // silent: true skips the loading flag entirely — used by onRateChanged
+    // (a single per-day edit from EmployeePayrollDetailModal) so refreshing
+    // company-wide totals doesn't blank the ENTIRE dashboard, including the
+    // modal the user is still actively working in, behind a full-page
+    // spinner. `if (loading) return <BrandedLoader/>` below unmounts
+    // everything under it while loading is true, so this isn't just a
+    // cosmetic flicker — it was closing the very modal being edited.
+    if (!options?.silent) setLoading(true);
     setError(null);
     try {
       const [
@@ -1642,7 +1649,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to load data");
     } finally {
-      setLoading(false);
+      if (!options?.silent) setLoading(false);
     }
   }, []);
 
@@ -3913,7 +3920,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
           <p className="text-slate-400 text-sm mb-4">{error}</p>
           <div className="flex flex-wrap items-center justify-center gap-2">
             <button
-              onClick={fetchData}
+              onClick={() => fetchData()}
               className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded text-sm font-semibold transition"
             >
               Retry
@@ -3992,7 +3999,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
               <p className="text-sm text-slate-400">{sub.description}</p>
             </div>
             <button
-              onClick={fetchData}
+              onClick={() => fetchData()}
               className="p-2 rounded hover:bg-white/10 text-slate-400 hover:text-white transition"
               title="Refresh"
             >
@@ -5862,7 +5869,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
           initialStart={genStart || undefined}
           initialEnd={genEnd || undefined}
           onClose={() => { setDetailEmployee(null); setWizardStep("detail"); }}
-          onRateChanged={() => { fetchData(); reloadTimecardEntries(); }}
+          onRateChanged={() => { fetchData({ silent: true }); reloadTimecardEntries(); }}
           nextBusy={nextBusy}
           onNext={
             isTechRole(detailEmployee)
