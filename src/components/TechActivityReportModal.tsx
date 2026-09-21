@@ -423,7 +423,7 @@ export function TechActivityReportModal({
 
   const subtotal =
     categoryPayments.reduce((s, c) => s + c.payment, 0) +
-    techManual.mileagePay + techManual.trainingPay +
+    techManual.ldtPay + techManual.mileagePay + techManual.trainingPay +
     twoTechPayment + completedTicketsPayment + redoReductionPayment + customLinesTotal + carryoverTotal + row.techHourlyPay + techGuaranteedSalaryMatch + techHolidayPremium + techTraineeMatch;
   const owIncentivePay = (techManual.owIncentivePct / 100) * subtotal;
   const totalPayment = subtotal + owIncentivePay;
@@ -585,8 +585,9 @@ export function TechActivityReportModal({
                     </tr>
                   )}
 
-                  {(["mileage", "trainingValue"] as const).map((field) => {
+                  {(["ldtCount", "mileage", "trainingValue"] as const).map((field) => {
                     const meta = {
+                      ldtCount: { label: "LDT", rateKey: "LDT", value: techManual.ldtCount, pay: techManual.ldtPay },
                       mileage: { label: "Mileage", rateKey: "Mileage", value: techManual.mileage, pay: techManual.mileagePay },
                       trainingValue: { label: "Training Paid", rateKey: "Training Paid", value: techManual.trainingValue, pay: techManual.trainingPay },
                     }[field];
