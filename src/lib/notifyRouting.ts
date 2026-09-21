@@ -6,7 +6,7 @@
 
 import { getCsrTeamComposition, type CsrTeamComposition } from "@/lib/supabase/csrTeams";
 import type { ProfileRow } from "@/lib/supabase/users";
-import { isAttendanceManagerTierRole, isAttendanceFullAccessRole, isPartsStaffRole, TECHNICIAN_PAY_ROLES, normalizeRole } from "@/lib/roleLabels";
+import { isAttendanceManagerTierRole, isAttendanceFullAccessRole, isPartsStaffRole, isCsrManagerRole, TECHNICIAN_PAY_ROLES, normalizeRole } from "@/lib/roleLabels";
 
 const CSR_ROLES = new Set(["CSR", "CSR_AGENT", "CSR_TEAM_LEADER", "CSR_MANAGER"]);
 
@@ -86,13 +86,22 @@ export function visibleAttendanceProfileIds(
     });
   }
   if (csrComposition && isCsrRole(viewer)) {
-    const myLeaderTeamIds = new Set(
-      csrComposition.members.filter((m) => m.profileId === viewer.id && m.isLeader).map((m) => m.teamId)
-    );
-    if (myLeaderTeamIds.size > 0) {
-      csrComposition.members
-        .filter((m) => myLeaderTeamIds.has(m.teamId))
-        .forEach((m) => ids.add(m.profileId));
+    // CSR_MANAGER oversees every team, not just one they personally lead —
+    // they're never themselves a csr_team_members row (see
+    // isCsrManagerRole's doc comment), so the isLeader-scoped check below
+    // would otherwise leave them with zero CSR reports and only whatever
+    // the fragile manager_name text match happens to catch.
+    if (isCsrManagerRole(viewer.role, viewer.extra_roles)) {
+      csrComposition.members.forEach((m) => ids.add(m.profileId));
+    } else {
+      const myLeaderTeamIds = new Set(
+        csrComposition.members.filter((m) => m.profileId === viewer.id && m.isLeader).map((m) => m.teamId)
+      );
+      if (myLeaderTeamIds.size > 0) {
+        csrComposition.members
+          .filter((m) => myLeaderTeamIds.has(m.teamId))
+          .forEach((m) => ids.add(m.profileId));
+      }
     }
   }
   // Parts branch staff (PARTS or PARTS_MANAGER — see isPartsStaffRole): also

@@ -18,6 +18,7 @@
 import { supabase } from "./client";
 import { createNotification } from "./notifications";
 import { getCompanyUsers } from "./users";
+import { isAttendanceManagerTierRole } from "@/lib/roleLabels";
 
 export type CorrectionStatus = "pending" | "approved" | "rejected";
 export type CorrectionStage = "manager" | "hr" | "accounting";
@@ -192,10 +193,19 @@ export function canReviewCorrectionStage(
   viewerProfileId: string | null,
   viewerRole: string | null | undefined,
   viewerExtraRoles?: string[] | null,
-  /** The viewer's own display_name — only needed for the manager's-manager
-   *  fallback below; every existing caller that omits it just loses the
-   *  fallback, not correctness for the common case. */
+  /** The viewer's own display_name — only needed for the current-manager
+   *  and manager's-manager fallbacks below; every existing caller that
+   *  omits it just loses those fallbacks, not correctness for the common
+   *  case. */
   viewerDisplayName?: string | null,
+  /** The requester's CURRENT manager_name (profiles.manager_name), looked
+   *  up fresh by the caller — NOT request.managerId, which is a one-time
+   *  snapshot resolved at submission. Mirrors canReviewPtoStage's
+   *  requesterCurrentManagerName: request.managerId can go stale (a
+   *  reassignment, a CSR team-lead swap, or the resolver picking the wrong
+   *  person originally) and would otherwise strand the request with nobody
+   *  who has real, current authority over it able to act. */
+  requesterCurrentManagerName?: string | null,
   /** The requester's manager's OWN manager_name (profiles.manager_name of
    *  whoever request.managerId resolved to), looked up fresh by the
    *  caller — same "walk up one level" fallback canReviewPtoStage uses.
@@ -211,11 +221,21 @@ export function canReviewCorrectionStage(
   if (has("SUPERADMIN") || has("SUPERSUPERADMIN")) return true;
   if (stage === "manager") {
     if (request.managerId === viewerProfileId) return true;
+    const currentManagerName = (requesterCurrentManagerName || "").trim().toLowerCase();
     const managersManagerName = (requesterManagersManagerName || "").trim().toLowerCase();
     const viewerName = (viewerDisplayName || "").trim().toLowerCase();
+    if (currentManagerName && viewerName && currentManagerName === viewerName) return true;
     if (managersManagerName && viewerName && managersManagerName === viewerName) return true;
     if (request.managerId) return false;
-    return has("MANAGER");
+    // Any attendance manager-tier role (CSR_MANAGER, CSR_TEAM_LEADER,
+    // BRANCH_MANAGER, TECHNICIAN_MANAGER, ...) can stand in here, not just
+    // the literal "MANAGER" role string — a correction whose managerId
+    // never resolved at submission time (no manager_name match, or the CSR
+    // team-lead lookup found nobody) still needs SOME manager-tier person
+    // able to act on it, and restricting that to one specific role code
+    // left every other manager-tier role — CSR chief among them — locked
+    // out of ever approving these.
+    return isAttendanceManagerTierRole(viewerRole, viewerExtraRoles);
   }
   if (stage === "hr") return has("HR");
   return has("FINANCE");
