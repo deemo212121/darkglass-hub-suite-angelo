@@ -243,12 +243,23 @@ export function TechnicianFormChecklistPage() {
   const navigate = useNavigate();
   const { uid, displayName } = useAuth();
   const [myProfileId, setMyProfileId] = useState<string | null>(null);
-  const [activeChecklistTab, setActiveChecklistTab] = useState<ChecklistTabKey>("technician");
+  // Defaults to the "New Technician" tab, not the legacy "Technician" one —
+  // the old 16-form checklist is hidden by default (see
+  // showLegacyTechnicianTab below) since every technician's real paperwork
+  // now goes through the New Technician/Office/PH consolidated forms; it's
+  // still there for whatever's still outstanding on the old flow, just
+  // behind an explicit toggle instead of being the landing tab.
+  const [activeChecklistTab, setActiveChecklistTab] = useState<ChecklistTabKey>("newTechnician");
+  const [showLegacyTechnicianTab, setShowLegacyTechnicianTab] = useState(false);
+  const visibleChecklistTabs = useMemo(
+    () => (showLegacyTechnicianTab ? CHECKLIST_TABS : CHECKLIST_TABS.filter((t) => t.key !== "technician")),
+    [showLegacyTechnicianTab]
+  );
   // Lazy initializers so a cache hit paints the roster/active tab's forms on
   // the very first render — see the cache helpers above loadUsers/
   // loadDocsForActiveTab further down, which always still fetch for real.
   const [allUsers, setAllUsers] = useState<ProfileRow[]>(() => readCachedUsers() ?? []);
-  const [latestByKey, setLatestByKey] = useState<Map<string, SignableDocument>>(() => readCachedDocs("technician") ?? new Map());
+  const [latestByKey, setLatestByKey] = useState<Map<string, SignableDocument>>(() => readCachedDocs("newTechnician") ?? new Map());
   const [exemptions, setExemptions] = useState<Set<string>>(new Set());
   const [expanded, setExpanded] = useState<string | null>(null);
   const [hideComplete, setHideComplete] = useState(false);
@@ -536,6 +547,17 @@ export function TechnicianFormChecklistPage() {
     // (e.g. "Contractor Addendum" under BM+) may not exist under another.
     setFormTypeFilter("");
     setStatusFilter("");
+  };
+
+  const handleToggleLegacyTab = () => {
+    setShowLegacyTechnicianTab((cur) => {
+      const next = !cur;
+      // Turning the toggle off while sitting on the tab it controls would
+      // otherwise leave the page on a tab no longer in visibleChecklistTabs
+      // — jump back to the default tab instead of showing a dead selection.
+      if (!next && activeChecklistTab === "technician") handleTabChange("newTechnician");
+      return next;
+    });
   };
 
   const branchOptions = useMemo(
@@ -942,8 +964,8 @@ export function TechnicianFormChecklistPage() {
         </button>
       </div>
 
-      <div className="flex flex-wrap gap-1.5 mb-5 border-b border-white/10 pb-3">
-        {CHECKLIST_TABS.map((tab) => (
+      <div className="flex flex-wrap items-center gap-1.5 mb-5 border-b border-white/10 pb-3">
+        {visibleChecklistTabs.map((tab) => (
           <button
             key={tab.key}
             type="button"
@@ -957,6 +979,18 @@ export function TechnicianFormChecklistPage() {
             {tab.label}
           </button>
         ))}
+        <button
+          type="button"
+          onClick={handleToggleLegacyTab}
+          title="The original 16-form checklist — hidden by default now that Technician/Office/PH paperwork goes through the New/Office/PH Staff tabs instead"
+          className={`ml-auto px-3 py-1.5 rounded-md text-xs font-semibold border transition-colors ${
+            showLegacyTechnicianTab
+              ? "border-primary/50 bg-primary/10 text-foreground"
+              : "border-white/10 text-muted-foreground hover:text-foreground hover:bg-white/5"
+          }`}
+        >
+          {showLegacyTechnicianTab ? "Hide Legacy Technician Checklist" : "Show Legacy Technician Checklist"}
+        </button>
       </div>
 
       <div className="flex flex-wrap items-center gap-3 mb-6">
