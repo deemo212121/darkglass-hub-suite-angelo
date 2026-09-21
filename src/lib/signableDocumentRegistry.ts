@@ -90,6 +90,7 @@ export const TECHNICIAN_FORM_TYPES: SignableDocumentType[] = [
   "vehicle_agreement",
   "damage",
   "direct_deposit",
+  "drivers_license_form",
   "employee_confidentiality",
   "contractor_data",
   "flash_technician_travel",
@@ -98,6 +99,7 @@ export const TECHNICIAN_FORM_TYPES: SignableDocumentType[] = [
   "mileage_fuel",
   "parts_responsibility",
   "pto_ack",
+  "ssn_card_form",
   "substance_screening",
   "w4",
   "i9",
@@ -112,9 +114,9 @@ export const TECHNICIAN_FORM_TYPES: SignableDocumentType[] = [
  * below) to let HR quick-select a candidate's forms by role/tier instead of
  * checking each one by hand.
  */
-export const NEW_TECHNICIAN_FORM_TYPES: SignableDocumentType[] = ["master_w2_agreement", "w4", "i9", "direct_deposit"];
-export const OFFICE_STAFF_US_FORM_TYPES: SignableDocumentType[] = ["master_w2_office_agreement", "w4", "i9", "direct_deposit"];
-export const PH_STAFF_FORM_TYPES: SignableDocumentType[] = ["master_ph_contractor_agreement", "w8ben", "direct_deposit"];
+export const NEW_TECHNICIAN_FORM_TYPES: SignableDocumentType[] = ["master_w2_agreement", "w4", "i9", "direct_deposit", "ssn_card_form", "drivers_license_form"];
+export const OFFICE_STAFF_US_FORM_TYPES: SignableDocumentType[] = ["master_w2_office_agreement", "w4", "i9", "direct_deposit", "ssn_card_form", "drivers_license_form"];
+export const PH_STAFF_FORM_TYPES: SignableDocumentType[] = ["master_ph_contractor_agreement", "w8ben", "direct_deposit", "valid_id_form"];
 export const BM_AND_UP_FORM_TYPES: SignableDocumentType[] = ["master_w2_executive_agreement", "direct_deposit"];
 
 export type StaffFormTier = "newTechnician" | "officeStaffUs" | "phStaff" | "bmAndUp";
