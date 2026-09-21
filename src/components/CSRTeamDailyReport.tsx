@@ -7,12 +7,16 @@
  * one is reached as "Daily Report" (custom: "csr-team-daily-report").
  *
  * Full Name/Start Date come from profiles/employee_info, Month is computed
- * from Start Date, and Sick Day/Vacation Day are each person's current
+ * from Start Date, Rate is read live off salary_entries (resolved as of
+ * the selected report date, same entryEffectiveOn resolution Accounting
+ * Dashboard's Payroll tab uses — no longer the old typed-in
+ * csr_daily_report_entries.rate column, which still exists but is unused
+ * now), and Sick Day/Vacation Day are each person's current
  * remaining/allowance balance (src/lib/supabase/pto.ts — same tenure-year
  * math Master List and Employee Self-Service already use), all fetched
- * live and read-only here. Every other column (Rate, Task, GH, Total,
- * Schedule, Attempt, Update, Mistake, Warning, Abs/Em., hr) is typed in by
- * hand for the selected date and saved per cell (migration 0275,
+ * live and read-only here. Every other column (Task, GH, Total, Schedule,
+ * Attempt, Update, Mistake, Warning, Abs/Em., hr) is typed in by hand for
+ * the selected date and saved per cell (migration 0275,
  * csrDailyReportEntries.ts) — one row per (profile, date).
  *
  * Right sidebar (migration 0276, csrExtensions.ts): an editable Extension
@@ -40,6 +44,7 @@ import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { getCompanyUsers, getEmployeeInfoByProfileIds, type ProfileRow, type EmployeeInfo } from "@/lib/supabase/users";
 import { getCsrTeamComposition, type CsrTeamRow, type CsrTeamMemberRow } from "@/lib/supabase/csrTeams";
 import { getCompanyPtoRequests, ptoYearWindow, ptoDaysUsed, sickYearWindow, sickDaysUsed, type PtoRequestRow } from "@/lib/supabase/pto";
+import { getCompanySalaryEntries, entryEffectiveOn, type SalaryEntryRow } from "@/lib/supabase/salary";
 import { getCsrDailyReportEntries, upsertCsrDailyReportEntry, type CsrDailyReportEntry, type CsrDailyReportEntryFields } from "@/lib/supabase/csrDailyReportEntries";
 import {
   getCsrExtensions,
@@ -86,6 +91,24 @@ export function todayIso(now: Date = new Date()): string {
   const m = parts.find((p) => p.type === "month")!.value;
   const d = parts.find((p) => p.type === "day")!.value;
   return `${y}-${m}-${d}`;
+}
+
+/** Every ISO date from start to end, inclusive — used to fan out one query per day across a picked range. */
+function enumerateDatesISO(startIso: string, endIso: string): string[] {
+  const out: string[] = [];
+  let cur = new Date(startIso + "T00:00:00");
+  const end = new Date(endIso + "T00:00:00");
+  while (cur <= end) {
+    out.push(cur.toISOString().slice(0, 10));
+    cur = new Date(cur.getTime() + 24 * 60 * 60 * 1000);
+  }
+  return out;
+}
+
+/** Joins distinct non-empty values with "; " — used to show a text field (Mistake/Warning/Abs-Em/Task) across a multi-day range without picking just one day's value arbitrarily. */
+function joinDistinct(values: (string | null | undefined)[]): string | null {
+  const uniq = Array.from(new Set(values.filter((v): v is string => !!v && v.trim() !== "")));
+  return uniq.length > 0 ? uniq.join("; ") : null;
 }
 
 /** Whole months elapsed from startIso to onIso — matches ptoYearWindow's own anniversary-based day comparison (a same-day-of-month anniversary counts as the new month). */
@@ -161,7 +184,15 @@ export function CSRTeamDailyReport({ mod }: { mod: ModuleDef; sub: SubModuleDef 
   const navigate = useNavigate();
   const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
 
+  // reportDate doubles as the range's start date; rangeEnd defaults equal
+  // to it (a single day) — most of this page's editable cells only make
+  // sense for one exact day, so a real range (rangeEnd !== reportDate)
+  // switches the whole grid to a read-only sum across every day in it
+  // (see isSingleDay below), rather than trying to guess which day's value
+  // an edit should land on.
   const [reportDate, setReportDate] = useState(todayIso());
+  const [rangeEnd, setRangeEnd] = useState(todayIso());
+  const isSingleDay = reportDate === rangeEnd;
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [teams, setTeams] = useState<CsrTeamRow[]>([]);
@@ -169,6 +200,7 @@ export function CSRTeamDailyReport({ mod }: { mod: ModuleDef; sub: SubModuleDef 
   const [profiles, setProfiles] = useState<ProfileRow[]>([]);
   const [employeeInfoByProfileId, setEmployeeInfoByProfileId] = useState<Map<string, EmployeeInfo>>(new Map());
   const [ptoRequests, setPtoRequests] = useState<PtoRequestRow[]>([]);
+  const [salaryEntries, setSalaryEntries] = useState<SalaryEntryRow[]>([]);
   const [entries, setEntries] = useState<Map<string, CsrDailyReportEntry>>(new Map());
   const [savingKey, setSavingKey] = useState<string | null>(null);
 
@@ -186,28 +218,96 @@ export function CSRTeamDailyReport({ mod }: { mod: ModuleDef; sub: SubModuleDef 
   const [newMistakeAction, setNewMistakeAction] = useState("");
   const [addingMistake, setAddingMistake] = useState(false);
 
+  // A single day fetches exactly as before (one query per source). A real
+  // range fans out one query per day per source and sums numerically
+  // (joins distinct text for Task/Mistake/Warning/Abs-Em) — the grid then
+  // renders those totals read-only (see isSingleDay), same as the eBay
+  // Daily Report treats a picked range as a rollup rather than something
+  // to edit in place.
+  const fetchAggregatedForRange = async (dates: string[]) => {
+    if (dates.length === 1) {
+      const [entryRows, extCountRows, dayTotals] = await Promise.all([
+        getCsrDailyReportEntries(dates[0]),
+        getCsrExtensionDailyCounts(dates[0]),
+        getCsrDailyReportTotals(dates[0]),
+      ]);
+      return {
+        entries: new Map(entryRows.map((e) => [e.profileId, e])),
+        extCounts: new Map(extCountRows.map((c) => [c.extensionId, c])),
+        totals: dayTotals,
+      };
+    }
+    const perDate = await Promise.all(
+      dates.map((d) => Promise.all([getCsrDailyReportEntries(d), getCsrExtensionDailyCounts(d), getCsrDailyReportTotals(d)]))
+    );
+    const entryMap = new Map<string, CsrDailyReportEntry>();
+    const extMap = new Map<string, CsrExtensionDailyCount>();
+    let inboundCalls = 0, outboundCalls = 0, updateCsrCalls = 0, mistakesN = 0, hu = 0, mc = 0, anyTotals = false;
+    for (const [entryRows, extCountRows, dayTotals] of perDate) {
+      for (const e of entryRows) {
+        const prev = entryMap.get(e.profileId);
+        entryMap.set(e.profileId, {
+          id: "", profileId: e.profileId, reportDate: dates[0], rate: null,
+          task: joinDistinct([prev?.task, e.task]),
+          gh: (prev?.gh ?? 0) + (e.gh ?? 0),
+          total: (prev?.total ?? 0) + (e.total ?? 0),
+          schedule: (prev?.schedule ?? 0) + (e.schedule ?? 0),
+          attempt: (prev?.attempt ?? 0) + (e.attempt ?? 0),
+          updateCount: (prev?.updateCount ?? 0) + (e.updateCount ?? 0),
+          mistake: joinDistinct([prev?.mistake, e.mistake]),
+          warning: joinDistinct([prev?.warning, e.warning]),
+          absEm: joinDistinct([prev?.absEm, e.absEm]),
+          hr: (prev?.hr ?? 0) + (e.hr ?? 0),
+        });
+      }
+      for (const c of extCountRows) {
+        const prev = extMap.get(c.extensionId);
+        extMap.set(c.extensionId, {
+          extensionId: c.extensionId, reportDate: dates[0],
+          amCount: (prev?.amCount ?? 0) + (c.amCount ?? 0),
+          pmCount: (prev?.pmCount ?? 0) + (c.pmCount ?? 0),
+        });
+      }
+      if (dayTotals) {
+        anyTotals = true;
+        inboundCalls += dayTotals.inboundCalls ?? 0;
+        outboundCalls += dayTotals.outboundCalls ?? 0;
+        updateCsrCalls += dayTotals.updateCsrCalls ?? 0;
+        mistakesN += dayTotals.mistakes ?? 0;
+        hu += dayTotals.hu ?? 0;
+        mc += dayTotals.mc ?? 0;
+      }
+    }
+    return {
+      entries: entryMap,
+      extCounts: extMap,
+      totals: anyTotals ? { reportDate: dates[0], inboundCalls, outboundCalls, updateCsrCalls, mistakes: mistakesN, hu, mc } : null,
+    };
+  };
+
   const load = async () => {
     setLoading(true);
     setError(null);
     try {
-      const [composition, allProfiles, ptoReqs, entryRows, exts, extCountRows, dayTotals, mistakeRows] = await Promise.all([
+      const dates = enumerateDatesISO(reportDate, rangeEnd);
+      const [composition, allProfiles, ptoReqs, salaryRows, aggregated, exts, mistakeRows] = await Promise.all([
         getCsrTeamComposition(),
         getCompanyUsers(),
         getCompanyPtoRequests(),
-        getCsrDailyReportEntries(reportDate),
+        getCompanySalaryEntries(),
+        fetchAggregatedForRange(dates),
         getCsrExtensions(),
-        getCsrExtensionDailyCounts(reportDate),
-        getCsrDailyReportTotals(reportDate),
         getCsrMistakeLogEntries(),
       ]);
       setTeams(composition.teams);
       setMembers(composition.members);
       setProfiles(allProfiles);
       setPtoRequests(ptoReqs);
-      setEntries(new Map(entryRows.map((e) => [e.profileId, e])));
+      setSalaryEntries(salaryRows);
+      setEntries(aggregated.entries);
       setExtensions(exts);
-      setExtCounts(new Map(extCountRows.map((c) => [c.extensionId, c])));
-      setTotals(dayTotals);
+      setExtCounts(aggregated.extCounts);
+      setTotals(aggregated.totals);
       setMistakeLog(mistakeRows);
       const infoMap = await getEmployeeInfoByProfileIds(composition.members.map((m) => m.profileId));
       setEmployeeInfoByProfileId(infoMap);
@@ -219,7 +319,7 @@ export function CSRTeamDailyReport({ mod }: { mod: ModuleDef; sub: SubModuleDef 
   };
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { void load(); }, [reportDate]);
+  useEffect(() => { void load(); }, [reportDate, rangeEnd]);
 
   const profileById = useMemo(() => new Map(profiles.map((p) => [p.id, p])), [profiles]);
 
@@ -232,6 +332,27 @@ export function CSRTeamDailyReport({ mod }: { mod: ModuleDef; sub: SubModuleDef 
     }
     return map;
   }, [ptoRequests]);
+
+  const salaryByProfile = useMemo(() => {
+    const map = new Map<string, SalaryEntryRow[]>();
+    for (const s of salaryEntries) {
+      const arr = map.get(s.profileId) ?? [];
+      arr.push(s);
+      map.set(s.profileId, arr);
+    }
+    return map;
+  }, [salaryEntries]);
+
+  // Rate used to be typed in by hand per day (csr_daily_report_entries.rate)
+  // — now read live off the same salary_entries Accounting Dashboard's
+  // Payroll tab uses, resolved as of rangeEnd (the most recent day in the
+  // picked range — reportDate alone would resolve the rate as of the
+  // range's START, not its current state), so it can never drift from the
+  // agent's real pay rate.
+  const resolveHourlyRate = (profileId: string): number | null => {
+    const entry = entryEffectiveOn(salaryByProfile.get(profileId) ?? [], rangeEnd);
+    return entry && entry.compensationType === "hourly" ? entry.hourlyRate : null;
+  };
 
   const rowsByTeam = useMemo(() => {
     const map = new Map<string, Row[]>();
@@ -250,8 +371,8 @@ export function CSRTeamDailyReport({ mod }: { mod: ModuleDef; sub: SubModuleDef 
 
   const balanceFor = (profileId: string, startDate: string | null) => {
     const requests = ptoByProfile.get(profileId) ?? [];
-    const vacationWindow = ptoYearWindow(startDate, null, reportDate);
-    const sickWindow = sickYearWindow(startDate, null, reportDate);
+    const vacationWindow = ptoYearWindow(startDate, null, rangeEnd);
+    const sickWindow = sickYearWindow(startDate, null, rangeEnd);
     const vacation = vacationWindow ? { remaining: Math.max(0, vacationWindow.allowance - ptoDaysUsed(requests, vacationWindow)), allowance: vacationWindow.allowance } : null;
     const sick = sickWindow ? { remaining: Math.max(0, sickWindow.allowance - sickDaysUsed(requests, sickWindow)), allowance: sickWindow.allowance } : null;
     return { vacation, sick };
@@ -461,7 +582,32 @@ export function CSRTeamDailyReport({ mod }: { mod: ModuleDef; sub: SubModuleDef 
           </div>
           <div className="ml-auto flex items-center gap-2">
             <label className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Date</label>
-            <input type="date" value={reportDate} onChange={(e) => setReportDate(e.target.value)} className="glass-input" />
+            <input
+              type="date"
+              value={reportDate}
+              onChange={(e) => {
+                const v = e.target.value;
+                setReportDate(v);
+                if (v > rangeEnd) setRangeEnd(v);
+              }}
+              className="glass-input"
+            />
+            <span className="text-muted-foreground text-xs">to</span>
+            <input
+              type="date"
+              value={rangeEnd}
+              onChange={(e) => {
+                const v = e.target.value;
+                setRangeEnd(v);
+                if (v < reportDate) setReportDate(v);
+              }}
+              className="glass-input"
+            />
+            {!isSingleDay && (
+              <span className="text-[10px] text-amber-300 whitespace-nowrap" title="Cells show the sum across the whole range and can't be edited here — narrow back to one day to edit.">
+                Range totals (read-only)
+              </span>
+            )}
             {savingKey && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
           </div>
         </div>
@@ -516,7 +662,7 @@ export function CSRTeamDailyReport({ mod }: { mod: ModuleDef; sub: SubModuleDef 
                           const startDate = info?.hireDate || profile.created_at?.slice(0, 10) || null;
                           const entry = entries.get(profile.id);
                           const { vacation, sick } = balanceFor(profile.id, startDate);
-                          const months = startDate ? monthsElapsed(startDate, reportDate) : null;
+                          const months = startDate ? monthsElapsed(startDate, rangeEnd) : null;
                           return (
                             <tr key={profile.id} className="border-b border-white/5 hover:bg-white/5">
                               <td className="px-2 py-1 whitespace-nowrap">
@@ -524,34 +670,38 @@ export function CSRTeamDailyReport({ mod }: { mod: ModuleDef; sub: SubModuleDef 
                                 {isLeader && <span className="ml-1.5 text-[9px] font-semibold uppercase tracking-wide text-amber-300">Leader</span>}
                               </td>
                               <td className="px-2 py-1 text-muted-foreground whitespace-nowrap">{startDate || "—"}</td>
-                              <NumberCell value={entry?.rate ?? null} onSave={(v) => handleCellSave(profile.id, "rate", v)} />
+                              <td className="px-2 py-1 text-muted-foreground whitespace-nowrap">{(() => { const r = resolveHourlyRate(profile.id); return r !== null ? `$${r.toFixed(2)}` : "—"; })()}</td>
                               <td className="px-2 py-1 text-muted-foreground">{months ?? "—"}</td>
                               <td className="px-2 py-1">
-                                <select
-                                  value={entry?.task ?? ""}
-                                  onChange={(e) => void handleCellSave(profile.id, "task", e.target.value || null)}
-                                  className="glass-input text-[11px] py-0.5 px-1 rounded-md"
-                                >
-                                  <option value="">—</option>
-                                  {entry?.task && !CSR_DAILY_REPORT_TASKS.includes(entry.task) && (
-                                    <option value={entry.task}>{entry.task}</option>
-                                  )}
-                                  {CSR_DAILY_REPORT_TASKS.map((t) => (
-                                    <option key={t} value={t}>{t}</option>
-                                  ))}
-                                </select>
+                                {isSingleDay ? (
+                                  <select
+                                    value={entry?.task ?? ""}
+                                    onChange={(e) => void handleCellSave(profile.id, "task", e.target.value || null)}
+                                    className="glass-input text-[11px] py-0.5 px-1 rounded-md"
+                                  >
+                                    <option value="">—</option>
+                                    {entry?.task && !CSR_DAILY_REPORT_TASKS.includes(entry.task) && (
+                                      <option value={entry.task}>{entry.task}</option>
+                                    )}
+                                    {CSR_DAILY_REPORT_TASKS.map((t) => (
+                                      <option key={t} value={t}>{t}</option>
+                                    ))}
+                                  </select>
+                                ) : (
+                                  <span className="text-[11px] text-muted-foreground">{entry?.task || "—"}</span>
+                                )}
                               </td>
-                              <NumberCell value={entry?.gh ?? null} onSave={(v) => handleCellSave(profile.id, "gh", v)} tier={perfTier(entry?.gh ?? null, perfBandFor(entry?.task ?? null, "gh"))} />
-                              <NumberCell value={entry?.total ?? null} onSave={(v) => handleCellSave(profile.id, "total", v)} tier={perfTier(entry?.total ?? null, perfBandFor(entry?.task ?? null, "handled"))} />
-                              <NumberCell value={entry?.schedule ?? null} onSave={(v) => handleCellSave(profile.id, "schedule", v)} tier={perfTier(entry?.schedule ?? null, perfBandFor(entry?.task ?? null, "schedule"))} />
-                              <NumberCell value={entry?.attempt ?? null} onSave={(v) => handleCellSave(profile.id, "attempt", v)} />
-                              <NumberCell value={entry?.updateCount ?? null} onSave={(v) => handleCellSave(profile.id, "updateCount", v)} />
-                              <TextCell value={entry?.mistake ?? ""} onSave={(v) => handleCellSave(profile.id, "mistake", v || null)} />
-                              <TextCell value={entry?.warning ?? ""} onSave={(v) => handleCellSave(profile.id, "warning", v || null)} />
-                              <TextCell value={entry?.absEm ?? ""} onSave={(v) => handleCellSave(profile.id, "absEm", v || null)} />
+                              <NumberCell value={entry?.gh ?? null} onSave={(v) => handleCellSave(profile.id, "gh", v)} tier={perfTier(entry?.gh ?? null, perfBandFor(entry?.task ?? null, "gh"))} readOnly={!isSingleDay} />
+                              <NumberCell value={entry?.total ?? null} onSave={(v) => handleCellSave(profile.id, "total", v)} tier={perfTier(entry?.total ?? null, perfBandFor(entry?.task ?? null, "handled"))} readOnly={!isSingleDay} />
+                              <NumberCell value={entry?.schedule ?? null} onSave={(v) => handleCellSave(profile.id, "schedule", v)} tier={perfTier(entry?.schedule ?? null, perfBandFor(entry?.task ?? null, "schedule"))} readOnly={!isSingleDay} />
+                              <NumberCell value={entry?.attempt ?? null} onSave={(v) => handleCellSave(profile.id, "attempt", v)} readOnly={!isSingleDay} />
+                              <NumberCell value={entry?.updateCount ?? null} onSave={(v) => handleCellSave(profile.id, "updateCount", v)} readOnly={!isSingleDay} />
+                              <TextCell value={entry?.mistake ?? ""} onSave={(v) => handleCellSave(profile.id, "mistake", v || null)} readOnly={!isSingleDay} />
+                              <TextCell value={entry?.warning ?? ""} onSave={(v) => handleCellSave(profile.id, "warning", v || null)} readOnly={!isSingleDay} />
+                              <TextCell value={entry?.absEm ?? ""} onSave={(v) => handleCellSave(profile.id, "absEm", v || null)} readOnly={!isSingleDay} />
                               <td className="px-2 py-1 text-muted-foreground whitespace-nowrap">{sick ? `${sick.remaining}/${sick.allowance}` : "—"}</td>
                               <td className="px-2 py-1 text-muted-foreground whitespace-nowrap">{vacation ? `${vacation.remaining}/${vacation.allowance}` : "—"}</td>
-                              <NumberCell value={entry?.hr ?? null} onSave={(v) => handleCellSave(profile.id, "hr", v)} width="w-12" />
+                              <NumberCell value={entry?.hr ?? null} onSave={(v) => handleCellSave(profile.id, "hr", v)} width="w-12" readOnly={!isSingleDay} />
                             </tr>
                           );
                         })}
@@ -593,8 +743,8 @@ export function CSRTeamDailyReport({ mod }: { mod: ModuleDef; sub: SubModuleDef 
                           className="glass-input text-[11px] py-0.5 px-1 rounded-md w-20"
                         />
                       </td>
-                      <NumberCell value={c?.amCount ?? null} onSave={(v) => handleExtCountSave(ext.id, "amCount", v)} width="w-12" />
-                      <NumberCell value={c?.pmCount ?? null} onSave={(v) => handleExtCountSave(ext.id, "pmCount", v)} width="w-12" />
+                      <NumberCell value={c?.amCount ?? null} onSave={(v) => handleExtCountSave(ext.id, "amCount", v)} width="w-12" readOnly={!isSingleDay} />
+                      <NumberCell value={c?.pmCount ?? null} onSave={(v) => handleExtCountSave(ext.id, "pmCount", v)} width="w-12" readOnly={!isSingleDay} />
                       <td className="px-1 py-1">
                         <button type="button" onClick={() => void handleDeleteExtension(ext.id, ext.code)} className="text-red-400 hover:text-red-300 p-0.5" title="Remove extension">
                           <Trash2 className="h-3 w-3" />
@@ -624,17 +774,17 @@ export function CSRTeamDailyReport({ mod }: { mod: ModuleDef; sub: SubModuleDef 
           <div className="panel p-0 overflow-hidden">
             <div className="px-3 py-2 border-b border-white/10 bg-white/5">
               <h3 className="text-xs font-semibold">Summary</h3>
-              <p className="text-[9px] text-muted-foreground mt-0.5">Total CSR / Handle TK / Schedule / Attempt / Update / GH are today's grid, summed automatically.</p>
+              <p className="text-[9px] text-muted-foreground mt-0.5">Total CSR / Handle TK / Schedule / Attempt / Update / GH are the grid above, summed automatically — across the whole picked range, not just one day.</p>
             </div>
             <table className="w-full text-[11px]">
               <tbody>
                 <SummaryAutoRow label="Total CSR" value={gridTotals.totalCsr} />
-                <SummaryManualRow label="Inbound Calls" value={totals?.inboundCalls ?? null} onSave={(v) => handleTotalsSave("inboundCalls", v)} />
-                <SummaryManualRow label="Outbound Calls" value={totals?.outboundCalls ?? null} onSave={(v) => handleTotalsSave("outboundCalls", v)} />
-                <SummaryManualRow label="Update CSR Calls" value={totals?.updateCsrCalls ?? null} onSave={(v) => handleTotalsSave("updateCsrCalls", v)} />
-                <SummaryManualRow label="Mistakes" value={totals?.mistakes ?? null} onSave={(v) => handleTotalsSave("mistakes", v)} />
-                <SummaryManualRow label="HU" value={totals?.hu ?? null} onSave={(v) => handleTotalsSave("hu", v)} />
-                <SummaryManualRow label="MC" value={totals?.mc ?? null} onSave={(v) => handleTotalsSave("mc", v)} />
+                <SummaryManualRow label="Inbound Calls" value={totals?.inboundCalls ?? null} onSave={(v) => handleTotalsSave("inboundCalls", v)} readOnly={!isSingleDay} />
+                <SummaryManualRow label="Outbound Calls" value={totals?.outboundCalls ?? null} onSave={(v) => handleTotalsSave("outboundCalls", v)} readOnly={!isSingleDay} />
+                <SummaryManualRow label="Update CSR Calls" value={totals?.updateCsrCalls ?? null} onSave={(v) => handleTotalsSave("updateCsrCalls", v)} readOnly={!isSingleDay} />
+                <SummaryManualRow label="Mistakes" value={totals?.mistakes ?? null} onSave={(v) => handleTotalsSave("mistakes", v)} readOnly={!isSingleDay} />
+                <SummaryManualRow label="HU" value={totals?.hu ?? null} onSave={(v) => handleTotalsSave("hu", v)} readOnly={!isSingleDay} />
+                <SummaryManualRow label="MC" value={totals?.mc ?? null} onSave={(v) => handleTotalsSave("mc", v)} readOnly={!isSingleDay} />
                 <SummaryAutoRow label="Handle TK" value={gridTotals.handleTk} />
                 <SummaryAutoRow label="Schedule" value={gridTotals.schedule} />
                 <SummaryAutoRow label="Attempt" value={gridTotals.attempt} />
@@ -831,21 +981,25 @@ function SummaryAutoRow({ label, value }: { label: string; value: number }) {
   );
 }
 
-function SummaryManualRow({ label, value, onSave }: { label: string; value: number | null; onSave: (v: number | null) => void }) {
+function SummaryManualRow({ label, value, onSave, readOnly }: { label: string; value: number | null; onSave: (v: number | null) => void; readOnly?: boolean }) {
   return (
     <tr className="border-b border-white/5">
       <td className="px-2 py-1 text-muted-foreground">{label}</td>
       <td className="px-2 py-1 text-right">
-        <input
-          type="number"
-          defaultValue={value ?? ""}
-          onBlur={(e) => {
-            const raw = e.target.value.trim();
-            const parsed = raw === "" ? null : Number(raw);
-            if ((parsed ?? null) !== (value ?? null)) onSave(Number.isFinite(parsed as number) ? parsed : null);
-          }}
-          className="glass-input text-[11px] py-0.5 px-1 rounded-md w-16 text-right"
-        />
+        {readOnly ? (
+          <span className="text-[11px] text-muted-foreground">{value ?? "—"}</span>
+        ) : (
+          <input
+            type="number"
+            defaultValue={value ?? ""}
+            onBlur={(e) => {
+              const raw = e.target.value.trim();
+              const parsed = raw === "" ? null : Number(raw);
+              if ((parsed ?? null) !== (value ?? null)) onSave(Number.isFinite(parsed as number) ? parsed : null);
+            }}
+            className="glass-input text-[11px] py-0.5 px-1 rounded-md w-16 text-right"
+          />
+        )}
       </td>
     </tr>
   );
@@ -859,7 +1013,7 @@ function blankTotals(reportDate: string): CsrDailyReportTotals {
   return { reportDate, inboundCalls: null, outboundCalls: null, updateCsrCalls: null, mistakes: null, hu: null, mc: null };
 }
 
-function NumberCell({ value, onSave, width = "w-14", tier }: { value: number | null; onSave: (v: number | null) => void; width?: string; tier?: PerfTier | null }) {
+function NumberCell({ value, onSave, width = "w-14", tier, readOnly }: { value: number | null; onSave: (v: number | null) => void; width?: string; tier?: PerfTier | null; readOnly?: boolean }) {
   return (
     <td className="px-2 py-1">
       <div className="flex items-center gap-1.5">
@@ -870,33 +1024,41 @@ function NumberCell({ value, onSave, width = "w-14", tier }: { value: number | n
             title={PERF_TIER_LABEL[tier]}
           />
         )}
-        <input
-          type="number"
-          defaultValue={value ?? ""}
-          onBlur={(e) => {
-            const raw = e.target.value.trim();
-            const parsed = raw === "" ? null : Number(raw);
-            if ((parsed ?? null) !== (value ?? null)) onSave(Number.isFinite(parsed as number) ? parsed : null);
-          }}
-          className={`glass-input text-[11px] py-0.5 px-1 rounded-md ${width}`}
-        />
+        {readOnly ? (
+          <span className={`text-[11px] text-muted-foreground text-right ${width}`}>{value ?? "—"}</span>
+        ) : (
+          <input
+            type="number"
+            defaultValue={value ?? ""}
+            onBlur={(e) => {
+              const raw = e.target.value.trim();
+              const parsed = raw === "" ? null : Number(raw);
+              if ((parsed ?? null) !== (value ?? null)) onSave(Number.isFinite(parsed as number) ? parsed : null);
+            }}
+            className={`glass-input text-[11px] py-0.5 px-1 rounded-md ${width}`}
+          />
+        )}
       </div>
     </td>
   );
 }
 
-function TextCell({ value, onSave }: { value: string; onSave: (v: string) => void }) {
+function TextCell({ value, onSave, readOnly }: { value: string; onSave: (v: string) => void; readOnly?: boolean }) {
   return (
     <td className="px-2 py-1">
-      <input
-        type="text"
-        defaultValue={value}
-        onBlur={(e) => {
-          const v = e.target.value;
-          if (v !== value) onSave(v);
-        }}
-        className="glass-input text-[11px] py-0.5 px-1 rounded-md w-24"
-      />
+      {readOnly ? (
+        <span className="text-[11px] text-muted-foreground">{value || "—"}</span>
+      ) : (
+        <input
+          type="text"
+          defaultValue={value}
+          onBlur={(e) => {
+            const v = e.target.value;
+            if (v !== value) onSave(v);
+          }}
+          className="glass-input text-[11px] py-0.5 px-1 rounded-md w-24"
+        />
+      )}
     </td>
   );
 }

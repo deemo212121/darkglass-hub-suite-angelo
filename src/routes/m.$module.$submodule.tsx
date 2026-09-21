@@ -127,10 +127,12 @@ import { EmployeeSelfServicePage } from "@/components/EmployeeSelfServicePage";
 import { ItTicketsPage } from "@/components/ItTicketsPage";
 import { CSRMainDashboard } from "@/components/CSRMainDashboard";
 import { CSRTeamDailyReport } from "@/components/CSRTeamDailyReport";
+import { CsrSelfServiceTally } from "@/components/CsrSelfServiceTally";
 import { CSRCallTracker } from "@/components/CSRCallTracker";
 import { CSRStatusSummary } from "@/components/CSRStatusSummary";
 import { ExpenseTrackingPage } from "@/components/ExpenseTrackingPage";
 import { ClaimsDashboard } from "@/components/ClaimsDashboard";
+import { ClaimsDailyReport } from "@/components/ClaimsDailyReport";
 import { OperationsDashboard } from "@/components/OperationsDashboard";
 import { ReceivingStatusPage } from "@/components/ReceivingStatusPage";
 import { TicketOperationReport } from "@/components/TicketOperationReport";
@@ -647,6 +649,8 @@ function SubModule() {
         ? <TriagePerformanceReport mod={mod} sub={sub} />
         : (sub as any).custom === "report-hr-daily"
         ? <ReportHR mod={mod} sub={sub} />
+        : (sub as any).custom === "claims-daily-report"
+        ? <ClaimsDailyReport mod={mod} sub={sub} />
         : (sub as any).custom === "report-claims-daily"
         ? <ReportClaimsDaily mod={mod} sub={sub} />
         : (sub as any).custom === "report-triage-daily"
@@ -699,6 +703,8 @@ function SubModule() {
         ? <CSRMainDashboard mod={mod} sub={sub} />
         : (sub as any).custom === "csr-team-daily-report"
         ? <CSRTeamDailyReport mod={mod} sub={sub} />
+        : (sub as any).custom === "csr-self-service-tally"
+        ? <CsrSelfServiceTally mod={mod} sub={sub} />
         : (sub as any).custom === "csr-daily-report"
         ? <ReportCSRDaily mod={mod} sub={sub} />
         : (sub as any).custom === "call-tracker"
