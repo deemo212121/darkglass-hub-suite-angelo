@@ -29,19 +29,22 @@ export const DEFAULT_REPAIR_TYPE = "Default Amount";
 
 /**
  * The single "is this ticket done, for pay purposes" gate used everywhere in
- * this file — a ticket's own current status has actually reached CL-Claimed
- * or CL-Completed. Ready to Complete (RTC) no longer counts on its own: the
- * technician's part being done isn't enough for pay until the status is
- * actually claimed or completed. Not a timestamp check: a ticket at one of
- * these statuses counts as done whether or not the technician managed to
- * stamp an on-site check-in. A technician who did the work but the status
- * never got updated has to file a Ticket Time Dispute with photos instead of
- * this silently falling back to raw timestamps, which is exactly the
- * ambiguity a status-based ticket of record avoids.
+ * this file — a ticket's own current status has actually reached CL-Claimed,
+ * CL-Completed, or CL-Data-Closed, the same "completed" bucket
+ * ticketData.ts's statusGroupOf() already uses for Ticket List's own
+ * Completed/Claimed/Data Closed status filter. Ready to Complete (RTC) no
+ * longer counts on its own: the technician's part being done isn't enough
+ * for pay until the status is actually claimed, completed, or data-closed.
+ * Not a timestamp check: a ticket at one of these statuses counts as done
+ * whether or not the technician managed to stamp an on-site check-in. A
+ * technician who did the work but the status never got updated has to file
+ * a Ticket Time Dispute with photos instead of this silently falling back
+ * to raw timestamps, which is exactly the ambiguity a status-based ticket
+ * of record avoids.
  */
 function isCompletedStatus(status: string): boolean {
   const v = String(status || "").trim().toLowerCase();
-  return v === "cl-claimed" || v === "cl-completed";
+  return v === "cl-claimed" || v === "cl-completed" || v.includes("data closed") || v.includes("data-closed");
 }
 
 // Shared rate-table category lists — single source of truth for
