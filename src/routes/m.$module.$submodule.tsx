@@ -108,6 +108,7 @@ import { ReportOperationsDaily } from "@/components/ReportOperationsDaily";
 import { ReportAttendanceMonitoring } from "@/components/ReportAttendanceMonitoring";
 import { ReportAccounting } from "@/components/ReportAccounting";
 import { BranchDailyReportPage } from "@/components/BranchDailyReportPage";
+import { TechnicianPerformanceReport } from "@/components/TechnicianPerformanceReport";
 import { EncompassClaimAuditReport } from "@/components/EncompassClaimAuditReport";
 import { MonthlyPartReport } from "@/components/MonthlyPartReport";
 import { PayrollReport } from "@/components/PayrollReport";
@@ -660,6 +661,8 @@ function SubModule() {
         ? <ReportAccounting mod={mod} sub={sub} />
         : (sub as any).custom === "report-branch-daily"
         ? <BranchDailyReportPage mod={mod} sub={sub} />
+        : (sub as any).custom === "report-technician-performance"
+        ? <TechnicianPerformanceReport mod={mod} sub={sub} />
         : (sub as any).custom === "encompass-claim-audit-report"
         ? <EncompassClaimAuditReport mod={mod} sub={sub} />
         : (sub as any).custom === "monthly-part-report"

@@ -1556,6 +1556,15 @@ const reportMod: ModuleDef = {
       count: 0,
       seed: () => ({}),
     },
+    {
+      slug: "report-technician-performance",
+      title: "Technician Performance Report",
+      description: "Completed tickets, redo rate, tickets/hour, and miles/ticket per technician, with automated alerts.",
+      custom: "report-technician-performance" as any,
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
   ],
 };
 // --- Admin ---
