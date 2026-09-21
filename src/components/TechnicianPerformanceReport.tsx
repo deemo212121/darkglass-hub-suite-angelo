@@ -27,6 +27,7 @@
  * fabricating an ID when it hasn't.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
 import { Bar, BarChart, CartesianGrid, Cell, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
@@ -55,19 +56,48 @@ const TOOLTIP_STYLE = {
 const CHART_BAR_FILL = "#3b82f6";
 const COMPARE_BAR_FILLS = ["#3b82f6", "#f59e0b", "#10b981", "#ec4899", "#8b5cf6", "#06b6d4"];
 
-/** Checkbox-list multi-select, same shape as LtpReport.tsx's MultiSelect —
- *  reused here so Location/Manager/Tier can pick several values at once
- *  (combined/OR filtering) rather than only one. */
+/** Checkbox-list multi-select so Location/Manager/Tier can pick several
+ *  values at once (combined/OR filtering) rather than only one. Portaled
+ *  to <body> with `fixed` positioning from the trigger's
+ *  getBoundingClientRect() (same fix as AdminUserManagementPage.tsx's
+ *  column filter) — an `absolute` menu here renders inside the glass
+ *  `.panel` filter bar, which sits earlier in the DOM than the chart/
+ *  table panels below; those panels are glassmorphic (backdrop-blur),
+ *  which forms their own stacking context and paints over an in-flow
+ *  `absolute` dropdown regardless of z-index. Rendering into <body>
+ *  sidesteps that entirely. */
 function MultiSelect({
   label, options, selected, onChange,
 }: { label: string; options: string[]; selected: string[]; onChange: (v: string[]) => void }) {
   const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  const openMenu = () => {
+    const rect = btnRef.current?.getBoundingClientRect();
+    if (rect) setPos({ top: rect.bottom + 4, left: rect.left });
+    setOpen(true);
+  };
+
   useEffect(() => {
-    const fn = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
-    document.addEventListener("mousedown", fn);
-    return () => document.removeEventListener("mousedown", fn);
-  }, []);
+    if (!open) return;
+    const closeOnScroll = (e: Event) => {
+      if (menuRef.current && e.target instanceof Node && menuRef.current.contains(e.target)) return;
+      setOpen(false);
+    };
+    window.addEventListener("scroll", closeOnScroll, { capture: true, passive: true });
+    const closeOnOutsideClick = (e: MouseEvent) => {
+      const target = e.target as Node;
+      if (btnRef.current?.contains(target) || menuRef.current?.contains(target)) return;
+      setOpen(false);
+    };
+    document.addEventListener("mousedown", closeOnOutsideClick);
+    return () => {
+      window.removeEventListener("scroll", closeOnScroll, { capture: true });
+      document.removeEventListener("mousedown", closeOnOutsideClick);
+    };
+  }, [open]);
 
   const allSelected = selected.length === options.length && options.length > 0;
   const toggleAll = () => onChange(allSelected ? [] : [...options]);
@@ -80,25 +110,27 @@ function MultiSelect({
     : selected.slice(0, 2).join(", ") + (selected.length > 2 ? `, +${selected.length - 2} more` : "");
 
   return (
-    <div ref={ref} className="relative">
+    <>
       <button
+        ref={btnRef}
         type="button"
         aria-label={`Select ${label}`}
         aria-expanded={open}
         aria-haspopup="listbox"
-        onClick={() => setOpen((o) => !o)}
+        onClick={() => (open ? setOpen(false) : openMenu())}
         className="glass-input text-xs py-1.5 px-3 rounded-md flex items-center gap-2 min-w-[140px] justify-between"
       >
         <span className="truncate">{display}</span>
         <ChevronDown className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`} />
       </button>
-      {open && (
+      {open && pos && createPortal(
         <div
+          ref={menuRef}
           role="listbox"
           aria-label={label}
           aria-multiselectable="true"
-          className="absolute z-[99999] top-full mt-1 left-0 w-56 max-h-64 overflow-y-auto rounded-md border border-white/15 shadow-xl"
-          style={{ background: "rgb(22,28,52)", border: "1px solid rgba(255,255,255,0.15)" }}
+          className="fixed z-[9999] w-56 max-h-64 overflow-y-auto rounded-md border border-white/15 shadow-2xl"
+          style={{ top: pos.top, left: pos.left, background: "rgb(22,28,52)", border: "1px solid rgba(255,255,255,0.15)" }}
         >
           <label className="flex items-center gap-2 px-3 py-2 hover:bg-white/5 cursor-pointer border-b border-white/10 text-xs font-medium">
             <input type="checkbox" checked={allSelected} onChange={toggleAll} className="accent-blue-500" />
@@ -110,9 +142,10 @@ function MultiSelect({
               {o}
             </label>
           ))}
-        </div>
+        </div>,
+        document.body,
       )}
-    </div>
+    </>
   );
 }
 
