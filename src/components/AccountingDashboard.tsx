@@ -2518,7 +2518,19 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     // pay, Total Payment, CSV export, payslip/Send. techHourlyPayCompanyOnly
     // above stays the un-overridden flat calc, purely for the Tech Activity
     // Report's "Company vs. Applied" comparison.
-    const techHourlyPay = hourlyOtOverrides.get(emp.id)?.amount ?? techHourlyPayCompanyOnly;
+    //
+    // A technician who has since moved to Fixed Salary (isFixed — e.g. a
+    // promotion to a salaried Branch Manager role, effective mid-period) is
+    // paid the same flat perCutoffSalary officeGrossPay below already uses,
+    // not the hourly/piece-rate blend above — hourlyRate is forced to 0 for
+    // a fixed comp type (see isFixed above), so techHourlyPayCompanyOnly
+    // would otherwise silently collapse toward $0 while any State-mode
+    // override saved back when this technician was still hourly stays
+    // stuck applying its old (now meaningless) dollar amount on top of it.
+    // Fixed Salary always wins here, same as it already does for officeGrossPay.
+    const techHourlyPay = isFixed && annualSalary
+      ? perCutoffSalary(annualSalary)
+      : hourlyOtOverrides.get(emp.id)?.amount ?? techHourlyPayCompanyOnly;
     // Extra 0.5x bonus for hours actually worked on a recognized company
     // holiday — see holidayPremiumFor above. Paid on top of techHourlyPay
     // regardless of Company/State mode; not part of techIncludablePay/the
