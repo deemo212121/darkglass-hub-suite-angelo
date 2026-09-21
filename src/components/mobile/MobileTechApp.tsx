@@ -4125,6 +4125,7 @@ function ChatView({ firebaseUid, authorName }: { firebaseUid: string; authorName
   const [messagesLoading, setMessagesLoading] = useState(false);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
+  const composerRef = useRef<HTMLTextAreaElement>(null);
   const [roleFilter, setRoleFilter] = useState<string>("");
   const [searchName, setSearchName] = useState("");
   // Last message + unread count per teammate, keyed by their profile id -
@@ -4309,6 +4310,7 @@ function ChatView({ firebaseUid, authorName }: { firebaseUid: string; authorName
         body,
       });
       setDraft("");
+      if (composerRef.current) composerRef.current.style.height = "auto";
     } catch (e) {
       console.error("chat: send failed", e);
       alert(`Failed to send: ${e instanceof Error ? e.message : "Unknown error"}`);
@@ -4433,10 +4435,17 @@ function ChatView({ firebaseUid, authorName }: { firebaseUid: string; authorName
 
         {/* ── Composer ── */}
         <div className="mtech-chat-composer">
-          <input
+          <textarea
+            ref={composerRef}
             className="mtech-chat-composer-input"
+            rows={1}
             value={draft}
-            onChange={(e) => setDraft(e.target.value)}
+            onChange={(e) => {
+              setDraft(e.target.value);
+              const el = e.target;
+              el.style.height = "auto";
+              el.style.height = `${el.scrollHeight}px`;
+            }}
             placeholder="Message…"
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {

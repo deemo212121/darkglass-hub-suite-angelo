@@ -227,7 +227,7 @@ export function MessageBody({ text, className, mentionNames }: Props) {
   if (lastIndex < text.length) scanPlainText(text.slice(lastIndex), parts);
 
   return (
-    <p className={className}>
+    <p className={`whitespace-pre-wrap ${className ?? ""}`}>
       {parts.map((p, i) => {
         if (typeof p === "string") return <Fragment key={i}>{p}</Fragment>;
         if (p.kind === "namedLink") {
