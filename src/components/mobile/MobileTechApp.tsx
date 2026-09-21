@@ -6587,10 +6587,8 @@ function TechPayrollBreakdownPanel({
       {line("Sealed System", `$${entry.techCategoryPay.sealedSystem.toFixed(2)}`)}
       {line("Sealed System (R600)", `$${entry.techCategoryPay.sealedSystemR600.toFixed(2)}`)}
       {line("Two Tech", `${entry.twoTechCount} · $${entry.twoTechPay.toFixed(2)}`)}
-      {line("LDT", `${entry.ldtCount} · $${entry.ldtPay.toFixed(2)}`)}
       {line("Mileage", `${entry.mileage} mi · $${entry.mileagePay.toFixed(2)}`)}
       {line("Training Paid", `$${entry.trainingPay.toFixed(2)}`)}
-      {entry.mcaBonus > 0 && line("MCA Bonus", `$${entry.mcaBonus.toFixed(2)}`)}
       {entry.completedTicketsPay > 0 && line("Completed Tickets Rate", `$${entry.completedTicketsPay.toFixed(2)}`)}
       <div className="mtech-payroll-breakdown-row mtech-payroll-breakdown-total">
         <span className="mtech-payroll-breakdown-label">Net Pay</span>

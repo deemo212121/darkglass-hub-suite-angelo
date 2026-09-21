@@ -732,9 +732,15 @@ export interface AttendanceRow {
    * already applies to the real payroll total — this only makes that same
    * truth visible on this per-day table instead of it disagreeing with the
    * real number by showing "Absent"/$0.
+   * "unpaid-leave": no punch on a day covered by an APPROVED, UNPAID pto
+   * request (Unpaid or Sick — isPaidPtoType is false) — hoursWorked is 0
+   * (there's no pay to credit), but this is a recognized, EXCUSED absence,
+   * not an unexplained no-show — so it reads as "Unpaid Leave"/"Sick Leave"
+   * instead of flattening to plain "absent" and looking like a missed
+   * shift nobody accounted for.
    */
-  status: "present" | "absent" | "missing-in" | "missing-out" | "missing-meal" | "day-off" | "holiday" | "pending-correction" | "paid-leave";
-  /** Only set when status is "paid-leave" — which kind of paid PTO covers this day. */
+  status: "present" | "absent" | "missing-in" | "missing-out" | "missing-meal" | "day-off" | "holiday" | "pending-correction" | "paid-leave" | "unpaid-leave";
+  /** Only set when status is "paid-leave" or "unpaid-leave" — which kind of PTO covers this day. */
   leaveType?: PtoType;
   /** State the technician was assigned to for this day, if set. */
   state?: string;
@@ -763,6 +769,8 @@ export async function getAttendanceForRange(
     pendingCorrectionDates?: string[];
     /** "YYYY-MM-DD" -> leave type, for this profile's APPROVED, PAID pto requests (pto.ts's isPaidPtoType) overlapping the range — a no-punch day here reads as "paid-leave" (hoursWorked = the day's scheduled net hours) instead of "absent". */
     paidLeaveDates?: Map<string, PtoType>;
+    /** "YYYY-MM-DD" -> leave type, for this profile's APPROVED, UNPAID pto requests (Unpaid/Sick — isPaidPtoType false) overlapping the range — a no-punch day here reads as "unpaid-leave" (hoursWorked 0, but excused) instead of "absent". Takes precedence over paidLeaveDates for the same date if a caller somehow passes conflicting maps — an unpaid request is the more specific/recent record whenever both exist for one day (see EmployeePayrollDetailModal.tsx's merge). */
+    unpaidLeaveDates?: Map<string, PtoType>;
   } = {}
 ): Promise<AttendanceRow[]> {
   const { data, error } = await supabase
@@ -785,6 +793,7 @@ export async function getAttendanceForRange(
   const holidayDates = new Set(scheduled.holidayDates ?? []);
   const pendingCorrectionDates = new Set(scheduled.pendingCorrectionDates ?? []);
   const paidLeaveDates = scheduled.paidLeaveDates ?? new Map<string, PtoType>();
+  const unpaidLeaveDates = scheduled.unpaidLeaveDates ?? new Map<string, PtoType>();
   // Same rule as the timecard punch flows (TimeClockMenu.tsx / routes/timecard.tsx):
   // a shift over 6 hours is meal-eligible. Punching no longer BLOCKS timing
   // out without a meal — this is just where that gets recorded instead.
@@ -801,7 +810,10 @@ export async function getAttendanceForRange(
     const dow = d.getDay();
     const isOffDay = daysOff.has(dow);
     const isHoliday = holidayDates.has(key);
-    const leaveType = paidLeaveDates.get(key);
+    // An unpaid request for this date wins over a paid one — see the
+    // unpaidLeaveDates param doc for why a caller might pass both.
+    const unpaidType = unpaidLeaveDates.get(key);
+    const leaveType = unpaidType ?? paidLeaveDates.get(key);
     const row = byDate.get(key);
     if (!row) {
       // No timecard entry. Future days are skipped entirely (nothing to
@@ -813,7 +825,8 @@ export async function getAttendanceForRange(
       // missed shift (0 hours) — see AttendanceRow.status's "paid-leave" doc.
       const isFuture = key > new Date().toISOString().slice(0, 10);
       if (!isFuture) {
-        const isPaidLeave = !isOffDay && !isHoliday && leaveType != null && scheduledNetHours > 0;
+        const isUnpaidLeave = !isOffDay && !isHoliday && unpaidType != null;
+        const isPaidLeave = !isUnpaidLeave && !isOffDay && !isHoliday && leaveType != null && scheduledNetHours > 0;
         rows.push({
           date: key,
           clockIn: "",
@@ -821,8 +834,8 @@ export async function getAttendanceForRange(
           mealStart: "",
           mealEnd: "",
           hoursWorked: isPaidLeave ? scheduledNetHours : 0,
-          status: isOffDay ? "day-off" : isHoliday ? "holiday" : isPaidLeave ? "paid-leave" : pendingCorrectionDates.has(key) ? "pending-correction" : "absent",
-          ...(isPaidLeave ? { leaveType } : {}),
+          status: isOffDay ? "day-off" : isHoliday ? "holiday" : isUnpaidLeave ? "unpaid-leave" : isPaidLeave ? "paid-leave" : pendingCorrectionDates.has(key) ? "pending-correction" : "absent",
+          ...(isPaidLeave || isUnpaidLeave ? { leaveType } : {}),
         });
       }
       continue;

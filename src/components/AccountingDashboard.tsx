@@ -51,6 +51,7 @@ import { getEmployeeInfoByProfileIds, getCompanyUsers, getTechnicianContactInfoB
 import { resolveTeamLeadOrManager } from "@/lib/notifyRouting";
 import { createNotification } from "@/lib/supabase/notifications";
 import { getCompanyPtoRequests, isPaidPtoType, type PtoRequestRow } from "@/lib/supabase/pto";
+import { getCompanyHolidaysInRange, type CompanyHolidayRow } from "@/lib/supabase/companyHolidays";
 import { getCompanyTimecardCorrections, type TimecardCorrectionRow } from "@/lib/supabase/timecardCorrections";
 import {
   getTechRepairRates,
@@ -341,6 +342,11 @@ export interface EmployeePayrollRow {
    */
   techGuaranteedSalaryTarget: number;
   techGuaranteedSalaryMatch: number;
+  /** Extra 0.5x bonus for hours actually worked on a recognized company
+   * holiday (see holidayPremiumFor in payrollRows) — already folded into
+   * grossPay, kept separate for display. 0 when nobody worked a holiday
+   * this period, or for Office/fixed-salary rows. */
+  techHolidayPremium: number;
   /**
    * This period's includable incentive/bonus pay (piece-rate, carryover,
    * Training, Two Tech, Completed Tickets, commission-style custom
@@ -566,6 +572,23 @@ function computeHoursMap(
   }
 
   if (!periodStart || !periodEnd) return { totals: hoursMap, daily: dailyMap };
+  // An approved UNPAID (or Sick) request for a date always wins over a
+  // stale/superseded approved PAID request that happens to also cover it —
+  // e.g. an employee originally requested Vacation, was found ineligible,
+  // and got approved for Unpaid instead without the old Vacation request
+  // ever being cancelled. Without this, that date would still get credited
+  // as paid hours here even though the technician's own PTO record (and
+  // the Attendance table, see timecards.ts's unpaid-leave status) says
+  // it's unpaid.
+  const unpaidDatesByProfile = new Map<string, Set<string>>();
+  for (const pto of ptoRequests) {
+    if (pto.status !== "approved" || isPaidPtoType(pto.ptoType)) continue;
+    const dates = unpaidDatesByProfile.get(pto.profileId) ?? new Set<string>();
+    for (let d = new Date(`${pto.startDate}T00:00:00`); d <= new Date(`${pto.endDate}T00:00:00`); d.setDate(d.getDate() + 1)) {
+      dates.add(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`);
+    }
+    unpaidDatesByProfile.set(pto.profileId, dates);
+  }
   for (const pto of ptoRequests) {
     if (pto.status !== "approved" || !isPaidPtoType(pto.ptoType)) continue;
     const emp = employeeById.get(pto.profileId);
@@ -574,12 +597,14 @@ function computeHoursMap(
     const netHours = resolveScheduledNetHours(emp.requiredCheckIn || "", emp.requiredCheckOut || "", emp.workingHours, emp.mealMinutes);
     if (netHours <= 0) continue;
     const punched = punchedDates.get(pto.profileId);
+    const unpaidDates = unpaidDatesByProfile.get(pto.profileId);
     const start = pto.startDate < periodStart ? periodStart : pto.startDate;
     const end = pto.endDate > periodEnd ? periodEnd : pto.endDate;
     for (let d = new Date(`${start}T00:00:00`); d <= new Date(`${end}T00:00:00`); d.setDate(d.getDate() + 1)) {
       const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
       if (offDays.has(d.getDay())) continue;
       if (punched?.has(iso)) continue;
+      if (unpaidDates?.has(iso)) continue;
       const prev = hoursMap.get(pto.profileId) ?? { regular: 0, overtime: 0 };
       hoursMap.set(pto.profileId, { regular: prev.regular + netHours, overtime: prev.overtime });
       const prevDaily = dailyMap.get(pto.profileId) ?? [];
@@ -1972,6 +1997,25 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   }, [genStart, genEnd]);
   useEffect(() => { void loadHourlyOtOverrides(); }, [loadHourlyOtOverrides]);
 
+  // Company holidays for the picked period (migration 0252) — used to pay
+  // the Holiday Premium below for anyone who actually clocked in and
+  // worked ON a recognized holiday (a day OFF on a holiday needs none of
+  // this — see AttendanceRow's "holiday" status, unrelated to this premium).
+  // Same period-scoped load-on-change pattern as loadHourlyOtOverrides above.
+  const [companyHolidays, setCompanyHolidays] = useState<CompanyHolidayRow[]>([]);
+  const loadCompanyHolidays = useCallback(async () => {
+    if (!genStart || !genEnd || genStart > genEnd) {
+      setCompanyHolidays([]);
+      return;
+    }
+    try {
+      setCompanyHolidays(await getCompanyHolidaysInRange(genStart, genEnd));
+    } catch (err) {
+      console.error("Failed to load company holidays:", err);
+    }
+  }, [genStart, genEnd]);
+  useEffect(() => { void loadCompanyHolidays(); }, [loadCompanyHolidays]);
+
   // ── Derived data ─────────────────────────────────────────────────────────────
   // Salary entry effective as of this payroll period (genEnd) per employee.
   // salaryEntries is ordered by effective_date desc then created_at desc,
@@ -2055,6 +2099,29 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     }
     return best ? (best.compensation_type === "hourly" ? best.hourly_rate : 0) : fallbackRate;
   };
+
+  // "YYYY-MM-DD" dates recognized as a company holiday this period — feeds
+  // the Holiday Premium below. Multiple rows can share a date across US/PH,
+  // so this is a Set, not keyed by anything else.
+  const holidayDateSet = new Set(companyHolidays.map((h) => h.date));
+  /** Extra premium pay for hours actually worked ON a company holiday —
+   * Holiday Hours Worked × that day's own hourly rate × 0.5, same
+   * "half-time extra" convention as the FLSA OT premium. A day OFF on a
+   * holiday earns nothing here (0 hours worked); this is purely a bonus for
+   * choosing to work a recognized holiday, on top of normal straight/OT pay
+   * for those hours, which is unaffected. */
+  const HOLIDAY_PREMIUM_MULTIPLIER = 0.5;
+  function holidayPremiumFor(profileId: string, dailyHours: DailyHours[] | undefined, fallbackRate: number): number {
+    if (!dailyHours || holidayDateSet.size === 0) return 0;
+    let premium = 0;
+    for (const day of dailyHours) {
+      if (!holidayDateSet.has(day.date)) continue;
+      const dayHours = day.regular + day.overtime;
+      if (dayHours <= 0) continue;
+      premium += dayHours * hourlyRateOnDate(profileId, day.date, fallbackRate) * HOLIDAY_PREMIUM_MULTIPLIER;
+    }
+    return premium;
+  }
 
   // Technicians are paid per completed repair ticket (Tech Payroll) instead
   // of hourly-or-fixed — any field-technician tier (TECHNICIAN,
@@ -2245,17 +2312,22 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // so it feeds real grossPay below instead of only the modal's own
   // preview total.
   const techCustomTotalByProfile = new Map<string, number>();
-  // Same total, minus any line labeled as a reimbursement/mileage/
-  // allowance/stipend — those are expense reimbursements or flat per-diem
-  // stipends, not wages, so FLSA's weighted regular-rate calc
-  // (techIncludablePay below) has to leave them out even though they still
-  // count toward Total Payment via techCustomTotalByProfile above. A
-  // commission-style line (e.g. "Flash tech ticket commission") still
-  // counts as includable wages.
+  // Same total, minus any line NOT flagged isWageIncludable (migration
+  // 0291) — an expense reimbursement, a flat per-diem stipend, or an
+  // unrelated cash adjustment (a copay, a withheld deduction) isn't wages,
+  // so FLSA's weighted regular-rate calc (techIncludablePay below) has to
+  // leave it out even though it still counts toward Total Payment via
+  // techCustomTotalByProfile above. This used to be guessed from the label
+  // text via regex, which kept missing real deductions phrased differently
+  // each time ("Insurance", "Co pay paid in cash", "700 -$250 (6thcharged)
+  // = remaining balance") — an explicit, Finance-set flag replaces
+  // guessing from text. Redo Reduction defaults to includable (it's a real
+  // reduction in earned piece-rate wages, not an unrelated adjustment) —
+  // sign alone was never a safe signal for exclusion anyway.
   const techCustomIncludableByProfile = new Map<string, number>();
   for (const item of techCustomPayItemsAll) {
     techCustomTotalByProfile.set(item.profileId, (techCustomTotalByProfile.get(item.profileId) ?? 0) + item.value * item.rate);
-    if (!/reimburs|mileage|allowance|stipend/i.test(item.label)) {
+    if (item.isWageIncludable) {
       techCustomIncludableByProfile.set(item.profileId, (techCustomIncludableByProfile.get(item.profileId) ?? 0) + item.value * item.rate);
     }
   }
@@ -2398,6 +2470,12 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     // above stays the un-overridden flat calc, purely for the Tech Activity
     // Report's "Company vs. Applied" comparison.
     const techHourlyPay = hourlyOtOverrides.get(emp.id)?.amount ?? techHourlyPayCompanyOnly;
+    // Extra 0.5x bonus for hours actually worked on a recognized company
+    // holiday — see holidayPremiumFor above. Paid on top of techHourlyPay
+    // regardless of Company/State mode; not part of techIncludablePay/the
+    // weighted rate (the reference payroll workbook computes this as its
+    // own separate Step 6, independent of the Step 4 weighted-rate calc).
+    const techHolidayPremium = includeTech && isTechRole(emp) ? holidayPremiumFor(emp.id, dailyHoursByEmployeeId.get(emp.id), hourlyRate) : 0;
     // Guaranteed-minimum-salary match: some technicians have a fixed
     // annual salary on file (see latestFixedSalaryByProfile) that acts as
     // an ongoing floor under their hourly + incentive pay even while a
@@ -2442,7 +2520,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     // Training, a custom line, or an approved Payroll Dispute; the old
     // `tech ? ... : 0` gate silently dropped all of that to $0 for them.
     const techGrossPay = includeTech
-      ? (tech?.grossPay ?? 0) + (carryover?.grossPay ?? 0) + manualTotal + twoTechPay + completedTicketsPay + customPay + techHourlyPay + techGuaranteedSalaryMatch
+      ? (tech?.grossPay ?? 0) + (carryover?.grossPay ?? 0) + manualTotal + twoTechPay + completedTicketsPay + customPay + techHourlyPay + techGuaranteedSalaryMatch + techHolidayPremium
       : 0;
 
     const techRow: EmployeePayrollRow | null =
@@ -2483,6 +2561,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
             techWeightedRegularRate,
             techGuaranteedSalaryTarget,
             techGuaranteedSalaryMatch,
+            techHolidayPremium,
             techIncludablePay,
             dutyHours,
             grossPay: techGrossPay,
@@ -2525,6 +2604,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       techWeightedRegularRate: hourlyRate,
       techGuaranteedSalaryTarget: 0,
       techGuaranteedSalaryMatch: 0,
+      techHolidayPremium: 0,
       techIncludablePay: 0,
       dutyHours,
       grossPay: officeGrossPay,

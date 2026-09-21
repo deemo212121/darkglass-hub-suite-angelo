@@ -1148,6 +1148,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                           holiday: { label: "Holiday", className: "bg-purple-500/20 text-purple-300" },
                           "pending-correction": { label: "Pending Time Correction Request", className: "bg-amber-500/20 text-amber-300" },
                           "paid-leave": { label: "Paid Leave", className: "bg-sky-500/20 text-sky-300" },
+                          "unpaid-leave": { label: "Unpaid Leave", className: "bg-orange-500/20 text-orange-300" },
                         };
                         const meta = statusLabel[record.status];
                         return (
