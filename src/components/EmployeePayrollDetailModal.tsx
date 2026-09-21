@@ -584,6 +584,19 @@ export function EmployeePayrollDetailModal({
   // `state` is persisted, `load()`'s next attendance refetch makes that row
   // no longer blank, so this stops touching it.
   const autoFillingStateDates = useRef<Set<string>>(new Set());
+  const rateChangedDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    return () => {
+      if (rateChangedDebounceRef.current) {
+        clearTimeout(rateChangedDebounceRef.current);
+        // Flush rather than drop — otherwise closing the modal right after
+        // a state edit leaves the dashboard's totals stale with no pending
+        // refresh left to fix it.
+        onRateChanged?.();
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   useEffect(() => {
     if (loading) return;
     const toFill = attendance.filter(
@@ -1078,7 +1091,16 @@ export function EmployeePayrollDetailModal({
         state: value,
       });
       await load({ current: false });
-      onRateChanged?.();
+      // Debounced: onRateChanged triggers a full company-wide dashboard
+      // refetch (all profiles, salary entries, line items, etc.), so firing
+      // it on every single dropdown click — e.g. clearing several
+      // "State Not Assigned" days in a row — was reloading the whole
+      // dashboard once per click. Coalesce rapid edits into one refresh.
+      if (rateChangedDebounceRef.current) clearTimeout(rateChangedDebounceRef.current);
+      rateChangedDebounceRef.current = setTimeout(() => {
+        rateChangedDebounceRef.current = null;
+        onRateChanged?.();
+      }, 800);
     } catch (err) {
       alert(`Failed to save state: ${err instanceof Error ? err.message : "Unknown error"}`);
       setStateEdits((prev) => {
