@@ -71,8 +71,9 @@ import {
   type OnboardingDocumentColumn,
   type OnboardingGroupKey,
 } from "@/lib/supabase/onboardingDocumentColumns";
-import { uploadCoeCertificate, uploadWarningForm, uploadPromotionForm, uploadActionPlanForm, uploadTerminationForm, uploadW8benForm, uploadW4Form, uploadW4RForm, uploadI9Form, uploadWageAckForm, uploadCarIqAgreementForm, uploadVehicleAgreementForm, uploadEmployeeConfidentialityForm, uploadMealRestBreakForm, uploadPtoAckForm, uploadPartsResponsibilityForm, uploadMileageFuelForm, uploadLocationConsentForm, uploadDamageForm, uploadContractorDataForm, uploadDirectDepositForm, uploadSubstanceScreeningForm, uploadFlashTechnicianTravelForm, uploadContractorAddendumForm, uploadMasterW2AgreementForm, uploadMasterW2OfficeAgreementForm, uploadMasterPhContractorAgreementForm, uploadMasterW2ExecutiveAgreementForm, uploadSignableDocumentSignature, refreshStorageAuthToken } from "@/lib/firebase/storage";
-import { captureHtmlToPdfBlob, captureHtmlPagesToPdfBlob, loadAssetDataUrl as loadImageDataUrl } from "@/lib/pdfCapture";
+import { uploadCoeCertificate, uploadWarningForm, uploadPromotionForm, uploadActionPlanForm, uploadTerminationForm, uploadW8benForm, uploadW4Form, uploadW4RForm, uploadI9Form, uploadWageAckForm, uploadCarIqAgreementForm, uploadVehicleAgreementForm, uploadEmployeeConfidentialityForm, uploadMealRestBreakForm, uploadPtoAckForm, uploadPartsResponsibilityForm, uploadMileageFuelForm, uploadLocationConsentForm, uploadDamageForm, uploadContractorDataForm, uploadDirectDepositForm, uploadSubstanceScreeningForm, uploadFlashTechnicianTravelForm, uploadContractorAddendumForm, uploadMasterW2AgreementForm, uploadMasterW2OfficeAgreementForm, uploadMasterPhContractorAgreementForm, uploadMasterW2ExecutiveAgreementForm, uploadVehicleUseAgreementForm, uploadNdaForm, uploadSsnCardForm, uploadDriversLicenseForm, uploadValidIdForm, uploadSignableDocumentSignature, refreshStorageAuthToken } from "@/lib/firebase/storage";
+import { regenerateSimpleSignableDocumentPdf, regenerateMasterAgreementPdf } from "@/lib/regenerateSignableDocumentPdf";
+import { captureHtmlToPdfBlob, captureHtmlPagesToPdfBlob, resolveSignaturesForCapture, loadAssetDataUrl as loadImageDataUrl } from "@/lib/pdfCapture";
 import { downloadSignableDocumentPdf } from "@/lib/downloadSignableDocumentPdf";
 import { repairMultiSignerPdfs, type RepairResult } from "@/lib/repairMultiSignerSignatures";
 import { useSortableSearchTable } from "@/hooks/useSortableSearchTable";
@@ -138,9 +139,9 @@ import type { VehicleAgreementFormData } from "@/lib/vehicleAgreementFormTemplat
 import { fillVehicleAgreementPdf } from "@/lib/vehicleAgreementPdfFill";
 import type { EmployeeConfidentialityFormData } from "@/lib/employeeConfidentialityFormTemplate";
 import { fillEmployeeConfidentialityPdf } from "@/lib/employeeConfidentialityPdfFill";
-import type { SsnCardFormData } from "@/lib/ssnCardFormTemplate";
-import type { DriversLicenseFormData } from "@/lib/driversLicenseFormTemplate";
-import type { ValidIdFormData } from "@/lib/validIdFormTemplate";
+import { buildSsnCardFormBodyMarkup, ssnCardFormStyles, type SsnCardFormData } from "@/lib/ssnCardFormTemplate";
+import { buildDriversLicenseFormBodyMarkup, driversLicenseFormStyles, type DriversLicenseFormData } from "@/lib/driversLicenseFormTemplate";
+import { buildValidIdFormBodyMarkup, validIdFormStyles, type ValidIdFormData } from "@/lib/validIdFormTemplate";
 import { MEAL_REST_BREAK_BRANCHES, type MealRestBreakFormData } from "@/lib/mealRestBreakFormTemplate";
 import { fillMealRestBreakPdf } from "@/lib/mealRestBreakPdfFill";
 import { PTO_ACK_BRANCHES, type PtoAckFormData } from "@/lib/ptoAckFormTemplate";
@@ -4869,6 +4870,23 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     await downloadSignableDocumentPdf(doc.pdfUrl, `Master W-2 Technician Agreement - ${name}.pdf`);
   };
 
+  /** Re-renders this document's PDF from its already-stored data (employee/employer signatures are inline data: URLs in form_data, no CORS resolution needed) — see regenerateSignableDocumentPdf.ts's header comment. */
+  const handleRegenerateMasterW2AgreementPdf = async (doc: SignableDocument) => {
+    const name = (doc.formData as Partial<MasterW2AgreementFormData>).employeeName || doc.recipientName || "master-w2-agreement";
+    setMasterW2AgreementActionBusyId(doc.id);
+    setMasterW2AgreementActionError(null);
+    try {
+      const logo = masterW2AgreementLogoDataUrl || (await loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png")));
+      if (!masterW2AgreementLogoDataUrl) setMasterW2AgreementLogoDataUrl(logo);
+      await regenerateMasterAgreementPdf(doc, logo, buildMasterW2AgreementBodyMarkup, masterW2AgreementStyles, uploadMasterW2AgreementForm, name);
+      await loadSentMasterW2AgreementForms();
+    } catch (err) {
+      setMasterW2AgreementActionError(err instanceof Error ? err.message : "Failed to regenerate PDF.");
+    } finally {
+      setMasterW2AgreementActionBusyId(null);
+    }
+  };
+
   const handleReopenMasterW2AgreementEmployer = async (doc: SignableDocument) => {
     if (!window.confirm("Re-open this for a new employer signature? The employee's signature stays as-is.")) return;
     setMasterW2AgreementActionBusyId(doc.id);
@@ -5152,6 +5170,23 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     await downloadSignableDocumentPdf(doc.pdfUrl, `Master W-2 Office Agreement - ${name}.pdf`);
   };
 
+  /** Re-renders this document's PDF from its already-stored data (employee/employer signatures are inline data: URLs in form_data, no CORS resolution needed) — see regenerateSignableDocumentPdf.ts's header comment. */
+  const handleRegenerateMasterW2OfficeAgreementPdf = async (doc: SignableDocument) => {
+    const name = (doc.formData as Partial<MasterW2OfficeAgreementFormData>).employeeName || doc.recipientName || "master-w2-office-agreement";
+    setMasterW2OfficeAgreementActionBusyId(doc.id);
+    setMasterW2OfficeAgreementActionError(null);
+    try {
+      const logo = masterW2OfficeAgreementLogoDataUrl || (await loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png")));
+      if (!masterW2OfficeAgreementLogoDataUrl) setMasterW2OfficeAgreementLogoDataUrl(logo);
+      await regenerateMasterAgreementPdf(doc, logo, buildMasterW2OfficeAgreementBodyMarkup, masterW2OfficeAgreementStyles, uploadMasterW2OfficeAgreementForm, name);
+      await loadSentMasterW2OfficeAgreementForms();
+    } catch (err) {
+      setMasterW2OfficeAgreementActionError(err instanceof Error ? err.message : "Failed to regenerate PDF.");
+    } finally {
+      setMasterW2OfficeAgreementActionBusyId(null);
+    }
+  };
+
   const handleReopenMasterW2OfficeAgreementEmployer = async (doc: SignableDocument) => {
     if (!window.confirm("Re-open this for a new employer signature? The employee's signature stays as-is.")) return;
     setMasterW2OfficeAgreementActionBusyId(doc.id);
@@ -5426,6 +5461,23 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     if (!doc.pdfUrl) return;
     const name = (doc.formData as Partial<MasterW2ExecutiveAgreementFormData>).employeeName || doc.recipientName || "master-w2-executive-agreement";
     await downloadSignableDocumentPdf(doc.pdfUrl, `W-2 Executive Exempt Management Agreement - ${name}.pdf`);
+  };
+
+  /** Re-renders this document's PDF from its already-stored data (employee/employer signatures are inline data: URLs in form_data, no CORS resolution needed) — see regenerateSignableDocumentPdf.ts's header comment. */
+  const handleRegenerateMasterW2ExecutiveAgreementPdf = async (doc: SignableDocument) => {
+    const name = (doc.formData as Partial<MasterW2ExecutiveAgreementFormData>).employeeName || doc.recipientName || "master-w2-executive-agreement";
+    setMasterW2ExecutiveAgreementActionBusyId(doc.id);
+    setMasterW2ExecutiveAgreementActionError(null);
+    try {
+      const logo = masterW2ExecutiveAgreementLogoDataUrl || (await loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png")));
+      if (!masterW2ExecutiveAgreementLogoDataUrl) setMasterW2ExecutiveAgreementLogoDataUrl(logo);
+      await regenerateMasterAgreementPdf(doc, logo, buildMasterW2ExecutiveAgreementBodyMarkup, masterW2ExecutiveAgreementStyles, uploadMasterW2ExecutiveAgreementForm, name);
+      await loadSentMasterW2ExecutiveAgreementForms();
+    } catch (err) {
+      setMasterW2ExecutiveAgreementActionError(err instanceof Error ? err.message : "Failed to regenerate PDF.");
+    } finally {
+      setMasterW2ExecutiveAgreementActionBusyId(null);
+    }
   };
 
   const handleReopenMasterW2ExecutiveAgreementEmployer = async (doc: SignableDocument) => {
@@ -5731,6 +5783,23 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     if (!doc.pdfUrl) return;
     const name = (doc.formData as Partial<MasterPhContractorAgreementFormData>).employeeName || doc.recipientName || "master-ph-contractor-agreement";
     await downloadSignableDocumentPdf(doc.pdfUrl, `Master PH Contractor Agreement - ${name}.pdf`);
+  };
+
+  /** Re-renders this document's PDF from its already-stored data (employee/employer signatures are inline data: URLs in form_data, no CORS resolution needed) — see regenerateSignableDocumentPdf.ts's header comment. */
+  const handleRegenerateMasterPhContractorAgreementPdf = async (doc: SignableDocument) => {
+    const name = (doc.formData as Partial<MasterPhContractorAgreementFormData>).employeeName || doc.recipientName || "master-ph-contractor-agreement";
+    setMasterPhContractorAgreementActionBusyId(doc.id);
+    setMasterPhContractorAgreementActionError(null);
+    try {
+      const logo = masterPhContractorAgreementLogoDataUrl || (await loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png")));
+      if (!masterPhContractorAgreementLogoDataUrl) setMasterPhContractorAgreementLogoDataUrl(logo);
+      await regenerateMasterAgreementPdf(doc, logo, buildMasterPhContractorAgreementBodyMarkup, masterPhContractorAgreementStyles, uploadMasterPhContractorAgreementForm, name);
+      await loadSentMasterPhContractorAgreementForms();
+    } catch (err) {
+      setMasterPhContractorAgreementActionError(err instanceof Error ? err.message : "Failed to regenerate PDF.");
+    } finally {
+      setMasterPhContractorAgreementActionBusyId(null);
+    }
   };
 
   const handleReopenMasterPhContractorAgreementEmployer = async (doc: SignableDocument) => {
@@ -7049,6 +7118,22 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     await downloadSignableDocumentPdf(doc.pdfUrl, `SSN Card - ${name}.pdf`);
   };
 
+  /** Re-renders this document's PDF from its already-stored data/signatures — see regenerateSignableDocumentPdf.ts's header comment (built for the date-rollback fmtDate fix, which only affects documents generated after the fix). */
+  const handleRegenerateSsnCardPdf = async (doc: SignableDocument) => {
+    const name = (doc.formData as Partial<SsnCardFormData>).employeeName || doc.recipientName || "ssn-card";
+    setSsnCardActionBusyId(doc.id);
+    setSsnCardActionError(null);
+    try {
+      const logo = await loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png"));
+      await regenerateSimpleSignableDocumentPdf(doc, logo, buildSsnCardFormBodyMarkup, ssnCardFormStyles, uploadSsnCardForm, name);
+      await loadSentSsnCardForms();
+    } catch (err) {
+      setSsnCardActionError(err instanceof Error ? err.message : "Failed to regenerate PDF.");
+    } finally {
+      setSsnCardActionBusyId(null);
+    }
+  };
+
   const handleDeleteSsnCard = async (doc: SignableDocument) => {
     if (!window.confirm("Permanently delete this SSN Card request?")) return;
     setSsnCardActionBusyId(doc.id);
@@ -7185,6 +7270,22 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     await downloadSignableDocumentPdf(doc.pdfUrl, `Driver's License - ${name}.pdf`);
   };
 
+  /** Re-renders this document's PDF from its already-stored data/signatures — see regenerateSignableDocumentPdf.ts's header comment (built for the date-rollback fmtDate fix, which only affects documents generated after the fix). */
+  const handleRegenerateDriversLicensePdf = async (doc: SignableDocument) => {
+    const name = (doc.formData as Partial<DriversLicenseFormData>).employeeName || doc.recipientName || "drivers-license";
+    setDriversLicenseActionBusyId(doc.id);
+    setDriversLicenseActionError(null);
+    try {
+      const logo = await loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png"));
+      await regenerateSimpleSignableDocumentPdf(doc, logo, buildDriversLicenseFormBodyMarkup, driversLicenseFormStyles, uploadDriversLicenseForm, name);
+      await loadSentDriversLicenseForms();
+    } catch (err) {
+      setDriversLicenseActionError(err instanceof Error ? err.message : "Failed to regenerate PDF.");
+    } finally {
+      setDriversLicenseActionBusyId(null);
+    }
+  };
+
   const handleDeleteDriversLicense = async (doc: SignableDocument) => {
     if (!window.confirm("Permanently delete this Driver's License request?")) return;
     setDriversLicenseActionBusyId(doc.id);
@@ -7319,6 +7420,22 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     if (!doc.pdfUrl) return;
     const name = (doc.formData as Partial<ValidIdFormData>).employeeName || doc.recipientName || "valid-id";
     await downloadSignableDocumentPdf(doc.pdfUrl, `Valid ID - ${name}.pdf`);
+  };
+
+  /** Re-renders this document's PDF from its already-stored data/signatures — see regenerateSignableDocumentPdf.ts's header comment (built for the date-rollback fmtDate fix, which only affects documents generated after the fix). */
+  const handleRegenerateValidIdPdf = async (doc: SignableDocument) => {
+    const name = (doc.formData as Partial<ValidIdFormData>).employeeName || doc.recipientName || "valid-id";
+    setValidIdActionBusyId(doc.id);
+    setValidIdActionError(null);
+    try {
+      const logo = await loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png"));
+      await regenerateSimpleSignableDocumentPdf(doc, logo, buildValidIdFormBodyMarkup, validIdFormStyles, uploadValidIdForm, name);
+      await loadSentValidIdForms();
+    } catch (err) {
+      setValidIdActionError(err instanceof Error ? err.message : "Failed to regenerate PDF.");
+    } finally {
+      setValidIdActionBusyId(null);
+    }
   };
 
   const handleDeleteValidId = async (doc: SignableDocument) => {
@@ -7507,6 +7624,27 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     if (!doc.pdfUrl) return;
     const name = (doc.formData as { employeeName?: string }).employeeName || doc.recipientName || "nda-form";
     await downloadSignableDocumentPdf(doc.pdfUrl, `Non-Disclosure Agreement - ${name}.pdf`);
+  };
+
+  /** Re-renders this document's PDF from its already-stored data/signatures — same idea as regenerateSignableDocumentPdf.ts's helpers, just inlined since NDA is multi-page (buildNdaFormPages/captureHtmlPagesToPdfBlob) rather than the single-page shape those helpers assume. */
+  const handleRegenerateNdaPdf = async (doc: SignableDocument) => {
+    const name = (doc.formData as { employeeName?: string }).employeeName || doc.recipientName || "nda-form";
+    setNdaActionBusyId(doc.id);
+    setNdaActionError(null);
+    try {
+      const logo = ndaLogoDataUrl || (await loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png")));
+      if (!ndaLogoDataUrl) setNdaLogoDataUrl(logo);
+      const resolved = await resolveSignaturesForCapture(doc.signatures, "__regenerate__", "");
+      const pages = buildNdaFormPages(doc.formData as NdaFormData, logo, resolved.employee);
+      const pdfBlob = await captureHtmlPagesToPdfBlob(pages, ndaFormStyles);
+      const pdfUrl = await uploadNdaForm(doc.companyId, name, pdfBlob);
+      await updateSignableDocumentPdfUrl(doc.id, pdfUrl);
+      await loadSentNdaForms();
+    } catch (err) {
+      setNdaActionError(err instanceof Error ? err.message : "Failed to regenerate PDF.");
+    } finally {
+      setNdaActionBusyId(null);
+    }
   };
 
   const handleDeleteNda = async (doc: SignableDocument) => {
@@ -9877,6 +10015,23 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     await downloadSignableDocumentPdf(doc.pdfUrl, `Employee Data - ${name}.pdf`);
   };
 
+  /** Re-renders this document's PDF from its already-stored data/signatures — see regenerateSignableDocumentPdf.ts's header comment (built for the date-rollback fmtDate fix, which only affects documents generated after the fix). */
+  const handleRegenerateContractorDataPdf = async (doc: SignableDocument) => {
+    const name = (doc.formData as Partial<ContractorDataFormData>).employeeName || doc.recipientName || "employee-data";
+    setContractorDataActionBusyId(doc.id);
+    setContractorDataActionError(null);
+    try {
+      const logo = contractorDataLogoDataUrl || (await loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png")));
+      if (!contractorDataLogoDataUrl) setContractorDataLogoDataUrl(logo);
+      await regenerateSimpleSignableDocumentPdf(doc, logo, buildContractorDataBodyMarkup, contractorDataStyles, uploadContractorDataForm, name);
+      await loadSentContractorDataForms();
+    } catch (err) {
+      setContractorDataActionError(err instanceof Error ? err.message : "Failed to regenerate PDF.");
+    } finally {
+      setContractorDataActionBusyId(null);
+    }
+  };
+
   const handleDeleteContractorData = async (doc: SignableDocument) => {
     if (!window.confirm("Permanently delete this Employee Data request?")) return;
     setContractorDataActionBusyId(doc.id);
@@ -10080,6 +10235,23 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     await downloadSignableDocumentPdf(doc.pdfUrl, `Contractor Data (US) - ${name}.pdf`);
   };
 
+  /** Re-renders this document's PDF from its already-stored data/signatures — see regenerateSignableDocumentPdf.ts's header comment (built for the date-rollback fmtDate fix, which only affects documents generated after the fix). */
+  const handleRegenerateContractorDataUsPdf = async (doc: SignableDocument) => {
+    const name = (doc.formData as Partial<ContractorDataUsFormData>).employeeName || doc.recipientName || "contractor-data-us";
+    setContractorDataUsActionBusyId(doc.id);
+    setContractorDataUsActionError(null);
+    try {
+      const logo = contractorDataUsLogoDataUrl || (await loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png")));
+      if (!contractorDataUsLogoDataUrl) setContractorDataUsLogoDataUrl(logo);
+      await regenerateSimpleSignableDocumentPdf(doc, logo, buildContractorDataUsBodyMarkup, contractorDataUsStyles, uploadContractorDataForm, name);
+      await loadSentContractorDataUsForms();
+    } catch (err) {
+      setContractorDataUsActionError(err instanceof Error ? err.message : "Failed to regenerate PDF.");
+    } finally {
+      setContractorDataUsActionBusyId(null);
+    }
+  };
+
   const handleDeleteContractorDataUs = async (doc: SignableDocument) => {
     if (!window.confirm("Permanently delete this Contractor Data (US) request?")) return;
     setContractorDataUsActionBusyId(doc.id);
@@ -10262,6 +10434,23 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     if (!doc.pdfUrl) return;
     const name = (doc.formData as Partial<VehicleUseAgreementFormData>).employeeName || doc.recipientName || "vehicle-use-agreement";
     await downloadSignableDocumentPdf(doc.pdfUrl, `Vehicle Use Agreement - ${name}.pdf`);
+  };
+
+  /** Re-renders this document's PDF from its already-stored data/signatures — see regenerateSignableDocumentPdf.ts's header comment (built for the date-rollback fmtDate fix, which only affects documents generated after the fix). */
+  const handleRegenerateVehicleUseAgreementPdf = async (doc: SignableDocument) => {
+    const name = (doc.formData as Partial<VehicleUseAgreementFormData>).employeeName || doc.recipientName || "vehicle-use-agreement";
+    setVehicleUseAgreementActionBusyId(doc.id);
+    setVehicleUseAgreementActionError(null);
+    try {
+      const logo = vehicleUseAgreementLogoDataUrl || (await loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png")));
+      if (!vehicleUseAgreementLogoDataUrl) setVehicleUseAgreementLogoDataUrl(logo);
+      await regenerateSimpleSignableDocumentPdf(doc, logo, buildVehicleUseAgreementBodyMarkup, vehicleUseAgreementStyles, uploadVehicleUseAgreementForm, name);
+      await loadSentVehicleUseAgreementForms();
+    } catch (err) {
+      setVehicleUseAgreementActionError(err instanceof Error ? err.message : "Failed to regenerate PDF.");
+    } finally {
+      setVehicleUseAgreementActionBusyId(null);
+    }
   };
 
   const handleDeleteVehicleUseAgreement = async (doc: SignableDocument) => {
@@ -10459,6 +10648,23 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     if (!doc.pdfUrl) return;
     const name = (doc.formData as Partial<DirectDepositFormData>).employeeName || doc.recipientName || "direct-deposit";
     await downloadSignableDocumentPdf(doc.pdfUrl, `Direct Deposit Authorization - ${name}.pdf`);
+  };
+
+  /** Re-renders this document's PDF from its already-stored data/signatures — see regenerateSignableDocumentPdf.ts's header comment (built for the date-rollback fmtDate fix, which only affects documents generated after the fix). */
+  const handleRegenerateDirectDepositPdf = async (doc: SignableDocument) => {
+    const name = (doc.formData as Partial<DirectDepositFormData>).employeeName || doc.recipientName || "direct-deposit";
+    setDirectDepositActionBusyId(doc.id);
+    setDirectDepositActionError(null);
+    try {
+      const logo = directDepositLogoDataUrl || (await loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png")));
+      if (!directDepositLogoDataUrl) setDirectDepositLogoDataUrl(logo);
+      await regenerateSimpleSignableDocumentPdf(doc, logo, buildDirectDepositBodyMarkup, directDepositStyles, uploadDirectDepositForm, name);
+      await loadSentDirectDepositForms();
+    } catch (err) {
+      setDirectDepositActionError(err instanceof Error ? err.message : "Failed to regenerate PDF.");
+    } finally {
+      setDirectDepositActionBusyId(null);
+    }
   };
 
   const handleDeleteDirectDeposit = async (doc: SignableDocument) => {
@@ -23118,6 +23324,9 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           {doc.pdfUrl && (
                             <button type="button" onClick={() => handleDownloadSsnCardPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">Download PDF</button>
                           )}
+                          {doc.pdfUrl && (
+                            <button type="button" disabled={busy} onClick={() => void handleRegenerateSsnCardPdf(doc)} title="Re-render this PDF from its saved data — fixes a date that was rendered a day early before the timezone bug fix" className="text-amber-300 hover:text-amber-200 underline text-xs disabled:opacity-40">{busy ? "Regenerating…" : "Regenerate PDF"}</button>
+                          )}
                           <button type="button" disabled={busy} onClick={() => handleDeleteSsnCard(doc)} title="Permanently delete this request" className="text-muted-foreground hover:text-red-300 disabled:opacity-50">
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
@@ -23249,6 +23458,9 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           {doc.pdfUrl && (
                             <button type="button" onClick={() => handleDownloadDriversLicensePdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">Download PDF</button>
                           )}
+                          {doc.pdfUrl && (
+                            <button type="button" disabled={busy} onClick={() => void handleRegenerateDriversLicensePdf(doc)} title="Re-render this PDF from its saved data — fixes a date that was rendered a day early before the timezone bug fix" className="text-amber-300 hover:text-amber-200 underline text-xs disabled:opacity-40">{busy ? "Regenerating…" : "Regenerate PDF"}</button>
+                          )}
                           <button type="button" disabled={busy} onClick={() => handleDeleteDriversLicense(doc)} title="Permanently delete this request" className="text-muted-foreground hover:text-red-300 disabled:opacity-50">
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
@@ -23379,6 +23591,9 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           )}
                           {doc.pdfUrl && (
                             <button type="button" onClick={() => handleDownloadValidIdPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">Download PDF</button>
+                          )}
+                          {doc.pdfUrl && (
+                            <button type="button" disabled={busy} onClick={() => void handleRegenerateValidIdPdf(doc)} title="Re-render this PDF from its saved data — fixes a date that was rendered a day early before the timezone bug fix" className="text-amber-300 hover:text-amber-200 underline text-xs disabled:opacity-40">{busy ? "Regenerating…" : "Regenerate PDF"}</button>
                           )}
                           <button type="button" disabled={busy} onClick={() => handleDeleteValidId(doc)} title="Permanently delete this request" className="text-muted-foreground hover:text-red-300 disabled:opacity-50">
                             <Trash2 className="h-3.5 w-3.5" />
@@ -23576,6 +23791,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           {doc.pdfUrl && (
                             <button type="button" onClick={() => handleDownloadNdaPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
                               Download PDF
+                            </button>
+                          )}
+                          {doc.pdfUrl && (
+                            <button type="button" disabled={busy} onClick={() => void handleRegenerateNdaPdf(doc)} title="Re-render this PDF from its saved data — fixes a date that was rendered a day early before the timezone bug fix" className="text-amber-300 hover:text-amber-200 underline text-xs disabled:opacity-40">
+                              {busy ? "Regenerating…" : "Regenerate PDF"}
                             </button>
                           )}
                           <button
@@ -24952,6 +25172,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                               Download PDF
                             </button>
                           )}
+                          {doc.pdfUrl && (
+                            <button type="button" disabled={busy} onClick={() => void handleRegenerateMasterW2AgreementPdf(doc)} title="Re-render this PDF from its saved data — fixes a date that was rendered a day early before the timezone bug fix" className="text-amber-300 hover:text-amber-200 underline text-xs disabled:opacity-40">
+                              {busy ? "Regenerating…" : "Regenerate PDF"}
+                            </button>
+                          )}
                           {doc.status === "confirmed" && (
                             <button type="button" onClick={() => handleReopenMasterW2AgreementEmployer(doc)} className="btn text-[10px] px-2 py-1" title="Redo the employer signature — keeps the employee's original signature">
                               Re-sign
@@ -25264,6 +25489,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                               Download PDF
                             </button>
                           )}
+                          {doc.pdfUrl && (
+                            <button type="button" disabled={busy} onClick={() => void handleRegenerateMasterW2OfficeAgreementPdf(doc)} title="Re-render this PDF from its saved data — fixes a date that was rendered a day early before the timezone bug fix" className="text-amber-300 hover:text-amber-200 underline text-xs disabled:opacity-40">
+                              {busy ? "Regenerating…" : "Regenerate PDF"}
+                            </button>
+                          )}
                           {doc.status === "confirmed" && (
                             <button type="button" onClick={() => handleReopenMasterW2OfficeAgreementEmployer(doc)} className="btn text-[10px] px-2 py-1" title="Redo the employer signature — keeps the employee's original signature">
                               Re-sign
@@ -25550,6 +25780,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           {doc.pdfUrl && (
                             <button type="button" onClick={() => handleDownloadMasterW2ExecutiveAgreementPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
                               Download PDF
+                            </button>
+                          )}
+                          {doc.pdfUrl && (
+                            <button type="button" disabled={busy} onClick={() => void handleRegenerateMasterW2ExecutiveAgreementPdf(doc)} title="Re-render this PDF from its saved data — fixes a date that was rendered a day early before the timezone bug fix" className="text-amber-300 hover:text-amber-200 underline text-xs disabled:opacity-40">
+                              {busy ? "Regenerating…" : "Regenerate PDF"}
                             </button>
                           )}
                           {doc.status === "confirmed" && (
@@ -25868,6 +26103,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           {doc.pdfUrl && (
                             <button type="button" onClick={() => handleDownloadMasterPhContractorAgreementPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
                               Download PDF
+                            </button>
+                          )}
+                          {doc.pdfUrl && (
+                            <button type="button" disabled={busy} onClick={() => void handleRegenerateMasterPhContractorAgreementPdf(doc)} title="Re-render this PDF from its saved data — fixes a date that was rendered a day early before the timezone bug fix" className="text-amber-300 hover:text-amber-200 underline text-xs disabled:opacity-40">
+                              {busy ? "Regenerating…" : "Regenerate PDF"}
                             </button>
                           )}
                           {doc.status === "confirmed" && (
@@ -27181,6 +27421,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                               Download PDF
                             </button>
                           )}
+                          {doc.pdfUrl && (
+                            <button type="button" disabled={busy} onClick={() => void handleRegenerateContractorDataPdf(doc)} title="Re-render this PDF from its saved data — fixes a date that was rendered a day early before the timezone bug fix" className="text-amber-300 hover:text-amber-200 underline text-xs disabled:opacity-40">
+                              {busy ? "Regenerating…" : "Regenerate PDF"}
+                            </button>
+                          )}
                           <button
                             type="button"
                             disabled={busy}
@@ -27383,6 +27628,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           {doc.pdfUrl && (
                             <button type="button" onClick={() => handleDownloadContractorDataUsPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
                               Download PDF
+                            </button>
+                          )}
+                          {doc.pdfUrl && (
+                            <button type="button" disabled={busy} onClick={() => void handleRegenerateContractorDataUsPdf(doc)} title="Re-render this PDF from its saved data — fixes a date that was rendered a day early before the timezone bug fix" className="text-amber-300 hover:text-amber-200 underline text-xs disabled:opacity-40">
+                              {busy ? "Regenerating…" : "Regenerate PDF"}
                             </button>
                           )}
                           <button
@@ -27589,6 +27839,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                               Download PDF
                             </button>
                           )}
+                          {doc.pdfUrl && (
+                            <button type="button" disabled={busy} onClick={() => void handleRegenerateVehicleUseAgreementPdf(doc)} title="Re-render this PDF from its saved data — fixes a date that was rendered a day early before the timezone bug fix" className="text-amber-300 hover:text-amber-200 underline text-xs disabled:opacity-40">
+                              {busy ? "Regenerating…" : "Regenerate PDF"}
+                            </button>
+                          )}
                           <button
                             type="button"
                             disabled={busy}
@@ -27791,6 +28046,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           {doc.pdfUrl && (
                             <button type="button" onClick={() => handleDownloadDirectDepositPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
                               Download PDF
+                            </button>
+                          )}
+                          {doc.pdfUrl && (
+                            <button type="button" disabled={busy} onClick={() => void handleRegenerateDirectDepositPdf(doc)} title="Re-render this PDF from its saved data — fixes a date that was rendered a day early before the timezone bug fix" className="text-amber-300 hover:text-amber-200 underline text-xs disabled:opacity-40">
+                              {busy ? "Regenerating…" : "Regenerate PDF"}
                             </button>
                           )}
                           <button
