@@ -20,15 +20,21 @@
  * "tier 1" and job titles like "Branch Manager") that predates this
  * report and isn't a clean Tier 1-4 enum. Shown as-is rather than
  * inventing a new field no one would maintain.
+ *
+ * Tech ID is employee_info.employeeId (HR's own free-text staff ID field,
+ * bulk-loaded via getEmployeeInfoByProfileIds — same one shown elsewhere
+ * in HR tooling) when HR has set one; falls back to "—" rather than
+ * fabricating an ID when it hasn't.
  */
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
+import { Bar, BarChart, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { ChevronLeft, Download, RefreshCw } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { BrandedLoader } from "@/components/BrandedLoader";
-import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
+import { getCompanyUsers, getEmployeeInfoByProfileIds, type ProfileRow } from "@/lib/supabase/users";
 import { getTechCompletedRepairCounts, getTechRedoTickets } from "@/lib/supabase/techPayroll";
 import { getMileageEntries, mileageEffectiveTotal } from "@/lib/supabase/mileage";
 import { getCompanyTimecardEntries, calcWorkedHours, computeMealTimeCredit, startOfWeekSunday, addDaysISO } from "@/lib/supabase/timecards";
@@ -37,12 +43,24 @@ import { visibleAttendanceProfileIds } from "@/lib/notifyRouting";
 import { TECHNICIAN_PAY_ROLES, normalizeRole, isMealAlwaysPaidRole } from "@/lib/roleLabels";
 import { exportToCSV } from "@/lib/csvExport";
 
+const TOOLTIP_STYLE = {
+  background: "#ffffff",
+  border: "1px solid #cbd5e1",
+  borderRadius: 6,
+  color: "#0f172a",
+  fontSize: 12,
+  fontWeight: 600,
+  boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
+} as const;
+const CHART_BAR_FILL = "#3b82f6";
+
 type PeriodMode = "weekly" | "monthly";
-type SortKey = "name" | "location" | "manager" | "tier" | "hoursWorked" | "totalTickets" | "redoCount" | "redoRatePct" | "miles" | "milesPerTicket" | "ticketsPerHour";
+type SortKey = "techId" | "name" | "location" | "manager" | "tier" | "daysWorked" | "hoursWorked" | "totalTickets" | "redoCount" | "redoRatePct" | "miles" | "milesPerTicket" | "ticketsPerHour";
 type GroupBy = "none" | "location" | "manager" | "tier";
 
 interface TechPerfRow {
   id: string;
+  techId: string;
   name: string;
   location: string;
   manager: string;
@@ -111,6 +129,7 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
       setCsrComposition(composition);
 
       const techs = allUsers.filter((u) => u.is_active && TECHNICIAN_PAY_ROLES.has(normalizeRole(u.role)));
+      const employeeInfoMap = await getEmployeeInfoByProfileIds(techs.map((t) => t.id));
 
       // Total completed tickets per technician (every repair-type category
       // summed — no Minor/Major split, see this file's header comment).
@@ -175,6 +194,7 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
         const weeklyEquivalentHours = periodWeeks > 0 ? hoursWorked / periodWeeks : hoursWorked;
         return {
           id: t.id,
+          techId: employeeInfoMap.get(t.id)?.employeeId?.trim() || "—",
           name: t.display_name || t.email,
           location: t.assigned_branch || "—",
           manager: t.manager_name || "—",
@@ -229,10 +249,12 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
     const dir = sortDir === "asc" ? 1 : -1;
     const val = (r: TechPerfRow): string | number => {
       switch (sortKey) {
+        case "techId": return r.techId.toLowerCase();
         case "name": return r.name.toLowerCase();
         case "location": return r.location.toLowerCase();
         case "manager": return r.manager.toLowerCase();
         case "tier": return r.tier.toLowerCase();
+        case "daysWorked": return r.daysWorked;
         case "hoursWorked": return r.hoursWorked;
         case "totalTickets": return r.totalTickets;
         case "redoCount": return r.redoCount;
@@ -268,12 +290,20 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
     else { setSortKey(key); setSortDir("asc"); }
   };
 
+  const top5Chart = useMemo(
+    () => [...filteredRows]
+      .sort((a, b) => b.totalTickets - a.totalTickets)
+      .slice(0, 5)
+      .map((r) => ({ name: r.name.split(" ")[0] || r.name, fullName: r.name, value: r.totalTickets })),
+    [filteredRows],
+  );
+
   const handleExportCsv = () => {
     exportToCSV(
       "technician_performance",
       ["Tech ID", "Name", "Location", "Manager", "Tier", "Days Worked", "Hours Worked", "Total Tickets", "Redo Count", "Redo Rate %", "Miles", "Miles/Ticket", "Tickets/Hour", "High Redo", "Route Mileage Audit", "Low Utilization"],
       sortedRows.map((r) => [
-        r.id, r.name, r.location, r.manager, r.tier, r.daysWorked, fmt1(r.hoursWorked), r.totalTickets, r.redoCount,
+        r.techId, r.name, r.location, r.manager, r.tier, r.daysWorked, fmt1(r.hoursWorked), r.totalTickets, r.redoCount,
         r.redoRatePct != null ? fmt1(r.redoRatePct) : "—", fmt1(r.miles),
         r.milesPerTicket != null ? fmt1(r.milesPerTicket) : "—", r.ticketsPerHour != null ? fmt1(r.ticketsPerHour) : "—",
         r.highRedoAlert ? "Yes" : "", r.routeMileageAlert ? "Yes" : "", r.lowUtilizationAlert ? "Yes" : "",
@@ -369,6 +399,26 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
           <div className="panel p-10 flex items-center justify-center"><BrandedLoader /></div>
         ) : (
           <div className="space-y-4">
+            {top5Chart.length > 0 && (
+              <div className="panel p-4">
+                <p className="text-sm font-semibold mb-4">Top 5 Technicians (Total Tickets)</p>
+                <ResponsiveContainer width="100%" height={200} debounce={200}>
+                  <BarChart data={top5Chart} margin={{ left: -10 }}>
+                    <XAxis dataKey="name" tick={{ fill: "#94a3b8", fontSize: 11 }} />
+                    <YAxis tick={{ fill: "#94a3b8", fontSize: 11 }} allowDecimals={false} />
+                    <Tooltip
+                      contentStyle={TOOLTIP_STYLE}
+                      cursor={{ fill: "rgba(148,163,184,0.1)" }}
+                      formatter={(v: any) => [v, "Total Tickets"]}
+                      labelFormatter={(_, payload) => payload?.[0]?.payload?.fullName ?? ""}
+                    />
+                    <Bar dataKey="value" radius={[4, 4, 0, 0]} name="Total Tickets">
+                      {top5Chart.map((_, i) => <Cell key={i} fill={CHART_BAR_FILL} />)}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
             {groupedRows.map(({ groupName, rows: groupRows }) => (
               <div key={groupName ?? "all"} className="panel p-0 overflow-hidden">
                 {groupName != null && (
@@ -383,10 +433,12 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b border-white/10 bg-white/5">
+                        <th className={thClass} onClick={() => toggleSort("techId")}>Tech ID{sortIndicator("techId")}</th>
                         <th className={thClass} onClick={() => toggleSort("name")}>Name{sortIndicator("name")}</th>
                         <th className={thClass} onClick={() => toggleSort("location")}>Location{sortIndicator("location")}</th>
                         <th className={thClass} onClick={() => toggleSort("manager")}>Manager{sortIndicator("manager")}</th>
                         <th className={thClass} onClick={() => toggleSort("tier")}>Tier{sortIndicator("tier")}</th>
+                        <th className={`${thClass} text-right`} onClick={() => toggleSort("daysWorked")}>Days{sortIndicator("daysWorked")}</th>
                         <th className={`${thClass} text-right`} onClick={() => toggleSort("hoursWorked")}>Hrs{sortIndicator("hoursWorked")}</th>
                         <th className={`${thClass} text-right`} onClick={() => toggleSort("totalTickets")}>Total Tickets{sortIndicator("totalTickets")}</th>
                         <th className={`${thClass} text-right`} onClick={() => toggleSort("redoCount")}>Redo{sortIndicator("redoCount")}</th>
@@ -399,14 +451,16 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                     </thead>
                     <tbody>
                       {groupRows.length === 0 ? (
-                        <tr><td colSpan={12} className="px-4 py-8 text-center text-muted-foreground text-sm">No technicians match.</td></tr>
+                        <tr><td colSpan={14} className="px-4 py-8 text-center text-muted-foreground text-sm">No technicians match.</td></tr>
                       ) : (
                         groupRows.map((r) => (
                           <tr key={r.id} className="border-b border-white/5 hover:bg-white/5">
+                            <td className="px-3 py-2 text-muted-foreground">{r.techId}</td>
                             <td className="px-3 py-2 font-medium">{r.name}</td>
                             <td className="px-3 py-2 text-muted-foreground">{r.location}</td>
                             <td className="px-3 py-2 text-muted-foreground">{r.manager}</td>
                             <td className="px-3 py-2 text-muted-foreground">{r.tier}</td>
+                            <td className="px-3 py-2 text-right">{r.daysWorked}</td>
                             <td className="px-3 py-2 text-right">{fmt1(r.hoursWorked)}</td>
                             <td className="px-3 py-2 text-right">{r.totalTickets}</td>
                             <td className="px-3 py-2 text-right">{r.redoCount}</td>
