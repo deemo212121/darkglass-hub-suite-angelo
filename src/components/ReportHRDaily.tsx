@@ -26101,6 +26101,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                             </>
                           )}
                           {doc.pdfUrl && (
+                            <button type="button" onClick={() => setMasterPhContractorAgreementDocPreview(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
+                              View PDF
+                            </button>
+                          )}
+                          {doc.pdfUrl && (
                             <button type="button" onClick={() => handleDownloadMasterPhContractorAgreementPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
                               Download PDF
                             </button>
