@@ -26,11 +26,11 @@
  * in HR tooling) when HR has set one; falls back to "—" rather than
  * fabricating an ID when it hasn't.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
-import { Bar, BarChart, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { ChevronLeft, Download, RefreshCw } from "lucide-react";
+import { Bar, BarChart, CartesianGrid, Cell, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { ChevronDown, ChevronLeft, Download, RefreshCw } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { BrandedLoader } from "@/components/BrandedLoader";
@@ -53,6 +53,68 @@ const TOOLTIP_STYLE = {
   boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
 } as const;
 const CHART_BAR_FILL = "#3b82f6";
+const COMPARE_BAR_FILLS = ["#3b82f6", "#f59e0b", "#10b981", "#ec4899", "#8b5cf6", "#06b6d4"];
+
+/** Checkbox-list multi-select, same shape as LtpReport.tsx's MultiSelect —
+ *  reused here so Location/Manager/Tier can pick several values at once
+ *  (combined/OR filtering) rather than only one. */
+function MultiSelect({
+  label, options, selected, onChange,
+}: { label: string; options: string[]; selected: string[]; onChange: (v: string[]) => void }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const fn = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener("mousedown", fn);
+    return () => document.removeEventListener("mousedown", fn);
+  }, []);
+
+  const allSelected = selected.length === options.length && options.length > 0;
+  const toggleAll = () => onChange(allSelected ? [] : [...options]);
+  const toggle = (v: string) => onChange(selected.includes(v) ? selected.filter((x) => x !== v) : [...selected, v]);
+
+  const display = selected.length === 0
+    ? "All"
+    : selected.length === options.length
+    ? "All selected"
+    : selected.slice(0, 2).join(", ") + (selected.length > 2 ? `, +${selected.length - 2} more` : "");
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        aria-label={`Select ${label}`}
+        aria-expanded={open}
+        aria-haspopup="listbox"
+        onClick={() => setOpen((o) => !o)}
+        className="glass-input text-xs py-1.5 px-3 rounded-md flex items-center gap-2 min-w-[140px] justify-between"
+      >
+        <span className="truncate">{display}</span>
+        <ChevronDown className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`} />
+      </button>
+      {open && (
+        <div
+          role="listbox"
+          aria-label={label}
+          aria-multiselectable="true"
+          className="absolute z-[99999] top-full mt-1 left-0 w-56 max-h-64 overflow-y-auto rounded-md border border-white/15 shadow-xl"
+          style={{ background: "rgb(22,28,52)", border: "1px solid rgba(255,255,255,0.15)" }}
+        >
+          <label className="flex items-center gap-2 px-3 py-2 hover:bg-white/5 cursor-pointer border-b border-white/10 text-xs font-medium">
+            <input type="checkbox" checked={allSelected} onChange={toggleAll} className="accent-blue-500" />
+            [ Select All ]
+          </label>
+          {options.map((o) => (
+            <label key={o} className="flex items-center gap-2 px-3 py-1.5 hover:bg-white/5 cursor-pointer text-xs">
+              <input type="checkbox" checked={selected.includes(o)} onChange={() => toggle(o)} className="accent-blue-500" />
+              {o}
+            </label>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 type PeriodMode = "weekly" | "monthly";
 type SortKey = "techId" | "name" | "location" | "manager" | "tier" | "daysWorked" | "hoursWorked" | "totalTickets" | "redoCount" | "redoRatePct" | "miles" | "milesPerTicket" | "ticketsPerHour";
@@ -102,9 +164,9 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
   const [error, setError] = useState<string | null>(null);
 
   const [search, setSearch] = useState("");
-  const [locationFilter, setLocationFilter] = useState("");
-  const [managerFilter, setManagerFilter] = useState("");
-  const [tierFilter, setTierFilter] = useState("");
+  const [locationFilter, setLocationFilter] = useState<string[]>([]);
+  const [managerFilter, setManagerFilter] = useState<string[]>([]);
+  const [tierFilter, setTierFilter] = useState<string[]>([]);
   const [groupBy, setGroupBy] = useState<GroupBy>("none");
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
@@ -238,12 +300,41 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
     const q = search.trim().toLowerCase();
     return visibleRows.filter((r) => {
       if (q && !r.name.toLowerCase().includes(q) && !r.id.toLowerCase().includes(q)) return false;
-      if (locationFilter && r.location !== locationFilter) return false;
-      if (managerFilter && r.manager !== managerFilter) return false;
-      if (tierFilter && r.tier !== tierFilter) return false;
+      if (locationFilter.length > 0 && !locationFilter.includes(r.location)) return false;
+      if (managerFilter.length > 0 && !managerFilter.includes(r.manager)) return false;
+      if (tierFilter.length > 0 && !tierFilter.includes(r.tier)) return false;
       return true;
     });
   }, [visibleRows, search, locationFilter, managerFilter, tierFilter]);
+
+  // "Compare" mode: once 2+ values are picked in one of the Location/
+  // Manager/Tier multi-selects, aggregate the (already combined/OR-
+  // filtered) rows per selected value so they can be read side by side,
+  // instead of only as one merged total. Location takes priority when
+  // more than one dimension has 2+ picks, to keep the comparison to a
+  // single axis at a time.
+  const compareDimension: "location" | "manager" | "tier" | null =
+    locationFilter.length >= 2 ? "location" : managerFilter.length >= 2 ? "manager" : tierFilter.length >= 2 ? "tier" : null;
+
+  const compareGroups = useMemo(() => {
+    if (!compareDimension) return [];
+    const selected = compareDimension === "location" ? locationFilter : compareDimension === "manager" ? managerFilter : tierFilter;
+    return selected.map((value) => {
+      const groupRows = filteredRows.filter((r) => r[compareDimension] === value);
+      const totalTickets = groupRows.reduce((s, r) => s + r.totalTickets, 0);
+      const redoCount = groupRows.reduce((s, r) => s + r.redoCount, 0);
+      const miles = groupRows.reduce((s, r) => s + r.miles, 0);
+      const hoursWorked = groupRows.reduce((s, r) => s + r.hoursWorked, 0);
+      return {
+        value,
+        techCount: groupRows.length,
+        totalTickets,
+        redoRatePct: totalTickets > 0 ? (redoCount / totalTickets) * 100 : null,
+        ticketsPerHour: hoursWorked > 0 ? totalTickets / hoursWorked : null,
+        milesPerTicket: totalTickets > 0 ? miles / totalTickets : null,
+      };
+    });
+  }, [compareDimension, locationFilter, managerFilter, tierFilter, filteredRows]);
 
   const sortedRows = useMemo(() => {
     const dir = sortDir === "asc" ? 1 : -1;
@@ -363,24 +454,15 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
           </div>
           <div>
             <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide block mb-1">Location</label>
-            <select value={locationFilter} onChange={(e) => setLocationFilter(e.target.value)} className="glass-input text-xs py-1.5 px-3 rounded-md">
-              <option value="">All</option>
-              {locationOptions.map((l) => <option key={l} value={l}>{l}</option>)}
-            </select>
+            <MultiSelect label="Location" options={locationOptions} selected={locationFilter} onChange={setLocationFilter} />
           </div>
           <div>
             <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide block mb-1">Manager</label>
-            <select value={managerFilter} onChange={(e) => setManagerFilter(e.target.value)} className="glass-input text-xs py-1.5 px-3 rounded-md">
-              <option value="">All</option>
-              {managerOptions.map((m) => <option key={m} value={m}>{m}</option>)}
-            </select>
+            <MultiSelect label="Manager" options={managerOptions} selected={managerFilter} onChange={setManagerFilter} />
           </div>
           <div>
             <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide block mb-1">Tier</label>
-            <select value={tierFilter} onChange={(e) => setTierFilter(e.target.value)} className="glass-input text-xs py-1.5 px-3 rounded-md">
-              <option value="">All</option>
-              {tierOptions.map((t) => <option key={t} value={t}>{t}</option>)}
-            </select>
+            <MultiSelect label="Tier" options={tierOptions} selected={tierFilter} onChange={setTierFilter} />
           </div>
           <div>
             <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide block mb-1">Group By</label>
@@ -399,6 +481,57 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
           <div className="panel p-10 flex items-center justify-center"><BrandedLoader /></div>
         ) : (
           <div className="space-y-4">
+            {compareDimension && compareGroups.length > 0 && (
+              <div className="panel p-4">
+                <p className="text-sm font-semibold mb-1">
+                  Compare by {compareDimension === "location" ? "Location" : compareDimension === "manager" ? "Manager" : "Tier"}
+                </p>
+                <p className="text-[10px] text-muted-foreground mb-4">
+                  {compareGroups.length} selected — combined totals shown in the table below, side by side here.
+                </p>
+                <ResponsiveContainer width="100%" height={220} debounce={200}>
+                  <BarChart data={compareGroups} margin={{ left: -10 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.15)" vertical={false} />
+                    <XAxis dataKey="value" tick={{ fill: "#94a3b8", fontSize: 11 }} />
+                    <YAxis tick={{ fill: "#94a3b8", fontSize: 11 }} allowDecimals={false} />
+                    <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: "rgba(148,163,184,0.1)" }} />
+                    <Legend wrapperStyle={{ fontSize: 11 }} />
+                    <Bar dataKey="totalTickets" name="Total Tickets" radius={[4, 4, 0, 0]}>
+                      {compareGroups.map((_, i) => <Cell key={i} fill={COMPARE_BAR_FILLS[i % COMPARE_BAR_FILLS.length]} />)}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+                <div className="overflow-x-auto mt-4">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-white/10 bg-white/5">
+                        <th className="px-3 py-2 text-left text-xs text-muted-foreground uppercase">{compareDimension === "location" ? "Location" : compareDimension === "manager" ? "Manager" : "Tier"}</th>
+                        <th className="px-3 py-2 text-right text-xs text-muted-foreground uppercase">Techs</th>
+                        <th className="px-3 py-2 text-right text-xs text-muted-foreground uppercase">Total Tickets</th>
+                        <th className="px-3 py-2 text-right text-xs text-muted-foreground uppercase">Redo %</th>
+                        <th className="px-3 py-2 text-right text-xs text-muted-foreground uppercase">Tickets/Hr</th>
+                        <th className="px-3 py-2 text-right text-xs text-muted-foreground uppercase">Mi/Ticket</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {compareGroups.map((g, i) => (
+                        <tr key={g.value} className="border-b border-white/5">
+                          <td className="px-3 py-2 font-medium flex items-center gap-2">
+                            <span className="inline-block h-2.5 w-2.5 rounded-full shrink-0" style={{ background: COMPARE_BAR_FILLS[i % COMPARE_BAR_FILLS.length] }} />
+                            {g.value}
+                          </td>
+                          <td className="px-3 py-2 text-right">{g.techCount}</td>
+                          <td className="px-3 py-2 text-right">{g.totalTickets}</td>
+                          <td className="px-3 py-2 text-right">{g.redoRatePct != null ? `${fmt1(g.redoRatePct)}%` : "—"}</td>
+                          <td className="px-3 py-2 text-right">{g.ticketsPerHour != null ? g.ticketsPerHour.toFixed(2) : "—"}</td>
+                          <td className="px-3 py-2 text-right">{g.milesPerTicket != null ? fmt1(g.milesPerTicket) : "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
             {top5Chart.length > 0 && (
               <div className="panel p-4">
                 <p className="text-sm font-semibold mb-4">Top 5 Technicians (Total Tickets)</p>
