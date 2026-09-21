@@ -258,19 +258,38 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
       // Mileage: one effective total per distinct (technician, work_date) —
       // several entries can share one day's total (one row per ticket that
       // day), same dedup rule as Tech Activity Report's mileage panel.
+      //
+      // Also scoped to each technician's OWN assigned branch, matching how
+      // AccountingDashboard's real Tech Activity Report pulls mileage —
+      // getMileageEntries(branch) there filters server-side to the branch
+      // that payroll run is open for. Without this, a tech with a stray
+      // mileage_entries row tagged to a different branch (data entry slip,
+      // or a genuine one-off cross-branch job) shows MORE total miles here
+      // than what payroll actually counted/paid for them.
+      const branchByProfile = new Map<string, string>();
+      const branchByName = new Map<string, string>();
+      for (const t of techs) {
+        if (!t.assigned_branch) continue;
+        branchByProfile.set(t.id, t.assigned_branch);
+        branchByName.set((t.display_name || t.email).trim().toLowerCase(), t.assigned_branch);
+      }
+
       const milesByProfile = new Map<string, number>();
       const milesByName = new Map<string, number>();
       const seenDayKeys = new Set<string>();
       for (const e of mileageEntries) {
         if (e.deletedAt) continue;
         if (e.workDate < periodStart || e.workDate > periodEnd) continue;
-        const identity = e.profileId ?? `name:${(e.technicianName || "").trim().toLowerCase()}`;
+        const nameKey = (e.technicianName || "").trim().toLowerCase();
+        const techBranch = e.profileId ? branchByProfile.get(e.profileId) : branchByName.get(nameKey);
+        if (techBranch && e.branch !== techBranch) continue;
+        const identity = e.profileId ?? `name:${nameKey}`;
         const dayKey = `${identity}|${e.workDate}`;
         if (seenDayKeys.has(dayKey)) continue;
         seenDayKeys.add(dayKey);
         const miles = mileageEffectiveTotal(e);
         if (e.profileId) milesByProfile.set(e.profileId, (milesByProfile.get(e.profileId) ?? 0) + miles);
-        else milesByName.set((e.technicianName || "").trim().toLowerCase(), (milesByName.get((e.technicianName || "").trim().toLowerCase()) ?? 0) + miles);
+        else milesByName.set(nameKey, (milesByName.get(nameKey) ?? 0) + miles);
       }
 
       // Hours + distinct days worked per technician, from raw punches —
