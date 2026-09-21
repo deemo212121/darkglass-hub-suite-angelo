@@ -2541,33 +2541,36 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     // latestCompMap, which only looks at entries effective by genEnd — an
     // upcoming switch to salary doesn't retroactively apply, but Finance
     // still wants it treated as a floor going forward). If actual earned
-    // compensation this period (Company-baseline Hourly + OT, plus
+    // compensation this period (Hourly + OT as ACTUALLY applied, plus
     // includable incentive pay) falls short of that salary's per-cutoff
-    // equivalent, the shortfall is topped up here. Deliberately keyed off
-    // the Company-only figure (techHourlyPayCompanyOnly), NOT techHourlyPay
-    // (whichever mode is actually applied): a state-floor match is separate,
-    // legally-owed money for hours that were underpaid relative to that
-    // state's minimum wage — it's additive on top of the guarantee, not
-    // something the guarantee gets to absorb. Keying this off techHourlyPay
-    // would let switching to State silently swallow that money back into
-    // the same $ total instead of paying it out on top. Reimbursement/
-    // mileage/allowance custom lines and mileage pay don't count toward
-    // either side of this check — they're paid on top regardless, same as
-    // the state match.
+    // equivalent, the shortfall is topped up here.
     //
-    // NOTE (see conversation): the reference workbook's own 15-step chain
-    // implies the guarantee should really be checked against the STATE-
-    // matched earned total specifically (not Company-only) — its "FINAL
-    // TOTAL PAY DUE" already has the state match folded in before the
-    // guarantee tops it up. This module can't compute that live for every
-    // technician (the per-day state-floor match needs per-day attendance +
-    // state assignment data that's only fetched in TechActivityReportModal
-    // for whichever technician is currently open) — see that conversation
-    // for the options being weighed before changing this further.
+    // Keyed off techHourlyPay (whichever mode is actually applied), NOT
+    // techHourlyPayCompanyOnly — a previous version used the Company-only
+    // figure deliberately, reasoning that the state-floor match is separate
+    // money that shouldn't get "absorbed" by the guarantee. That reasoning
+    // doesn't hold up: when a State-mode override is active, techHourlyPay
+    // already has the state match folded into it, so adding
+    // techGuaranteedSalaryMatch computed against the Company-only baseline
+    // on top double-counts that same state match — once inside techHourlyPay,
+    // once again because the guarantee was sized as if techHourlyPay were
+    // still the smaller Company-only figure (see Matthew Nichols, where this
+    // overstated Total Payment by exactly his $199.88 state-floor match).
+    // Keying off techHourlyPay instead doesn't let the state match get
+    // "swallowed": if State-mode earnings + includable pay already clear the
+    // salary target, techGuaranteedSalaryMatch is correctly $0 and the
+    // technician keeps the full higher state-matched amount; if they still
+    // fall short even with the state match applied, the guarantee correctly
+    // tops up only the REMAINING gap instead of re-adding money already
+    // earned. Matches the reference payroll workbook's own 15-step chain,
+    // which checks the guarantee against the state-matched total for the
+    // same reason. Reimbursement/mileage/allowance custom lines and mileage
+    // pay still don't count toward either side of this check — paid on top
+    // regardless, same as before.
     const guaranteedAnnualSalary = includeTech && isTechRole(emp) && !isFixed
       ? latestFixedSalaryByProfile.get(emp.id)?.annual_salary ?? null
       : null;
-    const techEarnedBeforeReimbursements = techHourlyPayCompanyOnly + techIncludablePay;
+    const techEarnedBeforeReimbursements = techHourlyPay + techIncludablePay;
     const techGuaranteedSalaryTarget = guaranteedAnnualSalary ? perCutoffSalary(guaranteedAnnualSalary) : 0;
     const techGuaranteedSalaryMatch = guaranteedAnnualSalary
       ? Math.max(techGuaranteedSalaryTarget - techEarnedBeforeReimbursements, 0)
