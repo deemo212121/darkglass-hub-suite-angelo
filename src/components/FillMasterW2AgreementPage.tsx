@@ -7,11 +7,12 @@
  * submit, same "preview what's about to be signed" pattern
  * SignActionPlanFormPage.tsx uses.
  *
- * Two photo uploads (driver's license, Social Security card) alongside the
- * typed fields — private bucket, not embedded in the PDF itself (see
- * technicianIdDocuments.ts). Genuine two-party document: only the employee
- * half is filled here; the employer/HR countersignature happens separately
- * afterward (ReportHRDaily.tsx's "Complete Employer Signature" dialog, or
+ * The driver's license/Social Security card photo uploads that used to live
+ * here (technicianIdDocuments.ts's private bucket) moved out to their own
+ * standalone forms — see ssnCardFormTemplate.ts/driversLicenseFormTemplate.ts.
+ * Genuine two-party document: only the employee half is filled here; the
+ * employer/HR countersignature happens separately afterward
+ * (ReportHRDaily.tsx's "Complete Employer Signature" dialog, or
  * ManagerReviewPage.tsx for a non-HR manager it's been reassigned to).
  */
 import { useEffect, useState } from "react";
@@ -23,7 +24,6 @@ import { FillFormSignInRequired } from "@/components/FillFormSignInRequired";
 import { getMyProfileId } from "@/lib/supabase/users";
 import { getSignableDocument, signDocument, type SignableDocument } from "@/lib/supabase/signableDocuments";
 import { uploadSignableDocumentSignature, uploadMasterW2AgreementForm, refreshStorageAuthToken } from "@/lib/firebase/storage";
-import { uploadTechnicianIdDocument } from "@/lib/supabase/technicianIdDocuments";
 import { captureHtmlToPdfBlob, loadAssetDataUrl } from "@/lib/pdfCapture";
 import {
   MASTER_W2_AGREEMENT_BRANCHES,
@@ -56,8 +56,6 @@ const BLANK_FORM: MasterW2AgreementFormData = {
   addressZip: "",
   phone: "",
   email: "",
-  licensePhotoPath: "",
-  ssnCardPhotoPath: "",
   employeeDateSigned: "",
   employeeSignatureDataUrl: "",
   employerDateSigned: "",
@@ -75,8 +73,6 @@ export function FillMasterW2AgreementPage({ docId }: Props) {
   const [logoDataUrl, setLogoDataUrl] = useState("");
 
   const [form, setForm] = useState<MasterW2AgreementFormData>({ ...BLANK_FORM });
-  const [licenseFile, setLicenseFile] = useState<File | null>(null);
-  const [ssnCardFile, setSsnCardFile] = useState<File | null>(null);
 
   const sigPad = useSignaturePad({ width: 440, height: 100 });
 
@@ -122,8 +118,6 @@ export function FillMasterW2AgreementPage({ docId }: Props) {
     if (!form.addressStreet.trim() || !form.addressCity.trim() || !form.addressState.trim() || !form.addressZip.trim()) return "Fill in your complete home address.";
     if (!form.phone.trim()) return "Enter your phone number.";
     if (!form.email.trim()) return "Enter your email address.";
-    if (!licenseFile && !form.licensePhotoPath) return "Upload a photo of your driver's license.";
-    if (!ssnCardFile && !form.ssnCardPhotoPath) return "Upload a photo of your Social Security card.";
     if (!sigPad.hasContent()) return "Please add your signature.";
     return null;
   };
@@ -149,19 +143,12 @@ export function FillMasterW2AgreementPage({ docId }: Props) {
       // it go stale between signing in and finally submitting).
       await refreshStorageAuthToken();
 
-      const [licensePath, ssnCardPath] = await Promise.all([
-        licenseFile ? uploadTechnicianIdDocument(companyId, doc.id, "license", licenseFile) : Promise.resolve(form.licensePhotoPath),
-        ssnCardFile ? uploadTechnicianIdDocument(companyId, doc.id, "ssn_card", ssnCardFile) : Promise.resolve(form.ssnCardPhotoPath),
-      ]);
-
       const employeeName = [form.firstName, form.middleName, form.lastName].filter(Boolean).join(" ");
       const signatureUrl = await uploadSignableDocumentSignature(companyId, doc.id, "employee", dataUrl);
       const signedAt = new Date().toISOString();
       const finalData: MasterW2AgreementFormData = {
         ...form,
         employeeName,
-        licensePhotoPath: licensePath,
-        ssnCardPhotoPath: ssnCardPath,
         employeeDateSigned: signedAt,
         employeeSignatureDataUrl: dataUrl,
       };
@@ -234,7 +221,7 @@ export function FillMasterW2AgreementPage({ docId }: Props) {
           <div className="panel p-4">
             <h1 className="text-lg font-bold mb-1">Master W-2 Technician Agreement</h1>
             <p className="text-xs text-muted-foreground mb-4">
-              Fill in your information below, upload the two required photos, read the agreement, then sign and submit.
+              Fill in your information below, read the agreement, then sign and submit.
             </p>
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
@@ -295,19 +282,6 @@ export function FillMasterW2AgreementPage({ docId }: Props) {
               <div>
                 <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1 block">Email Address</label>
                 <input type="email" className="glass-input text-sm py-1.5 px-3 rounded-md w-full" value={form.email} onChange={(e) => updateField("email", e.target.value)} />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
-              <div>
-                <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1 block">Driver's License Photo</label>
-                <input type="file" accept="image/*,.pdf" className="glass-input text-sm py-1.5 px-3 rounded-md w-full" onChange={(e) => setLicenseFile(e.target.files?.[0] ?? null)} />
-                {form.licensePhotoPath && !licenseFile && <p className="text-[10px] text-emerald-400 mt-1">Already uploaded — choose a file to replace it.</p>}
-              </div>
-              <div>
-                <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1 block">Social Security Card Photo</label>
-                <input type="file" accept="image/*,.pdf" className="glass-input text-sm py-1.5 px-3 rounded-md w-full" onChange={(e) => setSsnCardFile(e.target.files?.[0] ?? null)} />
-                {form.ssnCardPhotoPath && !ssnCardFile && <p className="text-[10px] text-emerald-400 mt-1">Already uploaded — choose a file to replace it.</p>}
               </div>
             </div>
 

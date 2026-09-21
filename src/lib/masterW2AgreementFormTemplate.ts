@@ -19,14 +19,13 @@
  * (ReportHRDaily.tsx's "Complete Employer Signature" dialog, or
  * ManagerReviewPage.tsx when reassigned to a non-HR manager).
  *
- * Two photo uploads (driver's license, Social Security card) are collected
- * alongside the typed fields — see technicianIdDocuments.ts. Deliberately
- * no typed SSN field anywhere: the photo is the only record of it, so
- * there's never a plaintext SSN sitting in a database column. The photos
- * are stored as their own private-bucket paths (formData.licensePhotoPath /
- * ssnCardPhotoPath) and are NOT drawn onto the generated PDF — they're
- * reviewable separately via getTechnicianIdDocumentUrl, same as a
- * candidate's CV isn't baked into anything either.
+ * The driver's license/Social Security card photo uploads that used to be
+ * collected here (technicianIdDocuments.ts's private bucket,
+ * formData.licensePhotoPath/ssnCardPhotoPath, never drawn onto the
+ * generated PDF) moved out to their own standalone forms — see
+ * ssnCardFormTemplate.ts/driversLicenseFormTemplate.ts. A document signed
+ * before that split still carries its own licensePhotoPath/ssnCardPhotoPath
+ * in form_data even though the type below no longer declares them.
  */
 
 export const MASTER_W2_AGREEMENT_BRANCHES = [
@@ -52,9 +51,9 @@ export interface MasterW2AgreementFormData {
   addressZip: string;
   phone: string;
   email: string;
-  /** Storage paths in the private "technician-id-documents" bucket — see technicianIdDocuments.ts. Not URLs (the bucket is private); resolve with getTechnicianIdDocumentUrl when displaying. */
-  licensePhotoPath: string;
-  ssnCardPhotoPath: string;
+  /** Storage paths in the private "technician-id-documents" bucket — see technicianIdDocuments.ts. Only present on a document signed before the SSN Card/Driver's License split (see this file's header comment); FillMasterW2AgreementPage.tsx no longer writes these, but ReportHRDaily.tsx's Sent History "View ID Photos" links still read them for older documents. Not URLs (the bucket is private); resolve with getTechnicianIdDocumentUrl when displaying. */
+  licensePhotoPath?: string;
+  ssnCardPhotoPath?: string;
   employeeDateSigned: string;
   employeeSignatureDataUrl: string;
   employerDateSigned: string;

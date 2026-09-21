@@ -37,9 +37,9 @@ export interface MasterW2OfficeAgreementFormData {
   addressZip: string;
   phone: string;
   email: string;
-  /** Storage paths in the private "technician-id-documents" bucket — see technicianIdDocuments.ts. Not URLs (the bucket is private); resolve with getTechnicianIdDocumentUrl when displaying. */
-  licensePhotoPath: string;
-  ssnCardPhotoPath: string;
+  /** Storage paths in the private "technician-id-documents" bucket — see technicianIdDocuments.ts. Only present on a document signed before the SSN Card/Driver's License split (see ssnCardFormTemplate.ts/driversLicenseFormTemplate.ts); FillMasterW2OfficeAgreementPage.tsx no longer writes these, but ReportHRDaily.tsx's Sent History "View ID Photos" links still read them for older documents. Not URLs (the bucket is private); resolve with getTechnicianIdDocumentUrl when displaying. */
+  licensePhotoPath?: string;
+  ssnCardPhotoPath?: string;
   employeeDateSigned: string;
   employeeSignatureDataUrl: string;
   employerDateSigned: string;

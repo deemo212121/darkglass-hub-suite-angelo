@@ -11,12 +11,12 @@
  *
  * Same HTML-captured-to-PDF technique (no source PDF to overlay) and the
  * same two-party "contractor fills + signs, then employer countersigns"
- * shape as the other two Master agreements. PH contractors have neither a
- * US driver's license nor a US SSN, so instead of the Technician/Office
- * agreements' two-photo license+SSN-card capture, this collects a single
- * "license or passport / government-issued ID" photo — whichever the
- * contractor actually has (see technicianIdDocuments.ts's "government_id"
- * kind).
+ * shape as the other two Master agreements. The single "license or
+ * passport / government-issued ID" photo upload that used to be collected
+ * here (technicianIdDocuments.ts's "government_id" kind — PH contractors
+ * have neither a US driver's license nor a US SSN, so one photo covers
+ * whichever ID they actually have) moved out to its own standalone form —
+ * see validIdFormTemplate.ts.
  */
 
 export interface MasterPhContractorAgreementFormData {
@@ -44,8 +44,8 @@ export interface MasterPhContractorAgreementFormData {
   maritalStatus: string;
   spouseName: string;
   spouseEmployer: string;
-  /** Storage path in the private "technician-id-documents" bucket — see technicianIdDocuments.ts. Not a URL (the bucket is private); resolve with getTechnicianIdDocumentUrl when displaying. */
-  governmentIdPhotoPath: string;
+  /** Storage path in the private "technician-id-documents" bucket — see technicianIdDocuments.ts. Only present on a document signed before the Valid ID split (see validIdFormTemplate.ts); FillMasterPhContractorAgreementPage.tsx no longer writes this, but ReportHRDaily.tsx's Sent History "View ID Photo" link still reads it for older documents. Not a URL (the bucket is private); resolve with getTechnicianIdDocumentUrl when displaying. */
+  governmentIdPhotoPath?: string;
   contractorDateSigned: string;
   contractorSignatureDataUrl: string;
   employerDateSigned: string;

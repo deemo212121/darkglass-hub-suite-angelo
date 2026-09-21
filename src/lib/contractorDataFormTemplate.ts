@@ -2,11 +2,11 @@
  * Contractor Data — shared data types + HTML/CSS document template. Unlike
  * every other automated form built this session, there's no real source
  * PDF to overlay-fill: this is a from-scratch intake form (contact/address/
- * identity info + two ID-photo uploads), so the final PDF is generated the
- * same way the Warning Form/Promotion Form/Action Plan Form/Termination
- * Notice are — a hand-built HTML template captured to PDF via
- * captureHtmlToPdfBlob (see pdfCapture.ts), not pdf-lib drawing onto a
- * blank asset. See contractorDataPdfFill.ts for the actual capture step.
+ * identity info), so the final PDF is generated the same way the Warning
+ * Form/Promotion Form/Action Plan Form/Termination Notice are — a
+ * hand-built HTML template captured to PDF via captureHtmlToPdfBlob (see
+ * pdfCapture.ts), not pdf-lib drawing onto a blank asset. See
+ * contractorDataPdfFill.ts for the actual capture step.
  *
  * Single-party, same shape as Car IQ/Parts Responsibility: one recipient
  * fills in everything and signs — no employer/HR co-signature step. The
@@ -16,13 +16,17 @@
  * real signature and hr_signable_documents.signDocument requires one — the
  * fields above it are exactly what was asked for, verbatim.
  *
- * The two ID-photo fields (Social Security Card, Driver's License — each
- * "front and back", so effectively 2 files per field) are this app's first
- * use of file uploads inside the signable-documents family. Storage/upload
- * plumbing lives in firebase/storage.ts's uploadSignableDocumentAttachment
- * (logged-in path) and signableDocumentsBridge.ts's generic `attachment_*`
- * FormData handling (external no-login path) — both new, see those files'
- * comments.
+ * The Social Security Card and Driver's License fields that used to live
+ * here (this app's first use of file uploads inside the signable-documents
+ * family — the storage plumbing they introduced,
+ * firebase/storage.ts's uploadSignableDocumentAttachment and
+ * signableDocumentsBridge.ts's generic `attachment_*` FormData handling,
+ * is still used by every later upload-taking form) moved out to their own
+ * standalone forms — see ssnCardFormTemplate.ts / driversLicenseFormTemplate.ts.
+ * An employee who already submitted this form before that split still has
+ * their ID photos on that older PDF; ONBOARDING_COLUMN_TO_DOCUMENT_TYPE in
+ * ReportHRDaily.tsx treats a signed old-shape Contractor Data Sheet as
+ * satisfying the new SSN Card/Driver's License checklist columns too.
  *
  * Emergency Contacts is a fixed array of 3 (ContractorDataEmergencyContact)
  * — only #1 is required, #2/#3 are entirely optional, matching the source
@@ -87,12 +91,6 @@ export interface ContractorDataFormData {
   startDate: string;
   /** YYYY-MM-DD — built in the fill UI from three separate Month/Day/Year dropdowns (not a native date picker), matching the source content's own field breakdown. */
   birthDate: string;
-  ssn: string;
-  /** Firebase Storage URLs — front + back as separate uploads under the same logical field, see this file's header comment. */
-  ssnCardUrls: string[];
-  driversLicenseNumber: string;
-  driversLicenseState: string;
-  driversLicenseUrls: string[];
   email: string;
   maritalStatus: string;
   spouseName: string;
@@ -148,8 +146,6 @@ function field(label: string, value: string) {
 }
 
 export function buildContractorDataBodyMarkup(data: ContractorDataFormData, logoDataUrl: string, signature: ContractorDataSignature | undefined): string {
-  const photoImgs = (urls: string[]) => urls.map((u) => `<img src="${u}" alt="" />`).join("");
-
   return `
     <div class="cdata-container">
       <div class="cdata-header">
@@ -177,23 +173,6 @@ export function buildContractorDataBodyMarkup(data: ContractorDataFormData, logo
         ${field("State", data.state)}
         ${field("Zip Code", data.zipCode)}
         ${field("Country", data.country)}
-      </div>
-
-      <div class="cdata-section-title">IDENTIFICATION</div>
-      <div class="cdata-grid">
-        ${field("Social Security Number", data.ssn)}
-        ${field("Driver's License Number", data.driversLicenseNumber)}
-        ${field("State Issued", data.driversLicenseState)}
-      </div>
-      <div class="cdata-grid full">
-        <div class="cdata-row">
-          <span class="cdata-label">Social Security Card (Front / Back)</span>
-          <div class="cdata-photos">${photoImgs(data.ssnCardUrls)}</div>
-        </div>
-        <div class="cdata-row">
-          <span class="cdata-label">Driver's License (Front / Back)</span>
-          <div class="cdata-photos">${photoImgs(data.driversLicenseUrls)}</div>
-        </div>
       </div>
 
       <div class="cdata-section-title">MARITAL STATUS & RESIDENCY</div>

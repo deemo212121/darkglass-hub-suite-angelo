@@ -55,11 +55,6 @@ const BLANK_FORM: ContractorDataUsFormData = {
   otherPhoneNumber: "",
   startDate: "",
   birthDate: "",
-  ssn: "",
-  ssnCardUrls: [],
-  driversLicenseNumber: "",
-  driversLicenseState: "",
-  driversLicenseUrls: [],
   email: "",
   maritalStatus: "",
   spouseName: "",
@@ -98,8 +93,6 @@ export function ExternalFillContractorDataUsPage({ docId }: Props) {
   const [birthMonth, setBirthMonth] = useState("");
   const [birthDay, setBirthDay] = useState("");
   const [birthYear, setBirthYear] = useState("");
-  const [ssnCardFiles, setSsnCardFiles] = useState<File[]>([]);
-  const [driversLicenseFiles, setDriversLicenseFiles] = useState<File[]>([]);
 
   const employeeName = [form.firstName, form.middleName, form.lastName].filter(Boolean).join(" ");
   const sigPad = useSignaturePad({ defaultName: employeeName, width: 500, height: 130 });
@@ -160,11 +153,6 @@ export function ExternalFillContractorDataUsPage({ docId }: Props) {
     if (!form.otherPhoneNumber.trim()) return "Enter another telephone number.";
     if (!form.startDate) return "Enter your start date.";
     if (!birthMonth || !birthDay || !birthYear) return "Select your complete birth date.";
-    if (!form.ssn.trim()) return "Enter your Social Security Number.";
-    if (ssnCardFiles.length === 0) return "Upload a photo of your Social Security Card (or National/Government ID).";
-    if (!form.driversLicenseNumber.trim()) return "Enter your Driver's License number.";
-    if (!form.driversLicenseState) return "Select the state your Driver's License was issued in.";
-    if (driversLicenseFiles.length === 0) return "Upload a photo of your Driver's License (or another government ID).";
     if (!form.email.trim()) return "Enter your email address.";
     if (!form.maritalStatus) return "Select your marital status.";
     if (!form.spouseName.trim()) return "Enter your spouse's name (or N/A).";
@@ -197,17 +185,10 @@ export function ExternalFillContractorDataUsPage({ docId }: Props) {
     try {
       const signatureBlob = await (await fetch(dataUrl)).blob();
       const signedAt = new Date().toISOString();
-      // Placeholder URLs — the server bridge fills these in for real once it
-      // uploads the attachment_* files below, see submitExternalSignature's
-      // header comment.
       const finalData: ContractorDataUsFormData = { ...form, employeeName, dateSigned: signedAt, signatureDataUrl: dataUrl };
 
       const pdfBlob = await captureHtmlToPdfBlob(
-        buildContractorDataUsBodyMarkup(
-          { ...finalData, ssnCardUrls: ssnCardFiles.map((f) => URL.createObjectURL(f)), driversLicenseUrls: driversLicenseFiles.map((f) => URL.createObjectURL(f)) },
-          logoDataUrl,
-          { name: employeeName, url: dataUrl, signedAt }
-        ),
+        buildContractorDataUsBodyMarkup(finalData, logoDataUrl, { name: employeeName, url: dataUrl, signedAt }),
         contractorDataUsStyles
       );
 
@@ -215,7 +196,6 @@ export function ExternalFillContractorDataUsPage({ docId }: Props) {
         signatureBlob,
         pdfBlob,
         formData: finalData as unknown as Record<string, any>,
-        attachments: { ssnCardUrls: ssnCardFiles, driversLicenseUrls: driversLicenseFiles },
       });
 
       setSubmittedPdfUrl(pdfUrl);
@@ -231,10 +211,8 @@ export function ExternalFillContractorDataUsPage({ docId }: Props) {
     () => ({
       ...form,
       employeeName: [form.firstName, form.middleName, form.lastName].filter(Boolean).join(" "),
-      ssnCardUrls: ssnCardFiles.map((f) => URL.createObjectURL(f)),
-      driversLicenseUrls: driversLicenseFiles.map((f) => URL.createObjectURL(f)),
     }),
-    [form, ssnCardFiles, driversLicenseFiles]
+    [form]
   );
 
   return (
@@ -328,31 +306,6 @@ export function ExternalFillContractorDataUsPage({ docId }: Props) {
                         <option value="">Please Select</option>
                         {CONTRACTOR_DATA_US_COUNTRIES.map((c) => <option key={c} value={c}>{c}</option>)}
                       </select>
-                    </div>
-                  </div>
-                </div>
-
-                <div>
-                  <h2 className="text-xs font-bold uppercase tracking-wide text-muted-foreground mb-2">Identification</h2>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div><label className={labelCls}>Social Security Number*</label><input className={inputCls} value={form.ssn} onChange={(e) => updateField("ssn", e.target.value)} /></div>
-                    <div>
-                      <label className={labelCls}>SSN Card — Front & Back*</label>
-                      <input type="file" multiple accept="image/*" className={inputCls} onChange={(e) => setSsnCardFiles(Array.from(e.target.files ?? []))} />
-                      <p className="text-[10px] text-muted-foreground mt-1">Disclaimer: For PH staff, please upload your National ID / Government ID instead.</p>
-                    </div>
-                    <div><label className={labelCls}>Driver's License Number*</label><input className={inputCls} value={form.driversLicenseNumber} onChange={(e) => updateField("driversLicenseNumber", e.target.value)} /></div>
-                    <div>
-                      <label className={labelCls}>State Issued*</label>
-                      <select className={inputCls} value={form.driversLicenseState} onChange={(e) => updateField("driversLicenseState", e.target.value)}>
-                        <option value="">Please Select</option>
-                        {CONTRACTOR_DATA_US_STATES.map((s) => <option key={s} value={s}>{s}</option>)}
-                      </select>
-                    </div>
-                    <div className="sm:col-span-2">
-                      <label className={labelCls}>Driver's License — Front & Back*</label>
-                      <input type="file" multiple accept="image/*" className={inputCls} onChange={(e) => setDriversLicenseFiles(Array.from(e.target.files ?? []))} />
-                      <p className="text-[10px] text-muted-foreground mt-1">Disclaimer: If you don't have a driver's license, you can upload another government ID.</p>
                     </div>
                   </div>
                 </div>

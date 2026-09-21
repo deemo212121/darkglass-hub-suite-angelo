@@ -7,7 +7,8 @@
  * app is one dedicated file set per type, not a shared parametrized
  * component). See that file's own header comment for the underlying
  * rationale (from-scratch HTML template captured to PDF, single-party,
- * two ID-photo upload fields, 3-slot emergency contacts).
+ * 3-slot emergency contacts) — including the same SSN Card/Driver's
+ * License field removal (moved to their own standalone forms).
  */
 
 export const CONTRACTOR_DATA_US_BRANCHES = [
@@ -68,12 +69,6 @@ export interface ContractorDataUsFormData {
   startDate: string;
   /** YYYY-MM-DD — built in the fill UI from three separate Month/Day/Year dropdowns (not a native date picker). */
   birthDate: string;
-  ssn: string;
-  /** Firebase Storage URLs — front + back as separate uploads under the same logical field. */
-  ssnCardUrls: string[];
-  driversLicenseNumber: string;
-  driversLicenseState: string;
-  driversLicenseUrls: string[];
   email: string;
   maritalStatus: string;
   spouseName: string;
@@ -129,8 +124,6 @@ function field(label: string, value: string) {
 }
 
 export function buildContractorDataUsBodyMarkup(data: ContractorDataUsFormData, logoDataUrl: string, signature: ContractorDataUsSignature | undefined): string {
-  const photoImgs = (urls: string[]) => urls.map((u) => `<img src="${u}" alt="" />`).join("");
-
   return `
     <div class="cdata-container">
       <div class="cdata-header">
@@ -158,23 +151,6 @@ export function buildContractorDataUsBodyMarkup(data: ContractorDataUsFormData, 
         ${field("State", data.state)}
         ${field("Zip Code", data.zipCode)}
         ${field("Country", data.country)}
-      </div>
-
-      <div class="cdata-section-title">IDENTIFICATION</div>
-      <div class="cdata-grid">
-        ${field("Social Security Number", data.ssn)}
-        ${field("Driver's License Number", data.driversLicenseNumber)}
-        ${field("State Issued", data.driversLicenseState)}
-      </div>
-      <div class="cdata-grid full">
-        <div class="cdata-row">
-          <span class="cdata-label">Social Security Card (Front / Back)</span>
-          <div class="cdata-photos">${photoImgs(data.ssnCardUrls)}</div>
-        </div>
-        <div class="cdata-row">
-          <span class="cdata-label">Driver's License (Front / Back)</span>
-          <div class="cdata-photos">${photoImgs(data.driversLicenseUrls)}</div>
-        </div>
       </div>
 
       <div class="cdata-section-title">MARITAL STATUS & RESIDENCY</div>

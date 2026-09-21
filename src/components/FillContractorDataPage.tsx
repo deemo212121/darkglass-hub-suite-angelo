@@ -23,8 +23,7 @@ import { useAuth } from "@/lib/auth";
 import { FillFormSignInRequired } from "@/components/FillFormSignInRequired";
 import { getMyProfileId } from "@/lib/supabase/users";
 import { getSignableDocument, signDocument, type SignableDocument } from "@/lib/supabase/signableDocuments";
-import { uploadSignableDocumentSignature, uploadSignableDocumentAttachment, uploadContractorDataForm, refreshStorageAuthToken } from "@/lib/firebase/storage";
-import { compressImage } from "@/lib/imageCompression";
+import { uploadSignableDocumentSignature, uploadContractorDataForm, refreshStorageAuthToken } from "@/lib/firebase/storage";
 import { captureHtmlToPdfBlob, loadAssetDataUrl } from "@/lib/pdfCapture";
 import {
   buildContractorDataBodyMarkup,
@@ -64,11 +63,6 @@ const BLANK_FORM: ContractorDataFormData = {
   otherPhoneNumber: "",
   startDate: "",
   birthDate: "",
-  ssn: "",
-  ssnCardUrls: [],
-  driversLicenseNumber: "",
-  driversLicenseState: "",
-  driversLicenseUrls: [],
   email: "",
   maritalStatus: "",
   spouseName: "",
@@ -104,26 +98,6 @@ const labelCls = "text-[10px] font-semibold text-muted-foreground uppercase trac
  * the UI waiting on it and surfaces a clear, step-specific error so the
  * user knows to retry instead of staring at a frozen button.
  */
-/**
- * SSN card / driver's license photos come straight off a phone camera —
- * often several MB uncompressed — with no size limit on the file input, so
- * a slow/cellular connection was very likely to time out mid-upload before
- * this existed. Same compressImage() TicketPhotos.tsx already uses (resize
- * to 1920px, target ~1MB). Falls back to the original file if compression
- * itself fails for any reason, rather than blocking the whole submission on
- * a compression bug.
- */
-async function compressForUpload(file: File): Promise<File> {
-  try {
-    const result = await compressImage(file);
-    const ext = result.mimeType === "image/webp" ? "webp" : result.mimeType === "image/png" ? "png" : "jpg";
-    return new File([result.blob], file.name.replace(/\.[^.]+$/, `.${ext}`), { type: result.mimeType });
-  } catch (err) {
-    console.error("[contractor-data] photo compression failed, uploading original:", err);
-    return file;
-  }
-}
-
 function withTimeout<T>(promise: Promise<T>, ms: number, step: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(
@@ -152,8 +126,6 @@ export function FillContractorDataPage({ docId }: Props) {
   const [birthMonth, setBirthMonth] = useState("");
   const [birthDay, setBirthDay] = useState("");
   const [birthYear, setBirthYear] = useState("");
-  const [ssnCardFiles, setSsnCardFiles] = useState<File[]>([]);
-  const [driversLicenseFiles, setDriversLicenseFiles] = useState<File[]>([]);
 
   const employeeName = [form.firstName, form.middleName, form.lastName].filter(Boolean).join(" ");
   const sigPad = useSignaturePad({ defaultName: employeeName, width: 500, height: 130 });
@@ -216,11 +188,6 @@ export function FillContractorDataPage({ docId }: Props) {
     if (!form.otherPhoneNumber.trim()) return "Enter another telephone number.";
     if (!form.startDate) return "Enter your start date.";
     if (!birthMonth || !birthDay || !birthYear) return "Select your complete birth date.";
-    if (!form.ssn.trim()) return "Enter your Social Security Number.";
-    if (ssnCardFiles.length === 0) return "Upload a photo of your Social Security Card (or National/Government ID).";
-    if (!form.driversLicenseNumber.trim()) return "Enter your Driver's License number.";
-    if (!form.driversLicenseState) return "Select the state your Driver's License was issued in.";
-    if (driversLicenseFiles.length === 0) return "Upload a photo of your Driver's License (or another government ID).";
     if (!form.email.trim()) return "Enter your email address.";
     if (!form.maritalStatus) return "Select your marital status.";
     if (!form.spouseName.trim()) return "Enter your spouse's name (or N/A).";
@@ -253,29 +220,12 @@ export function FillContractorDataPage({ docId }: Props) {
     try {
       const companyId = doc.companyId;
 
-      // This form does several uploads in a row (SSN card, driver's
-      // license front+back, signature, then the final PDF) — force a
-      // fresh ID token first so a slow mobile connection can't let it go
-      // stale partway through and fail the LAST upload with a confusing
-      // "storage/unauthorized" (see refreshStorageAuthToken's doc comment).
+      // Force a fresh ID token first so a slow mobile connection can't let
+      // it go stale partway through and fail the signature upload with a
+      // confusing "storage/unauthorized" (see refreshStorageAuthToken's doc
+      // comment).
       setSubmitStep("Preparing upload…");
       await withTimeout(refreshStorageAuthToken(), 15_000, "Preparing upload");
-
-      setSubmitStep(`Uploading SSN card${ssnCardFiles.length > 1 ? "s" : ""}…`);
-      const compressedSsnCardFiles = await Promise.all(ssnCardFiles.map(compressForUpload));
-      const ssnCardUrls = await withTimeout(
-        Promise.all(compressedSsnCardFiles.map((file, i) => uploadSignableDocumentAttachment(companyId, doc.id, "ssnCardUrls", i, file))),
-        60_000,
-        "Uploading SSN card"
-      );
-
-      setSubmitStep("Uploading driver's license…");
-      const compressedDriversLicenseFiles = await Promise.all(driversLicenseFiles.map(compressForUpload));
-      const driversLicenseUrls = await withTimeout(
-        Promise.all(compressedDriversLicenseFiles.map((file, i) => uploadSignableDocumentAttachment(companyId, doc.id, "driversLicenseUrls", i, file))),
-        60_000,
-        "Uploading driver's license"
-      );
 
       setSubmitStep("Uploading signature…");
       const signatureUrl = await withTimeout(
@@ -284,7 +234,7 @@ export function FillContractorDataPage({ docId }: Props) {
         "Uploading signature"
       );
       const signedAt = new Date().toISOString();
-      const finalData: ContractorDataFormData = { ...form, employeeName, ssnCardUrls, driversLicenseUrls, dateSigned: signedAt, signatureDataUrl: dataUrl };
+      const finalData: ContractorDataFormData = { ...form, employeeName, dateSigned: signedAt, signatureDataUrl: dataUrl };
       const entry = { name: displayName || employeeName || "Signed", url: signatureUrl, signedAt };
 
       setSubmitStep("Generating document…");
@@ -348,10 +298,8 @@ export function FillContractorDataPage({ docId }: Props) {
     () => ({
       ...form,
       employeeName: [form.firstName, form.middleName, form.lastName].filter(Boolean).join(" "),
-      ssnCardUrls: ssnCardFiles.map((f) => URL.createObjectURL(f)),
-      driversLicenseUrls: driversLicenseFiles.map((f) => URL.createObjectURL(f)),
     }),
-    [form, ssnCardFiles, driversLicenseFiles]
+    [form]
   );
 
   return (
@@ -449,31 +397,6 @@ export function FillContractorDataPage({ docId }: Props) {
                         <option value="">Please Select</option>
                         {CONTRACTOR_DATA_COUNTRIES.map((c) => <option key={c} value={c}>{c}</option>)}
                       </select>
-                    </div>
-                  </div>
-                </div>
-
-                <div>
-                  <h2 className="text-xs font-bold uppercase tracking-wide text-muted-foreground mb-2">Identification</h2>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div><label className={labelCls}>Social Security Number*</label><input className={inputCls} value={form.ssn} onChange={(e) => updateField("ssn", e.target.value)} /></div>
-                    <div>
-                      <label className={labelCls}>SSN Card — Front & Back*</label>
-                      <input type="file" multiple accept="image/*" className={inputCls} onChange={(e) => setSsnCardFiles(Array.from(e.target.files ?? []))} />
-                      <p className="text-[10px] text-muted-foreground mt-1">Disclaimer: For PH staff, please upload your National ID / Government ID instead.</p>
-                    </div>
-                    <div><label className={labelCls}>Driver's License Number*</label><input className={inputCls} value={form.driversLicenseNumber} onChange={(e) => updateField("driversLicenseNumber", e.target.value)} /></div>
-                    <div>
-                      <label className={labelCls}>State Issued*</label>
-                      <select className={inputCls} value={form.driversLicenseState} onChange={(e) => updateField("driversLicenseState", e.target.value)}>
-                        <option value="">Please Select</option>
-                        {CONTRACTOR_DATA_STATES.map((s) => <option key={s} value={s}>{s}</option>)}
-                      </select>
-                    </div>
-                    <div className="sm:col-span-2">
-                      <label className={labelCls}>Driver's License — Front & Back*</label>
-                      <input type="file" multiple accept="image/*" className={inputCls} onChange={(e) => setDriversLicenseFiles(Array.from(e.target.files ?? []))} />
-                      <p className="text-[10px] text-muted-foreground mt-1">Disclaimer: If you don't have a driver's license, you can upload another government ID.</p>
                     </div>
                   </div>
                 </div>
