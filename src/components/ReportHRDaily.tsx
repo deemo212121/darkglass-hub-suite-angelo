@@ -2,11 +2,21 @@ import { useState, useMemo, useEffect, useRef, Fragment } from "react";
 import { createPortal } from "react-dom";
 import { Link, useSearch, useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
-import { ChevronLeft, ChevronDown, ChevronUp, ChevronRight, Plus, Trash2, AlertTriangle, CheckCircle, XCircle, Paperclip, Users, Clock, UserCheck, UserX, UserMinus, Search, Bell, Download, Forward, History, FileText, ClipboardList, Landmark, GripVertical, FileCheck, Link2, Copy, Calendar, Check, Pencil, Filter, Columns3, Mail, PenLine, X, ExternalLink, Loader2, Send, GraduationCap, LogOut, PhoneCall } from "lucide-react";
+import { ChevronLeft, ChevronDown, ChevronUp, ChevronRight, Plus, Trash2, AlertTriangle, CheckCircle, XCircle, Paperclip, Users, Clock, UserCheck, UserX, UserMinus, UserPlus, Search, Bell, Download, Forward, History, FileText, ClipboardList, Landmark, GripVertical, FileCheck, Link2, Copy, Calendar, Check, Pencil, Filter, Columns3, Mail, PenLine, X, ExternalLink, Loader2, Send, ShieldCheck, GraduationCap, LogOut, PhoneCall, Briefcase, Star } from "lucide-react";
 import { useSignaturePad } from "@/hooks/useSignaturePad";
 import { SignaturePadControls } from "@/components/SignaturePad";
 import { StickyHorizontalScrollbar } from "@/components/StickyHorizontalScrollbar";
 import { TicketColumnFilter } from "@/components/TicketColumnFilter";
+import {
+  getHrJobPostings,
+  addHrJobPosting,
+  updateHrJobPosting,
+  deleteHrJobPosting,
+  type HrJobPosting,
+  type HrJobPostingPlatform,
+  type HrJobPostingStatus,
+} from "@/lib/supabase/hrJobPostings";
+import { getHrBranchPostingStatuses, setHrBranchPostingStatus } from "@/lib/supabase/hrBranchPostingStatus";
 import { getGmailConnectionStatus, disconnectGmail, sendHiringCredentialsEmail, type GmailConnectionStatus } from "@/lib/supabase/gmailConnection";
 
 /** Shared shape for a sidebar/header-dropdown nav tab entry — broad enough to structurally match every tabGroups[].tabs literal (they all share this key/label/count/icon shape, just with different literal `key`/`label` string types per group), so renderSidebarTabButton/renderDropdownTabButton can be called with tabs from any group. */
@@ -304,6 +314,21 @@ const CANDIDATE_STATUS_COLOR: Record<CandidateStatus, string> = {
 function candidateStatusTextColor(status: CandidateStatus): string {
   return CANDIDATE_STATUS_COLOR[status].split(" ").find((c) => c.startsWith("text-")) ?? "text-muted-foreground";
 }
+/** Recruitment Site tab's Job status badge — same colored-<select> convention as CANDIDATE_STATUS_COLOR above. */
+const JOB_POSTING_STATUS_COLOR: Record<HrJobPostingStatus, string> = {
+  open: "bg-green-500/20 text-green-300",
+  paused: "bg-amber-500/20 text-amber-300",
+  closed: "bg-red-500/20 text-red-300",
+};
+const JOB_POSTING_STATUS_LABEL: Record<HrJobPostingStatus, string> = {
+  open: "Open",
+  paused: "Paused",
+  closed: "Closed",
+};
+const JOB_POSTING_PLATFORM_LABEL: Record<HrJobPostingPlatform, string> = {
+  zip_recruiter: "Zip Recruiter",
+  indeed: "Indeed",
+};
 /** "John Smith" -> "John.Smith" — this company's Login Name convention, used to pre-fill Add User's Login Name field from a candidate's name. Middle names are dropped (first + last token only); a single-word name is used as-is. */
 function deriveLoginName(fullName: string): string {
   const parts = fullName.trim().split(/\s+/).filter(Boolean);
@@ -1070,7 +1095,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // Reviews, the Approved log, the department trend chart, and the full
   // Employee Directory all on top of each other, forcing a long scroll to
   // reach anything below Hiring.
-  const [activeTab, setActiveTab] = useState<"hiring" | "warnings" | "masterList" | "leaders" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "promotionForm" | "actionPlanForm" | "terminationForm" | "employeeRequestManager" | "w8ben" | "i9" | "wageAck" | "carIqAgreement" | "vehicleAgreement" | "vehicleUseAgreement" | "employeeConfidentiality" | "mealRestBreak" | "ptoAck" | "partsResponsibility" | "mileageFuel" | "locationConsent" | "damage" | "contractorData" | "contractorDataUs" | "directDeposit" | "substanceScreening" | "flashTechnicianTravel" | "contractorAddendum" | "combineForms" | "employerQueue" | "ndaForm" | "calendar" | "interviewCalendar" | "masterW2Agreement" | "newW4" | "masterW2OfficeAgreement" | "newW8ben" | "masterPhContractorAgreement" | "newI9" | "newDirectDeposit" | "newCombineForms" | "newOnboardingDocuments" | "newW9" | "newContractorAddendum" | "masterW2ExecutiveAgreement" | "ssnCard" | "driversLicense" | "validId">(paperworksOnly ? "combineForms" : "hiring");
+  const [activeTab, setActiveTab] = useState<"hiring" | "recruitmentSite" | "warnings" | "masterList" | "leaders" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "promotionForm" | "actionPlanForm" | "terminationForm" | "employeeRequestManager" | "w8ben" | "i9" | "wageAck" | "carIqAgreement" | "vehicleAgreement" | "vehicleUseAgreement" | "employeeConfidentiality" | "mealRestBreak" | "ptoAck" | "partsResponsibility" | "mileageFuel" | "locationConsent" | "damage" | "contractorData" | "contractorDataUs" | "directDeposit" | "substanceScreening" | "flashTechnicianTravel" | "contractorAddendum" | "combineForms" | "employerQueue" | "ndaForm" | "calendar" | "interviewCalendar" | "masterW2Agreement" | "newW4" | "masterW2OfficeAgreement" | "newW8ben" | "masterPhContractorAgreement" | "newI9" | "newDirectDeposit" | "newCombineForms" | "newOnboardingDocuments" | "newW9" | "newContractorAddendum" | "masterW2ExecutiveAgreement" | "ssnCard" | "driversLicense" | "validId">(paperworksOnly ? "combineForms" : "hiring");
   const [openCategory, setOpenCategory] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   // Which floating-sidebar section headers (Automated Forms/Generate
@@ -1815,7 +1840,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       .catch((err) => setError(err instanceof Error ? err.message : "Failed to open CV."));
   }, [candidates]);
   const [showAddCandidate, setShowAddCandidate] = useState(false);
-  const [newCandidate, setNewCandidate] = useState({ name: "", phone: "", email: "", position: "", branch: "", department: "", branchManagerId: "", assignedInterviewerId: "", source: "", sourceOther: "" });
+  const [newCandidate, setNewCandidate] = useState({ name: "", phone: "", email: "", position: "", branch: "", department: "", branchManagerId: "", assignedInterviewerId: "", jobPostingId: "", source: "", sourceOther: "" });
   const [cvFile, setCvFile] = useState<File | null>(null);
   const [savingCandidate, setSavingCandidate] = useState(false);
   const [hiringSearch, setHiringSearch] = useState("");
@@ -1944,6 +1969,97 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const loadCandidatesDebounced = () => {
     if (loadCandidatesDebounceRef.current) window.clearTimeout(loadCandidatesDebounceRef.current);
     loadCandidatesDebounceRef.current = window.setTimeout(() => { void loadCandidates(); }, 800);
+  };
+
+  // Recruitment Site tab — a manually-kept mirror of HR's real ZipRecruiter/
+  // Indeed job postings (migration 0294). jobPostings itself loads
+  // unconditionally on mount (not gated on the tab being open) since Add
+  // Candidate's own "Job Posting" dropdown on the Hiring tab needs it too
+  // (migration 0296) — only branchPostingStatus stays lazy, since nothing
+  // outside Recruitment Site reads it. "Branch" is a third, unrelated view
+  // within the same tab (migration 0295) — not a job posting, just an
+  // Open/Closed-for-posting toggle per real branch — so recruitmentPlatform's
+  // type is a superset of HrJobPostingPlatform rather than that type itself.
+  const [jobPostings, setJobPostings] = useState<HrJobPosting[]>([]);
+  const [jobPostingsLoading, setJobPostingsLoading] = useState(false);
+  const [recruitmentPlatform, setRecruitmentPlatform] = useState<HrJobPostingPlatform | "branch">("zip_recruiter");
+  const [branchPostingStatus, setBranchPostingStatus] = useState<Map<string, boolean>>(new Map());
+  const [branchStatusLoading, setBranchStatusLoading] = useState(false);
+  // Clicking All/New/CVs on a posting's Candidates cell opens this — the
+  // actual list of linked candidates in that bucket, not just the count.
+  const [postingCandidatesModal, setPostingCandidatesModal] = useState<{ posting: HrJobPosting; bucket: "all" | "new" | "cvs" } | null>(null);
+  const loadJobPostings = async () => {
+    setJobPostingsLoading(true);
+    try {
+      setJobPostings(await getHrJobPostings());
+    } catch (err) {
+      console.error("Failed to load job postings:", err);
+    } finally {
+      setJobPostingsLoading(false);
+    }
+  };
+  const loadBranchPostingStatus = async () => {
+    setBranchStatusLoading(true);
+    try {
+      setBranchPostingStatus(await getHrBranchPostingStatuses());
+    } catch (err) {
+      console.error("Failed to load branch posting status:", err);
+    } finally {
+      setBranchStatusLoading(false);
+    }
+  };
+  // Loaded unconditionally (not gated on the Recruitment Site tab being
+  // open) — Add Candidate's own "Job Posting" dropdown, on the Hiring tab,
+  // needs this list too.
+  useEffect(() => {
+    void loadJobPostings();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useEffect(() => {
+    if (activeTab === "recruitmentSite") {
+      void loadBranchPostingStatus();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab]);
+
+  const handleAddJobPosting = async () => {
+    if (recruitmentPlatform === "branch") return;
+    try {
+      const created = await addHrJobPosting(recruitmentPlatform);
+      setJobPostings((prev) => [created, ...prev]);
+    } catch (err) {
+      alert(`Failed to add job posting: ${err instanceof Error ? err.message : "Unknown error"}`);
+    }
+  };
+  const handleToggleBranchOpen = async (branch: string, currentlyOpen: boolean) => {
+    const nextOpen = !currentlyOpen;
+    setBranchPostingStatus((prev) => new Map(prev).set(branch, nextOpen));
+    try {
+      await setHrBranchPostingStatus(branch, nextOpen);
+    } catch (err) {
+      alert(`Failed to save: ${err instanceof Error ? err.message : "Unknown error"}`);
+      setBranchPostingStatus((prev) => new Map(prev).set(branch, currentlyOpen));
+    }
+  };
+  const handleUpdateJobPostingField = async (id: string, patch: Parameters<typeof updateHrJobPosting>[1]) => {
+    setJobPostings((prev) => prev.map((p) => (p.id === id ? { ...p, ...patch } : p)));
+    try {
+      await updateHrJobPosting(id, patch);
+    } catch (err) {
+      console.error("Failed to save job posting:", err);
+      void loadJobPostings();
+    }
+  };
+  const handleDeleteJobPosting = async (id: string) => {
+    if (!confirm("Remove this job posting?")) return;
+    const prev = jobPostings;
+    setJobPostings((p) => p.filter((row) => row.id !== id));
+    try {
+      await deleteHrJobPosting(id);
+    } catch (err) {
+      alert(`Failed to delete: ${err instanceof Error ? err.message : "Unknown error"}`);
+      setJobPostings(prev);
+    }
   };
 
   // Forms column — every signed/pending document company-wide (one bulk
@@ -13551,7 +13667,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       // The candidate row is saved at this point — close the form and
       // refresh the list regardless of what happens next, so a CV upload
       // failure doesn't strand the UI on a stale, still-open form.
-      setNewCandidate({ name: "", phone: "", email: "", position: "", branch: "", department: "", branchManagerId: "", assignedInterviewerId: "", source: "", sourceOther: "" });
+      setNewCandidate({ name: "", phone: "", email: "", position: "", branch: "", department: "", branchManagerId: "", assignedInterviewerId: "", jobPostingId: "", source: "", sourceOther: "" });
       setCvFile(null);
       setShowAddCandidate(false);
       await loadCandidates();
@@ -15693,6 +15809,14 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         columns: undefined,
       },
       {
+        group: "Recruitment Site",
+        icon: Briefcase,
+        tabs: [
+          { key: "recruitmentSite", label: "Recruitment Site", count: jobPostings.length, icon: Briefcase },
+        ] as const,
+        columns: undefined,
+      },
+      {
         group: "Calendar",
         icon: Calendar,
         tabs: [
@@ -16315,6 +16439,15 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               </select>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
+              <select value={newCandidate.jobPostingId} onChange={(e) => setNewCandidate({ ...newCandidate, jobPostingId: e.target.value })} className="glass-input text-sm py-1.5 px-3 rounded-md" title="Link this candidate to a Recruitment Site job posting (optional)">
+                <option value="">Select Job Posting (optional)</option>
+                <optgroup label="Zip Recruiter">
+                  {jobPostings.filter((p) => p.platform === "zip_recruiter").map((p) => <option key={p.id} value={p.id}>{p.jobTitle} — Zip Recruiter</option>)}
+                </optgroup>
+                <optgroup label="Indeed">
+                  {jobPostings.filter((p) => p.platform === "indeed").map((p) => <option key={p.id} value={p.id}>{p.jobTitle} — Indeed</option>)}
+                </optgroup>
+              </select>
               <select value={newCandidate.source} onChange={(e) => setNewCandidate({ ...newCandidate, source: e.target.value })} className="glass-input text-sm py-1.5 px-3 rounded-md">
                 <option value="">Where was this applicant found?</option>
                 {CANDIDATE_SOURCE_OPTIONS.map((s) => <option key={s} value={s}>{s === "Other" ? "Other, please specify" : s}</option>)}
@@ -17137,6 +17270,289 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         })()}
       </div>
       )}
+
+      {/* ── Recruitment Site: manually-kept mirror of real ZipRecruiter/Indeed job postings ── */}
+      {activeTab === "recruitmentSite" && (
+      <div className="panel p-0 overflow-hidden mb-4">
+        <div className="px-4 py-4 border-b border-white/10 flex flex-wrap justify-between items-center gap-3">
+          <div>
+            <h2 className="font-semibold text-sm">Recruitment Site</h2>
+            <p className="text-[10px] text-muted-foreground mt-0.5">Mirrors what's live on your real ZipRecruiter/Indeed job postings, plus a Branch tab for tracking internal open-for-posting needs — type it in here so HR doesn't have to jump between sites.</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="flex rounded-md overflow-hidden border border-white/15 text-xs">
+              <button type="button" onClick={() => setRecruitmentPlatform("zip_recruiter")} className={`px-3 py-1.5 ${recruitmentPlatform === "zip_recruiter" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground"}`}>Zip Recruiter</button>
+              <button type="button" onClick={() => setRecruitmentPlatform("indeed")} className={`px-3 py-1.5 border-l border-white/15 ${recruitmentPlatform === "indeed" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground"}`}>Indeed</button>
+              <button type="button" onClick={() => setRecruitmentPlatform("branch")} className={`px-3 py-1.5 border-l border-white/15 ${recruitmentPlatform === "branch" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground"}`} title="Track a branch that's open for posting, not tied to an external site">Branch</button>
+            </div>
+            {recruitmentPlatform !== "branch" && (
+              <button onClick={() => void handleAddJobPosting()} className="btn text-sm px-3 py-1.5 flex items-center gap-2">
+                <Plus className="h-4 w-4" /> Add Job Posting
+              </button>
+            )}
+          </div>
+        </div>
+        {recruitmentPlatform === "branch" ? (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-white/10 bg-white/5">
+                <th className="px-3 py-2 text-left text-xs text-muted-foreground uppercase">Branch</th>
+                <th className="px-3 py-2 text-left text-xs text-muted-foreground uppercase">Posting Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {branchStatusLoading ? (
+                <tr><td colSpan={2} className="px-4 py-8 text-center text-muted-foreground text-sm">Loading…</td></tr>
+              ) : (
+                branchOptions.map((branch) => {
+                  const isOpen = branchPostingStatus.get(branch) ?? true;
+                  return (
+                    <tr key={branch} className="border-b border-white/5 hover:bg-white/5">
+                      <td className="px-3 py-2 font-medium">{branch}</td>
+                      <td className="px-3 py-2">
+                        <button
+                          type="button"
+                          onClick={() => void handleToggleBranchOpen(branch, isOpen)}
+                          className={`text-xs font-semibold px-2.5 py-1 rounded-full border transition ${
+                            isOpen
+                              ? "bg-green-500/20 text-green-300 border-green-500/40 hover:bg-green-500/30"
+                              : "bg-red-500/20 text-red-300 border-red-500/40 hover:bg-red-500/30"
+                          }`}
+                          title="Click to toggle"
+                        >
+                          {isOpen ? "Open for Posting" : "Closed"}
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+        ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-white/10 bg-white/5">
+                <th className="px-3 py-2 text-left text-xs text-muted-foreground uppercase" />
+                <th className="px-3 py-2 text-left text-xs text-muted-foreground uppercase">Job Title</th>
+                <th className="px-3 py-2 text-left text-xs text-muted-foreground uppercase">Candidates</th>
+                <th className="px-3 py-2 text-left text-xs text-muted-foreground uppercase">Sponsored Job Plan</th>
+                <th className="px-3 py-2 text-left text-xs text-muted-foreground uppercase">Date Posted</th>
+                <th className="px-3 py-2 text-left text-xs text-muted-foreground uppercase">Assignee</th>
+                <th className="px-3 py-2 text-left text-xs text-muted-foreground uppercase">Job Status</th>
+                <th className="px-3 py-2 text-left text-xs text-muted-foreground uppercase" />
+              </tr>
+            </thead>
+            <tbody>
+              {jobPostingsLoading ? (
+                <tr><td colSpan={8} className="px-4 py-8 text-center text-muted-foreground text-sm">Loading…</td></tr>
+              ) : jobPostings.filter((p) => p.platform === recruitmentPlatform).length === 0 ? (
+                <tr><td colSpan={8} className="px-4 py-8 text-center text-muted-foreground text-sm">No {JOB_POSTING_PLATFORM_LABEL[recruitmentPlatform]} job postings yet.</td></tr>
+              ) : (
+                jobPostings.filter((p) => p.platform === recruitmentPlatform).map((posting) => {
+                  const assignee = hrPersonnelOptions.find((m) => m.id === posting.assigneeId) || employees.find((e) => e.id === posting.assigneeId);
+                  return (
+                    <tr key={posting.id} className="border-b border-white/5 hover:bg-white/5 align-top">
+                      <td className="px-3 py-2">
+                        <button type="button" onClick={() => void handleUpdateJobPostingField(posting.id, { starred: !posting.starred })} title={posting.starred ? "Unstar" : "Star"}>
+                          <Star className={`h-4 w-4 ${posting.starred ? "fill-yellow-400 text-yellow-400" : "text-muted-foreground"}`} />
+                        </button>
+                      </td>
+                      <td className="px-3 py-2 min-w-[180px]">
+                        <input
+                          type="text"
+                          defaultValue={posting.jobTitle}
+                          onBlur={(e) => { if (e.target.value !== posting.jobTitle) void handleUpdateJobPostingField(posting.id, { jobTitle: e.target.value }); }}
+                          className="glass-input text-sm py-1 px-2 rounded-md w-full font-medium mb-1"
+                        />
+                        <select
+                          value={posting.location}
+                          onChange={(e) => void handleUpdateJobPostingField(posting.id, { location: e.target.value })}
+                          className="glass-input text-xs py-1 px-2 rounded-md w-full text-muted-foreground"
+                        >
+                          <option value="">Select Location</option>
+                          {posting.location && !branchOptions.includes(posting.location) && (
+                            <option value={posting.location}>{posting.location}</option>
+                          )}
+                          {branchOptions.map((b) => (
+                            <option key={b} value={b}>{b} — {(branchPostingStatus.get(b) ?? true) ? "Open" : "Closed"}</option>
+                          ))}
+                        </select>
+                      </td>
+                      <td className="px-3 py-2 min-w-[100px]">
+                        {(() => {
+                          // Real counts, not typed in — every candidate
+                          // linked to this posting via Add Candidate's own
+                          // "Job Posting" dropdown (migration 0296). "New" =
+                          // added within the last 3 days (by createdAt), not
+                          // a status — a candidate can be "New" regardless
+                          // of what's happened to them since. Each count is
+                          // clickable — opens the real candidate list for
+                          // that bucket, not just the number.
+                          const linked = candidates.filter((c) => c.jobPostingId === posting.id);
+                          const threeDaysAgo = Date.now() - 3 * 24 * 60 * 60 * 1000;
+                          const allCount = linked.length;
+                          const newCount = linked.filter((c) => new Date(c.createdAt).getTime() >= threeDaysAgo).length;
+                          const cvCount = linked.filter((c) => c.cvPath).length;
+                          const stat = (bucket: "all" | "new" | "cvs", Icon: typeof Users, count: number, label: string, color: string, title: string) => (
+                            <button
+                              type="button"
+                              onClick={() => setPostingCandidatesModal({ posting, bucket })}
+                              className="flex items-center gap-1.5 hover:underline underline-offset-2"
+                              title={title}
+                            >
+                              <Icon className={`h-3.5 w-3.5 shrink-0 ${color}`} />
+                              <span className="text-xs font-semibold">{count}</span>
+                              <span className={`text-[10px] ${color}`}>{label}</span>
+                            </button>
+                          );
+                          return (
+                            <div className="flex flex-col gap-1">
+                              {stat("all", Users, allCount, "All", "text-muted-foreground", `${allCount} candidate${allCount === 1 ? "" : "s"} linked to this posting — click to view`)}
+                              {stat("new", UserPlus, newCount, "New", "text-blue-300", `${newCount} added in the last 3 days — click to view`)}
+                              {stat("cvs", Paperclip, cvCount, "CVs", "text-emerald-300", `${cvCount} with a CV on file — click to view`)}
+                            </div>
+                          );
+                        })()}
+                      </td>
+                      <td className="px-3 py-2 min-w-[150px]">
+                        <input
+                          type="text"
+                          defaultValue={posting.sponsoredPlan}
+                          placeholder="Standard"
+                          onBlur={(e) => { if (e.target.value !== posting.sponsoredPlan) void handleUpdateJobPostingField(posting.id, { sponsoredPlan: e.target.value }); }}
+                          className="glass-input text-xs py-1 px-2 rounded-md w-full mb-1"
+                        />
+                        <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                          $
+                          <input
+                            type="number"
+                            min={0}
+                            step={0.01}
+                            defaultValue={posting.costDaily ?? ""}
+                            placeholder="0.00"
+                            onBlur={(e) => { const v = e.target.value === "" ? null : Number(e.target.value); if (v !== posting.costDaily) void handleUpdateJobPostingField(posting.id, { costDaily: v }); }}
+                            className="glass-input text-[10px] py-0.5 px-1 rounded-md w-14"
+                            title="Daily cost"
+                          />
+                          /day · $
+                          <input
+                            type="number"
+                            min={0}
+                            step={0.01}
+                            defaultValue={posting.costTotal ?? ""}
+                            placeholder="0.00"
+                            onBlur={(e) => { const v = e.target.value === "" ? null : Number(e.target.value); if (v !== posting.costTotal) void handleUpdateJobPostingField(posting.id, { costTotal: v }); }}
+                            className="glass-input text-[10px] py-0.5 px-1 rounded-md w-14"
+                            title="Total cost"
+                          />
+                          total
+                        </div>
+                      </td>
+                      <td className="px-3 py-2 min-w-[130px]">
+                        <input
+                          type="date"
+                          defaultValue={posting.datePosted || ""}
+                          onBlur={(e) => { if (e.target.value !== posting.datePosted) void handleUpdateJobPostingField(posting.id, { datePosted: e.target.value }); }}
+                          className="glass-input text-xs py-1 px-2 rounded-md"
+                        />
+                      </td>
+                      <td className="px-3 py-2 min-w-[150px]">
+                        <div className="flex items-center gap-2">
+                          {assignee && (
+                            <div className="h-6 w-6 rounded-full bg-blue-500/20 text-blue-300 flex items-center justify-center text-[10px] font-semibold shrink-0" title={assignee.name}>
+                              {assignee.name.charAt(0).toUpperCase()}
+                            </div>
+                          )}
+                          <select
+                            value={posting.assigneeId ?? ""}
+                            onChange={(e) => void handleUpdateJobPostingField(posting.id, { assigneeId: e.target.value || null })}
+                            className="glass-input text-xs py-1 px-1.5 rounded-md flex-1 min-w-0"
+                          >
+                            <option value="">Unassigned</option>
+                            {hrPersonnelOptions.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+                          </select>
+                        </div>
+                      </td>
+                      <td className="px-3 py-2">
+                        <select
+                          value={posting.status}
+                          onChange={(e) => void handleUpdateJobPostingField(posting.id, { status: e.target.value as HrJobPostingStatus })}
+                          className={`text-xs font-semibold px-2 py-1 rounded border-0 ${JOB_POSTING_STATUS_COLOR[posting.status]}`}
+                        >
+                          {(["open", "paused", "closed"] as const).map((s) => (
+                            <option key={s} value={s}>{JOB_POSTING_STATUS_LABEL[s]}</option>
+                          ))}
+                        </select>
+                      </td>
+                      <td className="px-3 py-2">
+                        <button type="button" onClick={() => void handleDeleteJobPosting(posting.id)} className="text-red-400 hover:text-red-300 p-1" title="Remove this job posting">
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+        )}
+      </div>
+      )}
+
+      {/* ── Recruitment Site: All/New/CVs candidate list popup ── */}
+      {postingCandidatesModal && (() => {
+        const { posting, bucket } = postingCandidatesModal;
+        const threeDaysAgo = Date.now() - 3 * 24 * 60 * 60 * 1000;
+        const linked = candidates.filter((c) => c.jobPostingId === posting.id);
+        const rows =
+          bucket === "all" ? linked :
+          bucket === "new" ? linked.filter((c) => new Date(c.createdAt).getTime() >= threeDaysAgo) :
+          linked.filter((c) => c.cvPath);
+        const bucketLabel = bucket === "all" ? "All Candidates" : bucket === "new" ? "New (last 3 days)" : "With a CV";
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setPostingCandidatesModal(null)}>
+            <div className="w-full max-w-lg max-h-[80vh] overflow-y-auto rounded-xl border border-white/10 bg-slate-900 p-5" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-start justify-between gap-3 mb-1">
+                <div>
+                  <h3 className="text-sm font-semibold">{posting.jobTitle || "Job Posting"}</h3>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">{bucketLabel} — {rows.length}</p>
+                </div>
+                <button className="rounded-md border border-white/15 bg-slate-800/70 p-1.5 text-slate-300 hover:bg-slate-700" onClick={() => setPostingCandidatesModal(null)}>
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              <div className="mt-3 divide-y divide-white/5 rounded-lg border border-white/10">
+                {rows.length === 0 ? (
+                  <p className="px-3 py-6 text-center text-xs text-muted-foreground">No candidates in this group yet.</p>
+                ) : (
+                  rows.map((c) => (
+                    <div key={c.id} className="flex items-center justify-between gap-3 px-3 py-2">
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium truncate">{c.name}</p>
+                        <p className="text-[10px] text-muted-foreground">{CANDIDATE_STATUS_LABEL[c.status]} · added {new Date(c.createdAt).toLocaleDateString()}</p>
+                      </div>
+                      {c.cvPath && (
+                        <button
+                          type="button"
+                          onClick={() => void handleViewCv(c.cvPath!)}
+                          className="shrink-0 inline-flex items-center gap-1 text-[10px] px-2 py-1 rounded-md border border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20"
+                        >
+                          <Paperclip className="h-3 w-3" /> View CV
+                        </button>
+                      )}
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ── Warnings & Mistakes tab: Pending Reviews, Approved log, department trend ── */}
       {activeTab === "warnings" && (

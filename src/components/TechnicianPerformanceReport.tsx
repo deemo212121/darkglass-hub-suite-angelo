@@ -32,7 +32,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
-import { Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { ChevronDown, ChevronLeft, Download, RefreshCw, X, MapPin, UserSquare2, Star, CalendarClock, ChevronRight } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
@@ -582,6 +582,24 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
     [filteredRows],
   );
 
+  // Same stat-tile treatment as the Technician Details modal's Daily
+  // Activity Log row — a page-level rollup of whatever's currently
+  // filtered, so it moves with Location/Manager/Tier/Search like the table
+  // below it does.
+  const pageKpis = useMemo(() => {
+    const totalTickets = filteredRows.reduce((s, r) => s + r.totalTickets, 0);
+    const totalRedo = filteredRows.reduce((s, r) => s + r.redoCount, 0);
+    const totalHours = filteredRows.reduce((s, r) => s + r.hoursWorked, 0);
+    const flagged = filteredRows.filter((r) => r.highRedoAlert || r.routeMileageAlert || r.lowUtilizationAlert).length;
+    return {
+      techCount: filteredRows.length,
+      totalTickets,
+      avgRedoPct: totalTickets > 0 ? (totalRedo / totalTickets) * 100 : null,
+      avgTicketsPerHour: totalHours > 0 ? totalTickets / totalHours : null,
+      flagged,
+    };
+  }, [filteredRows]);
+
   const handleExportCsv = () => {
     exportToCSV(
       "technician_performance",
@@ -627,25 +645,50 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
   return (
     <div className="min-h-screen flex flex-col">
       <main className="flex-1 max-w-[1500px] mx-auto w-full px-4 sm:px-6 py-8">
-        <div className="flex items-center gap-3 mb-2 flex-wrap">
-          <button onClick={goBack} className="btn hover:bg-white/15"><ChevronLeft className="h-4 w-4" /></button>
-          <h1 className="text-2xl font-bold">Technician Performance Report</h1>
-          <div className="ml-auto flex items-center gap-2">
-            {isFullAccess && (
-              <button onClick={handleExportCsv} className="btn text-xs px-2.5 py-1.5 flex items-center gap-1.5">
-                <Download className="h-3.5 w-3.5" /> Export CSV
+        <div className="relative rounded-2xl border border-white/10 bg-gradient-to-br from-blue-600/20 via-indigo-600/10 to-transparent px-6 py-6 mb-5">
+          <div className="flex items-center gap-3 flex-wrap">
+            <button onClick={goBack} className="btn hover:bg-white/15 shrink-0"><ChevronLeft className="h-4 w-4" /></button>
+            <div className="min-w-0">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-blue-300/80 mb-0.5">Reports</p>
+              <h1 className="text-2xl font-bold">Technician Performance Report</h1>
+            </div>
+            <div className="ml-auto flex items-center gap-2">
+              {isFullAccess && (
+                <button onClick={handleExportCsv} className="btn text-xs px-2.5 py-1.5 flex items-center gap-1.5">
+                  <Download className="h-3.5 w-3.5" /> Export CSV
+                </button>
+              )}
+              <button onClick={() => void load()} className="btn text-xs px-2.5 py-1.5 flex items-center gap-1.5" disabled={loading}>
+                <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} /> Refresh
               </button>
-            )}
-            <button onClick={() => void load()} className="btn text-xs px-2.5 py-1.5 flex items-center gap-1.5" disabled={loading}>
-              <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} /> Refresh
-            </button>
+            </div>
           </div>
+          <p className="text-xs text-muted-foreground mt-3 max-w-3xl">
+            Total Tickets, Redo Rate %, Tickets/Hour, and Miles/Ticket per technician — read-only. High Redo (&gt;5%), Route Mileage Audit (&gt;30 mi/ticket), and Low Utilization (&lt;32 hrs/week) are flagged automatically.
+          </p>
         </div>
-        <p className="text-xs text-muted-foreground mb-6">
-          Total Tickets, Redo Rate %, Tickets/Hour, and Miles/Ticket per technician — read-only. High Redo (&gt;5%), Route Mileage Audit (&gt;30 mi/ticket), and Low Utilization (&lt;32 hrs/week) are flagged automatically.
-        </p>
 
-        <div className="panel mb-4 p-4 flex flex-wrap items-end gap-3">
+        {!loading && (
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-5">
+            {[
+              { label: "Technicians", icon: UserSquare2, accent: "blue", value: pageKpis.techCount },
+              { label: "Total Tickets", icon: Star, accent: "emerald", value: pageKpis.totalTickets },
+              { label: "Avg Redo %", icon: MapPin, accent: "amber", value: pageKpis.avgRedoPct != null ? `${fmt1(pageKpis.avgRedoPct)}%` : "—" },
+              { label: "Avg Tickets/Hr", icon: CalendarClock, accent: "violet", value: pageKpis.avgTicketsPerHour != null ? pageKpis.avgTicketsPerHour.toFixed(2) : "—" },
+              { label: "Flagged", icon: UserSquare2, accent: "cyan", value: pageKpis.flagged },
+            ].map(({ label, icon: Icon, accent, value }) => (
+              <div key={label} className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+                <div className={`inline-flex p-1.5 rounded-lg mb-2 ${ACCENT_CLASSES[accent].chip}`}>
+                  <Icon className={`h-3.5 w-3.5 ${ACCENT_CLASSES[accent].text}`} />
+                </div>
+                <p className={`text-2xl font-bold tabular-nums ${ACCENT_CLASSES[accent].text}`}>{value}</p>
+                <p className="text-[10px] text-muted-foreground mt-1 leading-tight">{label}</p>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div className="rounded-xl border border-white/10 bg-white/[0.03] mb-4 p-4 flex flex-wrap items-end gap-3">
           <div>
             <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide block mb-1">Period</label>
             <div className="flex rounded-md overflow-hidden border border-white/15 text-xs">
@@ -722,14 +765,17 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
         {error && <p className="mb-4 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{error}</p>}
 
         {loading ? (
-          <div className="panel p-10 flex items-center justify-center"><BrandedLoader /></div>
+          <div className="rounded-xl border border-white/10 bg-white/[0.03] p-10 flex items-center justify-center"><BrandedLoader /></div>
         ) : (
           <div className="space-y-4">
             {compareDimension && compareGroups.length > 0 && (
-              <div className="panel p-4">
-                <p className="text-sm font-semibold mb-1">
-                  Compare by {compareDimension === "location" ? "Location" : compareDimension === "manager" ? "Manager" : "Tier"}
-                </p>
+              <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+                <div className="flex items-center gap-1.5 mb-1">
+                  <UserSquare2 className="h-4 w-4 text-blue-400" />
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Compare by {compareDimension === "location" ? "Location" : compareDimension === "manager" ? "Manager" : "Tier"}
+                  </p>
+                </div>
                 <p className="text-[10px] text-muted-foreground mb-4">
                   {compareGroups.length} selected — Total Tickets per day, color-coded per {compareDimension}. Period totals are in the table below.
                 </p>
@@ -793,8 +839,11 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
               </div>
             )}
             {top5Chart.length > 0 && (
-              <div className="panel p-4">
-                <p className="text-sm font-semibold mb-4">Top 5 Technicians (Total Tickets)</p>
+              <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+                <div className="flex items-center gap-1.5 mb-4">
+                  <Star className="h-4 w-4 text-emerald-400" />
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Top 5 Technicians (Total Tickets)</p>
+                </div>
                 <ResponsiveContainer width="100%" height={200} debounce={200}>
                   <BarChart data={top5Chart} margin={{ left: -10 }}>
                     <XAxis dataKey="name" tick={{ fill: "#94a3b8", fontSize: 11 }} />
@@ -813,7 +862,7 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
               </div>
             )}
             {groupedRows.map(({ groupName, rows: groupRows }) => (
-              <div key={groupName ?? "all"} className="panel p-0 overflow-hidden">
+              <div key={groupName ?? "all"} className="rounded-xl border border-white/10 bg-white/[0.03] overflow-hidden">
                 {groupName != null && (
                   <div className="px-4 py-2.5 border-b border-white/10 bg-white/5 flex items-center justify-between">
                     <h2 className="font-semibold text-sm">{groupName}</h2>
@@ -1094,7 +1143,7 @@ function TechDetailPanel({
       onClick={onClose}
     >
       <div
-        className={`w-full max-w-3xl max-h-[88vh] overflow-y-auto rounded-2xl border border-white/10 bg-slate-950 shadow-[0_20px_70px_rgba(0,0,0,0.55)] transition-all duration-200 ${entered ? "opacity-100 scale-100" : "opacity-0 scale-95"}`}
+        className={`w-full max-w-5xl max-h-[88vh] overflow-y-auto rounded-2xl border border-white/10 bg-slate-950 shadow-[0_20px_70px_rgba(0,0,0,0.55)] transition-all duration-200 ${entered ? "opacity-100 scale-100" : "opacity-0 scale-95"}`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="relative px-7 py-7 bg-gradient-to-br from-blue-600/20 via-indigo-600/10 to-transparent border-b border-white/10">
@@ -1126,7 +1175,8 @@ function TechDetailPanel({
           </div>
         </div>
 
-        <div className="p-7 space-y-6">
+        <div className="p-7 grid grid-cols-1 lg:grid-cols-[1fr_260px] gap-6 items-start">
+          <div className="space-y-6">
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             {infoCards.map(({ icon: Icon, label, value, hint, accent }) => (
               <div key={label} className="rounded-xl border border-white/10 bg-white/[0.03] p-4 hover:border-white/20 transition">
@@ -1172,19 +1222,82 @@ function TechDetailPanel({
               <ChevronRight className={`h-3.5 w-3.5 transition-transform ${showActivityLog ? "rotate-90" : ""}`} />
             </button>
             {showActivityLog && (
-              <div ref={activityLogRef} className="mt-3 max-h-56 overflow-y-auto rounded-xl border border-white/10 divide-y divide-white/5">
+              <div ref={activityLogRef} className="mt-3">
                 {dailyLog.length === 0 ? (
-                  <p className="text-xs text-muted-foreground text-center py-6">No completed tickets logged for this period.</p>
+                  <div className="rounded-xl border border-white/10 py-6">
+                    <p className="text-xs text-muted-foreground text-center">No completed tickets logged for this period.</p>
+                  </div>
                 ) : (
-                  dailyLog.map(([date, count]) => (
-                    <div key={date} className="flex items-center justify-between px-4 py-2 text-xs">
-                      <span className="text-muted-foreground">{date}</span>
-                      <span className="font-semibold">{count} ticket{count === 1 ? "" : "s"}</span>
+                  <>
+                    <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 mb-2">
+                      <ResponsiveContainer width="100%" height={160} debounce={200}>
+                        <BarChart data={[...dailyLog].reverse().map(([date, count]) => ({ date: `${date.slice(5, 7)}/${date.slice(8, 10)}`, count }))} margin={{ left: -20, right: 8 }}>
+                          <XAxis dataKey="date" tick={{ fill: "#94a3b8", fontSize: 10 }} />
+                          <YAxis tick={{ fill: "#94a3b8", fontSize: 10 }} allowDecimals={false} width={28} />
+                          <Tooltip
+                            contentStyle={TOOLTIP_STYLE}
+                            cursor={{ fill: "rgba(148,163,184,0.1)" }}
+                            formatter={(v: any) => [v, "Tickets"]}
+                          />
+                          <Bar dataKey="count" radius={[3, 3, 0, 0]} name="Tickets">
+                            {dailyLog.map((_, i) => <Cell key={i} fill={CHART_BAR_FILL} />)}
+                          </Bar>
+                        </BarChart>
+                      </ResponsiveContainer>
                     </div>
-                  ))
+                    <div className="max-h-56 overflow-y-auto rounded-xl border border-white/10 divide-y divide-white/5">
+                      {dailyLog.map(([date, count]) => (
+                        <div key={date} className="flex items-center justify-between px-4 py-2 text-xs">
+                          <span className="text-muted-foreground">{date}</span>
+                          <span className="font-semibold">{count} ticket{count === 1 ? "" : "s"}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </>
                 )}
               </div>
             )}
+          </div>
+          </div>
+
+          <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-3">Ticket Outcomes</p>
+            <div className="relative">
+              <ResponsiveContainer width="100%" height={170}>
+                <PieChart>
+                  <Pie
+                    data={[
+                      { name: "Completed", value: Math.max(0, tech.totalTickets - tech.redoCount) },
+                      { name: "Redo", value: tech.redoCount },
+                    ]}
+                    dataKey="value"
+                    nameKey="name"
+                    innerRadius={48}
+                    outerRadius={68}
+                    paddingAngle={tech.redoCount > 0 && tech.totalTickets - tech.redoCount > 0 ? 3 : 0}
+                    stroke="none"
+                  >
+                    <Cell fill="#22c55e" />
+                    <Cell fill="#ef4444" />
+                  </Pie>
+                  <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v: any, n: any) => [v, n]} />
+                </PieChart>
+              </ResponsiveContainer>
+              <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                <p className="text-xl font-bold">{tech.redoRatePct != null ? `${fmt1(tech.redoRatePct)}%` : "—"}</p>
+                <p className="text-[9px] text-muted-foreground uppercase tracking-wide">Redo Rate</p>
+              </div>
+            </div>
+            <div className="flex flex-col gap-1.5 mt-2 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="flex items-center gap-1.5 text-muted-foreground"><span className="h-2 w-2 rounded-full bg-green-500" />Completed</span>
+                <span className="font-semibold">{Math.max(0, tech.totalTickets - tech.redoCount)}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="flex items-center gap-1.5 text-muted-foreground"><span className="h-2 w-2 rounded-full bg-red-500" />Redo</span>
+                <span className="font-semibold">{tech.redoCount}</span>
+              </div>
+            </div>
           </div>
         </div>
       </div>
