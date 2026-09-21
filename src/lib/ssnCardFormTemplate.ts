@@ -30,6 +30,16 @@ const blank = (v: string) => (v && v.trim() ? escapeHtml(v) : "&nbsp;");
 
 const fmtDate = (v: string) => {
   if (!v) return "";
+  // A date-only string ("2026-09-17") parses as UTC midnight; formatting
+  // it back out in the browser's local timezone (anything behind UTC,
+  // i.e. all of the US) rolls it back a day — "9/17" printing as "9/16".
+  // Parsing the y/m/d parts directly into a local Date avoids that. A
+  // full timestamp has no such ambiguity and is left to the normal parse.
+  const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v);
+  if (dateOnly) {
+    const [, y, m, d] = dateOnly;
+    return new Date(Number(y), Number(m) - 1, Number(d)).toLocaleDateString();
+  }
   const d = new Date(v);
   return isNaN(d.getTime()) ? v : d.toLocaleDateString();
 };
