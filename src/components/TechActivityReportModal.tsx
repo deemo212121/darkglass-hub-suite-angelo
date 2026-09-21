@@ -1005,17 +1005,19 @@ export function TechActivityReportModal({
                           <div className="flex items-center rounded-full bg-slate-900 border border-white/10 p-0.5 text-[10px] shrink-0">
                             <button
                               type="button"
-                              disabled={hourlyOtModeBusy}
+                              disabled={hourlyOtModeBusy || loadingStateComparison}
+                              title={loadingStateComparison ? "Still loading this technician's per-day state comparison — wait for it to finish before switching modes." : undefined}
                               onClick={() => onSetHourlyOtMode("company", companyHourlyOtTotal)}
-                              className={`px-2 py-0.5 rounded-full transition ${!appliedIsState ? "bg-slate-700 text-white" : "text-slate-500 hover:text-slate-300"}`}
+                              className={`px-2 py-0.5 rounded-full transition disabled:opacity-50 ${!appliedIsState ? "bg-slate-700 text-white" : "text-slate-500 hover:text-slate-300"}`}
                             >
                               Company
                             </button>
                             <button
                               type="button"
-                              disabled={hourlyOtModeBusy}
+                              disabled={hourlyOtModeBusy || loadingStateComparison}
+                              title={loadingStateComparison ? "Still loading this technician's per-day state comparison — wait for it to finish before switching modes." : undefined}
                               onClick={() => onSetHourlyOtMode("state", stateHourlyOtTotal)}
-                              className={`px-2 py-0.5 rounded-full transition ${appliedIsState ? "bg-emerald-700 text-white" : "text-slate-500 hover:text-slate-300"}`}
+                              className={`px-2 py-0.5 rounded-full transition disabled:opacity-50 ${appliedIsState ? "bg-emerald-700 text-white" : "text-slate-500 hover:text-slate-300"}`}
                             >
                               State
                             </button>
