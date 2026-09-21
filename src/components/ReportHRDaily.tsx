@@ -6,6 +6,7 @@ import { ChevronLeft, ChevronDown, ChevronUp, ChevronRight, Plus, Trash2, AlertT
 import { useSignaturePad } from "@/hooks/useSignaturePad";
 import { SignaturePadControls } from "@/components/SignaturePad";
 import { StickyHorizontalScrollbar } from "@/components/StickyHorizontalScrollbar";
+import { TicketColumnFilter } from "@/components/TicketColumnFilter";
 import { getGmailConnectionStatus, disconnectGmail, sendHiringCredentialsEmail, type GmailConnectionStatus } from "@/lib/supabase/gmailConnection";
 
 /** Shared shape for a sidebar/header-dropdown nav tab entry — broad enough to structurally match every tabGroups[].tabs literal (they all share this key/label/count/icon shape, just with different literal `key`/`label` string types per group), so renderSidebarTabButton/renderDropdownTabButton can be called with tabs from any group. */
@@ -14464,7 +14465,12 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [employees, leadersDeptByName]);
 
-  const masterListFiltered = useMemo(() => {
+  // Dept-tab + search only — the shared base every per-column funnel filter's
+  // own option list is built from (each one excludes just ITS OWN filter, so
+  // opening e.g. Department still lists every department present among rows
+  // that already pass every OTHER active filter — same Excel-autofilter UX
+  // as TicketList.tsx's buildOptionsExcluding).
+  const masterListDeptSearchFiltered = useMemo(() => {
     let result = employees;
     if (masterListDept === MASTER_LIST_TRAINEE_TAB) {
       result = result.filter((e) => e.employmentType === "trainee");
@@ -14480,9 +14486,101 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         (ROLE_LABELS[normalizeRole(e.position)] ?? e.position ?? "").toLowerCase().includes(q),
       );
     }
-    return [...result].sort((a, b) => positionRank(b) - positionRank(a) || a.name.localeCompare(b.name));
+    return result;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [employees, masterListDept, masterListSearch, leadersDeptByName, leadersTierByName]);
+
+  // Master List's per-column funnel filters (Status/Start Date/Name/Phone/
+  // Address/Department/Position/Hours of Work/Total Work Hours/Meal Time/
+  // Sick Leave/Vacation Leave/Tier Level/Employment Status/Warnings) — same
+  // TicketColumnFilter component and pattern TicketList.tsx already
+  // established for its own column filters.
+  const MASTER_LIST_COLUMN_FILTER_KEYS = [
+    "status", "startDate", "name", "phone", "address", "department", "position",
+    "hoursOfWork", "totalWorkHours", "mealTime", "sickLeave", "vacationLeave",
+    "tierLevel", "employmentStatus", "warnings",
+  ] as const;
+  type MasterListColumnFilterKey = (typeof MASTER_LIST_COLUMN_FILTER_KEYS)[number];
+
+  // Reads each filterable column's DISPLAYED value off an Employee row —
+  // Sick/Vacation Leave and Warnings come from the same derived maps
+  // (remainingSickByProfile/remainingPtoByProfile/approvedWarningCountByProfile)
+  // the table rows themselves already read, so the filter never disagrees
+  // with what's actually shown.
+  const masterListColumnValueGetters: Record<MasterListColumnFilterKey, (e: Employee) => string> = {
+    status: (e) => (e.status ? e.status.charAt(0).toUpperCase() + e.status.slice(1) : ""),
+    startDate: (e) => e.startDate || "",
+    name: (e) => e.name || "",
+    phone: (e) => e.phone || "",
+    address: (e) => e.address || "",
+    department: (e) => resolveMasterListDepartment(e) || "",
+    position: (e) => resolveMasterListPosition(e) || "",
+    hoursOfWork: (e) => (e.requiredCheckIn && e.requiredCheckOut ? `${e.requiredCheckIn.slice(0, 5)}–${e.requiredCheckOut.slice(0, 5)} ${e.scheduleTimezone}` : ""),
+    totalWorkHours: (e) => (e.workingHours != null ? String(e.workingHours) : ""),
+    mealTime: (e) => (e.mealMinutes != null ? String(e.mealMinutes) : ""),
+    sickLeave: (e) => {
+      const s = remainingSickByProfile.get(e.id);
+      return s ? `${s.remaining}/${s.allowance}` : "";
+    },
+    vacationLeave: (e) => {
+      const p = remainingPtoByProfile.get(e.id);
+      return p ? `${p.remaining}/${p.allowance}` : "";
+    },
+    tierLevel: (e) => e.tierLevel || "",
+    employmentStatus: (e) => (e.employmentType === "trainee" ? "Trainee" : "Regular"),
+    warnings: (e) => String(approvedWarningCountByProfile.get(e.id) ?? 0),
+  };
+
+  const [masterListColFilters, setMasterListColFilters] = useState<Record<MasterListColumnFilterKey, Set<string>>>(() => {
+    const init = {} as Record<MasterListColumnFilterKey, Set<string>>;
+    for (const k of MASTER_LIST_COLUMN_FILTER_KEYS) init[k] = new Set<string>();
+    return init;
+  });
+  const updateMasterListColFilter = (key: MasterListColumnFilterKey, next: Set<string>) => {
+    setMasterListColFilters((prev) => ({ ...prev, [key]: next }));
+  };
+
+  const masterListFiltered = useMemo(() => {
+    const result = masterListDeptSearchFiltered.filter((e) =>
+      MASTER_LIST_COLUMN_FILTER_KEYS.every((key) => {
+        const sel = masterListColFilters[key];
+        if (!sel || sel.size === 0) return true;
+        return sel.has(masterListColumnValueGetters[key](e));
+      }),
+    );
+    return [...result].sort((a, b) => positionRank(b) - positionRank(a) || a.name.localeCompare(b.name));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [masterListDeptSearchFiltered, masterListColFilters]);
+
+  const buildMasterListOptionsExcluding = (excludeKey: MasterListColumnFilterKey): string[] => {
+    const values = new Set<string>();
+    for (const e of masterListDeptSearchFiltered) {
+      const matchesOtherCols = MASTER_LIST_COLUMN_FILTER_KEYS.every((key) => {
+        if (key === excludeKey) return true;
+        const sel = masterListColFilters[key];
+        if (!sel || sel.size === 0) return true;
+        return sel.has(masterListColumnValueGetters[key](e));
+      });
+      if (matchesOtherCols) values.add(masterListColumnValueGetters[excludeKey](e));
+    }
+    return Array.from(values);
+  };
+
+  const masterListColumnOptions = useMemo(() => {
+    const out = {} as Record<MasterListColumnFilterKey, string[]>;
+    for (const key of MASTER_LIST_COLUMN_FILTER_KEYS) out[key] = buildMasterListOptionsExcluding(key);
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [masterListDeptSearchFiltered, masterListColFilters]);
+
+  const renderMasterListColFilter = (key: MasterListColumnFilterKey, label: string) => (
+    <TicketColumnFilter
+      options={masterListColumnOptions[key] || []}
+      selected={masterListColFilters[key] || new Set()}
+      onChange={(next) => updateMasterListColFilter(key, next)}
+      label={`Filter by ${label}`}
+    />
+  );
 
   // ── Leaders — a hand-maintained, drag-to-reorder roster (migration 0153),
   // NOT derived from profiles.role — several of these titles ("Assistant
@@ -16740,22 +16838,22 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             <thead>
               <tr className="border-b border-white/10 bg-white/5">
                 {showBranchColumn && <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase">Branch</th>}
-                <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase">Status</th>
-                <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase" title="Editable — writes the employee's hire date">Start Date</th>
-                <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase">Name</th>
-                <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase" title="Editable — writes profiles.phone_number">Phone</th>
-                <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase">Address</th>
-                <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase">Department</th>
-                <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase">Position</th>
-                <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase" title="Editable — writes profiles.required_check_in / required_check_out, the Required Schedule shown on the employee's own My Profile page">Hours of Work</th>
-                <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase" title="Editable — writes profiles.working_hours, a plain total distinct from the Required Schedule range">Total Work Hours</th>
-                <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase" title="Editable — writes profiles.meal_minutes, the other half of My Profile's Working Hours & Meal Time field">Meal Time</th>
-                <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase" title="Sick Leave is its own allowance, separate from vacation — flat 5 days/year, available from day 1">Sick Leave</th>
-                <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase" title="Remaining / Allowance">Vacation Leave</th>
-                {showTierColumn && <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase" title="Editable — writes profiles.tier_level, same field Staff List's own Tier Level tab uses">Tier Level</th>}
-                <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase">Employment Status</th>
+                <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase">Status{renderMasterListColFilter("status", "Status")}</th>
+                <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase" title="Editable — writes the employee's hire date">Start Date{renderMasterListColFilter("startDate", "Start Date")}</th>
+                <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase">Name{renderMasterListColFilter("name", "Name")}</th>
+                <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase" title="Editable — writes profiles.phone_number">Phone{renderMasterListColFilter("phone", "Phone")}</th>
+                <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase">Address{renderMasterListColFilter("address", "Address")}</th>
+                <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase">Department{renderMasterListColFilter("department", "Department")}</th>
+                <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase">Position{renderMasterListColFilter("position", "Position")}</th>
+                <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase" title="Editable — writes profiles.required_check_in / required_check_out, the Required Schedule shown on the employee's own My Profile page">Hours of Work{renderMasterListColFilter("hoursOfWork", "Hours of Work")}</th>
+                <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase" title="Editable — writes profiles.working_hours, a plain total distinct from the Required Schedule range">Total Work Hours{renderMasterListColFilter("totalWorkHours", "Total Work Hours")}</th>
+                <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase" title="Editable — writes profiles.meal_minutes, the other half of My Profile's Working Hours & Meal Time field">Meal Time{renderMasterListColFilter("mealTime", "Meal Time")}</th>
+                <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase" title="Sick Leave is its own allowance, separate from vacation — flat 5 days/year, available from day 1">Sick Leave{renderMasterListColFilter("sickLeave", "Sick Leave")}</th>
+                <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase" title="Remaining / Allowance">Vacation Leave{renderMasterListColFilter("vacationLeave", "Vacation Leave")}</th>
+                {showTierColumn && <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase" title="Editable — writes profiles.tier_level, same field Staff List's own Tier Level tab uses">Tier Level{renderMasterListColFilter("tierLevel", "Tier Level")}</th>}
+                <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase">Employment Status{renderMasterListColFilter("employmentStatus", "Employment Status")}</th>
                 {showAccessColumn && <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase" title="Lets a trainee use their real role's full access while still showing as Trainee above">Access</th>}
-                <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase">Warnings</th>
+                <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase">Warnings{renderMasterListColFilter("warnings", "Warnings")}</th>
               </tr>
             </thead>
             <tbody>

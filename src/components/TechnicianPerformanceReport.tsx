@@ -21,21 +21,23 @@
  * report and isn't a clean Tier 1-4 enum. Shown as-is rather than
  * inventing a new field no one would maintain.
  *
- * Tech ID is employee_info.employeeId (HR's own free-text staff ID field,
- * bulk-loaded via getEmployeeInfoByProfileIds — same one shown elsewhere
- * in HR tooling) when HR has set one; falls back to "—" rather than
- * fabricating an ID when it hasn't.
+ * Tech ID is profiles.technician_id — the real dedicated column Admin User
+ * Management's own "Technician ID" field edits (getCompanyUsers already
+ * selects it, no extra fetch needed) — NOT employee_info.employeeId, a
+ * separate free-text HR field that's a different piece of data entirely
+ * and was almost always empty, which is why every row showed "—" here.
+ * Falls back to "—" rather than fabricating an ID when it hasn't been set.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
 import { Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { ChevronDown, ChevronLeft, Download, RefreshCw, X } from "lucide-react";
+import { ChevronDown, ChevronLeft, Download, RefreshCw, X, MapPin, UserSquare2, Star, CalendarClock, ChevronRight } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { BrandedLoader } from "@/components/BrandedLoader";
-import { getCompanyUsers, getEmployeeInfoByProfileIds, type ProfileRow } from "@/lib/supabase/users";
+import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
 import { getTechCompletedRepairCounts, getTechCompletedTicketsDaily, getTechRedoTickets, type TechCompletedTicketDaily } from "@/lib/supabase/techPayroll";
 import { getMileageEntries, mileageEffectiveTotal } from "@/lib/supabase/mileage";
 import { getCompanyTimecardEntries, calcWorkedHours, computeMealTimeCredit, startOfWeekSunday, addDaysISO } from "@/lib/supabase/timecards";
@@ -160,6 +162,7 @@ interface TechPerfRow {
   location: string;
   manager: string;
   tier: string;
+  isActive: boolean;
   daysWorked: number;
   hoursWorked: number;
   totalTickets: number;
@@ -171,6 +174,12 @@ interface TechPerfRow {
   highRedoAlert: boolean;
   routeMileageAlert: boolean;
   lowUtilizationAlert: boolean;
+}
+
+function initialsFor(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "?";
+  return (parts[0][0] + (parts.length > 1 ? parts[parts.length - 1][0] : "")).toUpperCase();
 }
 
 const todayStr = () => new Date().toISOString().slice(0, 10);
@@ -208,6 +217,8 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
   const [groupBy, setGroupBy] = useState<GroupBy>("none");
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  const [selectedTechId, setSelectedTechId] = useState<string | null>(null);
+  const [showActivityLog, setShowActivityLog] = useState(false);
 
   const periodStart =
     periodMode === "weekly" ? startOfWeekSunday(anchor)
@@ -237,7 +248,6 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
       setDailyTickets(dailyCompleted);
 
       const techs = allUsers.filter((u) => u.is_active && TECHNICIAN_PAY_ROLES.has(normalizeRole(u.role)));
-      const employeeInfoMap = await getEmployeeInfoByProfileIds(techs.map((t) => t.id));
       const dimensionByName = new Map<string, { location: string; manager: string; tier: string }>();
       for (const t of techs) {
         dimensionByName.set((t.display_name || t.email).trim().toLowerCase(), {
@@ -343,11 +353,12 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
         const weeklyEquivalentHours = periodWeeks > 0 ? hoursWorked / periodWeeks : hoursWorked;
         return {
           id: t.id,
-          techId: employeeInfoMap.get(t.id)?.employeeId?.trim() || "—",
+          techId: t.technician_id?.trim() || "—",
           name: t.display_name || t.email,
           location: t.assigned_branch || "—",
           manager: t.manager_name || "—",
           tier: t.tier_level || "—",
+          isActive: t.is_active,
           daysWorked: daysByProfile.get(t.id)?.size ?? 0,
           hoursWorked,
           totalTickets,
@@ -523,7 +534,7 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
   const handleExportCsv = () => {
     exportToCSV(
       "technician_performance",
-      ["Tech ID", "Name", "Location", "Manager", "Tier", "Days Worked", "Hours Worked", "Total Tickets", "Redo Count", "Redo Rate %", "Miles", "Miles/Ticket", "Tickets/Hour", "High Redo", "Route Mileage Audit", "Low Utilization"],
+      ["Technician ID", "Name", "Location", "Manager", "Tier", "Days Worked", "Hours Worked", "Total Tickets", "Redo Count", "Redo Rate %", "Miles", "Miles/Ticket", "Tickets/Hour", "High Redo", "Route Mileage Audit", "Low Utilization"],
       sortedRows.map((r) => [
         r.techId, r.name, r.location, r.manager, r.tier, r.daysWorked, fmt1(r.hoursWorked), r.totalTickets, r.redoCount,
         r.redoRatePct != null ? fmt1(r.redoRatePct) : "—", fmt1(r.miles),
@@ -543,6 +554,24 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
 
   const thClass = "px-3 py-2 text-left text-xs text-muted-foreground uppercase cursor-pointer select-none hover:text-foreground";
   const sortIndicator = (key: SortKey) => (sortKey === key ? (sortDir === "asc" ? " ▲" : " ▼") : "");
+
+  const selectedTech = useMemo(() => (selectedTechId ? visibleRows.find((r) => r.id === selectedTechId) ?? null : null), [selectedTechId, visibleRows]);
+
+  // Same dailyTickets population the Compare line chart already draws
+  // from (getTechCompletedTicketsDaily) — filtered to just this one
+  // technician's name for the "View Activity Log" breakdown, so no new
+  // fetch is needed to back it.
+  const selectedTechDailyLog = useMemo(() => {
+    if (!selectedTech) return [];
+    const nameKey = selectedTech.name.trim().toLowerCase();
+    const counts = new Map<string, number>();
+    for (const t of dailyTickets) {
+      if (t.date < periodStart || t.date > periodEnd) continue;
+      if (t.technician.trim().toLowerCase() !== nameKey) continue;
+      counts.set(t.date, (counts.get(t.date) ?? 0) + 1);
+    }
+    return Array.from(counts.entries()).sort(([a], [b]) => b.localeCompare(a));
+  }, [selectedTech, dailyTickets, periodStart, periodEnd]);
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -746,7 +775,7 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b border-white/10 bg-white/5">
-                        <th className={thClass} onClick={() => toggleSort("techId")}>Tech ID{sortIndicator("techId")}</th>
+                        <th className={thClass} onClick={() => toggleSort("techId")}>Technician ID{sortIndicator("techId")}</th>
                         <th className={thClass} onClick={() => toggleSort("name")}>Name{sortIndicator("name")}</th>
                         <th className={thClass} onClick={() => toggleSort("location")}>Location{sortIndicator("location")}</th>
                         <th className={thClass} onClick={() => toggleSort("manager")}>Manager{sortIndicator("manager")}</th>
@@ -769,7 +798,16 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                         groupRows.map((r) => (
                           <tr key={r.id} className="border-b border-white/5 hover:bg-white/5">
                             <td className="px-3 py-2 text-muted-foreground">{r.techId}</td>
-                            <td className="px-3 py-2 font-medium">{r.name}</td>
+                            <td className="px-3 py-2 font-medium">
+                              <button
+                                type="button"
+                                onClick={() => { setSelectedTechId(r.id); setShowActivityLog(false); }}
+                                className="hover:text-blue-300 hover:underline underline-offset-2 transition"
+                                title="Click the name to view details"
+                              >
+                                {r.name}
+                              </button>
+                            </td>
                             <td className="px-3 py-2 text-muted-foreground">{r.location}</td>
                             <td className="px-3 py-2 text-muted-foreground">{r.manager}</td>
                             <td className="px-3 py-2 text-muted-foreground">{r.tier}</td>
@@ -861,6 +899,175 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
           </div>
         </div>
       )}
+
+      {selectedTech && (
+        <TechDetailPanel
+          tech={selectedTech}
+          dailyLog={selectedTechDailyLog}
+          showActivityLog={showActivityLog}
+          onToggleActivityLog={() => setShowActivityLog((v) => !v)}
+          onClose={() => setSelectedTechId(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+const ACTIVITY_TILES: { label: string; icon: typeof Star; accent: string; getValue: (t: TechPerfRow) => string | number }[] = [
+  { label: "Days Worked", icon: CalendarClock, accent: "blue", getValue: (t) => t.daysWorked },
+  { label: "Total Hrs Worked", icon: CalendarClock, accent: "violet", getValue: (t) => fmt1(t.hoursWorked) },
+  { label: "Tickets Completed", icon: Star, accent: "emerald", getValue: (t) => t.totalTickets },
+  { label: "Redo Count", icon: UserSquare2, accent: "amber", getValue: (t) => t.redoCount },
+  { label: "Drive Range (Mi)", icon: MapPin, accent: "cyan", getValue: (t) => fmt1(t.miles) },
+];
+const ACCENT_CLASSES: Record<string, { chip: string; text: string }> = {
+  blue: { chip: "bg-blue-500/10", text: "text-blue-400" },
+  violet: { chip: "bg-violet-500/10", text: "text-violet-400" },
+  emerald: { chip: "bg-emerald-500/10", text: "text-emerald-400" },
+  amber: { chip: "bg-amber-500/10", text: "text-amber-400" },
+  cyan: { chip: "bg-cyan-500/10", text: "text-cyan-400" },
+};
+
+function TechDetailPanel({
+  tech, dailyLog, showActivityLog, onToggleActivityLog, onClose,
+}: {
+  tech: TechPerfRow;
+  dailyLog: [string, number][];
+  showActivityLog: boolean;
+  onToggleActivityLog: () => void;
+  onClose: () => void;
+}) {
+  // No animation plugin installed in this project (tailwindcss-animate
+  // isn't a dependency) — fade/scale it in manually: mount at
+  // opacity-0/scale-95, then flip on the next tick so the transition plays.
+  const [entered, setEntered] = useState(false);
+  useEffect(() => {
+    const id = requestAnimationFrame(() => setEntered(true));
+    return () => cancelAnimationFrame(id);
+  }, []);
+
+  // A stat tile is a shortcut into the same day-by-day breakdown the "View
+  // Activity Log" button opens — clicking one opens it (never closes it)
+  // and scrolls it into view, since it's the only detail view this data
+  // supports today.
+  const activityLogRef = useRef<HTMLDivElement>(null);
+  const onOpenActivityLog = () => {
+    if (!showActivityLog) onToggleActivityLog();
+    requestAnimationFrame(() => activityLogRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }));
+  };
+
+  const infoCards = [
+    { icon: UserSquare2, label: "Technician ID", value: tech.techId, hint: "Unique technician identifier", accent: "blue" },
+    { icon: MapPin, label: "Location", value: tech.location, hint: "Geographical location / branch", accent: "rose" },
+    { icon: UserSquare2, label: "Direct Manager", value: tech.manager, hint: "Direct supervisor", accent: "indigo" },
+    { icon: Star, label: "Tier Level", value: tech.tier, hint: "Technician classification tier", accent: "amber" },
+  ];
+  const infoAccent: Record<string, { chip: string; text: string }> = {
+    ...ACCENT_CLASSES,
+    rose: { chip: "bg-rose-500/10", text: "text-rose-400" },
+    indigo: { chip: "bg-indigo-500/10", text: "text-indigo-400" },
+  };
+
+  return (
+    <div
+      className={`fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm transition-opacity duration-200 ${entered ? "opacity-100" : "opacity-0"}`}
+      onClick={onClose}
+    >
+      <div
+        className={`w-full max-w-3xl max-h-[88vh] overflow-y-auto rounded-2xl border border-white/10 bg-slate-950 shadow-[0_20px_70px_rgba(0,0,0,0.55)] transition-all duration-200 ${entered ? "opacity-100 scale-100" : "opacity-0 scale-95"}`}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="relative px-7 py-7 bg-gradient-to-br from-blue-600/20 via-indigo-600/10 to-transparent border-b border-white/10">
+          <button type="button" onClick={onClose} className="absolute top-5 right-5 text-muted-foreground hover:text-foreground p-1.5 rounded-lg hover:bg-white/5 transition" title="Close">
+            <X className="h-5 w-5" />
+          </button>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-blue-300/80 mb-1">Technician Details</p>
+          <div className="flex items-start gap-4">
+            <div className="h-16 w-16 rounded-2xl bg-gradient-to-br from-blue-500 to-indigo-600 ring-4 ring-blue-500/20 flex items-center justify-center text-white font-bold text-xl shrink-0 shadow-lg">
+              {initialsFor(tech.name)}
+            </div>
+            <div className="min-w-0 flex-1 pt-0.5">
+              <div className="flex items-center gap-2.5 flex-wrap">
+                <h2 className="text-2xl font-bold truncate">{tech.name}</h2>
+                <span className={`shrink-0 inline-flex items-center gap-1.5 text-[10px] font-semibold px-2.5 py-1 rounded-full ${tech.isActive ? "bg-green-500/15 text-green-300" : "bg-slate-500/15 text-slate-400"}`}>
+                  <span className={`h-1.5 w-1.5 rounded-full ${tech.isActive ? "bg-green-400" : "bg-slate-500"}`} />
+                  {tech.isActive ? "Active" : "Inactive"}
+                </span>
+              </div>
+              <p className="text-sm text-muted-foreground mt-0.5">{tech.techId !== "—" ? `${tech.techId} · ` : ""}{tech.tier}</p>
+              {(tech.highRedoAlert || tech.routeMileageAlert || tech.lowUtilizationAlert) && (
+                <div className="flex flex-wrap gap-1.5 mt-3">
+                  {tech.highRedoAlert && <span className="text-[10px] px-2 py-0.5 rounded-full bg-red-500/20 text-red-300 border border-red-500/40">High Redo</span>}
+                  {tech.routeMileageAlert && <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40">Route Mileage</span>}
+                  {tech.lowUtilizationAlert && <span className="text-[10px] px-2 py-0.5 rounded-full bg-sky-500/20 text-sky-300 border border-sky-500/40">Low Utilization</span>}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="p-7 space-y-6">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            {infoCards.map(({ icon: Icon, label, value, hint, accent }) => (
+              <div key={label} className="rounded-xl border border-white/10 bg-white/[0.03] p-4 hover:border-white/20 transition">
+                <div className={`inline-flex p-2 rounded-lg mb-2.5 ${infoAccent[accent].chip}`}>
+                  <Icon className={`h-4 w-4 ${infoAccent[accent].text}`} />
+                </div>
+                <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">{label}</p>
+                <p className="text-base font-bold truncate mt-0.5" title={value}>{value}</p>
+                <p className="text-[10px] text-muted-foreground mt-1">{hint}</p>
+              </div>
+            ))}
+          </div>
+
+          <div>
+            <div className="flex items-center gap-1.5 mb-3">
+              <CalendarClock className="h-4 w-4 text-blue-400" />
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Daily Activity Log</p>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+              {ACTIVITY_TILES.map(({ label, icon: Icon, accent, getValue }) => (
+                <button
+                  key={label}
+                  type="button"
+                  onClick={onOpenActivityLog}
+                  title="View the day-by-day breakdown"
+                  className="text-left rounded-xl border border-white/10 bg-white/[0.03] p-4 hover:border-white/25 hover:bg-white/[0.06] active:scale-[0.98] transition cursor-pointer"
+                >
+                  <div className={`inline-flex p-1.5 rounded-lg mb-2 ${ACCENT_CLASSES[accent].chip}`}>
+                    <Icon className={`h-3.5 w-3.5 ${ACCENT_CLASSES[accent].text}`} />
+                  </div>
+                  <p className={`text-2xl font-bold tabular-nums ${ACCENT_CLASSES[accent].text}`}>{getValue(tech)}</p>
+                  <p className="text-[10px] text-muted-foreground mt-1 leading-tight">{label}</p>
+                </button>
+              ))}
+            </div>
+
+            <button
+              type="button"
+              onClick={onToggleActivityLog}
+              className="btn text-xs w-full mt-4 flex items-center justify-center gap-1.5"
+            >
+              {showActivityLog ? "Hide Activity Log" : "View Activity Log"}
+              <ChevronRight className={`h-3.5 w-3.5 transition-transform ${showActivityLog ? "rotate-90" : ""}`} />
+            </button>
+            {showActivityLog && (
+              <div ref={activityLogRef} className="mt-3 max-h-56 overflow-y-auto rounded-xl border border-white/10 divide-y divide-white/5">
+                {dailyLog.length === 0 ? (
+                  <p className="text-xs text-muted-foreground text-center py-6">No completed tickets logged for this period.</p>
+                ) : (
+                  dailyLog.map(([date, count]) => (
+                    <div key={date} className="flex items-center justify-between px-4 py-2 text-xs">
+                      <span className="text-muted-foreground">{date}</span>
+                      <span className="font-semibold">{count} ticket{count === 1 ? "" : "s"}</span>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
