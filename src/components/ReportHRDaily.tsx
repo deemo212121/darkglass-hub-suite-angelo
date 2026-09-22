@@ -7241,7 +7241,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     setSsnCardActionError(null);
     try {
       const logo = await loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png"));
-      await regenerateSimpleSignableDocumentPdf(doc, logo, buildSsnCardFormBodyMarkup, ssnCardFormStyles, uploadSsnCardForm, name);
+      await regenerateSimpleSignableDocumentPdf(doc, logo, buildSsnCardFormBodyMarkup, ssnCardFormStyles, uploadSsnCardForm, name, "cardPhotoUrls");
       await loadSentSsnCardForms();
     } catch (err) {
       setSsnCardActionError(err instanceof Error ? err.message : "Failed to regenerate PDF.");
@@ -7393,7 +7393,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     setDriversLicenseActionError(null);
     try {
       const logo = await loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png"));
-      await regenerateSimpleSignableDocumentPdf(doc, logo, buildDriversLicenseFormBodyMarkup, driversLicenseFormStyles, uploadDriversLicenseForm, name);
+      await regenerateSimpleSignableDocumentPdf(doc, logo, buildDriversLicenseFormBodyMarkup, driversLicenseFormStyles, uploadDriversLicenseForm, name, "licensePhotoUrls");
       await loadSentDriversLicenseForms();
     } catch (err) {
       setDriversLicenseActionError(err instanceof Error ? err.message : "Failed to regenerate PDF.");
@@ -7435,6 +7435,9 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [validIdSendError, setValidIdSendError] = useState<string | null>(null);
   const [validIdActionBusyId, setValidIdActionBusyId] = useState<string | null>(null);
   const [validIdActionError, setValidIdActionError] = useState<string | null>(null);
+  // In-page PDF preview (iframe modal) — same "View" pattern as the Master
+  // PH Contractor Agreement table, so HR doesn't have to leave the tab.
+  const [validIdDocPreview, setValidIdDocPreview] = useState<SignableDocument | null>(null);
   const [validIdExternalName, setValidIdExternalName] = useState("");
   const [validIdSentLink, setValidIdSentLink] = useState<{ link: string; recipientName: string } | null>(null);
   const [validIdSentLinkCopied, setValidIdSentLinkCopied] = useState(false);
@@ -7545,7 +7548,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     setValidIdActionError(null);
     try {
       const logo = await loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png"));
-      await regenerateSimpleSignableDocumentPdf(doc, logo, buildValidIdFormBodyMarkup, validIdFormStyles, uploadValidIdForm, name);
+      await regenerateSimpleSignableDocumentPdf(doc, logo, buildValidIdFormBodyMarkup, validIdFormStyles, uploadValidIdForm, name, "idPhotoUrls");
       await loadSentValidIdForms();
     } catch (err) {
       setValidIdActionError(err instanceof Error ? err.message : "Failed to regenerate PDF.");
@@ -23741,7 +23744,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                             <button type="button" onClick={() => handleDownloadSsnCardPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">Download PDF</button>
                           )}
                           {doc.pdfUrl && (
-                            <button type="button" disabled={busy} onClick={() => void handleRegenerateSsnCardPdf(doc)} title="Re-render this PDF from its saved data — fixes a date that was rendered a day early before the timezone bug fix" className="text-amber-300 hover:text-amber-200 underline text-xs disabled:opacity-40">{busy ? "Regenerating…" : "Regenerate PDF"}</button>
+                            <button type="button" disabled={busy} onClick={() => void handleRegenerateSsnCardPdf(doc)} title="Re-render this PDF from its saved data — fixes a date rendered a day early, or a blank signature/card photo from a cross-origin image glitch" className="text-amber-300 hover:text-amber-200 underline text-xs disabled:opacity-40">{busy ? "Regenerating…" : "Regenerate PDF"}</button>
                           )}
                           <button type="button" disabled={busy} onClick={() => handleDeleteSsnCard(doc)} title="Permanently delete this request" className="text-muted-foreground hover:text-red-300 disabled:opacity-50">
                             <Trash2 className="h-3.5 w-3.5" />
@@ -23875,7 +23878,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                             <button type="button" onClick={() => handleDownloadDriversLicensePdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">Download PDF</button>
                           )}
                           {doc.pdfUrl && (
-                            <button type="button" disabled={busy} onClick={() => void handleRegenerateDriversLicensePdf(doc)} title="Re-render this PDF from its saved data — fixes a date that was rendered a day early before the timezone bug fix" className="text-amber-300 hover:text-amber-200 underline text-xs disabled:opacity-40">{busy ? "Regenerating…" : "Regenerate PDF"}</button>
+                            <button type="button" disabled={busy} onClick={() => void handleRegenerateDriversLicensePdf(doc)} title="Re-render this PDF from its saved data — fixes a date rendered a day early, or a blank signature/license photo from a cross-origin image glitch" className="text-amber-300 hover:text-amber-200 underline text-xs disabled:opacity-40">{busy ? "Regenerating…" : "Regenerate PDF"}</button>
                           )}
                           <button type="button" disabled={busy} onClick={() => handleDeleteDriversLicense(doc)} title="Permanently delete this request" className="text-muted-foreground hover:text-red-300 disabled:opacity-50">
                             <Trash2 className="h-3.5 w-3.5" />
@@ -24006,10 +24009,13 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                             <button type="button" onClick={() => handleCopyValidIdLink(doc)} className="btn text-[10px] px-2 py-1">Copy Link</button>
                           )}
                           {doc.pdfUrl && (
+                            <button type="button" onClick={() => setValidIdDocPreview(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">View</button>
+                          )}
+                          {doc.pdfUrl && (
                             <button type="button" onClick={() => handleDownloadValidIdPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">Download PDF</button>
                           )}
                           {doc.pdfUrl && (
-                            <button type="button" disabled={busy} onClick={() => void handleRegenerateValidIdPdf(doc)} title="Re-render this PDF from its saved data — fixes a date that was rendered a day early before the timezone bug fix" className="text-amber-300 hover:text-amber-200 underline text-xs disabled:opacity-40">{busy ? "Regenerating…" : "Regenerate PDF"}</button>
+                            <button type="button" disabled={busy} onClick={() => void handleRegenerateValidIdPdf(doc)} title="Re-render this PDF from its saved data — fixes a date rendered a day early, or a blank signature/ID photo from a cross-origin image glitch" className="text-amber-300 hover:text-amber-200 underline text-xs disabled:opacity-40">{busy ? "Regenerating…" : "Regenerate PDF"}</button>
                           )}
                           <button type="button" disabled={busy} onClick={() => handleDeleteValidId(doc)} title="Permanently delete this request" className="text-muted-foreground hover:text-red-300 disabled:opacity-50">
                             <Trash2 className="h-3.5 w-3.5" />
@@ -24025,6 +24031,31 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         </div>
       </div>
       </>
+      )}
+
+      {/* Valid ID Sent History PDF preview — same inline-frame pattern used for the other Sent History tables */}
+      {validIdDocPreview && (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => setValidIdDocPreview(null)}>
+          <div className="bg-slate-900 border border-white/10 rounded-lg shadow-2xl w-full max-w-6xl h-[92vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold">{(validIdDocPreview.formData as Partial<ValidIdFormData>).employeeName || validIdDocPreview.recipientName || "—"}</p>
+                <p className="text-[10px] text-muted-foreground">
+                  {validIdDocPreview.status === "signed" ? "Submitted" : "Pending"} {new Date(validIdDocPreview.signedAt ?? validIdDocPreview.createdAt).toLocaleString()}
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                {validIdDocPreview.pdfUrl && (
+                  <a href={validIdDocPreview.pdfUrl} target="_blank" rel="noopener noreferrer" className="btn text-xs px-2.5 py-1.5 flex items-center gap-1"><Download className="h-3 w-3" /> Download</a>
+                )}
+                <button type="button" onClick={() => setValidIdDocPreview(null)} className="btn text-xs px-2.5 py-1.5">Close</button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-hidden bg-slate-950">
+              {validIdDocPreview.pdfUrl && <iframe src={validIdDocPreview.pdfUrl} title="Valid ID" className="w-full h-full min-h-[70vh] border-0" />}
+            </div>
+          </div>
+        </div>
       )}
 
       {activeTab === "ndaForm" && (
@@ -31089,7 +31120,18 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             <div className="max-h-80 overflow-y-auto border border-white/10 rounded-md divide-y divide-white/5 mb-4">
               {(() => {
                 const q = formsDialogSearch.trim().toLowerCase();
-                const types = (Object.keys(SIGNABLE_DOCUMENT_REGISTRY) as SignableDocumentType[])
+                // A new hire only ever needs the current tier-based forms
+                // (STAFF_FORM_TIERS — same 4 buttons right above this list),
+                // never the legacy pre-consolidation checklist (old W-9/
+                // W-4R/Wage Ack/Car IQ/Vehicle Use/etc.) or employee-only
+                // forms (Warning/Promotion/Action Plan/Termination) that
+                // used to leak in here via the raw, unfiltered registry.
+                // Anything already checked for THIS candidate stays visible
+                // even if it's one of those — so an existing selection from
+                // before this filter existed never silently disappears.
+                const browsableTypes = new Set<SignableDocumentType>(STAFF_FORM_TIERS.flatMap((t) => t.formTypes));
+                formsDialog.selected.forEach((t) => browsableTypes.add(t));
+                const types = Array.from(browsableTypes)
                   .filter((type) => !q || SIGNABLE_DOCUMENT_REGISTRY[type].label.toLowerCase().includes(q))
                   // Checked forms float to the top so HR can see at a glance
                   // what a tier button (or manual picking) actually selected,

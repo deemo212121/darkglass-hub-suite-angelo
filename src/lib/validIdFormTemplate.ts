@@ -63,7 +63,7 @@ export const validIdFormStyles = `
   .validid-label { color: #374151; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.2px; display: block; }
   .validid-value { font-weight: 700; }
   .validid-photos { display: flex; gap: 10px; margin-top: 6px; flex-wrap: wrap; }
-  .validid-photos img { width: 200px; height: 126px; object-fit: cover; border: 1px solid #d1d5db; border-radius: 4px; }
+  .validid-photos img { width: 320px; height: 202px; object-fit: cover; border: 1px solid #d1d5db; border-radius: 4px; }
   .validid-cert { margin-top: 20px; font-style: italic; }
   .validid-sig-line { border-bottom: 1px solid #9ca3af; min-height: 44px; padding: 4px 2px; display: flex; align-items: flex-end; margin-top: 16px; }
   .validid-sign-row { display: flex; justify-content: space-between; gap: 16px; padding: 6px 2px 0; }

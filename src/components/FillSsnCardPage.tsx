@@ -17,7 +17,7 @@ import { getMyProfileId } from "@/lib/supabase/users";
 import { getSignableDocument, signDocument, type SignableDocument } from "@/lib/supabase/signableDocuments";
 import { uploadSignableDocumentSignature, uploadSignableDocumentAttachment, uploadSsnCardForm, refreshStorageAuthToken } from "@/lib/firebase/storage";
 import { compressImage } from "@/lib/imageCompression";
-import { captureHtmlToPdfBlob, loadAssetDataUrl } from "@/lib/pdfCapture";
+import { captureHtmlToPdfBlob, loadAssetDataUrl, fileToDataUrl } from "@/lib/pdfCapture";
 import { buildSsnCardFormBodyMarkup, ssnCardFormStyles, type SsnCardFormData } from "@/lib/ssnCardFormTemplate";
 import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
 import { logActivity } from "@/lib/supabase/hrActivityLog";
@@ -150,11 +150,20 @@ export function FillSsnCardPage({ docId }: Props) {
       const signatureUrl = await withTimeout(uploadSignableDocumentSignature(companyId, doc.id, "employee", dataUrl), 30_000, "Uploading signature");
       const signedAt = new Date().toISOString();
       const finalData: SsnCardFormData = { ...form, cardPhotoUrls, dateSigned: signedAt, signatureDataUrl: dataUrl };
+      // Stored entry (signDocument, below) keeps the real Firebase Storage
+      // URL. The capture entry is separate and points at local data: URLs
+      // already in hand instead, so html2canvas never needs a cross-origin
+      // fetch for either the signature or the card photo — see
+      // fileToDataUrl's doc comment (pdfCapture.ts) for why that fetch
+      // can't be trusted to finish before the canvas snapshot.
       const entry = { name: displayName || form.employeeName || "Signed", url: signatureUrl, signedAt };
 
       setSubmitStep("Generating document…");
+      const localCardPhotoUrls = await Promise.all(compressedFiles.map(fileToDataUrl));
+      const captureData: SsnCardFormData = { ...finalData, cardPhotoUrls: localCardPhotoUrls };
+      const captureEntry = { ...entry, url: dataUrl };
       const pdfBlob = await withTimeout(
-        captureHtmlToPdfBlob(buildSsnCardFormBodyMarkup(finalData, logoDataUrl, entry), ssnCardFormStyles),
+        captureHtmlToPdfBlob(buildSsnCardFormBodyMarkup(captureData, logoDataUrl, captureEntry), ssnCardFormStyles),
         30_000,
         "Generating document"
       );
