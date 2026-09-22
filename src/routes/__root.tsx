@@ -20,8 +20,9 @@ import { FrozenAccountModal } from "@/components/FrozenAccountModal";
 import { LateTicketCompletionModal } from "@/components/LateTicketCompletionModal";
 import { TicketSearchFab } from "@/components/TicketSearchFab";
 import { FloatingMessenger } from "@/components/FloatingMessenger";
-import { ModuleNavigator } from "@/components/ModuleNavigator";
 import { SessionKickedOutBanner } from "@/components/SessionKickedOutBanner";
+import { ViewAsRoleBanner } from "@/components/ViewAsRoleBanner";
+import { ModuleNavigator } from "@/components/ModuleNavigator";
 import { TechnicianLocationTracker } from "@/components/TechnicianLocationTracker";
 import { LiveLocationProvider } from "@/lib/liveLocationContext";
 
@@ -165,6 +166,7 @@ function RootComponent() {
                 in/out day to day. */}
             <TechnicianLocationTracker />
             <SessionKickedOutBanner />
+            {!hideChrome && <ViewAsRoleBanner />}
             <MustChangePasswordGate hideChrome={hideChrome} />
             {!hideChrome && <AnnouncementBanner />}
             {!hideChrome && <TraineeAttendanceReviewModal />}

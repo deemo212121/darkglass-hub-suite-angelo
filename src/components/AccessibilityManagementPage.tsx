@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
-import { ChevronLeft, ChevronDown, Loader2, ArrowRight, ArrowLeft, LayoutGrid, Move, GripVertical, Inbox, CheckCircle2, Plus, X, Settings, Pencil, Trash2, Check } from "lucide-react";
-import { DndContext, useDraggable, useDroppable, type DragEndEvent } from "@dnd-kit/core";
+import { ChevronLeft, Loader2, ArrowRight, Inbox, CheckCircle2, Plus, X, Settings, Pencil, Trash2, Check } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { MODULES } from "@/lib/modules";
 import { ROLE_LABELS, ROLE_OPTIONS } from "@/lib/roleLabels";
@@ -10,39 +9,10 @@ import { useAllRoleOptions, useCustomRoles, createCustomRole, setRoleLabel, dele
 import { DASHBOARD_ROLE_GATES } from "@/lib/dashboardAccess";
 import { hydrateModuleRoleGates } from "@/lib/moduleAccess";
 import { getModuleRoleGateOverrides, setModuleRoleGateOverride } from "@/lib/supabase/moduleRoleGates";
-import { FloatingHorizontalScrollbar } from "@/components/FloatingHorizontalScrollbar";
 
 interface Props {
   mod: ModuleDef;
   sub: SubModuleDef;
-}
-
-// Fixed per-column pixel widths for the Module Access by Role grid below
-// (see the split-table comment further down for why there are two <table>
-// elements). table-layout: fixed + identical <colgroup> widths is what
-// keeps their columns pixel-aligned as the body scrolls sideways. Role
-// count is dynamic (built-in roles plus any company-created custom roles —
-// see src/lib/customRoles.ts), so widths are computed from the live count
-// instead of a module-level constant.
-const CHECKBOX_COL_W = 92;
-const GATE_NAME_COL_W = 260;
-
-function gateColWidths(roleCount: number): number[] {
-  return [GATE_NAME_COL_W, ...Array.from({ length: roleCount }, () => CHECKBOX_COL_W)];
-}
-
-function gateTableWidth(roleCount: number): number {
-  return gateColWidths(roleCount).reduce((sum, w) => sum + w, 0);
-}
-
-function GateColGroup({ roleCount }: { roleCount: number }) {
-  return (
-    <colgroup>
-      {gateColWidths(roleCount).map((w, i) => (
-        <col key={i} style={{ width: w }} />
-      ))}
-    </colgroup>
-  );
 }
 
 // Admin-tier codes excluded from Manage Roles' "Built-in Roles" rename
@@ -52,18 +22,18 @@ function GateColGroup({ roleCount }: { roleCount: number }) {
 // itself; ADMIN is listed defensively too since it IS in ROLE_OPTIONS.
 const NON_RENAMABLE_BUILTIN_CODES = new Set(["ADMIN", "SUPERADMIN", "SUPERSUPERADMIN"]);
 
-// Drag & Drop alternate view for "Module Access by Role" (see the toggle
-// next to that heading) — one role at a time, two containers, each module
-// card living in exactly one of them so nothing repeats the way it would
-// showing every role as its own column. Reuses the same GateRow shape,
-// dashboardGates state, and handleGateToggle save path the Grid view
-// already has; this is purely a different way to trigger the same change.
-// Same card/container visual language as CsrTeamComposition.tsx's existing
-// drag-and-drop board (Team Composition, under CSR) — grip handle, same
-// rounded-lg/border-white/10/bg-white/5 idle style, same opacity-on-drag
-// feedback, same isOver container highlight — so this reads as the same
-// interaction pattern elsewhere in the app, just wired to @dnd-kit instead
-// of that page's native HTML5 drag events.
+// Click-to-move alternate view for "Module Access by Role" — one role at a
+// time, two containers, each page living in exactly one of them so nothing
+// repeats the way it would showing every role as its own column. Reuses the
+// same GateRow shape, dashboardGates state, and handleGateToggle save path
+// the Grid view already had. Deliberately NOT drag-and-drop: an earlier
+// @dnd-kit-based version of this kept silently losing edits (a drop's
+// trailing synthetic click re-toggling whatever card ended up under the
+// pointer, or the whole gesture just not registering depending on where a
+// drag ended relative to the container boundary) — a plain move button with
+// no pointer-capture/collision-detection machinery underneath it has none
+// of those failure modes, so it's the more reliable choice here even though
+// it's a smaller motion than a real drag.
 // One accent color per top-level module (Dashboard/Tickets/Parts/Claims/
 // Report/Admin) — reusing MODULES' own ModuleDef.accent (already the app's
 // canonical per-module color, shown as each module's tile dot on the home
@@ -71,51 +41,40 @@ const NON_RENAMABLE_BUILTIN_CODES = new Set(["ADMIN", "SUPERADMIN", "SUPERSUPERA
 // here means the same thing it does everywhere else in the app.
 const moduleAccentBySlug = new Map(MODULES.map((m) => [m.slug, m.accent]));
 
-function DraggableModuleCard({ id, title, moduleLabel, moduleSlug, onMove, direction }: { id: string; title: string; moduleLabel: string; moduleSlug: string; onMove: () => void; direction: "grant" | "revoke" }) {
-  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id });
+export function ModuleAccessCard({ title, moduleLabel, moduleSlug, onMove, direction }: { title: string; moduleLabel: string; moduleSlug: string; onMove: () => void; direction: "grant" | "revoke" }) {
   const accent = moduleAccentBySlug.get(moduleSlug) ?? "#94a3b8";
   return (
-    <div
-      ref={setNodeRef}
-      {...listeners}
-      {...attributes}
-      style={{
-        transform: transform ? `translate3d(${transform.x}px, ${transform.y}px, 0)` : undefined,
-        borderLeftColor: accent,
-        borderLeftWidth: "3px",
-      }}
-      className={`group flex items-center gap-2.5 rounded-lg border border-white/10 bg-white/5 px-3 py-2.5 cursor-grab active:cursor-grabbing touch-none ${isDragging ? "opacity-50" : ""}`}
+    <button
+      type="button"
+      onClick={onMove}
+      title={direction === "grant" ? "Grant access" : "Revoke access"}
+      style={{ borderLeftColor: accent, borderLeftWidth: "3px" }}
+      className="group flex w-full items-center gap-2.5 rounded-lg border border-white/10 bg-white/5 px-3 py-2.5 text-left hover:bg-white/[0.08] transition-colors"
     >
-      <GripVertical className="h-4 w-4 text-muted-foreground shrink-0" />
       <span className="h-2.5 w-2.5 rounded-full shrink-0" style={{ backgroundColor: accent }} />
       <div className="min-w-0 flex-1">
         <div className="text-sm font-medium truncate" title={title}>{title}</div>
         <div className="text-xs truncate" style={{ color: accent }}>{moduleLabel}</div>
       </div>
-      <button
-        type="button"
-        title={direction === "grant" ? "Grant access" : "Revoke access"}
-        onClick={(e) => { e.stopPropagation(); onMove(); }}
-        className="shrink-0 rounded-md p-1.5 text-muted-foreground opacity-0 group-hover:opacity-100 hover:text-foreground hover:bg-white/10 transition-colors"
+      <span
+        className={`shrink-0 rounded-md p-1.5 transition-colors ${
+          direction === "grant"
+            ? "text-muted-foreground group-hover:text-foreground group-hover:bg-white/10"
+            : "text-red-400/80 group-hover:text-red-300 group-hover:bg-red-500/10"
+        }`}
       >
-        {direction === "grant" ? <ArrowRight className="h-4 w-4" /> : <ArrowLeft className="h-4 w-4" />}
-      </button>
-    </div>
+        {direction === "grant" ? <ArrowRight className="h-4 w-4" /> : <X className="h-4 w-4" />}
+      </span>
+    </button>
   );
 }
 
-function DroppableContainer({ id, label, count, icon, tint, children }: { id: string; label: string; count: number; icon: React.ReactNode; tint: "neutral" | "granted"; children: React.ReactNode }) {
-  const { setNodeRef, isOver } = useDroppable({ id });
+export function AccessListContainer({ label, count, icon, tint, children }: { label: string; count: number; icon: React.ReactNode; tint: "neutral" | "granted"; children: React.ReactNode }) {
   const idleBorder = tint === "granted" ? "border-emerald-500/30" : "border-white/10";
   const idleBg = tint === "granted" ? "bg-emerald-500/[0.04]" : "bg-white/5";
   return (
-    <div
-      ref={setNodeRef}
-      className={`flex-1 min-w-0 rounded-xl border-2 p-4 space-y-2 min-h-[24rem] max-h-[42rem] overflow-y-auto transition-colors ${
-        isOver ? "border-blue-500 bg-white/10" : `${idleBorder} ${idleBg}`
-      }`}
-    >
-      <div className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground mb-3 flex items-center gap-2 sticky top-0">
+    <div className={`flex-1 min-w-0 rounded-xl border-2 p-4 space-y-2 min-h-[24rem] max-h-[42rem] overflow-y-auto ${idleBorder} ${idleBg}`}>
+      <div className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground mb-3 flex items-center gap-2 sticky top-0 -mx-4 -mt-4 px-4 pt-4 pb-2 bg-slate-950/95 backdrop-blur-sm z-10">
         {icon} {label} · {count}
       </div>
       {children}
@@ -123,15 +82,19 @@ function DroppableContainer({ id, label, count, icon, tint, children }: { id: st
   );
 }
 
-function ModuleAccessDragDrop({
+export function ModuleAccessEditor({
   gateRows,
   dashboardGates,
   selectedRole,
   onSelectedRoleChange,
   filter,
   onFilterChange,
-  savingGateCell,
   onToggle,
+  pendingCount,
+  saving,
+  saveError,
+  onSaveAll,
+  onDiscardAll,
 }: {
   gateRows: GateRow[];
   dashboardGates: Record<string, string[]>;
@@ -139,8 +102,12 @@ function ModuleAccessDragDrop({
   onSelectedRoleChange: (role: string) => void;
   filter: string;
   onFilterChange: (v: string) => void;
-  savingGateCell: string | null;
   onToggle: (moduleSlug: string, submoduleSlug: string, roleCode: string, checked: boolean) => void;
+  pendingCount: number;
+  saving: boolean;
+  saveError: string | null;
+  onSaveAll: () => void;
+  onDiscardAll: () => void;
 }) {
   const roleOptions = useAllRoleOptions();
   const customRoles = useCustomRoles();
@@ -167,18 +134,8 @@ function ModuleAccessDragDrop({
   const isGranted = (row: GateRow) => (dashboardGates[`${row.moduleSlug}:${row.slug}`] ?? allRoleValues).includes(selectedRole);
   const granted = filtered.filter(isGranted);
   const available = filtered.filter((r) => !isGranted(r));
-  const cellBusy = savingGateCell?.endsWith(`:${selectedRole}`);
 
   const move = (row: GateRow, toGranted: boolean) => onToggle(row.moduleSlug, row.slug, selectedRole, toGranted);
-
-  const handleDragEnd = (event: DragEndEvent) => {
-    const { active, over } = event;
-    if (!over) return;
-    const row = gateRows.find((r) => `${r.moduleSlug}:${r.slug}` === active.id);
-    if (!row) return;
-    if (over.id === "granted" && !isGranted(row)) move(row, true);
-    else if (over.id === "available" && isGranted(row)) move(row, false);
-  };
 
   const handleCreateRole = async () => {
     setCreatingRole(true);
@@ -333,8 +290,41 @@ function ModuleAccessDragDrop({
           placeholder="Filter pages…"
           className="glass-input text-base py-2 px-3 rounded-md ml-auto w-64"
         />
-        {cellBusy && <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />}
       </div>
+
+      {/* Explicit Save bar — clicking a card only stages a local change now
+          (see the parent's handleGateToggle), it does NOT write to the
+          database by itself. Nothing here persists until "Save Changes" is
+          clicked, which is the point: a save that only fires on a single,
+          deliberate click is much easier to reason about (and to trust) than
+          one silently firing on every card click, especially after this
+          exact page's auto-save kept appearing to lose edits. */}
+      {(pendingCount > 0 || saveError) && (
+        <div className="mb-5 flex flex-wrap items-center gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3">
+          <span className="text-sm font-medium text-amber-200">
+            {saveError ? saveError : `${pendingCount} unsaved change${pendingCount === 1 ? "" : "s"}`}
+          </span>
+          <div className="ml-auto flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onDiscardAll}
+              disabled={saving}
+              className="rounded-lg border border-white/15 bg-white/5 px-3 py-1.5 text-xs font-semibold text-slate-300 hover:bg-white/10 disabled:opacity-40"
+            >
+              Discard
+            </button>
+            <button
+              type="button"
+              onClick={onSaveAll}
+              disabled={saving || pendingCount === 0}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-40"
+            >
+              {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+              {saving ? "Saving…" : "Save Changes"}
+            </button>
+          </div>
+        </div>
+      )}
 
       {addRoleOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 px-4 py-6 backdrop-blur-sm">
@@ -412,42 +402,37 @@ function ModuleAccessDragDrop({
         </div>
       )}
 
-      <DndContext onDragEnd={handleDragEnd}>
-        <div className="flex gap-4 flex-col md:flex-row">
-          <DroppableContainer id="available" label="Available" count={available.length} icon={<Inbox className="h-4 w-4" />} tint="neutral">
-            {available.map((row) => (
-              <DraggableModuleCard
-                key={`${row.moduleSlug}:${row.slug}`}
-                id={`${row.moduleSlug}:${row.slug}`}
-                title={row.title}
-                moduleLabel={row.moduleLabel}
-                moduleSlug={row.moduleSlug}
-                direction="grant"
-                onMove={() => move(row, true)}
-              />
-            ))}
-            {available.length === 0 && <div className="text-sm text-muted-foreground italic px-1 py-4 text-center">Nothing here.</div>}
-          </DroppableContainer>
-          <DroppableContainer id="granted" label={`Granted to ${ROLE_LABELS[selectedRole] ?? selectedRole}`} count={granted.length} icon={<CheckCircle2 className="h-4 w-4" />} tint="granted">
-            {granted.map((row) => (
-              <DraggableModuleCard
-                key={`${row.moduleSlug}:${row.slug}`}
-                id={`${row.moduleSlug}:${row.slug}`}
-                title={row.title}
-                moduleLabel={row.moduleLabel}
-                moduleSlug={row.moduleSlug}
-                direction="revoke"
-                onMove={() => move(row, false)}
-              />
-            ))}
-            {granted.length === 0 && <div className="text-sm text-muted-foreground italic px-1 py-4 text-center">Nothing here.</div>}
-          </DroppableContainer>
-        </div>
-      </DndContext>
+      <div className="flex gap-4 flex-col md:flex-row">
+        <AccessListContainer label="Available" count={available.length} icon={<Inbox className="h-4 w-4" />} tint="neutral">
+          {available.map((row) => (
+            <ModuleAccessCard
+              key={`${row.moduleSlug}:${row.slug}`}
+              title={row.title}
+              moduleLabel={row.moduleLabel}
+              moduleSlug={row.moduleSlug}
+              direction="grant"
+              onMove={() => move(row, true)}
+            />
+          ))}
+          {available.length === 0 && <div className="text-sm text-muted-foreground italic px-1 py-4 text-center">Nothing here.</div>}
+        </AccessListContainer>
+        <AccessListContainer label={`Granted to ${ROLE_LABELS[selectedRole] ?? selectedRole}`} count={granted.length} icon={<CheckCircle2 className="h-4 w-4" />} tint="granted">
+          {granted.map((row) => (
+            <ModuleAccessCard
+              key={`${row.moduleSlug}:${row.slug}`}
+              title={row.title}
+              moduleLabel={row.moduleLabel}
+              moduleSlug={row.moduleSlug}
+              direction="revoke"
+              onMove={() => move(row, false)}
+            />
+          ))}
+          {granted.length === 0 && <div className="text-sm text-muted-foreground italic px-1 py-4 text-center">Nothing here.</div>}
+        </AccessListContainer>
+      </div>
       <p className="mt-4 text-xs text-muted-foreground">
-        Drag a page into "Granted" to give {ROLE_LABELS[selectedRole] ?? selectedRole} access, or back to "Available" to
-        revoke it — or use the arrow button on a card. Each card's dot/label color matches its parent module. Changes save
-        automatically and are shared company-wide.
+        Click a page's arrow to grant {ROLE_LABELS[selectedRole] ?? selectedRole} access, or the X on a granted page to
+        revoke it. Each card's dot/label color matches its parent module. Nothing is saved until you click "Save Changes" above.
       </p>
     </div>
   );
@@ -487,37 +472,44 @@ export function AccessibilityManagementPage({ mod, sub }: Props) {
   const roleOptions = useAllRoleOptions();
   const allRoleValues = useMemo(() => roleOptions.map((r) => r.value), [roleOptions]);
 
-  // Dashboard-submodule role-gate grid.
   const [dashboardGates, setDashboardGates] = useState<Record<string, string[]>>({});
   const [gatesLoading, setGatesLoading] = useState(true);
-  const [savingGateCell, setSavingGateCell] = useState<string | null>(null);
-  const gateTableScrollRef = useRef<HTMLDivElement>(null);
-  const gateHeaderScrollRef = useRef<HTMLDivElement>(null);
   // The TRUE override map (no "open to everyone" rows filled in) — kept
   // separate from dashboardGates (which fills in allRoleValues for
   // display on untouched rows) so hydrateModuleRoleGates never mistakes a
   // merely-displayed default for a real override.
   const rawOverridesRef = useRef<Record<string, string[]>>({});
-  // Which modules' submodule rows are expanded — every module starts
-  // collapsed (just its one header row) so the ~74-row grid across all 6
-  // modules doesn't force a long scroll before you reach the one module
-  // you actually came to edit.
-  const [expandedGateModules, setExpandedGateModules] = useState<Set<string>>(new Set());
 
-  // Every submodule across every module — grouped by module for the grid
-  // below. A row with no override (and, for Dashboard, no hardcoded
-  // DASHBOARD_ROLE_GATES entry either) is open to every role today.
+  // Staged-but-unsaved edits — a card click no longer writes to the
+  // database by itself, it just records what WOULD be written here.
+  // pendingSaves is what "Save Changes" actually sends; originalValues is
+  // what "Discard" reverts dashboardGates back to. Both keyed by
+  // `${moduleSlug}:${submoduleSlug}`, and only ever gains an entry the
+  // FIRST time a given row is touched in this batch — a second edit to the
+  // same row updates pendingSaves but must never overwrite originalValues,
+  // or Discard would "revert" to an already-edited value.
+  const [pendingSaves, setPendingSaves] = useState<Record<string, { moduleSlug: string; submoduleSlug: string; roles: string[] }>>({});
+  const [originalValues, setOriginalValues] = useState<Record<string, string[]>>({});
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  // A module tile's gear icon (home.tsx's quick-edit modal footer link)
+  // deep-links here as ?focusModule=<slug> — land already filtered to just
+  // that module's pages instead of the full list across every module.
+  const focusModuleSlug = typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("focusModule") : null;
+  const focusModuleLabel = focusModuleSlug ? MODULES.find((m) => m.slug === focusModuleSlug)?.label ?? "" : "";
+
+  // Every submodule across every module — the source list for the
+  // Available/Granted editor below. A row with no override (and, for
+  // Dashboard, no hardcoded DASHBOARD_ROLE_GATES entry either) is open to
+  // every role today.
   const gateRows = useMemo<GateRow[]>(
     () => MODULES.flatMap((m) => m.submodules.map((s) => ({ moduleSlug: m.slug, moduleLabel: m.label, slug: s.slug, title: s.title }))),
     []
   );
 
-  // Drag & Drop alternate view for "Module Access by Role" — same data and
-  // save path as the checkbox grid (handleGateToggle below), just a
-  // one-role-at-a-time, two-container editor instead of a ~86×28 matrix.
-  const [moduleAccessView, setModuleAccessView] = useState<"grid" | "dragdrop">("dragdrop");
   const [dndSelectedRole, setDndSelectedRole] = useState(roleOptions[0]?.value ?? "");
-  const [dndFilter, setDndFilter] = useState("");
+  const [dndFilter, setDndFilter] = useState(focusModuleLabel);
 
   const loadDashboardGates = async () => {
     setGatesLoading(true);
@@ -530,6 +522,12 @@ export function AccessibilityManagementPage({ mod, sub }: Props) {
         const hardcodedDefault = (row.moduleSlug === "dashboard" || row.moduleSlug === "hr" || row.moduleSlug === "accounting" || row.moduleSlug === "csr") ? DASHBOARD_ROLE_GATES[row.slug] : undefined;
         effective[key] = overrides[key] ?? hardcodedDefault ?? allRoleValues;
       }
+      // Re-apply any not-yet-saved edits on top of the fresh load — this
+      // effect can in principle re-run mid-edit (its dep is roleOptions
+      // .length, which changes if a custom role is added while a save is
+      // still pending), and a reload must never silently wipe an edit the
+      // Save bar is still showing as unsaved.
+      for (const [key, entry] of Object.entries(pendingSaves)) effective[key] = entry.roles;
       setDashboardGates(effective);
       // Every client (including this tab's own nav gating) reads overrides
       // straight from moduleAccess.ts's hydrated cache — keep it in sync
@@ -548,37 +546,75 @@ export function AccessibilityManagementPage({ mod, sub }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roleOptions.length]);
 
-  const handleGateToggle = async (moduleSlug: string, submoduleSlug: string, roleCode: string, checked: boolean) => {
+  // Local-only — records the intended change and updates the display, but
+  // does NOT write to the database. See handleSaveAll for the actual write.
+  const handleGateToggle = (moduleSlug: string, submoduleSlug: string, roleCode: string, checked: boolean) => {
     const key = `${moduleSlug}:${submoduleSlug}`;
     const prev = dashboardGates[key] ?? [];
     const next = checked ? Array.from(new Set([...prev, roleCode])) : prev.filter((r) => r !== roleCode);
 
     setDashboardGates((p) => ({ ...p, [key]: next }));
-    const cellKey = `${key}:${roleCode}`;
-    setSavingGateCell(cellKey);
+    setPendingSaves((p) => ({ ...p, [key]: { moduleSlug, submoduleSlug, roles: next } }));
+    setOriginalValues((p) => (key in p ? p : { ...p, [key]: prev }));
+    setSaveError(null);
+  };
+
+  const handleSaveAll = async () => {
+    const entries = Object.entries(pendingSaves);
+    if (entries.length === 0) return;
+    setSaving(true);
+    setSaveError(null);
+    const succeededKeys: string[] = [];
     try {
-      await setModuleRoleGateOverride(moduleSlug, submoduleSlug, next);
-      // Reflect the change in this tab's own nav gating immediately too,
-      // instead of only taking effect on the next login/reload — only the
-      // ONE real override changes here, everything else stays exactly what
-      // it actually is in the database (never the "all roles" display
-      // fallback dashboardGates uses for an untouched row).
-      rawOverridesRef.current = { ...rawOverridesRef.current, [key]: next };
+      for (const [key, entry] of entries) {
+        await setModuleRoleGateOverride(entry.moduleSlug, entry.submoduleSlug, entry.roles);
+        // Reflect each write in this tab's own nav gating immediately too,
+        // instead of only taking effect on the next login/reload.
+        rawOverridesRef.current = { ...rawOverridesRef.current, [key]: entry.roles };
+        succeededKeys.push(key);
+      }
       hydrateModuleRoleGates(rawOverridesRef.current);
+      setPendingSaves({});
+      setOriginalValues({});
     } catch (err) {
-      // Roll back this one cell — every other row/cell is unaffected.
-      setDashboardGates((p) => ({ ...p, [key]: prev }));
-      alert(`Failed to update module access: ${err instanceof Error ? err.message : "Unknown error"}`);
+      // Whatever succeeded before the failure stays applied (both here and
+      // in the database) — drop just those from the pending queue so a
+      // retry only resends what actually still needs saving.
+      setPendingSaves((p) => {
+        const next = { ...p };
+        for (const key of succeededKeys) delete next[key];
+        return next;
+      });
+      setOriginalValues((p) => {
+        const next = { ...p };
+        for (const key of succeededKeys) delete next[key];
+        return next;
+      });
+      setSaveError(err instanceof Error ? err.message : "Failed to save changes.");
     } finally {
-      setSavingGateCell(null);
+      setSaving(false);
     }
+  };
+
+  const handleDiscardAll = () => {
+    setDashboardGates((p) => ({ ...p, ...originalValues }));
+    setPendingSaves({});
+    setOriginalValues({});
+    setSaveError(null);
   };
 
   return (
     <main className="flex-1 bg-slate-950 py-6">
       <div className="max-w-[1600px] mx-auto px-6">
         <div className="mb-4 flex flex-wrap items-center gap-3 text-white">
-          <button type="button" onClick={goBack} className="btn">
+          <button
+            type="button"
+            onClick={() => {
+              if (Object.keys(pendingSaves).length > 0 && !confirm("You have unsaved changes. Leave without saving?")) return;
+              goBack();
+            }}
+            className="btn"
+          >
             <ChevronLeft className="h-4 w-4" />
             {mod.label}
           </button>
@@ -589,166 +625,29 @@ export function AccessibilityManagementPage({ mod, sub }: Props) {
         </div>
 
         <div className="mb-4">
-          <div className="flex items-center justify-between gap-3 flex-wrap">
-            <h2 className="text-xl font-semibold text-white">Module Access by Role</h2>
-            <div className="flex rounded-lg border border-[var(--color-panel-border)] overflow-hidden text-xs font-medium">
-              <button
-                type="button"
-                onClick={() => setModuleAccessView("grid")}
-                className={`flex items-center gap-1.5 px-3 py-1.5 transition-colors ${moduleAccessView === "grid" ? "bg-blue-600 text-white" : "bg-transparent text-slate-400 hover:text-slate-200"}`}
-              >
-                <LayoutGrid className="h-3.5 w-3.5" /> Grid
-              </button>
-              <button
-                type="button"
-                onClick={() => setModuleAccessView("dragdrop")}
-                className={`flex items-center gap-1.5 px-3 py-1.5 transition-colors ${moduleAccessView === "dragdrop" ? "bg-blue-600 text-white" : "bg-transparent text-slate-400 hover:text-slate-200"}`}
-              >
-                <Move className="h-3.5 w-3.5" /> Drag &amp; Drop
-              </button>
-            </div>
-          </div>
+          <h2 className="text-xl font-semibold text-white">Module Access by Role</h2>
           <p className="text-sm text-slate-400 mt-1">
-            {moduleAccessView === "grid" ? (
-              <>
-                Click a module name to expand or collapse its submodules — every module starts collapsed. Check a box to
-                let that role open the submodule (from its tile grid, and directly by URL). A row you haven't edited yet
-                shows the built-in default — every role for most submodules, or the Dashboard's own built-in list for the
-                few that have one. Changing any box here replaces that submodule's whole list, company-wide, immediately.
-                Super Admin can always open every submodule regardless of this grid.
-              </>
-            ) : (
-              <>
-                Pick a role, then drag a page between the two lists (or use the arrow buttons) to grant or revoke its
-                access — same effect as checking a box in the Grid view, just one role at a time. Super Admin can always
-                open every submodule regardless of this.
-              </>
-            )}
+            Pick a role, then move a page between the two lists to grant or revoke its access. A row you haven't edited
+            yet is open to every role — moving it out of "Granted" replaces its whole allowed-role list, company-wide,
+            immediately. Super Admin can always open every page regardless of this.
           </p>
         </div>
 
-        {moduleAccessView === "dragdrop" && (
-          <ModuleAccessDragDrop
-            gateRows={gateRows}
-            dashboardGates={dashboardGates}
-            selectedRole={dndSelectedRole}
-            onSelectedRoleChange={setDndSelectedRole}
-            filter={dndFilter}
-            onFilterChange={setDndFilter}
-            savingGateCell={savingGateCell}
-            onToggle={handleGateToggle}
-          />
-        )}
-
-        {moduleAccessView === "grid" && (
-        <>
-        <FloatingHorizontalScrollbar targetRef={gateTableScrollRef} />
-        <div
-          ref={gateHeaderScrollRef}
-          className="overflow-x-hidden rounded-t-lg border border-b-0 border-[var(--color-panel-border)] bg-[var(--color-panel)] backdrop-blur-md sticky top-16 z-20"
-        >
-          <table className="text-sm" style={{ tableLayout: "fixed", width: gateTableWidth(roleOptions.length) }}>
-            <GateColGroup roleCount={roleOptions.length} />
-            <thead>
-              <tr className="border-b border-white/10 text-left text-[10px] uppercase tracking-wide text-slate-500">
-                <th className="px-3 py-2 truncate sticky left-0 z-10 bg-slate-950">Module / Submodule</th>
-                {roleOptions.map((r) => (
-                  <th key={r.value} className="px-2 py-2 text-center font-normal leading-tight">
-                    {r.label}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-          </table>
-        </div>
-        <div
-          ref={gateTableScrollRef}
-          onScroll={(e) => {
-            if (gateHeaderScrollRef.current) gateHeaderScrollRef.current.scrollLeft = e.currentTarget.scrollLeft;
-          }}
-          className="overflow-x-auto rounded-b-lg border border-[var(--color-panel-border)] bg-[var(--color-panel)] backdrop-blur-md"
-        >
-          <table className="text-sm" style={{ tableLayout: "fixed", width: gateTableWidth(roleOptions.length) }}>
-            <GateColGroup roleCount={roleOptions.length} />
-            <tbody>
-              {gatesLoading ? (
-                <tr>
-                  <td colSpan={1 + roleOptions.length} className="px-3 py-6 text-center text-slate-400">
-                    Loading…
-                  </td>
-                </tr>
-              ) : (
-                MODULES.flatMap((m) => {
-                  const isModuleExpanded = expandedGateModules.has(m.slug);
-                  const headerRow = (
-                    <tr key={`mod-${m.slug}`} className="border-b border-white/10 bg-white/5">
-                      <td colSpan={1 + roleOptions.length} className="p-0 sticky left-0 bg-slate-900">
-                        <button
-                          type="button"
-                          data-testid="gate-module-row"
-                          data-module-slug={m.slug}
-                          onClick={() =>
-                            setExpandedGateModules((prev) => {
-                              const next = new Set(prev);
-                              if (next.has(m.slug)) next.delete(m.slug);
-                              else next.add(m.slug);
-                              return next;
-                            })
-                          }
-                          aria-expanded={isModuleExpanded}
-                          className="w-full flex items-center gap-1.5 px-3 py-1.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-300 hover:bg-white/5 transition-colors"
-                        >
-                          <ChevronDown className={`h-3.5 w-3.5 shrink-0 transition-transform ${isModuleExpanded ? "rotate-180" : ""}`} />
-                          {m.label}
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                  if (!isModuleExpanded) return [headerRow];
-                  return [
-                    headerRow,
-                    ...m.submodules.map((s) => {
-                      const key = `${m.slug}:${s.slug}`;
-                      const allowed = new Set(dashboardGates[key] ?? []);
-                      return (
-                        <tr key={key} data-testid="gate-submodule-row" className="border-b border-white/5 hover:bg-white/5">
-                          <td
-                            className="px-3 py-2 truncate font-medium text-white sticky left-0 z-10 bg-slate-950"
-                            title={s.title}
-                          >
-                            {s.title}
-                          </td>
-                          {roleOptions.map((r) => {
-                            const checked = allowed.has(r.value);
-                            const cellKey = `${key}:${r.value}`;
-                            const cellSaving = savingGateCell === cellKey;
-                            return (
-                              <td key={r.value} className="px-2 py-2 text-center">
-                                {cellSaving ? (
-                                  <Loader2 className="h-3.5 w-3.5 mx-auto animate-spin text-slate-400" />
-                                ) : (
-                                  <input
-                                    type="checkbox"
-                                    checked={checked}
-                                    onChange={(e) => void handleGateToggle(m.slug, s.slug, r.value, e.target.checked)}
-                                    className="h-4 w-4 accent-blue-500"
-                                  />
-                                )}
-                              </td>
-                            );
-                          })}
-                        </tr>
-                      );
-                    }),
-                  ];
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
-        </>
-        )}
-
+        <ModuleAccessEditor
+          gateRows={gateRows}
+          dashboardGates={dashboardGates}
+          selectedRole={dndSelectedRole}
+          onSelectedRoleChange={setDndSelectedRole}
+          filter={dndFilter}
+          onFilterChange={setDndFilter}
+          onToggle={handleGateToggle}
+          pendingCount={Object.keys(pendingSaves).length}
+          saving={saving}
+          saveError={saveError}
+          onSaveAll={() => void handleSaveAll()}
+          onDiscardAll={handleDiscardAll}
+        />
+        {gatesLoading && <p className="mt-3 text-sm text-slate-400">Loading…</p>}
       </div>
     </main>
   );

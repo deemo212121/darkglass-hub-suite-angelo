@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
-import { ChevronLeft, Check, Columns3, History } from "lucide-react";
+import { ChevronLeft, Check, Columns3, History, PackageCheck, CalendarRange } from "lucide-react";
 import { LOCATIONS } from "@/lib/locations";
+import { branchAbbrev, branchChipColor, branchDonutHex } from "@/lib/branchDisplay";
+import { DonutSummaryCard, CATEGORICAL_DONUT_HEX, DONUT_OTHER_COLOR, DONUT_TOP_N, topDonutSlices } from "@/components/DonutSummaryCard";
 import {
   getPartsToReceive,
   updatePartReceiveRow,
@@ -180,67 +182,12 @@ function loadPartReceiveVisibleColumns(): Record<string, boolean> {
   }
 }
 
-// Short display codes for the per-branch summary chips — purely a
-// display shorthand (not an official code), just compact enough to fit
-// next to a color swatch and a couple of counts.
-const BRANCH_ABBREV: Record<string, string> = {
-  Asheville: "AVL",
-  Atlanta: "ATL",
-  Birmingham: "BHM",
-  "Cape Girardeau": "CGI",
-  Chattanooga: "CHA",
-  Columbus: "CLB",
-  Dallas: "DAL",
-  Destin: "DST",
-  Huntsville: "HSV",
-  "Jackson, MS": "JXM",
-  "Jackson, TN": "JXT",
-  Jacksonville: "JAX",
-  Jonesboro: "JNB",
-  Knoxville: "KNX",
-  "Lake Charles": "LCH",
-  "Little Rock": "LTR",
-  Louisville: "LOU",
-  Memphis: "MEM",
-  Mobile: "MOB",
-  Montgomery: "MGM",
-  Nashville: "NSH",
-  "New Orleans": "NOL",
-  Norfolk: "NOR",
-  Philippines: "PHL",
-  Raleigh: "RAL",
-  Richmond: "RIC",
-  "San Antonio": "SAT",
-  Savannah: "SAV",
-  "St. Louis": "STL",
-  Tallahassee: "TLH",
-  Wilmington: "WIL",
-};
-function branchAbbrev(location: string): string {
-  return BRANCH_ABBREV[location] || location.slice(0, 3).toUpperCase();
-}
-
-// A fixed palette cycled by each branch's position in LOCATIONS (not by
-// sort order, which changes with the data) so a given branch always
-// gets the same color chip-to-chip and session-to-session.
-const BRANCH_CHIP_COLORS = [
-  { bg: "bg-blue-500/15", border: "border-blue-400/40", text: "text-blue-300" },
-  { bg: "bg-purple-500/15", border: "border-purple-400/40", text: "text-purple-300" },
-  { bg: "bg-teal-500/15", border: "border-teal-400/40", text: "text-teal-300" },
-  { bg: "bg-amber-500/15", border: "border-amber-400/40", text: "text-amber-300" },
-  { bg: "bg-rose-500/15", border: "border-rose-400/40", text: "text-rose-300" },
-  { bg: "bg-emerald-500/15", border: "border-emerald-400/40", text: "text-emerald-300" },
-  { bg: "bg-cyan-500/15", border: "border-cyan-400/40", text: "text-cyan-300" },
-  { bg: "bg-indigo-500/15", border: "border-indigo-400/40", text: "text-indigo-300" },
-  { bg: "bg-fuchsia-500/15", border: "border-fuchsia-400/40", text: "text-fuchsia-300" },
-  { bg: "bg-lime-500/15", border: "border-lime-400/40", text: "text-lime-300" },
-  { bg: "bg-orange-500/15", border: "border-orange-400/40", text: "text-orange-300" },
-  { bg: "bg-sky-500/15", border: "border-sky-400/40", text: "text-sky-300" },
-];
-function branchChipColor(location: string) {
-  const idx = LOCATIONS.indexOf(location as (typeof LOCATIONS)[number]);
-  return BRANCH_CHIP_COLORS[(idx >= 0 ? idx : 0) % BRANCH_CHIP_COLORS.length];
-}
+// Same amber/green pairing already used everywhere else on this page for
+// "not received" vs "received" (the badge counts, the totals row) — the
+// Status donut just visualizes the same two numbers, so it needs the same
+// colors.
+const DONUT_NOT_RECEIVED_COLOR = "#f59e0b";
+const DONUT_RECEIVED_COLOR = "#22c55e";
 
 export function PartReceive({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
   const navigate = useNavigate();
@@ -542,6 +489,34 @@ export function PartReceive({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef })
     notReceived: branchScoped.filter((item) => item.qtyReceived <= 0).length,
     received: branchScoped.filter((item) => item.qtyReceived > 0).length,
   };
+  // Same total each location badge shows (not received + received) —
+  // reused directly as the Location donut's slice values, so the donut and
+  // the list beside it can never disagree with each other.
+  const locationDonutData = topDonutSlices(
+    Object.fromEntries(branchSummary.map((b) => [b.location, b.notReceived + b.received])),
+    DONUT_TOP_N
+  );
+
+  // Part From donut's base scope — mirrors branchScoped's own reasoning,
+  // just excluding the ONE filter this chart itself visualizes (Part From)
+  // instead of Location, so picking a source in the dropdown doesn't just
+  // collapse this donut down to a single 100% slice.
+  const partFromScoped = receiveItems.filter((item) => {
+    if (location && item.location !== location) return false;
+    if (dateFrom || dateTo) {
+      if (!item.poDate) return false;
+      const rowDate = new Date(item.poDate);
+      if (dateFrom && rowDate < new Date(dateFrom)) return false;
+      if (dateTo && rowDate > new Date(dateTo)) return false;
+    }
+    return true;
+  });
+  const partFromCounts: Record<string, number> = {};
+  for (const item of partFromScoped) {
+    const key = item.partFrom?.trim() || "Unspecified";
+    partFromCounts[key] = (partFromCounts[key] ?? 0) + 1;
+  }
+  const partFromDonutData = topDonutSlices(partFromCounts, DONUT_TOP_N);
 
   // colSpans that track which columns are actually visible right now, so
   // hiding/showing columns never leaves the header groups or footer
@@ -567,51 +542,143 @@ export function PartReceive({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef })
 
         {!loading && !loadError && (
           <div className="panel mb-6">
-            <div className="flex items-center justify-between mb-1">
-              <h3 className="form-section-title mb-0">Branch Summary</h3>
-              <button
-                type="button"
-                onClick={openActivityLog}
-                className="btn hover:bg-white/15 inline-flex items-center gap-2 text-xs"
-              >
-                <History className="h-3.5 w-3.5" /> View Activity
-              </button>
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2.5">
+                <PackageCheck className="h-4 w-4 text-blue-400 shrink-0" />
+                <div>
+                  <h3 className="form-section-title mb-0">Branch Summary</h3>
+                  <p className="text-xs text-muted-foreground -mt-0.5">Click a branch to filter the table below</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-3 flex-wrap">
+                {/* Same dateFrom/dateTo state the "PO Date Range" filter
+                    below reads/writes — not a second, separate filter, just
+                    a second place to set the exact same one, so both stay
+                    in sync automatically with no extra wiring. */}
+                <div className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-2.5 py-1.5">
+                  <CalendarRange className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                  <input
+                    type="date"
+                    value={dateFrom}
+                    onChange={(e) => setDateFrom(e.target.value)}
+                    className="bg-transparent text-xs text-white outline-none [color-scheme:dark]"
+                    aria-label="PO date from"
+                  />
+                  <span className="text-xs text-muted-foreground">~</span>
+                  <input
+                    type="date"
+                    value={dateTo}
+                    onChange={(e) => setDateTo(e.target.value)}
+                    className="bg-transparent text-xs text-white outline-none [color-scheme:dark]"
+                    aria-label="PO date to"
+                  />
+                  {(dateFrom || dateTo) && (
+                    <button
+                      type="button"
+                      onClick={() => { setDateFrom(""); setDateTo(""); }}
+                      title="Clear date range"
+                      className="text-muted-foreground hover:text-white transition-colors ml-1 text-sm leading-none"
+                    >
+                      ×
+                    </button>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={openActivityLog}
+                  className="btn hover:bg-white/15 inline-flex items-center gap-2 text-xs shrink-0"
+                >
+                  <History className="h-3.5 w-3.5" /> View Activity
+                </button>
+              </div>
             </div>
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={() => setLocation("")}
-                className={`flex flex-col items-start gap-1 rounded-lg border px-3 py-2 text-left transition ${
-                  location === "" ? "border-white/50 bg-white/10" : "border-white/10 bg-white/5 hover:border-white/25"
-                }`}
-              >
-                <span className="text-xs font-bold tracking-wide text-white">ALL LOCATIONS</span>
-                <span className="text-[11px] text-slate-300">
-                  <span className="font-semibold text-amber-300">{allBranchTotals.notReceived}</span> not rcvd ·{" "}
-                  <span className="font-semibold text-green-400">{allBranchTotals.received}</span> rcvd
-                </span>
-              </button>
-              {branchSummary.map((b) => {
-                const c = branchChipColor(b.location);
-                const active = location === b.location;
-                return (
-                  <button
-                    key={b.location}
-                    type="button"
-                    onClick={() => setLocation(active ? "" : b.location)}
-                    title={b.location}
-                    className={`flex flex-col items-start gap-1 rounded-lg border px-3 py-2 text-left transition ${c.bg} ${
-                      active ? "border-white/70" : `${c.border} hover:brightness-125`
-                    }`}
-                  >
-                    <span className={`text-xs font-bold tracking-wide ${c.text}`}>{branchAbbrev(b.location)}</span>
-                    <span className="text-[11px] text-slate-300">
-                      <span className="font-semibold text-amber-300">{b.notReceived}</span> not rcvd ·{" "}
-                      <span className="font-semibold text-green-400">{b.received}</span> rcvd
-                    </span>
-                  </button>
-                );
-              })}
+            {/* Capped, not unbounded — a branch list can run to 20+ rows,
+                and letting the donuts stretch to match THAT height (rather
+                than a sane fixed one) is what made them balloon into huge,
+                mostly-empty rings. The list scrolls internally past this
+                height instead. */}
+            <div className="flex flex-col lg:flex-row gap-4 items-stretch lg:max-h-[520px]">
+              {/* ~1/4 width on wide screens — the list itself doesn't need
+                  more, and the donut alongside fills what would otherwise
+                  be dead space to its right. */}
+              <div className="lg:w-1/4 lg:shrink-0 rounded-lg border border-white/10 divide-y divide-white/5 overflow-y-auto">
+                <button
+                  type="button"
+                  onClick={() => setLocation("")}
+                  className={`w-full flex items-center gap-3 px-3 py-2.5 text-left transition ${
+                    location === "" ? "bg-white/10" : "hover:bg-white/5"
+                  }`}
+                >
+                  <span className="inline-flex shrink-0 items-center rounded-md border border-white/20 bg-white/10 px-2 py-0.5 text-[11px] font-bold tracking-wide text-white">
+                    ALL LOCATIONS
+                  </span>
+                  <span className="ml-auto text-xs text-slate-300">
+                    <span className="font-semibold text-amber-300">{allBranchTotals.notReceived}</span> not rcvd ·{" "}
+                    <span className="font-semibold text-green-400">{allBranchTotals.received}</span> rcvd
+                  </span>
+                </button>
+                {branchSummary.map((b) => {
+                  const c = branchChipColor(b.location);
+                  const active = location === b.location;
+                  return (
+                    <button
+                      key={b.location}
+                      type="button"
+                      onClick={() => setLocation(active ? "" : b.location)}
+                      title={b.location}
+                      className={`w-full flex items-center gap-3 px-3 py-2.5 text-left transition ${
+                        active ? "bg-white/10" : "hover:bg-white/5"
+                      }`}
+                    >
+                      <span className={`inline-flex shrink-0 items-center justify-center rounded-md border px-2 py-0.5 text-[11px] font-bold tracking-wide min-w-[3.25rem] ${c.bg} ${c.border} ${c.text}`}>
+                        {branchAbbrev(b.location)}
+                      </span>
+                      <span className="ml-auto text-xs text-slate-300">
+                        <span className="font-semibold text-amber-300">{b.notReceived}</span> not rcvd ·{" "}
+                        <span className="font-semibold text-green-400">{b.received}</span> rcvd
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Fills the remaining space beside the (now-narrow) list —
+                  three breakdowns of the same underlying data (status,
+                  location, source) instead of one empty stretch of panel.
+                  No content-start: the row (and each card in it, via
+                  DonutSummaryCard's own h-full) stretches to match the
+                  branch list's full height instead of packing to the top
+                  and leaving the rest of the panel blank. */}
+              <div className="flex-1 flex flex-wrap gap-4">
+                <DonutSummaryCard
+                  title="Status"
+                  data={[
+                    { name: "Not received", value: allBranchTotals.notReceived },
+                    { name: "Received", value: allBranchTotals.received },
+                  ].filter((d) => d.value > 0)}
+                  colorFor={(name) => (name === "Received" ? DONUT_RECEIVED_COLOR : DONUT_NOT_RECEIVED_COLOR)}
+                  centerValue={
+                    allBranchTotals.notReceived + allBranchTotals.received > 0
+                      ? `${Math.round((allBranchTotals.received / (allBranchTotals.notReceived + allBranchTotals.received)) * 100)}%`
+                      : "—"
+                  }
+                  centerLabel="Received"
+                />
+                <DonutSummaryCard
+                  title="By Location"
+                  data={locationDonutData}
+                  colorFor={(name) => (name === "Other" ? DONUT_OTHER_COLOR : branchDonutHex(name))}
+                  centerValue={String(locationDonutData.reduce((sum, d) => sum + d.value, 0))}
+                  centerLabel="Total"
+                />
+                <DonutSummaryCard
+                  title="By Part From"
+                  data={partFromDonutData}
+                  colorFor={(name, i) => (name === "Other" ? DONUT_OTHER_COLOR : CATEGORICAL_DONUT_HEX[i % CATEGORICAL_DONUT_HEX.length])}
+                  centerValue={String(partFromDonutData.reduce((sum, d) => sum + d.value, 0))}
+                  centerLabel="Total"
+                />
+              </div>
             </div>
           </div>
         )}

@@ -3,11 +3,13 @@ import { AppHeader } from "@/components/Header";
 import { Footer } from "@/components/Footer";
 import { useAuth } from "@/lib/auth";
 import { MODULES } from "@/lib/modules";
-import { ArrowRight } from "lucide-react";
-import { useEffect } from "react";
+import { ArrowRight, Settings } from "lucide-react";
+import { useEffect, useState } from "react";
 import { shouldUseMobile } from "@/lib/device";
 import { isModuleAllowed, isModuleAllowedForTrainee, isModuleAllowedForFrozen } from "@/lib/roleLabels";
 import { canAccessSubmodule } from "@/lib/submoduleAccess";
+import type { ModuleDef } from "@/lib/modules";
+import { ModuleAccessQuickEditModal } from "@/components/ModuleAccessQuickEditModal";
 
 export const Route = createFileRoute("/home")({
   ssr: false,
@@ -18,7 +20,14 @@ export const Route = createFileRoute("/home")({
 function Home() {
   const { ready, email, role, extraRoles, isTrainee, isFrozen } = useAuth();
   const navigate = useNavigate();
-  
+  // Only an actual admin tier can reassign who sees a module — same gate
+  // Accessibility Management itself sits behind. Super Admin always passes
+  // isModuleAllowed/canAccessSubmodule regardless of this page's own
+  // overrides, so showing the gear to a lower role would let them open an
+  // editor whose changes wouldn't even affect their own access to see it.
+  const canManageAccess = role === "ADMIN" || role === "SUPERADMIN";
+  const [accessModalFor, setAccessModalFor] = useState<ModuleDef | null>(null);
+
   useEffect(() => {
     if (!ready) return;
     
@@ -58,27 +67,47 @@ function Home() {
           {MODULES.filter((m) => isModuleAllowed(role, m.slug, extraRoles) && isModuleAllowedForTrainee(isTrainee, m.slug) && isModuleAllowedForFrozen(isFrozen, m.slug)).map((m) => {
             const visibleSubmodules = m.submodules.filter((s) => canAccessSubmodule(role, extraRoles, m.slug, s, isTrainee, isFrozen));
             return (
-            <Link key={m.slug} to="/m/$module" params={{ module: m.slug }} className="module-card group">
-              <div className="flex items-center gap-3 mb-3">
-                <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: m.accent }} />
-                <h2 className="text-xl font-semibold">{m.label}</h2>
-                <ArrowRight className="ml-auto h-4 w-4 opacity-60 group-hover:translate-x-1 transition" />
-              </div>
-              <p className="text-sm text-muted-foreground mb-4">{m.tagline}</p>
-              <ul className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-sm">
-                {visibleSubmodules.slice(0, 6).map((s) => (
-                  <li key={s.slug} className="text-foreground/80 truncate">• {s.title}</li>
-                ))}
-              </ul>
-              {visibleSubmodules.length > 6 && (
-                <div className="text-xs text-muted-foreground mt-2">+{visibleSubmodules.length - 6} more</div>
+            <div key={m.slug} className="relative group h-full">
+              {canManageAccess && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setAccessModalFor(m);
+                  }}
+                  title={`Manage who can access ${m.label}`}
+                  aria-label={`Manage who can access ${m.label}`}
+                  className="absolute bottom-4 right-4 z-10 grid h-7 w-7 place-items-center rounded-full border border-[var(--color-panel-border)] bg-[var(--color-panel)] text-muted-foreground opacity-0 group-hover:opacity-100 hover:text-foreground hover:bg-[var(--color-secondary)] transition-all"
+                >
+                  <Settings className="h-3.5 w-3.5" />
+                </button>
               )}
-            </Link>
+              <Link to="/m/$module" params={{ module: m.slug }} className="module-card flex h-full flex-col">
+                <div className="flex items-center gap-3 mb-3">
+                  <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: m.accent }} />
+                  <h2 className="text-xl font-semibold">{m.label}</h2>
+                  <ArrowRight className="ml-auto h-4 w-4 opacity-60 group-hover:translate-x-1 transition" />
+                </div>
+                <p className="text-sm text-muted-foreground mb-4">{m.tagline}</p>
+                <ul className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-sm">
+                  {visibleSubmodules.slice(0, 6).map((s) => (
+                    <li key={s.slug} className="text-foreground/80 truncate">• {s.title}</li>
+                  ))}
+                </ul>
+                {visibleSubmodules.length > 6 && (
+                  <div className="text-xs text-muted-foreground mt-2">+{visibleSubmodules.length - 6} more</div>
+                )}
+              </Link>
+            </div>
             );
           })}
         </div>
       </main>
       <Footer />
+      {accessModalFor && (
+        <ModuleAccessQuickEditModal mod={accessModalFor} onClose={() => setAccessModalFor(null)} />
+      )}
     </>
   );
 }

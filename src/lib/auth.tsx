@@ -12,6 +12,11 @@ import { subscribeTableChanges } from "./supabase/realtime";
 
 // One active session per account (migration 0124) — see checkAndHandleSession below.
 const CLAIMED_SESSION_KEY = "ahs:deviceSessionId";
+// "View as" role preview (Super Admin only) — see the viewAsRole block below.
+// Tab-scoped (sessionStorage, not localStorage) so it never quietly survives
+// into a different login on the same device.
+const VIEW_AS_ROLE_KEY = "ahs:viewAsRole";
+const SUPER_ROLES = new Set(["SUPERADMIN", "SUPERSUPERADMIN"]);
 
 // Startup/auth-flow tracing — genuinely useful when debugging a real login
 // issue locally (see the token-bridge hang fix, root-caused this way), but
@@ -83,6 +88,19 @@ type AuthState = {
    *  — pass both to the roleLabels.ts/pto.ts/timecardCorrections.ts helpers
    *  that accept an extraRoles argument. */
   extraRoles: string[];
+  /** The account's actual role, ignoring any "view as" preview below —
+   *  use this (never `role`) for anything that must reflect who is really
+   *  signed in (e.g. deciding whether to show the "View as" selector itself). */
+  realRole: string | null;
+  /** Non-null while a Super Admin is previewing the app as another role —
+   *  `role`/`extraRoles` above are swapped to simulate that role's nav/module
+   *  visibility. This is a front-end-only preview: Supabase RLS still
+   *  authorizes every read/write against `realRole`, so it can't be used to
+   *  actually gain access, only to see what a role's UI looks like. */
+  viewAsRole: string | null;
+  /** Sets/clears the "view as" preview. No-op (and clears any stale stored
+   *  value) unless `realRole` is SUPERADMIN/SUPERSUPERADMIN. */
+  setViewAsRole: (roleCode: string | null) => void;
   /** Trainee vs Regular (Master List's Employment Status column, migration
    *  0152) — true means this account only sees Employee Self-Service
    *  (roleLabels.ts's isSubmoduleAllowedForTrainee), regardless of role.
@@ -258,6 +276,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [allowedLocations, setAllowedLocations] = useState<string[] | null>(null);
   const [mustChangePassword, setMustChangePasswordState] = useState(false);
   const [kickedOut, setKickedOut] = useState(false);
+  const [viewAsRoleState, setViewAsRoleState] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    try {
+      return sessionStorage.getItem(VIEW_AS_ROLE_KEY);
+    } catch {
+      return null;
+    }
+  });
   const [ready, setReady] = useState(false);
   const [loading, setLoading] = useState(true);
   // Set by login() right after it fully claims the session for this uid
@@ -355,6 +381,40 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const stopSessionWatchIfAny = () => {
           if (stopSessionWatch) stopSessionWatch();
           stopSessionWatch = null;
+        };
+        // Module/submodule role-gate overrides (migration 0151) — the
+        // realtime fast path. Without this, an edit made in Accessibility
+        // Management only reaches OTHER already-open sessions (a different
+        // tab, a different signed-in device) the next time THAT session logs
+        // in or reloads, since hydrateModuleRoleGates below only ever ran
+        // once at login. Any change to this company's rows now re-hydrates
+        // every connected session's cache immediately, and
+        // m.$module.$submodule.tsx reads it through moduleAccess.ts's
+        // useModuleRoleGate hook (not the plain synchronous getter) so an
+        // already-open restricted/allowed page re-evaluates and re-renders
+        // right away too, not just the cache underneath it.
+        let stopModuleGateWatch: (() => void) | null = null;
+        const startModuleGateWatch = (targetCompanyId: string) => {
+          if (stopModuleGateWatch) stopModuleGateWatch();
+          stopModuleGateWatch = subscribeTableChanges(
+            "module_role_gate_overrides",
+            () => {
+              void (async () => {
+                try {
+                  const { getModuleRoleGateOverrides } = await import("./supabase/moduleRoleGates");
+                  const { hydrateModuleRoleGates } = await import("./moduleAccess");
+                  hydrateModuleRoleGates(await getModuleRoleGateOverrides());
+                } catch (e) {
+                  console.warn("Module role gate override re-hydration skipped:", e);
+                }
+              })();
+            },
+            `company_id=eq.${targetCompanyId}`
+          );
+        };
+        const stopModuleGateWatchIfAny = () => {
+          if (stopModuleGateWatch) stopModuleGateWatch();
+          stopModuleGateWatch = null;
         };
         // Also refresh when the tab regains focus — covers laptop sleep / long
         // idle where the interval may not have fired in time.
@@ -465,6 +525,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                       console.warn("Module role gate override hydration skipped:", e);
                     }
                   })();
+                  startModuleGateWatch(sbProfile.companyId);
                   // Compute location access. Two overrides win over the
                   // work-plan-based filter:
                   //   1. branch_access = "*" (admin set "All Locations") →
@@ -550,6 +611,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             devLog("🔓 No Firebase user authenticated");
             stopTokenRefresh();
             stopSessionWatchIfAny();
+            stopModuleGateWatchIfAny();
             // Clear Supabase session
             clearSupabaseSession();
             // Clear auth state
@@ -574,6 +636,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           devLog("🔒 Cleaning up Firebase Auth listener");
           stopTokenRefresh();
           stopSessionWatchIfAny();
+          stopModuleGateWatchIfAny();
           document.removeEventListener("visibilitychange", onVisible);
           unsubscribe();
         };
@@ -709,6 +772,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     try {
       devLog("🔓 Logging out...");
+      try { sessionStorage.removeItem(VIEW_AS_ROLE_KEY); } catch { /* best-effort */ }
       await firebaseSignOut();
       devLog("✅ Logout successful");
 
@@ -732,13 +796,47 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  // Only a real Super Admin may hold a "view as" preview — a stale value
+  // left over in sessionStorage (e.g. a different account signed in later
+  // in the same tab) is silently ignored for anyone else, and cleared
+  // outright once we know who's actually signed in.
+  const isSuperRole = role !== null && SUPER_ROLES.has(role);
+  useEffect(() => {
+    if (!ready) return;
+    if (!isSuperRole && viewAsRoleState !== null) {
+      setViewAsRoleState(null);
+      try { sessionStorage.removeItem(VIEW_AS_ROLE_KEY); } catch { /* best-effort */ }
+    }
+  }, [ready, isSuperRole, viewAsRoleState]);
+
+  const setViewAsRole = (roleCode: string | null) => {
+    if (roleCode !== null && !isSuperRole) return; // only Super Admin may enter preview
+    setViewAsRoleState(roleCode);
+    try {
+      if (roleCode) sessionStorage.setItem(VIEW_AS_ROLE_KEY, roleCode);
+      else sessionStorage.removeItem(VIEW_AS_ROLE_KEY);
+    } catch {
+      // best-effort — preview still works for this render even if storage is blocked
+    }
+  };
+
+  const effectiveViewAsRole = isSuperRole ? viewAsRoleState : null;
+  const effectiveRole = effectiveViewAsRole ?? role;
+  // Simulate holding ONLY the previewed role — a real holder of that role
+  // may also have extra_roles layered on top, but the point of the preview
+  // is to see that one role's own access, not some blend.
+  const effectiveExtraRoles = effectiveViewAsRole ? [] : extraRoles;
+
   return (
     <AuthContext.Provider value={{
       email,
       companyId,
       companyLoginAlias,
-      role,
-      extraRoles,
+      role: effectiveRole,
+      extraRoles: effectiveExtraRoles,
+      realRole: role,
+      viewAsRole: effectiveViewAsRole,
+      setViewAsRole,
       isTrainee,
       isFrozen,
       uid,

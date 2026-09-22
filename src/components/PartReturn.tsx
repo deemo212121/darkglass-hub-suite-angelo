@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
-import { ChevronLeft, Printer } from "lucide-react";
+import { ChevronLeft, Printer, PackageCheck } from "lucide-react";
 import { LOCATIONS } from "@/lib/locations";
+import { branchAbbrev, branchChipColor, branchDonutHex } from "@/lib/branchDisplay";
+import { DonutSummaryCard, CATEGORICAL_DONUT_HEX, DONUT_OTHER_COLOR, DONUT_TOP_N, topDonutSlices } from "@/components/DonutSummaryCard";
 import { getPartReturns, updatePartReturnEntryRow, submitPartReturnBatch, type PartReturnRow } from "@/lib/supabase/partReturn";
 import { marconeLookupPart, marconeRequestReturn, marconeGetReaQrCode, marconeFindReturnableItems, type MarconePartInfo } from "@/lib/marconeApi";
 import { FloatingHorizontalScrollbar } from "@/components/FloatingHorizontalScrollbar";
@@ -47,6 +49,12 @@ function providerGroupOf(partDist: string): string {
 function formatMoney(value: number) {
   return `$${Number(value || 0).toFixed(2)}`;
 }
+
+// Same amber/green pairing Part Receive's own Branch Summary donut uses
+// for its own "not X / X" split — kept consistent across the two Parts
+// pages rather than picking a fresh pair here.
+const DONUT_NOT_RETURNED_COLOR = "#f59e0b";
+const DONUT_RETURNED_COLOR = "#22c55e";
 
 function formatUsd(value: number | undefined): string {
   return typeof value === "number" ? `$${value.toFixed(2)}` : "—";
@@ -396,6 +404,57 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
     [byTab, provider, location, agingMin, agingMax, includeReturned, includeReserved, uniqueIdSearch, resultSearch]
   );
 
+  // Branch Summary — same shape as Part Receive's own version: per-branch
+  // Not Returned/Returned counts (returnStatus "NOT RECEIVED" is the
+  // distributor not having received the return back yet — recdQty's own
+  // condition, reused here so the two never disagree), ignoring the
+  // Location filter itself (that's what these rows let you set) and the
+  // includeReturned/includeReserved checkboxes (the whole point is showing
+  // both counts side by side regardless of which rows the table shows).
+  // Still respects Part Provider / aging, since those narrow "which
+  // returns" rather than "which branch".
+  const branchScoped = byTab.filter((r) => {
+    if (provider && providerGroupOf(r.partDist) !== provider) return false;
+    if (r.aging !== null && (r.aging < agingMin || r.aging > agingMax)) return false;
+    return true;
+  });
+  const branchSummary = LOCATIONS.map((loc) => {
+    const items = branchScoped.filter((r) => r.location === loc);
+    return {
+      location: loc,
+      notReturned: items.filter((r) => r.returnStatus === "NOT RECEIVED").length,
+      returned: items.filter((r) => r.returnStatus !== "NOT RECEIVED").length,
+    };
+  })
+    .filter((b) => b.notReturned + b.returned > 0)
+    .sort((a, b) => b.notReturned - a.notReturned || a.location.localeCompare(b.location));
+  const allBranchTotals = {
+    notReturned: branchScoped.filter((r) => r.returnStatus === "NOT RECEIVED").length,
+    returned: branchScoped.filter((r) => r.returnStatus !== "NOT RECEIVED").length,
+  };
+  // Same total each location badge shows — reused directly as the Location
+  // donut's slice values, so the donut and the list beside it never disagree.
+  const locationDonutData = topDonutSlices(
+    Object.fromEntries(branchSummary.map((b) => [b.location, b.notReturned + b.returned])),
+    DONUT_TOP_N
+  );
+
+  // Part Provider donut's base scope — mirrors branchScoped's own
+  // reasoning, just excluding the ONE filter this chart itself visualizes
+  // (Provider) instead of Location, so picking one in the dropdown doesn't
+  // just collapse this donut down to a single 100% slice.
+  const providerScoped = byTab.filter((r) => {
+    if (location && r.location !== location) return false;
+    if (r.aging !== null && (r.aging < agingMin || r.aging > agingMax)) return false;
+    return true;
+  });
+  const providerCounts: Record<string, number> = {};
+  for (const r of providerScoped) {
+    const key = providerGroupOf(r.partDist);
+    providerCounts[key] = (providerCounts[key] ?? 0) + 1;
+  }
+  const providerDonutData = topDonutSlices(providerCounts, DONUT_TOP_N);
+
   return (
     <div className="min-h-screen flex flex-col">
       <main className="flex-1 max-w-[1400px] mx-auto w-full px-6 py-8">
@@ -468,6 +527,102 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
           <h1 className="text-4xl font-display font-bold tracking-tight mb-2">{sub.title}</h1>
         </div>
         {saveError && <p className="text-sm text-red-400 mb-3 no-print">{saveError}</p>}
+
+        {!loading && !loadError && (
+          <div className="panel mb-6 no-print">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2.5">
+                <PackageCheck className="h-4 w-4 text-blue-400 shrink-0" />
+                <div>
+                  <h3 className="text-[0.95rem] font-semibold uppercase tracking-wide" style={{ color: "#64b5f6" }}>Branch Summary</h3>
+                  <p className="text-xs text-muted-foreground -mt-0.5">Click a branch to filter the table below</p>
+                </div>
+              </div>
+            </div>
+            {/* Capped, not unbounded — see Part Receive's own Branch
+                Summary for why: an uncapped row stretches the donuts to
+                match however tall the branch list happens to be, which
+                balloons them into huge, mostly-empty rings once there are
+                20+ branches. The list scrolls internally past this height. */}
+            <div className="flex flex-col lg:flex-row gap-4 items-stretch lg:max-h-[520px]">
+              {/* ~1/4 width on wide screens — same layout as Part Receive's
+                  own Branch Summary, same branch abbreviations/colors too
+                  (src/lib/branchDisplay.ts), just Returned/Not Returned
+                  instead of Received/Not Received. */}
+              <div className="lg:w-1/4 lg:shrink-0 rounded-lg border border-white/10 divide-y divide-white/5 overflow-y-auto">
+                <button
+                  type="button"
+                  onClick={() => setLocation("")}
+                  className={`w-full flex items-center gap-3 px-3 py-2.5 text-left transition ${
+                    location === "" ? "bg-white/10" : "hover:bg-white/5"
+                  }`}
+                >
+                  <span className="inline-flex shrink-0 items-center rounded-md border border-white/20 bg-white/10 px-2 py-0.5 text-[11px] font-bold tracking-wide text-white">
+                    ALL LOCATIONS
+                  </span>
+                  <span className="ml-auto text-xs text-slate-300">
+                    <span className="font-semibold text-amber-300">{allBranchTotals.notReturned}</span> not rtn'd ·{" "}
+                    <span className="font-semibold text-green-400">{allBranchTotals.returned}</span> rtn'd
+                  </span>
+                </button>
+                {branchSummary.map((b) => {
+                  const c = branchChipColor(b.location);
+                  const active = location === b.location;
+                  return (
+                    <button
+                      key={b.location}
+                      type="button"
+                      onClick={() => setLocation(active ? "" : b.location)}
+                      title={b.location}
+                      className={`w-full flex items-center gap-3 px-3 py-2.5 text-left transition ${
+                        active ? "bg-white/10" : "hover:bg-white/5"
+                      }`}
+                    >
+                      <span className={`inline-flex shrink-0 items-center justify-center rounded-md border px-2 py-0.5 text-[11px] font-bold tracking-wide min-w-[3.25rem] ${c.bg} ${c.border} ${c.text}`}>
+                        {branchAbbrev(b.location)}
+                      </span>
+                      <span className="ml-auto text-xs text-slate-300">
+                        <span className="font-semibold text-amber-300">{b.notReturned}</span> not rtn'd ·{" "}
+                        <span className="font-semibold text-green-400">{b.returned}</span> rtn'd
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className="flex-1 flex flex-wrap gap-4">
+                <DonutSummaryCard
+                  title="Status"
+                  data={[
+                    { name: "Not returned", value: allBranchTotals.notReturned },
+                    { name: "Returned", value: allBranchTotals.returned },
+                  ].filter((d) => d.value > 0)}
+                  colorFor={(name) => (name === "Returned" ? DONUT_RETURNED_COLOR : DONUT_NOT_RETURNED_COLOR)}
+                  centerValue={
+                    allBranchTotals.notReturned + allBranchTotals.returned > 0
+                      ? `${Math.round((allBranchTotals.returned / (allBranchTotals.notReturned + allBranchTotals.returned)) * 100)}%`
+                      : "—"
+                  }
+                  centerLabel="Returned"
+                />
+                <DonutSummaryCard
+                  title="By Location"
+                  data={locationDonutData}
+                  colorFor={(name) => (name === "Other" ? DONUT_OTHER_COLOR : branchDonutHex(name))}
+                  centerValue={String(locationDonutData.reduce((sum, d) => sum + d.value, 0))}
+                  centerLabel="Total"
+                />
+                <DonutSummaryCard
+                  title="By Provider"
+                  data={providerDonutData}
+                  colorFor={(name, i) => (name === "Other" ? DONUT_OTHER_COLOR : CATEGORICAL_DONUT_HEX[i % CATEGORICAL_DONUT_HEX.length])}
+                  centerValue={String(providerDonutData.reduce((sum, d) => sum + d.value, 0))}
+                  centerLabel="Total"
+                />
+              </div>
+            </div>
+          </div>
+        )}
 
         <div className="glass-panel pr-panel no-print">
           <div className="controls-grid">

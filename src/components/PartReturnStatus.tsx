@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
-import { ChevronLeft, Download } from "lucide-react";
+import { ChevronLeft, Download, PackageCheck } from "lucide-react";
 import * as XLSX from "xlsx";
 import { LOCATIONS } from "@/lib/locations";
+import { branchAbbrev, branchChipColor, branchDonutHex } from "@/lib/branchDisplay";
+import { DonutSummaryCard, CATEGORICAL_DONUT_HEX, DONUT_OTHER_COLOR, DONUT_TOP_N, topDonutSlices } from "@/components/DonutSummaryCard";
 import {
   getPartReturns,
   updatePartReturnRow,
@@ -16,6 +18,19 @@ const TAB_KEY = "partReturnStatusTab";
 
 const REGULAR_STATUS_OPTIONS = ["NOT RECEIVED", "RECEIVED", "PROCESSED", "DISPUTED"];
 const CORE_STATUS_OPTIONS = ["NOT RECEIVED", "CORE RETURN", "RECEIVED", "PROCESSED", "DISPUTED"];
+
+// Real status semantics, not a generic categorical palette — pending
+// (amber), in progress (blue), done (green), needs attention (red). Same
+// amber/green pairing the other two Parts pages' Branch Summary uses for
+// their own "not X / X" split.
+const RETURN_STATUS_COLOR: Record<string, string> = {
+  "NOT RECEIVED": "#f59e0b",
+  "CORE RETURN": "#0ea5e9",
+  RECEIVED: "#0ea5e9",
+  PROCESSED: "#22c55e",
+  DISPUTED: "#ef4444",
+};
+const DONUT_STATUS_FALLBACK_COLOR = "#94a3b8";
 
 function formatUsd(value: number | undefined): string {
   return typeof value === "number" ? `$${value.toFixed(2)}` : "—";
@@ -159,6 +174,75 @@ export function PartReturnStatusPage() {
 
   const filteredRegular = useMemo(() => applyCommonFilters(regularRows, resultSearch), [regularRows, locationFilter, distributorFilter, raFilter, uniqueIdFilter, fromDate, toDate, resultSearch]);
   const filteredCore = useMemo(() => applyCommonFilters(coreRows, coreResultSearch), [coreRows, locationFilter, distributorFilter, raFilter, uniqueIdFilter, fromDate, toDate, coreResultSearch]);
+
+  // Branch Summary — scoped to whichever tab (Part Return / Core Part
+  // Return) is active, same "respects everything except the one filter
+  // this list/chart itself sets" reasoning as Part Return's own version.
+  const activeTabRows = activeView === "core" ? coreRows : regularRows;
+  const branchScoped = activeTabRows.filter((row) => {
+    if (distributorFilter && row.distributor !== distributorFilter) return false;
+    if (raFilter && !(row.raNo || "").toLowerCase().includes(raFilter.toLowerCase())) return false;
+    if (uniqueIdFilter && !row.id.toLowerCase().includes(uniqueIdFilter.toLowerCase())) return false;
+    if (fromDate || toDate) {
+      if (!row.raDate) return false;
+      const rowDate = new Date(row.raDate);
+      if (fromDate && rowDate < new Date(fromDate)) return false;
+      if (toDate && rowDate > new Date(toDate)) return false;
+    }
+    return true;
+  });
+  const branchSummary = LOCATIONS.map((loc) => {
+    const items = branchScoped.filter((row) => row.location === loc);
+    return {
+      location: loc,
+      notReceived: items.filter((row) => row.returnStatus === "NOT RECEIVED").length,
+      received: items.filter((row) => row.returnStatus !== "NOT RECEIVED").length,
+    };
+  })
+    .filter((b) => b.notReceived + b.received > 0)
+    .sort((a, b) => b.notReceived - a.notReceived || a.location.localeCompare(b.location));
+  const allBranchTotals = {
+    notReceived: branchScoped.filter((row) => row.returnStatus === "NOT RECEIVED").length,
+    received: branchScoped.filter((row) => row.returnStatus !== "NOT RECEIVED").length,
+  };
+  const locationDonutData = topDonutSlices(
+    Object.fromEntries(branchSummary.map((b) => [b.location, b.notReceived + b.received])),
+    DONUT_TOP_N
+  );
+  // Full status breakdown (not just the binary not-received/received the
+  // list rows show) — the real point of a dedicated Status donut here,
+  // since this page's whole job is tracking that 4-5-value status.
+  const statusCounts: Record<string, number> = {};
+  for (const row of branchScoped) {
+    const key = row.returnStatus || "Unspecified";
+    statusCounts[key] = (statusCounts[key] ?? 0) + 1;
+  }
+  const statusDonutData = Object.entries(statusCounts)
+    .filter(([, v]) => v > 0)
+    .sort((a, b) => b[1] - a[1])
+    .map(([name, value]) => ({ name, value }));
+
+  // Distributor donut's base scope — mirrors branchScoped's own reasoning,
+  // just excluding the ONE filter this chart itself visualizes
+  // (Distributor) instead of Location.
+  const distributorScoped = activeTabRows.filter((row) => {
+    if (locationFilter && row.location !== locationFilter) return false;
+    if (raFilter && !(row.raNo || "").toLowerCase().includes(raFilter.toLowerCase())) return false;
+    if (uniqueIdFilter && !row.id.toLowerCase().includes(uniqueIdFilter.toLowerCase())) return false;
+    if (fromDate || toDate) {
+      if (!row.raDate) return false;
+      const rowDate = new Date(row.raDate);
+      if (fromDate && rowDate < new Date(fromDate)) return false;
+      if (toDate && rowDate > new Date(toDate)) return false;
+    }
+    return true;
+  });
+  const distributorCounts: Record<string, number> = {};
+  for (const row of distributorScoped) {
+    const key = row.distributor?.trim() || "Unspecified";
+    distributorCounts[key] = (distributorCounts[key] ?? 0) + 1;
+  }
+  const distributorDonutData = topDonutSlices(distributorCounts, DONUT_TOP_N);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -395,6 +479,92 @@ export function PartReturnStatusPage() {
           <p className="text-sm text-muted-foreground">Track regular and core part returns separately.</p>
           {saveError && <p className="text-sm text-red-400 mt-1">{saveError}</p>}
         </div>
+
+        {!loading && !loadError && (
+          <div className="panel">
+            <div className="flex items-center gap-2.5 mb-4">
+              <PackageCheck className="h-4 w-4 text-blue-400 shrink-0" />
+              <div>
+                <h3 className="text-[0.95rem] font-semibold uppercase tracking-wide" style={{ color: "#64b5f6" }}>Branch Summary</h3>
+                <p className="text-xs text-muted-foreground -mt-0.5">
+                  {activeView === "core" ? "Core Part Return" : "Part Return"} · Click a branch to filter the table below
+                </p>
+              </div>
+            </div>
+            {/* Capped, not unbounded — see Part Receive's own Branch
+                Summary for why. */}
+            <div className="flex flex-col lg:flex-row gap-4 items-stretch lg:max-h-[520px]">
+              <div className="lg:w-1/4 lg:shrink-0 rounded-lg border border-white/10 divide-y divide-white/5 overflow-y-auto">
+                <button
+                  type="button"
+                  onClick={() => setLocationFilter("")}
+                  className={`w-full flex items-center gap-3 px-3 py-2.5 text-left transition ${
+                    locationFilter === "" ? "bg-white/10" : "hover:bg-white/5"
+                  }`}
+                >
+                  <span className="inline-flex shrink-0 items-center rounded-md border border-white/20 bg-white/10 px-2 py-0.5 text-[11px] font-bold tracking-wide text-white">
+                    ALL LOCATIONS
+                  </span>
+                  <span className="ml-auto text-xs text-slate-300">
+                    <span className="font-semibold text-amber-300">{allBranchTotals.notReceived}</span> not rcvd ·{" "}
+                    <span className="font-semibold text-green-400">{allBranchTotals.received}</span> rcvd
+                  </span>
+                </button>
+                {branchSummary.map((b) => {
+                  const c = branchChipColor(b.location);
+                  const active = locationFilter === b.location;
+                  return (
+                    <button
+                      key={b.location}
+                      type="button"
+                      onClick={() => setLocationFilter(active ? "" : b.location)}
+                      title={b.location}
+                      className={`w-full flex items-center gap-3 px-3 py-2.5 text-left transition ${
+                        active ? "bg-white/10" : "hover:bg-white/5"
+                      }`}
+                    >
+                      <span className={`inline-flex shrink-0 items-center justify-center rounded-md border px-2 py-0.5 text-[11px] font-bold tracking-wide min-w-[3.25rem] ${c.bg} ${c.border} ${c.text}`}>
+                        {branchAbbrev(b.location)}
+                      </span>
+                      <span className="ml-auto text-xs text-slate-300">
+                        <span className="font-semibold text-amber-300">{b.notReceived}</span> not rcvd ·{" "}
+                        <span className="font-semibold text-green-400">{b.received}</span> rcvd
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className="flex-1 flex flex-wrap gap-4">
+                <DonutSummaryCard
+                  title="Status"
+                  data={statusDonutData}
+                  colorFor={(name) => RETURN_STATUS_COLOR[name] ?? DONUT_STATUS_FALLBACK_COLOR}
+                  centerValue={
+                    allBranchTotals.notReceived + allBranchTotals.received > 0
+                      ? `${Math.round((allBranchTotals.received / (allBranchTotals.notReceived + allBranchTotals.received)) * 100)}%`
+                      : "—"
+                  }
+                  centerLabel="Received"
+                />
+                <DonutSummaryCard
+                  title="By Location"
+                  data={locationDonutData}
+                  colorFor={(name) => (name === "Other" ? DONUT_OTHER_COLOR : branchDonutHex(name))}
+                  centerValue={String(locationDonutData.reduce((sum, d) => sum + d.value, 0))}
+                  centerLabel="Total"
+                />
+                <DonutSummaryCard
+                  title="By Distributor"
+                  data={distributorDonutData}
+                  colorFor={(name, i) => (name === "Other" ? DONUT_OTHER_COLOR : CATEGORICAL_DONUT_HEX[i % CATEGORICAL_DONUT_HEX.length])}
+                  centerValue={String(distributorDonutData.reduce((sum, d) => sum + d.value, 0))}
+                  centerLabel="Total"
+                />
+              </div>
+            </div>
+          </div>
+        )}
 
         <div className="panel">
           <div className="controls-grid">

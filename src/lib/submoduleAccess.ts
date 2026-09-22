@@ -16,13 +16,19 @@ import { getDashboardRoleGate, hasDashboardAccess } from "./dashboardAccess";
 import { getModuleRoleGate } from "./moduleAccess";
 
 export const ADMIN_MODULE_ROLES = ["ADMIN", "SUPERADMIN"];
-export const USER_MANAGEMENT_ROLES = ["HR", "FINANCE", "MANAGER", "SENIOR_BRANCH_MANAGER", "ADMIN", "SUPERADMIN"];
-export const ACTIVITY_LOG_ROLES = ["SENIOR_BRANCH_MANAGER", "ADMIN", "SUPERADMIN"];
+// DEFAULTS only, not floors — a company can widen or narrow any of these
+// three from Accessibility Management (module "admin", the matching
+// submodule slug) exactly like any other page, via module_role_gate_
+// overrides. This list is only what a company gets until it configures its
+// own; see canAccessSubmodule below, which checks explicitModuleOverride
+// first and falls back to these.
+export const USER_MANAGEMENT_DEFAULT_ROLES = ["HR", "FINANCE", "MANAGER", "SENIOR_BRANCH_MANAGER", "ADMIN", "SUPERADMIN"];
+export const ACTIVITY_LOG_DEFAULT_ROLES = ["SENIOR_BRANCH_MANAGER", "ADMIN", "SUPERADMIN"];
 // Technical Director oversees dispatch/route visibility company-wide, same
-// operational reason Senior Branch Manager already gets a broader carve-out
+// operational reason Senior Branch Manager already gets a broader default
 // above for Activity Logs — full Admin access isn't needed just to see
 // where technicians are.
-export const WHEREABOUTS_ROLES = ["TECHNICAL_DIRECTOR", "ADMIN", "SUPERADMIN"];
+export const WHEREABOUTS_DEFAULT_ROLES = ["TECHNICAL_DIRECTOR", "ADMIN", "SUPERADMIN"];
 // Admin-module submodules open to everyone regardless of the admin gate —
 // company-wide utilities, same carve-out as m.$module.$submodule.tsx's own.
 const ALL_ROLES_ADMIN_SUBMODULES = new Set(["internal-message-support"]);
@@ -67,9 +73,9 @@ export function canAccessSubmodule(
     return false;
   }
 
-  if (isUserManagementSubmodule && !hasDashboardAccess(USER_MANAGEMENT_ROLES, role, extraRoles)) return false;
-  if (isActivityLogSubmodule && !hasDashboardAccess(ACTIVITY_LOG_ROLES, role, extraRoles)) return false;
-  if (isWhereaboutsSubmodule && !hasDashboardAccess(WHEREABOUTS_ROLES, role, extraRoles)) return false;
+  if (isUserManagementSubmodule && !hasDashboardAccess(explicitModuleOverride ?? USER_MANAGEMENT_DEFAULT_ROLES, role, extraRoles)) return false;
+  if (isActivityLogSubmodule && !hasDashboardAccess(explicitModuleOverride ?? ACTIVITY_LOG_DEFAULT_ROLES, role, extraRoles)) return false;
+  if (isWhereaboutsSubmodule && !hasDashboardAccess(explicitModuleOverride ?? WHEREABOUTS_DEFAULT_ROLES, role, extraRoles)) return false;
   if (sub.custom === "company-settings" && !isCompanySuperAdminRole(role, extraRoles)) return false;
 
   // Same carve-out as the admin-module gate above (ALL_ROLES_ADMIN_SUBMODULES)

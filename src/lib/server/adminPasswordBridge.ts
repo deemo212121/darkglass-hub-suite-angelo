@@ -4,7 +4,7 @@
  * same default used at account creation (see AdminUserManagementPage.tsx's
  * createCompanyUser, "Welcome2024!"), no old password needed, no reset
  * email required. HR is included because HR already has full access to the
- * User Management page (USER_MANAGEMENT_ROLES in submoduleAccess.ts) and
+ * User Management page (USER_MANAGEMENT_DEFAULT_ROLES in submoduleAccess.ts) and
  * account-recovery is squarely HR's job. The role is matched against the
  * caller's PRIMARY role or any of their extra_roles — a held secondary
  * role grants the same access as a primary one, per the app-wide rule.

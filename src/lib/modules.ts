@@ -532,7 +532,7 @@ const partsCommonFields = (extra: FieldDef[] = []): FieldDef[] => [
 
 const partsMod: ModuleDef = {
   slug: "parts",
-  label: "Parts",
+  label: "Logistics",
   tagline: "Inventory, orders, returns & PO tracking",
   accent: "#22d3ee",
   submodules: [
@@ -1790,7 +1790,7 @@ const adminMod: ModuleDef = {
 };
 
 
-export const MODULES: ModuleDef[] = [dashboardMod, ticketsMod, partsMod, claimsMod, reportMod, hrMod, adminMod, accountingMod, csrMod];
+export const MODULES: ModuleDef[] = [dashboardMod, csrMod, ticketsMod, partsMod, reportMod, claimsMod, accountingMod, hrMod, adminMod];
 
 export function getModule(slug: string) {
   return MODULES.find((m) => m.slug === slug);
