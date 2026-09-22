@@ -15,7 +15,7 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
-import { RotateCcw, GripVertical, Users, Plus, X, Crown, UserCog, Pencil, Loader2 } from "lucide-react";
+import { RotateCcw, GripVertical, Users, Plus, X, Crown, UserCog, Pencil, Loader2, ShieldCheck } from "lucide-react";
 import { BrandedLoader } from "@/components/BrandedLoader";
 import { getCompanyUsers } from "@/lib/supabase/users";
 import {
@@ -32,7 +32,7 @@ const ROSTER = "__roster__";
 const TEAM_COLORS = ["#3b82f6", "#34d399", "#a78bfa", "#fb923c", "#f43f5e", "#14b8a6", "#eab308", "#06b6d4", "#ec4899", "#22c55e"];
 
 interface Team { key: string; name: string; color: string; }
-interface Person { id: string; name: string; isLeaderRole: boolean; }
+interface Person { id: string; name: string; isLeaderRole: boolean; isManagerRole: boolean; }
 
 const firstName = (full: string) => (full || "").trim().split(/\s+/)[0] || "";
 const teamNameFor = (leaderName: string) => `Team ${firstName(leaderName)}`;
@@ -41,6 +41,7 @@ export function CsrTeamComposition() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [staff, setStaff] = useState<Person[]>([]);
+  const [managers, setManagers] = useState<Person[]>([]);
   const [teams, setTeams] = useState<Team[]>([]);
   const [assign, setAssign] = useState<Record<string, string>>({}); // profileId -> teamKey | ROSTER
   const [leaders, setLeaders] = useState<Record<string, string>>({}); // teamKey -> profileId
@@ -53,8 +54,8 @@ export function CsrTeamComposition() {
     setError(null);
     try {
       const [profiles, composition] = await Promise.all([getCompanyUsers(), getCsrTeamComposition()]);
-      const roster: Person[] = profiles
-        .filter((p) => p.is_active !== false)
+      const active = profiles.filter((p) => p.is_active !== false);
+      const roster: Person[] = active
         .filter((p) => {
           const extras = p.extra_roles || [];
           return p.role === "CSR_AGENT" || p.role === "CSR_TEAM_LEADER" || extras.includes("CSR_AGENT") || extras.includes("CSR_TEAM_LEADER");
@@ -63,8 +64,18 @@ export function CsrTeamComposition() {
           id: p.id,
           name: p.display_name || p.username || p.email,
           isLeaderRole: p.role === "CSR_TEAM_LEADER" || (p.extra_roles || []).includes("CSR_TEAM_LEADER"),
+          isManagerRole: false,
+        }));
+      const managerRoster: Person[] = active
+        .filter((p) => p.role === "CSR_MANAGER" || (p.extra_roles || []).includes("CSR_MANAGER"))
+        .map((p) => ({
+          id: p.id,
+          name: p.display_name || p.username || p.email,
+          isLeaderRole: false,
+          isManagerRole: true,
         }));
       setStaff(roster);
+      setManagers(managerRoster);
       await applyComposition(roster, composition);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load team composition.");
@@ -290,7 +301,7 @@ export function CsrTeamComposition() {
         <div className="mb-4 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">{error}</div>
       )}
 
-      {staff.length === 0 ? (
+      {staff.length === 0 && managers.length === 0 ? (
         <p className="text-sm text-muted-foreground py-6 text-center">
           No CSR Associates or CSR Team Leaders found. Add them in User Management with role "CSR Associate" or "CSR Team Leader" first.
         </p>
@@ -303,6 +314,24 @@ export function CsrTeamComposition() {
           onDrop={(e) => { const n = e.dataTransfer.getData("text/plain") || dragging; if (n) moveTo(n, ROSTER); setDragging(null); setOver(null); }}
           className={`rounded-xl border p-3 transition-colors overflow-y-auto max-h-[calc(100vh-220px)] lg:sticky lg:top-4 ${over === ROSTER ? "border-primary bg-white/10" : "border-white/10 bg-white/5"}`}
         >
+          {managers.length > 0 && (
+            <>
+              <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground mb-2 flex items-center gap-1.5">
+                <ShieldCheck className="h-3.5 w-3.5" /> CSR Managers · {managers.length}
+              </div>
+              <div className="flex flex-col gap-1.5 mb-4">
+                {managers.map((m) => (
+                  <div key={m.id} className="flex items-center gap-1.5 rounded-lg border px-2 py-1.5" style={{ borderColor: "#8b5cf6", backgroundColor: "rgba(139,92,246,0.08)" }}>
+                    <ShieldCheck className="h-3.5 w-3.5 text-violet-400 shrink-0" />
+                    <div className="min-w-0 flex-1">
+                      <div className="text-xs font-medium truncate">{m.name}</div>
+                      <div className="text-[10px] text-muted-foreground truncate">CSR Manager</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
           <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground mb-2 flex items-center gap-1.5">
             <UserCog className="h-3.5 w-3.5" /> Team Leaders · {rosterLeaders.length}
           </div>
