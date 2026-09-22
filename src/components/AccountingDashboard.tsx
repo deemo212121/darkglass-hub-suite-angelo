@@ -2143,18 +2143,28 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
 
   // Trainee daily $100 guarantee (migration 0297, profiles.training_end_date):
   // every day from hireDate through trainingEndDate (inclusive) is a trainee
-  // day. If that day's actual company pay (straight + 1.5x OT, same simple
-  // per-day convention as the reference payroll workbook) falls short of
-  // $100, the shortfall is topped up — a floor, not a flat replacement, so a
-  // trainee who has a big day and already clears $100 keeps the full amount
-  // rather than being clawed back to $100 (see Bryson Baize conversation).
+  // day. If that day's actual pay falls short of $100, the shortfall is
+  // topped up — a floor, not a flat replacement, so a trainee who has a big
+  // day and already clears $100 keeps the full amount rather than being
+  // clawed back to $100.
+  //
+  // "Actual pay" values overtime hours at rate + weightedRate*0.5 (straight
+  // time for the hour plus the same weighted-rate premium techHourlyPay
+  // already pays it), NOT the naive rate*1.5 this used before — that older
+  // convention double-counted a trainee's overtime: once at 1.5x here, and
+  // again via techHourlyPayOtPremium's weighted-rate premium, which is
+  // computed period-wide and always includes every overtime hour regardless
+  // of trainee status. See Bryson Baize (9/4: 2.78 OT hours) — his trainee
+  // shortfall came out $1.70 too high under the old rate*1.5 baseline
+  // because it assumed his overtime hadn't been paid for anywhere else yet.
   const TRAINEE_DAILY_MATCH_TARGET = 100;
   function traineeDailyMatchFor(
     profileId: string,
     dailyHours: DailyHours[] | undefined,
     fallbackRate: number,
     hireDate: string | null,
-    trainingEndDate: string | null
+    trainingEndDate: string | null,
+    weightedRate: number
   ): number {
     if (!dailyHours || !trainingEndDate) return 0;
     let match = 0;
@@ -2164,7 +2174,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       const dayHours = day.regular + day.overtime;
       if (dayHours <= 0) continue;
       const rate = hourlyRateOnDate(profileId, day.date, fallbackRate);
-      const actualDailyPay = day.regular * rate + day.overtime * rate * 1.5;
+      const actualDailyPay = dayHours * rate + day.overtime * weightedRate * 0.5;
       if (actualDailyPay < TRAINEE_DAILY_MATCH_TARGET) {
         match += TRAINEE_DAILY_MATCH_TARGET - actualDailyPay;
       }
@@ -2543,7 +2553,8 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
           dailyHoursByEmployeeId.get(emp.id),
           hourlyRate,
           employeeInfoByProfileId.get(emp.id)?.hireDate ?? null,
-          emp.trainingEndDate
+          emp.trainingEndDate,
+          techWeightedRegularRate
         )
       : 0;
     // Guaranteed-minimum-salary match: some technicians have a fixed
