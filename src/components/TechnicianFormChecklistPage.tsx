@@ -265,7 +265,7 @@ function writeCachedDocs(tab: ChecklistTabKey, entries: Map<string, SignableDocu
 
 type SortMode = "missing-desc" | "missing-asc" | "name" | "branch";
 
-export function TechnicianFormChecklistPage() {
+export function TechnicianFormChecklistPage({ embedded }: { embedded?: boolean } = {}) {
   const navigate = useNavigate();
   const { uid, displayName } = useAuth();
   const [myProfileId, setMyProfileId] = useState<string | null>(null);
@@ -956,22 +956,26 @@ export function TechnicianFormChecklistPage() {
 
   return (
     <>
-    <main className="max-w-[1000px] mx-auto px-6 py-8">
+    <main className={embedded ? "" : "max-w-[1000px] mx-auto px-6 py-8"}>
       <div className="flex items-center gap-3 mb-4">
-        <button
-          type="button"
-          onClick={() => navigate({ to: "/m/$module", params: { module: "hr" } })}
-          className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-white/15 bg-white/5 text-slate-300 hover:text-white"
-        >
-          <ChevronLeft className="h-4 w-4" />
-        </button>
-        <div className="flex-1">
-          <h1 className="flex items-center gap-2 text-xl font-bold text-white">
-            <ClipboardCheck className="h-5 w-5" /> Staff Form Checklist
-          </h1>
-          <p className="text-sm text-slate-400">Live signed/pending status for every tracked form, per tier — nothing here is manually checked.</p>
-        </div>
-        <span className="shrink-0 rounded-full border border-white/15 bg-white/5 px-2.5 py-1 text-xs font-semibold text-slate-300">
+        {!embedded && (
+          <button
+            type="button"
+            onClick={() => navigate({ to: "/m/$module", params: { module: "hr" } })}
+            className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-white/15 bg-white/5 text-slate-300 hover:text-white"
+          >
+            <ChevronLeft className="h-4 w-4" />
+          </button>
+        )}
+        {!embedded && (
+          <div className="flex-1">
+            <h1 className="flex items-center gap-2 text-xl font-bold text-white">
+              <ClipboardCheck className="h-5 w-5" /> Staff Form Checklist
+            </h1>
+            <p className="text-sm text-slate-400">Live signed/pending status for every tracked form, per tier — nothing here is manually checked.</p>
+          </div>
+        )}
+        <span className={`shrink-0 rounded-full border border-white/15 bg-white/5 px-2.5 py-1 text-xs font-semibold text-slate-300 ${embedded ? "ml-auto" : ""}`}>
           {visibleRows.length === rows.length
             ? `${rows.length} ${activeConfig.noun}`
             : `${visibleRows.length} of ${rows.length} ${activeConfig.noun}`}

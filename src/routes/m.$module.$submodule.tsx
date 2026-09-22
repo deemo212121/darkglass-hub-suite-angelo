@@ -94,6 +94,7 @@ import { ReportHRDaily } from "@/components/ReportHRDaily";
 import { HrOnboardingChecklistPage } from "@/components/HrOnboardingChecklistPage";
 import { TechnicianFormChecklistPage } from "@/components/TechnicianFormChecklistPage";
 import { HiringAnalyticsPage } from "@/components/HiringAnalyticsPage";
+import { CandidateReviewsPage } from "@/components/CandidateReviewsPage";
 import { TrainingListPage } from "@/components/TrainingListPage";
 import { AbsentListPage } from "@/components/AbsentListPage";
 import { ExpensesModulePage } from "@/components/ExpensesModulePage";
@@ -716,6 +717,8 @@ function SubModule() {
         ? <HiringAnalyticsPage />
         : (sub as any).custom === "training-list"
         ? <TrainingListPage />
+        : (sub as any).custom === "candidate-reviews"
+        ? <CandidateReviewsPage />
         : (sub as any).custom === "absent-list"
         ? <AbsentListPage mod={mod} sub={sub} />
         : (sub as any).custom === "flash-tech"

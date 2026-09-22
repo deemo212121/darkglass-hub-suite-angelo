@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect, useRef, Fragment } from "react";
 import { createPortal } from "react-dom";
 import { Link, useSearch, useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
-import { ChevronLeft, ChevronDown, ChevronUp, ChevronRight, Plus, Trash2, AlertTriangle, CheckCircle, XCircle, Paperclip, Users, Clock, UserCheck, UserX, UserMinus, UserPlus, Search, Bell, Download, Forward, History, FileText, ClipboardList, Landmark, GripVertical, FileCheck, Link2, Copy, Calendar, Check, Pencil, Filter, Columns3, Mail, PenLine, X, ExternalLink, Loader2, Send, ShieldCheck, GraduationCap, LogOut, PhoneCall, Briefcase, Star } from "lucide-react";
+import { ChevronLeft, ChevronDown, ChevronUp, ChevronRight, Plus, Trash2, AlertTriangle, CheckCircle, XCircle, Paperclip, Users, Clock, UserCheck, UserX, UserMinus, UserPlus, Search, Bell, Download, Forward, History, FileText, ClipboardList, ClipboardCheck, Landmark, GripVertical, FileCheck, Link2, Copy, Calendar, Check, Pencil, Filter, Columns3, Mail, PenLine, X, ExternalLink, Loader2, Send, ShieldCheck, GraduationCap, LogOut, PhoneCall, Briefcase, Star, Route as RouteIcon } from "lucide-react";
 import { useSignaturePad } from "@/hooks/useSignaturePad";
 import { SignaturePadControls } from "@/components/SignaturePad";
 import { StickyHorizontalScrollbar } from "@/components/StickyHorizontalScrollbar";
@@ -178,6 +178,14 @@ import { logActivity, getActivityLog, activityActionLabel, type HrActivityLogEnt
 import { HrActivityLogPanel } from "@/components/HrActivityLogPage";
 import { InterviewCalendarTab, type InterviewCalendarCandidate } from "@/components/InterviewCalendarTab";
 import { AttachmentPreviewModal } from "@/components/AttachmentPreviewModal";
+// Consolidated under this dashboard's own "HR Tools" tab (see tabGroups
+// below) — each already supports an `embedded` prop (same convention
+// FlashTechCalendarPage's own pre-existing embed inside AccountingDashboard
+// established) that suppresses its standalone back-button/title, since
+// this page's own tab bar already provides that navigation context.
+import { FlashTechCalendarPage } from "@/components/FlashTechCalendarPage";
+import { TechnicianFormChecklistPage } from "@/components/TechnicianFormChecklistPage";
+import { TrainingListPage } from "@/components/TrainingListPage";
 import {
   DEFAULT_COE_BODY_TEMPLATE,
   COE_BODY_PLACEHOLDERS,
@@ -1095,7 +1103,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // Reviews, the Approved log, the department trend chart, and the full
   // Employee Directory all on top of each other, forcing a long scroll to
   // reach anything below Hiring.
-  const [activeTab, setActiveTab] = useState<"hiring" | "recruitmentSite" | "warnings" | "masterList" | "leaders" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "promotionForm" | "actionPlanForm" | "terminationForm" | "employeeRequestManager" | "w8ben" | "i9" | "wageAck" | "carIqAgreement" | "vehicleAgreement" | "vehicleUseAgreement" | "employeeConfidentiality" | "mealRestBreak" | "ptoAck" | "partsResponsibility" | "mileageFuel" | "locationConsent" | "damage" | "contractorData" | "contractorDataUs" | "directDeposit" | "substanceScreening" | "flashTechnicianTravel" | "contractorAddendum" | "combineForms" | "employerQueue" | "ndaForm" | "calendar" | "interviewCalendar" | "masterW2Agreement" | "newW4" | "masterW2OfficeAgreement" | "newW8ben" | "masterPhContractorAgreement" | "newI9" | "newDirectDeposit" | "newCombineForms" | "newOnboardingDocuments" | "newW9" | "newContractorAddendum" | "masterW2ExecutiveAgreement" | "ssnCard" | "driversLicense" | "validId">(paperworksOnly ? "combineForms" : "hiring");
+  const [activeTab, setActiveTab] = useState<"hiring" | "recruitmentSite" | "warnings" | "masterList" | "leaders" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "promotionForm" | "actionPlanForm" | "terminationForm" | "employeeRequestManager" | "w8ben" | "i9" | "wageAck" | "carIqAgreement" | "vehicleAgreement" | "vehicleUseAgreement" | "employeeConfidentiality" | "mealRestBreak" | "ptoAck" | "partsResponsibility" | "mileageFuel" | "locationConsent" | "damage" | "contractorData" | "contractorDataUs" | "directDeposit" | "substanceScreening" | "flashTechnicianTravel" | "contractorAddendum" | "combineForms" | "employerQueue" | "ndaForm" | "calendar" | "interviewCalendar" | "masterW2Agreement" | "newW4" | "masterW2OfficeAgreement" | "newW8ben" | "masterPhContractorAgreement" | "newI9" | "newDirectDeposit" | "newCombineForms" | "newOnboardingDocuments" | "newW9" | "newContractorAddendum" | "masterW2ExecutiveAgreement" | "ssnCard" | "driversLicense" | "validId" | "flashTech" | "staffFormChecklist" | "trainingList">(paperworksOnly ? "combineForms" : "hiring");
   const [openCategory, setOpenCategory] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   // Which floating-sidebar section headers (Automated Forms/Generate
@@ -1119,7 +1127,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const navigate = useNavigate();
   const hrSearchParams = (useSearch({ strict: false }) as { tab?: string; submissionId?: string; profileId?: string; docId?: string; viewCvCandidateId?: string }) ?? {};
   const initialHrSearchRef = useRef(hrSearchParams);
-  const VALID_HR_TABS = ["hiring", "warnings", "masterList", "leaders", "jotform", "jotformDocuments", "customForms", "onboarding", "hiringReports", "report", "coe", "warningForm", "promotionForm", "actionPlanForm", "terminationForm", "employeeRequestManager", "w8ben", "i9", "newI9", "wageAck", "carIqAgreement", "vehicleAgreement", "vehicleUseAgreement", "employeeConfidentiality", "mealRestBreak", "ptoAck", "partsResponsibility", "mileageFuel", "locationConsent", "damage", "contractorData", "contractorDataUs", "directDeposit", "substanceScreening", "flashTechnicianTravel", "combineForms", "newCombineForms", "employerQueue", "ssnCard", "driversLicense", "validId"] as const;
+  const VALID_HR_TABS = ["hiring", "warnings", "masterList", "leaders", "jotform", "jotformDocuments", "customForms", "onboarding", "hiringReports", "report", "coe", "warningForm", "promotionForm", "actionPlanForm", "terminationForm", "employeeRequestManager", "w8ben", "i9", "newI9", "wageAck", "carIqAgreement", "vehicleAgreement", "vehicleUseAgreement", "employeeConfidentiality", "mealRestBreak", "ptoAck", "partsResponsibility", "mileageFuel", "locationConsent", "damage", "contractorData", "contractorDataUs", "directDeposit", "substanceScreening", "flashTechnicianTravel", "combineForms", "newCombineForms", "employerQueue", "ssnCard", "driversLicense", "validId", "flashTech", "staffFormChecklist", "trainingList"] as const;
   useEffect(() => {
     const tab = initialHrSearchRef.current.tab;
     if (tab && (VALID_HR_TABS as readonly string[]).includes(tab)) setActiveTab(tab as typeof activeTab);
@@ -16996,6 +17004,40 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         ] as const,
         columns: undefined,
       },
+      // Consolidated here (was 3 separate top-level HR module tiles) so
+      // they're one click away from the rest of HR's day-to-day tools
+      // instead of their own standalone pages — same FlashTechCalendarPage/
+      // TechnicianFormChecklistPage/TrainingListPage components either way,
+      // just embedded (see the import comment above). Three separate
+      // single-tab groups on purpose, not one "HR Tools" group with 3 tabs
+      // — a group only collapses into a dropdown once it has more than one
+      // tab (same rule Generate Reports/Recruitment Site/Calendar already
+      // rely on to render as a plain button), so this keeps all three
+      // directly visible in the bar instead of hidden behind a click.
+      {
+        group: "Flash Tech",
+        icon: RouteIcon,
+        tabs: [
+          { key: "flashTech", label: "Flash Tech", count: 0, icon: RouteIcon },
+        ] as const,
+        columns: undefined,
+      },
+      {
+        group: "Staff Form Checklist",
+        icon: ClipboardCheck,
+        tabs: [
+          { key: "staffFormChecklist", label: "Staff Form Checklist", count: 0, icon: ClipboardCheck },
+        ] as const,
+        columns: undefined,
+      },
+      {
+        group: "Training List",
+        icon: GraduationCap,
+        tabs: [
+          { key: "trainingList", label: "Training List", count: 0, icon: GraduationCap },
+        ] as const,
+        columns: undefined,
+      },
     ] : []),
   ] as const;
 
@@ -18989,6 +19031,13 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           onGoToHiring={() => setActiveTab("hiring")}
         />
       )}
+
+      {/* ── HR Tools — Flash Tech / Staff Form Checklist / Training List,
+          consolidated here from their own standalone HR module tiles (see
+          modules.ts). Same components either way, just embedded. ── */}
+      {activeTab === "flashTech" && <FlashTechCalendarPage mod={mod} sub={sub} embedded />}
+      {activeTab === "staffFormChecklist" && <TechnicianFormChecklistPage embedded />}
+      {activeTab === "trainingList" && <TrainingListPage embedded />}
 
       {/* ── Master List — Employee Directory's same roster, split into
           department sub-tabs instead of one flat table. ── */}

@@ -38,17 +38,21 @@
  * the route already renders <AppHeader /> and gates access to ADMIN / HR
  * (DASHBOARD_ROLE_GATES).
  */
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { ChevronLeft, ChevronRight, GraduationCap, Loader2, RefreshCw, UserX, X } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, GraduationCap, Loader2, RefreshCw, UserX, X } from "lucide-react";
 import {
   getCandidates,
   updateCandidateTrainingDates,
+  updateCandidateTrainingTimes,
   updateCandidateStatus,
   updateCandidateNotes,
   type Candidate,
 } from "@/lib/supabase/hrCandidates";
 import { getBranchRoles, upsertBranchRole, type BranchRoles } from "@/lib/supabase/generalInfo";
+import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
+import { getCompanyTraineeEntries } from "@/lib/supabase/traineeTimecards";
+import { getCompanyTimecardEntries } from "@/lib/supabase/timecards";
 
 const DATE_ONLY = /^(\d{4})-(\d{2})-(\d{2})$/;
 
@@ -73,20 +77,44 @@ function monthKey(iso: string): string {
   return iso.slice(0, 7);
 }
 
-function monthLabel(key: string): string {
-  const [y, m] = key.split("-").map(Number);
-  return new Date(y, m - 1, 1).toLocaleDateString(undefined, { month: "long", year: "numeric" });
-}
-
 function monthNameOnly(key: string): string {
   const [y, m] = key.split("-").map(Number);
   return new Date(y, m - 1, 1).toLocaleDateString(undefined, { month: "long" });
+}
+
+function monthLabel(key: string): string {
+  const [y, m] = key.split("-").map(Number);
+  return new Date(y, m - 1, 1).toLocaleDateString(undefined, { month: "long", year: "numeric" });
 }
 
 function shiftMonthKey(key: string, delta: number): string {
   const [y, m] = key.split("-").map(Number);
   const d = new Date(y, m - 1 + delta, 1);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function daysInMonth(key: string): number {
+  const [y, m] = key.split("-").map(Number);
+  return new Date(y, m, 0).getDate();
+}
+
+/** Every "YYYY-MM-DD" from `from` to `to` inclusive, local-date arithmetic (see parseDateOnly's own note on why). */
+function eachDate(from: string, to: string): string[] {
+  const start = parseDateOnly(from);
+  const end = parseDateOnly(to);
+  if (!start || !end || start > end) return [];
+  const dates: string[] = [];
+  const cur = new Date(start);
+  while (cur <= end) {
+    dates.push(`${cur.getFullYear()}-${String(cur.getMonth() + 1).padStart(2, "0")}-${String(cur.getDate()).padStart(2, "0")}`);
+    cur.setDate(cur.getDate() + 1);
+  }
+  return dates;
+}
+
+/** hr_candidates and profiles share no FK — phone number (digits only) is the only thing linking a candidate to their real employee/timecard account. */
+function normalizePhone(phone: string | null | undefined): string {
+  return (phone || "").replace(/\D/g, "");
 }
 
 /** "Sept 24, 2026" / "A and B" / "A, B, and C" — matches how HR already
@@ -118,22 +146,31 @@ function groupByBranch(rows: Candidate[]): BranchGroup[] {
     .sort((a, b) => a.branch.localeCompare(b.branch));
 }
 
-export function TrainingListPage() {
+export function TrainingListPage({ embedded }: { embedded?: boolean } = {}) {
   const navigate = useNavigate();
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [branchRoles, setBranchRoles] = useState<BranchRoles[]>([]);
+  const [profiles, setProfiles] = useState<ProfileRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [targetMonth, setTargetMonth] = useState(() => new Date().toISOString().slice(0, 7));
-  const [selectedGroup, setSelectedGroup] = useState<{ title: string; rows: Candidate[] } | null>(null);
+  const [selMonth, setSelMonth] = useState(() => new Date().toISOString().slice(0, 7));
+  const [dayFrom, setDayFrom] = useState(1);
+  const [dayTo, setDayTo] = useState(() => daysInMonth(new Date().toISOString().slice(0, 7)));
+  const maxDay = daysInMonth(selMonth);
+  const effectiveDayFrom = Math.min(dayFrom, maxDay);
+  const effectiveDayTo = Math.min(dayTo, maxDay);
+  const dateFrom = `${selMonth}-${String(effectiveDayFrom).padStart(2, "0")}`;
+  const dateTo = `${selMonth}-${String(effectiveDayTo).padStart(2, "0")}`;
+  const dayOptions = useMemo(() => Array.from({ length: maxDay }, (_, i) => i + 1), [maxDay]);
 
   const load = async () => {
     setLoading(true);
     setError(null);
     try {
-      const [candidateRows, branchRoleRows] = await Promise.all([getCandidates(), getBranchRoles()]);
+      const [candidateRows, branchRoleRows, profileRows] = await Promise.all([getCandidates(), getBranchRoles(), getCompanyUsers()]);
       setCandidates(candidateRows);
       setBranchRoles(branchRoleRows);
+      setProfiles(profileRows);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load the training list.");
     } finally {
@@ -147,12 +184,20 @@ export function TrainingListPage() {
 
   const branchRoleByName = useMemo(() => new Map(branchRoles.map((b) => [b.branch, b])), [branchRoles]);
 
+  // Overlap, not an exact match on trainingStartDate — a trainee who
+  // started Sept 5 and field-starts Sept 20 is still "current" on every
+  // day in between, so any selected window touching [start, fieldStart]
+  // (fieldStart open-ended if not set yet) should surface them.
   const cohort = useMemo(
     () =>
       candidates.filter(
-        (c) => c.trainingStartDate && monthKey(c.trainingStartDate) === targetMonth && !NOT_CONTINUING_EXCLUDED_STATUSES.has(c.status)
+        (c) =>
+          c.trainingStartDate &&
+          c.trainingStartDate <= dateTo &&
+          (!c.trainingEndDate || c.trainingEndDate >= dateFrom) &&
+          !NOT_CONTINUING_EXCLUDED_STATUSES.has(c.status)
       ),
-    [candidates, targetMonth]
+    [candidates, dateFrom, dateTo]
   );
   const currentTraineeGroups = useMemo(() => groupByBranch(cohort), [cohort]);
 
@@ -170,41 +215,65 @@ export function TrainingListPage() {
     return { label: `${monthNameOnly(targetKey)} Field Starts`, groups: groupByBranch(bucketRows) };
   }, [candidates]);
 
-  const monthName = monthLabel(targetMonth);
+  const rangeLabel = `${fmtDateShort(dateFrom)} – ${fmtDateShort(dateTo)}`;
 
   return (
     <>
-      <main className="max-w-[1000px] mx-auto px-6 py-8">
+      <main className={embedded ? "" : "max-w-[1000px] mx-auto px-6 py-8"}>
         <div className="flex items-center gap-3 mb-6 flex-wrap">
-          <button
-            type="button"
-            onClick={() => navigate({ to: "/m/$module", params: { module: "hr" } })}
-            className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-white/15 bg-white/5 text-slate-300 hover:text-white"
-          >
-            <ChevronLeft className="h-4 w-4" />
-          </button>
-          <div className="flex-1 min-w-[200px]">
-            <h1 className="flex items-center gap-2 text-xl font-bold text-white">
-              <GraduationCap className="h-5 w-5" /> Training List
-            </h1>
-            <p className="text-sm text-slate-400">Trainee headcount by branch. Click a count to see who's behind it.</p>
-          </div>
-          <div className="flex items-center gap-1.5 shrink-0">
+          {!embedded && (
             <button
               type="button"
-              onClick={() => setTargetMonth((k) => shiftMonthKey(k, -1))}
+              onClick={() => navigate({ to: "/m/$module", params: { module: "hr" } })}
               className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-white/15 bg-white/5 text-slate-300 hover:text-white"
             >
               <ChevronLeft className="h-4 w-4" />
             </button>
-            <span className="min-w-[9rem] text-center text-sm font-semibold text-white">{monthName}</span>
+          )}
+          {!embedded && (
+            <div className="flex-1 min-w-[200px]">
+              <h1 className="flex items-center gap-2 text-xl font-bold text-white">
+                <GraduationCap className="h-5 w-5" /> Training List
+              </h1>
+              <p className="text-sm text-slate-400">Trainee headcount by branch. Click a count to see who's behind it.</p>
+            </div>
+          )}
+          <div className={`flex items-center gap-1.5 shrink-0 ${embedded ? "ml-auto" : ""}`}>
             <button
               type="button"
-              onClick={() => setTargetMonth((k) => shiftMonthKey(k, 1))}
+              onClick={() => setSelMonth((k) => shiftMonthKey(k, -1))}
+              className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-white/15 bg-white/5 text-slate-300 hover:text-white"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+            <span className="min-w-[8.5rem] text-center text-sm font-semibold text-white">{monthLabel(selMonth)}</span>
+            <button
+              type="button"
+              onClick={() => setSelMonth((k) => shiftMonthKey(k, 1))}
               className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-white/15 bg-white/5 text-slate-300 hover:text-white"
             >
               <ChevronRight className="h-4 w-4" />
             </button>
+            <span className="text-xs text-slate-500 pl-1">days</span>
+            <select
+              value={effectiveDayFrom}
+              onChange={(e) => setDayFrom(Number(e.target.value))}
+              className="bg-white/5 border border-white/15 rounded-md px-2 py-1.5 text-xs text-white [&>option]:bg-slate-900 [&>option]:text-white"
+            >
+              {dayOptions.map((d) => (
+                <option key={d} value={d}>{d}</option>
+              ))}
+            </select>
+            <span className="text-xs text-slate-500">to</span>
+            <select
+              value={effectiveDayTo}
+              onChange={(e) => setDayTo(Number(e.target.value))}
+              className="bg-white/5 border border-white/15 rounded-md px-2 py-1.5 text-xs text-white [&>option]:bg-slate-900 [&>option]:text-white"
+            >
+              {dayOptions.map((d) => (
+                <option key={d} value={d}>{d}</option>
+              ))}
+            </select>
           </div>
           <button
             type="button"
@@ -227,8 +296,12 @@ export function TrainingListPage() {
               title="Current Trainee"
               groups={currentTraineeGroups}
               dateOf={(c) => c.trainingStartDate}
-              emptyMessage={`No trainees for ${monthName}.`}
-              onSelectBranch={(branch, rows) => setSelectedGroup({ title: `Current Trainee — ${branch}`, rows })}
+              emptyMessage={`No trainees for ${rangeLabel}.`}
+              branchRoleByName={branchRoleByName}
+              onChanged={() => void load()}
+              profiles={profiles}
+              dateFrom={dateFrom}
+              dateTo={dateTo}
             />
 
             {fieldStartSection && (
@@ -237,22 +310,16 @@ export function TrainingListPage() {
                 groups={fieldStartSection.groups}
                 dateOf={(c) => c.trainingEndDate}
                 emptyMessage=""
-                onSelectBranch={(branch, rows) => setSelectedGroup({ title: `${fieldStartSection.label} — ${branch}`, rows })}
+                branchRoleByName={branchRoleByName}
+                onChanged={() => void load()}
+                profiles={profiles}
+                dateFrom={dateFrom}
+                dateTo={dateTo}
               />
             )}
           </div>
         )}
       </main>
-
-      {selectedGroup && (
-        <TraineeDetailModal
-          title={selectedGroup.title}
-          rows={selectedGroup.rows}
-          branchRoleByName={branchRoleByName}
-          onClose={() => setSelectedGroup(null)}
-          onChanged={() => void load()}
-        />
-      )}
     </>
   );
 }
@@ -262,66 +329,24 @@ function BranchTable({
   groups,
   dateOf,
   emptyMessage,
-  onSelectBranch,
+  branchRoleByName,
+  onChanged,
+  profiles,
+  dateFrom,
+  dateTo,
 }: {
   title: string;
   groups: BranchGroup[];
   dateOf: (row: Candidate) => string | null;
   emptyMessage: string;
-  onSelectBranch: (branch: string, rows: Candidate[]) => void;
-}) {
-  return (
-    <div className="panel overflow-hidden">
-      <div className="px-4 py-3 border-b border-white/10 bg-white/5">
-        <h2 className="text-sm font-bold text-white">{title}</h2>
-      </div>
-      {groups.length === 0 ? (
-        <p className="px-4 py-6 text-sm text-slate-400">{emptyMessage}</p>
-      ) : (
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-white/10 text-left text-xs font-semibold text-slate-400 uppercase">
-              <th className="px-4 py-2">Area</th>
-              <th className="px-4 py-2">Count</th>
-              <th className="px-4 py-2">Date</th>
-            </tr>
-          </thead>
-          <tbody>
-            {groups.map((g) => (
-              <tr key={g.branch} className="border-b border-white/5 last:border-b-0">
-                <td className="px-4 py-2 font-semibold text-white">{g.branch}</td>
-                <td className="px-4 py-2">
-                  <button
-                    type="button"
-                    onClick={() => onSelectBranch(g.branch, g.rows)}
-                    className="text-blue-300 hover:text-blue-200 underline font-semibold"
-                  >
-                    {g.rows.length}
-                  </button>
-                </td>
-                <td className="px-4 py-2 text-slate-300">{joinDates(g.rows.map(dateOf).filter((d): d is string => !!d))}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-    </div>
-  );
-}
-
-function TraineeDetailModal({
-  title,
-  rows,
-  branchRoleByName,
-  onClose,
-  onChanged,
-}: {
-  title: string;
-  rows: Candidate[];
   branchRoleByName: Map<string, BranchRoles>;
-  onClose: () => void;
   onChanged: () => void;
+  profiles: ProfileRow[];
+  dateFrom: string;
+  dateTo: string;
 }) {
+  const [expandedBranch, setExpandedBranch] = useState<string | null>(null);
+  const [expandedTraineeId, setExpandedTraineeId] = useState<string | null>(null);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [quitTarget, setQuitTarget] = useState<Candidate | null>(null);
@@ -346,6 +371,14 @@ function TraineeDetailModal({
   const handleEditFieldDate = (c: Candidate, date: string) => {
     if (date === (c.trainingEndDate || "")) return;
     void withEdit(c.id, () => updateCandidateTrainingDates(c.id, { trainingEndDate: date || null }));
+  };
+  const handleEditTimeIn = (c: Candidate, time: string) => {
+    if (time === (c.trainingTimeIn || "")) return;
+    void withEdit(c.id, () => updateCandidateTrainingTimes(c.id, { trainingTimeIn: time || null }));
+  };
+  const handleEditTimeOut = (c: Candidate, time: string) => {
+    if (time === (c.trainingTimeOut || "")) return;
+    void withEdit(c.id, () => updateCandidateTrainingTimes(c.id, { trainingTimeOut: time || null }));
   };
   // Senior Manager / Branch Manager are branch-wide (General Information),
   // not per-candidate — editing here writes the whole branch's leadership
@@ -374,103 +407,173 @@ function TraineeDetailModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={onClose}>
-      <div
-        className="bg-slate-900 border border-white/10 rounded-lg shadow-2xl w-full max-w-4xl max-h-[85vh] flex flex-col"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="px-5 py-3 border-b border-white/10 flex items-center justify-between gap-3">
-          <h3 className="text-sm font-bold text-white">{title}</h3>
-          <button type="button" onClick={onClose} className="text-slate-400 hover:text-white">
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-
-        {saveError && <p className="mx-5 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-3 py-2">{saveError}</p>}
-
-        <div className="overflow-y-auto flex-1 px-5 py-4">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-white/10 text-left text-xs font-semibold text-slate-400 uppercase whitespace-nowrap">
-                <th className="py-2 pr-3">Name</th>
-                <th className="py-2 pr-3">Senior Manager</th>
-                <th className="py-2 pr-3">Branch Manager</th>
-                <th className="py-2 pr-3">Start Date</th>
-                <th className="py-2 pr-3">Field Start</th>
-                <th className="py-2 pr-3">Phone / Email</th>
-                <th className="py-2 pr-3">Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((c) => {
-                const leadership = branchRoleByName.get(c.branch || "");
-                const busy = savingId === c.id;
-                return (
-                  <tr key={c.id} className="border-b border-white/5 last:border-b-0 align-top">
-                    <td className="py-2 pr-3 font-semibold text-white whitespace-nowrap">{c.name}</td>
-                    <td className="py-2 pr-3">
-                      <input
-                        type="text"
-                        defaultValue={leadership?.seniorBranchManager || ""}
-                        disabled={busy || !c.branch}
-                        onBlur={(e) => handleEditLeadership(c, "seniorBranchManager", e.target.value)}
-                        title="Branch-wide — also updates General Information's leadership directory for this branch"
-                        className="bg-white/5 border border-white/15 rounded-md px-2 py-1 text-xs text-white w-28"
-                      />
-                    </td>
-                    <td className="py-2 pr-3">
-                      <input
-                        type="text"
-                        defaultValue={leadership?.branchManager || ""}
-                        disabled={busy || !c.branch}
-                        onBlur={(e) => handleEditLeadership(c, "branchManager", e.target.value)}
-                        title="Branch-wide — also updates General Information's leadership directory for this branch"
-                        className="bg-white/5 border border-white/15 rounded-md px-2 py-1 text-xs text-white w-28"
-                      />
-                    </td>
-                    <td className="py-2 pr-3">
-                      <input
-                        type="date"
-                        defaultValue={c.trainingStartDate || ""}
-                        disabled={busy}
-                        onChange={(e) => handleEditStartDate(c, e.target.value)}
-                        className="bg-white/5 border border-white/15 rounded-md px-2 py-1 text-xs text-white"
-                      />
-                    </td>
-                    <td className="py-2 pr-3">
-                      <input
-                        type="date"
-                        defaultValue={c.trainingEndDate || ""}
-                        disabled={busy}
-                        onChange={(e) => handleEditFieldDate(c, e.target.value)}
-                        className="bg-white/5 border border-white/15 rounded-md px-2 py-1 text-xs text-white"
-                      />
-                    </td>
-                    <td className="py-2 pr-3 text-slate-300 whitespace-nowrap">
-                      <div>{c.phone || "—"}</div>
-                      <div className="text-slate-500">{c.email || ""}</div>
-                    </td>
-                    <td className="py-2 pr-3">
-                      <div className="flex items-center gap-1.5">
-                        <button
-                          type="button"
-                          disabled={busy}
-                          onClick={() => setQuitTarget(c)}
-                          title="Mark this trainee as quit/stopped"
-                          className="inline-flex items-center gap-1 text-xs text-red-300 hover:text-red-200 disabled:opacity-40"
-                        >
-                          <UserX className="h-3.5 w-3.5" /> Quit/Stopped
-                        </button>
-                        {busy && <Loader2 className="h-3 w-3 animate-spin text-slate-400" />}
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+    <div className="panel overflow-hidden">
+      <div className="px-4 py-3 border-b border-white/10 bg-white/5">
+        <h2 className="text-sm font-bold text-white">{title}</h2>
       </div>
+
+      {saveError && <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-3 py-2">{saveError}</p>}
+
+      {groups.length === 0 ? (
+        <p className="px-4 py-6 text-sm text-slate-400">{emptyMessage}</p>
+      ) : (
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-white/10 text-left text-xs font-semibold text-slate-400 uppercase">
+              <th className="px-4 py-2 w-8"></th>
+              <th className="px-4 py-2">Area</th>
+              <th className="px-4 py-2">Count</th>
+              <th className="px-4 py-2">Date</th>
+            </tr>
+          </thead>
+          <tbody>
+            {groups.map((g) => {
+              const isOpen = expandedBranch === g.branch;
+              return (
+                <Fragment key={g.branch}>
+                  <tr
+                    onClick={() => setExpandedBranch(isOpen ? null : g.branch)}
+                    className="border-b border-white/5 last:border-b-0 cursor-pointer hover:bg-white/5"
+                  >
+                    <td className="px-4 py-2 text-slate-400">
+                      <ChevronDown className={`h-3.5 w-3.5 transition-transform ${isOpen ? "rotate-180" : ""}`} />
+                    </td>
+                    <td className="px-4 py-2 font-semibold text-white">{g.branch}</td>
+                    <td className="px-4 py-2 text-blue-300 font-semibold">{g.rows.length}</td>
+                    <td className="px-4 py-2 text-slate-300">{joinDates(g.rows.map(dateOf).filter((d): d is string => !!d))}</td>
+                  </tr>
+                  {isOpen && (
+                    <tr className="border-b border-white/5 last:border-b-0 bg-black/20">
+                      <td colSpan={4} className="px-4 py-3">
+                        <table className="w-full text-xs">
+                          <thead>
+                            <tr className="border-b border-white/10 text-left text-[10px] font-semibold text-slate-400 uppercase whitespace-nowrap">
+                              <th className="py-1.5 pr-3">Name</th>
+                              <th className="py-1.5 pr-3">Senior Manager</th>
+                              <th className="py-1.5 pr-3">Branch Manager</th>
+                              <th className="py-1.5 pr-3">Start Date</th>
+                              <th className="py-1.5 pr-3">Field Start</th>
+                              <th className="py-1.5 pr-3">Time In</th>
+                              <th className="py-1.5 pr-3">Time Out</th>
+                              <th className="py-1.5 pr-3">Phone / Email</th>
+                              <th className="py-1.5 pr-3">Action</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {g.rows.map((c) => {
+                              const leadership = branchRoleByName.get(c.branch || "");
+                              const busy = savingId === c.id;
+                              const traineeOpen = expandedTraineeId === c.id;
+                              return (
+                                <Fragment key={c.id}>
+                                <tr className="border-b border-white/5 last:border-b-0 align-top" onClick={(e) => e.stopPropagation()}>
+                                  <td className="py-1.5 pr-3 font-semibold text-white whitespace-nowrap">
+                                    <button
+                                      type="button"
+                                      onClick={() => setExpandedTraineeId(traineeOpen ? null : c.id)}
+                                      title="See their actual day-by-day Time In/Out"
+                                      className="inline-flex items-center gap-1 hover:text-blue-300"
+                                    >
+                                      <ChevronDown className={`h-3 w-3 text-slate-400 transition-transform ${traineeOpen ? "rotate-180" : ""}`} />
+                                      {c.name}
+                                    </button>
+                                  </td>
+                                  <td className="py-1.5 pr-3">
+                                    <input
+                                      type="text"
+                                      defaultValue={leadership?.seniorBranchManager || ""}
+                                      disabled={busy || !c.branch}
+                                      onBlur={(e) => handleEditLeadership(c, "seniorBranchManager", e.target.value)}
+                                      title="Branch-wide — also updates General Information's leadership directory for this branch"
+                                      className="bg-white/5 border border-white/15 rounded-md px-2 py-1 text-xs text-white w-28"
+                                    />
+                                  </td>
+                                  <td className="py-1.5 pr-3">
+                                    <input
+                                      type="text"
+                                      defaultValue={leadership?.branchManager || ""}
+                                      disabled={busy || !c.branch}
+                                      onBlur={(e) => handleEditLeadership(c, "branchManager", e.target.value)}
+                                      title="Branch-wide — also updates General Information's leadership directory for this branch"
+                                      className="bg-white/5 border border-white/15 rounded-md px-2 py-1 text-xs text-white w-28"
+                                    />
+                                  </td>
+                                  <td className="py-1.5 pr-3">
+                                    <input
+                                      type="date"
+                                      defaultValue={c.trainingStartDate || ""}
+                                      disabled={busy}
+                                      onChange={(e) => handleEditStartDate(c, e.target.value)}
+                                      className="bg-white/5 border border-white/15 rounded-md px-2 py-1 text-xs text-white"
+                                    />
+                                  </td>
+                                  <td className="py-1.5 pr-3">
+                                    <input
+                                      type="date"
+                                      defaultValue={c.trainingEndDate || ""}
+                                      disabled={busy}
+                                      onChange={(e) => handleEditFieldDate(c, e.target.value)}
+                                      className="bg-white/5 border border-white/15 rounded-md px-2 py-1 text-xs text-white"
+                                    />
+                                  </td>
+                                  <td className="py-1.5 pr-3">
+                                    <input
+                                      type="time"
+                                      defaultValue={c.trainingTimeIn || ""}
+                                      disabled={busy}
+                                      onChange={(e) => handleEditTimeIn(c, e.target.value)}
+                                      className="bg-white/5 border border-white/15 rounded-md px-2 py-1 text-xs text-white"
+                                    />
+                                  </td>
+                                  <td className="py-1.5 pr-3">
+                                    <input
+                                      type="time"
+                                      defaultValue={c.trainingTimeOut || ""}
+                                      disabled={busy}
+                                      onChange={(e) => handleEditTimeOut(c, e.target.value)}
+                                      className="bg-white/5 border border-white/15 rounded-md px-2 py-1 text-xs text-white"
+                                    />
+                                  </td>
+                                  <td className="py-1.5 pr-3 text-slate-300 whitespace-nowrap">
+                                    <div>{c.phone || "—"}</div>
+                                    <div className="text-slate-500">{c.email || ""}</div>
+                                  </td>
+                                  <td className="py-1.5 pr-3">
+                                    <div className="flex items-center gap-1.5">
+                                      <button
+                                        type="button"
+                                        disabled={busy}
+                                        onClick={() => setQuitTarget(c)}
+                                        title="Mark this trainee as quit/stopped"
+                                        className="inline-flex items-center gap-1 text-xs text-red-300 hover:text-red-200 disabled:opacity-40"
+                                      >
+                                        <UserX className="h-3.5 w-3.5" /> Quit/Stopped
+                                      </button>
+                                      {busy && <Loader2 className="h-3 w-3 animate-spin text-slate-400" />}
+                                    </div>
+                                  </td>
+                                </tr>
+                                {traineeOpen && (
+                                  <tr className="border-b border-white/5 last:border-b-0 bg-black/30" onClick={(e) => e.stopPropagation()}>
+                                    <td colSpan={9} className="px-3 py-2">
+                                      <TraineeDailyPunches candidate={c} profiles={profiles} dateFrom={dateFrom} dateTo={dateTo} />
+                                    </td>
+                                  </tr>
+                                )}
+                                </Fragment>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
 
       {quitTarget && (
         <QuitDialog
@@ -479,10 +582,112 @@ function TraineeDetailModal({
           onSaved={() => {
             setQuitTarget(null);
             onChanged();
-            onClose();
           }}
         />
       )}
+    </div>
+  );
+}
+
+/**
+ * Real day-by-day Time In/Out, unlike the single manually-typed
+ * trainingTimeIn/trainingTimeOut fields above — pulled from
+ * trainee_timecard_entries (the same table the trainee punches through on
+ * the normal Time Clock, and Attendance Monitoring's "Trainee Attendance"
+ * tab reviews). hr_candidates and profiles share no FK, so the only way to
+ * find this candidate's employee account is a normalized phone-number
+ * match; if that fails (no account yet, or a different number on file),
+ * this just says so instead of guessing.
+ */
+function TraineeDailyPunches({
+  candidate,
+  profiles,
+  dateFrom,
+  dateTo,
+}: {
+  candidate: Candidate;
+  profiles: ProfileRow[];
+  dateFrom: string;
+  dateTo: string;
+}) {
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [linked, setLinked] = useState(true);
+  const [days, setDays] = useState<{ date: string; checkIn: string; checkOut: string }[]>([]);
+
+  // Range shown never depends on whether a matching account was found — it's
+  // always every day in [dateFrom, dateTo] clamped to this trainee's actual
+  // training window, so the list itself (Sept 1–30, or whatever's selected
+  // up top) is stable; only the Time In/Out values are blank when unlinked.
+  const rangeStart = candidate.trainingStartDate && candidate.trainingStartDate > dateFrom ? candidate.trainingStartDate : dateFrom;
+  const rangeEndRaw = candidate.trainingEndDate && candidate.trainingEndDate < dateTo ? candidate.trainingEndDate : dateTo;
+  const rangeEnd = rangeEndRaw < rangeStart ? rangeStart : rangeEndRaw;
+
+  useEffect(() => {
+    let cancelled = false;
+    const run = async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const normalizedPhone = normalizePhone(candidate.phone);
+        const profile = normalizedPhone ? profiles.find((p) => normalizePhone(p.phone_number) === normalizedPhone) : undefined;
+        if (!cancelled) setLinked(!!profile);
+        // Two sources, not one: a trainee still mid-training punches into
+        // trainee_timecard_entries, but once their day's approved (or once
+        // they've since graduated to a real employment_type, like Alexander
+        // here) the real punches live on timecard_entries instead — see
+        // approveTraineeDay, which mirrors approved days onto the real
+        // table. Real wins when both have something for the same day.
+        const [realEntries, traineeEntries] = profile
+          ? await Promise.all([getCompanyTimecardEntries(rangeStart, rangeEnd), getCompanyTraineeEntries(rangeStart, rangeEnd)])
+          : [[], []];
+        const realByDate = new Map(profile ? realEntries.filter((e) => e.profileId === profile.id).map((e) => [e.workDate, e] as const) : []);
+        const traineeByDate = new Map(profile ? traineeEntries.filter((e) => e.profileId === profile.id).map((e) => [e.workDate, e] as const) : []);
+        const rows = eachDate(rangeStart, rangeEnd).map((date) => {
+          const real = realByDate.get(date);
+          const trainee = traineeByDate.get(date);
+          return { date, checkIn: real?.checkIn || trainee?.checkIn || "", checkOut: real?.checkOut || trainee?.checkOut || "" };
+        });
+        if (!cancelled) setDays(rows);
+      } catch (err) {
+        if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load punches.");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [candidate.id, candidate.phone, rangeStart, rangeEnd, profiles]);
+
+  if (loading) return <p className="px-1 py-1.5 text-[11px] text-slate-400">Loading punches…</p>;
+  if (error) return <p className="px-1 py-1.5 text-[11px] text-red-300">{error}</p>;
+  if (days.length === 0) return <p className="px-1 py-1.5 text-[11px] text-slate-400">No days in range.</p>;
+
+  return (
+    <div>
+      {!linked && (
+        <p className="px-1 pb-1.5 text-[11px] text-slate-500">No linked employee account found for this phone number yet — Check In/Out will stay blank until they punch in for real.</p>
+      )}
+      <table className="w-full text-[11px]">
+        <thead>
+          <tr className="border-b border-white/10 text-left text-[10px] font-semibold text-slate-400 uppercase">
+            <th className="py-1 pr-3">Date</th>
+            <th className="py-1 pr-3">Check In</th>
+            <th className="py-1 pr-3">Check Out</th>
+          </tr>
+        </thead>
+        <tbody>
+          {days.map((d) => (
+            <tr key={d.date} className="border-b border-white/5 last:border-b-0">
+              <td className="py-1 pr-3 text-slate-300">{fmtDateShort(d.date)}</td>
+              <td className="py-1 pr-3 text-white">{d.checkIn || "—"}</td>
+              <td className="py-1 pr-3 text-white">{d.checkOut || "—"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }

@@ -431,11 +431,16 @@ const hrMod: ModuleDef = {
     // live source of truth for whether every technician/office/PH/
     // management-tier hire has actually completed their paperwork, not
     // just one more tracking tool among several.
+    // Consolidated into the "HR Tools" tab inside HR To Do List
+    // (ReportHRDaily.tsx's own tabGroups) — hiddenFromGrid rather than
+    // removed outright so the route/component still work for anyone with
+    // an old link, they just don't get their own top-level tile anymore.
     {
       slug: "technician-form-checklist",
       title: "Staff Form Checklist",
       description: "Live signed/pending status of every Technician/New Technician/Office Staff/PH Staff/Management-tier form, per person.",
       custom: "technician-form-checklist" as any,
+      hiddenFromGrid: true,
       fields: [],
       count: 0,
       seed: () => ({}),
@@ -458,16 +463,16 @@ const hrMod: ModuleDef = {
       count: 0,
       seed: () => ({}),
     },
-    // Standalone full-page version of the same FlashTechCalendarPage
-    // Accounting Dashboard already embeds as its own "Flash Tech" tab
-    // (unchanged) — same flash_tech_trips data either way, just also
-    // reachable as its own HR Dashboard tile so HR can fill in the Tracker
-    // view without needing Accounting access.
+    // Same FlashTechCalendarPage Accounting Dashboard already embeds as its
+    // own "Flash Tech" tab, ALSO now embedded in HR To Do List's own "HR
+    // Tools" tab — hiddenFromGrid rather than removed so the route/
+    // component still work for anyone with an old link.
     {
       slug: "flash-tech",
       title: "Flash Tech",
       description: "Technician travel trips — schedule (Calendar) or fill in hotel/rental/receipt tracking detail (Tracker).",
       custom: "flash-tech" as any,
+      hiddenFromGrid: true,
       fields: [],
       count: 0,
       seed: () => ({}),
@@ -481,11 +486,29 @@ const hrMod: ModuleDef = {
       count: 0,
       seed: () => ({}),
     },
+    // Consolidated into the "HR Tools" tab inside HR To Do List — see the
+    // Staff Form Checklist entry above for why this is hiddenFromGrid
+    // rather than removed.
     {
       slug: "training-list",
       title: "Training List",
       description: "Technicians currently in their trainee window, by branch — current roster and upcoming field starts.",
       custom: "training-list" as any,
+      hiddenFromGrid: true,
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
+    // Where a Forward Candidate recipient (often a Branch Manager with no
+    // other reason to be in HR) comes back to see just what was sent to
+    // them and leave their Interviewer Note — self-scoping by recipient_id
+    // on hr_candidate_cv_forwards, so left open by default rather than
+    // role-gated (Accessibility Management can still narrow it).
+    {
+      slug: "candidate-reviews",
+      title: "Candidate Reviews",
+      description: "Candidates forwarded to you for review — view their CV and leave your interviewer notes.",
+      custom: "candidate-reviews" as any,
       fields: [],
       count: 0,
       seed: () => ({}),
