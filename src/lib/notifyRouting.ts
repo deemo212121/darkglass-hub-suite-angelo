@@ -6,7 +6,15 @@
 
 import { getCsrTeamComposition, type CsrTeamComposition } from "@/lib/supabase/csrTeams";
 import type { ProfileRow } from "@/lib/supabase/users";
-import { isAttendanceManagerTierRole, isAttendanceFullAccessRole, isPartsStaffRole, isCsrManagerRole, TECHNICIAN_PAY_ROLES, normalizeRole } from "@/lib/roleLabels";
+import {
+  isAttendanceManagerTierRole,
+  isAttendanceFullAccessRole,
+  isPartsStaffRole,
+  isCsrManagerRole,
+  isEmployeeMonitoringTeamLeadOnlyRole,
+  TECHNICIAN_PAY_ROLES,
+  normalizeRole,
+} from "@/lib/roleLabels";
 
 const CSR_ROLES = new Set(["CSR", "CSR_AGENT", "CSR_TEAM_LEADER", "CSR_MANAGER"]);
 
@@ -115,5 +123,73 @@ export function visibleAttendanceProfileIds(
       if (p.assigned_branch === viewer.assigned_branch && TECHNICIAN_PAY_ROLES.has(normalizeRole(p.role))) ids.add(p.id);
     });
   }
+  return ids;
+}
+
+const MAX_MANAGEMENT_CHAIN_DEPTH = 8;
+
+/**
+ * Employee Monitoring's (AbsentListPage.tsx) row-visibility scope. Same
+ * `null` = unrestricted / individual-contributor = own row only shape as
+ * visibleAttendanceProfileIds, but the manager-tier scoping itself is
+ * different by design, per the request that added this: a Team Leader
+ * (isEmployeeMonitoringTeamLeadOnlyRole) sees only their own direct
+ * reports, one level — everyone else manager-tier ("Branch Manager and up")
+ * sees their WHOLE downward management chain, not just direct reports,
+ * walked level-by-level through manager_name until nobody new is found
+ * (capped at MAX_MANAGEMENT_CHAIN_DEPTH so a bad/cyclic manager_name entry
+ * can't spin forever). CSR_MANAGER additionally gets every CSR team's
+ * roster the same way visibleAttendanceProfileIds does, since CSR's real
+ * hierarchy lives in csr_team_members, not manager_name, and CSR_MANAGER
+ * is never themselves a team's assigned leader there.
+ *
+ * Deliberately a separate function from visibleAttendanceProfileIds rather
+ * than a shared one with a mode flag — Attendance Monitoring's own
+ * single-level behavior is unchanged/untouched by this.
+ */
+export function visibleEmployeeMonitoringProfileIds(
+  viewer: ProfileRow,
+  allProfiles: ProfileRow[],
+  csrComposition: CsrTeamComposition | null
+): Set<string> | null {
+  if (isAttendanceFullAccessRole(viewer.role, viewer.extra_roles)) return null;
+  if (!isAttendanceManagerTierRole(viewer.role, viewer.extra_roles)) return new Set([viewer.id]);
+
+  const ids = new Set<string>([viewer.id]);
+
+  if (isEmployeeMonitoringTeamLeadOnlyRole(viewer.role, viewer.extra_roles)) {
+    const viewerName = (viewer.display_name || "").trim().toLowerCase();
+    if (viewerName) {
+      allProfiles.forEach((p) => {
+        if ((p.manager_name || "").trim().toLowerCase() === viewerName) ids.add(p.id);
+      });
+    }
+  } else {
+    // Branch Manager tier and up: walk the manager_name chain downward,
+    // level by level — each round's newly-found names become next round's
+    // search targets, so a Senior Branch Manager sees their Branch
+    // Managers' Team Leaders' Agents too, not just people who directly
+    // name them as manager.
+    let frontier = new Set<string>();
+    const startName = (viewer.display_name || "").trim().toLowerCase();
+    if (startName) frontier.add(startName);
+    for (let depth = 0; depth < MAX_MANAGEMENT_CHAIN_DEPTH && frontier.size > 0; depth++) {
+      const nextFrontier = new Set<string>();
+      allProfiles.forEach((p) => {
+        const managerName = (p.manager_name || "").trim().toLowerCase();
+        if (managerName && frontier.has(managerName) && !ids.has(p.id)) {
+          ids.add(p.id);
+          const ownName = (p.display_name || "").trim().toLowerCase();
+          if (ownName) nextFrontier.add(ownName);
+        }
+      });
+      frontier = nextFrontier;
+    }
+  }
+
+  if (csrComposition && isCsrManagerRole(viewer.role, viewer.extra_roles)) {
+    csrComposition.members.forEach((m) => ids.add(m.profileId));
+  }
+
   return ids;
 }

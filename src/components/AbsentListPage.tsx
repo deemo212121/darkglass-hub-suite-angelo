@@ -1,13 +1,20 @@
 /**
  * Absent List — HR module. Everyone with no recorded clock-in on any day in
- * the selected date range (defaults to just today), company-wide, excluding
- * scheduled rest days (profiles.off_days) and anyone on approved PTO/leave
- * that day (not a genuine miss). Same "no Time In = absent" convention
- * Ticket Attendance's own Status filter already uses, for consistency
- * across the app — this page is the general-purpose "who's missing today
- * (or over a stretch of days)" lookup HR itself reaches for, distinct from
- * Attendance Warning Settings' live grace-window alerting (a different,
- * narrower tool for a different purpose).
+ * the selected date range (defaults to just today), excluding scheduled
+ * rest days (profiles.off_days) and anyone on approved PTO/leave that day
+ * (not a genuine miss). Same "no Time In = absent" convention Ticket
+ * Attendance's own Status filter already uses, for consistency across the
+ * app — this page is the general-purpose "who's missing today (or over a
+ * stretch of days)" lookup HR itself reaches for, distinct from Attendance
+ * Warning Settings' live grace-window alerting (a different, narrower tool
+ * for a different purpose).
+ *
+ * ADMIN/HR/FINANCE/SUPERADMIN see the whole company. Manager-tier roles
+ * also reach this page (DASHBOARD_ROLE_GATES["absent-list"]), scoped by
+ * visibleEmployeeMonitoringProfileIds: a Team Leader sees only their own
+ * direct reports; Branch Manager tier and up sees their whole downward
+ * management chain instead, not just direct reports — see that function's
+ * own doc comment for the reasoning.
  *
  * A row is one (person, day) absence — spanning a range can put the same
  * person in multiple rows, each with its own independently editable
@@ -26,6 +33,8 @@ import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { ROLE_LABELS } from "@/lib/roleLabels";
 import { getCompanyUsers, getEmployeeInfoByProfileIds, type ProfileRow } from "@/lib/supabase/users";
+import { getCsrTeamComposition, type CsrTeamComposition } from "@/lib/supabase/csrTeams";
+import { visibleEmployeeMonitoringProfileIds } from "@/lib/notifyRouting";
 import { getCompanyTimecardEntries, getProfileIdByFirebaseUid, type CompanyTimecardEntry } from "@/lib/supabase/timecards";
 import { getAttendanceNotes, upsertAttendanceNote, upsertAttendanceHrNote, uploadAttendanceNoteAttachment, removeAttendanceNoteAttachment, type AttendanceNoteRow } from "@/lib/supabase/attendanceNotes";
 import { getCompanyPtoRequests, type PtoRequestRow } from "@/lib/supabase/pto";
@@ -164,6 +173,7 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
   // Employee roster + PTO requests don't depend on the selected date —
   // loaded once, separately from the per-date timecard/notes fetch below.
   const [hireDateByProfileId, setHireDateByProfileId] = useState<Map<string, string>>(new Map());
+  const [csrComposition, setCsrComposition] = useState<CsrTeamComposition | null>(null);
   useEffect(() => {
     getCompanyUsers()
       .then((rows) => {
@@ -182,7 +192,28 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
     getCompanyPtoRequests()
       .then(setPtoRequests)
       .catch((err) => console.error("Failed to load PTO requests for Absent List:", err));
+    // Only feeds visibleEmployeeMonitoringProfileIds' CSR_MANAGER "see every
+    // team" case below — safe to just no-op if the composition tables don't
+    // exist yet (a company that hasn't set up CSR Team Composition), same
+    // as AttendanceMonitoringPage.tsx's own fetch.
+    getCsrTeamComposition()
+      .then(setCsrComposition)
+      .catch(() => setCsrComposition(null));
   }, []);
+
+  // Manager-tier roles (Team Leader, Branch Manager and up) only see their
+  // own reports here; Admin/HR/Finance/SuperAdmin see everyone (returns
+  // null = unrestricted). See visibleEmployeeMonitoringProfileIds' own doc
+  // comment for exactly how the scope differs by tier.
+  const myProfile = useMemo(() => (myProfileId ? profiles.find((p) => p.id === myProfileId) ?? null : null), [myProfileId, profiles]);
+  const teamScopedIds = useMemo(
+    () => (myProfile ? visibleEmployeeMonitoringProfileIds(myProfile, profiles, csrComposition) : null),
+    [myProfile, profiles, csrComposition]
+  );
+  const visibleProfiles = useMemo(
+    () => (teamScopedIds === null ? profiles : profiles.filter((p) => teamScopedIds.has(p.id))),
+    [profiles, teamScopedIds]
+  );
 
   const [holidays, setHolidays] = useState<CompanyHolidayRow[]>([]);
   const [pendingCorrections, setPendingCorrections] = useState<TimecardCorrectionRow[]>([]);
@@ -249,39 +280,39 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
   // Every date in the selected range, oldest first.
   const rangeDates = useMemo(() => (dateTo >= dateFrom ? enumerateDates(dateFrom, dateTo) : []), [dateFrom, dateTo]);
 
-  // Filter-menu option lists — sourced from the full active roster (not
-  // just today's absent rows) so the checklists stay stable regardless of
-  // what's currently filtered.
+  // Filter-menu option lists — sourced from the (scope-narrowed) active
+  // roster, not just today's absent rows, so the checklists stay stable
+  // regardless of what's currently filtered.
   const nameOptions = useMemo(
-    () => Array.from(new Set(profiles.filter((p) => p.is_active).map((p) => p.display_name || p.email))).sort(),
-    [profiles]
+    () => Array.from(new Set(visibleProfiles.filter((p) => p.is_active).map((p) => p.display_name || p.email))).sort(),
+    [visibleProfiles]
   );
   const roleOptions = useMemo(
-    () => Array.from(new Set(profiles.filter((p) => p.is_active).map((p) => p.role))).sort((a, b) => (ROLE_LABELS[a] || a).localeCompare(ROLE_LABELS[b] || b)),
-    [profiles]
+    () => Array.from(new Set(visibleProfiles.filter((p) => p.is_active).map((p) => p.role))).sort((a, b) => (ROLE_LABELS[a] || a).localeCompare(ROLE_LABELS[b] || b)),
+    [visibleProfiles]
   );
   const branchOptions = useMemo(
-    () => Array.from(new Set(profiles.filter((p) => p.is_active).map((p) => p.assigned_branch).filter((b): b is string => !!b))).sort(),
-    [profiles]
+    () => Array.from(new Set(visibleProfiles.filter((p) => p.is_active).map((p) => p.assigned_branch).filter((b): b is string => !!b))).sort(),
+    [visibleProfiles]
   );
   const managerOptions = useMemo(
-    () => Array.from(new Set(profiles.filter((p) => p.is_active).map((p) => p.manager_name).filter((m): m is string => !!m))).sort(),
-    [profiles]
+    () => Array.from(new Set(visibleProfiles.filter((p) => p.is_active).map((p) => p.manager_name).filter((m): m is string => !!m))).sort(),
+    [visibleProfiles]
   );
 
   // Name/Role/Branch/Manager filters don't depend on the date — narrow the
-  // roster once, then apply the per-day checks (rest day/leave/check-in)
-  // per date in the range against that same narrowed list.
+  // (scope-narrowed) roster once, then apply the per-day checks (rest day/
+  // leave/check-in) per date in the range against that same narrowed list.
   const activeFilteredProfiles = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return profiles
+    return visibleProfiles
       .filter((p) => p.is_active)
       .filter((p) => !q || (p.display_name || p.email).toLowerCase().includes(q))
       .filter((p) => nameFilter.size === 0 || nameFilter.has(p.display_name || p.email))
       .filter((p) => roleFilter.size === 0 || roleFilter.has(p.role))
       .filter((p) => branchFilter.size === 0 || (p.assigned_branch && branchFilter.has(p.assigned_branch)))
       .filter((p) => managerFilter.size === 0 || (p.manager_name && managerFilter.has(p.manager_name)));
-  }, [profiles, search, nameFilter, roleFilter, branchFilter, managerFilter]);
+  }, [visibleProfiles, search, nameFilter, roleFilter, branchFilter, managerFilter]);
 
   const absentRows: AbsentRow[] = useMemo(() => {
     const rows: AbsentRow[] = [];
@@ -321,11 +352,11 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
     let count = 0;
     for (const d of rangeDates) {
       const dow = new Date(d + "T00:00:00").getDay();
-      count += profiles.filter((p) => p.is_active && !(p.off_days ?? []).includes(dow) && isOnLeave(p.id, d)).length;
+      count += visibleProfiles.filter((p) => p.is_active && !(p.off_days ?? []).includes(dow) && isOnLeave(p.id, d)).length;
     }
     return count;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [profiles, rangeDates, ptoRequests]);
+  }, [visibleProfiles, rangeDates, ptoRequests]);
 
   // Read-only breakdown of the HR Status already applied on the rows
   // currently shown (absentRows, i.e. whatever's left after the header
@@ -354,11 +385,11 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
     return Array.from(groups.entries());
   }, [absentRows]);
 
-  // Shape HrCalendarTab expects — same roster this page already loads, just
-  // remapped field names.
+  // Shape HrCalendarTab expects — same (scope-narrowed) roster this page
+  // already loads, just remapped field names.
   const calendarEmployees = useMemo(
     () =>
-      profiles.map((p) => ({
+      visibleProfiles.map((p) => ({
         id: p.id,
         name: p.display_name || p.email,
         branch: p.assigned_branch || "",
@@ -368,7 +399,7 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
         managerName: p.manager_name || null,
         offDays: p.off_days ?? null,
       })),
-    [profiles, hireDateByProfileId]
+    [visibleProfiles, hireDateByProfileId]
   );
 
   // Keyed "profileId|date" (not just profileId) — a person can now appear
