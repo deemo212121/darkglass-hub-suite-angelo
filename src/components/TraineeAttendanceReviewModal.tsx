@@ -36,6 +36,7 @@ import { useAuth } from "@/lib/auth";
 import { getMyProfileId } from "@/lib/supabase/users";
 import {
   getTraineeReviewQueue,
+  getTraineeEntryForDate,
   approveTraineeDay,
   rejectTraineeDay,
   recordTraineeDayWithoutPunch,
@@ -125,6 +126,33 @@ export function TraineeAttendanceReviewModal() {
     } catch (err) {
       console.error("Failed to approve trainee day:", err);
       alert("Couldn't approve this day — please try again.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // "Present" for a no-show item: the queue was built the moment this
+  // popup loaded, but the trainee may have punched in for real since then
+  // (e.g. right before this manager tries to check out later in the day).
+  // Re-checks trainee_timecard_entries fresh and, if a real punch now
+  // exists, approves the day with THAT actual Time In/Out instead of
+  // making the manager type times by hand (that's what "On Field" is for
+  // — a trainee who genuinely worked but never punched at all).
+  const handleMarkPresent = async (item: TraineeReviewQueueItem) => {
+    if (!profileId || submitting) return;
+    setSubmitting(true);
+    try {
+      const entry = await getTraineeEntryForDate(item.trainee.id, item.workDate);
+      if (!entry || (!entry.checkIn && !entry.checkOut)) {
+        alert(`${item.trainee.display_name || "This trainee"} hasn't punched in yet for ${item.workDate} — nothing to fetch yet.`);
+        return;
+      }
+      await approveTraineeDay(entry, profileId);
+      setPending((prev) => prev.filter((p) => itemKey(p) !== itemKey(item)));
+      setSelectedKey(null);
+    } catch (err) {
+      console.error("Failed to mark trainee present:", err);
+      alert("Couldn't fetch their punch — please try again.");
     } finally {
       setSubmitting(false);
     }
@@ -233,6 +261,16 @@ export function TraineeAttendanceReviewModal() {
                       className="flex-1 rounded-full bg-emerald-500 px-4 py-3 text-sm font-semibold text-white transition disabled:opacity-50"
                     >
                       Approve
+                    </button>
+                  )}
+                  {selected.kind === "noshow" && (
+                    <button
+                      type="button"
+                      disabled={submitting}
+                      onClick={() => handleMarkPresent(selected)}
+                      className="flex-1 rounded-full bg-emerald-500 px-4 py-3 text-sm font-semibold text-white transition disabled:opacity-50"
+                    >
+                      Present
                     </button>
                   )}
                   <button

@@ -48,6 +48,8 @@ export interface Candidate {
   interviewTimezone: "CST" | "EST" | null;  // which zone interviewTime is in — same two zones profiles.schedule_timezone uses
   trainingStartDate: string | null;  // required when status = "training"
   trainingEndDate: string | null;    // optional, settable alongside trainingStartDate
+  trainingTimeIn: string | null;     // "HH:MM" clock-in time for that trainee's training day — see migration 0300
+  trainingTimeOut: string | null;    // "HH:MM" clock-out time for that trainee's training day
   withdrawnDate: string | null;      // required when status = "withdrawn"
   startDate: string | null;          // required when status = "hired" — see migration 0261
   screeningDate: string | null;      // manual, independent of the phone_screening status — see updateCandidateScreeningDate. See migration 0247.
@@ -63,7 +65,11 @@ export interface Candidate {
 // `full_name` is the real column (the table predates this feature — see
 // 0001_init.sql / 0030_hr_candidates.sql); mapped to `name` here so the
 // rest of the app's Candidate type reads naturally.
-const SELECT = "id, company_id, full_name, phone, email, position, branch, department, branch_manager_id, assigned_interviewer_id, assigned_manager_id, job_posting_id, trainer_id, source, texted_am, texted_pm, called_am, called_pm, cv_path, status, interview_date, interview_time, interview_timezone, training_start_date, training_end_date, withdrawn_date, start_date, screening_date, document_verified, notes, interviewer_note, created_by, created_at, updated_at, author:created_by (display_name, username)";
+const SELECT = "id, company_id, full_name, phone, email, position, branch, department, branch_manager_id, assigned_interviewer_id, assigned_manager_id, job_posting_id, trainer_id, source, texted_am, texted_pm, called_am, called_pm, cv_path, status, interview_date, interview_time, interview_timezone, training_start_date, training_end_date, training_time_in, training_time_out, withdrawn_date, start_date, screening_date, document_verified, notes, interviewer_note, created_by, created_at, updated_at, author:created_by (display_name, username)";
+// Falls back to this if training_time_in/training_time_out don't exist yet
+// — i.e. 0300_hr_candidates_training_times.sql hasn't been run against this
+// database, but 0296_hr_candidates_job_posting.sql has.
+const SELECT_V16 = "id, company_id, full_name, phone, email, position, branch, department, branch_manager_id, assigned_interviewer_id, assigned_manager_id, job_posting_id, trainer_id, source, texted_am, texted_pm, called_am, called_pm, cv_path, status, interview_date, interview_time, interview_timezone, training_start_date, training_end_date, withdrawn_date, start_date, screening_date, document_verified, notes, interviewer_note, created_by, created_at, updated_at, author:created_by (display_name, username)";
 // Falls back to this if job_posting_id doesn't exist yet — i.e.
 // 0296_hr_candidates_job_posting.sql hasn't been run against this
 // database, but 0261_hr_candidates_start_date.sql has.
@@ -157,6 +163,8 @@ function fromRow(r: any): Candidate {
     interviewTimezone: r.interview_timezone ?? null,
     trainingStartDate: r.training_start_date ?? null,
     trainingEndDate: r.training_end_date ?? null,
+    trainingTimeIn: r.training_time_in ?? null,
+    trainingTimeOut: r.training_time_out ?? null,
     withdrawnDate: r.withdrawn_date ?? null,
     startDate: r.start_date ?? null,
     screeningDate: r.screening_date ?? null,
@@ -186,6 +194,14 @@ export async function getCandidates(): Promise<Candidate[]> {
       .order("created_at", { ascending: false })
       .range(from, from + CANDIDATES_PAGE_SIZE - 1);
     if (isMissingColumnError(error) && select === SELECT) {
+      select = SELECT_V16;
+      ({ data, error } = await supabase
+        .from("hr_candidates")
+        .select(select)
+        .order("created_at", { ascending: false })
+        .range(from, from + CANDIDATES_PAGE_SIZE - 1));
+    }
+    if (isMissingColumnError(error) && select === SELECT_V16) {
       select = SELECT_V15;
       ({ data, error } = await supabase
         .from("hr_candidates")
@@ -625,6 +641,18 @@ export async function updateCandidateTrainingDates(
   if (error) throw new Error(error.message);
 }
 
+/** Sets the clock Time In / Time Out for a trainee's training day — distinct from trainingStartDate/trainingEndDate above, which are the DATES the training window opened/closed. See migration 0300. */
+export async function updateCandidateTrainingTimes(
+  id: string,
+  fields: Partial<{ trainingTimeIn: string | null; trainingTimeOut: string | null }>
+): Promise<void> {
+  const payload: Record<string, string | null> = {};
+  if (fields.trainingTimeIn !== undefined) payload.training_time_in = fields.trainingTimeIn || null;
+  if (fields.trainingTimeOut !== undefined) payload.training_time_out = fields.trainingTimeOut || null;
+  const { error } = await supabase.from("hr_candidates").update(payload).eq("id", id);
+  if (error) throw new Error(error.message);
+}
+
 /** Updates the Interviewer Note — a separate slot from the general HR note (updateCandidateNotes above) so each role's write never clobbers the other's. See 0241_hr_candidates_screening_interviewer_notes.sql. */
 export async function updateCandidateInterviewerNote(id: string, note: string): Promise<void> {
   const { error } = await supabase.from("hr_candidates").update({ interviewer_note: note.trim() || null }).eq("id", id);
@@ -982,6 +1010,45 @@ export async function getCvForwardsByCandidateId(): Promise<Map<string, CvForwar
     details.set(r.candidate_id, list);
   }
   return details;
+}
+
+/**
+ * Candidates forwarded to ONE specific recipient (a Branch Manager opening
+ * "Candidate Reviews" to see just what HR sent them) — the flip side of
+ * getCvForwardsByCandidateId above, which goes the other direction (one
+ * candidate, every recipient). Deduped to one row per candidate (the most
+ * recent forward, if HR sent it more than once) since this drives a review
+ * LIST, not a forward history log. Full Candidate objects (not just the
+ * name/position slice the other two CV-forward readers use) since the
+ * review page needs everything — CV link, status, the Interviewer Note
+ * field itself — not just a label for a popover.
+ */
+export async function getCvForwardsForRecipient(recipientId: string): Promise<{ candidate: Candidate; forwardedAt: string }[]> {
+  const { data, error } = await supabase
+    .from("hr_candidate_cv_forwards")
+    .select("candidate_id, created_at")
+    .eq("recipient_id", recipientId)
+    .order("created_at", { ascending: false });
+  if (error) {
+    if (error.code === "42P01") return []; // table doesn't exist yet
+    throw new Error(error.message);
+  }
+  // First occurrence per candidate_id wins — already newest-first from the
+  // order() above, so that's the most recent forward.
+  const forwardedAtByCandidateId = new Map<string, string>();
+  for (const row of data ?? []) {
+    if (!forwardedAtByCandidateId.has(row.candidate_id)) forwardedAtByCandidateId.set(row.candidate_id, row.created_at);
+  }
+  if (forwardedAtByCandidateId.size === 0) return [];
+
+  const allCandidates = await getCandidates();
+  const byId = new Map(allCandidates.map((c) => [c.id, c]));
+  const result: { candidate: Candidate; forwardedAt: string }[] = [];
+  for (const [candidateId, forwardedAt] of forwardedAtByCandidateId) {
+    const candidate = byId.get(candidateId);
+    if (candidate) result.push({ candidate, forwardedAt });
+  }
+  return result.sort((a, b) => b.forwardedAt.localeCompare(a.forwardedAt));
 }
 
 /**
