@@ -17,15 +17,25 @@
  * container). We compute that edge dynamically from the actual header
  * size, so the Modules pill stays perfectly aligned with the user pill
  * at every viewport width.
+ *
+ * Also hosts the "View as" role selector, shown left of the Modules pill
+ * and only to Super Admins — picking a role drives auth.tsx's viewAsRole
+ * preview, which swaps `role`/`extraRoles` everywhere in the app (this
+ * strip included) so a Super Admin can see exactly what nav/modules a
+ * given role sees. See ViewAsRoleBanner.tsx for the "still previewing"
+ * reminder shown while one is active.
  */
 
 import { Link } from "@tanstack/react-router";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { LayoutGrid } from "lucide-react";
+import { LayoutGrid, Eye } from "lucide-react";
 import { MODULES, type ModuleDef, type SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { canAccessSubmodule } from "@/lib/submoduleAccess";
+import { ROLE_OPTIONS } from "@/lib/roleLabels";
+
+const SUPER_ROLES = new Set(["SUPERADMIN", "SUPERSUPERADMIN"]);
 
 // Header's inner container in AppHeader: `max-w-[1400px] mx-auto px-6`.
 // We mirror those constants here so the floating navigator's right edge
@@ -84,7 +94,7 @@ function useHeaderMetrics() {
 }
 
 export function ModuleNavigator() {
-  const { ready, email, role, extraRoles, isTrainee, isFrozen } = useAuth();
+  const { ready, email, role, extraRoles, isTrainee, isFrozen, realRole, viewAsRole, setViewAsRole } = useAuth();
   const [mounted, setMounted] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [activeModule, setActiveModule] = useState<ModuleDef | null>(null);
@@ -150,7 +160,7 @@ export function ModuleNavigator() {
       onMouseEnter={() => { cancelClose(); setExpanded(true); }}
       onMouseLeave={scheduleClose}
     >
-      <div className="flex items-center justify-end gap-1">
+      <div className="flex items-center justify-end gap-1.5">
         {expanded && (
           <div className="flex items-stretch overflow-visible">
             {visibleModules.map((m) => {
@@ -217,6 +227,31 @@ export function ModuleNavigator() {
           <LayoutGrid className="h-3.5 w-3.5" />
           <span>Modules</span>
         </button>
+
+        {realRole && SUPER_ROLES.has(realRole) && (
+          <div
+            className={`flex items-center gap-1 rounded-full border px-1.5 py-1 backdrop-blur ${
+              viewAsRole ? "border-violet-400/50 bg-violet-950/85" : "border-white/15 bg-slate-900/85"
+            }`}
+            title="Preview module/nav access as another role — Super Admin only"
+          >
+            <Eye className={`h-3.5 w-3.5 shrink-0 ${viewAsRole ? "text-violet-300" : "text-slate-400"}`} />
+            <select
+              value={viewAsRole ?? ""}
+              onChange={(e) => setViewAsRole(e.target.value || null)}
+              className={`bg-transparent text-[11px] font-semibold outline-none max-w-[9rem] ${
+                viewAsRole ? "text-violet-100" : "text-slate-300"
+              }`}
+            >
+              <option value="" className="bg-slate-900 text-slate-300">View as…</option>
+              {ROLE_OPTIONS.map((r) => (
+                <option key={r.value} value={r.value} className="bg-slate-900 text-slate-100">
+                  {r.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
       </div>
     </div>
   );

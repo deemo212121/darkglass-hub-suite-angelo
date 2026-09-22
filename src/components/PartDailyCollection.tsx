@@ -2,8 +2,10 @@ import { useState, useRef, useEffect, useLayoutEffect, useCallback } from "react
 import { createPortal } from "react-dom";
 import { useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
-import { ChevronLeft, Printer, Save, CheckCircle, Loader2, Undo2, ScanLine, History } from "lucide-react";
+import { ChevronLeft, Printer, Save, CheckCircle, Loader2, Undo2, ScanLine, History, PackageCheck } from "lucide-react";
 import { LOCATIONS } from "@/lib/locations";
+import { branchAbbrev, branchChipColor, branchDonutHex } from "@/lib/branchDisplay";
+import { DonutSummaryCard, CATEGORICAL_DONUT_HEX, DONUT_OTHER_COLOR, DONUT_TOP_N, topDonutSlices } from "@/components/DonutSummaryCard";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { getCompanyTechnicians } from "@/lib/supabase/users";
@@ -23,6 +25,10 @@ const DS:React.CSSProperties={background:"var(--color-card)",color:"var(--color-
 const Chev=({o}:{o:boolean})=><svg className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${o?"rotate-180":""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 12 15 18 9"/></svg>;
 function useP(open:boolean){const ref=useRef<HTMLButtonElement>(null);const [pos,setPos]=useState<any>(null);const r=useCallback(()=>{if(!ref.current)return;const b=ref.current.getBoundingClientRect();setPos({top:b.bottom+2,left:b.left,width:b.width});},[]);useLayoutEffect(()=>{if(open)r();},[open,r]);useEffect(()=>{if(!open)return;window.addEventListener("scroll",r,true);window.addEventListener("resize",r);return()=>{window.removeEventListener("scroll",r,true);window.removeEventListener("resize",r);};},[open,r]);return{ref,pos};}
 
+// Same amber/green pairing Part Receive/Part Return's own Branch Summary
+// donuts use for their own "not X / X" split.
+const DONUT_NOT_COLLECTED_COLOR = "#f59e0b";
+const DONUT_COLLECTED_COLOR = "#22c55e";
 const DATE_TYPES=["Pickup Date","Collect Date"] as const;
 const COLLECT_TYPES=["Defective","Hold by Technician","In Review","Restock","Used","Used (Core)","Used (Panel)"];
 const TODAY=new Date().toISOString().slice(0,10);
@@ -102,6 +108,59 @@ export function PartDailyCollection({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
   }, [location, tech, dateType, startDate, endDate, ticketNo, notCollected, collected, collectType]);
 
   useEffect(() => { loadRows(); }, [loadRows]);
+
+  // Branch Summary's own data — a second, broader fetch (not derived from
+  // `rows` above) because `rows` is already server-filtered to the current
+  // Location/Collect Type/Collected selection, and the summary needs the
+  // full picture regardless of those two specifically (same reasoning as
+  // Part Receive/Part Return's own branchScoped: respects Technician/Date/
+  // Ticket No, deliberately ignores Location and the Not-Collected/
+  // Collected checkboxes so both counts always show side by side).
+  const [summaryRows, setSummaryRows] = useState<PartCollectionRow[]>([]);
+  const loadSummaryRows = useCallback(() => {
+    getPartsForDailyCollection({
+      technician: tech || undefined,
+      dateType,
+      startDate,
+      endDate,
+      ticketNo: ticketNo || undefined,
+      notCollected: true,
+      collected: true,
+      collectType: collectType || undefined,
+    })
+      .then(setSummaryRows)
+      .catch((err) => console.error("Branch Summary load failed:", err));
+  }, [tech, dateType, startDate, endDate, ticketNo, collectType]);
+  useEffect(() => { loadSummaryRows(); }, [loadSummaryRows]);
+
+  const branchSummary = LOCATIONS.map((loc) => {
+    const items = summaryRows.filter((r) => r.location === loc);
+    return {
+      location: loc,
+      notCollected: items.filter((r) => !r.collected).length,
+      collected: items.filter((r) => r.collected).length,
+    };
+  })
+    .filter((b) => b.notCollected + b.collected > 0)
+    .sort((a, b) => b.notCollected - a.notCollected || a.location.localeCompare(b.location));
+  const allBranchTotals = {
+    notCollected: summaryRows.filter((r) => !r.collected).length,
+    collected: summaryRows.filter((r) => r.collected).length,
+  };
+  const locationDonutData = topDonutSlices(
+    Object.fromEntries(branchSummary.map((b) => [b.location, b.notCollected + b.collected])),
+    DONUT_TOP_N
+  );
+  // Not its own separate fetch (unlike Location above) — Collect Type is a
+  // much lower-traffic filter here, so reusing the same broader summaryRows
+  // (which already ignores Location too) is a fine simplification rather
+  // than a third full-table fetch just for this one chart.
+  const collectTypeCounts: Record<string, number> = {};
+  for (const r of summaryRows) {
+    const key = r.collectType?.trim() || "Unspecified";
+    collectTypeCounts[key] = (collectTypeCounts[key] ?? 0) + 1;
+  }
+  const collectTypeDonutData = topDonutSlices(collectTypeCounts, DONUT_TOP_N);
 
   const updateRowField = (id: string, patch: Partial<PartCollectionRow>) => {
     setRows((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
@@ -218,6 +277,93 @@ export function PartDailyCollection({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
         <History className="h-3.5 w-3.5" /> View Activity
       </button>
     </div>
+
+    <div className="panel mb-6">
+      <div className="flex items-center gap-2.5 mb-4">
+        <PackageCheck className="h-4 w-4 text-blue-400 shrink-0" />
+        <div>
+          <h3 className="text-[0.95rem] font-semibold uppercase tracking-wide" style={{ color: "#64b5f6" }}>Branch Summary</h3>
+          <p className="text-xs text-muted-foreground -mt-0.5">Click a branch to filter the table below</p>
+        </div>
+      </div>
+      {/* Capped, not unbounded — see Part Receive/Part Return's own Branch
+          Summary for why: an uncapped row stretches the donuts to match
+          however tall the branch list happens to be. */}
+      <div className="flex flex-col lg:flex-row gap-4 items-stretch lg:max-h-[520px]">
+        <div className="lg:w-1/4 lg:shrink-0 rounded-lg border border-white/10 divide-y divide-white/5 overflow-y-auto">
+          <button
+            type="button"
+            onClick={() => setLocation("")}
+            className={`w-full flex items-center gap-3 px-3 py-2.5 text-left transition ${
+              location === "" ? "bg-white/10" : "hover:bg-white/5"
+            }`}
+          >
+            <span className="inline-flex shrink-0 items-center rounded-md border border-white/20 bg-white/10 px-2 py-0.5 text-[11px] font-bold tracking-wide text-white">
+              ALL LOCATIONS
+            </span>
+            <span className="ml-auto text-xs text-slate-300">
+              <span className="font-semibold text-amber-300">{allBranchTotals.notCollected}</span> not coll'd ·{" "}
+              <span className="font-semibold text-green-400">{allBranchTotals.collected}</span> coll'd
+            </span>
+          </button>
+          {branchSummary.map((b) => {
+            const c = branchChipColor(b.location);
+            const active = location === b.location;
+            return (
+              <button
+                key={b.location}
+                type="button"
+                onClick={() => setLocation(active ? "" : b.location)}
+                title={b.location}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 text-left transition ${
+                  active ? "bg-white/10" : "hover:bg-white/5"
+                }`}
+              >
+                <span className={`inline-flex shrink-0 items-center justify-center rounded-md border px-2 py-0.5 text-[11px] font-bold tracking-wide min-w-[3.25rem] ${c.bg} ${c.border} ${c.text}`}>
+                  {branchAbbrev(b.location)}
+                </span>
+                <span className="ml-auto text-xs text-slate-300">
+                  <span className="font-semibold text-amber-300">{b.notCollected}</span> not coll'd ·{" "}
+                  <span className="font-semibold text-green-400">{b.collected}</span> coll'd
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="flex-1 flex flex-wrap gap-4">
+          <DonutSummaryCard
+            title="Status"
+            data={[
+              { name: "Not collected", value: allBranchTotals.notCollected },
+              { name: "Collected", value: allBranchTotals.collected },
+            ].filter((d) => d.value > 0)}
+            colorFor={(name) => (name === "Collected" ? DONUT_COLLECTED_COLOR : DONUT_NOT_COLLECTED_COLOR)}
+            centerValue={
+              allBranchTotals.notCollected + allBranchTotals.collected > 0
+                ? `${Math.round((allBranchTotals.collected / (allBranchTotals.notCollected + allBranchTotals.collected)) * 100)}%`
+                : "—"
+            }
+            centerLabel="Collected"
+          />
+          <DonutSummaryCard
+            title="By Location"
+            data={locationDonutData}
+            colorFor={(name) => (name === "Other" ? DONUT_OTHER_COLOR : branchDonutHex(name))}
+            centerValue={String(locationDonutData.reduce((sum, d) => sum + d.value, 0))}
+            centerLabel="Total"
+          />
+          <DonutSummaryCard
+            title="By Collect Type"
+            data={collectTypeDonutData}
+            colorFor={(name, i) => (name === "Other" ? DONUT_OTHER_COLOR : CATEGORICAL_DONUT_HEX[i % CATEGORICAL_DONUT_HEX.length])}
+            centerValue={String(collectTypeDonutData.reduce((sum, d) => sum + d.value, 0))}
+            centerLabel="Total"
+          />
+        </div>
+      </div>
+    </div>
+
     <div className="panel mb-4">
       <div className="flex flex-wrap items-end gap-3">
         <div className="flex flex-col gap-1 min-w-[160px] flex-1"><label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Location*</label>

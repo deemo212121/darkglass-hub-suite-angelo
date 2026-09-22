@@ -2,7 +2,13 @@
  * Per-company overrides for which roles may open ANY module's submodule
  * (migration 0151, module_role_gate_overrides) — covers every module, not
  * just Dashboard. Hydrated once per session by auth.tsx right after the
- * profile loads (see hydrateModuleRoleGates below).
+ * profile loads, and re-hydrated live after that: auth.tsx also holds a
+ * realtime subscription (module_role_gate_overrides, migration 0299 added
+ * it to the supabase_realtime publication) that re-fetches and re-hydrates
+ * this cache the instant a company's own rows change — an admin's edit in
+ * Accessibility Management reaches every already-open session for that
+ * company within moments, not just the tab that made the edit and not only
+ * on that session's next login.
  *
  * The Dashboard module additionally has hardcoded defaults
  * (DASHBOARD_ROLE_GATES in dashboardAccess.ts) for submodules with no
@@ -16,25 +22,55 @@
  * Every other module's submodules have no hardcoded default: no override
  * here means "open to every role," same as before this system existed.
  */
+import { useSyncExternalStore } from "react";
 
 let overrides: Record<string, string[]> = {}; // key: `${moduleSlug}:${submoduleSlug}`
+const listeners = new Set<() => void>();
+
+function notify(): void {
+  for (const l of listeners) l();
+}
+
+function subscribe(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+}
 
 function gateKey(moduleSlug: string, submoduleSlug: string): string {
   return `${moduleSlug}:${submoduleSlug}`;
 }
 
-/** Called once after login/profile load — see auth.tsx. */
+/** Called at login, and again on every realtime update — see auth.tsx. */
 export function hydrateModuleRoleGates(o: Record<string, string[]>): void {
   overrides = o;
+  notify();
 }
 
 /**
  * Raw override lookup for one (module, submodule) pair — null means no
  * override is recorded, i.e. open to every role (except for the Dashboard
  * module, where dashboardAccess.ts's getDashboardRoleGate still applies
- * its own hardcoded default on top of this).
+ * its own hardcoded default on top of this). Plain synchronous read, not
+ * reactive — fine for a one-shot check (a list filter, a save-path
+ * fallback) but a component that stays mounted while access could change
+ * out from under it (the actual submodule page) should use
+ * useModuleRoleGate below instead, so it re-renders when the cache updates
+ * instead of showing a stale answer until something else happens to
+ * re-render it.
  */
 export function getModuleRoleGate(moduleSlug: string, submoduleSlug: string): string[] | null {
   const key = gateKey(moduleSlug, submoduleSlug);
   return key in overrides ? overrides[key] : null;
+}
+
+/**
+ * Reactive version of getModuleRoleGate — re-renders the calling component
+ * the moment this (module, submodule) pair's override changes, whether
+ * from this tab's own save or the realtime-driven re-hydration of an edit
+ * made elsewhere. m.$module.$submodule.tsx uses this for its own gate so a
+ * page someone is actively sitting on reacts immediately to an admin
+ * revoking their access, instead of only on their next reload.
+ */
+export function useModuleRoleGate(moduleSlug: string, submoduleSlug: string): string[] | null {
+  return useSyncExternalStore(subscribe, () => getModuleRoleGate(moduleSlug, submoduleSlug));
 }
