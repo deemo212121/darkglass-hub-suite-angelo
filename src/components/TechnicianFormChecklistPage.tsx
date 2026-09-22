@@ -37,10 +37,11 @@ import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { ChevronLeft, ClipboardCheck, Loader2, ChevronDown, ExternalLink, RefreshCw, Send, Bell, Snowflake, Search, X, PenLine, Filter } from "lucide-react";
 import { useAuth } from "@/lib/auth";
+import { Switch } from "@/components/ui/switch";
 import { ManagerReviewPage, SUPPORTED_TYPES as EMPLOYER_SIGN_SUPPORTED_TYPES } from "@/components/ManagerReviewPage";
 import { getCompanyUsers, getMyProfileId, setProfileFrozen, type ProfileRow } from "@/lib/supabase/users";
 import { isEligibleForTechnicianFormChecklist, isBmAndUpRole, getRoleDepartmentBreakdown } from "@/lib/roleLabels";
-import { getSignableDocumentsByTypes, getExistingActiveDocumentTypes, createSignableDocument, updateSignableDocumentPdfUrl, updateSignableDocumentFormData, confirmSignableDocument, type SignableDocument, type SignableDocumentType } from "@/lib/supabase/signableDocuments";
+import { getSignableDocumentsByTypes, getExistingActiveDocumentTypes, createSignableDocument, updateSignableDocumentPdfUrl, confirmSignableDocument, type SignableDocument, type SignableDocumentType } from "@/lib/supabase/signableDocuments";
 import {
   SIGNABLE_DOCUMENT_REGISTRY,
   TECHNICIAN_FORM_TYPES,
@@ -102,17 +103,42 @@ interface ChecklistTabConfig {
  * signed PDF itself, so they need their own "view" links here rather than
  * riding along with the doc's pdfUrl-driven one above.
  */
-const ID_DOC_FIELDS: Partial<Record<SignableDocumentType, { field: string; label: string }[]>> = {
-  master_w2_agreement: [
-    { field: "licensePhotoPath", label: "License" },
-    { field: "ssnCardPhotoPath", label: "SSN Card" },
+/**
+ * SSN Card / Driver's License / Valid ID (their own standalone forms now —
+ * see ssnCardFormTemplate.ts/driversLicenseFormTemplate.ts/
+ * validIdFormTemplate.ts) can also be satisfied by an ID photo already on
+ * file from the OLD Master Agreement that used to collect it inline
+ * (technicianIdDocuments.ts's private-bucket paths). Someone who already
+ * uploaded their license/SSN card/government ID through the old flow
+ * shouldn't have to redo it just because the field moved to its own form —
+ * this used to render as a separate "ID"/"License"/"SSN Card" sub-row
+ * nested under the Master Agreement row; now it's folded straight into
+ * whichever standalone row it satisfies instead (see findLegacyIdSource
+ * below), so there's exactly one row per requirement, not two.
+ */
+const LEGACY_ID_SOURCES: Partial<Record<SignableDocumentType, { fromType: SignableDocumentType; field: string }[]>> = {
+  ssn_card_form: [
+    { fromType: "master_w2_agreement", field: "ssnCardPhotoPath" },
+    { fromType: "master_w2_office_agreement", field: "ssnCardPhotoPath" },
   ],
-  master_w2_office_agreement: [
-    { field: "licensePhotoPath", label: "License" },
-    { field: "ssnCardPhotoPath", label: "SSN Card" },
+  drivers_license_form: [
+    { fromType: "master_w2_agreement", field: "licensePhotoPath" },
+    { fromType: "master_w2_office_agreement", field: "licensePhotoPath" },
   ],
-  master_ph_contractor_agreement: [{ field: "governmentIdPhotoPath", label: "ID" }],
+  valid_id_form: [{ fromType: "master_ph_contractor_agreement", field: "governmentIdPhotoPath" }],
 };
+
+/** The legacy Master Agreement doc + field satisfying `type`, if any — null when `type` has no legacy source or none of them have the photo on file. */
+function findLegacyIdSource(
+  type: SignableDocumentType,
+  docMap: Map<SignableDocumentType, SignableDocument | undefined>
+): { doc: SignableDocument; field: string } | null {
+  for (const src of LEGACY_ID_SOURCES[type] ?? []) {
+    const doc = docMap.get(src.fromType);
+    if (doc?.formData?.[src.field]) return { doc, field: src.field };
+  }
+  return null;
+}
 
 const CHECKLIST_TABS: ChecklistTabConfig[] = [
   {
@@ -243,12 +269,23 @@ export function TechnicianFormChecklistPage() {
   const navigate = useNavigate();
   const { uid, displayName } = useAuth();
   const [myProfileId, setMyProfileId] = useState<string | null>(null);
-  const [activeChecklistTab, setActiveChecklistTab] = useState<ChecklistTabKey>("technician");
+  // Defaults to the "New Technician" tab, not the legacy "Technician" one —
+  // the old 16-form checklist is hidden by default (see
+  // showLegacyTechnicianTab below) since every technician's real paperwork
+  // now goes through the New Technician/Office/PH consolidated forms; it's
+  // still there for whatever's still outstanding on the old flow, just
+  // behind an explicit toggle instead of being the landing tab.
+  const [activeChecklistTab, setActiveChecklistTab] = useState<ChecklistTabKey>("newTechnician");
+  const [showLegacyTechnicianTab, setShowLegacyTechnicianTab] = useState(false);
+  const visibleChecklistTabs = useMemo(
+    () => (showLegacyTechnicianTab ? CHECKLIST_TABS : CHECKLIST_TABS.filter((t) => t.key !== "technician")),
+    [showLegacyTechnicianTab]
+  );
   // Lazy initializers so a cache hit paints the roster/active tab's forms on
   // the very first render — see the cache helpers above loadUsers/
   // loadDocsForActiveTab further down, which always still fetch for real.
   const [allUsers, setAllUsers] = useState<ProfileRow[]>(() => readCachedUsers() ?? []);
-  const [latestByKey, setLatestByKey] = useState<Map<string, SignableDocument>>(() => readCachedDocs("technician") ?? new Map());
+  const [latestByKey, setLatestByKey] = useState<Map<string, SignableDocument>>(() => readCachedDocs("newTechnician") ?? new Map());
   const [exemptions, setExemptions] = useState<Set<string>>(new Set());
   const [expanded, setExpanded] = useState<string | null>(null);
   const [hideComplete, setHideComplete] = useState(false);
@@ -492,15 +529,20 @@ export function TechnicianFormChecklistPage() {
 
   const rows: TechRow[] = useMemo(() => {
     return allUsers.filter(activeConfig.isEligible).map((u) => {
+      // Two passes: docMap needs every one of this tab's form types filled
+      // in before findLegacyIdSource can look a type's legacy source up in
+      // it, regardless of which order formTypes lists them in.
       const docMap = new Map<SignableDocumentType, SignableDocument | undefined>();
+      for (const type of activeConfig.formTypes) {
+        docMap.set(type, latestByKey.get(`${u.id}|${type}`));
+      }
       const exempt = new Set<SignableDocumentType>();
       let doneCount = 0;
       for (const type of activeConfig.formTypes) {
-        const doc = latestByKey.get(`${u.id}|${type}`);
-        docMap.set(type, doc);
+        const doc = docMap.get(type);
         if (isTechnicianExemptFromForm(type, !!doc, exemptions.has(`${u.id}|${type}`))) {
           exempt.add(type);
-        } else if (isComplete(doc, type)) {
+        } else if (isComplete(doc, type) || findLegacyIdSource(type, docMap)) {
           doneCount++;
         }
       }
@@ -536,6 +578,17 @@ export function TechnicianFormChecklistPage() {
     // (e.g. "Contractor Addendum" under BM+) may not exist under another.
     setFormTypeFilter("");
     setStatusFilter("");
+  };
+
+  const handleToggleLegacyTab = () => {
+    setShowLegacyTechnicianTab((cur) => {
+      const next = !cur;
+      // Turning the toggle off while sitting on the tab it controls would
+      // otherwise leave the page on a tab no longer in visibleChecklistTabs
+      // — jump back to the default tab instead of showing a dead selection.
+      if (!next && activeChecklistTab === "technician") handleTabChange("newTechnician");
+      return next;
+    });
   };
 
   const branchOptions = useMemo(
@@ -690,7 +743,7 @@ export function TechnicianFormChecklistPage() {
   // individually, same as any other send.
   const handleSendAllForms = async (r: TechRow, contractorAddendumInfo?: { positionLevel: string; baselinePayout: string }) => {
     const outstanding = activeConfig.formTypes.filter(
-      (type) => !r.exempt.has(type) && getDocumentReviewStatus(type, r.docs.get(type)) === "not_sent"
+      (type) => !r.exempt.has(type) && getDocumentReviewStatus(type, r.docs.get(type)) === "not_sent" && !findLegacyIdSource(type, r.docs)
     );
     if (outstanding.length === 0) return;
     const key = `${r.profileId}|sendAll`;
@@ -821,34 +874,6 @@ export function TechnicianFormChecklistPage() {
     }
   };
 
-  // HR's "reviewed this ID photo" checkbox (ID_DOC_FIELDS) — a plain flag on
-  // the document's own form_data, keyed per field so e.g. master_w2_agreement's
-  // separate License/SSN Card photos each track independently. Not part of
-  // the sign/countersign flow at all, purely a "someone on HR actually
-  // looked at this" record.
-  const handleToggleIdVerified = async (doc: SignableDocument, personId: string, type: SignableDocumentType, field: string) => {
-    const key = `${personId}|${type}|${field}`;
-    const verifiedField = `${field}Verified`;
-    const nextFormData = { ...doc.formData, [verifiedField]: !doc.formData?.[verifiedField] };
-    setActionKey(key);
-    setActionError(null);
-    try {
-      await updateSignableDocumentFormData(doc.id, nextFormData);
-      setLatestByKey((prev) => {
-        const mapKey = `${personId}|${type}`;
-        const existing = prev.get(mapKey);
-        if (!existing) return prev;
-        const next = new Map(prev);
-        next.set(mapKey, { ...existing, formData: nextFormData });
-        return next;
-      });
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : "Failed to update.");
-    } finally {
-      setActionKey(null);
-    }
-  };
-
   // "Not Applicable" — this person doesn't need this form. `exemptions`
   // tracks raw row-existence ("${personId}|${type}" has an exemption row at
   // all), not the UI-level exempt/not-exempt meaning — that's derived per
@@ -942,8 +967,8 @@ export function TechnicianFormChecklistPage() {
         </button>
       </div>
 
-      <div className="flex flex-wrap gap-1.5 mb-5 border-b border-white/10 pb-3">
-        {CHECKLIST_TABS.map((tab) => (
+      <div className="flex flex-wrap items-center gap-1.5 mb-5 border-b border-white/10 pb-3">
+        {visibleChecklistTabs.map((tab) => (
           <button
             key={tab.key}
             type="button"
@@ -957,6 +982,13 @@ export function TechnicianFormChecklistPage() {
             {tab.label}
           </button>
         ))}
+        <label
+          title="The original 16-form checklist — hidden by default now that Technician/Office/PH paperwork goes through the New/Office/PH Staff tabs instead"
+          className="ml-auto flex items-center gap-2 rounded-md border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-semibold text-muted-foreground cursor-pointer"
+        >
+          Show Legacy Technician Checklist
+          <Switch checked={showLegacyTechnicianTab} onCheckedChange={handleToggleLegacyTab} />
+        </label>
       </div>
 
       <div className="flex flex-wrap items-center gap-3 mb-6">
@@ -1138,6 +1170,14 @@ export function TechnicianFormChecklistPage() {
                         const na = r.exempt.has(type);
                         const reviewStatus = na ? null : getDocumentReviewStatus(type, doc);
                         const done = reviewStatus === "done";
+                        // Not yet signed as its own document, but an old
+                        // Master Agreement already has this exact photo on
+                        // file — see LEGACY_ID_SOURCES's header comment.
+                        // Counts as done for display; no Send/Remind offered
+                        // since there's nothing left to collect.
+                        const legacySrc = !na && !done ? findLegacyIdSource(type, r.docs) : null;
+                        const doneViaLegacy = !!legacySrc;
+                        const effectivelyDone = done || doneViaLegacy;
                         const awaitingEmployee = reviewStatus === "awaiting_employee";
                         const awaitingHr = reviewStatus === "awaiting_hr";
                         const label = SIGNABLE_DOCUMENT_REGISTRY[type]?.label ?? type;
@@ -1147,6 +1187,8 @@ export function TechnicianFormChecklistPage() {
                           ? "N/A"
                           : done
                           ? "Signed"
+                          : doneViaLegacy
+                          ? "On File (Legacy)"
                           : awaitingHr
                           ? "Awaiting HR review"
                           : awaitingEmployee
@@ -1154,28 +1196,27 @@ export function TechnicianFormChecklistPage() {
                           : "Not sent";
                         const statusColor = na
                           ? "text-slate-500"
-                          : done
+                          : effectivelyDone
                           ? "text-emerald-400"
                           : awaitingHr
                           ? "text-sky-400"
                           : awaitingEmployee
                           ? "text-amber-400"
                           : "text-slate-600";
-                        const markerClass = done
+                        const markerClass = effectivelyDone
                           ? "border-emerald-500 bg-emerald-500 text-slate-950"
                           : awaitingHr
                           ? "border-sky-500/60 bg-sky-500/20"
                           : awaitingEmployee
                           ? "border-amber-500/60 bg-transparent"
                           : "border-white/20 bg-transparent";
-                        const idDocFields = !na && doc ? (ID_DOC_FIELDS[type] ?? []).filter(({ field }) => doc.formData?.[field]) : [];
                         return (
                           <Fragment key={type}>
                           <li className={`flex items-center gap-2.5 text-sm ${na ? "opacity-50" : ""}`}>
                             <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${markerClass}`}>
-                              {done && <span className="text-[10px] font-bold leading-none">✓</span>}
+                              {effectivelyDone && <span className="text-[10px] font-bold leading-none">✓</span>}
                             </span>
-                            <span className={`flex-1 min-w-0 ${done ? "text-slate-400" : "text-slate-200"}`}>{label}</span>
+                            <span className={`flex-1 min-w-0 ${effectivelyDone ? "text-slate-400" : "text-slate-200"}`}>{label}</span>
                             <span className={`shrink-0 text-[10px] font-semibold uppercase tracking-wide ${statusColor}`}>
                               {statusText}
                             </span>
@@ -1183,6 +1224,20 @@ export function TechnicianFormChecklistPage() {
                               <button
                                 type="button"
                                 onClick={() => setViewDoc({ doc: doc!, label })}
+                                className="inline-flex shrink-0 items-center gap-0.5 text-xs text-blue-400 hover:text-blue-300"
+                              >
+                                view <ExternalLink className="h-3 w-3" />
+                              </button>
+                            )}
+                            {!na && legacySrc && (
+                              <button
+                                type="button"
+                                title={`On file from ${SIGNABLE_DOCUMENT_REGISTRY[legacySrc.doc.documentType]?.label ?? legacySrc.doc.documentType}`}
+                                onClick={() =>
+                                  getTechnicianIdDocumentUrl(legacySrc.doc.formData[legacySrc.field])
+                                    .then((url) => setIdPhotoView({ url, label }))
+                                    .catch((err) => setActionError(err instanceof Error ? err.message : `Failed to open ${label} photo.`))
+                                }
                                 className="inline-flex shrink-0 items-center gap-0.5 text-xs text-blue-400 hover:text-blue-300"
                               >
                                 view <ExternalLink className="h-3 w-3" />
@@ -1257,7 +1312,7 @@ export function TechnicianFormChecklistPage() {
                                 </span>
                               )
                             )}
-                            {!na && reviewStatus === "not_sent" && (
+                            {!na && !doneViaLegacy && reviewStatus === "not_sent" && (
                               <button
                                 type="button"
                                 disabled={busy}
@@ -1279,44 +1334,13 @@ export function TechnicianFormChecklistPage() {
                               <input
                                 type="checkbox"
                                 checked={na}
-                                disabled={busy || done || awaitingHr}
+                                disabled={busy || done || doneViaLegacy || awaitingHr}
                                 onChange={(e) => void handleToggleExempt(r.profileId, type, e.target.checked)}
                                 className="h-3 w-3"
                               />
                               N/A
                             </label>
                           </li>
-                          {idDocFields.map(({ field, label: fieldLabel }) => {
-                            const idKey = `${r.profileId}|${type}|${field}`;
-                            const idBusy = actionKey === idKey;
-                            const verified = !!doc!.formData?.[`${field}Verified`];
-                            return (
-                            <li key={field} className="flex items-center gap-2.5 text-sm pl-6">
-                              <button
-                                type="button"
-                                disabled={idBusy}
-                                onClick={() => void handleToggleIdVerified(doc!, r.profileId, type, field)}
-                                title={verified ? "Reviewed — click to unmark" : "Mark this ID photo as reviewed"}
-                                className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border disabled:opacity-40 ${verified ? "border-emerald-500 bg-emerald-500 text-slate-950" : "border-white/20 bg-transparent hover:border-white/40"}`}
-                              >
-                                {verified && <span className="text-[10px] font-bold leading-none">✓</span>}
-                              </button>
-                              <span className={`flex-1 min-w-0 ${verified ? "text-slate-500" : "text-slate-400"}`}>{fieldLabel}</span>
-                              {verified && <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wide text-emerald-400">Reviewed</span>}
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  getTechnicianIdDocumentUrl(doc!.formData[field])
-                                    .then((url) => setIdPhotoView({ url, label: fieldLabel }))
-                                    .catch((err) => setActionError(err instanceof Error ? err.message : `Failed to open ${fieldLabel} photo.`))
-                                }
-                                className="inline-flex shrink-0 items-center gap-0.5 text-xs text-blue-400 hover:text-blue-300"
-                              >
-                                view <ExternalLink className="h-3 w-3" />
-                              </button>
-                            </li>
-                            );
-                          })}
                           </Fragment>
                         );
                       })}

@@ -98,7 +98,7 @@ export function TechActivityReportModal({
   onSetHourlyOtMode,
   hourlyOtModeBusy,
 }: Props) {
-  const { employee, techManual, techCategoryCounts, techCarryover, ticketsAssigned, ticketsCompleted, workingDays, twoTechCount, hoursWorked, overtimeHours, hourlyRate, techHourlyPay, techHourlyPayStraight, techHourlyPayOtPremium, techWeightedRegularRate, techGuaranteedSalaryTarget, techHolidayPremium, techIncludablePay } = row;
+  const { employee, techManual, techCategoryCounts, techCarryover, ticketsAssigned, ticketsCompleted, workingDays, twoTechCount, hoursWorked, overtimeHours, hourlyRate, techHourlyPay, techHourlyPayStraight, techHourlyPayOtPremium, techWeightedRegularRate, techGuaranteedSalaryTarget, techHolidayPremium, techTraineeMatch, techIncludablePay } = row;
   const branch = employee.assigned_branch || "";
 
   // Live Company-vs-State comparison for the Hourly Pay figure — fetched
@@ -240,8 +240,13 @@ export function TechActivityReportModal({
   // so this is the authoritative figure once this report has been opened;
   // AccountingDashboard's own total for this technician only matches it
   // once a State override has actually been saved (see onSetHourlyOtMode).
+  // techHolidayPremium is folded into the earned baseline too, for the same
+  // reason as in AccountingDashboard.tsx's own copy of this calc — it's
+  // paid as its own line further down (techGrossTotal), so leaving it out
+  // here sizes the match as if it hadn't been earned yet and overpays by
+  // exactly that amount whenever the guarantee triggers.
   const techGuaranteedSalaryMatch = techGuaranteedSalaryTarget > 0
-    ? Math.max(techGuaranteedSalaryTarget - (stateHourlyOtTotal + techIncludablePay), 0)
+    ? Math.max(techGuaranteedSalaryTarget - (stateHourlyOtTotal + techIncludablePay + techHolidayPremium), 0)
     : 0;
 
   // Temporary, NOT persisted — lets HR type in a what-if Completed Tickets
@@ -423,8 +428,8 @@ export function TechActivityReportModal({
 
   const subtotal =
     categoryPayments.reduce((s, c) => s + c.payment, 0) +
-    techManual.mileagePay + techManual.trainingPay +
-    twoTechPayment + completedTicketsPayment + redoReductionPayment + customLinesTotal + carryoverTotal + row.techHourlyPay + techGuaranteedSalaryMatch + techHolidayPremium;
+    techManual.ldtPay + techManual.mileagePay + techManual.trainingPay +
+    twoTechPayment + completedTicketsPayment + redoReductionPayment + customLinesTotal + carryoverTotal + row.techHourlyPay + techGuaranteedSalaryMatch + techHolidayPremium + techTraineeMatch;
   const owIncentivePay = (techManual.owIncentivePct / 100) * subtotal;
   const totalPayment = subtotal + owIncentivePay;
 
@@ -576,9 +581,18 @@ export function TechActivityReportModal({
                       <td className="px-3 py-2 text-right text-slate-200">{fmt(techHolidayPremium)}</td>
                     </tr>
                   )}
+                  {techTraineeMatch > 0.005 && (
+                    <tr title="Trainee daily $100 guarantee: any day within this technician's trainee window (hireDate through Training End Date) whose actual pay fell short of $100 is topped up to $100. A day that already earned $100+ keeps its full actual pay -- this is a floor, not a flat replacement.">
+                      <td className="px-3 py-2 text-slate-300">Trainee Daily Match</td>
+                      <td className="px-3 py-2 text-right text-slate-300">—</td>
+                      <td className="px-3 py-2 text-right text-slate-300">$100/day</td>
+                      <td className="px-3 py-2 text-right text-slate-200">{fmt(techTraineeMatch)}</td>
+                    </tr>
+                  )}
 
-                  {(["mileage", "trainingValue"] as const).map((field) => {
+                  {(["ldtCount", "mileage", "trainingValue"] as const).map((field) => {
                     const meta = {
+                      ldtCount: { label: "LDT", rateKey: "LDT", value: techManual.ldtCount, pay: techManual.ldtPay },
                       mileage: { label: "Mileage", rateKey: "Mileage", value: techManual.mileage, pay: techManual.mileagePay },
                       trainingValue: { label: "Training Paid", rateKey: "Training Paid", value: techManual.trainingValue, pay: techManual.trainingPay },
                     }[field];
@@ -1100,17 +1114,19 @@ export function TechActivityReportModal({
                           <div className="flex items-center rounded-full bg-slate-900 border border-white/10 p-0.5 text-[10px] shrink-0">
                             <button
                               type="button"
-                              disabled={hourlyOtModeBusy}
+                              disabled={hourlyOtModeBusy || loadingStateComparison}
+                              title={loadingStateComparison ? "Still loading this technician's per-day state comparison — wait for it to finish before switching modes." : undefined}
                               onClick={() => onSetHourlyOtMode("company", companyHourlyOtTotal)}
-                              className={`px-2 py-0.5 rounded-full transition ${!appliedIsState ? "bg-slate-700 text-white" : "text-slate-500 hover:text-slate-300"}`}
+                              className={`px-2 py-0.5 rounded-full transition disabled:opacity-50 ${!appliedIsState ? "bg-slate-700 text-white" : "text-slate-500 hover:text-slate-300"}`}
                             >
                               Company
                             </button>
                             <button
                               type="button"
-                              disabled={hourlyOtModeBusy}
+                              disabled={hourlyOtModeBusy || loadingStateComparison}
+                              title={loadingStateComparison ? "Still loading this technician's per-day state comparison — wait for it to finish before switching modes." : undefined}
                               onClick={() => onSetHourlyOtMode("state", stateHourlyOtTotal)}
-                              className={`px-2 py-0.5 rounded-full transition ${appliedIsState ? "bg-emerald-700 text-white" : "text-slate-500 hover:text-slate-300"}`}
+                              className={`px-2 py-0.5 rounded-full transition disabled:opacity-50 ${appliedIsState ? "bg-emerald-700 text-white" : "text-slate-500 hover:text-slate-300"}`}
                             >
                               State
                             </button>

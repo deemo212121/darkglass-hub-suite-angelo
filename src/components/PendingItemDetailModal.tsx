@@ -131,7 +131,7 @@ export function PendingItemDetailModal({
   ];
   const canReviewStage = (stage: CorrectionStage | PtoStage) =>
     isCorrection
-      ? canReviewCorrectionStage(item.data, stage as CorrectionStage, myProfileId, myRole, myExtraRoles, myDisplayName, requesterManagersManagerName)
+      ? canReviewCorrectionStage(item.data, stage as CorrectionStage, myProfileId, myRole, myExtraRoles, myDisplayName, requesterManagerName, requesterManagersManagerName)
       : canReviewPtoStage(item.data, stage as PtoStage, myProfileId, myRole, myExtraRoles, myDisplayName, requesterManagerName, requesterManagersManagerName);
 
   return (

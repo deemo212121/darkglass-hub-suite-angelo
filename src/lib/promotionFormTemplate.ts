@@ -59,6 +59,34 @@ export interface PromotionSignatureEntry {
 
 export type PromotionFormSignatures = Partial<Record<PromotionSignatureSlot, PromotionSignatureEntry>>;
 
+/**
+ * The CEO's personal congratulations DM, sent automatically to the
+ * promoted employee the moment the "executive" slot — the last signer in
+ * the Employee Promotion / Role Change Form chain (employee, manager,
+ * senior_manager, hr_staff, executive) — signs. See
+ * SignPromotionFormPage.tsx's handleConfirmSign. Fixed company template
+ * (Justin, CEO) with just the employee's name and new title substituted —
+ * not personalized per whichever executive account actually signs, since
+ * that's what was asked for verbatim.
+ */
+export function buildPromotionCongratsMessage(employeeName: string, newPositionTitle: string): string {
+  return `🎉 **Huge congratulations on your promotion, ${employeeName}!**
+
+Hi ${employeeName},
+
+I wanted to take a moment to personally congratulate you on your promotion to ${newPositionTitle}.
+
+Seeing your hard work, dedication, and the impact you've made here has been incredible. This promotion is a well-deserved recognition of your commitment and the value you bring to Us In Home Services.
+
+Thank you for everything you do and for continuously stepping up. I'm excited to see you grow further and achieve even greater things in this new role.
+
+Congratulations once again!
+
+Best regards,
+Justin
+CEO, Us In Home Services`;
+}
+
 const escapeHtml = (s: string) =>
   String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 

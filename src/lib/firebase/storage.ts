@@ -770,6 +770,39 @@ export async function uploadContractorDataForm(companyId: string, employeeName: 
   return getDownloadURL(snapshot.ref);
 }
 
+export async function uploadSsnCardForm(companyId: string, employeeName: string, pdfBlob: Blob): Promise<string> {
+  if (!isFirebaseReady() || !storage) {
+    throw new Error("Firebase Storage not configured");
+  }
+  const folder = `companies/${companyId}/ssn-card-forms`;
+  const objectName = `${Date.now()}-${sanitizeFileName(employeeName || "ssn-card")}.pdf`;
+  const objectRef = ref(storage, `${folder}/${objectName}`);
+  const snapshot = await uploadBytes(objectRef, pdfBlob, { contentType: "application/pdf" });
+  return getDownloadURL(snapshot.ref);
+}
+
+export async function uploadDriversLicenseForm(companyId: string, employeeName: string, pdfBlob: Blob): Promise<string> {
+  if (!isFirebaseReady() || !storage) {
+    throw new Error("Firebase Storage not configured");
+  }
+  const folder = `companies/${companyId}/drivers-license-forms`;
+  const objectName = `${Date.now()}-${sanitizeFileName(employeeName || "drivers-license")}.pdf`;
+  const objectRef = ref(storage, `${folder}/${objectName}`);
+  const snapshot = await uploadBytes(objectRef, pdfBlob, { contentType: "application/pdf" });
+  return getDownloadURL(snapshot.ref);
+}
+
+export async function uploadValidIdForm(companyId: string, employeeName: string, pdfBlob: Blob): Promise<string> {
+  if (!isFirebaseReady() || !storage) {
+    throw new Error("Firebase Storage not configured");
+  }
+  const folder = `companies/${companyId}/valid-id-forms`;
+  const objectName = `${Date.now()}-${sanitizeFileName(employeeName || "valid-id")}.pdf`;
+  const objectRef = ref(storage, `${folder}/${objectName}`);
+  const snapshot = await uploadBytes(objectRef, pdfBlob, { contentType: "application/pdf" });
+  return getDownloadURL(snapshot.ref);
+}
+
 export async function uploadVehicleUseAgreementForm(companyId: string, employeeName: string, pdfBlob: Blob): Promise<string> {
   if (!isFirebaseReady() || !storage) {
     throw new Error("Firebase Storage not configured");

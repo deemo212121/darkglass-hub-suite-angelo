@@ -426,6 +426,20 @@ const hrMod: ModuleDef = {
       count: 0,
       seed: () => ({}),
     },
+    // Given its own prominent slot right after the HR landing tile — not
+    // buried among the rest of the HR submodule tiles — since it's the
+    // live source of truth for whether every technician/office/PH/
+    // management-tier hire has actually completed their paperwork, not
+    // just one more tracking tool among several.
+    {
+      slug: "technician-form-checklist",
+      title: "Staff Form Checklist",
+      description: "Live signed/pending status of every Technician/New Technician/Office Staff/PH Staff/Management-tier form, per person.",
+      custom: "technician-form-checklist" as any,
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
     {
       slug: "hr-paperworks",
       title: "HR Paperworks",
@@ -454,15 +468,6 @@ const hrMod: ModuleDef = {
       title: "Flash Tech",
       description: "Technician travel trips — schedule (Calendar) or fill in hotel/rental/receipt tracking detail (Tracker).",
       custom: "flash-tech" as any,
-      fields: [],
-      count: 0,
-      seed: () => ({}),
-    },
-    {
-      slug: "technician-form-checklist",
-      title: "Staff Form Checklist",
-      description: "Live signed/pending status of every Technician/New Technician/Office Staff/PH Staff/Management-tier form, per person.",
-      custom: "technician-form-checklist" as any,
       fields: [],
       count: 0,
       seed: () => ({}),

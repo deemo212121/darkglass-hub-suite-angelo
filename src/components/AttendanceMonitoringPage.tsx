@@ -1526,22 +1526,26 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   // as visibleProfiles/visiblePtoRequests above — a manager-tier viewer
   // only ever sees corrections for their own team, never the whole company.
   //
-  // teamScopedIds itself is a live, name-matched set (p.manager_name ===
-  // viewer's display_name) shared with Daily Attendance/PTO — it crosses
-  // over whenever two managers share a display name, or an employee's
-  // manager_name has drifted since the correction was submitted. Each
-  // correction row instead carries its own managerId, resolved ONCE at
-  // submission time (resolveTeamLeadOrManager, in EmployeeSelfServicePage /
-  // AttendanceMonitoringPage's own submit handler) and never recomputed —
-  // trust that over the live name match whenever it's set, so a manager-tier
-  // viewer only ever sees corrections actually routed to them. Legacy rows
-  // from before managerId was captured (null) still fall back to the
-  // broader name-matched set rather than being hidden outright.
+  // teamScopedIds itself is a live, name-matched (or CSR-team-matched) set
+  // shared with Daily Attendance/PTO. Each correction row also carries its
+  // own managerId, resolved ONCE at submission time (resolveTeamLeadOrManager,
+  // in EmployeeSelfServicePage / AttendanceMonitoringPage's own submit
+  // handler) and never recomputed — this USED to unconditionally override
+  // the live match whenever it disagreed, on the theory that it disambiguates
+  // two same-named managers. In practice that snapshot going stale (a manager
+  // reassignment, a CSR team-lead swap, or the resolver having picked the
+  // wrong person at submission time) was far more common than a genuine
+  // name collision, and it permanently hid the correction from whoever
+  // actually manages this employee today — see visiblePtoRequests just
+  // above, which has no such extra check and doesn't have this problem.
+  // So: trust the live team scope as authoritative (same as PTO/roster);
+  // the snapshot only ADDS visibility (for the rare case the requester's
+  // manager_name doesn't currently resolve back to this viewer at all, e.g.
+  // it's stale/blank but the id was captured correctly), never removes it.
   const filteredCorrections = useMemo(() => {
     const q = correctionSearch.trim().toLowerCase();
     return corrections.filter((c) => {
-      if (teamScopedIds !== null && !teamScopedIds.has(c.profileId)) return false;
-      if (teamScopedIds !== null && c.managerId && c.managerId !== myProfileId) return false;
+      if (teamScopedIds !== null && !teamScopedIds.has(c.profileId) && c.managerId !== myProfileId) return false;
       if (correctionStatusFilter !== "all" && c.status !== correctionStatusFilter) return false;
       if (correctionDepartmentFilter !== "all") {
         const p = allProfileById.get(c.profileId);
@@ -1577,16 +1581,15 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     [filteredCorrections]
   );
 
-  // Correction History panel — same team scoping (and the same managerId
-  // preference over the live name-matched set) as filteredCorrections above,
-  // via each history entry's related correction.
+  // Correction History panel — same team scoping as filteredCorrections
+  // above (live scope authoritative, managerId snapshot only ever widens
+  // visibility, never narrows it), via each history entry's related correction.
   const visibleCorrectionHistory = useMemo(() => {
     if (teamScopedIds === null) return correctionHistory;
     return correctionHistory.filter((h) => {
       const related = corrections.find((c) => c.id === h.correctionId);
       if (!related) return false;
-      if (!teamScopedIds.has(related.profileId)) return false;
-      if (related.managerId && related.managerId !== myProfileId) return false;
+      if (!teamScopedIds.has(related.profileId) && related.managerId !== myProfileId) return false;
       return true;
     });
   }, [correctionHistory, corrections, teamScopedIds, myProfileId]);
@@ -3231,7 +3234,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                 : null;
               return (
               <div className="space-y-2 mb-6">
-                {selectedCorrection.managerStatus === "pending" && canReviewCorrectionStage(selectedCorrection, "manager", myProfileId, role, extraRoles, displayName, correctionRequesterManagersManagerName) && (
+                {selectedCorrection.managerStatus === "pending" && canReviewCorrectionStage(selectedCorrection, "manager", myProfileId, role, extraRoles, displayName, correctionRequesterManagerName, correctionRequesterManagersManagerName) && (
                   <div className="grid gap-3 md:grid-cols-2">
                     <button onClick={() => handleCorrectionStageAction("manager", "approved")} disabled={correctionStageBusy} className="px-4 py-2 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded-lg transition font-semibold text-sm flex items-center justify-center gap-2">
                       {correctionStageBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle className="h-4 w-4" />}
@@ -3267,7 +3270,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                     </button>
                   </div>
                 )}
-                {!(selectedCorrection.managerStatus === "pending" && canReviewCorrectionStage(selectedCorrection, "manager", myProfileId, role, extraRoles, displayName, correctionRequesterManagersManagerName)) &&
+                {!(selectedCorrection.managerStatus === "pending" && canReviewCorrectionStage(selectedCorrection, "manager", myProfileId, role, extraRoles, displayName, correctionRequesterManagerName, correctionRequesterManagersManagerName)) &&
                  !(selectedCorrection.hrStatus === "pending" && canReviewCorrectionStage(selectedCorrection, "hr", myProfileId, role, extraRoles)) &&
                  !(selectedCorrection.accountingStatus === "pending" && canReviewCorrectionStage(selectedCorrection, "accounting", myProfileId, role, extraRoles)) && (() => {
                     const stillPending = [

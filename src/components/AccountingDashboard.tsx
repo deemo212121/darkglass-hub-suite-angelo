@@ -194,6 +194,13 @@ export interface SupabaseEmployee {
    *  Technicians" tab and Staff List's own "Tier Level" tab edit; shown here
    *  as a yellow badge beside Role. */
   tierLevel: string | null;
+  /** profiles.training_end_date (migration 0297) — the trainee daily $100
+   *  guarantee applies to every day from this employee's hireDate through
+   *  this date, inclusive. Null means no trainee window is set. Distinct
+   *  from isTrainee, which is a single permanent flag with no date range —
+   *  this lets someone who graduated mid-period keep the guarantee for
+   *  their trainee days without it bleeding into days after graduation. */
+  trainingEndDate: string | null;
 }
 
 interface SalaryEntry {
@@ -347,6 +354,11 @@ export interface EmployeePayrollRow {
    * grossPay, kept separate for display. 0 when nobody worked a holiday
    * this period, or for Office/fixed-salary rows. */
   techHolidayPremium: number;
+  /** Trainee daily $100 guarantee shortfall (see traineeDailyMatchFor) —
+   * already folded into grossPay, kept separate for display. 0 outside the
+   * employee's hireDate..trainingEndDate window, or when trainingEndDate
+   * isn't set. */
+  techTraineeMatch: number;
   /**
    * This period's includable incentive/bonus pay (piece-rate, carryover,
    * Training, Two Tech, Completed Tickets, commission-style custom
@@ -1475,8 +1487,15 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   const [genEnd, setGenEnd] = useState("");
 
   // ── Data fetching ───────────────────────────────────────────────────────────
-  const fetchData = useCallback(async () => {
-    setLoading(true);
+  const fetchData = useCallback(async (options?: { silent?: boolean }) => {
+    // silent: true skips the loading flag entirely — used by onRateChanged
+    // (a single per-day edit from EmployeePayrollDetailModal) so refreshing
+    // company-wide totals doesn't blank the ENTIRE dashboard, including the
+    // modal the user is still actively working in, behind a full-page
+    // spinner. `if (loading) return <BrandedLoader/>` below unmounts
+    // everything under it while loading is true, so this isn't just a
+    // cosmetic flicker — it was closing the very modal being edited.
+    if (!options?.silent) setLoading(true);
     setError(null);
     try {
       const [
@@ -1496,7 +1515,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
           for (let from = 0; ; from += PAGE_SIZE) {
             const { data, error } = await supabase
               .from("profiles")
-              .select("id,display_name,username,role,extra_roles,assigned_branch,email,off_days,required_check_in,required_check_out,payroll_excluded,is_active,schedule_timezone,employment_type,tier_level")
+              .select("id,display_name,username,role,extra_roles,assigned_branch,email,off_days,required_check_in,required_check_out,payroll_excluded,is_active,schedule_timezone,employment_type,tier_level,training_end_date")
               .neq("role", "SUPERSUPERADMIN")
               .range(from, from + PAGE_SIZE - 1);
             if (error) return { data: null, error };
@@ -1615,6 +1634,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         isActive: p.is_active ?? true,
         isTrainee: p.employment_type === "trainee",
         tierLevel: p.tier_level ?? null,
+        trainingEndDate: p.training_end_date ?? null,
         };
       }) as SupabaseEmployee[]);
       setSalaryEntries((salRes.data ?? []) as SalaryEntry[]);
@@ -1631,7 +1651,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to load data");
     } finally {
-      setLoading(false);
+      if (!options?.silent) setLoading(false);
     }
   }, []);
 
@@ -2123,6 +2143,37 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     return premium;
   }
 
+  // Trainee daily $100 guarantee (migration 0297, profiles.training_end_date):
+  // every day from hireDate through trainingEndDate (inclusive) is a trainee
+  // day. If that day's actual company pay (straight + 1.5x OT, same simple
+  // per-day convention as the reference payroll workbook) falls short of
+  // $100, the shortfall is topped up — a floor, not a flat replacement, so a
+  // trainee who has a big day and already clears $100 keeps the full amount
+  // rather than being clawed back to $100 (see Bryson Baize conversation).
+  const TRAINEE_DAILY_MATCH_TARGET = 100;
+  function traineeDailyMatchFor(
+    profileId: string,
+    dailyHours: DailyHours[] | undefined,
+    fallbackRate: number,
+    hireDate: string | null,
+    trainingEndDate: string | null
+  ): number {
+    if (!dailyHours || !trainingEndDate) return 0;
+    let match = 0;
+    for (const day of dailyHours) {
+      if (hireDate && day.date < hireDate) continue;
+      if (day.date > trainingEndDate) continue;
+      const dayHours = day.regular + day.overtime;
+      if (dayHours <= 0) continue;
+      const rate = hourlyRateOnDate(profileId, day.date, fallbackRate);
+      const actualDailyPay = day.regular * rate + day.overtime * rate * 1.5;
+      if (actualDailyPay < TRAINEE_DAILY_MATCH_TARGET) {
+        match += TRAINEE_DAILY_MATCH_TARGET - actualDailyPay;
+      }
+    }
+    return match;
+  }
+
   // Technicians are paid per completed repair ticket (Tech Payroll) instead
   // of hourly-or-fixed — any field-technician tier (TECHNICIAN,
   // TECHNICIAN_MANAGER, TECHNICAL_DIRECTOR, TECHNICAL_ASSISTANT_DIRECTOR —
@@ -2469,13 +2520,34 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     // pay, Total Payment, CSV export, payslip/Send. techHourlyPayCompanyOnly
     // above stays the un-overridden flat calc, purely for the Tech Activity
     // Report's "Company vs. Applied" comparison.
-    const techHourlyPay = hourlyOtOverrides.get(emp.id)?.amount ?? techHourlyPayCompanyOnly;
+    //
+    // A technician who has since moved to Fixed Salary (isFixed — e.g. a
+    // promotion to a salaried Branch Manager role, effective mid-period) is
+    // paid the same flat perCutoffSalary officeGrossPay below already uses,
+    // not the hourly/piece-rate blend above — hourlyRate is forced to 0 for
+    // a fixed comp type (see isFixed above), so techHourlyPayCompanyOnly
+    // would otherwise silently collapse toward $0 while any State-mode
+    // override saved back when this technician was still hourly stays
+    // stuck applying its old (now meaningless) dollar amount on top of it.
+    // Fixed Salary always wins here, same as it already does for officeGrossPay.
+    const techHourlyPay = isFixed && annualSalary
+      ? perCutoffSalary(annualSalary)
+      : hourlyOtOverrides.get(emp.id)?.amount ?? techHourlyPayCompanyOnly;
     // Extra 0.5x bonus for hours actually worked on a recognized company
     // holiday — see holidayPremiumFor above. Paid on top of techHourlyPay
     // regardless of Company/State mode; not part of techIncludablePay/the
     // weighted rate (the reference payroll workbook computes this as its
     // own separate Step 6, independent of the Step 4 weighted-rate calc).
     const techHolidayPremium = includeTech && isTechRole(emp) ? holidayPremiumFor(emp.id, dailyHoursByEmployeeId.get(emp.id), hourlyRate) : 0;
+    const techTraineeMatch = includeTech && isTechRole(emp)
+      ? traineeDailyMatchFor(
+          emp.id,
+          dailyHoursByEmployeeId.get(emp.id),
+          hourlyRate,
+          employeeInfoByProfileId.get(emp.id)?.hireDate ?? null,
+          emp.trainingEndDate
+        )
+      : 0;
     // Guaranteed-minimum-salary match: some technicians have a fixed
     // annual salary on file (see latestFixedSalaryByProfile) that acts as
     // an ongoing floor under their hourly + incentive pay even while a
@@ -2483,33 +2555,45 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     // latestCompMap, which only looks at entries effective by genEnd — an
     // upcoming switch to salary doesn't retroactively apply, but Finance
     // still wants it treated as a floor going forward). If actual earned
-    // compensation this period (Company-baseline Hourly + OT, plus
+    // compensation this period (Hourly + OT as ACTUALLY applied, plus
     // includable incentive pay) falls short of that salary's per-cutoff
-    // equivalent, the shortfall is topped up here. Deliberately keyed off
-    // the Company-only figure (techHourlyPayCompanyOnly), NOT techHourlyPay
-    // (whichever mode is actually applied): a state-floor match is separate,
-    // legally-owed money for hours that were underpaid relative to that
-    // state's minimum wage — it's additive on top of the guarantee, not
-    // something the guarantee gets to absorb. Keying this off techHourlyPay
-    // would let switching to State silently swallow that money back into
-    // the same $ total instead of paying it out on top. Reimbursement/
-    // mileage/allowance custom lines and mileage pay don't count toward
-    // either side of this check — they're paid on top regardless, same as
-    // the state match.
+    // equivalent, the shortfall is topped up here.
     //
-    // NOTE (see conversation): the reference workbook's own 15-step chain
-    // implies the guarantee should really be checked against the STATE-
-    // matched earned total specifically (not Company-only) — its "FINAL
-    // TOTAL PAY DUE" already has the state match folded in before the
-    // guarantee tops it up. This module can't compute that live for every
-    // technician (the per-day state-floor match needs per-day attendance +
-    // state assignment data that's only fetched in TechActivityReportModal
-    // for whichever technician is currently open) — see that conversation
-    // for the options being weighed before changing this further.
+    // Keyed off techHourlyPay (whichever mode is actually applied), NOT
+    // techHourlyPayCompanyOnly — a previous version used the Company-only
+    // figure deliberately, reasoning that the state-floor match is separate
+    // money that shouldn't get "absorbed" by the guarantee. That reasoning
+    // doesn't hold up: when a State-mode override is active, techHourlyPay
+    // already has the state match folded into it, so adding
+    // techGuaranteedSalaryMatch computed against the Company-only baseline
+    // on top double-counts that same state match — once inside techHourlyPay,
+    // once again because the guarantee was sized as if techHourlyPay were
+    // still the smaller Company-only figure (see Matthew Nichols, where this
+    // overstated Total Payment by exactly his $199.88 state-floor match).
+    // Keying off techHourlyPay instead doesn't let the state match get
+    // "swallowed": if State-mode earnings + includable pay already clear the
+    // salary target, techGuaranteedSalaryMatch is correctly $0 and the
+    // technician keeps the full higher state-matched amount; if they still
+    // fall short even with the state match applied, the guarantee correctly
+    // tops up only the REMAINING gap instead of re-adding money already
+    // earned. Matches the reference payroll workbook's own 15-step chain,
+    // which checks the guarantee against the state-matched total for the
+    // same reason. Reimbursement/mileage/allowance custom lines and mileage
+    // pay still don't count toward either side of this check — paid on top
+    // regardless, same as before.
     const guaranteedAnnualSalary = includeTech && isTechRole(emp) && !isFixed
       ? latestFixedSalaryByProfile.get(emp.id)?.annual_salary ?? null
       : null;
-    const techEarnedBeforeReimbursements = techHourlyPayCompanyOnly + techIncludablePay;
+    // techHolidayPremium is folded in too, for the same double-counting
+    // reason as techHourlyPay above — see Daven Hodge, where the reference
+    // workbook's own AN9 ("Corrected Wages Before Match") already folds its
+    // Holiday Premium into the earned baseline before sizing the match.
+    // Leaving it out here sized the guarantee as if that $51.40 hadn't
+    // been earned yet, then techGrossPay below added it again on top of
+    // the already-topped-up target — a flat overpayment equal to the
+    // holiday premium any time the guarantee triggers for a technician who
+    // also worked a recognized holiday.
+    const techEarnedBeforeReimbursements = techHourlyPay + techIncludablePay + techHolidayPremium;
     const techGuaranteedSalaryTarget = guaranteedAnnualSalary ? perCutoffSalary(guaranteedAnnualSalary) : 0;
     const techGuaranteedSalaryMatch = guaranteedAnnualSalary
       ? Math.max(techGuaranteedSalaryTarget - techEarnedBeforeReimbursements, 0)
@@ -2520,7 +2604,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     // Training, a custom line, or an approved Payroll Dispute; the old
     // `tech ? ... : 0` gate silently dropped all of that to $0 for them.
     const techGrossPay = includeTech
-      ? (tech?.grossPay ?? 0) + (carryover?.grossPay ?? 0) + manualTotal + twoTechPay + completedTicketsPay + customPay + techHourlyPay + techGuaranteedSalaryMatch + techHolidayPremium
+      ? (tech?.grossPay ?? 0) + (carryover?.grossPay ?? 0) + manualTotal + twoTechPay + completedTicketsPay + customPay + techHourlyPay + techGuaranteedSalaryMatch + techHolidayPremium + techTraineeMatch
       : 0;
 
     const techRow: EmployeePayrollRow | null =
@@ -2562,6 +2646,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
             techGuaranteedSalaryTarget,
             techGuaranteedSalaryMatch,
             techHolidayPremium,
+            techTraineeMatch,
             techIncludablePay,
             dutyHours,
             grossPay: techGrossPay,
@@ -2605,6 +2690,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       techGuaranteedSalaryTarget: 0,
       techGuaranteedSalaryMatch: 0,
       techHolidayPremium: 0,
+      techTraineeMatch: 0,
       techIncludablePay: 0,
       dutyHours,
       grossPay: officeGrossPay,
@@ -3860,7 +3946,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
           <p className="text-slate-400 text-sm mb-4">{error}</p>
           <div className="flex flex-wrap items-center justify-center gap-2">
             <button
-              onClick={fetchData}
+              onClick={() => fetchData()}
               className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded text-sm font-semibold transition"
             >
               Retry
@@ -3939,7 +4025,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
               <p className="text-sm text-slate-400">{sub.description}</p>
             </div>
             <button
-              onClick={fetchData}
+              onClick={() => fetchData()}
               className="p-2 rounded hover:bg-white/10 text-slate-400 hover:text-white transition"
               title="Refresh"
             >
@@ -5799,6 +5885,8 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
           role={detailEmployee.role}
           extraRoles={detailEmployee.extraRoles}
           tierLevel={detailEmployee.tierLevel}
+          trainingEndDate={detailEmployee.trainingEndDate}
+          hireDate={employeeInfoByProfileId.get(detailEmployee.id)?.hireDate || null}
           requiredCheckIn={detailEmployee.requiredCheckIn}
           requiredCheckOut={detailEmployee.requiredCheckOut}
           workingHours={detailEmployee.workingHours}
@@ -5808,7 +5896,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
           initialStart={genStart || undefined}
           initialEnd={genEnd || undefined}
           onClose={() => { setDetailEmployee(null); setWizardStep("detail"); }}
-          onRateChanged={() => { fetchData(); reloadTimecardEntries(); }}
+          onRateChanged={() => { fetchData({ silent: true }); reloadTimecardEntries(); }}
           nextBusy={nextBusy}
           onNext={
             isTechRole(detailEmployee)

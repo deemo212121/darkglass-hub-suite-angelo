@@ -1214,6 +1214,10 @@ export async function updateCompanyUser(
     isActive: boolean;
     /** Trainee vs Regular. See migration 0152. */
     employmentType: "trainee" | "regular";
+    /** Trainee daily $100 guarantee window's end date ("YYYY-MM-DD") — every
+     *  day from this profile's hireDate through this date is a trainee day
+     *  for payroll purposes. Pass null to clear. See migration 0297. */
+    trainingEndDate: string | null;
   }>
 ): Promise<void> {
   const payload: Record<string, unknown> = {};
@@ -1251,6 +1255,7 @@ export async function updateCompanyUser(
   if (fields.workPlan !== undefined) payload.work_plan = fields.workPlan;
   if (fields.isActive !== undefined) payload.is_active = fields.isActive;
   if (fields.employmentType !== undefined) payload.employment_type = fields.employmentType;
+  if (fields.trainingEndDate !== undefined) payload.training_end_date = fields.trainingEndDate;
 
   // .select("id") makes Supabase return the rows actually touched — without
   // it, an RLS policy silently blocking this update still comes back as

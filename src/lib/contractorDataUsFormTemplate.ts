@@ -7,7 +7,8 @@
  * app is one dedicated file set per type, not a shared parametrized
  * component). See that file's own header comment for the underlying
  * rationale (from-scratch HTML template captured to PDF, single-party,
- * two ID-photo upload fields, 3-slot emergency contacts).
+ * 3-slot emergency contacts) — including the same SSN Card/Driver's
+ * License field removal (moved to their own standalone forms).
  */
 
 export const CONTRACTOR_DATA_US_BRANCHES = [
@@ -68,12 +69,6 @@ export interface ContractorDataUsFormData {
   startDate: string;
   /** YYYY-MM-DD — built in the fill UI from three separate Month/Day/Year dropdowns (not a native date picker). */
   birthDate: string;
-  ssn: string;
-  /** Firebase Storage URLs — front + back as separate uploads under the same logical field. */
-  ssnCardUrls: string[];
-  driversLicenseNumber: string;
-  driversLicenseState: string;
-  driversLicenseUrls: string[];
   email: string;
   maritalStatus: string;
   spouseName: string;
@@ -99,6 +94,16 @@ const blank = (v: string) => (v && v.trim() ? escapeHtml(v) : "&nbsp;");
 
 const fmtDate = (v: string) => {
   if (!v) return "";
+  // A date-only string ("2026-09-17") parses as UTC midnight; formatting
+  // it back out in the browser's local timezone (anything behind UTC,
+  // i.e. all of the US) rolls it back a day — "9/17" printing as "9/16".
+  // Parsing the y/m/d parts directly into a local Date avoids that. A
+  // full timestamp has no such ambiguity and is left to the normal parse.
+  const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v);
+  if (dateOnly) {
+    const [, y, m, d] = dateOnly;
+    return new Date(Number(y), Number(m) - 1, Number(d)).toLocaleDateString();
+  }
   const d = new Date(v);
   return isNaN(d.getTime()) ? v : d.toLocaleDateString();
 };
@@ -129,8 +134,6 @@ function field(label: string, value: string) {
 }
 
 export function buildContractorDataUsBodyMarkup(data: ContractorDataUsFormData, logoDataUrl: string, signature: ContractorDataUsSignature | undefined): string {
-  const photoImgs = (urls: string[]) => urls.map((u) => `<img src="${u}" alt="" />`).join("");
-
   return `
     <div class="cdata-container">
       <div class="cdata-header">
@@ -158,23 +161,6 @@ export function buildContractorDataUsBodyMarkup(data: ContractorDataUsFormData, 
         ${field("State", data.state)}
         ${field("Zip Code", data.zipCode)}
         ${field("Country", data.country)}
-      </div>
-
-      <div class="cdata-section-title">IDENTIFICATION</div>
-      <div class="cdata-grid">
-        ${field("Social Security Number", data.ssn)}
-        ${field("Driver's License Number", data.driversLicenseNumber)}
-        ${field("State Issued", data.driversLicenseState)}
-      </div>
-      <div class="cdata-grid full">
-        <div class="cdata-row">
-          <span class="cdata-label">Social Security Card (Front / Back)</span>
-          <div class="cdata-photos">${photoImgs(data.ssnCardUrls)}</div>
-        </div>
-        <div class="cdata-row">
-          <span class="cdata-label">Driver's License (Front / Back)</span>
-          <div class="cdata-photos">${photoImgs(data.driversLicenseUrls)}</div>
-        </div>
       </div>
 
       <div class="cdata-section-title">MARITAL STATUS & RESIDENCY</div>

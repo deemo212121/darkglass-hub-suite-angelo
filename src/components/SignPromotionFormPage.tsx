@@ -17,7 +17,7 @@ import { getMyProfileId } from "@/lib/supabase/users";
 import { getSignableDocument, signDocument, type SignableDocument } from "@/lib/supabase/signableDocuments";
 import { uploadSignableDocumentSignature, uploadPromotionForm, refreshStorageAuthToken } from "@/lib/firebase/storage";
 import { captureHtmlToPdfBlob, loadAssetDataUrl, resolveSignaturesForCapture } from "@/lib/pdfCapture";
-import { buildPromotionFormBodyMarkup, promotionFormStyles, type PromotionFormData } from "@/lib/promotionFormTemplate";
+import { buildPromotionFormBodyMarkup, buildPromotionCongratsMessage, promotionFormStyles, type PromotionFormData } from "@/lib/promotionFormTemplate";
 import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
 import { logActivity } from "@/lib/supabase/hrActivityLog";
 import { getHrNotificationSettings } from "@/lib/supabase/companySettings";
@@ -141,6 +141,27 @@ export function SignPromotionFormPage({ docId }: Props) {
           void notifyHrRoleUsers(myProfileId, displayName || "Employee", excludeIds, `â Employee Promotion / Role Change Form for ${formData.employeeName} has been signed.`);
         })
         .catch((err) => console.error("[promotion-form] hr notify check failed:", err));
+
+      // The CEO's personal congratulations DM - fires the moment the
+      // "executive" slot signs, the last signer in this form's chain
+      // (employee, manager, senior_manager, hr_staff, executive), per an
+      // explicit ask to send it automatically "when I sign the promotion
+      // paper at last." Sent as its own DM thread to the promoted
+      // employee (formData.employeeId), not the doc's own recipient chain.
+      if (doc.recipientSlot === "executive" && formData.employeeId && formData.employeeId !== myProfileId) {
+        try {
+          const congratsThread = await getOrCreateDmThread(myProfileId, formData.employeeId);
+          await sendMessage({
+            dmThreadId: congratsThread.id,
+            senderId: myProfileId,
+            senderName: displayName || "CEO",
+            body: buildPromotionCongratsMessage(formData.employeeName, formData.newPositionTitle),
+          });
+          void logActivity({ action: "promotion_congrats_sent", targetType: "employee", targetId: formData.employeeId, targetLabel: formData.employeeName });
+        } catch (err) {
+          console.error("[promotion-form] congrats DM failed:", err);
+        }
+      }
 
       setDoc({ ...doc, status: "signed", pdfUrl, signatures, signedAt: entry.signedAt });
       void logActivity({ action: "promotion_form_signed", targetType: "employee", targetLabel: formData.employeeName, details: { slot: doc.recipientSlot } });

@@ -37,9 +37,9 @@ export interface MasterW2OfficeAgreementFormData {
   addressZip: string;
   phone: string;
   email: string;
-  /** Storage paths in the private "technician-id-documents" bucket — see technicianIdDocuments.ts. Not URLs (the bucket is private); resolve with getTechnicianIdDocumentUrl when displaying. */
-  licensePhotoPath: string;
-  ssnCardPhotoPath: string;
+  /** Storage paths in the private "technician-id-documents" bucket — see technicianIdDocuments.ts. Only present on a document signed before the SSN Card/Driver's License split (see ssnCardFormTemplate.ts/driversLicenseFormTemplate.ts); FillMasterW2OfficeAgreementPage.tsx no longer writes these, but ReportHRDaily.tsx's Sent History "View ID Photos" links still read them for older documents. Not URLs (the bucket is private); resolve with getTechnicianIdDocumentUrl when displaying. */
+  licensePhotoPath?: string;
+  ssnCardPhotoPath?: string;
   employeeDateSigned: string;
   employeeSignatureDataUrl: string;
   employerDateSigned: string;
@@ -53,6 +53,16 @@ const blank = (v: string) => (v && v.trim() ? escapeHtml(v) : "&nbsp;");
 
 const fmtDate = (iso: string) => {
   if (!iso) return "";
+  // A date-only string ("2026-09-17") parses as UTC midnight; formatting
+  // it back out in the browser's local timezone (anything behind UTC,
+  // i.e. all of the US) rolls it back a day — "9/17" printing as "9/16".
+  // Parsing the y/m/d parts directly into a local Date avoids that. A
+  // full timestamp has no such ambiguity and is left to the normal parse.
+  const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  if (dateOnly) {
+    const [, y, m, d] = dateOnly;
+    return new Date(Number(y), Number(m) - 1, Number(d)).toLocaleDateString();
+  }
   const d = new Date(iso);
   return isNaN(d.getTime()) ? iso : d.toLocaleDateString();
 };

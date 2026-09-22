@@ -599,6 +599,20 @@ export function isPartsStaffRole(role: string | null | undefined, extraRoles?: s
   return anyHeldRoleIn(PARTS_STAFF_ROLES, role, extraRoles);
 }
 
+const CSR_MANAGER_ROLES = new Set(["CSR_MANAGER"]);
+
+/**
+ * CSR_MANAGER sits above every CSR_TEAM_LEADER, overseeing the whole
+ * department rather than leading one specific team — so unlike a team
+ * leader, they're never themselves assigned as a csr_team_members row with
+ * is_leader = true. visibleAttendanceProfileIds (notifyRouting.ts) uses this
+ * to grant them every CSR team's roster, not just a team they personally
+ * lead (which for them is none).
+ */
+export function isCsrManagerRole(role: string | null | undefined, extraRoles?: string[] | null): boolean {
+  return anyHeldRoleIn(CSR_MANAGER_ROLES, role, extraRoles);
+}
+
 /**
  * The Technical Support department — TRIAGE_USER ("Technical Support") and
  * its higher-ops tier TRIAGE_MANAGER ("Technical Support Manager"). Single

@@ -454,20 +454,31 @@ export async function getTechOnHoldTickets(startDate: string, endDate: string): 
 
 /** One completed, pay-eligible ticket, dated — the same population
  *  getTechCompletedRepairCounts sums into Total Completed Tickets, just
- *  broken out per day instead of aggregated over the whole period, for
+ *  broken out per ticket instead of aggregated over the whole period, for
  *  building a day-by-day trend line (e.g. Technician Performance
- *  Report's branch/manager/tier comparison chart). */
+ *  Report's branch/manager/tier comparison chart) or listing the actual
+ *  tickets behind a Total Tickets count. */
 export interface TechCompletedTicketDaily {
   date: string;
   technician: string;
   location: string;
+  ticketId: string;
+  ticketNo: string;
+  repairType: string;
 }
 
 export async function getTechCompletedTicketsDaily(startDate: string, endDate: string): Promise<TechCompletedTicketDaily[]> {
   const candidates = await getTechCompletedCandidates(startDate, endDate);
   return candidates
     .filter((c) => !c.redo && !c.onHold && c.scheduleDate)
-    .map((c) => ({ date: c.scheduleDate, technician: c.technician, location: c.location }));
+    .map((c) => ({
+      date: c.scheduleDate,
+      technician: c.technician,
+      location: c.location,
+      ticketId: c.ticketId,
+      ticketNo: c.ticketNo,
+      repairType: c.repairType,
+    }));
 }
 
 /** Shared grouping/dedup for getTechRedoTickets / getTechOnHoldTickets — one entry per (technician, ticket), keyed by lowercased technician name. */

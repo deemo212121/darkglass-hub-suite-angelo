@@ -62,6 +62,14 @@ export const SIGNABLE_DOCUMENT_REGISTRY: Record<SignableDocumentType, SignableDo
   // company-generated certificate) — same "internal recipients only"
   // reasoning as master_w2_agreement above, no external/no-login variant.
   certificate_of_employment: { label: "Certificate of Employment", internalPath: "/sign-coe-form", externalPath: "/sign-coe-form" },
+  // Standalone ID-document submissions, split out of Contractor Data
+  // Sheet / Master W-2 Technician & Office Agreements (US) and the Master
+  // PH Contractor Agreement (PH), which used to each embed their own ID
+  // upload field — see ssnCardFormTemplate.ts/driversLicenseFormTemplate.ts/
+  // validIdFormTemplate.ts's header comments.
+  ssn_card_form: { label: "SSN Card", internalPath: "/fill-ssn-card", externalPath: "/fill-ssn-card-external" },
+  drivers_license_form: { label: "Driver's License", internalPath: "/fill-drivers-license", externalPath: "/fill-drivers-license-external" },
+  valid_id_form: { label: "Valid ID", internalPath: "/fill-valid-id", externalPath: "/fill-valid-id-external" },
 };
 
 export function signableDocumentLabel(type: SignableDocumentType): string {
@@ -82,6 +90,7 @@ export const TECHNICIAN_FORM_TYPES: SignableDocumentType[] = [
   "vehicle_agreement",
   "damage",
   "direct_deposit",
+  "drivers_license_form",
   "employee_confidentiality",
   "contractor_data",
   "flash_technician_travel",
@@ -90,6 +99,7 @@ export const TECHNICIAN_FORM_TYPES: SignableDocumentType[] = [
   "mileage_fuel",
   "parts_responsibility",
   "pto_ack",
+  "ssn_card_form",
   "substance_screening",
   "w4",
   "i9",
@@ -104,9 +114,9 @@ export const TECHNICIAN_FORM_TYPES: SignableDocumentType[] = [
  * below) to let HR quick-select a candidate's forms by role/tier instead of
  * checking each one by hand.
  */
-export const NEW_TECHNICIAN_FORM_TYPES: SignableDocumentType[] = ["master_w2_agreement", "w4", "i9", "direct_deposit"];
-export const OFFICE_STAFF_US_FORM_TYPES: SignableDocumentType[] = ["master_w2_office_agreement", "w4", "i9", "direct_deposit"];
-export const PH_STAFF_FORM_TYPES: SignableDocumentType[] = ["master_ph_contractor_agreement", "w8ben", "direct_deposit"];
+export const NEW_TECHNICIAN_FORM_TYPES: SignableDocumentType[] = ["master_w2_agreement", "w4", "i9", "direct_deposit", "ssn_card_form", "drivers_license_form"];
+export const OFFICE_STAFF_US_FORM_TYPES: SignableDocumentType[] = ["master_w2_office_agreement", "w4", "i9", "direct_deposit", "ssn_card_form", "drivers_license_form"];
+export const PH_STAFF_FORM_TYPES: SignableDocumentType[] = ["master_ph_contractor_agreement", "w8ben", "direct_deposit", "valid_id_form"];
 export const BM_AND_UP_FORM_TYPES: SignableDocumentType[] = ["master_w2_executive_agreement", "direct_deposit"];
 
 export type StaffFormTier = "newTechnician" | "officeStaffUs" | "phStaff" | "bmAndUp";

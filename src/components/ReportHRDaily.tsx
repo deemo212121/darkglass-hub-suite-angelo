@@ -81,8 +81,9 @@ import {
   type OnboardingDocumentColumn,
   type OnboardingGroupKey,
 } from "@/lib/supabase/onboardingDocumentColumns";
-import { uploadCoeCertificate, uploadWarningForm, uploadPromotionForm, uploadActionPlanForm, uploadTerminationForm, uploadW8benForm, uploadW4Form, uploadW4RForm, uploadI9Form, uploadWageAckForm, uploadCarIqAgreementForm, uploadVehicleAgreementForm, uploadEmployeeConfidentialityForm, uploadMealRestBreakForm, uploadPtoAckForm, uploadPartsResponsibilityForm, uploadMileageFuelForm, uploadLocationConsentForm, uploadDamageForm, uploadContractorDataForm, uploadDirectDepositForm, uploadSubstanceScreeningForm, uploadFlashTechnicianTravelForm, uploadContractorAddendumForm, uploadMasterW2AgreementForm, uploadMasterW2OfficeAgreementForm, uploadMasterPhContractorAgreementForm, uploadMasterW2ExecutiveAgreementForm, uploadSignableDocumentSignature, refreshStorageAuthToken } from "@/lib/firebase/storage";
-import { captureHtmlToPdfBlob, captureHtmlPagesToPdfBlob, loadAssetDataUrl as loadImageDataUrl } from "@/lib/pdfCapture";
+import { uploadCoeCertificate, uploadWarningForm, uploadPromotionForm, uploadActionPlanForm, uploadTerminationForm, uploadW8benForm, uploadW4Form, uploadW4RForm, uploadI9Form, uploadWageAckForm, uploadCarIqAgreementForm, uploadVehicleAgreementForm, uploadEmployeeConfidentialityForm, uploadMealRestBreakForm, uploadPtoAckForm, uploadPartsResponsibilityForm, uploadMileageFuelForm, uploadLocationConsentForm, uploadDamageForm, uploadContractorDataForm, uploadDirectDepositForm, uploadSubstanceScreeningForm, uploadFlashTechnicianTravelForm, uploadContractorAddendumForm, uploadMasterW2AgreementForm, uploadMasterW2OfficeAgreementForm, uploadMasterPhContractorAgreementForm, uploadMasterW2ExecutiveAgreementForm, uploadVehicleUseAgreementForm, uploadNdaForm, uploadSsnCardForm, uploadDriversLicenseForm, uploadValidIdForm, uploadSignableDocumentSignature, refreshStorageAuthToken } from "@/lib/firebase/storage";
+import { regenerateSimpleSignableDocumentPdf, regenerateMasterAgreementPdf } from "@/lib/regenerateSignableDocumentPdf";
+import { captureHtmlToPdfBlob, captureHtmlPagesToPdfBlob, resolveSignaturesForCapture, loadAssetDataUrl as loadImageDataUrl } from "@/lib/pdfCapture";
 import { downloadSignableDocumentPdf } from "@/lib/downloadSignableDocumentPdf";
 import { repairMultiSignerPdfs, type RepairResult } from "@/lib/repairMultiSignerSignatures";
 import { useSortableSearchTable } from "@/hooks/useSortableSearchTable";
@@ -148,6 +149,9 @@ import type { VehicleAgreementFormData } from "@/lib/vehicleAgreementFormTemplat
 import { fillVehicleAgreementPdf } from "@/lib/vehicleAgreementPdfFill";
 import type { EmployeeConfidentialityFormData } from "@/lib/employeeConfidentialityFormTemplate";
 import { fillEmployeeConfidentialityPdf } from "@/lib/employeeConfidentialityPdfFill";
+import { buildSsnCardFormBodyMarkup, ssnCardFormStyles, type SsnCardFormData } from "@/lib/ssnCardFormTemplate";
+import { buildDriversLicenseFormBodyMarkup, driversLicenseFormStyles, type DriversLicenseFormData } from "@/lib/driversLicenseFormTemplate";
+import { buildValidIdFormBodyMarkup, validIdFormStyles, type ValidIdFormData } from "@/lib/validIdFormTemplate";
 import { MEAL_REST_BREAK_BRANCHES, type MealRestBreakFormData } from "@/lib/mealRestBreakFormTemplate";
 import { fillMealRestBreakPdf } from "@/lib/mealRestBreakPdfFill";
 import { PTO_ACK_BRANCHES, type PtoAckFormData } from "@/lib/ptoAckFormTemplate";
@@ -443,6 +447,7 @@ const PH_ONBOARDING_DOCS = [
   "CSR Duty Agreement",
   "Employee Off Days Agreement",
   "W-8BEN",
+  "Valid ID",
 ];
 
 // "New Onboarding Documents" — the same paperwork tracker, but split into 4
@@ -493,7 +498,7 @@ const ONBOARDING_GROUP_KEY_LABELS: Record<OnboardingGroupKey, string> = {
  * for why some of these are ambiguous. This can only ever ADD a "YES" a
  * human hasn't gotten to yet; it never removes one a human already set.
  */
-const ONBOARDING_COLUMN_TO_DOCUMENT_TYPE: Record<string, SignableDocumentType> = {
+const ONBOARDING_COLUMN_TO_DOCUMENT_TYPE: Record<string, SignableDocumentType | SignableDocumentType[]> = {
   "Contractor Data Sheet": "contractor_data",
   "Direct Deposit Authorization": "direct_deposit",
   "Non-Disclosure Agreement": "nda_form",
@@ -513,6 +518,20 @@ const ONBOARDING_COLUMN_TO_DOCUMENT_TYPE: Record<string, SignableDocumentType> =
   "Substance Screening & Conduct Agreement": "substance_screening",
   "W-4R": "w4r",
   "I-9": "i9",
+  // Standalone as of ssn_card_form/drivers_license_form (SSN Card / Driver's
+  // License tabs), but a signed OLD combined form (Contractor Data Sheet or
+  // either Master W-2 Agreement — both require uploading BOTH the SSN card
+  // AND the license before they'll let you submit, see their own validate()
+  // functions) already proves the same document was collected, so those
+  // count here too — an employee who submitted one of the old forms before
+  // this split shows "YES" immediately instead of HR re-requesting it.
+  "Driver's License": ["drivers_license_form", "contractor_data", "contractor_data_us", "master_w2_agreement", "master_w2_office_agreement"],
+  "Social Security": ["ssn_card_form", "contractor_data", "contractor_data_us", "master_w2_agreement", "master_w2_office_agreement"],
+  // Standalone as of valid_id_form (PH "Valid ID" tab), but a signed OLD
+  // Master PH Contractor Agreement already proves a government ID was
+  // collected (its own validate() requires the photo upload) — same
+  // backward-compatible pull-forward as Driver's License/Social Security.
+  "Valid ID": ["valid_id_form", "master_ph_contractor_agreement"],
 };
 
 // Job Title options for the Generate COE tab — every real role in the
@@ -1077,7 +1096,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // Reviews, the Approved log, the department trend chart, and the full
   // Employee Directory all on top of each other, forcing a long scroll to
   // reach anything below Hiring.
-  const [activeTab, setActiveTab] = useState<"hiring" | "recruitmentSite" | "warnings" | "masterList" | "leaders" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "promotionForm" | "actionPlanForm" | "terminationForm" | "employeeRequestManager" | "w8ben" | "i9" | "wageAck" | "carIqAgreement" | "vehicleAgreement" | "vehicleUseAgreement" | "employeeConfidentiality" | "mealRestBreak" | "ptoAck" | "partsResponsibility" | "mileageFuel" | "locationConsent" | "damage" | "contractorData" | "contractorDataUs" | "directDeposit" | "substanceScreening" | "flashTechnicianTravel" | "contractorAddendum" | "combineForms" | "employerQueue" | "ndaForm" | "calendar" | "interviewCalendar" | "masterW2Agreement" | "newW4" | "masterW2OfficeAgreement" | "newW8ben" | "masterPhContractorAgreement" | "newI9" | "newDirectDeposit" | "newCombineForms" | "newOnboardingDocuments" | "newW9" | "newContractorAddendum" | "masterW2ExecutiveAgreement">(paperworksOnly ? "combineForms" : "hiring");
+  const [activeTab, setActiveTab] = useState<"hiring" | "recruitmentSite" | "warnings" | "masterList" | "leaders" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "promotionForm" | "actionPlanForm" | "terminationForm" | "employeeRequestManager" | "w8ben" | "i9" | "wageAck" | "carIqAgreement" | "vehicleAgreement" | "vehicleUseAgreement" | "employeeConfidentiality" | "mealRestBreak" | "ptoAck" | "partsResponsibility" | "mileageFuel" | "locationConsent" | "damage" | "contractorData" | "contractorDataUs" | "directDeposit" | "substanceScreening" | "flashTechnicianTravel" | "contractorAddendum" | "combineForms" | "employerQueue" | "ndaForm" | "calendar" | "interviewCalendar" | "masterW2Agreement" | "newW4" | "masterW2OfficeAgreement" | "newW8ben" | "masterPhContractorAgreement" | "newI9" | "newDirectDeposit" | "newCombineForms" | "newOnboardingDocuments" | "newW9" | "newContractorAddendum" | "masterW2ExecutiveAgreement" | "ssnCard" | "driversLicense" | "validId">(paperworksOnly ? "combineForms" : "hiring");
   const [openCategory, setOpenCategory] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   // Which floating-sidebar section headers (Automated Forms/Generate
@@ -1101,7 +1120,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const navigate = useNavigate();
   const hrSearchParams = (useSearch({ strict: false }) as { tab?: string; submissionId?: string; profileId?: string; docId?: string; viewCvCandidateId?: string }) ?? {};
   const initialHrSearchRef = useRef(hrSearchParams);
-  const VALID_HR_TABS = ["hiring", "warnings", "masterList", "leaders", "jotform", "jotformDocuments", "customForms", "onboarding", "hiringReports", "report", "coe", "warningForm", "promotionForm", "actionPlanForm", "terminationForm", "employeeRequestManager", "w8ben", "i9", "newI9", "wageAck", "carIqAgreement", "vehicleAgreement", "vehicleUseAgreement", "employeeConfidentiality", "mealRestBreak", "ptoAck", "partsResponsibility", "mileageFuel", "locationConsent", "damage", "contractorData", "contractorDataUs", "directDeposit", "substanceScreening", "flashTechnicianTravel", "combineForms", "newCombineForms", "employerQueue"] as const;
+  const VALID_HR_TABS = ["hiring", "warnings", "masterList", "leaders", "jotform", "jotformDocuments", "customForms", "onboarding", "hiringReports", "report", "coe", "warningForm", "promotionForm", "actionPlanForm", "terminationForm", "employeeRequestManager", "w8ben", "i9", "newI9", "wageAck", "carIqAgreement", "vehicleAgreement", "vehicleUseAgreement", "employeeConfidentiality", "mealRestBreak", "ptoAck", "partsResponsibility", "mileageFuel", "locationConsent", "damage", "contractorData", "contractorDataUs", "directDeposit", "substanceScreening", "flashTechnicianTravel", "combineForms", "newCombineForms", "employerQueue", "ssnCard", "driversLicense", "validId"] as const;
   useEffect(() => {
     const tab = initialHrSearchRef.current.tab;
     if (tab && (VALID_HR_TABS as readonly string[]).includes(tab)) setActiveTab(tab as typeof activeTab);
@@ -2472,6 +2491,9 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     master_ph_contractor_agreement: "masterPhContractorAgreement",
     master_w2_executive_agreement: "masterW2ExecutiveAgreement",
     certificate_of_employment: "coe",
+    ssn_card_form: "ssnCard",
+    drivers_license_form: "driversLicense",
+    valid_id_form: "validId",
   };
 
   // Forms popup — checkbox list of every SignableDocumentType, letting HR
@@ -4965,6 +4987,23 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     await downloadSignableDocumentPdf(doc.pdfUrl, `Master W-2 Technician Agreement - ${name}.pdf`);
   };
 
+  /** Re-renders this document's PDF from its already-stored data (employee/employer signatures are inline data: URLs in form_data, no CORS resolution needed) — see regenerateSignableDocumentPdf.ts's header comment. */
+  const handleRegenerateMasterW2AgreementPdf = async (doc: SignableDocument) => {
+    const name = (doc.formData as Partial<MasterW2AgreementFormData>).employeeName || doc.recipientName || "master-w2-agreement";
+    setMasterW2AgreementActionBusyId(doc.id);
+    setMasterW2AgreementActionError(null);
+    try {
+      const logo = masterW2AgreementLogoDataUrl || (await loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png")));
+      if (!masterW2AgreementLogoDataUrl) setMasterW2AgreementLogoDataUrl(logo);
+      await regenerateMasterAgreementPdf(doc, logo, buildMasterW2AgreementBodyMarkup, masterW2AgreementStyles, uploadMasterW2AgreementForm, name);
+      await loadSentMasterW2AgreementForms();
+    } catch (err) {
+      setMasterW2AgreementActionError(err instanceof Error ? err.message : "Failed to regenerate PDF.");
+    } finally {
+      setMasterW2AgreementActionBusyId(null);
+    }
+  };
+
   const handleReopenMasterW2AgreementEmployer = async (doc: SignableDocument) => {
     if (!window.confirm("Re-open this for a new employer signature? The employee's signature stays as-is.")) return;
     setMasterW2AgreementActionBusyId(doc.id);
@@ -5248,6 +5287,23 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     await downloadSignableDocumentPdf(doc.pdfUrl, `Master W-2 Office Agreement - ${name}.pdf`);
   };
 
+  /** Re-renders this document's PDF from its already-stored data (employee/employer signatures are inline data: URLs in form_data, no CORS resolution needed) — see regenerateSignableDocumentPdf.ts's header comment. */
+  const handleRegenerateMasterW2OfficeAgreementPdf = async (doc: SignableDocument) => {
+    const name = (doc.formData as Partial<MasterW2OfficeAgreementFormData>).employeeName || doc.recipientName || "master-w2-office-agreement";
+    setMasterW2OfficeAgreementActionBusyId(doc.id);
+    setMasterW2OfficeAgreementActionError(null);
+    try {
+      const logo = masterW2OfficeAgreementLogoDataUrl || (await loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png")));
+      if (!masterW2OfficeAgreementLogoDataUrl) setMasterW2OfficeAgreementLogoDataUrl(logo);
+      await regenerateMasterAgreementPdf(doc, logo, buildMasterW2OfficeAgreementBodyMarkup, masterW2OfficeAgreementStyles, uploadMasterW2OfficeAgreementForm, name);
+      await loadSentMasterW2OfficeAgreementForms();
+    } catch (err) {
+      setMasterW2OfficeAgreementActionError(err instanceof Error ? err.message : "Failed to regenerate PDF.");
+    } finally {
+      setMasterW2OfficeAgreementActionBusyId(null);
+    }
+  };
+
   const handleReopenMasterW2OfficeAgreementEmployer = async (doc: SignableDocument) => {
     if (!window.confirm("Re-open this for a new employer signature? The employee's signature stays as-is.")) return;
     setMasterW2OfficeAgreementActionBusyId(doc.id);
@@ -5522,6 +5578,23 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     if (!doc.pdfUrl) return;
     const name = (doc.formData as Partial<MasterW2ExecutiveAgreementFormData>).employeeName || doc.recipientName || "master-w2-executive-agreement";
     await downloadSignableDocumentPdf(doc.pdfUrl, `W-2 Executive Exempt Management Agreement - ${name}.pdf`);
+  };
+
+  /** Re-renders this document's PDF from its already-stored data (employee/employer signatures are inline data: URLs in form_data, no CORS resolution needed) — see regenerateSignableDocumentPdf.ts's header comment. */
+  const handleRegenerateMasterW2ExecutiveAgreementPdf = async (doc: SignableDocument) => {
+    const name = (doc.formData as Partial<MasterW2ExecutiveAgreementFormData>).employeeName || doc.recipientName || "master-w2-executive-agreement";
+    setMasterW2ExecutiveAgreementActionBusyId(doc.id);
+    setMasterW2ExecutiveAgreementActionError(null);
+    try {
+      const logo = masterW2ExecutiveAgreementLogoDataUrl || (await loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png")));
+      if (!masterW2ExecutiveAgreementLogoDataUrl) setMasterW2ExecutiveAgreementLogoDataUrl(logo);
+      await regenerateMasterAgreementPdf(doc, logo, buildMasterW2ExecutiveAgreementBodyMarkup, masterW2ExecutiveAgreementStyles, uploadMasterW2ExecutiveAgreementForm, name);
+      await loadSentMasterW2ExecutiveAgreementForms();
+    } catch (err) {
+      setMasterW2ExecutiveAgreementActionError(err instanceof Error ? err.message : "Failed to regenerate PDF.");
+    } finally {
+      setMasterW2ExecutiveAgreementActionBusyId(null);
+    }
   };
 
   const handleReopenMasterW2ExecutiveAgreementEmployer = async (doc: SignableDocument) => {
@@ -5827,6 +5900,23 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     if (!doc.pdfUrl) return;
     const name = (doc.formData as Partial<MasterPhContractorAgreementFormData>).employeeName || doc.recipientName || "master-ph-contractor-agreement";
     await downloadSignableDocumentPdf(doc.pdfUrl, `Master PH Contractor Agreement - ${name}.pdf`);
+  };
+
+  /** Re-renders this document's PDF from its already-stored data (employee/employer signatures are inline data: URLs in form_data, no CORS resolution needed) — see regenerateSignableDocumentPdf.ts's header comment. */
+  const handleRegenerateMasterPhContractorAgreementPdf = async (doc: SignableDocument) => {
+    const name = (doc.formData as Partial<MasterPhContractorAgreementFormData>).employeeName || doc.recipientName || "master-ph-contractor-agreement";
+    setMasterPhContractorAgreementActionBusyId(doc.id);
+    setMasterPhContractorAgreementActionError(null);
+    try {
+      const logo = masterPhContractorAgreementLogoDataUrl || (await loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png")));
+      if (!masterPhContractorAgreementLogoDataUrl) setMasterPhContractorAgreementLogoDataUrl(logo);
+      await regenerateMasterAgreementPdf(doc, logo, buildMasterPhContractorAgreementBodyMarkup, masterPhContractorAgreementStyles, uploadMasterPhContractorAgreementForm, name);
+      await loadSentMasterPhContractorAgreementForms();
+    } catch (err) {
+      setMasterPhContractorAgreementActionError(err instanceof Error ? err.message : "Failed to regenerate PDF.");
+    } finally {
+      setMasterPhContractorAgreementActionBusyId(null);
+    }
   };
 
   const handleReopenMasterPhContractorAgreementEmployer = async (doc: SignableDocument) => {
@@ -7013,6 +7103,472 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
 
+  // ── SSN Card / Driver's License / Valid ID (PH) — standalone
+  // ID-document submissions, split out of Contractor Data Sheet / Master
+  // W-2 Technician & Office Agreements (US) and the Master PH Contractor
+  // Agreement (PH), which used to each embed their own ID upload field.
+  // Same single-recipient, no-HR-content, no-employer-cosignature shape as
+  // Employee Confidentiality above — the recipient fills in everything
+  // themselves on FillSsnCardPage.tsx / FillDriversLicensePage.tsx /
+  // FillValidIdPage.tsx. No live preview here (unlike Confidentiality,
+  // there's no real source PDF to render ahead of time) — the fill page
+  // itself already shows a live preview to whoever's actually filling it. ──
+  const [sentSsnCardForms, setSentSsnCardForms] = useState<SignableDocument[]>([]);
+  const loadSentSsnCardForms = async () => {
+    try {
+      setSentSsnCardForms(await getSignableDocuments("ssn_card_form"));
+    } catch (err) {
+      console.error("Failed to load sent SSN Card forms:", err);
+    }
+  };
+  useEffect(() => {
+    if (activeTab === "ssnCard" || activeTab === "jotformDocuments" || activeTab === "combineForms") void loadSentSsnCardForms();
+  }, [activeTab]);
+
+  const [ssnCardRecipientId, setSsnCardRecipientId] = useState("");
+  const [ssnCardRecipientSearch, setSsnCardRecipientSearch] = useState("");
+  const [ssnCardRecipientDropdownOpen, setSsnCardRecipientDropdownOpen] = useState(false);
+  const [ssnCardSending, setSsnCardSending] = useState(false);
+  const [ssnCardSendError, setSsnCardSendError] = useState<string | null>(null);
+  const [ssnCardActionBusyId, setSsnCardActionBusyId] = useState<string | null>(null);
+  const [ssnCardActionError, setSsnCardActionError] = useState<string | null>(null);
+  const [ssnCardExternalName, setSsnCardExternalName] = useState("");
+  const [ssnCardSentLink, setSsnCardSentLink] = useState<{ link: string; recipientName: string } | null>(null);
+  const [ssnCardSentLinkCopied, setSsnCardSentLinkCopied] = useState(false);
+  const filteredSsnCardRecipients = useMemo(
+    () => employees.filter((e) => e.status === "active" && e.name.toLowerCase().includes(ssnCardRecipientSearch.toLowerCase())),
+    [employees, ssnCardRecipientSearch]
+  );
+
+  const handleSendSsnCard = async () => {
+    if (!ssnCardRecipientId || !uid) return;
+    setSsnCardSending(true);
+    setSsnCardSendError(null);
+    try {
+      const recipient = employees.find((e) => e.id === ssnCardRecipientId);
+      if (!recipient) throw new Error("Select a recipient first.");
+
+      const alreadySent = await getExistingActiveDocumentTypes(recipient.id, ["ssn_card_form"]);
+      if (alreadySent.length > 0 && !window.confirm(`${recipient.name} already has an SSN Card request on file. Send another one anyway?`)) {
+        return;
+      }
+
+      const doc = await createSignableDocument({
+        documentType: "ssn_card_form",
+        formData: { employeeId: recipient.id, employeeName: recipient.name } as unknown as Record<string, any>,
+        recipientId: ssnCardRecipientId,
+        recipientSlot: "employee",
+        pdfUrl: "",
+      });
+
+      const myProfileId = await getMyProfileId(uid);
+      if (!myProfileId) throw new Error("Could not resolve your profile.");
+      const thread = await getOrCreateDmThread(myProfileId, ssnCardRecipientId);
+      const fillLink = `${getAppUrl()}/fill-ssn-card/${doc.id}`;
+      await sendMessage({
+        dmThreadId: thread.id,
+        senderId: myProfileId,
+        senderName: displayName || "HR",
+        body: `📋 Please submit your SSN Card: ${fillLink}`,
+      });
+
+      void logActivity({ action: "ssn_card_sent", targetType: "employee", targetId: recipient.id, targetLabel: recipient.name });
+
+      setSsnCardRecipientId("");
+      setSsnCardRecipientSearch("");
+      await loadSentSsnCardForms();
+    } catch (err) {
+      setSsnCardSendError(err instanceof Error ? err.message : "Failed to send request.");
+    } finally {
+      setSsnCardSending(false);
+    }
+  };
+
+  const handleGenerateExternalSsnCard = async () => {
+    setSsnCardSending(true);
+    setSsnCardSendError(null);
+    try {
+      const name = ssnCardExternalName.trim() || "External Recipient";
+      const doc = await createSignableDocument({
+        documentType: "ssn_card_form",
+        formData: { employeeId: "", employeeName: name } as unknown as Record<string, any>,
+        recipientName: name,
+        recipientSlot: "employee",
+        pdfUrl: "",
+      });
+
+      void logActivity({ action: "ssn_card_sent", targetType: "employee", targetLabel: name, details: { external: true } });
+
+      setSsnCardSentLink({ link: `${getAppUrl()}/fill-ssn-card-external/${doc.id}`, recipientName: name });
+      setSsnCardExternalName("");
+      await loadSentSsnCardForms();
+    } catch (err) {
+      setSsnCardSendError(err instanceof Error ? err.message : "Failed to generate link.");
+    } finally {
+      setSsnCardSending(false);
+    }
+  };
+
+  const handleCopySsnCardSentLink = async () => {
+    if (!ssnCardSentLink) return;
+    try {
+      await navigator.clipboard.writeText(ssnCardSentLink.link);
+      setSsnCardSentLinkCopied(true);
+      setTimeout(() => setSsnCardSentLinkCopied(false), 1500);
+    } catch (err) {
+      console.error("Failed to copy link:", err);
+    }
+  };
+
+  const handleCopySsnCardLink = async (doc: SignableDocument) => {
+    try {
+      const path = doc.recipientId ? "fill-ssn-card" : "fill-ssn-card-external";
+      await navigator.clipboard.writeText(`${getAppUrl()}/${path}/${doc.id}`);
+    } catch (err) {
+      console.error("Failed to copy link:", err);
+    }
+  };
+
+  const handleDownloadSsnCardPdf = async (doc: SignableDocument) => {
+    if (!doc.pdfUrl) return;
+    const name = (doc.formData as Partial<SsnCardFormData>).employeeName || doc.recipientName || "ssn-card";
+    await downloadSignableDocumentPdf(doc.pdfUrl, `SSN Card - ${name}.pdf`);
+  };
+
+  /** Re-renders this document's PDF from its already-stored data/signatures — see regenerateSignableDocumentPdf.ts's header comment (built for the date-rollback fmtDate fix, which only affects documents generated after the fix). */
+  const handleRegenerateSsnCardPdf = async (doc: SignableDocument) => {
+    const name = (doc.formData as Partial<SsnCardFormData>).employeeName || doc.recipientName || "ssn-card";
+    setSsnCardActionBusyId(doc.id);
+    setSsnCardActionError(null);
+    try {
+      const logo = await loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png"));
+      await regenerateSimpleSignableDocumentPdf(doc, logo, buildSsnCardFormBodyMarkup, ssnCardFormStyles, uploadSsnCardForm, name);
+      await loadSentSsnCardForms();
+    } catch (err) {
+      setSsnCardActionError(err instanceof Error ? err.message : "Failed to regenerate PDF.");
+    } finally {
+      setSsnCardActionBusyId(null);
+    }
+  };
+
+  const handleDeleteSsnCard = async (doc: SignableDocument) => {
+    if (!window.confirm("Permanently delete this SSN Card request?")) return;
+    setSsnCardActionBusyId(doc.id);
+    setSsnCardActionError(null);
+    try {
+      await deleteSignableDocument(doc.id);
+      await loadSentSsnCardForms();
+    } catch (err) {
+      setSsnCardActionError(err instanceof Error ? err.message : "Failed to delete.");
+    } finally {
+      setSsnCardActionBusyId(null);
+    }
+  };
+
+  const [sentDriversLicenseForms, setSentDriversLicenseForms] = useState<SignableDocument[]>([]);
+  const loadSentDriversLicenseForms = async () => {
+    try {
+      setSentDriversLicenseForms(await getSignableDocuments("drivers_license_form"));
+    } catch (err) {
+      console.error("Failed to load sent Driver's License forms:", err);
+    }
+  };
+  useEffect(() => {
+    if (activeTab === "driversLicense" || activeTab === "jotformDocuments" || activeTab === "combineForms") void loadSentDriversLicenseForms();
+  }, [activeTab]);
+
+  const [driversLicenseRecipientId, setDriversLicenseRecipientId] = useState("");
+  const [driversLicenseRecipientSearch, setDriversLicenseRecipientSearch] = useState("");
+  const [driversLicenseRecipientDropdownOpen, setDriversLicenseRecipientDropdownOpen] = useState(false);
+  const [driversLicenseSending, setDriversLicenseSending] = useState(false);
+  const [driversLicenseSendError, setDriversLicenseSendError] = useState<string | null>(null);
+  const [driversLicenseActionBusyId, setDriversLicenseActionBusyId] = useState<string | null>(null);
+  const [driversLicenseActionError, setDriversLicenseActionError] = useState<string | null>(null);
+  const [driversLicenseExternalName, setDriversLicenseExternalName] = useState("");
+  const [driversLicenseSentLink, setDriversLicenseSentLink] = useState<{ link: string; recipientName: string } | null>(null);
+  const [driversLicenseSentLinkCopied, setDriversLicenseSentLinkCopied] = useState(false);
+  const filteredDriversLicenseRecipients = useMemo(
+    () => employees.filter((e) => e.status === "active" && e.name.toLowerCase().includes(driversLicenseRecipientSearch.toLowerCase())),
+    [employees, driversLicenseRecipientSearch]
+  );
+
+  const handleSendDriversLicense = async () => {
+    if (!driversLicenseRecipientId || !uid) return;
+    setDriversLicenseSending(true);
+    setDriversLicenseSendError(null);
+    try {
+      const recipient = employees.find((e) => e.id === driversLicenseRecipientId);
+      if (!recipient) throw new Error("Select a recipient first.");
+
+      const alreadySent = await getExistingActiveDocumentTypes(recipient.id, ["drivers_license_form"]);
+      if (alreadySent.length > 0 && !window.confirm(`${recipient.name} already has a Driver's License request on file. Send another one anyway?`)) {
+        return;
+      }
+
+      const doc = await createSignableDocument({
+        documentType: "drivers_license_form",
+        formData: { employeeId: recipient.id, employeeName: recipient.name } as unknown as Record<string, any>,
+        recipientId: driversLicenseRecipientId,
+        recipientSlot: "employee",
+        pdfUrl: "",
+      });
+
+      const myProfileId = await getMyProfileId(uid);
+      if (!myProfileId) throw new Error("Could not resolve your profile.");
+      const thread = await getOrCreateDmThread(myProfileId, driversLicenseRecipientId);
+      const fillLink = `${getAppUrl()}/fill-drivers-license/${doc.id}`;
+      await sendMessage({
+        dmThreadId: thread.id,
+        senderId: myProfileId,
+        senderName: displayName || "HR",
+        body: `📋 Please submit your Driver's License: ${fillLink}`,
+      });
+
+      void logActivity({ action: "drivers_license_sent", targetType: "employee", targetId: recipient.id, targetLabel: recipient.name });
+
+      setDriversLicenseRecipientId("");
+      setDriversLicenseRecipientSearch("");
+      await loadSentDriversLicenseForms();
+    } catch (err) {
+      setDriversLicenseSendError(err instanceof Error ? err.message : "Failed to send request.");
+    } finally {
+      setDriversLicenseSending(false);
+    }
+  };
+
+  const handleGenerateExternalDriversLicense = async () => {
+    setDriversLicenseSending(true);
+    setDriversLicenseSendError(null);
+    try {
+      const name = driversLicenseExternalName.trim() || "External Recipient";
+      const doc = await createSignableDocument({
+        documentType: "drivers_license_form",
+        formData: { employeeId: "", employeeName: name } as unknown as Record<string, any>,
+        recipientName: name,
+        recipientSlot: "employee",
+        pdfUrl: "",
+      });
+
+      void logActivity({ action: "drivers_license_sent", targetType: "employee", targetLabel: name, details: { external: true } });
+
+      setDriversLicenseSentLink({ link: `${getAppUrl()}/fill-drivers-license-external/${doc.id}`, recipientName: name });
+      setDriversLicenseExternalName("");
+      await loadSentDriversLicenseForms();
+    } catch (err) {
+      setDriversLicenseSendError(err instanceof Error ? err.message : "Failed to generate link.");
+    } finally {
+      setDriversLicenseSending(false);
+    }
+  };
+
+  const handleCopyDriversLicenseSentLink = async () => {
+    if (!driversLicenseSentLink) return;
+    try {
+      await navigator.clipboard.writeText(driversLicenseSentLink.link);
+      setDriversLicenseSentLinkCopied(true);
+      setTimeout(() => setDriversLicenseSentLinkCopied(false), 1500);
+    } catch (err) {
+      console.error("Failed to copy link:", err);
+    }
+  };
+
+  const handleCopyDriversLicenseLink = async (doc: SignableDocument) => {
+    try {
+      const path = doc.recipientId ? "fill-drivers-license" : "fill-drivers-license-external";
+      await navigator.clipboard.writeText(`${getAppUrl()}/${path}/${doc.id}`);
+    } catch (err) {
+      console.error("Failed to copy link:", err);
+    }
+  };
+
+  const handleDownloadDriversLicensePdf = async (doc: SignableDocument) => {
+    if (!doc.pdfUrl) return;
+    const name = (doc.formData as Partial<DriversLicenseFormData>).employeeName || doc.recipientName || "drivers-license";
+    await downloadSignableDocumentPdf(doc.pdfUrl, `Driver's License - ${name}.pdf`);
+  };
+
+  /** Re-renders this document's PDF from its already-stored data/signatures — see regenerateSignableDocumentPdf.ts's header comment (built for the date-rollback fmtDate fix, which only affects documents generated after the fix). */
+  const handleRegenerateDriversLicensePdf = async (doc: SignableDocument) => {
+    const name = (doc.formData as Partial<DriversLicenseFormData>).employeeName || doc.recipientName || "drivers-license";
+    setDriversLicenseActionBusyId(doc.id);
+    setDriversLicenseActionError(null);
+    try {
+      const logo = await loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png"));
+      await regenerateSimpleSignableDocumentPdf(doc, logo, buildDriversLicenseFormBodyMarkup, driversLicenseFormStyles, uploadDriversLicenseForm, name);
+      await loadSentDriversLicenseForms();
+    } catch (err) {
+      setDriversLicenseActionError(err instanceof Error ? err.message : "Failed to regenerate PDF.");
+    } finally {
+      setDriversLicenseActionBusyId(null);
+    }
+  };
+
+  const handleDeleteDriversLicense = async (doc: SignableDocument) => {
+    if (!window.confirm("Permanently delete this Driver's License request?")) return;
+    setDriversLicenseActionBusyId(doc.id);
+    setDriversLicenseActionError(null);
+    try {
+      await deleteSignableDocument(doc.id);
+      await loadSentDriversLicenseForms();
+    } catch (err) {
+      setDriversLicenseActionError(err instanceof Error ? err.message : "Failed to delete.");
+    } finally {
+      setDriversLicenseActionBusyId(null);
+    }
+  };
+
+  const [sentValidIdForms, setSentValidIdForms] = useState<SignableDocument[]>([]);
+  const loadSentValidIdForms = async () => {
+    try {
+      setSentValidIdForms(await getSignableDocuments("valid_id_form"));
+    } catch (err) {
+      console.error("Failed to load sent Valid ID forms:", err);
+    }
+  };
+  useEffect(() => {
+    if (activeTab === "validId" || activeTab === "jotformDocuments" || activeTab === "combineForms") void loadSentValidIdForms();
+  }, [activeTab]);
+
+  const [validIdRecipientId, setValidIdRecipientId] = useState("");
+  const [validIdRecipientSearch, setValidIdRecipientSearch] = useState("");
+  const [validIdRecipientDropdownOpen, setValidIdRecipientDropdownOpen] = useState(false);
+  const [validIdSending, setValidIdSending] = useState(false);
+  const [validIdSendError, setValidIdSendError] = useState<string | null>(null);
+  const [validIdActionBusyId, setValidIdActionBusyId] = useState<string | null>(null);
+  const [validIdActionError, setValidIdActionError] = useState<string | null>(null);
+  const [validIdExternalName, setValidIdExternalName] = useState("");
+  const [validIdSentLink, setValidIdSentLink] = useState<{ link: string; recipientName: string } | null>(null);
+  const [validIdSentLinkCopied, setValidIdSentLinkCopied] = useState(false);
+  const filteredValidIdRecipients = useMemo(
+    () => employees.filter((e) => e.status === "active" && e.name.toLowerCase().includes(validIdRecipientSearch.toLowerCase())),
+    [employees, validIdRecipientSearch]
+  );
+
+  const handleSendValidId = async () => {
+    if (!validIdRecipientId || !uid) return;
+    setValidIdSending(true);
+    setValidIdSendError(null);
+    try {
+      const recipient = employees.find((e) => e.id === validIdRecipientId);
+      if (!recipient) throw new Error("Select a recipient first.");
+
+      const alreadySent = await getExistingActiveDocumentTypes(recipient.id, ["valid_id_form"]);
+      if (alreadySent.length > 0 && !window.confirm(`${recipient.name} already has a Valid ID request on file. Send another one anyway?`)) {
+        return;
+      }
+
+      const doc = await createSignableDocument({
+        documentType: "valid_id_form",
+        formData: { employeeId: recipient.id, employeeName: recipient.name } as unknown as Record<string, any>,
+        recipientId: validIdRecipientId,
+        recipientSlot: "employee",
+        pdfUrl: "",
+      });
+
+      const myProfileId = await getMyProfileId(uid);
+      if (!myProfileId) throw new Error("Could not resolve your profile.");
+      const thread = await getOrCreateDmThread(myProfileId, validIdRecipientId);
+      const fillLink = `${getAppUrl()}/fill-valid-id/${doc.id}`;
+      await sendMessage({
+        dmThreadId: thread.id,
+        senderId: myProfileId,
+        senderName: displayName || "HR",
+        body: `📋 Please submit your Valid ID (passport or license): ${fillLink}`,
+      });
+
+      void logActivity({ action: "valid_id_sent", targetType: "employee", targetId: recipient.id, targetLabel: recipient.name });
+
+      setValidIdRecipientId("");
+      setValidIdRecipientSearch("");
+      await loadSentValidIdForms();
+    } catch (err) {
+      setValidIdSendError(err instanceof Error ? err.message : "Failed to send request.");
+    } finally {
+      setValidIdSending(false);
+    }
+  };
+
+  const handleGenerateExternalValidId = async () => {
+    setValidIdSending(true);
+    setValidIdSendError(null);
+    try {
+      const name = validIdExternalName.trim() || "External Recipient";
+      const doc = await createSignableDocument({
+        documentType: "valid_id_form",
+        formData: { employeeId: "", employeeName: name } as unknown as Record<string, any>,
+        recipientName: name,
+        recipientSlot: "employee",
+        pdfUrl: "",
+      });
+
+      void logActivity({ action: "valid_id_sent", targetType: "employee", targetLabel: name, details: { external: true } });
+
+      setValidIdSentLink({ link: `${getAppUrl()}/fill-valid-id-external/${doc.id}`, recipientName: name });
+      setValidIdExternalName("");
+      await loadSentValidIdForms();
+    } catch (err) {
+      setValidIdSendError(err instanceof Error ? err.message : "Failed to generate link.");
+    } finally {
+      setValidIdSending(false);
+    }
+  };
+
+  const handleCopyValidIdSentLink = async () => {
+    if (!validIdSentLink) return;
+    try {
+      await navigator.clipboard.writeText(validIdSentLink.link);
+      setValidIdSentLinkCopied(true);
+      setTimeout(() => setValidIdSentLinkCopied(false), 1500);
+    } catch (err) {
+      console.error("Failed to copy link:", err);
+    }
+  };
+
+  const handleCopyValidIdLink = async (doc: SignableDocument) => {
+    try {
+      const path = doc.recipientId ? "fill-valid-id" : "fill-valid-id-external";
+      await navigator.clipboard.writeText(`${getAppUrl()}/${path}/${doc.id}`);
+    } catch (err) {
+      console.error("Failed to copy link:", err);
+    }
+  };
+
+  const handleDownloadValidIdPdf = async (doc: SignableDocument) => {
+    if (!doc.pdfUrl) return;
+    const name = (doc.formData as Partial<ValidIdFormData>).employeeName || doc.recipientName || "valid-id";
+    await downloadSignableDocumentPdf(doc.pdfUrl, `Valid ID - ${name}.pdf`);
+  };
+
+  /** Re-renders this document's PDF from its already-stored data/signatures — see regenerateSignableDocumentPdf.ts's header comment (built for the date-rollback fmtDate fix, which only affects documents generated after the fix). */
+  const handleRegenerateValidIdPdf = async (doc: SignableDocument) => {
+    const name = (doc.formData as Partial<ValidIdFormData>).employeeName || doc.recipientName || "valid-id";
+    setValidIdActionBusyId(doc.id);
+    setValidIdActionError(null);
+    try {
+      const logo = await loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png"));
+      await regenerateSimpleSignableDocumentPdf(doc, logo, buildValidIdFormBodyMarkup, validIdFormStyles, uploadValidIdForm, name);
+      await loadSentValidIdForms();
+    } catch (err) {
+      setValidIdActionError(err instanceof Error ? err.message : "Failed to regenerate PDF.");
+    } finally {
+      setValidIdActionBusyId(null);
+    }
+  };
+
+  const handleDeleteValidId = async (doc: SignableDocument) => {
+    if (!window.confirm("Permanently delete this Valid ID request?")) return;
+    setValidIdActionBusyId(doc.id);
+    setValidIdActionError(null);
+    try {
+      await deleteSignableDocument(doc.id);
+      await loadSentValidIdForms();
+    } catch (err) {
+      setValidIdActionError(err instanceof Error ? err.message : "Failed to delete.");
+    } finally {
+      setValidIdActionBusyId(null);
+    }
+  };
+
   // ── Non-Disclosure Agreement (General tab) — same shape as Employee
   // Confidentiality above: single recipient, the recipient fills in
   // everything themselves (name, nationality, address, branch) on
@@ -7185,6 +7741,27 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     if (!doc.pdfUrl) return;
     const name = (doc.formData as { employeeName?: string }).employeeName || doc.recipientName || "nda-form";
     await downloadSignableDocumentPdf(doc.pdfUrl, `Non-Disclosure Agreement - ${name}.pdf`);
+  };
+
+  /** Re-renders this document's PDF from its already-stored data/signatures — same idea as regenerateSignableDocumentPdf.ts's helpers, just inlined since NDA is multi-page (buildNdaFormPages/captureHtmlPagesToPdfBlob) rather than the single-page shape those helpers assume. */
+  const handleRegenerateNdaPdf = async (doc: SignableDocument) => {
+    const name = (doc.formData as { employeeName?: string }).employeeName || doc.recipientName || "nda-form";
+    setNdaActionBusyId(doc.id);
+    setNdaActionError(null);
+    try {
+      const logo = ndaLogoDataUrl || (await loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png")));
+      if (!ndaLogoDataUrl) setNdaLogoDataUrl(logo);
+      const resolved = await resolveSignaturesForCapture(doc.signatures, "__regenerate__", "");
+      const pages = buildNdaFormPages(doc.formData as NdaFormData, logo, resolved.employee);
+      const pdfBlob = await captureHtmlPagesToPdfBlob(pages, ndaFormStyles);
+      const pdfUrl = await uploadNdaForm(doc.companyId, name, pdfBlob);
+      await updateSignableDocumentPdfUrl(doc.id, pdfUrl);
+      await loadSentNdaForms();
+    } catch (err) {
+      setNdaActionError(err instanceof Error ? err.message : "Failed to regenerate PDF.");
+    } finally {
+      setNdaActionBusyId(null);
+    }
   };
 
   const handleDeleteNda = async (doc: SignableDocument) => {
@@ -9424,11 +10001,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     otherPhoneNumber: "",
     startDate: "",
     birthDate: "",
-    ssn: "",
-    ssnCardUrls: [],
-    driversLicenseNumber: "",
-    driversLicenseState: "",
-    driversLicenseUrls: [],
     email: "",
     maritalStatus: "",
     spouseName: "",
@@ -9560,6 +10132,23 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     await downloadSignableDocumentPdf(doc.pdfUrl, `Employee Data - ${name}.pdf`);
   };
 
+  /** Re-renders this document's PDF from its already-stored data/signatures — see regenerateSignableDocumentPdf.ts's header comment (built for the date-rollback fmtDate fix, which only affects documents generated after the fix). */
+  const handleRegenerateContractorDataPdf = async (doc: SignableDocument) => {
+    const name = (doc.formData as Partial<ContractorDataFormData>).employeeName || doc.recipientName || "employee-data";
+    setContractorDataActionBusyId(doc.id);
+    setContractorDataActionError(null);
+    try {
+      const logo = contractorDataLogoDataUrl || (await loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png")));
+      if (!contractorDataLogoDataUrl) setContractorDataLogoDataUrl(logo);
+      await regenerateSimpleSignableDocumentPdf(doc, logo, buildContractorDataBodyMarkup, contractorDataStyles, uploadContractorDataForm, name);
+      await loadSentContractorDataForms();
+    } catch (err) {
+      setContractorDataActionError(err instanceof Error ? err.message : "Failed to regenerate PDF.");
+    } finally {
+      setContractorDataActionBusyId(null);
+    }
+  };
+
   const handleDeleteContractorData = async (doc: SignableDocument) => {
     if (!window.confirm("Permanently delete this Employee Data request?")) return;
     setContractorDataActionBusyId(doc.id);
@@ -9632,11 +10221,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     otherPhoneNumber: "",
     startDate: "",
     birthDate: "",
-    ssn: "",
-    ssnCardUrls: [],
-    driversLicenseNumber: "",
-    driversLicenseState: "",
-    driversLicenseUrls: [],
     email: "",
     maritalStatus: "",
     spouseName: "",
@@ -9766,6 +10350,23 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     if (!doc.pdfUrl) return;
     const name = (doc.formData as Partial<ContractorDataUsFormData>).employeeName || doc.recipientName || "contractor-data-us";
     await downloadSignableDocumentPdf(doc.pdfUrl, `Contractor Data (US) - ${name}.pdf`);
+  };
+
+  /** Re-renders this document's PDF from its already-stored data/signatures — see regenerateSignableDocumentPdf.ts's header comment (built for the date-rollback fmtDate fix, which only affects documents generated after the fix). */
+  const handleRegenerateContractorDataUsPdf = async (doc: SignableDocument) => {
+    const name = (doc.formData as Partial<ContractorDataUsFormData>).employeeName || doc.recipientName || "contractor-data-us";
+    setContractorDataUsActionBusyId(doc.id);
+    setContractorDataUsActionError(null);
+    try {
+      const logo = contractorDataUsLogoDataUrl || (await loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png")));
+      if (!contractorDataUsLogoDataUrl) setContractorDataUsLogoDataUrl(logo);
+      await regenerateSimpleSignableDocumentPdf(doc, logo, buildContractorDataUsBodyMarkup, contractorDataUsStyles, uploadContractorDataForm, name);
+      await loadSentContractorDataUsForms();
+    } catch (err) {
+      setContractorDataUsActionError(err instanceof Error ? err.message : "Failed to regenerate PDF.");
+    } finally {
+      setContractorDataUsActionBusyId(null);
+    }
   };
 
   const handleDeleteContractorDataUs = async (doc: SignableDocument) => {
@@ -9950,6 +10551,23 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     if (!doc.pdfUrl) return;
     const name = (doc.formData as Partial<VehicleUseAgreementFormData>).employeeName || doc.recipientName || "vehicle-use-agreement";
     await downloadSignableDocumentPdf(doc.pdfUrl, `Vehicle Use Agreement - ${name}.pdf`);
+  };
+
+  /** Re-renders this document's PDF from its already-stored data/signatures — see regenerateSignableDocumentPdf.ts's header comment (built for the date-rollback fmtDate fix, which only affects documents generated after the fix). */
+  const handleRegenerateVehicleUseAgreementPdf = async (doc: SignableDocument) => {
+    const name = (doc.formData as Partial<VehicleUseAgreementFormData>).employeeName || doc.recipientName || "vehicle-use-agreement";
+    setVehicleUseAgreementActionBusyId(doc.id);
+    setVehicleUseAgreementActionError(null);
+    try {
+      const logo = vehicleUseAgreementLogoDataUrl || (await loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png")));
+      if (!vehicleUseAgreementLogoDataUrl) setVehicleUseAgreementLogoDataUrl(logo);
+      await regenerateSimpleSignableDocumentPdf(doc, logo, buildVehicleUseAgreementBodyMarkup, vehicleUseAgreementStyles, uploadVehicleUseAgreementForm, name);
+      await loadSentVehicleUseAgreementForms();
+    } catch (err) {
+      setVehicleUseAgreementActionError(err instanceof Error ? err.message : "Failed to regenerate PDF.");
+    } finally {
+      setVehicleUseAgreementActionBusyId(null);
+    }
   };
 
   const handleDeleteVehicleUseAgreement = async (doc: SignableDocument) => {
@@ -10147,6 +10765,23 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     if (!doc.pdfUrl) return;
     const name = (doc.formData as Partial<DirectDepositFormData>).employeeName || doc.recipientName || "direct-deposit";
     await downloadSignableDocumentPdf(doc.pdfUrl, `Direct Deposit Authorization - ${name}.pdf`);
+  };
+
+  /** Re-renders this document's PDF from its already-stored data/signatures — see regenerateSignableDocumentPdf.ts's header comment (built for the date-rollback fmtDate fix, which only affects documents generated after the fix). */
+  const handleRegenerateDirectDepositPdf = async (doc: SignableDocument) => {
+    const name = (doc.formData as Partial<DirectDepositFormData>).employeeName || doc.recipientName || "direct-deposit";
+    setDirectDepositActionBusyId(doc.id);
+    setDirectDepositActionError(null);
+    try {
+      const logo = directDepositLogoDataUrl || (await loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png")));
+      if (!directDepositLogoDataUrl) setDirectDepositLogoDataUrl(logo);
+      await regenerateSimpleSignableDocumentPdf(doc, logo, buildDirectDepositBodyMarkup, directDepositStyles, uploadDirectDepositForm, name);
+      await loadSentDirectDepositForms();
+    } catch (err) {
+      setDirectDepositActionError(err instanceof Error ? err.message : "Failed to regenerate PDF.");
+    } finally {
+      setDirectDepositActionBusyId(null);
+    }
   };
 
   const handleDeleteDirectDeposit = async (doc: SignableDocument) => {
@@ -13969,12 +14604,14 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     if (activeTab !== "newOnboardingDocuments" || newOnboardingEmployees.length === 0) return;
     let cancelled = false;
     const employeeIds = newOnboardingEmployees.map((e) => e.id);
-    const mappedTypes = Array.from(new Set(Object.values(ONBOARDING_COLUMN_TO_DOCUMENT_TYPE)));
+    const mappedTypes = Array.from(new Set(Object.values(ONBOARDING_COLUMN_TO_DOCUMENT_TYPE).flat()));
     const labelsByType = new Map<SignableDocumentType, string[]>();
-    for (const [label, type] of Object.entries(ONBOARDING_COLUMN_TO_DOCUMENT_TYPE)) {
-      const arr = labelsByType.get(type) ?? [];
-      arr.push(label);
-      labelsByType.set(type, arr);
+    for (const [label, typeOrTypes] of Object.entries(ONBOARDING_COLUMN_TO_DOCUMENT_TYPE)) {
+      for (const type of Array.isArray(typeOrTypes) ? typeOrTypes : [typeOrTypes]) {
+        const arr = labelsByType.get(type) ?? [];
+        arr.push(label);
+        labelsByType.set(type, arr);
+      }
     }
     Promise.all([
       getOnboardingDocumentCategoriesByProfileIds(employeeIds),
@@ -14082,12 +14719,14 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     if (activeTab !== "onboarding" || onboardingEmployees.length === 0) return;
     let cancelled = false;
     const employeeIds = onboardingEmployees.map((e) => e.id);
-    const mappedTypes = Array.from(new Set(Object.values(ONBOARDING_COLUMN_TO_DOCUMENT_TYPE)));
+    const mappedTypes = Array.from(new Set(Object.values(ONBOARDING_COLUMN_TO_DOCUMENT_TYPE).flat()));
     const labelsByType = new Map<SignableDocumentType, string[]>();
-    for (const [label, type] of Object.entries(ONBOARDING_COLUMN_TO_DOCUMENT_TYPE)) {
-      const arr = labelsByType.get(type) ?? [];
-      arr.push(label);
-      labelsByType.set(type, arr);
+    for (const [label, typeOrTypes] of Object.entries(ONBOARDING_COLUMN_TO_DOCUMENT_TYPE)) {
+      for (const type of Array.isArray(typeOrTypes) ? typeOrTypes : [typeOrTypes]) {
+        const arr = labelsByType.get(type) ?? [];
+        arr.push(label);
+        labelsByType.set(type, arr);
+      }
     }
     Promise.all([
       getOnboardingDocumentCategoriesByProfileIds(employeeIds),
@@ -15008,6 +15647,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     { key: "vehicleAgreement", label: "Company Vehicle Use Agreement", count: 0, icon: FileCheck },
     { key: "damage", label: "Damage Agreement", count: sentDamageAwaitingEmployerCount, icon: FileCheck },
     { key: "directDeposit", label: "Direct Deposit Authorization", count: 0, icon: FileCheck },
+    { key: "driversLicense", label: "Driver's License", count: 0, icon: FileCheck },
     { key: "employeeConfidentiality", label: "Employee Confidentiality Agreement", count: 0, icon: FileCheck },
     { key: "contractorData", label: "Employee Data", count: 0, icon: FileCheck },
     { key: "flashTechnicianTravel", label: "Flash Technician Travel & Out-of-State Policy", count: sentFlashTechnicianTravelAwaitingEmployerCount, icon: FileCheck },
@@ -15016,6 +15656,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     { key: "mileageFuel", label: "Mileage & Fuel Policy", count: sentMileageFuelAwaitingEmployerCount, icon: FileCheck },
     { key: "partsResponsibility", label: "Parts Responsibility and Technician Floor Protection Acknowledgment Form", count: sentPartsResponsibilityAwaitingManagerCount, icon: FileCheck },
     { key: "ptoAck", label: "PTO & Sick Leave Policy", count: 0, icon: FileCheck },
+    { key: "ssnCard", label: "SSN Card", count: 0, icon: FileCheck },
     { key: "substanceScreening", label: "Substance Screening & Conduct Agreement", count: 0, icon: FileCheck },
   ] as const;
 
@@ -15057,6 +15698,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     { key: "masterPhContractorAgreement", label: "Master PH Contractor Agreement", count: sentMasterPhContractorAgreementAwaitingEmployerCount, icon: FileCheck },
     { key: "newW8ben", label: "Form W-8BEN", count: 0, icon: Landmark },
     { key: "newDirectDeposit", label: "Direct Deposit Authorization", count: 0, icon: FileCheck },
+    { key: "validId", label: "Valid ID", count: 0, icon: FileCheck },
   ] as const;
 
   // "New Automation Forms"'s management-tier column — Branch Manager/Senior
@@ -23016,6 +23658,408 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       </>
       )}
 
+      {activeTab === "ssnCard" && (
+      <>
+      <div className="panel p-0 overflow-visible mt-4 relative z-20">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">Send SSN Card Request</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Pick a teammate — they'll get a link to enter their SSN and upload a photo of their card. It comes back to you here automatically once submitted.</p>
+        </div>
+        <div className="p-4 flex flex-col gap-3 max-w-sm">
+          <div className="flex flex-col gap-1.5 pb-3 border-b border-white/10">
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">External Link (no login needed)</label>
+            {ssnCardSentLink ? (
+              <div className="flex flex-col gap-2">
+                <div className="rounded-md border border-green-500/30 bg-green-500/10 px-3 py-2.5">
+                  <p className="text-xs font-semibold text-green-300">Link generated for {ssnCardSentLink.recipientName}</p>
+                </div>
+                <div className="flex gap-2">
+                  <input type="text" readOnly value={ssnCardSentLink.link} onFocus={(e) => e.target.select()} className="glass-input text-xs py-1.5 px-3 rounded-md flex-1" />
+                  <button onClick={handleCopySsnCardSentLink} className="btn text-xs px-3 py-1.5 shrink-0">{ssnCardSentLinkCopied ? "Copied!" : "Copy"}</button>
+                </div>
+                <button onClick={() => setSsnCardSentLink(null)} className="btn text-xs px-3 py-1.5 w-fit">Done</button>
+              </div>
+            ) : (
+              <>
+                <div className="flex gap-2">
+                  <input type="text" value={ssnCardExternalName} onChange={(e) => setSsnCardExternalName(e.target.value)} placeholder="Type their name (optional)…" className="glass-input text-sm py-1.5 px-3 rounded-md flex-1" />
+                  <button onClick={handleGenerateExternalSsnCard} disabled={ssnCardSending} className="btn text-sm px-3 py-1.5 disabled:opacity-50 shrink-0">
+                    {ssnCardSending ? "Generating…" : "Generate Link"}
+                  </button>
+                </div>
+                <p className="text-[10px] text-muted-foreground">No AHS account needed — they can open the link and fill it in without logging in.</p>
+              </>
+            )}
+          </div>
+
+          <div className="flex flex-col gap-1 relative">
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient (AHS teammate)</label>
+            <input
+              type="text"
+              value={ssnCardRecipientSearch}
+              onChange={(e) => { setSsnCardRecipientSearch(e.target.value); setSsnCardRecipientId(""); setSsnCardRecipientDropdownOpen(true); }}
+              onFocus={() => setSsnCardRecipientDropdownOpen(true)}
+              onBlur={() => setTimeout(() => setSsnCardRecipientDropdownOpen(false), 150)}
+              placeholder="Search a teammate…"
+              className="glass-input text-sm py-1.5 px-3 rounded-md"
+            />
+            {ssnCardRecipientDropdownOpen && (
+              <div className="absolute z-50 top-full mt-1 w-full max-h-96 overflow-y-auto rounded-md border border-white/15 bg-slate-900 shadow-2xl">
+                {filteredSsnCardRecipients.length === 0 ? (
+                  <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+                ) : (
+                  filteredSsnCardRecipients.map((e) => (
+                    <button
+                      key={e.id}
+                      type="button"
+                      onMouseDown={(ev) => ev.preventDefault()}
+                      onClick={() => { setSsnCardRecipientId(e.id); setSsnCardRecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`); setSsnCardRecipientDropdownOpen(false); }}
+                      className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${ssnCardRecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                    >
+                      {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+
+          {ssnCardSendError && <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{ssnCardSendError}</p>}
+          <button onClick={handleSendSsnCard} disabled={!ssnCardRecipientId || ssnCardSending} className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 w-fit">
+            {ssnCardSending ? "Sending…" : "Send Request"}
+          </button>
+        </div>
+      </div>
+
+      <div className="panel p-0 overflow-hidden mt-4">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">Sent SSN Card Forms</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status.</p>
+        </div>
+        {ssnCardActionError && <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{ssnCardActionError}</p>}
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-white/10 bg-white/5">
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Employee</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent By</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Status</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sentSsnCardForms.length === 0 ? (
+                <tr><td colSpan={5} className="px-4 py-8 text-center text-muted-foreground text-sm">No requests sent yet.</td></tr>
+              ) : (
+                sentSsnCardForms.map((doc) => {
+                  const data = doc.formData as Partial<SsnCardFormData>;
+                  const busy = ssnCardActionBusyId === doc.id;
+                  return (
+                    <tr key={doc.id} className="border-b border-white/5 hover:bg-white/5">
+                      <td className="px-4 py-3 font-medium">{data.employeeName || doc.recipientName || "—"}</td>
+                      <td className="px-4 py-3 text-muted-foreground">{doc.createdByName ?? "—"}</td>
+                      <td className="px-4 py-3">
+                        <span className={`px-2 py-1 rounded text-xs font-semibold ${doc.status === "signed" ? "bg-green-500/20 text-green-300" : doc.status === "cancelled" ? "bg-slate-500/20 text-slate-400" : "bg-yellow-500/20 text-yellow-300"}`}>
+                          {doc.status === "signed" ? "Submitted" : doc.status === "cancelled" ? "Cancelled" : "Awaiting Completion"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{new Date(doc.createdAt).toLocaleDateString()}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {doc.status === "pending_signature" && (
+                            <button type="button" onClick={() => handleCopySsnCardLink(doc)} className="btn text-[10px] px-2 py-1">Copy Link</button>
+                          )}
+                          {doc.pdfUrl && (
+                            <button type="button" onClick={() => handleDownloadSsnCardPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">Download PDF</button>
+                          )}
+                          {doc.pdfUrl && (
+                            <button type="button" disabled={busy} onClick={() => void handleRegenerateSsnCardPdf(doc)} title="Re-render this PDF from its saved data — fixes a date that was rendered a day early before the timezone bug fix" className="text-amber-300 hover:text-amber-200 underline text-xs disabled:opacity-40">{busy ? "Regenerating…" : "Regenerate PDF"}</button>
+                          )}
+                          <button type="button" disabled={busy} onClick={() => handleDeleteSsnCard(doc)} title="Permanently delete this request" className="text-muted-foreground hover:text-red-300 disabled:opacity-50">
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      </>
+      )}
+
+      {activeTab === "driversLicense" && (
+      <>
+      <div className="panel p-0 overflow-visible mt-4 relative z-20">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">Send Driver's License Request</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Pick a teammate — they'll get a link to enter their license number/state and upload a photo. It comes back to you here automatically once submitted.</p>
+        </div>
+        <div className="p-4 flex flex-col gap-3 max-w-sm">
+          <div className="flex flex-col gap-1.5 pb-3 border-b border-white/10">
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">External Link (no login needed)</label>
+            {driversLicenseSentLink ? (
+              <div className="flex flex-col gap-2">
+                <div className="rounded-md border border-green-500/30 bg-green-500/10 px-3 py-2.5">
+                  <p className="text-xs font-semibold text-green-300">Link generated for {driversLicenseSentLink.recipientName}</p>
+                </div>
+                <div className="flex gap-2">
+                  <input type="text" readOnly value={driversLicenseSentLink.link} onFocus={(e) => e.target.select()} className="glass-input text-xs py-1.5 px-3 rounded-md flex-1" />
+                  <button onClick={handleCopyDriversLicenseSentLink} className="btn text-xs px-3 py-1.5 shrink-0">{driversLicenseSentLinkCopied ? "Copied!" : "Copy"}</button>
+                </div>
+                <button onClick={() => setDriversLicenseSentLink(null)} className="btn text-xs px-3 py-1.5 w-fit">Done</button>
+              </div>
+            ) : (
+              <>
+                <div className="flex gap-2">
+                  <input type="text" value={driversLicenseExternalName} onChange={(e) => setDriversLicenseExternalName(e.target.value)} placeholder="Type their name (optional)…" className="glass-input text-sm py-1.5 px-3 rounded-md flex-1" />
+                  <button onClick={handleGenerateExternalDriversLicense} disabled={driversLicenseSending} className="btn text-sm px-3 py-1.5 disabled:opacity-50 shrink-0">
+                    {driversLicenseSending ? "Generating…" : "Generate Link"}
+                  </button>
+                </div>
+                <p className="text-[10px] text-muted-foreground">No AHS account needed — they can open the link and fill it in without logging in.</p>
+              </>
+            )}
+          </div>
+
+          <div className="flex flex-col gap-1 relative">
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient (AHS teammate)</label>
+            <input
+              type="text"
+              value={driversLicenseRecipientSearch}
+              onChange={(e) => { setDriversLicenseRecipientSearch(e.target.value); setDriversLicenseRecipientId(""); setDriversLicenseRecipientDropdownOpen(true); }}
+              onFocus={() => setDriversLicenseRecipientDropdownOpen(true)}
+              onBlur={() => setTimeout(() => setDriversLicenseRecipientDropdownOpen(false), 150)}
+              placeholder="Search a teammate…"
+              className="glass-input text-sm py-1.5 px-3 rounded-md"
+            />
+            {driversLicenseRecipientDropdownOpen && (
+              <div className="absolute z-50 top-full mt-1 w-full max-h-96 overflow-y-auto rounded-md border border-white/15 bg-slate-900 shadow-2xl">
+                {filteredDriversLicenseRecipients.length === 0 ? (
+                  <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+                ) : (
+                  filteredDriversLicenseRecipients.map((e) => (
+                    <button
+                      key={e.id}
+                      type="button"
+                      onMouseDown={(ev) => ev.preventDefault()}
+                      onClick={() => { setDriversLicenseRecipientId(e.id); setDriversLicenseRecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`); setDriversLicenseRecipientDropdownOpen(false); }}
+                      className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${driversLicenseRecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                    >
+                      {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+
+          {driversLicenseSendError && <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{driversLicenseSendError}</p>}
+          <button onClick={handleSendDriversLicense} disabled={!driversLicenseRecipientId || driversLicenseSending} className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 w-fit">
+            {driversLicenseSending ? "Sending…" : "Send Request"}
+          </button>
+        </div>
+      </div>
+
+      <div className="panel p-0 overflow-hidden mt-4">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">Sent Driver's License Forms</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status.</p>
+        </div>
+        {driversLicenseActionError && <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{driversLicenseActionError}</p>}
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-white/10 bg-white/5">
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Employee</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent By</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Status</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sentDriversLicenseForms.length === 0 ? (
+                <tr><td colSpan={5} className="px-4 py-8 text-center text-muted-foreground text-sm">No requests sent yet.</td></tr>
+              ) : (
+                sentDriversLicenseForms.map((doc) => {
+                  const data = doc.formData as Partial<DriversLicenseFormData>;
+                  const busy = driversLicenseActionBusyId === doc.id;
+                  return (
+                    <tr key={doc.id} className="border-b border-white/5 hover:bg-white/5">
+                      <td className="px-4 py-3 font-medium">{data.employeeName || doc.recipientName || "—"}</td>
+                      <td className="px-4 py-3 text-muted-foreground">{doc.createdByName ?? "—"}</td>
+                      <td className="px-4 py-3">
+                        <span className={`px-2 py-1 rounded text-xs font-semibold ${doc.status === "signed" ? "bg-green-500/20 text-green-300" : doc.status === "cancelled" ? "bg-slate-500/20 text-slate-400" : "bg-yellow-500/20 text-yellow-300"}`}>
+                          {doc.status === "signed" ? "Submitted" : doc.status === "cancelled" ? "Cancelled" : "Awaiting Completion"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{new Date(doc.createdAt).toLocaleDateString()}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {doc.status === "pending_signature" && (
+                            <button type="button" onClick={() => handleCopyDriversLicenseLink(doc)} className="btn text-[10px] px-2 py-1">Copy Link</button>
+                          )}
+                          {doc.pdfUrl && (
+                            <button type="button" onClick={() => handleDownloadDriversLicensePdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">Download PDF</button>
+                          )}
+                          {doc.pdfUrl && (
+                            <button type="button" disabled={busy} onClick={() => void handleRegenerateDriversLicensePdf(doc)} title="Re-render this PDF from its saved data — fixes a date that was rendered a day early before the timezone bug fix" className="text-amber-300 hover:text-amber-200 underline text-xs disabled:opacity-40">{busy ? "Regenerating…" : "Regenerate PDF"}</button>
+                          )}
+                          <button type="button" disabled={busy} onClick={() => handleDeleteDriversLicense(doc)} title="Permanently delete this request" className="text-muted-foreground hover:text-red-300 disabled:opacity-50">
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      </>
+      )}
+
+      {activeTab === "validId" && (
+      <>
+      <div className="panel p-0 overflow-visible mt-4 relative z-20">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">Send Valid ID Request</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Pick a PH teammate — they'll get a link to submit a passport, license, or other government ID. It comes back to you here automatically once submitted.</p>
+        </div>
+        <div className="p-4 flex flex-col gap-3 max-w-sm">
+          <div className="flex flex-col gap-1.5 pb-3 border-b border-white/10">
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">External Link (no login needed)</label>
+            {validIdSentLink ? (
+              <div className="flex flex-col gap-2">
+                <div className="rounded-md border border-green-500/30 bg-green-500/10 px-3 py-2.5">
+                  <p className="text-xs font-semibold text-green-300">Link generated for {validIdSentLink.recipientName}</p>
+                </div>
+                <div className="flex gap-2">
+                  <input type="text" readOnly value={validIdSentLink.link} onFocus={(e) => e.target.select()} className="glass-input text-xs py-1.5 px-3 rounded-md flex-1" />
+                  <button onClick={handleCopyValidIdSentLink} className="btn text-xs px-3 py-1.5 shrink-0">{validIdSentLinkCopied ? "Copied!" : "Copy"}</button>
+                </div>
+                <button onClick={() => setValidIdSentLink(null)} className="btn text-xs px-3 py-1.5 w-fit">Done</button>
+              </div>
+            ) : (
+              <>
+                <div className="flex gap-2">
+                  <input type="text" value={validIdExternalName} onChange={(e) => setValidIdExternalName(e.target.value)} placeholder="Type their name (optional)…" className="glass-input text-sm py-1.5 px-3 rounded-md flex-1" />
+                  <button onClick={handleGenerateExternalValidId} disabled={validIdSending} className="btn text-sm px-3 py-1.5 disabled:opacity-50 shrink-0">
+                    {validIdSending ? "Generating…" : "Generate Link"}
+                  </button>
+                </div>
+                <p className="text-[10px] text-muted-foreground">No AHS account needed — they can open the link and fill it in without logging in.</p>
+              </>
+            )}
+          </div>
+
+          <div className="flex flex-col gap-1 relative">
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient (AHS teammate)</label>
+            <input
+              type="text"
+              value={validIdRecipientSearch}
+              onChange={(e) => { setValidIdRecipientSearch(e.target.value); setValidIdRecipientId(""); setValidIdRecipientDropdownOpen(true); }}
+              onFocus={() => setValidIdRecipientDropdownOpen(true)}
+              onBlur={() => setTimeout(() => setValidIdRecipientDropdownOpen(false), 150)}
+              placeholder="Search a teammate…"
+              className="glass-input text-sm py-1.5 px-3 rounded-md"
+            />
+            {validIdRecipientDropdownOpen && (
+              <div className="absolute z-50 top-full mt-1 w-full max-h-96 overflow-y-auto rounded-md border border-white/15 bg-slate-900 shadow-2xl">
+                {filteredValidIdRecipients.length === 0 ? (
+                  <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+                ) : (
+                  filteredValidIdRecipients.map((e) => (
+                    <button
+                      key={e.id}
+                      type="button"
+                      onMouseDown={(ev) => ev.preventDefault()}
+                      onClick={() => { setValidIdRecipientId(e.id); setValidIdRecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`); setValidIdRecipientDropdownOpen(false); }}
+                      className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${validIdRecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                    >
+                      {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+
+          {validIdSendError && <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{validIdSendError}</p>}
+          <button onClick={handleSendValidId} disabled={!validIdRecipientId || validIdSending} className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 w-fit">
+            {validIdSending ? "Sending…" : "Send Request"}
+          </button>
+        </div>
+      </div>
+
+      <div className="panel p-0 overflow-hidden mt-4">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">Sent Valid ID Forms</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status.</p>
+        </div>
+        {validIdActionError && <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{validIdActionError}</p>}
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-white/10 bg-white/5">
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Employee</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent By</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Status</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sentValidIdForms.length === 0 ? (
+                <tr><td colSpan={5} className="px-4 py-8 text-center text-muted-foreground text-sm">No requests sent yet.</td></tr>
+              ) : (
+                sentValidIdForms.map((doc) => {
+                  const data = doc.formData as Partial<ValidIdFormData>;
+                  const busy = validIdActionBusyId === doc.id;
+                  return (
+                    <tr key={doc.id} className="border-b border-white/5 hover:bg-white/5">
+                      <td className="px-4 py-3 font-medium">{data.employeeName || doc.recipientName || "—"}</td>
+                      <td className="px-4 py-3 text-muted-foreground">{doc.createdByName ?? "—"}</td>
+                      <td className="px-4 py-3">
+                        <span className={`px-2 py-1 rounded text-xs font-semibold ${doc.status === "signed" ? "bg-green-500/20 text-green-300" : doc.status === "cancelled" ? "bg-slate-500/20 text-slate-400" : "bg-yellow-500/20 text-yellow-300"}`}>
+                          {doc.status === "signed" ? "Submitted" : doc.status === "cancelled" ? "Cancelled" : "Awaiting Completion"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{new Date(doc.createdAt).toLocaleDateString()}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {doc.status === "pending_signature" && (
+                            <button type="button" onClick={() => handleCopyValidIdLink(doc)} className="btn text-[10px] px-2 py-1">Copy Link</button>
+                          )}
+                          {doc.pdfUrl && (
+                            <button type="button" onClick={() => handleDownloadValidIdPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">Download PDF</button>
+                          )}
+                          {doc.pdfUrl && (
+                            <button type="button" disabled={busy} onClick={() => void handleRegenerateValidIdPdf(doc)} title="Re-render this PDF from its saved data — fixes a date that was rendered a day early before the timezone bug fix" className="text-amber-300 hover:text-amber-200 underline text-xs disabled:opacity-40">{busy ? "Regenerating…" : "Regenerate PDF"}</button>
+                          )}
+                          <button type="button" disabled={busy} onClick={() => handleDeleteValidId(doc)} title="Permanently delete this request" className="text-muted-foreground hover:text-red-300 disabled:opacity-50">
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      </>
+      )}
+
       {activeTab === "ndaForm" && (
       <>
       <div className="panel p-0 overflow-visible mt-4 relative z-20">
@@ -23196,6 +24240,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           {doc.pdfUrl && (
                             <button type="button" onClick={() => handleDownloadNdaPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
                               Download PDF
+                            </button>
+                          )}
+                          {doc.pdfUrl && (
+                            <button type="button" disabled={busy} onClick={() => void handleRegenerateNdaPdf(doc)} title="Re-render this PDF from its saved data — fixes a date that was rendered a day early before the timezone bug fix" className="text-amber-300 hover:text-amber-200 underline text-xs disabled:opacity-40">
+                              {busy ? "Regenerating…" : "Regenerate PDF"}
                             </button>
                           )}
                           <button
@@ -24572,6 +25621,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                               Download PDF
                             </button>
                           )}
+                          {doc.pdfUrl && (
+                            <button type="button" disabled={busy} onClick={() => void handleRegenerateMasterW2AgreementPdf(doc)} title="Re-render this PDF from its saved data — fixes a date that was rendered a day early before the timezone bug fix" className="text-amber-300 hover:text-amber-200 underline text-xs disabled:opacity-40">
+                              {busy ? "Regenerating…" : "Regenerate PDF"}
+                            </button>
+                          )}
                           {doc.status === "confirmed" && (
                             <button type="button" onClick={() => handleReopenMasterW2AgreementEmployer(doc)} className="btn text-[10px] px-2 py-1" title="Redo the employer signature — keeps the employee's original signature">
                               Re-sign
@@ -24884,6 +25938,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                               Download PDF
                             </button>
                           )}
+                          {doc.pdfUrl && (
+                            <button type="button" disabled={busy} onClick={() => void handleRegenerateMasterW2OfficeAgreementPdf(doc)} title="Re-render this PDF from its saved data — fixes a date that was rendered a day early before the timezone bug fix" className="text-amber-300 hover:text-amber-200 underline text-xs disabled:opacity-40">
+                              {busy ? "Regenerating…" : "Regenerate PDF"}
+                            </button>
+                          )}
                           {doc.status === "confirmed" && (
                             <button type="button" onClick={() => handleReopenMasterW2OfficeAgreementEmployer(doc)} className="btn text-[10px] px-2 py-1" title="Redo the employer signature — keeps the employee's original signature">
                               Re-sign
@@ -25170,6 +26229,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           {doc.pdfUrl && (
                             <button type="button" onClick={() => handleDownloadMasterW2ExecutiveAgreementPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
                               Download PDF
+                            </button>
+                          )}
+                          {doc.pdfUrl && (
+                            <button type="button" disabled={busy} onClick={() => void handleRegenerateMasterW2ExecutiveAgreementPdf(doc)} title="Re-render this PDF from its saved data — fixes a date that was rendered a day early before the timezone bug fix" className="text-amber-300 hover:text-amber-200 underline text-xs disabled:opacity-40">
+                              {busy ? "Regenerating…" : "Regenerate PDF"}
                             </button>
                           )}
                           {doc.status === "confirmed" && (
@@ -25486,8 +26550,18 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                             </>
                           )}
                           {doc.pdfUrl && (
+                            <button type="button" onClick={() => setMasterPhContractorAgreementDocPreview(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
+                              View PDF
+                            </button>
+                          )}
+                          {doc.pdfUrl && (
                             <button type="button" onClick={() => handleDownloadMasterPhContractorAgreementPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
                               Download PDF
+                            </button>
+                          )}
+                          {doc.pdfUrl && (
+                            <button type="button" disabled={busy} onClick={() => void handleRegenerateMasterPhContractorAgreementPdf(doc)} title="Re-render this PDF from its saved data — fixes a date that was rendered a day early before the timezone bug fix" className="text-amber-300 hover:text-amber-200 underline text-xs disabled:opacity-40">
+                              {busy ? "Regenerating…" : "Regenerate PDF"}
                             </button>
                           )}
                           {doc.status === "confirmed" && (
@@ -26801,6 +27875,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                               Download PDF
                             </button>
                           )}
+                          {doc.pdfUrl && (
+                            <button type="button" disabled={busy} onClick={() => void handleRegenerateContractorDataPdf(doc)} title="Re-render this PDF from its saved data — fixes a date that was rendered a day early before the timezone bug fix" className="text-amber-300 hover:text-amber-200 underline text-xs disabled:opacity-40">
+                              {busy ? "Regenerating…" : "Regenerate PDF"}
+                            </button>
+                          )}
                           <button
                             type="button"
                             disabled={busy}
@@ -27003,6 +28082,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           {doc.pdfUrl && (
                             <button type="button" onClick={() => handleDownloadContractorDataUsPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
                               Download PDF
+                            </button>
+                          )}
+                          {doc.pdfUrl && (
+                            <button type="button" disabled={busy} onClick={() => void handleRegenerateContractorDataUsPdf(doc)} title="Re-render this PDF from its saved data — fixes a date that was rendered a day early before the timezone bug fix" className="text-amber-300 hover:text-amber-200 underline text-xs disabled:opacity-40">
+                              {busy ? "Regenerating…" : "Regenerate PDF"}
                             </button>
                           )}
                           <button
@@ -27209,6 +28293,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                               Download PDF
                             </button>
                           )}
+                          {doc.pdfUrl && (
+                            <button type="button" disabled={busy} onClick={() => void handleRegenerateVehicleUseAgreementPdf(doc)} title="Re-render this PDF from its saved data — fixes a date that was rendered a day early before the timezone bug fix" className="text-amber-300 hover:text-amber-200 underline text-xs disabled:opacity-40">
+                              {busy ? "Regenerating…" : "Regenerate PDF"}
+                            </button>
+                          )}
                           <button
                             type="button"
                             disabled={busy}
@@ -27411,6 +28500,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           {doc.pdfUrl && (
                             <button type="button" onClick={() => handleDownloadDirectDepositPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
                               Download PDF
+                            </button>
+                          )}
+                          {doc.pdfUrl && (
+                            <button type="button" disabled={busy} onClick={() => void handleRegenerateDirectDepositPdf(doc)} title="Re-render this PDF from its saved data — fixes a date that was rendered a day early before the timezone bug fix" className="text-amber-300 hover:text-amber-200 underline text-xs disabled:opacity-40">
+                              {busy ? "Regenerating…" : "Regenerate PDF"}
                             </button>
                           )}
                           <button

@@ -19,14 +19,13 @@
  * (ReportHRDaily.tsx's "Complete Employer Signature" dialog, or
  * ManagerReviewPage.tsx when reassigned to a non-HR manager).
  *
- * Two photo uploads (driver's license, Social Security card) are collected
- * alongside the typed fields — see technicianIdDocuments.ts. Deliberately
- * no typed SSN field anywhere: the photo is the only record of it, so
- * there's never a plaintext SSN sitting in a database column. The photos
- * are stored as their own private-bucket paths (formData.licensePhotoPath /
- * ssnCardPhotoPath) and are NOT drawn onto the generated PDF — they're
- * reviewable separately via getTechnicianIdDocumentUrl, same as a
- * candidate's CV isn't baked into anything either.
+ * The driver's license/Social Security card photo uploads that used to be
+ * collected here (technicianIdDocuments.ts's private bucket,
+ * formData.licensePhotoPath/ssnCardPhotoPath, never drawn onto the
+ * generated PDF) moved out to their own standalone forms — see
+ * ssnCardFormTemplate.ts/driversLicenseFormTemplate.ts. A document signed
+ * before that split still carries its own licensePhotoPath/ssnCardPhotoPath
+ * in form_data even though the type below no longer declares them.
  */
 
 export const MASTER_W2_AGREEMENT_BRANCHES = [
@@ -52,9 +51,9 @@ export interface MasterW2AgreementFormData {
   addressZip: string;
   phone: string;
   email: string;
-  /** Storage paths in the private "technician-id-documents" bucket — see technicianIdDocuments.ts. Not URLs (the bucket is private); resolve with getTechnicianIdDocumentUrl when displaying. */
-  licensePhotoPath: string;
-  ssnCardPhotoPath: string;
+  /** Storage paths in the private "technician-id-documents" bucket — see technicianIdDocuments.ts. Only present on a document signed before the SSN Card/Driver's License split (see this file's header comment); FillMasterW2AgreementPage.tsx no longer writes these, but ReportHRDaily.tsx's Sent History "View ID Photos" links still read them for older documents. Not URLs (the bucket is private); resolve with getTechnicianIdDocumentUrl when displaying. */
+  licensePhotoPath?: string;
+  ssnCardPhotoPath?: string;
   employeeDateSigned: string;
   employeeSignatureDataUrl: string;
   employerDateSigned: string;
@@ -68,6 +67,16 @@ const blank = (v: string) => (v && v.trim() ? escapeHtml(v) : "&nbsp;");
 
 const fmtDate = (iso: string) => {
   if (!iso) return "";
+  // A date-only string ("2026-09-17") parses as UTC midnight; formatting
+  // it back out in the browser's local timezone (anything behind UTC,
+  // i.e. all of the US) rolls it back a day — "9/17" printing as "9/16".
+  // Parsing the y/m/d parts directly into a local Date avoids that. A
+  // full timestamp has no such ambiguity and is left to the normal parse.
+  const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  if (dateOnly) {
+    const [, y, m, d] = dateOnly;
+    return new Date(Number(y), Number(m) - 1, Number(d)).toLocaleDateString();
+  }
   const d = new Date(iso);
   return isNaN(d.getTime()) ? iso : d.toLocaleDateString();
 };
