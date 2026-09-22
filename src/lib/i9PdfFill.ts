@@ -28,6 +28,7 @@
  */
 import { PDFDocument, StandardFonts } from "pdf-lib";
 import type { I9FormData } from "./i9FormTemplate";
+import { sanitizeForFont } from "./pdfFillSanitize";
 
 const fmtDate = (v: string) => {
   if (!v) return "";
@@ -48,10 +49,11 @@ export async function fillI9Pdf(data: I9FormData, employeeSigBytes?: Uint8Array,
   const blankBytes = await loadBlankI9Bytes();
   const pdfDoc = await PDFDocument.load(blankBytes);
   const form = pdfDoc.getForm();
+  const helveticaBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
 
   const setText = (name: string, value: string) => {
     try {
-      form.getTextField(name).setText(value ?? "");
+      form.getTextField(name).setText(sanitizeForFont(value, helveticaBold));
     } catch (err) {
       console.error(`I-9 PDF: failed to set field ${name}:`, err);
     }
@@ -138,7 +140,6 @@ export async function fillI9Pdf(data: I9FormData, employeeSigBytes?: Uint8Array,
   setText("Employers Business or Org Name", data.businessName);
   setText("Employers Business or Org Address", data.businessAddress);
 
-  const helveticaBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
   form.updateFieldAppearances(helveticaBold);
 
   // Signatures — drawn directly onto the page, same convention as

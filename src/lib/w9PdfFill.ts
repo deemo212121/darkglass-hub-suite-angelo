@@ -24,6 +24,7 @@
  */
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import type { W9FormData } from "./w9FormTemplate";
+import { sanitizeForFont } from "./pdfFillSanitize";
 
 const P = (n: string) => `topmostSubform[0].Page1[0].${n}`;
 
@@ -46,10 +47,11 @@ export async function fillW9Pdf(data: W9FormData, signaturePngBytes?: Uint8Array
   const blankBytes = await loadBlankW9Bytes();
   const pdfDoc = await PDFDocument.load(blankBytes);
   const form = pdfDoc.getForm();
+  const helveticaBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
 
   const setText = (name: string, value: string) => {
     try {
-      form.getTextField(P(name)).setText(value ?? "");
+      form.getTextField(P(name)).setText(sanitizeForFont(value, helveticaBold));
     } catch (err) {
       console.error(`W-9 PDF: failed to set field ${name}:`, err);
     }
@@ -101,7 +103,6 @@ export async function fillW9Pdf(data: W9FormData, signaturePngBytes?: Uint8Array
   setText("f1_14[0]", data.einPart1);
   setText("f1_15[0]", data.einPart2);
 
-  const helveticaBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
   form.updateFieldAppearances(helveticaBold);
 
   // Part II's signature/date have no AcroForm field on this PDF at all

@@ -23,6 +23,7 @@
  */
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import type { W4RFormData } from "./w4rFormTemplate";
+import { sanitizeForFont } from "./pdfFillSanitize";
 
 const P = (n: string) => `topmostSubform[0].Page1[0].${n}`;
 
@@ -45,10 +46,11 @@ export async function fillW4RPdf(data: W4RFormData, signaturePngBytes?: Uint8Arr
   const blankBytes = await loadBlankW4RBytes();
   const pdfDoc = await PDFDocument.load(blankBytes);
   const form = pdfDoc.getForm();
+  const helveticaBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
 
   const setText = (name: string, value: string) => {
     try {
-      form.getTextField(name).setText(value ?? "");
+      form.getTextField(name).setText(sanitizeForFont(value, helveticaBold));
     } catch (err) {
       console.error(`W-4R PDF: failed to set field ${name}:`, err);
     }
@@ -66,7 +68,6 @@ export async function fillW4RPdf(data: W4RFormData, signaturePngBytes?: Uint8Arr
   // i9PdfFill.ts's middle-initial/SSN fields).
   setText(P("f1_06[0]"), (data.withholdingRatePercent || "").slice(0, 3));
 
-  const helveticaBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
   form.updateFieldAppearances(helveticaBold);
 
   // "Sign Here" row's signature/date have no AcroForm field on this PDF at

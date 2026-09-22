@@ -32,6 +32,7 @@
  */
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import type { W4FormData } from "./w4FormTemplate";
+import { sanitizeForFont } from "./pdfFillSanitize";
 
 const P = (n: string) => `topmostSubform[0].Page1[0].${n}`;
 const P3 = (n: string) => `topmostSubform[0].Page3[0].${n}`;
@@ -56,10 +57,11 @@ export async function fillW4Pdf(data: W4FormData, signaturePngBytes?: Uint8Array
   const blankBytes = await loadBlankW4Bytes();
   const pdfDoc = await PDFDocument.load(blankBytes);
   const form = pdfDoc.getForm();
+  const helveticaBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
 
   const setText = (name: string, value: string) => {
     try {
-      form.getTextField(name).setText(value ?? "");
+      form.getTextField(name).setText(sanitizeForFont(value, helveticaBold));
     } catch (err) {
       console.error(`W-4 PDF: failed to set field ${name}:`, err);
     }
@@ -140,7 +142,6 @@ export async function fillW4Pdf(data: W4FormData, signaturePngBytes?: Uint8Array
   setText(P4("f4_22[0]"), data.dwLine14);
   setText(P4("f4_23[0]"), data.dwLine15);
 
-  const helveticaBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
   form.updateFieldAppearances(helveticaBold);
 
   // Step 5's signature/date have no AcroForm field on this PDF at all (see

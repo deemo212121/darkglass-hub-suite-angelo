@@ -18,6 +18,7 @@
  */
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import type { FlashTechnicianTravelFormData } from "./flashTechnicianTravelFormTemplate";
+import { sanitizeForFont } from "./pdfFillSanitize";
 
 export async function loadBlankFlashTechnicianTravelBytes(): Promise<Uint8Array> {
   const mod = await import("@/assets/Flash Technician Travel & Out-of-State Policy 1.pdf");
@@ -45,7 +46,7 @@ export async function fillFlashTechnicianTravelPdf(
   const page = pdfDoc.getPage(2);
   const drawDate = (text: string, x: number, y: number) => {
     if (!text) return;
-    page.drawText(text, { x, y, size: 11, font, color: rgb(0, 0, 0.545) });
+    page.drawText(sanitizeForFont(text, font), { x, y, size: 11, font, color: rgb(0, 0, 0.545) });
   };
   const drawSig = async (bytes: Uint8Array, x: number, y: number, maxW: number, maxH: number) => {
     const png = await pdfDoc.embedPng(bytes);

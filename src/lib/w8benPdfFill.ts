@@ -21,6 +21,7 @@
  */
 import { PDFDocument, StandardFonts } from "pdf-lib";
 import type { W8benFormData } from "./w8benFormTemplate";
+import { sanitizeForFont } from "./pdfFillSanitize";
 
 const F = (n: string) => `topmostSubform[0].Page1[0].${n}`;
 
@@ -43,10 +44,11 @@ export async function fillW8benPdf(data: W8benFormData, signaturePngBytes?: Uint
   const blankBytes = await loadBlankW8benBytes();
   const pdfDoc = await PDFDocument.load(blankBytes);
   const form = pdfDoc.getForm();
+  const helveticaBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
 
   const setText = (name: string, value: string) => {
     try {
-      form.getTextField(F(name)).setText(value ?? "");
+      form.getTextField(F(name)).setText(sanitizeForFont(value, helveticaBold));
     } catch (err) {
       console.error(`W-8BEN PDF: failed to set field ${name}:`, err);
     }
@@ -117,7 +119,6 @@ export async function fillW8benPdf(data: W8benFormData, signaturePngBytes?: Uint
   // the closest real match ourselves — pdf-lib's built-in Bold Helvetica —
   // while updateFieldAppearances still reads each field's own DA for size
   // and color, so the blue/bold/8pt convention is preserved exactly.
-  const helveticaBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
   form.updateFieldAppearances(helveticaBold);
 
   // Lock every field against further edits once submitted — same intent as

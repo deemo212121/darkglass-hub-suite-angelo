@@ -17,6 +17,7 @@ import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import type { MileageFuelFormData } from "./mileageFuelFormTemplate";
 import { addLogoHeader } from "./pdfLogoHeader";
 import { dateBlankPositions, fmtDateParts } from "./pdfDateBlankSplit";
+import { sanitizeForFont } from "./pdfFillSanitize";
 
 /** x position of each of the three date blanks on the two "Date:" lines (employee page1 y=93.17, employer page2 y=670.54) — see pdfDateBlankSplit.ts; both labels start at x=101.57. */
 const MILEAGE_FUEL_DATE_X = dateBlankPositions(101.57);
@@ -43,7 +44,7 @@ export async function fillMileageFuelPdf(
   const page1 = pdfDoc.getPage(0);
   const draw1 = (text: string, x: number, y: number, size = 10) => {
     if (!text) return;
-    page1.drawText(text, { x, y, size, font, color: rgb(0, 0, 0.545) });
+    page1.drawText(sanitizeForFont(text, font), { x, y, size, font, color: rgb(0, 0, 0.545) });
   };
   draw1(data.firstName, 223, 670.5);
   draw1(data.middleName, 396, 670.5);
@@ -63,7 +64,7 @@ export async function fillMileageFuelPdf(
   const page2 = pdfDoc.getPage(1);
   const draw2 = (text: string, x: number, y: number, size = 10) => {
     if (!text) return;
-    page2.drawText(text, { x, y, size, font, color: rgb(0, 0, 0.545) });
+    page2.drawText(sanitizeForFont(text, font), { x, y, size, font, color: rgb(0, 0, 0.545) });
   };
   if (employerSigBytes) {
     const png = await pdfDoc.embedPng(employerSigBytes);

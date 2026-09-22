@@ -28,6 +28,7 @@ import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import type { CarIqAgreementFormData } from "./carIqAgreementFormTemplate";
 import { addLogoHeader } from "./pdfLogoHeader";
 import { dateBlankPositions, fmtDateParts } from "./pdfDateBlankSplit";
+import { sanitizeForFont } from "./pdfFillSanitize";
 
 /** x position of each of the three date blanks on the "Today's Date:" line (y=285.94) — see pdfDateBlankSplit.ts; the label starts at x=140.93. */
 const CAR_IQ_DATE_X = dateBlankPositions(140.93);
@@ -69,7 +70,7 @@ export async function fillCarIqAgreementPdf(data: CarIqAgreementFormData, signat
   const font = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
   const draw = (page: ReturnType<typeof pdfDoc.getPage>, text: string, x: number, y: number, size = 10) => {
     if (!text) return;
-    page.drawText(text, { x, y, size, font, color: rgb(0, 0, 0.545) });
+    page.drawText(sanitizeForFont(text, font), { x, y, size, font, color: rgb(0, 0, 0.545) });
   };
 
   const page1 = pdfDoc.getPage(0);

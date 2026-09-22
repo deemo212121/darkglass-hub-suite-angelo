@@ -15,6 +15,7 @@
  */
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import type { EmployeeConfidentialityFormData } from "./employeeConfidentialityFormTemplate";
+import { sanitizeForFont } from "./pdfFillSanitize";
 import { addLogoHeader } from "./pdfLogoHeader";
 
 // The "Branch:" line ends with a bracketed placeholder — "[Please Select
@@ -65,7 +66,7 @@ export async function fillEmployeeConfidentialityPdf(
   const font = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
   const draw = (page: ReturnType<typeof pdfDoc.getPage>, text: string, x: number, y: number, size = 10) => {
     if (!text) return;
-    page.drawText(text, { x, y, size, font, color: rgb(0, 0, 0.545) });
+    page.drawText(sanitizeForFont(text, font), { x, y, size, font, color: rgb(0, 0, 0.545) });
   };
 
   const page1 = pdfDoc.getPage(0);

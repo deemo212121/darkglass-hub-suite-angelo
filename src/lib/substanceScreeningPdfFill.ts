@@ -23,6 +23,7 @@
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import type { SubstanceScreeningFormData } from "./substanceScreeningFormTemplate";
 import { addLogoHeader } from "./pdfLogoHeader";
+import { sanitizeForFont } from "./pdfFillSanitize";
 
 const fmtDate = (v: string) => {
   if (!v) return "";
@@ -64,7 +65,7 @@ export async function fillSubstanceScreeningPdf(
   const font = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
   const draw = (page: ReturnType<typeof pdfDoc.getPage>, text: string, x: number, y: number, size = 10) => {
     if (!text) return;
-    page.drawText(text, { x, y, size, font, color: rgb(0, 0, 0.545) });
+    page.drawText(sanitizeForFont(text, font), { x, y, size, font, color: rgb(0, 0, 0.545) });
   };
 
   const page1 = pdfDoc.getPage(0);

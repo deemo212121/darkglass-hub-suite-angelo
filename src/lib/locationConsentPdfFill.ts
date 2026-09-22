@@ -10,6 +10,7 @@
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import type { LocationConsentFormData } from "./locationConsentFormTemplate";
 import { addLogoHeader } from "./pdfLogoHeader";
+import { sanitizeForFont } from "./pdfFillSanitize";
 
 const fmtDate = (v: string) => {
   if (!v) return "";
@@ -42,7 +43,7 @@ export async function fillLocationConsentPdf(
   const page1 = pdfDoc.getPage(0);
   const draw1 = (text: string, x: number, y: number, size = 10) => {
     if (!text) return;
-    page1.drawText(text, { x, y, size, font, color: rgb(0, 0, 0.545) });
+    page1.drawText(sanitizeForFont(text, font), { x, y, size, font, color: rgb(0, 0, 0.545) });
   };
   draw1(data.employeeName, 162.4, 670.5);
   draw1(data.positionTitle, 153.8, 645.5);
@@ -51,7 +52,7 @@ export async function fillLocationConsentPdf(
   const page2 = pdfDoc.getPage(1);
   const draw2 = (text: string, x: number, y: number, size = 10) => {
     if (!text) return;
-    page2.drawText(text, { x, y, size, font, color: rgb(0, 0, 0.545) });
+    page2.drawText(sanitizeForFont(text, font), { x, y, size, font, color: rgb(0, 0, 0.545) });
   };
   if (employeeSigBytes) {
     const png = await pdfDoc.embedPng(employeeSigBytes);

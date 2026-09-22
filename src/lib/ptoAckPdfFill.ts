@@ -24,6 +24,7 @@ import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import type { PtoAckFormData } from "./ptoAckFormTemplate";
 import { addLogoHeader } from "./pdfLogoHeader";
 import { dateBlankPositions, fmtDateParts } from "./pdfDateBlankSplit";
+import { sanitizeForFont } from "./pdfFillSanitize";
 
 /** Where the redrawn signature/date/employer block sits on page 1 — exported so the fill pages' overlay rects can match exactly. */
 export const PTO_ACK_SIGNATURE_DRAW = { x: 177, y: 245, maxW: 285, maxH: 20 } as const;
@@ -61,7 +62,7 @@ export async function fillPtoAckPdf(data: PtoAckFormData, signatureBytes?: Uint8
   const page1 = pdfDoc.getPage(0);
   const draw1 = (text: string, x: number, y: number, size = 10) => {
     if (!text) return;
-    page1.drawText(text, { x, y, size, font, color: rgb(0, 0, 0.545) });
+    page1.drawText(sanitizeForFont(text, font), { x, y, size, font, color: rgb(0, 0, 0.545) });
   };
   draw1(data.firstName, 221, 328);
   draw1(data.middleName, 393, 328);
