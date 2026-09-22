@@ -769,6 +769,25 @@ export default defineConfig({
   cloudflare: { viteEnvironment: { name: "ssr" }, persistState: false },
   vite: {
     define: { ...SERVER_DEFINE, ...APP_DEFINE },
+    resolve: {
+      alias: {
+        // exceljs's package.json points "main" at its Node-targeted entry
+        // (excel.js -> lib/exceljs.nodejs.js) and only has a legacy
+        // "browser" FIELD (not a conditional exports map) pointing at its
+        // real browser-safe bundle. Vite's client build picks up that
+        // "browser" field on its own, but the SSR/Workers build resolves
+        // via "main" like a real Node host — except Cloudflare Workers
+        // isn't Node, so exceljs.nodejs.js's own top-level code (assumes
+        // real Node globals) crashed at Worker-script validation time
+        // during `wrangler deploy` ("Cannot set properties of undefined
+        // (setting 'base64')"), well before the request handler it's
+        // actually only ever called from (a client-only onClick in
+        // TechnicianPerformanceReport.tsx) could ever run. Aliasing forces
+        // BOTH environments to resolve the exact same browser-safe file,
+        // sidestepping the main/browser field split entirely.
+        exceljs: resolve(process.cwd(), "node_modules/exceljs/dist/exceljs.min.js"),
+      },
+    },
     // Vite's default asset list doesn't include .pdf — needed so the blank
     // W-8BEN template (src/assets/w8ben-blank.pdf) resolves to a URL via a
     // plain `import` the same way the logo/ribbon/footer PNGs already do.
@@ -848,32 +867,23 @@ export default defineConfig({
               // physical chunk that's already eagerly loaded app-wide
               // regardless of any individual module's own import style, so
               // leaving ExcelJS there would silently defeat that dynamic
-              // import (confirmed: it added ~2.7MB to "vendor" itself, with
-              // zero effect from the dynamic import() at its one call site).
-              // Its own chunk keeps that weight out of every page that
-              // isn't this one. Most of its own npm dependencies (an xlsx
-              // file IS a zip, hence archiver/unzipper/etc.) are folded in
-              // here too rather than left to fall through to "vendor" —
-              // jszip/readable-stream are deliberately NOT included even
-              // though ExcelJS depends on them too: `docx` (used
-              // elsewhere, e.g. warningFormDocx.ts) shares that exact same
-              // jszip/readable-stream install, so moving those specific
-              // two here would give "exceljs" an incoming edge from
-              // wherever docx's own already-vendor-bucketed code is
-              // reached, undoing the laziness this exists for.
-              if (
-                normalized.includes("/node_modules/exceljs/") ||
-                normalized.includes("/node_modules/archiver/") ||
-                normalized.includes("/node_modules/archiver-utils/") ||
-                normalized.includes("/node_modules/unzipper/") ||
-                normalized.includes("/node_modules/fast-csv/") ||
-                normalized.includes("/node_modules/@fast-csv/") ||
-                normalized.includes("/node_modules/saxes/") ||
-                normalized.includes("/node_modules/dayjs/") ||
-                normalized.includes("/node_modules/tmp/")
-              ) {
-                return "exceljs";
-              }
+              // import. Its own chunk keeps that weight out of every page
+              // that isn't this one. Resolved via an explicit alias (see
+              // `resolve.alias` above) straight to exceljs's own browser
+              // bundle (dist/exceljs.min.js) rather than the plain package
+              // name — its package.json "main" points at a Node-targeted
+              // entry (excel.js -> lib/exceljs.nodejs.js, pulling in real
+              // Node-only deps like archiver/unzipper along the way) that
+              // Vite's SSR build resolved by default, and that entry's own
+              // top-level code assumes real Node globals that don't exist
+              // in Cloudflare Workers — it crashed the Worker script at
+              // `wrangler deploy` validation time, well before the
+              // client-only handler that's its one actual caller could
+              // ever run. The alias means only the browser bundle (which
+              // has no such dependencies) is ever resolved, for either
+              // environment — this "exceljs" bucket now really is just
+              // exceljs.
+              if (normalized.includes("/node_modules/exceljs/")) return "exceljs";
               // pdf-lib is left in "vendor": it's pure JS PDF manipulation
               // with no DOM dependency, so it's SSR-safe.
               if (normalized.includes("/node_modules/@tanstack/")) return "tanstack";
