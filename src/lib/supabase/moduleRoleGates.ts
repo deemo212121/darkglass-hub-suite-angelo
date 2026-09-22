@@ -8,17 +8,33 @@
  */
 import { supabase } from "./client";
 
+// Supabase caps an unbounded select at 1000 rows (see signableDocuments.ts's
+// own note on this) — a company with dozens of modules/submodules times a
+// dozen-plus roles each crosses that easily (confirmed: 1604 rows for one
+// real company), so a single unpaged select here silently dropped roughly a
+// third of all override rows on every load. Any (module, submodule) whose
+// entire row set happened to land in the dropped remainder read back as "no
+// override at all" — i.e. open to everyone — making a real, successfully
+// saved revoke appear to have reverted itself the moment the page reloaded.
+const PAGE_SIZE = 1000;
+
 /** `${module_slug}:${submodule_slug}` -> allowed role codes, for every (module, submodule) that has at least one override row. */
 export async function getModuleRoleGateOverrides(): Promise<Record<string, string[]>> {
-  const { data, error } = await supabase.from("module_role_gate_overrides").select("module_slug, submodule_slug, role");
-  if (error) {
-    console.error("getModuleRoleGateOverrides error:", error.message);
-    return {};
-  }
   const out: Record<string, string[]> = {};
-  for (const row of data ?? []) {
-    const key = `${row.module_slug}:${row.submodule_slug}`;
-    (out[key] ??= []).push(row.role);
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from("module_role_gate_overrides")
+      .select("module_slug, submodule_slug, role")
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) {
+      console.error("getModuleRoleGateOverrides error:", error.message);
+      return out;
+    }
+    for (const row of data ?? []) {
+      const key = `${row.module_slug}:${row.submodule_slug}`;
+      (out[key] ??= []).push(row.role);
+    }
+    if (!data || data.length < PAGE_SIZE) break;
   }
   return out;
 }
