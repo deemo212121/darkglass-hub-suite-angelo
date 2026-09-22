@@ -841,6 +841,39 @@ export default defineConfig({
               ) {
                 return "pdfjs-dist";
               }
+              // ExcelJS is only ever reached via a dynamic import() (see
+              // TechnicianPerformanceReport.tsx's handleDownloadImportTemplate,
+              // the only caller) specifically so it's NOT shipped to every
+              // page — but the catch-all "vendor" bucket below is a single
+              // physical chunk that's already eagerly loaded app-wide
+              // regardless of any individual module's own import style, so
+              // leaving ExcelJS there would silently defeat that dynamic
+              // import (confirmed: it added ~2.7MB to "vendor" itself, with
+              // zero effect from the dynamic import() at its one call site).
+              // Its own chunk keeps that weight out of every page that
+              // isn't this one. Most of its own npm dependencies (an xlsx
+              // file IS a zip, hence archiver/unzipper/etc.) are folded in
+              // here too rather than left to fall through to "vendor" —
+              // jszip/readable-stream are deliberately NOT included even
+              // though ExcelJS depends on them too: `docx` (used
+              // elsewhere, e.g. warningFormDocx.ts) shares that exact same
+              // jszip/readable-stream install, so moving those specific
+              // two here would give "exceljs" an incoming edge from
+              // wherever docx's own already-vendor-bucketed code is
+              // reached, undoing the laziness this exists for.
+              if (
+                normalized.includes("/node_modules/exceljs/") ||
+                normalized.includes("/node_modules/archiver/") ||
+                normalized.includes("/node_modules/archiver-utils/") ||
+                normalized.includes("/node_modules/unzipper/") ||
+                normalized.includes("/node_modules/fast-csv/") ||
+                normalized.includes("/node_modules/@fast-csv/") ||
+                normalized.includes("/node_modules/saxes/") ||
+                normalized.includes("/node_modules/dayjs/") ||
+                normalized.includes("/node_modules/tmp/")
+              ) {
+                return "exceljs";
+              }
               // pdf-lib is left in "vendor": it's pure JS PDF manipulation
               // with no DOM dependency, so it's SSR-safe.
               if (normalized.includes("/node_modules/@tanstack/")) return "tanstack";
