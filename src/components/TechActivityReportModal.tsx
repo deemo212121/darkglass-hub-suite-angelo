@@ -240,8 +240,13 @@ export function TechActivityReportModal({
   // so this is the authoritative figure once this report has been opened;
   // AccountingDashboard's own total for this technician only matches it
   // once a State override has actually been saved (see onSetHourlyOtMode).
+  // techHolidayPremium is folded into the earned baseline too, for the same
+  // reason as in AccountingDashboard.tsx's own copy of this calc — it's
+  // paid as its own line further down (techGrossTotal), so leaving it out
+  // here sizes the match as if it hadn't been earned yet and overpays by
+  // exactly that amount whenever the guarantee triggers.
   const techGuaranteedSalaryMatch = techGuaranteedSalaryTarget > 0
-    ? Math.max(techGuaranteedSalaryTarget - (stateHourlyOtTotal + techIncludablePay), 0)
+    ? Math.max(techGuaranteedSalaryTarget - (stateHourlyOtTotal + techIncludablePay + techHolidayPremium), 0)
     : 0;
 
   // Temporary, NOT persisted — lets HR type in a what-if Completed Tickets

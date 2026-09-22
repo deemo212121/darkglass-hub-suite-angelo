@@ -2582,7 +2582,16 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     const guaranteedAnnualSalary = includeTech && isTechRole(emp) && !isFixed
       ? latestFixedSalaryByProfile.get(emp.id)?.annual_salary ?? null
       : null;
-    const techEarnedBeforeReimbursements = techHourlyPay + techIncludablePay;
+    // techHolidayPremium is folded in too, for the same double-counting
+    // reason as techHourlyPay above — see Daven Hodge, where the reference
+    // workbook's own AN9 ("Corrected Wages Before Match") already folds its
+    // Holiday Premium into the earned baseline before sizing the match.
+    // Leaving it out here sized the guarantee as if that $51.40 hadn't
+    // been earned yet, then techGrossPay below added it again on top of
+    // the already-topped-up target — a flat overpayment equal to the
+    // holiday premium any time the guarantee triggers for a technician who
+    // also worked a recognized holiday.
+    const techEarnedBeforeReimbursements = techHourlyPay + techIncludablePay + techHolidayPremium;
     const techGuaranteedSalaryTarget = guaranteedAnnualSalary ? perCutoffSalary(guaranteedAnnualSalary) : 0;
     const techGuaranteedSalaryMatch = guaranteedAnnualSalary
       ? Math.max(techGuaranteedSalaryTarget - techEarnedBeforeReimbursements, 0)
