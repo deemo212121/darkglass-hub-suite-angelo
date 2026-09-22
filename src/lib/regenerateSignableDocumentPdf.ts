@@ -27,7 +27,7 @@
  *   masterW2AgreementFormTemplate.ts's employeeSignatureDataUrl field).
  *   No CORS resolution needed at all; the raw pixels are already local.
  */
-import { captureHtmlToPdfBlob, resolveSignaturesForCapture } from "@/lib/pdfCapture";
+import { captureHtmlToPdfBlob, resolveSignaturesForCapture, resolvePhotoUrlsForCapture } from "@/lib/pdfCapture";
 import { updateSignableDocumentPdfUrl } from "@/lib/supabase/signableDocuments";
 
 interface RegenerateDocLike {
@@ -43,7 +43,18 @@ export async function regenerateSimpleSignableDocumentPdf<TFormData, TSig extend
   buildMarkup: (data: TFormData, logo: string, signature: TSig | undefined) => string,
   styles: string,
   uploadFn: (companyId: string, name: string, blob: Blob) => Promise<string>,
-  employeeName: string
+  employeeName: string,
+  /** For the SSN Card/Driver's License/Valid ID forms only — the form_data
+   *  key holding the array of Firebase Storage photo URLs ("cardPhotoUrls"
+   *  / "licensePhotoUrls" / "idPhotoUrls"). Same cross-origin-fetch problem
+   *  as the signature above, just for a different field — the original
+   *  fill page now avoids it by capturing from local data: URLs it already
+   *  has in hand (see FillValidIdPage.tsx etc.), but an already-submitted
+   *  document only has the real Storage URLs on file, so regenerating it
+   *  needs this same proxy round-trip resolveSignaturesForCapture already
+   *  does for signatures. Omit for every other document type, which has no
+   *  such field. */
+  photoUrlField?: keyof TFormData
 ): Promise<string> {
   const formData = doc.formData as TFormData;
   const resolved = await resolveSignaturesForCapture(
@@ -52,7 +63,15 @@ export async function regenerateSimpleSignableDocumentPdf<TFormData, TSig extend
     ""
   );
   const signature = resolved.employee as TSig | undefined;
-  const pdfBlob = await captureHtmlToPdfBlob(buildMarkup(formData, logoDataUrl, signature), styles);
+  let captureData = formData;
+  if (photoUrlField) {
+    const urls = formData[photoUrlField];
+    if (Array.isArray(urls) && urls.length > 0) {
+      const localUrls = await resolvePhotoUrlsForCapture(urls as string[]);
+      captureData = { ...formData, [photoUrlField]: localUrls };
+    }
+  }
+  const pdfBlob = await captureHtmlToPdfBlob(buildMarkup(captureData, logoDataUrl, signature), styles);
   const pdfUrl = await uploadFn(doc.companyId, employeeName, pdfBlob);
   await updateSignableDocumentPdfUrl(doc.id, pdfUrl);
   return pdfUrl;

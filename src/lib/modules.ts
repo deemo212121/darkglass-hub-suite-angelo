@@ -482,6 +482,15 @@ const hrMod: ModuleDef = {
       seed: () => ({}),
     },
     {
+      slug: "training-list",
+      title: "Training List",
+      description: "Technicians currently in their trainee window, by branch — current roster and upcoming field starts.",
+      custom: "training-list" as any,
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
+    {
       slug: "user-management",
       title: "User Management",
       description: "User accounts administration.",

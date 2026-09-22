@@ -16,7 +16,7 @@ import { getMyProfileId } from "@/lib/supabase/users";
 import { getSignableDocument, signDocument, type SignableDocument } from "@/lib/supabase/signableDocuments";
 import { uploadSignableDocumentSignature, uploadSignableDocumentAttachment, uploadValidIdForm, refreshStorageAuthToken } from "@/lib/firebase/storage";
 import { compressImage } from "@/lib/imageCompression";
-import { captureHtmlToPdfBlob, loadAssetDataUrl } from "@/lib/pdfCapture";
+import { captureHtmlToPdfBlob, loadAssetDataUrl, fileToDataUrl } from "@/lib/pdfCapture";
 import { buildValidIdFormBodyMarkup, validIdFormStyles, VALID_ID_TYPES, type ValidIdFormData } from "@/lib/validIdFormTemplate";
 import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
 import { logActivity } from "@/lib/supabase/hrActivityLog";
@@ -151,11 +151,22 @@ export function FillValidIdPage({ docId }: Props) {
       const signatureUrl = await withTimeout(uploadSignableDocumentSignature(companyId, doc.id, "employee", dataUrl), 30_000, "Uploading signature");
       const signedAt = new Date().toISOString();
       const finalData: ValidIdFormData = { ...form, idPhotoUrls, dateSigned: signedAt, signatureDataUrl: dataUrl };
+      // Stored entry (signDocument, below) keeps the real Firebase Storage
+      // URL — that's what everything else in the app expects to find in
+      // signable_documents.signatures. The capture entry below is a
+      // separate object that instead points at local data: URLs already in
+      // hand (the signature pad's own dataUrl, and each ID photo file read
+      // straight off disk) so html2canvas never needs a cross-origin fetch
+      // for either — see fileToDataUrl's doc comment for why that fetch
+      // can't be trusted to actually finish before the canvas snapshot.
       const entry = { name: displayName || form.employeeName || "Signed", url: signatureUrl, signedAt };
 
       setSubmitStep("Generating document…");
+      const localIdPhotoUrls = await Promise.all(compressedFiles.map(fileToDataUrl));
+      const captureData: ValidIdFormData = { ...finalData, idPhotoUrls: localIdPhotoUrls };
+      const captureEntry = { ...entry, url: dataUrl };
       const pdfBlob = await withTimeout(
-        captureHtmlToPdfBlob(buildValidIdFormBodyMarkup(finalData, logoDataUrl, entry), validIdFormStyles),
+        captureHtmlToPdfBlob(buildValidIdFormBodyMarkup(captureData, logoDataUrl, captureEntry), validIdFormStyles),
         30_000,
         "Generating document"
       );

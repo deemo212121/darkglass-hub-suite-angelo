@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "@tanstack/react-router";
+import { useNavigate } from "@tanstack/react-router";
 import { ChevronLeft, Download, Loader2, Search } from "lucide-react";
+import { useSmartBack } from "@/hooks/useSmartBack";
 import { BrandedLoader } from "@/components/BrandedLoader";
 import {
   Bar,
@@ -49,6 +50,14 @@ const branchesOf = (assignedBranch: string | null, branchAccess: string | null):
 };
 
 export function ReportCSRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
+  const navigate = useNavigate();
+  // This component is dispatched from two different places — the CSR
+  // module's own hidden-from-grid "csr-daily-report" tile AND the Report
+  // module's "report-csr-daily" tile (both custom === "csr-daily-report",
+  // see modules.ts) — so a hardcoded back target can only ever be right for
+  // one of them. useSmartBack returns to wherever the user actually came
+  // from; mod.slug is only the fallback for a bookmarked/direct link.
+  const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [agents, setAgents] = useState<Agent[]>([]);
@@ -233,13 +242,9 @@ export function ReportCSRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
     <div className="min-h-screen flex flex-col">
       <main className="flex-1 max-w-[1600px] mx-auto w-full px-6 py-8">
         <div className="flex items-center gap-3 mb-6">
-          <Link
-            to="/m/$module/$submodule"
-            params={{ module: "csr", submodule: "daily-report" }}
-            className="btn hover:bg-white/15"
-          >
+          <button type="button" onClick={goBack} className="btn hover:bg-white/15">
             <ChevronLeft className="h-4 w-4" />
-          </Link>
+          </button>
           <h1 className="text-2xl font-bold">{sub.title}</h1>
         </div>
 

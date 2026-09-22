@@ -16,7 +16,7 @@ import { getMyProfileId } from "@/lib/supabase/users";
 import { getSignableDocument, signDocument, type SignableDocument } from "@/lib/supabase/signableDocuments";
 import { uploadSignableDocumentSignature, uploadSignableDocumentAttachment, uploadDriversLicenseForm, refreshStorageAuthToken } from "@/lib/firebase/storage";
 import { compressImage } from "@/lib/imageCompression";
-import { captureHtmlToPdfBlob, loadAssetDataUrl } from "@/lib/pdfCapture";
+import { captureHtmlToPdfBlob, loadAssetDataUrl, fileToDataUrl } from "@/lib/pdfCapture";
 import { buildDriversLicenseFormBodyMarkup, driversLicenseFormStyles, DRIVERS_LICENSE_STATES, type DriversLicenseFormData } from "@/lib/driversLicenseFormTemplate";
 import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
 import { logActivity } from "@/lib/supabase/hrActivityLog";
@@ -151,11 +151,20 @@ export function FillDriversLicensePage({ docId }: Props) {
       const signatureUrl = await withTimeout(uploadSignableDocumentSignature(companyId, doc.id, "employee", dataUrl), 30_000, "Uploading signature");
       const signedAt = new Date().toISOString();
       const finalData: DriversLicenseFormData = { ...form, licensePhotoUrls, dateSigned: signedAt, signatureDataUrl: dataUrl };
+      // Stored entry (signDocument, below) keeps the real Firebase Storage
+      // URL. The capture entry is separate and points at local data: URLs
+      // already in hand instead, so html2canvas never needs a cross-origin
+      // fetch for either the signature or the license photo — see
+      // fileToDataUrl's doc comment (pdfCapture.ts) for why that fetch
+      // can't be trusted to finish before the canvas snapshot.
       const entry = { name: displayName || form.employeeName || "Signed", url: signatureUrl, signedAt };
 
       setSubmitStep("Generating document…");
+      const localLicensePhotoUrls = await Promise.all(compressedFiles.map(fileToDataUrl));
+      const captureData: DriversLicenseFormData = { ...finalData, licensePhotoUrls: localLicensePhotoUrls };
+      const captureEntry = { ...entry, url: dataUrl };
       const pdfBlob = await withTimeout(
-        captureHtmlToPdfBlob(buildDriversLicenseFormBodyMarkup(finalData, logoDataUrl, entry), driversLicenseFormStyles),
+        captureHtmlToPdfBlob(buildDriversLicenseFormBodyMarkup(captureData, logoDataUrl, captureEntry), driversLicenseFormStyles),
         30_000,
         "Generating document"
       );

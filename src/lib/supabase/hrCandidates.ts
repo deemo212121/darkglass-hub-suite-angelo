@@ -602,6 +602,29 @@ export async function updateCandidateNotes(id: string, notes: string): Promise<v
   if (error) throw new Error(error.message);
 }
 
+/**
+ * Corrects trainingStartDate/trainingEndDate directly, WITHOUT going
+ * through updateCandidateStatus/hr_update_candidate_status(). That RPC only
+ * ever writes these dates as a side effect of setting status to "training"
+ * — fine for the original Hiring-tab flow, wrong here: the Training List
+ * report needs to fix a historical date on a candidate who has since moved
+ * on to "hired" (or dropped to "withdrawn"), and re-running the status RPC
+ * would wrongly revert their status back to "training" (and, for a
+ * currently-hired candidate, undo the Staff Needed count the hire already
+ * applied). A plain field update has no such side effect — same reasoning
+ * as updateCandidateScreeningDate/updateCandidateNotes above.
+ */
+export async function updateCandidateTrainingDates(
+  id: string,
+  fields: Partial<{ trainingStartDate: string | null; trainingEndDate: string | null }>
+): Promise<void> {
+  const payload: Record<string, string | null> = {};
+  if (fields.trainingStartDate !== undefined) payload.training_start_date = fields.trainingStartDate || null;
+  if (fields.trainingEndDate !== undefined) payload.training_end_date = fields.trainingEndDate || null;
+  const { error } = await supabase.from("hr_candidates").update(payload).eq("id", id);
+  if (error) throw new Error(error.message);
+}
+
 /** Updates the Interviewer Note — a separate slot from the general HR note (updateCandidateNotes above) so each role's write never clobbers the other's. See 0241_hr_candidates_screening_interviewer_notes.sql. */
 export async function updateCandidateInterviewerNote(id: string, note: string): Promise<void> {
   const { error } = await supabase.from("hr_candidates").update({ interviewer_note: note.trim() || null }).eq("id", id);

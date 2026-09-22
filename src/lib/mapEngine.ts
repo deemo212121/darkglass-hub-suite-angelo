@@ -155,6 +155,34 @@ export function loadGoogleMapsScript(): Promise<void> {
  *  confidence). geocodeAddress folds this into its `approximate` output. */
 type ProviderHit = LatLng & { fuzzy: boolean };
 
+// Matches the "ST 12345" (optionally "-6789") tail every query built by
+// deriveQueryTiers/cleanAddressQuery ends with, so a live geocode result can
+// be cross-checked against the state/ZIP the query actually asked for.
+const QUERY_STATE_ZIP_TAIL = /\b([A-Za-z]{2})\s+(\d{5})(?:-\d{4})?\s*$/;
+
+/**
+ * True when a geocoder's result flatly contradicts the state/ZIP the query
+ * named — e.g. asking for "…, Ellijay, GA 30536" and getting back a
+ * same-named street in Coeburn, VA 24230. Seen live: Geoapify returned that
+ * exact mismatch as a "full_match" with 0 confidence for a real ticket
+ * address (192 Ivy Cove Ln) — its OSM-derived index has genuine data-quality
+ * gaps (see the geoapify-zip-geocoding-bug memory, same root cause for bare
+ * ZIPs) and will sometimes confidently match a street name in the wrong
+ * state entirely. A contradiction here isn't "lower confidence than ideal,"
+ * it's provably wrong, so callers should reject and keep trying coarser
+ * tiers rather than accept-with-a-fuzzy-flag — a fuzzy-but-consistent
+ * result (right state, just street/city-level) is still useful; a
+ * wrong-state one never is.
+ */
+function stateZipMismatch(query: string, gotStateCode: string | undefined | null, gotZip: string | undefined | null): boolean {
+  const wanted = QUERY_STATE_ZIP_TAIL.exec(query);
+  if (!wanted) return false;
+  const [, wantedState, wantedZip] = wanted;
+  if (gotStateCode && gotStateCode.toUpperCase() !== wantedState.toUpperCase()) return true;
+  if (gotZip && gotZip.slice(0, 5) !== wantedZip) return true;
+  return false;
+}
+
 async function geocodeWithGoogle(query: string): Promise<ProviderHit | null> {
   await loadGoogleMapsScript();
   const maps = (window as any).google?.maps;
@@ -170,6 +198,13 @@ async function geocodeWithGoogle(query: string): Promise<ProviderHit | null> {
         const r = results[0];
         const pos = r.geometry.location;
         const fuzzy = r.partial_match === true || r.geometry?.location_type === "APPROXIMATE";
+        const component = (type: string) => r.address_components?.find((c: any) => c.types?.includes(type));
+        const gotState = component("administrative_area_level_1")?.short_name;
+        const gotZip = component("postal_code")?.long_name;
+        if (stateZipMismatch(query, gotState, gotZip)) {
+          resolve(null);
+          return;
+        }
         resolve({ lat: pos.lat(), lng: pos.lng(), fuzzy });
       } else {
         resolve(null);
@@ -196,6 +231,7 @@ async function geocodeWithGeoapify(query: string): Promise<ProviderHit | null> {
     const feature = data?.features?.[0];
     const coords = feature?.geometry?.coordinates; // [lng, lat]
     if (!Array.isArray(coords) || coords.length < 2) return null;
+    if (stateZipMismatch(query, feature?.properties?.state_code, feature?.properties?.postcode)) return null;
     const rt = feature?.properties?.result_type;
     const conf = feature?.properties?.rank?.confidence;
     const fuzzy =

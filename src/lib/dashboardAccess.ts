@@ -59,11 +59,20 @@ export const DASHBOARD_ROLE_GATES: Record<string, string[]> = {
   // HR module's Hiring Analytics (custom: "hiring-analytics") — candidate
   // status/team-activity charts, same audience as the rest of Hiring.
   "hiring-analytics": ["ADMIN", "HR"],
+  // HR module's Training List (custom: "training-list") — per-branch roster
+  // of technicians currently in their trainee window, editable training end
+  // date. Same audience as the rest of HR.
+  "training-list": ["ADMIN", "HR"],
   // Same sensitivity as hr-dashboard — personal emails, addresses, DOB-
   // adjacent contact info per branch.
   "staff-list": ["ADMIN", "HR"],
-  // Company-wide daily absence list — same sensitivity tier as hr-dashboard.
-  "absent-list": ["ADMIN", "HR"],
+  // Company-wide for ADMIN/HR/FINANCE/SUPERADMIN; manager-tier roles (see
+  // ATTENDANCE_MANAGER_TIER_ROLES_ARRAY) can also open this now, scoped to
+  // their own reports inside AbsentListPage.tsx's
+  // visibleEmployeeMonitoringProfileIds — a Team Leader sees only their
+  // direct reports, Branch Manager tier and up sees their whole downward
+  // chain. Same audience shape as attendance-monitoring above.
+  "absent-list": ["ADMIN", "HR", "FINANCE", ...ATTENDANCE_MANAGER_TIER_ROLES_ARRAY],
   "live-chat-support": ["ADMIN", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER", "CSR_AGENT", "CSR_TEAM_LEADER", "CSR_MANAGER"],
   // IT Tickets now lives only in the Admin module (m.$module.$submodule.tsx
   // reuses this same list via getDashboardRoleGate("it-tickets") to carve

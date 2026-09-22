@@ -152,6 +152,26 @@ export async function blobToBase64(blob: Blob): Promise<string> {
 }
 
 /**
+ * Full "data:image/...;base64,..." URL (unlike blobToBase64 above, which
+ * strips the prefix) — for embedding a just-selected/compressed local file
+ * (an ID photo, say) directly as an <img src> before it's been uploaded
+ * anywhere, so captureHtmlToPdfBlob never needs a cross-origin fetch for
+ * it. Same reasoning as resolveSignaturesForCapture's "fresh signer" case
+ * just above: a local file already in hand needs no network round-trip at
+ * all, and html2canvas's useCORS fetch for a just-uploaded Firebase
+ * Storage URL isn't reliable enough to trust for something that doesn't
+ * need to touch the network in the first place.
+ */
+export async function fileToDataUrl(file: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(reader.result as string);
+    reader.onerror = () => reject(reader.error ?? new Error("Failed to read file"));
+    reader.readAsDataURL(file);
+  });
+}
+
+/**
  * Resolves every signature in a multi-signer document to something
  * guaranteed to actually render when html2canvas rasterizes it for
  * captureHtmlToPdfBlob — not just the signer who just signed.
@@ -211,6 +231,32 @@ export async function resolveSignaturesForCapture<T extends { url: string }>(
     })
   );
   return Object.fromEntries(entries) as Partial<Record<string, T>>;
+}
+
+/**
+ * Same idea as resolveSignaturesForCapture, but for a plain array of
+ * Firebase Storage image URLs (an ID/SSN card/driver's license photo
+ * array) rather than a signatures map — proxies each through
+ * /api/image-proxy and returns local data: URLs so captureHtmlToPdfBlob
+ * never needs a cross-origin fetch for them. An entry that's already a
+ * data: URL is returned unchanged (nothing to fetch); a proxied fetch that
+ * fails leaves that one entry's original URL in place, best-effort per
+ * entry, same as resolveSignaturesForCapture.
+ */
+export async function resolvePhotoUrlsForCapture(urls: string[]): Promise<string[]> {
+  return Promise.all(
+    urls.map(async (url) => {
+      if (!url || url.startsWith("data:")) return url;
+      try {
+        const res = await fetch(`/api/image-proxy?url=${encodeURIComponent(url)}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const blob = await res.blob();
+        return await fileToDataUrl(blob);
+      } catch {
+        return url;
+      }
+    })
+  );
 }
 
 /** Loads a bundled asset (imported via `@/assets/...`) as a data URL, so a print/capture document never depends on a live network fetch. Returns "" (graceful no-image) if the asset is missing. */
