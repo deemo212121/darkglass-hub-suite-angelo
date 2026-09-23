@@ -755,6 +755,31 @@ export async function getWorkingHoursByProfileIds(profileIds: string[]): Promise
   return out;
 }
 
+/**
+ * Bulk-load profiles.training_end_date (migration 0297 — the $100/day
+ * trainee guarantee's window close, paired with employee_info.hireDate as
+ * its open) for a set of profiles in one query — same "display without
+ * paying for the full employee_info payload" pattern as
+ * getWorkingHoursByProfileIds above.
+ */
+export async function getTrainingEndDatesByProfileIds(profileIds: string[]): Promise<Map<string, string | null>> {
+  const out = new Map<string, string | null>();
+  const uniq = Array.from(new Set(profileIds.filter(Boolean)));
+  if (uniq.length === 0) return out;
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("id, training_end_date")
+    .in("id", uniq);
+  if (error) {
+    console.error("getTrainingEndDatesByProfileIds error:", error.message);
+    return out;
+  }
+  for (const row of data ?? []) {
+    out.set((row as any).id, (row as any).training_end_date ?? null);
+  }
+  return out;
+}
+
 /** Save the employee_info JSON for a profile (by profile id). */
 export async function saveProfileEmployeeInfo(profileId: string, info: EmployeeInfo): Promise<void> {
   // .select("id") so an RLS-blocked update (returns { error: null }, 0 rows

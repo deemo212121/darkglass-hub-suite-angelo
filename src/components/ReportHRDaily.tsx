@@ -14155,6 +14155,12 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         const filename = (forwardCvDialog.cvPath.split("/").pop() || "CV").replace(/^\d+_/, "");
         lines.push(`CV: [${filename}](${cvUrl})`);
       }
+      // Deep link straight to this candidate on the recipient's own
+      // Candidate Reviews page (MessageBody's candidate-review: pseudo-link
+      // — see its own comment) — the whole point of that page is to be
+      // where a forward's recipient goes to leave their Interviewer Note,
+      // so the message that tells them about it should take them there.
+      lines.push(`[Open in Candidate Reviews](candidate-review:${forwardCvDialog.id})`);
       const body = lines.join("\n");
       const sentTo: string[] = [];
       for (const recipientId of forwardRecipientIds) {
@@ -14203,7 +14209,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
   // ── Employee status handlers (now real — persists to employee_info + is_active) ──
   const handleUpdateEmployeeStatus = (id: string, newStatus: EmploymentStatus) => {
-    if (newStatus === "terminated" || newStatus === "resigned") {
+    if (newStatus === "terminated" || newStatus === "resigned" || newStatus === "inactive") {
       const employee = employees.find(e => e.id === id);
       if (employee) setConfirmDialog({ show: true, employeeId: id, employeeName: employee.name, newStatus });
     } else {
@@ -14216,7 +14222,17 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     const prevStatus = employee?.status;
     try {
       const info = (await getProfileEmployeeInfo(id)) || {};
-      await saveProfileEmployeeInfo(id, { ...info, employmentStatus: newStatus, employmentStatusDate: today });
+      await saveProfileEmployeeInfo(id, {
+        ...info,
+        employmentStatus: newStatus,
+        employmentStatusDate: today,
+        // Reactivating clears a prior terminateDate (set by Terminated/
+        // Resigned here, or by Training List's own Quit/Stopped action on
+        // this same profile) — otherwise they'd come back Active but stay
+        // stuck in Training List's "Quit/Stopped" log, which filters on
+        // terminateDate being set, not on is_active.
+        terminateDate: newStatus === "active" ? undefined : info.terminateDate,
+      });
       await updateCompanyUser(id, { isActive: newStatus === "active" });
       setEmployees((prev) => prev.map((e) => (e.id === id ? { ...e, status: newStatus, terminationDate: newStatus === "terminated" || newStatus === "resigned" ? today : e.terminationDate } : e)));
       void logActivity({ action: "employee_status_changed", targetType: "employee", targetId: id, targetLabel: employee?.name, details: { from: prevStatus, to: newStatus, status: newStatus } });
@@ -14921,9 +14937,9 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     try {
       const patch: Partial<Employee> = {};
 
-      // Terminated/Resigned routes through the existing confirm dialog,
-      // which persists (and logs) on its own once confirmed — everything
-      // else here commits directly.
+      // Terminated/Resigned/Inactive all route through the existing confirm
+      // dialog (they all deactivate the account too), which persists (and
+      // logs) on its own once confirmed — only "active" commits directly.
       if (popupDraft.status !== original.status) {
         handleUpdateEmployeeStatus(id, popupDraft.status);
       }
@@ -30942,8 +30958,17 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             </p>
             <div className="flex gap-2 justify-end">
               <button onClick={handleCancelStatusChange} className="btn text-sm px-4 py-2">Cancel</button>
-              <button onClick={handleConfirmStatusChange} className={`btn text-sm px-4 py-2 text-white ${confirmDialog.newStatus === "terminated" ? "bg-red-600 hover:bg-red-700" : "bg-orange-600 hover:bg-orange-700"}`}>
-                Confirm {confirmDialog.newStatus === "terminated" ? "Termination" : "Resignation"}
+              <button
+                onClick={handleConfirmStatusChange}
+                className={`btn text-sm px-4 py-2 text-white ${
+                  confirmDialog.newStatus === "terminated"
+                    ? "bg-red-600 hover:bg-red-700"
+                    : confirmDialog.newStatus === "resigned"
+                    ? "bg-orange-600 hover:bg-orange-700"
+                    : "bg-slate-600 hover:bg-slate-700"
+                }`}
+              >
+                Confirm {confirmDialog.newStatus === "terminated" ? "Termination" : confirmDialog.newStatus === "resigned" ? "Resignation" : "Deactivation"}
               </button>
             </div>
           </div>
