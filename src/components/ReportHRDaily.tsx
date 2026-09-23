@@ -14095,6 +14095,18 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [forwardRecipientIds, setForwardRecipientIds] = useState<Set<string>>(new Set());
   const [forwardRecipientSearch, setForwardRecipientSearch] = useState("");
   const [forwardRecipientDropdownOpen, setForwardRecipientDropdownOpen] = useState(false);
+  // The Forward Candidate dialog itself scrolls (overflow-y-auto once its
+  // content outgrows max-h-[85vh]), which clips an ordinary absolutely-
+  // positioned dropdown to whatever's still visible instead of letting it
+  // float over the whole dialog — same fix as branchManagerCellPos above:
+  // portal to document.body, positioned from the input's own on-screen rect.
+  const forwardRecipientInputRef = useRef<HTMLInputElement | null>(null);
+  const [forwardRecipientPos, setForwardRecipientPos] = useState<{ top: number; left: number; width: number } | null>(null);
+  const openForwardRecipientDropdown = () => {
+    const rect = forwardRecipientInputRef.current?.getBoundingClientRect();
+    if (rect) setForwardRecipientPos({ top: rect.bottom + 4, left: rect.left, width: rect.width });
+    setForwardRecipientDropdownOpen(true);
+  };
   const [forwardSending, setForwardSending] = useState(false);
   const forwardRecipients = useMemo(
     () =>
@@ -31238,15 +31250,26 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                 // before this filter existed never silently disappears.
                 const browsableTypes = new Set<SignableDocumentType>(STAFF_FORM_TIERS.flatMap((t) => t.formTypes));
                 formsDialog.selected.forEach((t) => browsableTypes.add(t));
+                // Only the already-selected forms show by default — per the
+                // user's explicit call, HR doesn't want the full unchecked
+                // "other forms" list cluttering the view. Typing in the
+                // filter box still searches the FULL browsable set (not
+                // just what's selected), so an unchecked form can still be
+                // found and added; clearing the search goes back to
+                // selected-only.
                 const types = Array.from(browsableTypes)
-                  .filter((type) => !q || SIGNABLE_DOCUMENT_REGISTRY[type].label.toLowerCase().includes(q))
+                  .filter((type) => (q ? SIGNABLE_DOCUMENT_REGISTRY[type].label.toLowerCase().includes(q) : formsDialog.selected.has(type)))
                   // Checked forms float to the top so HR can see at a glance
                   // what a tier button (or manual picking) actually selected,
                   // without scrolling the whole list to find them — stable
                   // sort keeps each group's original registry order.
                   .sort((a, b) => Number(formsDialog.selected.has(b)) - Number(formsDialog.selected.has(a)));
                 if (types.length === 0) {
-                  return <div className="px-3 py-4 text-sm text-muted-foreground text-center">No forms match "{formsDialogSearch}".</div>;
+                  return (
+                    <div className="px-3 py-4 text-sm text-muted-foreground text-center">
+                      {q ? `No forms match "${formsDialogSearch}".` : "No forms selected yet — search above to add one."}
+                    </div>
+                  );
                 }
                 const dialogCandidate = candidates.find((c) => c.id === formsDialog.candidateId);
                 const dialogProfileId = dialogCandidate?.email ? profileIdByEmail.get(dialogCandidate.email.trim().toLowerCase()) : undefined;
@@ -31565,19 +31588,23 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             )}
             <div className="relative mt-1.5 mb-4">
               <input
+                ref={forwardRecipientInputRef}
                 type="text"
                 value={forwardRecipientSearch}
                 onChange={(e) => {
                   setForwardRecipientSearch(e.target.value);
-                  setForwardRecipientDropdownOpen(true);
+                  openForwardRecipientDropdown();
                 }}
-                onFocus={() => setForwardRecipientDropdownOpen(true)}
+                onFocus={openForwardRecipientDropdown}
                 onBlur={() => setTimeout(() => setForwardRecipientDropdownOpen(false), 150)}
                 placeholder="Add another manager…"
                 className="glass-input text-sm py-1.5 px-3 rounded-md w-full"
               />
-              {forwardRecipientDropdownOpen && (
-                <div className="absolute z-10 mt-1 w-full max-h-48 overflow-y-auto rounded-md border border-white/15 bg-slate-800 shadow-lg">
+              {forwardRecipientDropdownOpen && forwardRecipientPos && createPortal(
+                <div
+                  style={{ position: "fixed", top: forwardRecipientPos.top, left: forwardRecipientPos.left, width: forwardRecipientPos.width }}
+                  className="z-50 max-h-48 overflow-y-auto rounded-md border border-white/15 bg-slate-800 shadow-2xl"
+                >
                   {filteredManagerRecipients.length === 0 ? (
                     <p className="px-3 py-2 text-xs text-muted-foreground">No matching managers.</p>
                   ) : (
@@ -31596,7 +31623,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                       </button>
                     ))
                   )}
-                </div>
+                </div>,
+                document.body
               )}
             </div>
             {managerRecipients.length === 0 && (

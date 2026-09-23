@@ -18,15 +18,16 @@
  *
  * Dispatched from m.$module.$submodule.tsx for custom === "candidate-reviews".
  */
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { ChevronLeft, ClipboardList, Loader2, RefreshCw, FileText, Check } from "lucide-react";
 import { useAuth } from "@/lib/auth";
-import { getMyProfileId } from "@/lib/supabase/users";
+import { getMyProfileId, getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
 import {
   getCvForwardsForRecipient,
   getCandidateCvUrlForForwarding,
   updateCandidateInterviewerNote,
+  logCandidateFieldEdit,
   type Candidate,
   type CandidateStatus,
 } from "@/lib/supabase/hrCandidates";
@@ -64,6 +65,16 @@ interface ForwardedRow {
   forwardedAt: string;
 }
 
+function DetailItem({ label, value }: { label: string; value: string | null | undefined }) {
+  if (!value) return null;
+  return (
+    <div>
+      <div className="text-[10px] uppercase tracking-wide text-slate-500">{label}</div>
+      <div className="text-slate-200">{value}</div>
+    </div>
+  );
+}
+
 function NoteEditor({ candidate, onSaved }: { candidate: Candidate; onSaved: (note: string) => void }) {
   const [value, setValue] = useState(candidate.interviewerNote ?? "");
   const [saving, setSaving] = useState(false);
@@ -74,6 +85,10 @@ function NoteEditor({ candidate, onSaved }: { candidate: Candidate; onSaved: (no
     setSaving(true);
     try {
       await updateCandidateInterviewerNote(candidate.id, value);
+      // Same "who changed this field" log the Hiring table's own note editor
+      // writes to (hr_candidate_field_edits) — without this, HR's candidate
+      // detail popup shows a blank "Changed by" for a note saved from here.
+      void logCandidateFieldEdit(candidate.id, "interviewerNote");
       onSaved(value.trim());
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
@@ -113,6 +128,7 @@ export function CandidateReviewsPage() {
   const navigate = useNavigate();
   const { uid, ready } = useAuth();
   const [rows, setRows] = useState<ForwardedRow[]>([]);
+  const [profiles, setProfiles] = useState<ProfileRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [cvLoadingId, setCvLoadingId] = useState<string | null>(null);
@@ -131,7 +147,9 @@ export function CandidateReviewsPage() {
     try {
       const myProfileId = await getMyProfileId(uid);
       if (!myProfileId) throw new Error("Could not resolve your profile.");
-      setRows(await getCvForwardsForRecipient(myProfileId));
+      const [forwardRows, profileRows] = await Promise.all([getCvForwardsForRecipient(myProfileId), getCompanyUsers()]);
+      setRows(forwardRows);
+      setProfiles(profileRows);
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : "Failed to load candidates.");
     } finally {
@@ -143,6 +161,11 @@ export function CandidateReviewsPage() {
     if (ready && uid) void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, uid]);
+
+  // assignedInterviewerId/branchManagerId/assignedManagerId are all plain
+  // profiles.id UUIDs on the candidate row — resolve to display names here
+  // rather than showing the raw id.
+  const profileNameById = useMemo(() => new Map(profiles.map((p) => [p.id, p.display_name || p.email])), [profiles]);
 
   useEffect(() => {
     if (!focusedCandidateId || rows.length === 0) return;
@@ -213,9 +236,6 @@ export function CandidateReviewsPage() {
                       {STATUS_LABEL[candidate.status]}
                     </span>
                   </div>
-                  <p className="text-xs text-slate-400 mt-0.5">
-                    {[candidate.position, candidate.branch].filter(Boolean).join(" · ") || "—"}
-                  </p>
                   <p className="text-[11px] text-slate-500 mt-0.5">Forwarded {new Date(forwardedAt).toLocaleDateString()}</p>
                 </div>
                 {candidate.cvPath && (
@@ -230,6 +250,44 @@ export function CandidateReviewsPage() {
                   </button>
                 )}
               </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-2 text-xs mb-3 rounded-lg border border-white/5 bg-black/20 px-3 py-2.5">
+                <DetailItem label="Position" value={candidate.position} />
+                <DetailItem label="Branch" value={candidate.branch} />
+                <DetailItem label="Department" value={candidate.department} />
+                <DetailItem label="Source" value={candidate.source} />
+                <DetailItem label="Phone" value={candidate.phone} />
+                <DetailItem label="Email" value={candidate.email} />
+                <DetailItem label="Applied" value={candidate.createdAt ? new Date(candidate.createdAt).toLocaleDateString() : null} />
+                <DetailItem label="Added By" value={candidate.createdByName} />
+                <DetailItem label="Assigned Interviewer" value={candidate.assignedInterviewerId ? profileNameById.get(candidate.assignedInterviewerId) : null} />
+                <DetailItem label="Assigned Manager" value={candidate.assignedManagerId ? profileNameById.get(candidate.assignedManagerId) : null} />
+                <DetailItem label="Branch Manager" value={candidate.branchManagerId ? profileNameById.get(candidate.branchManagerId) : null} />
+                <DetailItem
+                  label="Interview"
+                  value={
+                    candidate.interviewDate
+                      ? `${new Date(candidate.interviewDate).toLocaleDateString()}${candidate.interviewTime ? ` ${candidate.interviewTime}` : ""}${candidate.interviewTimezone ? ` ${candidate.interviewTimezone}` : ""}`
+                      : null
+                  }
+                />
+                <DetailItem label="Screening Date" value={candidate.screeningDate ? new Date(candidate.screeningDate).toLocaleDateString() : null} />
+                <DetailItem label="Training Start" value={candidate.trainingStartDate ? new Date(candidate.trainingStartDate).toLocaleDateString() : null} />
+                <DetailItem label="Training End" value={candidate.trainingEndDate ? new Date(candidate.trainingEndDate).toLocaleDateString() : null} />
+                <DetailItem label="Start Date" value={candidate.startDate ? new Date(candidate.startDate).toLocaleDateString() : null} />
+                <DetailItem label="Withdrawn Date" value={candidate.withdrawnDate ? new Date(candidate.withdrawnDate).toLocaleDateString() : null} />
+                <DetailItem label="Document Verified" value={candidate.documentVerified ? "Yes" : null} />
+                <DetailItem label="Texted" value={[candidate.textedAm && "AM", candidate.textedPm && "PM"].filter(Boolean).join(" / ") || null} />
+                <DetailItem label="Called" value={[candidate.calledAm && "AM", candidate.calledPm && "PM"].filter(Boolean).join(" / ") || null} />
+              </div>
+
+              {candidate.notes && (
+                <p className="text-xs text-slate-400 mb-3">
+                  <span className="text-[10px] uppercase tracking-wide text-slate-500 mr-1.5">HR Note:</span>
+                  {candidate.notes}
+                </p>
+              )}
+
               <NoteEditor
                 candidate={candidate}
                 onSaved={(note) =>
