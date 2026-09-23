@@ -116,6 +116,13 @@ export function CandidateReviewsPage() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [cvLoadingId, setCvLoadingId] = useState<string | null>(null);
+  // Deep-linked from a Forward Candidate message's "Open in Candidate
+  // Reviews" link (MessageBody.tsx's candidate-review: pseudo-link) — a
+  // #candidateId=... hash, same style as the Staff Checklist deep link.
+  const [focusedCandidateId] = useState<string | null>(() => {
+    const m = window.location.hash.match(/candidateId=([^&]+)/);
+    return m ? decodeURIComponent(m[1]) : null;
+  });
 
   const load = async () => {
     if (!uid) return;
@@ -136,6 +143,11 @@ export function CandidateReviewsPage() {
     if (ready && uid) void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, uid]);
+
+  useEffect(() => {
+    if (!focusedCandidateId || rows.length === 0) return;
+    document.getElementById(`candidate-${focusedCandidateId}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [focusedCandidateId, rows]);
 
   const openCv = async (candidate: Candidate) => {
     if (!candidate.cvPath) return;
@@ -186,7 +198,13 @@ export function CandidateReviewsPage() {
       ) : (
         <div className="flex flex-col gap-3">
           {rows.map(({ candidate, forwardedAt }) => (
-            <div key={candidate.id} className="rounded-xl border border-white/10 bg-white/5 p-4">
+            <div
+              key={candidate.id}
+              id={`candidate-${candidate.id}`}
+              className={`rounded-xl border p-4 ${
+                candidate.id === focusedCandidateId ? "border-blue-400/60 bg-blue-500/10 ring-1 ring-blue-400/40" : "border-white/10 bg-white/5"
+              }`}
+            >
               <div className="flex flex-wrap items-start justify-between gap-3 mb-3">
                 <div>
                   <div className="flex items-center gap-2">

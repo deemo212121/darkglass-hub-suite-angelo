@@ -117,6 +117,7 @@ type Part =
   | { kind: "url"; value: string; trailing: string }
   | { kind: "ticket"; value: string; trailing: string }
   | { kind: "namedLink"; label: string; url: string }
+  | { kind: "candidateReviewLink"; label: string; candidateId: string }
   | { kind: "mention"; name: string };
 
 // Optional named-link syntax `[label](https://...)` — e.g. for forwarding a
@@ -126,6 +127,13 @@ type Part =
 // purely additive — every plain "https://..." URL still auto-linkifies
 // exactly as before.
 const NAMED_LINK_RE = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g;
+
+// Forward Candidate's "Open in Candidate Reviews" link — a fake
+// `candidate-review:{id}` pseudo-scheme instead of a real https:// URL, so
+// it can route client-side via <Link> (a recipient with no other reason to
+// be in HR shouldn't get bounced through a full page reload) instead of
+// falling through to NAMED_LINK_RE's plain <a target="_blank"> anchor.
+const CANDIDATE_REVIEW_LINK_RE = /\[([^\]]+)\]\(candidate-review:([^\s)]+)\)/g;
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -207,6 +215,10 @@ export function MessageBody({ text, className, mentionNames }: Props) {
     const idx = m.index ?? 0;
     wholeStringMatches.push({ start: idx, end: idx + m[0].length, part: { kind: "namedLink", label: m[1], url: m[2] } });
   }
+  for (const m of text.matchAll(CANDIDATE_REVIEW_LINK_RE)) {
+    const idx = m.index ?? 0;
+    wholeStringMatches.push({ start: idx, end: idx + m[0].length, part: { kind: "candidateReviewLink", label: m[1], candidateId: m[2] } });
+  }
   const mentionRe = buildMentionRegex(mentionNames ?? []);
   if (mentionRe) {
     for (const m of text.matchAll(mentionRe)) {
@@ -257,6 +269,19 @@ export function MessageBody({ text, className, mentionNames }: Props) {
                 View in Staff Checklist
               </Link>
             </span>
+          );
+        }
+        if (p.kind === "candidateReviewLink") {
+          return (
+            <Link
+              key={i}
+              to="/m/$module/$submodule"
+              params={{ module: "hr", submodule: "candidate-reviews" }}
+              hash={`candidateId=${p.candidateId}`}
+              className="inline-flex items-center gap-1 text-blue-300 underline decoration-blue-300/40 hover:text-blue-200"
+            >
+              🔗 {p.label}
+            </Link>
           );
         }
         if (p.kind === "mention") {
