@@ -26,10 +26,12 @@
  * so fetches everything itself).
  */
 import { useEffect, useMemo, useState, Fragment } from "react";
+import { Link } from "@tanstack/react-router";
 import { Check, X as XIcon, Clock3, RotateCcw } from "lucide-react";
 import type { ProfileRow } from "@/lib/supabase/users";
 import { calcWorkedHours } from "@/lib/supabase/timecards";
 import { ROLE_LABELS, normalizeRole, isAttendanceFullAccessRole, isTraineeFallbackReviewerRole } from "@/lib/roleLabels";
+import { getServerNow, zonedDateKey } from "@/lib/serverTime";
 import {
   getCompanyTraineeEntries,
   canApproveTraineeDay,
@@ -77,9 +79,35 @@ export function TraineeAttendanceTab({
   role: string | null;
   extraRoles: string[] | null;
 }) {
-  const todayISO = useMemo(() => new Date().toISOString().slice(0, 10), []);
-  const [dateFrom, setDateFrom] = useState(todayISO);
-  const [dateTo, setDateTo] = useState(todayISO);
+  // Initial guess only — the browser's own local calendar date, used purely
+  // so the filter isn't blank on first paint. Corrected below to the real
+  // server-verified CST business date (same canonical clock AppHeader shows
+  // and TimeClockMenu stamps a punch under), since a manager reviewing from
+  // a very different timezone (e.g. the Philippines) could otherwise land
+  // on this tab defaulted to a date that doesn't match the company's own
+  // "today" at all — see getTraineeReviewQueue's own fix for the same class
+  // of bug, which this mirrors for this tab's date-range filter.
+  const browserTodayGuess = useMemo(() => new Date().toISOString().slice(0, 10), []);
+  const [dateFrom, setDateFrom] = useState(browserTodayGuess);
+  const [dateTo, setDateTo] = useState(browserTodayGuess);
+  useEffect(() => {
+    let cancelled = false;
+    getServerNow()
+      .then((serverNow) => {
+        if (cancelled) return;
+        const realToday = zonedDateKey(serverNow, "CST");
+        if (realToday === browserTodayGuess) return;
+        // Only correct if the manager hasn't already changed the filter
+        // away from the initial guess — never stomp a date they picked.
+        setDateFrom((prev) => (prev === browserTodayGuess ? realToday : prev));
+        setDateTo((prev) => (prev === browserTodayGuess ? realToday : prev));
+      })
+      .catch((err) => console.error("Failed to resolve the real server-verified date:", err));
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [entries, setEntries] = useState<TraineeTimecardEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [actingId, setActingId] = useState<string | null>(null);
@@ -322,6 +350,7 @@ export function TraineeAttendanceTab({
               {[
                 { label: "Name", align: "text-left" },
                 { label: "Role", align: "text-left" },
+                { label: "Branch", align: "text-left" },
                 { label: "Date", align: "text-center" },
                 { label: "Clock In", align: "text-center" },
                 { label: "Required In", align: "text-center" },
@@ -337,19 +366,36 @@ export function TraineeAttendanceTab({
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={10} className="px-3 py-8 text-center text-muted-foreground">Loading…</td></tr>
+              <tr><td colSpan={11} className="px-3 py-8 text-center text-muted-foreground">Loading…</td></tr>
             ) : rows.length === 0 ? (
-              <tr><td colSpan={10} className="px-3 py-8 text-center text-muted-foreground">No trainees visible to you yet — set an employee's Employment Type to Trainee on Masterlist.</td></tr>
+              <tr><td colSpan={11} className="px-3 py-8 text-center text-muted-foreground">No trainees visible to you yet — set an employee's Employment Type to Trainee on Masterlist.</td></tr>
             ) : (
               rows.map((row, i) => {
                 const profile = profileById.get(row.profileId);
                 const showManagerBand = i === 0 || managerNameOf(rows[i - 1].profileId) !== managerNameOf(row.profileId);
                 const managerBand = (
                   <tr className="bg-blue-500/10">
-                    <td colSpan={10} className="px-2.5 py-1 font-semibold text-blue-300 text-[10px] uppercase tracking-wide">
+                    <td colSpan={11} className="px-2.5 py-1 font-semibold text-blue-300 text-[10px] uppercase tracking-wide">
                       {managerNameOf(row.profileId)}
                     </td>
                   </tr>
+                );
+                const nameCell = (
+                  <td className="px-2.5 py-1 font-medium whitespace-nowrap">
+                    {profile?.display_name ? (
+                      <Link
+                        to="/m/$module/$submodule"
+                        params={{ module: "hr", submodule: "user-management" }}
+                        search={{ q: profile.display_name } as any}
+                        className="text-sky-300 hover:text-sky-200 hover:underline"
+                        title="Open in User Management"
+                      >
+                        {profile.display_name}
+                      </Link>
+                    ) : (
+                      "—"
+                    )}
+                  </td>
                 );
 
                 if (row.kind === "placeholder") {
@@ -361,8 +407,9 @@ export function TraineeAttendanceTab({
                     <Fragment key={placeholderKey}>
                       {showManagerBand && managerBand}
                       <tr className={`border-b border-white/5 hover:bg-white/5 ${i % 2 !== 0 ? "bg-white/[0.02]" : ""}`}>
-                        <td className="px-2.5 py-1 font-medium whitespace-nowrap">{profile?.display_name || "—"}</td>
+                        {nameCell}
                         <td className="px-2.5 py-1 text-muted-foreground whitespace-nowrap">{roleLabel(profile?.role)}</td>
+                        <td className="px-2.5 py-1 text-muted-foreground whitespace-nowrap">{profile?.assigned_branch || "—"}</td>
                         <td className="px-2.5 py-1 text-center text-muted-foreground" colSpan={6}>No punch in this date range yet.</td>
                         <td className="px-2.5 py-1 text-center">
                           <span className="inline-block rounded px-1.5 py-0.5 text-[10px] bg-white/10 text-slate-400">No Punch Yet</span>
@@ -459,8 +506,9 @@ export function TraineeAttendanceTab({
                   <Fragment key={entry.id}>
                     {showManagerBand && managerBand}
                     <tr className={`border-b border-white/5 hover:bg-white/5 ${i % 2 !== 0 ? "bg-white/[0.02]" : ""}`}>
-                      <td className="px-2.5 py-1 font-medium whitespace-nowrap">{profile?.display_name || "—"}</td>
+                      {nameCell}
                       <td className="px-2.5 py-1 text-muted-foreground whitespace-nowrap">{roleLabel(profile?.role)}</td>
+                      <td className="px-2.5 py-1 text-muted-foreground whitespace-nowrap">{profile?.assigned_branch || "—"}</td>
                       <td className="px-2.5 py-1 text-center whitespace-nowrap">{entry.workDate}</td>
                       <td className="px-2.5 py-1 text-center whitespace-nowrap">{entry.checkIn || "—"}</td>
                       <td className="px-2.5 py-1 text-center whitespace-nowrap text-muted-foreground">{profile?.required_check_in || "—"}</td>

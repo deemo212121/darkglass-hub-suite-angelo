@@ -1,5 +1,5 @@
 -- =====================================================================
--- 0299 — let Admin/SuperAdmin/SuperSuperAdmin self-edit their own extra_roles
+-- 0301 — let Admin/SuperAdmin/SuperSuperAdmin self-edit their own extra_roles
 --
 -- 0225's restrict_profile_self_edit_columns() already lets a trusted-tier
 -- account (ADMIN/SUPERADMIN/SUPERSUPERADMIN) self-edit their own primary

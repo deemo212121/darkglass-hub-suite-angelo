@@ -228,25 +228,32 @@ export function TechActivityReportModal({
   const matchOt = Math.max(requiredPremiumAfterMinMatch - techHourlyPayOtPremium, 0);
   const stateHourlyOtTotal = companyHourlyOtTotal + matchMin + matchOt;
 
-  // The Guaranteed Minimum Salary Match, recomputed HERE against the live,
-  // per-day state-matched total (stateHourlyOtTotal) rather than
-  // row.techGuaranteedSalaryMatch (computed in AccountingDashboard.tsx
-  // against the Company-only figure, since that module has no per-day
-  // attendance/state data to compute a state-matched total for every
-  // technician — only this modal, opened for one technician at a time,
-  // ever fetches that). The reference payroll workbook's own 15-step chain
-  // checks the guarantee against the state-corrected earned total
-  // unconditionally, not whichever of Company/State happens to be applied —
-  // so this is the authoritative figure once this report has been opened;
-  // AccountingDashboard's own total for this technician only matches it
-  // once a State override has actually been saved (see onSetHourlyOtMode).
+  // The Guaranteed Minimum Salary Match, recomputed HERE (rather than using
+  // row.techGuaranteedSalaryMatch from AccountingDashboard.tsx) because that
+  // module has no per-day attendance/state data to compute companyHourlyOtTotal
+  // itself for every technician — only this modal, opened for one technician
+  // at a time, ever fetches that; this local copy has to match
+  // AccountingDashboard.tsx's formula, not diverge from it.
+  //
+  // Keyed off companyHourlyOtTotal, NOT stateHourlyOtTotal — company policy
+  // (2026-09-23) treats the state minimum-wage floor match as separate money
+  // that doesn't count toward satisfying the salary guarantee; it's still
+  // paid in full via the Hourly Pay line/Min Wage Floor Check box above once
+  // State mode is applied, just not counted toward this comparison. See the
+  // matching comment in AccountingDashboard.tsx's own copy of this calc.
+  //
   // techHolidayPremium is folded into the earned baseline too, for the same
   // reason as in AccountingDashboard.tsx's own copy of this calc — it's
   // paid as its own line further down (techGrossTotal), so leaving it out
   // here sizes the match as if it hadn't been earned yet and overpays by
   // exactly that amount whenever the guarantee triggers.
+  // Earned Toward Minimum ("A" — Company Hourly/OT + Includable + Holiday
+  // Premium) — broken out as its own value so the match's derivation
+  // (Per-Cutoff Minimum minus this) is visible on the report, not just the
+  // final Match to pay figure.
+  const techEarnedTowardMinimum = companyHourlyOtTotal + techIncludablePay + techHolidayPremium;
   const techGuaranteedSalaryMatch = techGuaranteedSalaryTarget > 0
-    ? Math.max(techGuaranteedSalaryTarget - (stateHourlyOtTotal + techIncludablePay + techHolidayPremium), 0)
+    ? Math.max(techGuaranteedSalaryTarget - techEarnedTowardMinimum, 0)
     : 0;
 
   // Temporary, NOT persisted — lets HR type in a what-if Completed Tickets
@@ -941,22 +948,6 @@ export function TechActivityReportModal({
                 </p>
               </div>
 
-              <div className="bg-slate-800/50 border border-white/10 rounded-lg px-3 py-2.5" title="How many days in this period this technician's total drive that day (Mileage tab's Total Mileage, adjustments/overrides included) exceeded each threshold — not a raw mileage_entries row count, since a day with several tickets still shares one day total.">
-                <p className="text-[10px] text-slate-400 uppercase tracking-wide mb-1.5">Days Over Mileage Threshold</p>
-                {loadingExtras ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin text-slate-400" />
-                ) : (
-                  <div className="flex flex-col gap-1">
-                    {mileageThresholdCounts.map(({ threshold, count }) => (
-                      <div key={threshold} className="flex items-center justify-between text-xs">
-                        <span className="text-slate-400">&gt;{threshold} miles</span>
-                        <span className={count > 0 ? "text-amber-300 font-semibold" : "text-slate-300"}>{count}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
               {companyHourlyOtTotal > 0 && (() => {
                 // Currently applied = whichever side techHourlyPay (the
                 // real, paid figure) matches. With no override saved yet,
@@ -1049,9 +1040,13 @@ export function TechActivityReportModal({
               })()}
 
               {techGuaranteedSalaryTarget > 0 && (
-                <div className="bg-slate-800/50 border border-white/10 rounded-lg px-3 py-2.5" title="A fixed annual salary on file for this technician (even if not yet effective this period) acts as an ongoing floor under their hourly + incentive pay — if actual earned compensation (excluding reimbursements) falls short of that salary's per-cutoff equivalent, the shortfall is added on top, already folded into grossPay/Total Payment below.">
+                <div className="bg-slate-800/50 border border-white/10 rounded-lg px-3 py-2.5" title="A fixed annual salary on file for this technician (even if not yet effective this period) acts as an ongoing floor under their hourly + incentive pay — if actual earned compensation (excluding reimbursements and any state minimum-wage floor match) falls short of that salary's per-cutoff equivalent, the shortfall is added on top, already folded into grossPay/Total Payment below. Earned Toward Minimum = Company Hourly/OT + Includable + Holiday Premium — company-rate earnings before any state floor match, which is paid separately and doesn't count toward this guarantee.">
                   <p className="text-[10px] text-slate-400 uppercase tracking-wide mb-1.5">Guaranteed Minimum Salary Match</p>
                   <div className="flex items-center justify-between text-xs">
+                    <span className="text-slate-400">Earned Toward Minimum</span>
+                    <span className="text-slate-200">{fmt(techEarnedTowardMinimum)}</span>
+                  </div>
+                  <div className="flex items-center justify-between text-xs mt-1">
                     <span className="text-slate-400">Per-Cutoff Minimum</span>
                     <span className="text-slate-200">{fmt(techGuaranteedSalaryTarget)}</span>
                   </div>
@@ -1061,6 +1056,22 @@ export function TechActivityReportModal({
                   </div>
                 </div>
               )}
+
+              <div className="bg-slate-800/50 border border-white/10 rounded-lg px-3 py-2.5" title="How many days in this period this technician's total drive that day (Mileage tab's Total Mileage, adjustments/overrides included) exceeded each threshold — not a raw mileage_entries row count, since a day with several tickets still shares one day total.">
+                <p className="text-[10px] text-slate-400 uppercase tracking-wide mb-1.5">Days Over Mileage Threshold</p>
+                {loadingExtras ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin text-slate-400" />
+                ) : (
+                  <div className="flex flex-col gap-1">
+                    {mileageThresholdCounts.map(({ threshold, count }) => (
+                      <div key={threshold} className="flex items-center justify-between text-xs">
+                        <span className="text-slate-400">&gt;{threshold} miles</span>
+                        <span className={count > 0 ? "text-amber-300 font-semibold" : "text-slate-300"}>{count}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </div>

@@ -12,8 +12,19 @@
  * report in this app already computes from (getTechCompletedRepairCounts,
  * getTechRedoTickets, mileage.ts, timecards.ts) rather than a new data
  * pipeline — this module is a different VIEW of that data, not a new
- * source of truth. No Minor/Major split (the app has no such concept —
- * see conversation): Total Tickets is simply every completed ticket.
+ * source of truth. Minor/Major Ticket split (explicit user rule, not
+ * derived): a completed ticket's repair_type (the "Repair Type (2nd
+ * Tech)" dropdown on the ticket's Visit Log, techPayroll.ts's
+ * REPAIR_TYPES — despite the label, set on every visit, not just 2nd-
+ * tech ones) counts as MAJOR when it's Sealed System (any of its 3
+ * variants), Drum Replacement, or Major Repair; every other repair_type
+ * (2 Man Job included — explicitly confirmed minor) and no-repair-type-
+ * set tickets are MINOR. Computed from getTechCompletedRepairCounts'
+ * per-(technician, repairType) totals, so — unlike Total Tickets — it
+ * does NOT reflect the day-level manual correction overrides (those only
+ * ever replace a day's raw total, with no repair_type attached), which
+ * is why Minor+Major can occasionally undercount a corrected period's
+ * Total Tickets by a small margin.
  *
  * "Tier Level" here is whatever's on profiles.tier_level verbatim — a
  * pre-existing, loosely-defined column (a mix of pay-tier labels like
@@ -27,6 +38,22 @@
  * separate free-text HR field that's a different piece of data entirely
  * and was almost always empty, which is why every row showed "—" here.
  * Falls back to "—" rather than fabricating an ID when it hasn't been set.
+ *
+ * Export CSV / Download Import Template / Import Excel all share one
+ * column arrangement (per an explicit reference spreadsheet): Name,
+ * Variance, [Date — import template only], Redo, Total Completion,
+ * Average Completion, Mileage, Working Days, Off Days, Unexcused Off Days
+ * Total 2026, Hours Worked, Location, Manager, Tier — plus this report's
+ * own extra analytical columns (Technician ID, Redo Rate %, Miles/Ticket,
+ * Tickets/Hour, the 3 threshold alerts) appended after, not dropped.
+ * "Off Days" = scheduled weekly RDOs within the period (profiles.off_days),
+ * not days actually missed. "Unexcused Off Days Total 2026" is a blank,
+ * manually-filled column by design — this app has no excused/unexcused
+ * absence tracking yet, so there's nothing live to put there; it's not
+ * parsed back out on import (same as Location/Manager/Tier). "Variance" =
+ * this technician's Total Completion vs. the average of every technician
+ * CURRENTLY in view (filteredRows), as a signed %, colored green/red in
+ * the .xlsx export (CSV can't carry color).
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -157,7 +184,7 @@ function MultiSelect({
 }
 
 type PeriodMode = "weekly" | "monthly" | "custom";
-type SortKey = "techId" | "name" | "location" | "manager" | "tier" | "daysWorked" | "hoursWorked" | "totalTickets" | "redoCount" | "redoRatePct" | "miles" | "milesPerTicket" | "ticketsPerHour";
+type SortKey = "techId" | "name" | "location" | "manager" | "tier" | "daysWorked" | "hoursWorked" | "totalTickets" | "minorTicketCount" | "majorTicketCount" | "redoCount" | "redoRatePct" | "miles" | "milesPerTicket" | "ticketsPerHour";
 type GroupBy = "none" | "location" | "manager" | "tier";
 
 interface TechPerfRow {
@@ -171,11 +198,22 @@ interface TechPerfRow {
   daysWorked: number;
   hoursWorked: number;
   totalTickets: number;
+  minorTicketCount: number;
+  majorTicketCount: number;
   redoCount: number;
   redoRatePct: number | null;
   miles: number;
   milesPerTicket: number | null;
   ticketsPerHour: number | null;
+  /** Count of the technician's scheduled weekly off days (profiles.off_days,
+   *  weekday indices 0=Sun..6=Sat) that fall within the current period —
+   *  NOT days actually missed, just the normal RDO/weekend pattern. See
+   *  this file's header comment on why "unexcused off days" (a real
+   *  excused/unexcused absence count) is a separate, still-unbuilt concept. */
+  offDaysCount: number;
+  /** Raw weekday indices (profiles.off_days) backing offDaysCount — kept
+   *  on the row too so the Off Days popup can list the actual dates. */
+  offDays: number[];
   highRedoAlert: boolean;
   routeMileageAlert: boolean;
   lowUtilizationAlert: boolean;
@@ -214,6 +252,33 @@ const daysBetween = (start: string, end: string) => Math.round((new Date(`${end}
 
 const fmt1 = (n: number) => n.toLocaleString("en-US", { maximumFractionDigits: 1 });
 
+/** Count of dates in [start, end] whose weekday (Date.getDay(): 0=Sun..
+ *  6=Sat) is in `offDays` — the same weekday-index convention profiles.
+ *  off_days is stored/read with everywhere else (AttendanceMonitoringPage,
+ *  timecards.ts, attendanceAlerts.ts). */
+const countOffDaysInRange = (offDays: number[] | null | undefined, start: string, end: string): number => {
+  if (!offDays || offDays.length === 0) return 0;
+  const set = new Set(offDays);
+  let count = 0;
+  for (let d = start; d <= end; d = addDaysISO(d, 1)) {
+    if (set.has(new Date(`${d}T00:00:00`).getDay())) count++;
+  }
+  return count;
+};
+
+/** Signed "+12.3% / -4.5%" display for the Variance column — null (no
+ *  team average to compare against, i.e. every visible technician has 0
+ *  Total Completion) renders as "—". */
+const fmtVariance = (v: number | null): string => (v == null ? "—" : `${v > 0 ? "+" : ""}${fmt1(v)}%`);
+
+/** Repair types (techPayroll.ts's REPAIR_TYPES) that count as a MAJOR
+ *  ticket for the Minor/Major Ticket columns — an explicit business rule,
+ *  not derivable from anything else. Everything else (2 Man Job included,
+ *  and no repair_type set at all) is minor. */
+const MAJOR_REPAIR_TYPES = new Set([
+  "Sealed System", "Sealed System Follow Up", "Sealed System(R600)", "Drum Replacement", "Major Repair",
+]);
+
 export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubModuleDef }) {
   const navigate = useNavigate();
   const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
@@ -237,6 +302,7 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
   const [error, setError] = useState<string | null>(null);
   const [ticketListFor, setTicketListFor] = useState<{ id: string; name: string } | null>(null);
   const [mileageListFor, setMileageListFor] = useState<{ id: string; name: string } | null>(null);
+  const [offDaysListFor, setOffDaysListFor] = useState<{ id: string; name: string } | null>(null);
   const [importing, setImporting] = useState(false);
   const [templateGenerating, setTemplateGenerating] = useState(false);
   const [importResult, setImportResult] = useState<{ rowsApplied: number; skipped: string[] } | null>(null);
@@ -292,11 +358,16 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
       setTechDimensionByName(dimensionByName);
 
       // Total completed tickets per technician (every repair-type category
-      // summed — no Minor/Major split, see this file's header comment).
+      // summed), plus the Minor/Major split — see this file's header
+      // comment for the MAJOR_REPAIR_TYPES rule.
       const ticketsByName = new Map<string, number>();
+      const minorByName = new Map<string, number>();
+      const majorByName = new Map<string, number>();
       for (const rc of repairCounts) {
         const key = rc.technician.trim().toLowerCase();
         ticketsByName.set(key, (ticketsByName.get(key) ?? 0) + rc.count);
+        const bucket = MAJOR_REPAIR_TYPES.has(rc.repairType) ? majorByName : minorByName;
+        bucket.set(key, (bucket.get(key) ?? 0) + rc.count);
       }
 
       // Same total, broken down per day (getTechCompletedTicketsDaily
@@ -487,11 +558,15 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
           daysWorked,
           hoursWorked,
           totalTickets,
+          minorTicketCount: minorByName.get(nameKey) ?? 0,
+          majorTicketCount: majorByName.get(nameKey) ?? 0,
           redoCount,
           redoRatePct,
           miles,
           milesPerTicket,
           ticketsPerHour,
+          offDaysCount: countOffDaysInRange(t.off_days, periodStart, periodEnd),
+          offDays: t.off_days ?? [],
           highRedoAlert: redoRatePct != null && redoRatePct > 5,
           routeMileageAlert: milesPerTicket != null && milesPerTicket > 30,
           lowUtilizationAlert: weeklyEquivalentHours < 32,
@@ -617,6 +692,22 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
       .sort((a, b) => b.date.localeCompare(a.date));
   }, [mileageListFor, mileageDaily]);
 
+  // The actual dates behind a clicked Off Days count — every date in the
+  // period whose weekday falls in this technician's scheduled off_days
+  // (Admin User Management's Off Days picker), same rule
+  // countOffDaysInRange uses to produce the count itself.
+  const offDaysListRows = useMemo(() => {
+    if (!offDaysListFor) return [];
+    const row = rows.find((r) => r.id === offDaysListFor.id);
+    if (!row) return [];
+    const offDaySet = new Set(row.offDays);
+    const dates: string[] = [];
+    for (let d = periodStart; d <= periodEnd; d = addDaysISO(d, 1)) {
+      if (offDaySet.has(new Date(`${d}T00:00:00`).getDay())) dates.push(d);
+    }
+    return dates;
+  }, [offDaysListFor, rows, periodStart, periodEnd]);
+
   const sortedRows = useMemo(() => {
     const dir = sortDir === "asc" ? 1 : -1;
     const val = (r: TechPerfRow): string | number => {
@@ -629,6 +720,8 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
         case "daysWorked": return r.daysWorked;
         case "hoursWorked": return r.hoursWorked;
         case "totalTickets": return r.totalTickets;
+        case "minorTicketCount": return r.minorTicketCount;
+        case "majorTicketCount": return r.majorTicketCount;
         case "redoCount": return r.redoCount;
         case "redoRatePct": return r.redoRatePct ?? -1;
         case "miles": return r.miles;
@@ -688,15 +781,34 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
     };
   }, [filteredRows]);
 
+  // Variance = each technician's Total Completion vs. the average of
+  // every technician CURRENTLY in view (Location/Manager/Tier/Search-
+  // filtered, same population pageKpis rolls up), as a signed %. Keyed
+  // off filteredRows rather than sortedRows since the average itself
+  // must not depend on sort order.
+  const varianceByRowId = useMemo(() => {
+    const map = new Map<string, number | null>();
+    const avg = filteredRows.length > 0 ? filteredRows.reduce((s, r) => s + r.totalTickets, 0) / filteredRows.length : 0;
+    for (const r of filteredRows) {
+      map.set(r.id, avg > 0 ? ((r.totalTickets - avg) / avg) * 100 : null);
+    }
+    return map;
+  }, [filteredRows]);
+
   const handleExportCsv = () => {
     exportToCSV(
       "technician_performance",
-      ["Technician ID", "Name", "Location", "Manager", "Tier", "Days Worked", "Hours Worked", "Total Tickets", "Redo Count", "Redo Rate %", "Miles", "Miles/Ticket", "Tickets/Hour", "High Redo", "Route Mileage Audit", "Low Utilization"],
+      [
+        "Name", "Variance", "Minor Ticket", "Major Ticket", "Redo", "Total Completion", "Average Completion", "Mileage",
+        "Working Days", "Off Days", "Unexcused Off Days Total 2026", "Hours Worked", "Location", "Manager", "Tier",
+        "Redo Rate %", "Miles/Ticket", "Tickets/Hour", "High Redo", "Route Mileage Audit", "Low Utilization",
+      ],
       sortedRows.map((r) => [
-        r.techId, r.name, r.location, r.manager, r.tier, r.daysWorked, fmt1(r.hoursWorked), r.totalTickets, r.redoCount,
-        r.redoRatePct != null ? fmt1(r.redoRatePct) : "—", fmt1(r.miles),
-        r.milesPerTicket != null ? fmt1(r.milesPerTicket) : "—", r.ticketsPerHour != null ? fmt1(r.ticketsPerHour) : "—",
-        r.highRedoAlert ? "Yes" : "", r.routeMileageAlert ? "Yes" : "", r.lowUtilizationAlert ? "Yes" : "",
+        r.name, fmtVariance(varianceByRowId.get(r.id) ?? null), r.minorTicketCount, r.majorTicketCount, r.redoCount, r.totalTickets,
+        r.daysWorked > 0 ? fmt1(r.totalTickets / r.daysWorked) : "—", fmt1(r.miles), r.daysWorked, r.offDaysCount,
+        "", fmt1(r.hoursWorked), r.location, r.manager, r.tier,
+        r.redoRatePct != null ? fmt1(r.redoRatePct) : "—", r.milesPerTicket != null ? fmt1(r.milesPerTicket) : "—",
+        r.ticketsPerHour != null ? fmt1(r.ticketsPerHour) : "—", r.highRedoAlert ? "Yes" : "", r.routeMileageAlert ? "Yes" : "", r.lowUtilizationAlert ? "Yes" : "",
       ]),
     );
   };
@@ -730,10 +842,17 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
 
       sheet.columns = [
         { header: "Name", key: "name", width: 26 },
+        { header: "Variance", key: "variance", width: 12 },
         { header: "Date", key: "date", width: 12 },
-        { header: "Total Tickets", key: "totalTickets", width: 14 },
-        { header: "Redo Count", key: "redoCount", width: 14 },
-        { header: "Miles", key: "miles", width: 12 },
+        { header: "Minor Ticket", key: "minorTicket", width: 14 },
+        { header: "Major Ticket", key: "majorTicket", width: 14 },
+        { header: "Redo", key: "redoCount", width: 10 },
+        { header: "Total Completion", key: "totalTickets", width: 16 },
+        { header: "Average Completion", key: "avgCompletion", width: 18 },
+        { header: "Mileage", key: "miles", width: 12 },
+        { header: "Working Days", key: "daysWorked", width: 14 },
+        { header: "Off Days", key: "offDays", width: 12 },
+        { header: "Unexcused Off Days Total 2026", key: "unexcusedOffDays", width: 26 },
         { header: "Hours Worked", key: "hoursWorked", width: 14 },
         { header: "Location", key: "location", width: 16 },
         { header: "Manager", key: "manager", width: 20 },
@@ -753,35 +872,59 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
       });
       sheet.views = [{ state: "frozen", ySplit: 1 }];
 
-      for (const r of sortedRows) {
-        const nameKey = r.name.trim().toLowerCase();
+      // Green when a technician is above the team average Total
+      // Completion, red when below, left unstyled at "—" (no team
+      // average to compare against).
+      const styleVarianceCell = (cell: import("exceljs").Cell, v: number | null) => {
+        if (v == null) return;
+        if (v > 0) {
+          cell.font = { bold: true, color: { argb: "FF166534" } };
+          cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFDCFCE7" } };
+        } else if (v < 0) {
+          cell.font = { bold: true, color: { argb: "FFB91C1C" } };
+          cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFEE2E2" } };
+        } else {
+          cell.font = { color: { argb: "FF64748B" } };
+        }
+      };
 
-        // Total Tickets is pre-filled (today's value, corrected in
-        // place); Redo Count/Miles/Hours Worked are left blank on purpose
-        // — blank means "no change" on import, filled means "override
-        // this day", so leaving them blank here is what makes
-        // re-importing an untouched row a true no-op instead of silently
-        // re-asserting a number as a permanent override. Redo Count in
-        // particular has no live per-day figure to even pre-fill (see
-        // migration 0300) — the technician's CURRENT total is shown in
-        // the reference block below instead, as something to match/adjust
-        // against while spreading a correction against specific days.
-        //
+      for (const r of sortedRows) {
         // EVERY day in the period gets a row here, not just days that
         // already have some activity — a gap used to read as "there's
         // nothing to correct here," when it actually meant "there's
         // nothing missing a row to correct it with," which is a very
         // different (and much more confusing) thing to a technician who
         // really did work that day but has zero logged for it.
+        //
+        // Every value column is left BLANK on every day row: for the 4
+        // fields that actually support a per-day override (Total
+        // Completion/Redo/Mileage/Hours Worked), blank means "no change"
+        // on import, so leaving them blank is what makes re-importing an
+        // untouched row a true no-op instead of silently re-asserting a
+        // number as a permanent override. The rest (Variance, Minor/Major
+        // Ticket, Average Completion, Working Days, Off Days) are period-
+        // level, not per-day, figures that aren't read back on import at
+        // all — repeating them on every one of a technician's day rows
+        // read as if they were themselves per-day data, so they're blank
+        // here too and shown once instead, in the reference block below.
+        // Unexcused Off Days Total 2026 is always blank (no live source,
+        // see this file's header comment) — a place for HR to type a
+        // number by hand, not something this export or the importer
+        // reads back.
         for (let date = periodStart; date <= periodEnd; date = addDaysISO(date, 1)) {
-          const liveTickets = dailyTickets.filter((d) => d.technician.trim().toLowerCase() === nameKey && d.date === date).length;
-          const ov = dailyOverrides.get(r.id)?.get(date);
           sheet.addRow({
             name: r.name,
+            variance: "",
             date,
-            totalTickets: ov?.totalTickets ?? liveTickets,
+            minorTicket: "",
+            majorTicket: "",
             redoCount: "",
+            totalTickets: "",
+            avgCompletion: "",
             miles: "",
+            daysWorked: "",
+            offDays: "",
+            unexcusedOffDays: "",
             hoursWorked: "",
             location: r.location,
             manager: r.manager,
@@ -792,18 +935,37 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
 
       // Reference block — every technician currently in view, even ones
       // with no activity/correction this period (so they'd have no
-      // day-row above at all). Location/Manager/Tier are here purely so
-      // a human can tell two same-named technicians apart before typing
-      // a new row; Redo Count here is the CURRENT total (reference only —
-      // a blank Date keeps this whole block from being read as real data
-      // on re-import, see handleImportFile).
+      // day-row above at all). Location/Manager/Tier/Variance/Average
+      // Completion/Working Days/Off Days are here purely so a human can
+      // tell two same-named technicians apart, or see current totals,
+      // before typing a new row; Redo/Total Completion/Mileage/Hours
+      // Worked here are the CURRENT totals (reference only — a blank
+      // Date keeps this whole block from being read as real data on
+      // re-import, see handleImportFile).
       sheet.addRow({});
       const noteRow = sheet.addRow({
-        name: "All technicians — add a row below (Name + Date + at least one value) to correct a day with no activity yet. Redo Count below is the CURRENT total, for reference.",
+        name: "All technicians — add a row below (Name + Date + at least one value) to correct a day with no activity yet. Redo/Total Completion/Mileage/Hours Worked below are the CURRENT totals, for reference.",
       });
       noteRow.font = { italic: true, color: { argb: "FF64748B" } };
       for (const r of sortedRows) {
-        sheet.addRow({ name: r.name, redoCount: r.redoCount, location: r.location, manager: r.manager, tier: r.tier });
+        const variance = varianceByRowId.get(r.id) ?? null;
+        const row = sheet.addRow({
+          name: r.name,
+          variance: fmtVariance(variance),
+          minorTicket: r.minorTicketCount,
+          majorTicket: r.majorTicketCount,
+          redoCount: r.redoCount,
+          totalTickets: r.totalTickets,
+          avgCompletion: r.daysWorked > 0 ? fmt1(r.totalTickets / r.daysWorked) : "—",
+          miles: fmt1(r.miles),
+          daysWorked: r.daysWorked,
+          offDays: r.offDaysCount,
+          hoursWorked: fmt1(r.hoursWorked),
+          location: r.location,
+          manager: r.manager,
+          tier: r.tier,
+        });
+        styleVarianceCell(row.getCell("variance"), variance);
       }
 
       const buffer = await workbook.xlsx.writeBuffer();
@@ -845,11 +1007,21 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
         if (aoa.length < 2) throw new Error("The file has no data rows.");
         const header = aoa[0].map((h) => String(h ?? "").trim().toLowerCase());
         const idx = (label: string) => header.indexOf(label);
+        // Accepts both the current header names and the pre-rename ones,
+        // so a template downloaded before this column rework (or an old
+        // saved copy of one) still imports correctly.
+        const idxAny = (...labels: string[]) => {
+          for (const label of labels) {
+            const i = idx(label);
+            if (i !== -1) return i;
+          }
+          return -1;
+        };
         const nameIdx = idx("name");
         const dateIdx = idx("date");
-        const ticketsIdx = idx("total tickets");
-        const redoIdx = idx("redo count");
-        const milesIdx = idx("miles");
+        const ticketsIdx = idxAny("total completion", "total tickets");
+        const redoIdx = idxAny("redo", "redo count");
+        const milesIdx = idxAny("mileage", "miles");
         const hoursIdx = idx("hours worked");
         const locationIdx = idx("location");
         if (nameIdx === -1 || dateIdx === -1) {
@@ -1214,17 +1386,22 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b border-white/10 bg-white/5">
-                        <th className={thClass} onClick={() => toggleSort("techId")}>Technician ID{sortIndicator("techId")}</th>
                         <th className={thClass} onClick={() => toggleSort("name")}>Name{sortIndicator("name")}</th>
+                        <th className="px-3 py-2 text-right text-xs text-muted-foreground uppercase">Variance</th>
+                        <th className={`${thClass} text-right`} onClick={() => toggleSort("minorTicketCount")}>Minor Ticket{sortIndicator("minorTicketCount")}</th>
+                        <th className={`${thClass} text-right`} onClick={() => toggleSort("majorTicketCount")}>Major Ticket{sortIndicator("majorTicketCount")}</th>
+                        <th className={`${thClass} text-right`} onClick={() => toggleSort("redoCount")}>Redo{sortIndicator("redoCount")}</th>
+                        <th className={`${thClass} text-right`} onClick={() => toggleSort("totalTickets")}>Total Completion{sortIndicator("totalTickets")}</th>
+                        <th className="px-3 py-2 text-right text-xs text-muted-foreground uppercase">Average Completion</th>
+                        <th className={`${thClass} text-right`} onClick={() => toggleSort("miles")}>Mileage{sortIndicator("miles")}</th>
+                        <th className={`${thClass} text-right`} onClick={() => toggleSort("daysWorked")}>Working Days{sortIndicator("daysWorked")}</th>
+                        <th className="px-3 py-2 text-right text-xs text-muted-foreground uppercase">Off Days</th>
+                        <th className="px-3 py-2 text-right text-xs text-muted-foreground uppercase">Unexcused Off Days Total 2026</th>
+                        <th className={`${thClass} text-right`} onClick={() => toggleSort("hoursWorked")}>Hours Worked{sortIndicator("hoursWorked")}</th>
                         <th className={thClass} onClick={() => toggleSort("location")}>Location{sortIndicator("location")}</th>
                         <th className={thClass} onClick={() => toggleSort("manager")}>Manager{sortIndicator("manager")}</th>
                         <th className={thClass} onClick={() => toggleSort("tier")}>Tier{sortIndicator("tier")}</th>
-                        <th className={`${thClass} text-right`} onClick={() => toggleSort("daysWorked")}>Days{sortIndicator("daysWorked")}</th>
-                        <th className={`${thClass} text-right`} onClick={() => toggleSort("hoursWorked")}>Hrs{sortIndicator("hoursWorked")}</th>
-                        <th className={`${thClass} text-right`} onClick={() => toggleSort("totalTickets")}>Total Tickets{sortIndicator("totalTickets")}</th>
-                        <th className={`${thClass} text-right`} onClick={() => toggleSort("redoCount")}>Redo{sortIndicator("redoCount")}</th>
                         <th className={`${thClass} text-right`} onClick={() => toggleSort("redoRatePct")}>Redo %{sortIndicator("redoRatePct")}</th>
-                        <th className={`${thClass} text-right`} onClick={() => toggleSort("miles")}>Miles{sortIndicator("miles")}</th>
                         <th className={`${thClass} text-right`} onClick={() => toggleSort("milesPerTicket")}>Mi/Ticket{sortIndicator("milesPerTicket")}</th>
                         <th className={`${thClass} text-right`} onClick={() => toggleSort("ticketsPerHour")}>Tickets/Hr{sortIndicator("ticketsPerHour")}</th>
                         <th className="px-3 py-2 text-left text-xs text-muted-foreground uppercase">Alerts</th>
@@ -1232,11 +1409,12 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                     </thead>
                     <tbody>
                       {groupRows.length === 0 ? (
-                        <tr><td colSpan={14} className="px-4 py-8 text-center text-muted-foreground text-sm">No technicians match.</td></tr>
+                        <tr><td colSpan={18} className="px-4 py-8 text-center text-muted-foreground text-sm">No technicians match.</td></tr>
                       ) : (
-                        groupRows.map((r) => (
+                        groupRows.map((r) => {
+                          const variance = varianceByRowId.get(r.id) ?? null;
+                          return (
                           <tr key={r.id} className="border-b border-white/5 hover:bg-white/5">
-                            <td className="px-3 py-2 text-muted-foreground">{r.techId}</td>
                             <td className="px-3 py-2 font-medium">
                               <button
                                 type="button"
@@ -1250,11 +1428,12 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                                 )}
                               </button>
                             </td>
-                            <td className="px-3 py-2 text-muted-foreground">{r.location}</td>
-                            <td className="px-3 py-2 text-muted-foreground">{r.manager}</td>
-                            <td className="px-3 py-2 text-muted-foreground">{r.tier}</td>
-                            <td className="px-3 py-2 text-right">{r.daysWorked}</td>
-                            <td className="px-3 py-2 text-right">{fmt1(r.hoursWorked)}</td>
+                            <td className={`px-3 py-2 text-right font-semibold ${variance == null ? "text-muted-foreground" : variance > 0 ? "text-emerald-400" : variance < 0 ? "text-red-400" : "text-muted-foreground"}`}>
+                              {fmtVariance(variance)}
+                            </td>
+                            <td className="px-3 py-2 text-right">{r.minorTicketCount}</td>
+                            <td className="px-3 py-2 text-right">{r.majorTicketCount}</td>
+                            <td className="px-3 py-2 text-right">{r.redoCount}</td>
                             <td className="px-3 py-2 text-right">
                               {r.totalTickets > 0 ? (
                                 <button
@@ -1269,8 +1448,7 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                                 r.totalTickets
                               )}
                             </td>
-                            <td className="px-3 py-2 text-right">{r.redoCount}</td>
-                            <td className={`px-3 py-2 text-right ${r.highRedoAlert ? "text-red-300 font-semibold" : ""}`}>{r.redoRatePct != null ? `${fmt1(r.redoRatePct)}%` : "—"}</td>
+                            <td className="px-3 py-2 text-right">{r.daysWorked > 0 ? fmt1(r.totalTickets / r.daysWorked) : "—"}</td>
                             <td className="px-3 py-2 text-right">
                               {r.miles > 0 ? (
                                 <button
@@ -1285,6 +1463,27 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                                 fmt1(r.miles)
                               )}
                             </td>
+                            <td className="px-3 py-2 text-right">{r.daysWorked}</td>
+                            <td className="px-3 py-2 text-right">
+                              {r.offDaysCount > 0 ? (
+                                <button
+                                  type="button"
+                                  onClick={() => setOffDaysListFor({ id: r.id, name: r.name })}
+                                  className="text-blue-400 hover:text-blue-300 hover:underline underline-offset-2"
+                                  title="View off-duty dates"
+                                >
+                                  {r.offDaysCount}
+                                </button>
+                              ) : (
+                                r.offDaysCount
+                              )}
+                            </td>
+                            <td className="px-3 py-2 text-right text-muted-foreground">—</td>
+                            <td className="px-3 py-2 text-right">{fmt1(r.hoursWorked)}</td>
+                            <td className="px-3 py-2 text-muted-foreground">{r.location}</td>
+                            <td className="px-3 py-2 text-muted-foreground">{r.manager}</td>
+                            <td className="px-3 py-2 text-muted-foreground">{r.tier}</td>
+                            <td className={`px-3 py-2 text-right ${r.highRedoAlert ? "text-red-300 font-semibold" : ""}`}>{r.redoRatePct != null ? `${fmt1(r.redoRatePct)}%` : "—"}</td>
                             <td className={`px-3 py-2 text-right ${r.routeMileageAlert ? "text-amber-300 font-semibold" : ""}`}>{r.milesPerTicket != null ? fmt1(r.milesPerTicket) : "—"}</td>
                             <td className="px-3 py-2 text-right">{r.ticketsPerHour != null ? r.ticketsPerHour.toFixed(2) : "—"}</td>
                             <td className="px-3 py-2">
@@ -1295,7 +1494,8 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                               </div>
                             </td>
                           </tr>
-                        ))
+                          );
+                        })
                       )}
                     </tbody>
                   </table>
@@ -1401,6 +1601,50 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                             </span>
                           )}
                         </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {offDaysListFor && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={() => setOffDaysListFor(null)}>
+          <div
+            className="bg-slate-900 border border-white/15 rounded-xl w-full max-w-sm max-h-[80vh] flex flex-col shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-5 py-4 border-b border-white/10 bg-slate-950 rounded-t-xl">
+              <div>
+                <p className="font-semibold text-white">Off Days — {offDaysListFor.name}</p>
+                <p className="text-xs text-slate-400">{periodStart} – {periodEnd} · {offDaysListRows.length} day{offDaysListRows.length === 1 ? "" : "s"}</p>
+              </div>
+              <button onClick={() => setOffDaysListFor(null)} className="text-white/40 hover:text-white/80 transition">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <p className="px-5 pt-3 text-[11px] text-slate-400">
+              Scheduled weekly off days (Admin User Management's Off Days picker) falling within this period — not days actually missed.
+            </p>
+            <div className="overflow-y-auto flex-1 p-2">
+              {offDaysListRows.length === 0 ? (
+                <p className="text-sm text-slate-400 text-center py-8">No off days in this period.</p>
+              ) : (
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-xs text-slate-400 uppercase">
+                      <th className="px-3 py-2">Date</th>
+                      <th className="px-3 py-2">Day</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5">
+                    {offDaysListRows.map((d) => (
+                      <tr key={d} className="hover:bg-white/5">
+                        <td className="px-3 py-2 text-slate-300">{d}</td>
+                        <td className="px-3 py-2 text-slate-300">{new Date(`${d}T00:00:00`).toLocaleDateString("en-US", { weekday: "long" })}</td>
                       </tr>
                     ))}
                   </tbody>

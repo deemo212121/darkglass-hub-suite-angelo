@@ -2568,41 +2568,31 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     // includable incentive pay) falls short of that salary's per-cutoff
     // equivalent, the shortfall is topped up here.
     //
-    // Keyed off techHourlyPay (whichever mode is actually applied), NOT
-    // techHourlyPayCompanyOnly — a previous version used the Company-only
-    // figure deliberately, reasoning that the state-floor match is separate
-    // money that shouldn't get "absorbed" by the guarantee. That reasoning
-    // doesn't hold up: when a State-mode override is active, techHourlyPay
-    // already has the state match folded into it, so adding
-    // techGuaranteedSalaryMatch computed against the Company-only baseline
-    // on top double-counts that same state match — once inside techHourlyPay,
-    // once again because the guarantee was sized as if techHourlyPay were
-    // still the smaller Company-only figure (see Matthew Nichols, where this
-    // overstated Total Payment by exactly his $199.88 state-floor match).
-    // Keying off techHourlyPay instead doesn't let the state match get
-    // "swallowed": if State-mode earnings + includable pay already clear the
-    // salary target, techGuaranteedSalaryMatch is correctly $0 and the
-    // technician keeps the full higher state-matched amount; if they still
-    // fall short even with the state match applied, the guarantee correctly
-    // tops up only the REMAINING gap instead of re-adding money already
-    // earned. Matches the reference payroll workbook's own 15-step chain,
-    // which checks the guarantee against the state-matched total for the
-    // same reason. Reimbursement/mileage/allowance custom lines and mileage
-    // pay still don't count toward either side of this check — paid on top
-    // regardless, same as before.
+    // Keyed off techHourlyPayCompanyOnly, NOT techHourlyPay — company policy
+    // (2026-09-23) treats the state minimum-wage floor match as separate
+    // money that doesn't count toward satisfying the salary guarantee: the
+    // guarantee is a promise of at least $X in company-rate wages +
+    // incentive pay, independent of which state a technician happened to
+    // work in that period. The floor match is still paid in full — via
+    // techHourlyPay itself once State mode is applied — this only changes
+    // what the guarantee is SIZED against, not what actually gets paid for
+    // the floor match. (Previously this was keyed off techHourlyPay so the
+    // state match would count toward the guarantee — reversed per direct
+    // instruction; see Matthew Nichols, where a $199.88 state-floor match
+    // was decided to stack on top of the guarantee rather than closing it.)
     const guaranteedAnnualSalary = includeTech && isTechRole(emp) && !isFixed
       ? latestFixedSalaryByProfile.get(emp.id)?.annual_salary ?? null
       : null;
     // techHolidayPremium is folded in too, for the same double-counting
-    // reason as techHourlyPay above — see Daven Hodge, where the reference
-    // workbook's own AN9 ("Corrected Wages Before Match") already folds its
-    // Holiday Premium into the earned baseline before sizing the match.
-    // Leaving it out here sized the guarantee as if that $51.40 hadn't
-    // been earned yet, then techGrossPay below added it again on top of
-    // the already-topped-up target — a flat overpayment equal to the
+    // reason as techHourlyPayCompanyOnly above — see Daven Hodge, where the
+    // reference workbook's own AN9 ("Corrected Wages Before Match") already
+    // folds its Holiday Premium into the earned baseline before sizing the
+    // match. Leaving it out here sized the guarantee as if that $51.40
+    // hadn't been earned yet, then techGrossPay below added it again on top
+    // of the already-topped-up target — a flat overpayment equal to the
     // holiday premium any time the guarantee triggers for a technician who
     // also worked a recognized holiday.
-    const techEarnedBeforeReimbursements = techHourlyPay + techIncludablePay + techHolidayPremium;
+    const techEarnedBeforeReimbursements = techHourlyPayCompanyOnly + techIncludablePay + techHolidayPremium;
     const techGuaranteedSalaryTarget = guaranteedAnnualSalary ? perCutoffSalary(guaranteedAnnualSalary) : 0;
     const techGuaranteedSalaryMatch = guaranteedAnnualSalary
       ? Math.max(techGuaranteedSalaryTarget - techEarnedBeforeReimbursements, 0)

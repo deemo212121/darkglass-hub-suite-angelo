@@ -14,6 +14,7 @@ import { getEntryForDate, saveEntry, type UITimeEntry, type PunchField } from ".
 import { getCompanyUsers, type ProfileRow } from "./users";
 import { createNotification } from "./notifications";
 import { isAttendanceFullAccessRole, isTraineeFallbackReviewerRole } from "@/lib/roleLabels";
+import { getServerNow, zonedDateKey, type ScheduleTimezone } from "@/lib/serverTime";
 
 /** Same deep-link convention timecard_corrections' own notifications already
  *  use (see reviewCorrectionStage) — the bell-icon notification list keys
@@ -328,10 +329,28 @@ export interface TraineeReviewQueueItem {
  * desktop's TraineeAttendanceReviewModal) AND getPendingTraineeReviewCount
  * below, so the count gating the manager's own Check Out and the list they
  * actually see can never disagree.
+ *
+ * No-show items also require is_active — without it, a trainee whose
+ * account was deactivated (Quit/Stopped, or Master List's own Inactive/
+ * Terminated/Resigned) keeps generating a fresh "not clocked in" item every
+ * single day forever, since they're never going to punch in again to clear
+ * it. A still-pending PAST entry from before they were deactivated is left
+ * alone — that real day still needs a real review.
+ *
+ * "Today" for the no-show check is computed PER TRAINEE, in THEIR OWN
+ * profiles.schedule_timezone (CST/EST — the same field TimeClockMenu's own
+ * workDate = zonedDateKey(serverNow, scheduleTimezone) stamps a real punch
+ * under), from a server-verified instant — never the caller's own browser
+ * clock. A manager reviewing from a very different timezone (e.g. the
+ * Philippines, UTC+8, against a CST trainee, UTC-5/-6 — an 13-14 hour gap)
+ * would otherwise see "today" computed as whatever UTC calendar date
+ * `new Date().toISOString()` happens to read on their own device, which
+ * can already be tomorrow in UTC while it's still this evening in CST —
+ * flagging a trainee as a false no-show for a business day that, in their
+ * own timezone, hasn't started (or ended) yet.
  */
 export async function getTraineeReviewQueue(managerProfileId: string): Promise<TraineeReviewQueueItem[]> {
-  const todayIso = new Date().toISOString().slice(0, 10);
-  const [entries, roster] = await Promise.all([getCompanyTraineeEntries(), getCompanyUsers()]);
+  const [entries, roster, serverNow] = await Promise.all([getCompanyTraineeEntries(), getCompanyUsers(), getServerNow()]);
   const manager = roster.find((p) => p.id === managerProfileId);
   const managerName = (manager?.display_name || "").trim().toLowerCase();
 
@@ -343,16 +362,26 @@ export async function getTraineeReviewQueue(managerProfileId: string): Promise<T
     })
     .filter((x): x is NonNullable<typeof x> => x !== null);
 
-  const entriesTodayByProfile = new Set(entries.filter((e) => e.workDate === todayIso).map((e) => e.profileId));
+  const entryProfileIdsByWorkDate = new Map<string, Set<string>>();
+  for (const e of entries) {
+    if (!entryProfileIdsByWorkDate.has(e.workDate)) entryProfileIdsByWorkDate.set(e.workDate, new Set());
+    entryProfileIdsByWorkDate.get(e.workDate)!.add(e.profileId);
+  }
   const noShowItems: TraineeReviewQueueItem[] = managerName
     ? roster
         .filter(
           (p) =>
             p.employment_type === "trainee" &&
-            (p.manager_name || "").trim().toLowerCase() === managerName &&
-            !entriesTodayByProfile.has(p.id)
+            p.is_active &&
+            (p.manager_name || "").trim().toLowerCase() === managerName
         )
-        .map((trainee) => ({ kind: "noshow" as const, trainee, entry: null, workDate: todayIso }))
+        .map((trainee) => {
+          const traineeTz: ScheduleTimezone = trainee.schedule_timezone || "CST";
+          const traineeToday = zonedDateKey(serverNow, traineeTz);
+          return { trainee, traineeToday };
+        })
+        .filter(({ trainee, traineeToday }) => !entryProfileIdsByWorkDate.get(traineeToday)?.has(trainee.id))
+        .map(({ trainee, traineeToday }) => ({ kind: "noshow" as const, trainee, entry: null, workDate: traineeToday }))
     : [];
 
   return [...entryItems, ...noShowItems];

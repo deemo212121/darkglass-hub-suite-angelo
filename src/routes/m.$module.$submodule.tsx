@@ -246,25 +246,7 @@ function SubModule() {
   // restriction while it's set, not something a leftover permission grant
   // can quietly punch a hole in.
   if (!isSubmoduleAllowedForTrainee(isTrainee, mod.slug, sub.slug)) {
-    return (
-      <>
-        <AppHeader />
-        <main className="flex-1 bg-slate-950 py-6">
-          <div className="max-w-4xl mx-auto px-6">
-            <div className="rounded-xl border border-white/15 bg-white/8 p-6 text-white backdrop-blur-md">
-              <h1 className="text-2xl font-bold">Access restricted</h1>
-              <p className="mt-2 text-sm text-slate-300">
-                You're currently marked as a Trainee — only the Employee Self-Service dashboard is available until this changes.
-              </p>
-              <p className="mt-2 text-sm text-slate-400">
-                Current sign-in: {email}
-              </p>
-            </div>
-          </div>
-        </main>
-        <Footer />
-      </>
-    );
+    return <Navigate to="/home" replace />;
   }
 
   // Frozen accounts only see Messages — same absolute, override-proof
@@ -304,28 +286,7 @@ function SubModule() {
   // the hidden tiles by typing the URL directly. Skipped entirely when an
   // admin has explicitly overridden this exact submodule's roles.
   if (!explicitModuleOverride && !isSubmoduleAllowed(role, mod.slug, sub.slug, extraRoles)) {
-    return (
-      <>
-        <AppHeader />
-        <main className="flex-1 bg-slate-950 py-6">
-          <div className="max-w-4xl mx-auto px-6">
-            <div className="rounded-xl border border-white/15 bg-white/8 p-6 text-white backdrop-blur-md">
-              <h1 className="text-2xl font-bold">Access restricted</h1>
-              <p className="mt-2 text-sm text-slate-300">
-                Your role doesn't have access to {sub.title}.
-              </p>
-              <p className="mt-2 text-sm text-slate-400">
-                Current sign-in: {email}
-              </p>
-              <p className="mt-1 text-sm text-slate-400">
-                Your role: {role || "No role assigned"}
-              </p>
-            </div>
-          </div>
-        </main>
-        <Footer />
-      </>
-    );
+    return <Navigate to="/home" replace />;
   }
 
   // Check admin access using Firebase role — primary role OR a secondary
@@ -365,30 +326,9 @@ function SubModule() {
     !isActivityLogSubmodule &&
     !isWhereaboutsSubmodule
   ) {
-    return (
-      <>
-        <AppHeader />
-        <main className="flex-1 bg-slate-950 py-6">
-          <div className="max-w-4xl mx-auto px-6">
-            <div className="rounded-xl border border-white/15 bg-white/8 p-6 text-white backdrop-blur-md">
-              <h1 className="text-2xl font-bold">Access restricted</h1>
-              <p className="mt-2 text-sm text-slate-300">
-                The admin module is only available to Admin and SuperAdmin users.
-              </p>
-              <p className="mt-2 text-sm text-slate-400">
-                Current sign-in: {email}
-              </p>
-              <p className="mt-1 text-sm text-slate-400">
-                Your role: {role || "No role assigned"}
-              </p>
-            </div>
-          </div>
-        </main>
-        <Footer />
-      </>
-    );
+    return <Navigate to="/home" replace />;
   }
-  
+
   // Check user management access using Firebase role — same primary-or-
   // secondary-role logic as the admin gate above. USER_MANAGEMENT_DEFAULT_
   // ROLES is only the fallback when no company override exists (module
@@ -398,29 +338,7 @@ function SubModule() {
   const hasUserManagementAccess = hasDashboardAccess(userManagementAllowedRoles, role, extraRoles);
 
   if (isUserManagementSubmodule && !hasUserManagementAccess) {
-    const allowedLabels = userManagementAllowedRoles.map((r) => ROLE_LABELS[r] || r).join(", ");
-    return (
-      <>
-        <AppHeader />
-        <main className="flex-1 bg-slate-950 py-6">
-          <div className="max-w-4xl mx-auto px-6">
-            <div className="rounded-xl border border-white/15 bg-white/8 p-6 text-white backdrop-blur-md">
-              <h1 className="text-2xl font-bold">Access restricted</h1>
-              <p className="mt-2 text-sm text-slate-300">
-                User management is only available to {allowedLabels}, and SuperAdmin users.
-              </p>
-              <p className="mt-2 text-sm text-slate-400">
-                Current sign-in: {email}
-              </p>
-              <p className="mt-1 text-sm text-slate-400">
-                Your role: {role || "No role assigned"}
-              </p>
-            </div>
-          </div>
-        </main>
-        <Footer />
-      </>
-    );
+    return <Navigate to="/home" replace />;
   }
 
   // Activity Logs — same carve-out pattern as User Management above.
@@ -428,29 +346,7 @@ function SubModule() {
   const hasActivityLogAccess = hasDashboardAccess(activityLogAllowedRoles, role, extraRoles);
 
   if (isActivityLogSubmodule && !hasActivityLogAccess) {
-    const allowedLabels = activityLogAllowedRoles.map((r) => ROLE_LABELS[r] || r).join(", ");
-    return (
-      <>
-        <AppHeader />
-        <main className="flex-1 bg-slate-950 py-6">
-          <div className="max-w-4xl mx-auto px-6">
-            <div className="rounded-xl border border-white/15 bg-white/8 p-6 text-white backdrop-blur-md">
-              <h1 className="text-2xl font-bold">Access restricted</h1>
-              <p className="mt-2 text-sm text-slate-300">
-                Activity Logs is only available to {allowedLabels}, and SuperAdmin users.
-              </p>
-              <p className="mt-2 text-sm text-slate-400">
-                Current sign-in: {email}
-              </p>
-              <p className="mt-1 text-sm text-slate-400">
-                Your role: {role || "No role assigned"}
-              </p>
-            </div>
-          </div>
-        </main>
-        <Footer />
-      </>
-    );
+    return <Navigate to="/home" replace />;
   }
 
   // Technician Whereabouts — same carve-out pattern as User Management/
@@ -459,29 +355,7 @@ function SubModule() {
   const hasWhereaboutsAccess = hasDashboardAccess(whereaboutsAllowedRoles, role, extraRoles);
 
   if (isWhereaboutsSubmodule && !hasWhereaboutsAccess) {
-    const allowedLabels = whereaboutsAllowedRoles.map((r) => ROLE_LABELS[r] || r).join(", ");
-    return (
-      <>
-        <AppHeader />
-        <main className="flex-1 bg-slate-950 py-6">
-          <div className="max-w-4xl mx-auto px-6">
-            <div className="rounded-xl border border-white/15 bg-white/8 p-6 text-white backdrop-blur-md">
-              <h1 className="text-2xl font-bold">Access restricted</h1>
-              <p className="mt-2 text-sm text-slate-300">
-                Technician Whereabouts is only available to {allowedLabels}, and SuperAdmin users.
-              </p>
-              <p className="mt-2 text-sm text-slate-400">
-                Current sign-in: {email}
-              </p>
-              <p className="mt-1 text-sm text-slate-400">
-                Your role: {role || "No role assigned"}
-              </p>
-            </div>
-          </div>
-        </main>
-        <Footer />
-      </>
-    );
+    return <Navigate to="/home" replace />;
   }
 
   // Company Settings is narrower than the general admin-module gate above —
@@ -490,28 +364,7 @@ function SubModule() {
   const hasCompanySettingsAccess = isCompanySuperAdminRole(role, extraRoles);
 
   if (sub.custom === "company-settings" && !hasCompanySettingsAccess) {
-    return (
-      <>
-        <AppHeader />
-        <main className="flex-1 bg-slate-950 py-6">
-          <div className="max-w-4xl mx-auto px-6">
-            <div className="rounded-xl border border-white/15 bg-white/8 p-6 text-white backdrop-blur-md">
-              <h1 className="text-2xl font-bold">Access restricted</h1>
-              <p className="mt-2 text-sm text-slate-300">
-                Company Settings is only available to this company's SuperAdmin.
-              </p>
-              <p className="mt-2 text-sm text-slate-400">
-                Current sign-in: {email}
-              </p>
-              <p className="mt-1 text-sm text-slate-400">
-                Your role: {role || "No role assigned"}
-              </p>
-            </div>
-          </div>
-        </main>
-        <Footer />
-      </>
-    );
+    return <Navigate to="/home" replace />;
   }
 
   const hasNestedUserRoute = sub.custom === "user-management" && location.pathname.split("/").filter(Boolean).length > 3;
@@ -533,29 +386,7 @@ function SubModule() {
     hasDashboardAccess(moduleAllowedRoles, role, extraRoles);
 
   if (moduleAllowedRoles && !moduleAccessOk) {
-    const allowedLabels = moduleAllowedRoles.map((r) => ROLE_LABELS[r] || r).join(", ");
-    return (
-      <>
-        <AppHeader />
-        <main className="flex-1 bg-slate-950 py-6">
-          <div className="max-w-4xl mx-auto px-6">
-            <div className="rounded-xl border border-white/15 bg-white/8 p-6 text-white backdrop-blur-md">
-              <h1 className="text-2xl font-bold">Access restricted</h1>
-              <p className="mt-2 text-sm text-slate-300">
-                {sub.title} is only available to {allowedLabels}, and SuperAdmin users.
-              </p>
-              <p className="mt-2 text-sm text-slate-400">
-                Current sign-in: {email}
-              </p>
-              <p className="mt-1 text-sm text-slate-400">
-                Your role: {role || "No role assigned"}
-              </p>
-            </div>
-          </div>
-        </main>
-        <Footer />
-      </>
-    );
+    return <Navigate to="/home" replace />;
   }
 
   return (

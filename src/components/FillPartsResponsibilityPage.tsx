@@ -36,7 +36,7 @@ import { notifyHrRoleUsers } from "@/lib/supabase/hrRoleNotify";
 import { useSignaturePad } from "@/hooks/useSignaturePad";
 import { useResponsivePdfScale } from "@/hooks/useResponsivePdfScale";
 import { SignaturePadControls } from "@/components/SignaturePad";
-import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
+import pdfWorkerUrl from "pdfjs-dist/legacy/build/pdf.worker.min.mjs?url";
 
 interface Props {
   docId: string;
@@ -137,7 +137,7 @@ export function FillPartsResponsibilityPage({ docId }: Props) {
     let cancelled = false;
     (async () => {
       try {
-        const [pdfjsLib, bytes] = await Promise.all([import("pdfjs-dist"), loadBlankPartsResponsibilityBytes()]);
+        const [pdfjsLib, bytes] = await Promise.all([import("pdfjs-dist/legacy/build/pdf.mjs"), loadBlankPartsResponsibilityBytes()]);
         pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
         const pdf = await pdfjsLib.getDocument({ data: bytes }).promise;
         if (cancelled) return;

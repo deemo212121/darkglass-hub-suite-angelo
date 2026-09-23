@@ -72,54 +72,6 @@ const dashboardMod: ModuleDef = {
   accent: "#3b82f6",
   submodules: [
     {
-      slug: "daily-activity",
-      title: "Daily Activity Report",
-      description: "Review daily operational activities summary.",
-      fields: [
-        { key: "tech", label: "Technician", type: "select", options: TECHS, filterable: true },
-        { key: "activityType", label: "Activity", type: "select", options: ACTIVITY_TYPES, filterable: true },
-        { key: "ticketsClosed", label: "Closed", type: "number" },
-        { key: "ticketsOpened", label: "Opened", type: "number" },
-        { key: "miles", label: "Miles", type: "number" },
-        { key: "date", label: "Date", type: "date", filterable: true },
-      ],
-      count: 30,
-      seed: (i) => ({
-        tech: pick(TECHS, i),
-        activityType: pick(ACTIVITY_TYPES, i),
-        ticketsClosed: (i % 7) + 1,
-        ticketsOpened: (i % 5) + 1,
-        miles: 20 + (i * 11) % 180,
-        date: dateStr(-(i % 14)),
-      }),
-    },
-    {
-      slug: "triage-dashboard",
-      title: "Triage Dashboard",
-      description: "Same daily activity breakdown as the Daily Activity Report, scoped to Technical Support and Technical Support Managers only.",
-      fields: [],
-      count: 0,
-      seed: () => ({}),
-    },
-    {
-      slug: "overall-status",
-      title: "Overall Status",
-      description: "View system-wide status and health metrics.",
-      fields: [
-        { key: "queue", label: "Queue", filterable: true },
-        { key: "count", label: "Count", type: "number" },
-        { key: "owner", label: "Owner", type: "select", options: TECHS, editable: true },
-        { key: "status", label: "Status", type: "select", options: ["Green","Yellow","Red"], editable: true, filterable: true },
-      ],
-      count: 14,
-      seed: (i) => ({
-        queue: ["Dispatch","Diagnostics","Parts Pending","Customer Contact","Invoicing","Returns","Warranty","Escalations"][i % 8] + " #" + (i + 1),
-        count: 3 + (i * 5) % 40,
-        owner: pick(TECHS, i),
-        status: pick(["Green","Yellow","Red"], i),
-      }),
-    },
-    {
       slug: "attendance-monitoring",
       title: "Attendance Monitoring Dashboard",
       description: "Track daily attendance, late arrivals, and absences.",
@@ -163,15 +115,6 @@ const dashboardMod: ModuleDef = {
       },
     },
     {
-      slug: "general-information",
-      title: "General Information",
-      description: "Branch management directory — roles, regions, and leadership.",
-      custom: "general-information" as any,
-      fields: [],
-      count: 0,
-      seed: () => ({}),
-    },
-    {
       slug: "employee-self-service",
       title: "Employee Self-Service Portal",
       description: "Allow employees to view timecards and request time off.",
@@ -192,32 +135,6 @@ const dashboardMod: ModuleDef = {
     },
 
     {
-      slug: "expense-tracking",
-      title: "Tracking Expenses Dashboard",
-      description: "Track and manage employee expenses and reimbursements.",
-      fields: [
-        { key: "employeeName", label: "Employee", filterable: true },
-        { key: "category", label: "Category", type: "select", options: ["Travel", "Supplies", "Meals", "Other"], filterable: true },
-        { key: "date", label: "Date", type: "date" },
-        { key: "amount", label: "Amount", type: "number" },
-        { key: "description", label: "Description", filterable: true },
-        { key: "status", label: "Status", type: "select", options: ["Pending", "Approved", "Reimbursed"], filterable: true },
-      ],
-      count: 40,
-      seed: (i) => {
-        const categories = ["Travel", "Supplies", "Meals", "Other"];
-        const statuses = ["Pending", "Approved", "Reimbursed"];
-        return {
-          employeeName: pick(TECHS, i),
-          category: pick(categories, i),
-          date: dateStr(-(i % 20)),
-          amount: 25 + (i * 13) % 250,
-          description: `Expense for ${pick(categories, i)}`,
-          status: pick(statuses, i),
-        };
-      },
-    },
-    {
       slug: "flash-tech-calendar",
       title: "Flash Tech Calendar",
       description: "Plot flash tech travel schedules and track Hotel/Transportation costs through Expense Tracking.",
@@ -234,33 +151,6 @@ const dashboardMod: ModuleDef = {
       description: "Per-branch technician roster, branch-manager summary, and tier pay rates.",
       custom: "staff-list",
       hiddenFromGrid: true,
-      fields: [],
-      count: 0,
-      seed: () => ({}),
-    },
-    {
-      slug: "live-chat-support",
-      title: "Live Chat",
-      description: "See and reply to live chat messages from the public website.",
-      custom: "live-chat-support" as any,
-      fields: [],
-      count: 0,
-      seed: () => ({}),
-    },
-    {
-      slug: "claims-dashboard",
-      title: "Claims Dashboard",
-      description: "Claims pipeline overview — brand/status breakdown, pre-authorization aging, and Claims staff.",
-      custom: "claims-dashboard",
-      fields: [],
-      count: 0,
-      seed: () => ({}),
-    },
-    {
-      slug: "operations-dashboard",
-      title: "Operations Dashboard",
-      description: "Company-wide ticket overview — region breakdown, status funnel, and BizOps staff.",
-      custom: "operations-dashboard" as any,
       fields: [],
       count: 0,
       seed: () => ({}),
@@ -346,6 +236,37 @@ const csrMod: ModuleDef = {
       count: 0,
       seed: () => ({}),
     },
+    // Moved here from Dashboard (not a copy — Dashboard no longer has this
+    // tile) per the user's explicit call.
+    {
+      slug: "live-chat-support",
+      title: "Live Chat",
+      description: "See and reply to live chat messages from the public website.",
+      custom: "live-chat-support" as any,
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
+    // Same shortcut-copy pattern as Branch/Technician's own tiles below —
+    // reuses Dashboard's exact page (dispatch is by `custom` alone), just
+    // reachable from here too, per the user's explicit call that every
+    // module except Admin/Tickets/Report should carry these two.
+    {
+      slug: "attendance-monitoring",
+      title: "Attendance Monitoring Dashboard",
+      description: "Track daily attendance, late arrivals, and absences.",
+      custom: "attendance-monitoring" as any,
+      fields: [],
+      seed: () => ({}),
+    },
+    {
+      slug: "employee-self-service",
+      title: "Employee Self-Service Portal",
+      description: "View timecards and request time off.",
+      custom: "employee-self-service" as any,
+      fields: [],
+      seed: () => ({}),
+    },
   ],
 };
 
@@ -398,6 +319,24 @@ const accountingMod: ModuleDef = {
       custom: "expenses" as any,
       fields: [],
       count: 0,
+      seed: () => ({}),
+    },
+    // Same shortcut-copy pattern as CSR's own tiles above — reuses
+    // Dashboard's exact page (dispatch is by `custom` alone).
+    {
+      slug: "attendance-monitoring",
+      title: "Attendance Monitoring Dashboard",
+      description: "Track daily attendance, late arrivals, and absences.",
+      custom: "attendance-monitoring" as any,
+      fields: [],
+      seed: () => ({}),
+    },
+    {
+      slug: "employee-self-service",
+      title: "Employee Self-Service Portal",
+      description: "View timecards and request time off.",
+      custom: "employee-self-service" as any,
+      fields: [],
       seed: () => ({}),
     },
   ],
@@ -540,6 +479,24 @@ const hrMod: ModuleDef = {
           lastLogin: dateStr(-(i%30)),
         };
       },
+    },
+    // Same shortcut-copy pattern as CSR/Accounting's own tiles above —
+    // reuses Dashboard's exact page (dispatch is by `custom` alone).
+    {
+      slug: "attendance-monitoring",
+      title: "Attendance Monitoring Dashboard",
+      description: "Track daily attendance, late arrivals, and absences.",
+      custom: "attendance-monitoring" as any,
+      fields: [],
+      seed: () => ({}),
+    },
+    {
+      slug: "employee-self-service",
+      title: "Employee Self-Service Portal",
+      description: "View timecards and request time off.",
+      custom: "employee-self-service" as any,
+      fields: [],
+      seed: () => ({}),
     },
   ],
 };
@@ -798,6 +755,24 @@ const partsMod: ModuleDef = {
       title: "Parts Order Dashboard",
       description: "Parts Order overview — distributor spend, daily PO balances, warranty/vendor breakdown, part lines, and Parts Order staff.",
       custom: "parts-order-dashboard" as any,
+      fields: [],
+      seed: () => ({}),
+    },
+    // Same shortcut-copy pattern as CSR/Accounting/HR's own tiles above —
+    // reuses Dashboard's exact page (dispatch is by `custom` alone).
+    {
+      slug: "attendance-monitoring",
+      title: "Attendance Monitoring Dashboard",
+      description: "Track daily attendance, late arrivals, and absences.",
+      custom: "attendance-monitoring" as any,
+      fields: [],
+      seed: () => ({}),
+    },
+    {
+      slug: "employee-self-service",
+      title: "Employee Self-Service Portal",
+      description: "View timecards and request time off.",
+      custom: "employee-self-service" as any,
       fields: [],
       seed: () => ({}),
     },
@@ -1516,6 +1491,34 @@ const claimsMod: ModuleDef = {
         claimStatus: pick(["Not Claimed","Pending","Approved","Denied"], i),
       }),
     },
+    // Same shortcut-copy pattern as CSR/Accounting/HR/Logistics' own tiles
+    // above — reuses Dashboard's exact page (dispatch is by `custom` alone).
+    {
+      slug: "attendance-monitoring",
+      title: "Attendance Monitoring Dashboard",
+      description: "Track daily attendance, late arrivals, and absences.",
+      custom: "attendance-monitoring" as any,
+      fields: [],
+      seed: () => ({}),
+    },
+    {
+      slug: "employee-self-service",
+      title: "Employee Self-Service Portal",
+      description: "View timecards and request time off.",
+      custom: "employee-self-service" as any,
+      fields: [],
+      seed: () => ({}),
+    },
+    // Moved here from Dashboard per the user's explicit call.
+    {
+      slug: "claims-dashboard",
+      title: "Claims Dashboard",
+      description: "Claims pipeline overview — brand/status breakdown, pre-authorization aging, and Claims staff.",
+      custom: "claims-dashboard",
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
   ],
 };
 
@@ -1542,15 +1545,6 @@ const reportMod: ModuleDef = {
       title: "Claims Daily Report",
       description: "Claims completed vs remaining, brand breakdown and pending types.",
       custom: "report-claims-daily" as any,
-      fields: [],
-      count: 0,
-      seed: () => ({}),
-    },
-    {
-      slug: "report-triage-daily",
-      title: "Triage Daily Report",
-      description: "Triage completed, remaining, staff and agent performance.",
-      custom: "report-triage-daily" as any,
       fields: [],
       count: 0,
       seed: () => ({}),
@@ -1617,6 +1611,49 @@ const reportMod: ModuleDef = {
       fields: [],
       count: 0,
       seed: () => ({}),
+    },
+    // Moved here from Dashboard per the user's explicit call. Dispatched by
+    // sub.slug (not `custom`), same as triage-dashboard — works from any
+    // module/submodule pair as long as the slug itself is unchanged.
+    {
+      slug: "daily-activity",
+      title: "Daily Activity Report",
+      description: "Review daily operational activities summary.",
+      fields: [
+        { key: "tech", label: "Technician", type: "select", options: TECHS, filterable: true },
+        { key: "activityType", label: "Activity", type: "select", options: ACTIVITY_TYPES, filterable: true },
+        { key: "ticketsClosed", label: "Closed", type: "number" },
+        { key: "ticketsOpened", label: "Opened", type: "number" },
+        { key: "miles", label: "Miles", type: "number" },
+        { key: "date", label: "Date", type: "date", filterable: true },
+      ],
+      count: 30,
+      seed: (i) => ({
+        tech: pick(TECHS, i),
+        activityType: pick(ACTIVITY_TYPES, i),
+        ticketsClosed: (i % 7) + 1,
+        ticketsOpened: (i % 5) + 1,
+        miles: 20 + (i * 11) % 180,
+        date: dateStr(-(i % 14)),
+      }),
+    },
+    {
+      slug: "overall-status",
+      title: "Overall Status",
+      description: "View system-wide status and health metrics.",
+      fields: [
+        { key: "queue", label: "Queue", filterable: true },
+        { key: "count", label: "Count", type: "number" },
+        { key: "owner", label: "Owner", type: "select", options: TECHS, editable: true },
+        { key: "status", label: "Status", type: "select", options: ["Green","Yellow","Red"], editable: true, filterable: true },
+      ],
+      count: 14,
+      seed: (i) => ({
+        queue: ["Dispatch","Diagnostics","Parts Pending","Customer Contact","Invoicing","Returns","Warranty","Escalations"][i % 8] + " #" + (i + 1),
+        count: 3 + (i * 5) % 40,
+        owner: pick(TECHS, i),
+        status: pick(["Green","Yellow","Red"], i),
+      }),
     },
   ],
 };
@@ -1812,8 +1849,172 @@ const adminMod: ModuleDef = {
   ],
 };
 
+// Branch Managers / Technicians already have each of these five pages
+// individually, scattered across Dashboard/Report/HR — this module is
+// purely a convenience shortcut gathering copies of them in one place, not
+// a new feature. Each entry below reuses the SAME `custom` dispatch value
+// as its original tile (m.$module.$submodule.tsx dispatches by `custom`
+// alone, not by which module/submodule slug pair it's reached through —
+// same "one page, two tiles" pattern csr-daily-report/report-csr-daily
+// already use), so there's exactly one real page/component behind each,
+// just reachable from a second spot too.
+const branchTechMod: ModuleDef = {
+  slug: "branch-technician",
+  label: "Branch/Technician",
+  tagline: "Shortcuts branch managers & technicians use daily",
+  accent: "#14b8a6",
+  submodules: [
+    {
+      slug: "candidate-reviews",
+      title: "Candidate Reviews",
+      description: "Candidates forwarded to you for review — view their CV and leave your interviewer notes.",
+      custom: "candidate-reviews" as any,
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
+    {
+      slug: "attendance-monitoring",
+      title: "Attendance Monitoring Dashboard",
+      description: "Track daily attendance, late arrivals, and absences.",
+      custom: "attendance-monitoring" as any,
+      fields: [],
+      seed: () => ({}),
+    },
+    {
+      slug: "employee-self-service",
+      title: "Employee Self-Service Portal",
+      description: "View timecards and request time off.",
+      custom: "employee-self-service" as any,
+      fields: [],
+      seed: () => ({}),
+    },
+    {
+      slug: "report-branch-daily",
+      title: "Branch Daily Report",
+      description: "Branch notes, urgency, pending tickets & tech counts, by Senior Branch Manager.",
+      custom: "report-branch-daily" as any,
+      fields: [],
+      seed: () => ({}),
+    },
+    {
+      slug: "report-technician-performance",
+      title: "Technician Performance Report",
+      description: "Completed tickets, redo rate, tickets/hour, and miles/ticket per technician, with automated alerts.",
+      custom: "report-technician-performance" as any,
+      fields: [],
+      seed: () => ({}),
+    },
+  ],
+};
 
-export const MODULES: ModuleDef[] = [dashboardMod, csrMod, ticketsMod, partsMod, reportMod, claimsMod, accountingMod, hrMod, adminMod];
+// Consolidates Triage's 3 pages, which used to be scattered across
+// Dashboard and Report, into their own module. Triage Performance Report
+// (custom: "triage-performance-report") already had a real dispatcher
+// branch in m.$module.$submodule.tsx but NO tile anywhere pointing to it —
+// unreachable from the UI until now.
+const triageMod: ModuleDef = {
+  slug: "triage",
+  label: "Triage",
+  tagline: "Technical Support triage queue & performance",
+  accent: "#d946ef",
+  submodules: [
+    {
+      slug: "triage-dashboard",
+      title: "Triage Dashboard",
+      description: "Same daily activity breakdown as the Daily Activity Report, scoped to Technical Support and Technical Support Managers only.",
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
+    {
+      slug: "report-triage-daily",
+      title: "Triage Daily Report",
+      description: "Triage completed, remaining, staff and agent performance.",
+      custom: "report-triage-daily" as any,
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
+    {
+      slug: "triage-performance-report",
+      title: "Triage Performance Report",
+      description: "Triage staff performance metrics.",
+      custom: "triage-performance-report" as any,
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
+    // Same shortcut-copy pattern as CSR/Accounting/HR/Logistics/Claims'
+    // own tiles above — reuses Dashboard's exact page (dispatch is by
+    // `custom` alone).
+    {
+      slug: "attendance-monitoring",
+      title: "Attendance Monitoring Dashboard",
+      description: "Track daily attendance, late arrivals, and absences.",
+      custom: "attendance-monitoring" as any,
+      fields: [],
+      seed: () => ({}),
+    },
+    {
+      slug: "employee-self-service",
+      title: "Employee Self-Service Portal",
+      description: "View timecards and request time off.",
+      custom: "employee-self-service" as any,
+      fields: [],
+      seed: () => ({}),
+    },
+  ],
+};
+
+// No longer an empty shell — Operations Dashboard moved here from
+// Dashboard, Operations Daily Report copied in from Report (original stays
+// there too), plus the same Attendance Monitoring/Employee Self-Service
+// shortcut copies every other module carries.
+const bizOpsMod: ModuleDef = {
+  slug: "bizops",
+  label: "BizOps",
+  tagline: "Business operations",
+  accent: "#94a3b8",
+  submodules: [
+    {
+      slug: "operations-dashboard",
+      title: "Operations Dashboard",
+      description: "Company-wide ticket overview — region breakdown, status funnel, and BizOps staff.",
+      custom: "operations-dashboard" as any,
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
+    {
+      slug: "report-operations-daily",
+      title: "Operations Daily Report",
+      description: "Operations staff tasks, mishandled tickets, and Eastern/Western/Central TX branch metrics.",
+      custom: "report-operations-daily" as any,
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
+    {
+      slug: "attendance-monitoring",
+      title: "Attendance Monitoring Dashboard",
+      description: "Track daily attendance, late arrivals, and absences.",
+      custom: "attendance-monitoring" as any,
+      fields: [],
+      seed: () => ({}),
+    },
+    {
+      slug: "employee-self-service",
+      title: "Employee Self-Service Portal",
+      description: "View timecards and request time off.",
+      custom: "employee-self-service" as any,
+      fields: [],
+      seed: () => ({}),
+    },
+  ],
+};
+
+export const MODULES: ModuleDef[] = [dashboardMod, csrMod, ticketsMod, partsMod, reportMod, claimsMod, accountingMod, hrMod, branchTechMod, triageMod, bizOpsMod, adminMod];
 
 export function getModule(slug: string) {
   return MODULES.find((m) => m.slug === slug);

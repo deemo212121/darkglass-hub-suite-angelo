@@ -632,11 +632,14 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
   // Notifications that link here (e.g. a Mileage payroll-hold alert) append
   // ?ticketNo=<no> so the linked ticket shows up immediately instead of
   // landing on the unfiltered full list — same convention as Part
-  // History's own ?uniqueId= deep link.
+  // History's own ?uniqueId= deep link. The Tickets → Operation page's
+  // status counters link here the same way via ?status=<exact status>.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const ticketNo = params.get("ticketNo");
     if (ticketNo) setSearchQuery(ticketNo);
+    const status = params.get("status");
+    if (status) setRepairStatusFilter(status);
   }, []);
 
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());

@@ -6,7 +6,7 @@ import { MapProviderToggle } from "@/components/MapProviderToggle";
 import { useAuth } from "@/lib/auth";
 import { getModule, type ModuleDef, type SubModuleDef } from "@/lib/modules";
 import { hasDashboardAccess } from "@/lib/dashboardAccess";
-import { getModuleRoleGate } from "@/lib/moduleAccess";
+import { getModuleRoleGate, MODULE_LEVEL_GATE_SLUG } from "@/lib/moduleAccess";
 import { isModuleAllowed, isModuleAllowedForTrainee, isModuleAllowedForFrozen } from "@/lib/roleLabels";
 import { canAccessSubmodule } from "@/lib/submoduleAccess";
 import { getMyRoles, getCompanyUsers } from "@/lib/supabase/users";
@@ -381,26 +381,19 @@ function ModuleIndex() {
   // Accessibility Management's Module Access by Role grid — otherwise
   // that override could never actually be reached, since the tile grid
   // page itself would refuse to render before the per-submodule filtering
-  // below even runs.
+  // below even runs. This escape hatch only makes sense for the *implicit*
+  // CSR restriction though — if an admin has explicitly set the module's
+  // own "Whole Module" gate (MODULE_LEVEL_GATE_SLUG), that's a deliberate
+  // front-door decision and must be authoritative, so a leftover individual
+  // submodule grant can't quietly bypass it.
   const hasSubmoduleOverrideForRole = m.submodules.some((s: SubModuleDef) => {
     const allowed = getModuleRoleGate(m.slug, s.slug);
     return allowed && hasDashboardAccess(allowed, role, extraRoles);
   });
+  const hasExplicitModuleLevelOverride = getModuleRoleGate(m.slug, MODULE_LEVEL_GATE_SLUG) !== null;
 
-  if (!isModuleAllowed(role, m.slug, extraRoles) && !hasSubmoduleOverrideForRole) {
-    return (
-      <>
-        <AppHeader />
-        <main className="max-w-[1400px] mx-auto px-6 py-8 page-fade-in">
-          <div className="panel text-center max-w-md mx-auto">
-            <h1 className="text-xl font-semibold">Access restricted</h1>
-            <p className="text-sm text-muted-foreground mt-2">Your role doesn't have access to the {m.label} module.</p>
-            <Link to="/home" className="btn btn-primary mt-4 inline-flex">Back home</Link>
-          </div>
-        </main>
-        <Footer />
-      </>
-    );
+  if (!isModuleAllowed(role, m.slug, extraRoles) && !(hasExplicitModuleLevelOverride ? false : hasSubmoduleOverrideForRole)) {
+    return <Navigate to="/home" replace />;
   }
 
   // Trainees only see Employee Self-Service — checked independently of the
@@ -409,19 +402,7 @@ function ModuleIndex() {
   // still renders here so the per-submodule filter further down can show
   // just that one tile; every other module is blocked outright.
   if (!isModuleAllowedForTrainee(isTrainee, m.slug)) {
-    return (
-      <>
-        <AppHeader />
-        <main className="max-w-[1400px] mx-auto px-6 py-8 page-fade-in">
-          <div className="panel text-center max-w-md mx-auto">
-            <h1 className="text-xl font-semibold">Access restricted</h1>
-            <p className="text-sm text-muted-foreground mt-2">You're currently marked as a Trainee — only the Employee Self-Service dashboard is available until this changes.</p>
-            <Link to="/home" className="btn btn-primary mt-4 inline-flex">Back home</Link>
-          </div>
-        </main>
-        <Footer />
-      </>
-    );
+    return <Navigate to="/home" replace />;
   }
 
   // Frozen accounts only see Messages (Admin module, internal-message-support

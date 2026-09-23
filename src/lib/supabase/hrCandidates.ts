@@ -48,7 +48,7 @@ export interface Candidate {
   interviewTimezone: "CST" | "EST" | null;  // which zone interviewTime is in — same two zones profiles.schedule_timezone uses
   trainingStartDate: string | null;  // required when status = "training"
   trainingEndDate: string | null;    // optional, settable alongside trainingStartDate
-  trainingTimeIn: string | null;     // "HH:MM" clock-in time for that trainee's training day — see migration 0300
+  trainingTimeIn: string | null;     // "HH:MM" clock-in time for that trainee's training day — see migration 0302
   trainingTimeOut: string | null;    // "HH:MM" clock-out time for that trainee's training day
   withdrawnDate: string | null;      // required when status = "withdrawn"
   startDate: string | null;          // required when status = "hired" — see migration 0261
@@ -641,7 +641,7 @@ export async function updateCandidateTrainingDates(
   if (error) throw new Error(error.message);
 }
 
-/** Sets the clock Time In / Time Out for a trainee's training day — distinct from trainingStartDate/trainingEndDate above, which are the DATES the training window opened/closed. See migration 0300. */
+/** Sets the clock Time In / Time Out for a trainee's training day — distinct from trainingStartDate/trainingEndDate above, which are the DATES the training window opened/closed. See migration 0302. */
 export async function updateCandidateTrainingTimes(
   id: string,
   fields: Partial<{ trainingTimeIn: string | null; trainingTimeOut: string | null }>

@@ -33,7 +33,7 @@ import { notifyHrRoleUsers } from "@/lib/supabase/hrRoleNotify";
 import { useSignaturePad } from "@/hooks/useSignaturePad";
 import { useResponsivePdfScale } from "@/hooks/useResponsivePdfScale";
 import { SignaturePadControls } from "@/components/SignaturePad";
-import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
+import pdfWorkerUrl from "pdfjs-dist/legacy/build/pdf.worker.min.mjs?url";
 
 interface Props {
   docId: string;
@@ -170,7 +170,7 @@ export function FillW8benPage({ docId }: Props) {
       setPageLoading(true);
       setPageError(null);
       try {
-        const [pdfjsLib, bytes] = await Promise.all([import("pdfjs-dist"), loadBlankW8benBytes()]);
+        const [pdfjsLib, bytes] = await Promise.all([import("pdfjs-dist/legacy/build/pdf.mjs"), loadBlankW8benBytes()]);
         pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
         const pdf = await pdfjsLib.getDocument({ data: bytes }).promise;
         const page = await pdf.getPage(1);
@@ -321,7 +321,26 @@ export function FillW8benPage({ docId }: Props) {
 
             <div ref={containerRef} className="overflow-x-auto flex justify-center bg-white/5 rounded-md p-4">
               <div className="relative bg-white shadow-lg" style={{ width: PAGE_WIDTH * scale, height: PAGE_HEIGHT * scale }}>
-                <canvas ref={bgCanvasRef} className="absolute inset-0" />
+                {/* `absolute inset-0` alone does NOT reliably stretch a
+                    <canvas> down to its container: once the canvas's own
+                    intrinsic pixel buffer (canvas.width/height, set to
+                    PAGE_WIDTH/HEIGHT * PDF_RENDER_SCALE * devicePixelRatio
+                    in the render effect below) is LARGER than the
+                    container — true on any devicePixelRatio > 1, i.e. most
+                    Windows laptops at their default 125–150% display
+                    scaling — Chromium lays the canvas out at its own
+                    intrinsic size instead of the inset-constrained one,
+                    confirmed empirically (getBoundingClientRect showed the
+                    full intrinsic 1193×1544 instead of the intended
+                    795×1030 at devicePixelRatio 1.5). The overlay inputs
+                    below correctly track the smaller container via `scale`
+                    regardless, so the two silently drifted apart — every
+                    field read as uniformly shifted down/right relative to
+                    the (too-large, cropped-looking) background. Setting
+                    the CSS size explicitly here — reactive to `scale`,
+                    independent of the canvas's own pixel buffer — is what
+                    actually pins the display size to the container. */}
+                <canvas ref={bgCanvasRef} className="absolute inset-0" style={{ width: PAGE_WIDTH * scale, height: PAGE_HEIGHT * scale }} />
                 {pageLoading && (
                   <div className="absolute inset-0 flex items-center justify-center bg-white/70 text-sm text-muted-foreground gap-2">
                     <Loader2 className="h-4 w-4 animate-spin" /> Loading formâ¦

@@ -34,6 +34,7 @@ const BLANK_FORM: SsnCardFormData = {
   employeeId: "",
   employeeName: "",
   ssn: "",
+  livedInNewYork: "",
   cardPhotoUrls: [],
   dateSigned: "",
   signatureDataUrl: "",
@@ -113,6 +114,7 @@ export function FillSsnCardPage({ docId }: Props) {
   const validate = (): string | null => {
     if (!form.employeeName.trim()) return "Enter your full name.";
     if (!form.ssn.trim()) return "Enter your Social Security Number.";
+    if (!form.livedInNewYork) return "Answer whether you've lived in New York in the past 7 years.";
     if (cardFiles.length === 0) return "Upload a photo of your Social Security Card.";
     if (!sigPad.hasContent()) return "Please add your signature.";
     return null;
@@ -253,6 +255,14 @@ export function FillSsnCardPage({ docId }: Props) {
                 <div>
                   <label className={labelCls}>Social Security Number*</label>
                   <input className={inputCls} value={form.ssn} onChange={(e) => updateField("ssn", e.target.value)} />
+                </div>
+                <div>
+                  <label className={labelCls}>Have you lived in New York in the past 7 years?*</label>
+                  <select className={inputCls} value={form.livedInNewYork} onChange={(e) => updateField("livedInNewYork", e.target.value as SsnCardFormData["livedInNewYork"])}>
+                    <option value="">Please Select</option>
+                    <option value="Yes">Yes</option>
+                    <option value="No">No</option>
+                  </select>
                 </div>
                 <div>
                   <label className={labelCls}>SSN Card Photo*</label>

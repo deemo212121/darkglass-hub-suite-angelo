@@ -6,6 +6,8 @@
  * database. The Firestore console — and any UI that needs a "User Type"
  * label — uses the values from this map instead of the raw code.
  */
+import { getModuleRoleGate, MODULE_LEVEL_GATE_SLUG } from "./moduleAccess";
+
 export const ROLE_LABELS: Record<string, string> = {
   SUPERSUPERADMIN: "Super Super Admin",
   SUPERADMIN: "Super Admin",
@@ -317,8 +319,24 @@ export function isCsrRestrictedRole(role: string | null | undefined, extraRoles?
   return everyHeldRoleIn(CSR_RESTRICTED_ROLES, role, extraRoles);
 }
 
-/** Whether a CSR department role may open this module at all. Non-CSR roles always pass. */
+/**
+ * Whether this role may open the module AT ALL — the module tile/route
+ * itself, before ever getting to any individual submodule inside it.
+ * Checks the admin-configurable module-level gate first (Accessibility
+ * Management's "Whole Module" box, module_role_gate_overrides keyed under
+ * MODULE_LEVEL_GATE_SLUG — no override recorded there means open to
+ * everyone, same permissive default every other gate in this system uses),
+ * then falls back to the CSR department's own hardcoded restriction.
+ * SUPERADMIN always passes regardless of either check.
+ */
 export function isModuleAllowed(role: string | null | undefined, moduleSlug: string, extraRoles?: string[] | null): boolean {
+  if (normalizeRole(role) !== "SUPERADMIN") {
+    const moduleLevelOverride = getModuleRoleGate(moduleSlug, MODULE_LEVEL_GATE_SLUG);
+    if (moduleLevelOverride) {
+      const normalizedOverride = moduleLevelOverride.map((r) => normalizeRole(r));
+      if (!allHeldRoles(role, extraRoles).some((r) => normalizedOverride.includes(r))) return false;
+    }
+  }
   if (!isCsrRestrictedRole(role, extraRoles)) return true;
   return CSR_ALLOWED_MODULES.has(moduleSlug);
 }

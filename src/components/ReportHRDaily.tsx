@@ -81,9 +81,10 @@ import {
   type OnboardingDocumentColumn,
   type OnboardingGroupKey,
 } from "@/lib/supabase/onboardingDocumentColumns";
-import { uploadCoeCertificate, uploadWarningForm, uploadPromotionForm, uploadActionPlanForm, uploadTerminationForm, uploadW8benForm, uploadW4Form, uploadW4RForm, uploadI9Form, uploadWageAckForm, uploadCarIqAgreementForm, uploadVehicleAgreementForm, uploadEmployeeConfidentialityForm, uploadMealRestBreakForm, uploadPtoAckForm, uploadPartsResponsibilityForm, uploadMileageFuelForm, uploadLocationConsentForm, uploadDamageForm, uploadContractorDataForm, uploadDirectDepositForm, uploadSubstanceScreeningForm, uploadFlashTechnicianTravelForm, uploadContractorAddendumForm, uploadMasterW2AgreementForm, uploadMasterW2OfficeAgreementForm, uploadMasterPhContractorAgreementForm, uploadMasterW2ExecutiveAgreementForm, uploadVehicleUseAgreementForm, uploadNdaForm, uploadSsnCardForm, uploadDriversLicenseForm, uploadValidIdForm, uploadSignableDocumentSignature, refreshStorageAuthToken } from "@/lib/firebase/storage";
+import { uploadCoeCertificate, uploadWarningForm, uploadPromotionForm, uploadActionPlanForm, uploadTerminationForm, uploadW8benForm, uploadW4Form, uploadW4RForm, uploadI9Form, uploadWageAckForm, uploadCarIqAgreementForm, uploadVehicleAgreementForm, uploadEmployeeConfidentialityForm, uploadMealRestBreakForm, uploadPtoAckForm, uploadPartsResponsibilityForm, uploadMileageFuelForm, uploadLocationConsentForm, uploadDamageForm, uploadContractorDataForm, uploadDirectDepositForm, uploadSubstanceScreeningForm, uploadFlashTechnicianTravelForm, uploadContractorAddendumForm, uploadMasterW2AgreementForm, uploadMasterW2OfficeAgreementForm, uploadMasterPhContractorAgreementForm, uploadMasterW2ExecutiveAgreementForm, uploadVehicleUseAgreementForm, uploadNdaForm, uploadSsnCardForm, uploadDriversLicenseForm, uploadValidIdForm, uploadSignableDocumentSignature, uploadSignableDocumentAttachment, refreshStorageAuthToken } from "@/lib/firebase/storage";
 import { regenerateSimpleSignableDocumentPdf, regenerateMasterAgreementPdf } from "@/lib/regenerateSignableDocumentPdf";
-import { captureHtmlToPdfBlob, captureHtmlPagesToPdfBlob, resolveSignaturesForCapture, loadAssetDataUrl as loadImageDataUrl } from "@/lib/pdfCapture";
+import { captureHtmlToPdfBlob, captureHtmlPagesToPdfBlob, resolveSignaturesForCapture, loadAssetDataUrl as loadImageDataUrl, fileToDataUrl } from "@/lib/pdfCapture";
+import { compressImage } from "@/lib/imageCompression";
 import { downloadSignableDocumentPdf } from "@/lib/downloadSignableDocumentPdf";
 import { repairMultiSignerPdfs, type RepairResult } from "@/lib/repairMultiSignerSignatures";
 import { useSortableSearchTable } from "@/hooks/useSortableSearchTable";
@@ -150,7 +151,7 @@ import { fillVehicleAgreementPdf } from "@/lib/vehicleAgreementPdfFill";
 import type { EmployeeConfidentialityFormData } from "@/lib/employeeConfidentialityFormTemplate";
 import { fillEmployeeConfidentialityPdf } from "@/lib/employeeConfidentialityPdfFill";
 import { buildSsnCardFormBodyMarkup, ssnCardFormStyles, type SsnCardFormData } from "@/lib/ssnCardFormTemplate";
-import { buildDriversLicenseFormBodyMarkup, driversLicenseFormStyles, type DriversLicenseFormData } from "@/lib/driversLicenseFormTemplate";
+import { buildDriversLicenseFormBodyMarkup, driversLicenseFormStyles, DRIVERS_LICENSE_STATES, type DriversLicenseFormData } from "@/lib/driversLicenseFormTemplate";
 import { buildValidIdFormBodyMarkup, validIdFormStyles, type ValidIdFormData } from "@/lib/validIdFormTemplate";
 import { MEAL_REST_BREAK_BRANCHES, type MealRestBreakFormData } from "@/lib/mealRestBreakFormTemplate";
 import { fillMealRestBreakPdf } from "@/lib/mealRestBreakPdfFill";
@@ -1071,6 +1072,18 @@ function FilterableTh<C extends string>({
       )}
     </th>
   );
+}
+
+/** Same compress-before-upload wrapper every Fill*Page.tsx ID-photo upload already uses (e.g. FillSsnCardPage.tsx) — shared here for the "File on Behalf" HR uploads (SSN Card/Driver's License), which go through the same uploadSignableDocumentAttachment path. Falls back to the original file rather than failing the whole submission over a compression error. */
+async function compressIdPhotoForUpload(file: File): Promise<File> {
+  try {
+    const result = await compressImage(file);
+    const ext = result.mimeType === "image/webp" ? "webp" : result.mimeType === "image/png" ? "png" : "jpg";
+    return new File([result.blob], file.name.replace(/\.[^.]+$/, `.${ext}`), { type: result.mimeType });
+  } catch (err) {
+    console.error("[hr-file-id] photo compression failed, uploading original:", err);
+    return file;
+  }
 }
 
 export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
@@ -7636,6 +7649,27 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     [employees, ssnCardRecipientSearch]
   );
 
+  // "File on Behalf" — HR already has the technician's SSN card (emailed,
+  // handed over in person, etc.) and would rather enter it directly than
+  // send a fill-link and wait. Creates the document and signs it in one
+  // step, same PDF pipeline the employee's own Fill page uses, just with
+  // no signature pad — filedByHr/filedByHrName in formData tell
+  // buildSsnCardFormBodyMarkup to show who filed it instead of a forged
+  // signature (see ssnCardFormTemplate.ts).
+  const [ssnCardFileForRecipientId, setSsnCardFileForRecipientId] = useState("");
+  const [ssnCardFileForRecipientSearch, setSsnCardFileForRecipientSearch] = useState("");
+  const [ssnCardFileForRecipientDropdownOpen, setSsnCardFileForRecipientDropdownOpen] = useState(false);
+  const [ssnCardFileForNumber, setSsnCardFileForNumber] = useState("");
+  const [ssnCardFileForLivedInNewYork, setSsnCardFileForLivedInNewYork] = useState<"" | "Yes" | "No">("");
+  const [ssnCardFileForPhotos, setSsnCardFileForPhotos] = useState<File[]>([]);
+  const [ssnCardFiling, setSsnCardFiling] = useState(false);
+  const [ssnCardFilingStep, setSsnCardFilingStep] = useState<string | null>(null);
+  const [ssnCardFilingError, setSsnCardFilingError] = useState<string | null>(null);
+  const filteredSsnCardFileForRecipients = useMemo(
+    () => employees.filter((e) => e.status === "active" && e.name.toLowerCase().includes(ssnCardFileForRecipientSearch.toLowerCase())),
+    [employees, ssnCardFileForRecipientSearch]
+  );
+
   const handleSendSsnCard = async () => {
     if (!ssnCardRecipientId || !uid) return;
     setSsnCardSending(true);
@@ -7747,6 +7781,96 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
 
+  const handleFileSsnCardForHr = async () => {
+    if (!ssnCardFileForRecipientId || !uid) return;
+    const recipient = employees.find((e) => e.id === ssnCardFileForRecipientId);
+    if (!recipient) { setSsnCardFilingError("Select a technician first."); return; }
+    if (!ssnCardFileForNumber.trim()) { setSsnCardFilingError("Enter the Social Security Number."); return; }
+    if (!ssnCardFileForLivedInNewYork) { setSsnCardFilingError("Answer whether the technician has lived in New York in the past 7 years."); return; }
+    if (ssnCardFileForPhotos.length === 0) { setSsnCardFilingError("Upload at least one photo of the card."); return; }
+
+    setSsnCardFiling(true);
+    setSsnCardFilingError(null);
+    let createdDocId: string | null = null;
+    try {
+      const alreadySent = await getExistingActiveDocumentTypes(recipient.id, ["ssn_card_form"]);
+      if (alreadySent.length > 0 && !window.confirm(`${recipient.name} already has an SSN Card on file. File another one anyway?`)) {
+        return;
+      }
+
+      setSsnCardFilingStep("Creating record…");
+      const doc = await createSignableDocument({
+        documentType: "ssn_card_form",
+        formData: { employeeId: recipient.id, employeeName: recipient.name } as unknown as Record<string, any>,
+        recipientId: recipient.id,
+        recipientSlot: "employee",
+        pdfUrl: "",
+      });
+      createdDocId = doc.id;
+      const companyId = doc.companyId;
+
+      setSsnCardFilingStep("Preparing upload…");
+      await refreshStorageAuthToken();
+
+      setSsnCardFilingStep(`Uploading photo${ssnCardFileForPhotos.length > 1 ? "s" : ""}…`);
+      const compressedFiles = await Promise.all(ssnCardFileForPhotos.map(compressIdPhotoForUpload));
+      const cardPhotoUrls = await Promise.all(
+        compressedFiles.map((file, i) => uploadSignableDocumentAttachment(companyId, doc.id, "cardPhotoUrls", i, file))
+      );
+
+      const signedAt = new Date().toISOString();
+      const filedByHrName = displayName || "HR";
+      const finalData: SsnCardFormData = {
+        employeeId: recipient.id,
+        employeeName: recipient.name,
+        ssn: ssnCardFileForNumber.trim(),
+        livedInNewYork: ssnCardFileForLivedInNewYork,
+        cardPhotoUrls,
+        dateSigned: signedAt,
+        signatureDataUrl: "",
+        filedByHr: true,
+        filedByHrName,
+      };
+      // No real signature — HR typed this in, the technician never drew
+      // anything. url: "" is safe here specifically because the template
+      // checks filedByHr before ever rendering a <img src>; see this
+      // page's own header comment on resolveSignaturesForCapture handling
+      // a blank url gracefully too, for a later Regenerate PDF.
+      const entry = { name: `Filed by HR — ${filedByHrName}`, url: "", signedAt };
+
+      setSsnCardFilingStep("Generating document…");
+      const localCardPhotoUrls = await Promise.all(compressedFiles.map(fileToDataUrl));
+      const captureData: SsnCardFormData = { ...finalData, cardPhotoUrls: localCardPhotoUrls };
+      const logo = await loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png"));
+      const pdfBlob = await captureHtmlToPdfBlob(buildSsnCardFormBodyMarkup(captureData, logo, entry), ssnCardFormStyles);
+      const pdfUrl = await uploadSsnCardForm(companyId, recipient.name, pdfBlob);
+
+      setSsnCardFilingStep("Saving…");
+      await signDocument(doc.id, "employee", entry, pdfUrl, finalData as unknown as Record<string, any>);
+
+      void logActivity({ action: "ssn_card_filed_by_hr", targetType: "employee", targetId: recipient.id, targetLabel: recipient.name });
+
+      setSsnCardFileForRecipientId("");
+      setSsnCardFileForRecipientSearch("");
+      setSsnCardFileForNumber("");
+      setSsnCardFileForLivedInNewYork("");
+      setSsnCardFileForPhotos([]);
+      await loadSentSsnCardForms();
+    } catch (err) {
+      // A row created but never signed would otherwise sit as a phantom
+      // "Awaiting Completion" the technician can't actually complete
+      // (there's no fill link for it) — clean it up rather than leave it
+      // stuck.
+      if (createdDocId) {
+        try { await deleteSignableDocument(createdDocId); } catch { /* best effort */ }
+      }
+      setSsnCardFilingError(err instanceof Error ? err.message : "Failed to file this SSN Card.");
+    } finally {
+      setSsnCardFiling(false);
+      setSsnCardFilingStep(null);
+    }
+  };
+
   const handleDeleteSsnCard = async (doc: SignableDocument) => {
     if (!window.confirm("Permanently delete this SSN Card request?")) return;
     setSsnCardActionBusyId(doc.id);
@@ -7826,6 +7950,24 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const filteredDriversLicenseRecipients = useMemo(
     () => employees.filter((e) => e.status === "active" && e.name.toLowerCase().includes(driversLicenseRecipientSearch.toLowerCase())),
     [employees, driversLicenseRecipientSearch]
+  );
+
+  // "File on Behalf" — same reasoning as SSN Card's own version above:
+  // HR already has the technician's license (emailed, handed over in
+  // person, etc.) and would rather enter it directly than send a
+  // fill-link and wait.
+  const [driversLicenseFileForRecipientId, setDriversLicenseFileForRecipientId] = useState("");
+  const [driversLicenseFileForRecipientSearch, setDriversLicenseFileForRecipientSearch] = useState("");
+  const [driversLicenseFileForRecipientDropdownOpen, setDriversLicenseFileForRecipientDropdownOpen] = useState(false);
+  const [driversLicenseFileForNumber, setDriversLicenseFileForNumber] = useState("");
+  const [driversLicenseFileForState, setDriversLicenseFileForState] = useState("");
+  const [driversLicenseFileForPhotos, setDriversLicenseFileForPhotos] = useState<File[]>([]);
+  const [driversLicenseFiling, setDriversLicenseFiling] = useState(false);
+  const [driversLicenseFilingStep, setDriversLicenseFilingStep] = useState<string | null>(null);
+  const [driversLicenseFilingError, setDriversLicenseFilingError] = useState<string | null>(null);
+  const filteredDriversLicenseFileForRecipients = useMemo(
+    () => employees.filter((e) => e.status === "active" && e.name.toLowerCase().includes(driversLicenseFileForRecipientSearch.toLowerCase())),
+    [employees, driversLicenseFileForRecipientSearch]
   );
 
   const handleSendDriversLicense = async () => {
@@ -7936,6 +8078,87 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       setDriversLicenseActionError(err instanceof Error ? err.message : "Failed to regenerate PDF.");
     } finally {
       setDriversLicenseActionBusyId(null);
+    }
+  };
+
+  const handleFileDriversLicenseForHr = async () => {
+    if (!driversLicenseFileForRecipientId || !uid) return;
+    const recipient = employees.find((e) => e.id === driversLicenseFileForRecipientId);
+    if (!recipient) { setDriversLicenseFilingError("Select a technician first."); return; }
+    if (!driversLicenseFileForNumber.trim()) { setDriversLicenseFilingError("Enter the license number."); return; }
+    if (!driversLicenseFileForState) { setDriversLicenseFilingError("Select the issuing state."); return; }
+    if (driversLicenseFileForPhotos.length === 0) { setDriversLicenseFilingError("Upload at least one photo of the license."); return; }
+
+    setDriversLicenseFiling(true);
+    setDriversLicenseFilingError(null);
+    let createdDocId: string | null = null;
+    try {
+      const alreadySent = await getExistingActiveDocumentTypes(recipient.id, ["drivers_license_form"]);
+      if (alreadySent.length > 0 && !window.confirm(`${recipient.name} already has a Driver's License on file. File another one anyway?`)) {
+        return;
+      }
+
+      setDriversLicenseFilingStep("Creating record…");
+      const doc = await createSignableDocument({
+        documentType: "drivers_license_form",
+        formData: { employeeId: recipient.id, employeeName: recipient.name } as unknown as Record<string, any>,
+        recipientId: recipient.id,
+        recipientSlot: "employee",
+        pdfUrl: "",
+      });
+      createdDocId = doc.id;
+      const companyId = doc.companyId;
+
+      setDriversLicenseFilingStep("Preparing upload…");
+      await refreshStorageAuthToken();
+
+      setDriversLicenseFilingStep(`Uploading photo${driversLicenseFileForPhotos.length > 1 ? "s" : ""}…`);
+      const compressedFiles = await Promise.all(driversLicenseFileForPhotos.map(compressIdPhotoForUpload));
+      const licensePhotoUrls = await Promise.all(
+        compressedFiles.map((file, i) => uploadSignableDocumentAttachment(companyId, doc.id, "licensePhotoUrls", i, file))
+      );
+
+      const signedAt = new Date().toISOString();
+      const filedByHrName = displayName || "HR";
+      const finalData: DriversLicenseFormData = {
+        employeeId: recipient.id,
+        employeeName: recipient.name,
+        licenseNumber: driversLicenseFileForNumber.trim(),
+        licenseState: driversLicenseFileForState,
+        licensePhotoUrls,
+        dateSigned: signedAt,
+        signatureDataUrl: "",
+        filedByHr: true,
+        filedByHrName,
+      };
+      const entry = { name: `Filed by HR — ${filedByHrName}`, url: "", signedAt };
+
+      setDriversLicenseFilingStep("Generating document…");
+      const localLicensePhotoUrls = await Promise.all(compressedFiles.map(fileToDataUrl));
+      const captureData: DriversLicenseFormData = { ...finalData, licensePhotoUrls: localLicensePhotoUrls };
+      const logo = await loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png"));
+      const pdfBlob = await captureHtmlToPdfBlob(buildDriversLicenseFormBodyMarkup(captureData, logo, entry), driversLicenseFormStyles);
+      const pdfUrl = await uploadDriversLicenseForm(companyId, recipient.name, pdfBlob);
+
+      setDriversLicenseFilingStep("Saving…");
+      await signDocument(doc.id, "employee", entry, pdfUrl, finalData as unknown as Record<string, any>);
+
+      void logActivity({ action: "drivers_license_filed_by_hr", targetType: "employee", targetId: recipient.id, targetLabel: recipient.name });
+
+      setDriversLicenseFileForRecipientId("");
+      setDriversLicenseFileForRecipientSearch("");
+      setDriversLicenseFileForNumber("");
+      setDriversLicenseFileForState("");
+      setDriversLicenseFileForPhotos([]);
+      await loadSentDriversLicenseForms();
+    } catch (err) {
+      if (createdDocId) {
+        try { await deleteSignableDocument(createdDocId); } catch { /* best effort */ }
+      }
+      setDriversLicenseFilingError(err instanceof Error ? err.message : "Failed to file this Driver's License.");
+    } finally {
+      setDriversLicenseFiling(false);
+      setDriversLicenseFilingStep(null);
     }
   };
 
@@ -12146,12 +12369,16 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     { type: "w4", label: "Form W-4" },
     { type: "i9", label: "Form I-9 (Employment Eligibility)" },
     { type: "direct_deposit", label: "Direct Deposit Authorization" },
+    { type: "ssn_card_form", label: "SSN Card" },
+    { type: "drivers_license_form", label: "Driver's License" },
   ];
   const NEW_OFFICE_BULK_FORM_TYPES: { type: SignableDocumentType; label: string }[] = [
     { type: "master_w2_office_agreement", label: "Master W-2 Office Agreement" },
     { type: "w4", label: "Form W-4" },
     { type: "i9", label: "Form I-9 (Employment Eligibility)" },
     { type: "direct_deposit", label: "Direct Deposit Authorization" },
+    { type: "ssn_card_form", label: "SSN Card" },
+    { type: "drivers_license_form", label: "Driver's License" },
   ];
   const NEW_PH_BULK_FORM_TYPES: { type: SignableDocumentType; label: string }[] = [
     { type: "master_ph_contractor_agreement", label: "Master PH Contractor Agreement" },
@@ -15263,6 +15490,18 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [forwardRecipientIds, setForwardRecipientIds] = useState<Set<string>>(new Set());
   const [forwardRecipientSearch, setForwardRecipientSearch] = useState("");
   const [forwardRecipientDropdownOpen, setForwardRecipientDropdownOpen] = useState(false);
+  // The Forward Candidate dialog itself scrolls (overflow-y-auto once its
+  // content outgrows max-h-[85vh]), which clips an ordinary absolutely-
+  // positioned dropdown to whatever's still visible instead of letting it
+  // float over the whole dialog — same fix as branchManagerCellPos above:
+  // portal to document.body, positioned from the input's own on-screen rect.
+  const forwardRecipientInputRef = useRef<HTMLInputElement | null>(null);
+  const [forwardRecipientPos, setForwardRecipientPos] = useState<{ top: number; left: number; width: number } | null>(null);
+  const openForwardRecipientDropdown = () => {
+    const rect = forwardRecipientInputRef.current?.getBoundingClientRect();
+    if (rect) setForwardRecipientPos({ top: rect.bottom + 4, left: rect.left, width: rect.width });
+    setForwardRecipientDropdownOpen(true);
+  };
   const [forwardSending, setForwardSending] = useState(false);
   const forwardRecipients = useMemo(
     () =>
@@ -16867,19 +17106,27 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     { key: "newW4", label: "Form W-4", count: 0, icon: Landmark },
     { key: "newI9", label: "Form I-9 (Employment Eligibility)", count: sentI9AwaitingSection2CountNew, icon: FileCheck },
     { key: "newDirectDeposit", label: "Direct Deposit Authorization", count: 0, icon: FileCheck },
+    // Same standalone-identity-doc tabs automatedFormsTechnicianTabs already
+    // has, reused as-is (no "new"-prefixed pair — same treatment "validId"
+    // already gets in newAutomationFormsPhTabs below) — the Staff Form
+    // Checklist's own NEW_TECHNICIAN_FORM_TYPES tier already expects both.
+    { key: "ssnCard", label: "SSN Card", count: 0, icon: FileCheck },
+    { key: "driversLicense", label: "Driver's License", count: 0, icon: FileCheck },
   ] as const;
 
   // "New Office Forms (US)" — the office/logistics counterpart to New
   // Technician Forms above: Master W-2 Office Agreement is its own document
   // (different content — see masterW2OfficeAgreementFormTemplate.ts), while
-  // Form W-4/I-9/Direct Deposit are the exact same shared tab keys reused
-  // from New Technician Forms (there's only one W-4/I-9/Direct Deposit flow
-  // regardless of which column links to it).
+  // Form W-4/I-9/Direct Deposit/SSN Card/Driver's License are the exact
+  // same shared tab keys reused from New Technician Forms (there's only one
+  // flow for each regardless of which column links to it).
   const newAutomationFormsOfficeTabs = [
     { key: "masterW2OfficeAgreement", label: "Master W-2 Office Agreement", count: sentMasterW2OfficeAgreementAwaitingEmployerCount, icon: FileCheck },
     { key: "newW4", label: "Form W-4", count: 0, icon: Landmark },
     { key: "newI9", label: "Form I-9 (Employment Eligibility)", count: sentI9AwaitingSection2CountNew, icon: FileCheck },
     { key: "newDirectDeposit", label: "Direct Deposit Authorization", count: 0, icon: FileCheck },
+    { key: "ssnCard", label: "SSN Card", count: 0, icon: FileCheck },
+    { key: "driversLicense", label: "Driver's License", count: 0, icon: FileCheck },
   ] as const;
 
   // "PH Staff" — the Philippines-contractor counterpart to New Technician/
@@ -25462,6 +25709,74 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         </div>
       </div>
 
+      <div className="panel p-0 overflow-visible mt-4 relative z-10">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">File on Behalf</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Already have their SSN and a photo of the card (emailed, handed to you in person)? Enter it directly here instead of sending a link — it's saved as complete right away, with no employee signature collected.</p>
+        </div>
+        <div className="p-4 flex flex-col gap-3 max-w-sm">
+          <div className="flex flex-col gap-1 relative">
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Technician</label>
+            <input
+              type="text"
+              value={ssnCardFileForRecipientSearch}
+              onChange={(e) => { setSsnCardFileForRecipientSearch(e.target.value); setSsnCardFileForRecipientId(""); setSsnCardFileForRecipientDropdownOpen(true); }}
+              onFocus={() => setSsnCardFileForRecipientDropdownOpen(true)}
+              onBlur={() => setTimeout(() => setSsnCardFileForRecipientDropdownOpen(false), 150)}
+              placeholder="Search a teammate…"
+              className="glass-input text-sm py-1.5 px-3 rounded-md"
+            />
+            {ssnCardFileForRecipientDropdownOpen && (
+              <div className="absolute z-50 top-full mt-1 w-full max-h-96 overflow-y-auto rounded-md border border-white/15 bg-slate-900 shadow-2xl">
+                {filteredSsnCardFileForRecipients.length === 0 ? (
+                  <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+                ) : (
+                  filteredSsnCardFileForRecipients.map((e) => (
+                    <button
+                      key={e.id}
+                      type="button"
+                      onMouseDown={(ev) => ev.preventDefault()}
+                      onClick={() => { setSsnCardFileForRecipientId(e.id); setSsnCardFileForRecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`); setSsnCardFileForRecipientDropdownOpen(false); }}
+                      className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${ssnCardFileForRecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                    >
+                      {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Social Security Number</label>
+            <input type="text" value={ssnCardFileForNumber} onChange={(e) => setSsnCardFileForNumber(e.target.value)} placeholder="XXX-XX-XXXX" className="glass-input text-sm py-1.5 px-3 rounded-md" />
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Have you lived in New York in the past 7 years?</label>
+            <select value={ssnCardFileForLivedInNewYork} onChange={(e) => setSsnCardFileForLivedInNewYork(e.target.value as "" | "Yes" | "No")} className="glass-input text-sm py-1.5 px-3 rounded-md">
+              <option value="">Please Select</option>
+              <option value="Yes">Yes</option>
+              <option value="No">No</option>
+            </select>
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Card Photo</label>
+            <label className="glass-input text-sm py-1.5 px-3 rounded-md flex items-center gap-2 cursor-pointer text-muted-foreground">
+              <Paperclip className="h-3.5 w-3.5 shrink-0" />
+              <span className="truncate">{ssnCardFileForPhotos.length > 0 ? `${ssnCardFileForPhotos.length} photo${ssnCardFileForPhotos.length > 1 ? "s" : ""} selected` : "Upload photo(s)…"}</span>
+              <input type="file" accept="image/*" multiple className="hidden" onChange={(e) => setSsnCardFileForPhotos(Array.from(e.target.files ?? []))} />
+            </label>
+          </div>
+
+          {ssnCardFilingError && <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{ssnCardFilingError}</p>}
+          <button onClick={() => void handleFileSsnCardForHr()} disabled={!ssnCardFileForRecipientId || ssnCardFiling} className="btn text-sm px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-50 w-fit">
+            {ssnCardFiling ? (ssnCardFilingStep || "Filing…") : "File This SSN Card"}
+          </button>
+        </div>
+      </div>
+
       <div className="panel p-0 overflow-hidden mt-4">
         <div className="px-4 py-4 border-b border-white/10">
           <h2 className="font-semibold text-sm">Sent SSN Card Forms</h2>
@@ -25654,6 +25969,73 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           {driversLicenseSendError && <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{driversLicenseSendError}</p>}
           <button onClick={handleSendDriversLicense} disabled={!driversLicenseRecipientId || driversLicenseSending} className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 w-fit">
             {driversLicenseSending ? "Sending…" : "Send Request"}
+          </button>
+        </div>
+      </div>
+
+      <div className="panel p-0 overflow-visible mt-4 relative z-10">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">File on Behalf</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Already have their license number/state and a photo (emailed, handed to you in person)? Enter it directly here instead of sending a link — it's saved as complete right away, with no employee signature collected.</p>
+        </div>
+        <div className="p-4 flex flex-col gap-3 max-w-sm">
+          <div className="flex flex-col gap-1 relative">
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Technician</label>
+            <input
+              type="text"
+              value={driversLicenseFileForRecipientSearch}
+              onChange={(e) => { setDriversLicenseFileForRecipientSearch(e.target.value); setDriversLicenseFileForRecipientId(""); setDriversLicenseFileForRecipientDropdownOpen(true); }}
+              onFocus={() => setDriversLicenseFileForRecipientDropdownOpen(true)}
+              onBlur={() => setTimeout(() => setDriversLicenseFileForRecipientDropdownOpen(false), 150)}
+              placeholder="Search a teammate…"
+              className="glass-input text-sm py-1.5 px-3 rounded-md"
+            />
+            {driversLicenseFileForRecipientDropdownOpen && (
+              <div className="absolute z-50 top-full mt-1 w-full max-h-96 overflow-y-auto rounded-md border border-white/15 bg-slate-900 shadow-2xl">
+                {filteredDriversLicenseFileForRecipients.length === 0 ? (
+                  <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+                ) : (
+                  filteredDriversLicenseFileForRecipients.map((e) => (
+                    <button
+                      key={e.id}
+                      type="button"
+                      onMouseDown={(ev) => ev.preventDefault()}
+                      onClick={() => { setDriversLicenseFileForRecipientId(e.id); setDriversLicenseFileForRecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`); setDriversLicenseFileForRecipientDropdownOpen(false); }}
+                      className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${driversLicenseFileForRecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                    >
+                      {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Driver's License Number</label>
+            <input type="text" value={driversLicenseFileForNumber} onChange={(e) => setDriversLicenseFileForNumber(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">State Issued</label>
+            <select value={driversLicenseFileForState} onChange={(e) => setDriversLicenseFileForState(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md">
+              <option value="">Select a state…</option>
+              {DRIVERS_LICENSE_STATES.map((s) => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">License Photo (Front / Back)</label>
+            <label className="glass-input text-sm py-1.5 px-3 rounded-md flex items-center gap-2 cursor-pointer text-muted-foreground">
+              <Paperclip className="h-3.5 w-3.5 shrink-0" />
+              <span className="truncate">{driversLicenseFileForPhotos.length > 0 ? `${driversLicenseFileForPhotos.length} photo${driversLicenseFileForPhotos.length > 1 ? "s" : ""} selected` : "Upload photo(s)…"}</span>
+              <input type="file" accept="image/*" multiple className="hidden" onChange={(e) => setDriversLicenseFileForPhotos(Array.from(e.target.files ?? []))} />
+            </label>
+          </div>
+
+          {driversLicenseFilingError && <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{driversLicenseFilingError}</p>}
+          <button onClick={() => void handleFileDriversLicenseForHr()} disabled={!driversLicenseFileForRecipientId || driversLicenseFiling} className="btn text-sm px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-50 w-fit">
+            {driversLicenseFiling ? (driversLicenseFilingStep || "Filing…") : "File This Driver's License"}
           </button>
         </div>
       </div>
@@ -33647,15 +34029,26 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                 // before this filter existed never silently disappears.
                 const browsableTypes = new Set<SignableDocumentType>(STAFF_FORM_TIERS.flatMap((t) => t.formTypes));
                 formsDialog.selected.forEach((t) => browsableTypes.add(t));
+                // Only the already-selected forms show by default — per the
+                // user's explicit call, HR doesn't want the full unchecked
+                // "other forms" list cluttering the view. Typing in the
+                // filter box still searches the FULL browsable set (not
+                // just what's selected), so an unchecked form can still be
+                // found and added; clearing the search goes back to
+                // selected-only.
                 const types = Array.from(browsableTypes)
-                  .filter((type) => !q || SIGNABLE_DOCUMENT_REGISTRY[type].label.toLowerCase().includes(q))
+                  .filter((type) => (q ? SIGNABLE_DOCUMENT_REGISTRY[type].label.toLowerCase().includes(q) : formsDialog.selected.has(type)))
                   // Checked forms float to the top so HR can see at a glance
                   // what a tier button (or manual picking) actually selected,
                   // without scrolling the whole list to find them — stable
                   // sort keeps each group's original registry order.
                   .sort((a, b) => Number(formsDialog.selected.has(b)) - Number(formsDialog.selected.has(a)));
                 if (types.length === 0) {
-                  return <div className="px-3 py-4 text-sm text-muted-foreground text-center">No forms match "{formsDialogSearch}".</div>;
+                  return (
+                    <div className="px-3 py-4 text-sm text-muted-foreground text-center">
+                      {q ? `No forms match "${formsDialogSearch}".` : "No forms selected yet — search above to add one."}
+                    </div>
+                  );
                 }
                 const dialogCandidate = candidates.find((c) => c.id === formsDialog.candidateId);
                 const dialogProfileId = dialogCandidate?.email ? profileIdByEmail.get(dialogCandidate.email.trim().toLowerCase()) : undefined;
@@ -33974,19 +34367,23 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             )}
             <div className="relative mt-1.5 mb-4">
               <input
+                ref={forwardRecipientInputRef}
                 type="text"
                 value={forwardRecipientSearch}
                 onChange={(e) => {
                   setForwardRecipientSearch(e.target.value);
-                  setForwardRecipientDropdownOpen(true);
+                  openForwardRecipientDropdown();
                 }}
-                onFocus={() => setForwardRecipientDropdownOpen(true)}
+                onFocus={openForwardRecipientDropdown}
                 onBlur={() => setTimeout(() => setForwardRecipientDropdownOpen(false), 150)}
                 placeholder="Add another manager…"
                 className="glass-input text-sm py-1.5 px-3 rounded-md w-full"
               />
-              {forwardRecipientDropdownOpen && (
-                <div className="absolute z-10 mt-1 w-full max-h-48 overflow-y-auto rounded-md border border-white/15 bg-slate-800 shadow-lg">
+              {forwardRecipientDropdownOpen && forwardRecipientPos && createPortal(
+                <div
+                  style={{ position: "fixed", top: forwardRecipientPos.top, left: forwardRecipientPos.left, width: forwardRecipientPos.width }}
+                  className="z-50 max-h-48 overflow-y-auto rounded-md border border-white/15 bg-slate-800 shadow-2xl"
+                >
                   {filteredManagerRecipients.length === 0 ? (
                     <p className="px-3 py-2 text-xs text-muted-foreground">No matching managers.</p>
                   ) : (
@@ -34005,7 +34402,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                       </button>
                     ))
                   )}
-                </div>
+                </div>,
+                document.body
               )}
             </div>
             {managerRecipients.length === 0 && (
