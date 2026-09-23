@@ -24,6 +24,15 @@
  */
 import { useSyncExternalStore } from "react";
 
+// Reserved submodule_slug — module_role_gate_overrides otherwise always
+// keys a real submodule, but this sentinel represents "can this role open
+// the module AT ALL" (the module tile/route itself, not any one page
+// inside it) — consumed by roleLabels.ts's isModuleAllowed. Same table,
+// same cache, same realtime sync as every real submodule key; just a
+// different meaning for this one reserved slug. No real submodule will
+// ever use this literal string as its own slug.
+export const MODULE_LEVEL_GATE_SLUG = "__module_access__";
+
 let overrides: Record<string, string[]> = {}; // key: `${moduleSlug}:${submoduleSlug}`
 const listeners = new Set<() => void>();
 

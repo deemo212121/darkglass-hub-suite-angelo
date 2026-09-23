@@ -1,4 +1,4 @@
-import { createFileRoute, notFound, Link, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, notFound, Link, Navigate, useNavigate } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, ChevronDown } from "lucide-react";
@@ -766,22 +766,7 @@ function UserDetailsPage() {
   );
 
   if (ready && !hasAccountAccess) {
-    return (
-      <>
-        <AppHeader />
-        <main className="flex-1 bg-slate-950 py-6">
-          <div className="max-w-5xl mx-auto px-6">
-            <div className="rounded-xl border border-white/15 bg-white/8 p-6 text-white backdrop-blur-md">
-              <h1 className="text-2xl font-bold mb-2">Access restricted</h1>
-              <p className="text-slate-300">Only Admin, Super Admin, and HR can view or edit employee details.</p>
-              <p className="mt-2 text-sm text-slate-400">Current sign-in: {viewerEmail}</p>
-              <p className="mt-1 text-sm text-slate-400">Your role: {viewerRole || "No role assigned"}</p>
-            </div>
-          </div>
-        </main>
-        <Footer />
-      </>
-    );
+    return <Navigate to="/home" replace />;
   }
 
   return (
