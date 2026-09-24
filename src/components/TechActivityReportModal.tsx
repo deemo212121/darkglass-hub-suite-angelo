@@ -98,7 +98,7 @@ export function TechActivityReportModal({
   onSetHourlyOtMode,
   hourlyOtModeBusy,
 }: Props) {
-  const { employee, techManual, techCategoryCounts, techCarryover, ticketsAssigned, ticketsCompleted, workingDays, twoTechCount, hoursWorked, overtimeHours, hourlyRate, techHourlyPay, techHourlyPayStraight, techHourlyPayOtPremium, techWeightedRegularRate, techGuaranteedSalaryTarget, techHolidayPremium, techTraineeMatch, techIncludablePay } = row;
+  const { employee, techManual, techCategoryCounts, techCarryover, ticketsAssigned, ticketsCompleted, workingDays, twoTechCount, hoursWorked, overtimeHours, hourlyRate, techHourlyPay, techHourlyPayStraight, techHourlyPayOtPremium, techWeightedRegularRate, techGuaranteedSalaryTarget, techHolidayPremium, techIncludablePay } = row;
   const branch = employee.assigned_branch || "";
 
   // Live Company-vs-State comparison for the Hourly Pay figure — fetched
@@ -227,6 +227,40 @@ export function TechActivityReportModal({
   const requiredPremiumAfterMinMatch = overtimeHours * regularRateAfterMinMatch * 0.5;
   const matchOt = Math.max(requiredPremiumAfterMinMatch - techHourlyPayOtPremium, 0);
   const stateHourlyOtTotal = companyHourlyOtTotal + matchMin + matchOt;
+
+  // Trainee daily $100 guarantee, recomputed HERE against each day's real
+  // EFFECTIVE rate (state floor if higher than the company rate on file —
+  // same per-day floor lookup as stateMinFloor above), rather than using
+  // row.techTraineeMatch (AccountingDashboard.tsx), which has no per-day
+  // state data and sizes the shortfall against the bare company rate. That
+  // understates a trainee's actual pay on any day a state floor bumped
+  // their rate up — e.g. Bilal Poole, 2026-08-28: Virginia's $12.77 floor
+  // already pays him $153.72 for the day (well past $100), but the
+  // Company-only calc sees only 12.037 hrs * $7.25 = $87.27 and manufactures
+  // a phantom $12.73 shortfall against the $100 target.
+  const TRAINEE_DAILY_MATCH_TARGET = 100;
+  const techTraineeMatch = useMemo(() => {
+    const trainingEndDate = employee.trainingEndDate;
+    if (!trainingEndDate) return 0;
+    let match = 0;
+    for (const d of periodDayInfo) {
+      if (d.date < periodStart || d.date > periodEnd) continue;
+      if (hireDate && d.date < hireDate) continue;
+      if (d.date > trainingEndDate) continue;
+      const split = dailySplit.get(d.date) ?? { regular: 0, overtime: 0 };
+      const dayHours = split.regular + split.overtime;
+      if (dayHours <= 0) continue;
+      const companyRate = rateOnDate(d.date);
+      const floorRate = d.state ? STATE_MIN_WAGE_2026.find((s) => s.state === d.state)?.rate ?? null : null;
+      const effectiveRate = floorRate != null ? Math.max(floorRate, companyRate) : companyRate;
+      const actualDailyPay = dayHours * effectiveRate + split.overtime * techWeightedRegularRate * 0.5;
+      if (actualDailyPay < TRAINEE_DAILY_MATCH_TARGET) {
+        match += TRAINEE_DAILY_MATCH_TARGET - actualDailyPay;
+      }
+    }
+    return match;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [periodDayInfo, dailySplit, periodStart, periodEnd, hireDate, employee.trainingEndDate, salaryHistory, hourlyRate, techWeightedRegularRate]);
 
   // The Guaranteed Minimum Salary Match, recomputed HERE (rather than using
   // row.techGuaranteedSalaryMatch from AccountingDashboard.tsx) because that
@@ -589,7 +623,7 @@ export function TechActivityReportModal({
                     </tr>
                   )}
                   {techTraineeMatch > 0.005 && (
-                    <tr title="Trainee daily $100 guarantee: any day within this technician's trainee window (hireDate through Training End Date) whose actual pay fell short of $100 is topped up to $100. A day that already earned $100+ keeps its full actual pay -- this is a floor, not a flat replacement.">
+                    <tr title="Trainee daily $100 guarantee: any day within this technician's trainee window (hireDate through Training End Date) whose actual pay -- at whichever rate was really in effect that day, including any state minimum-wage floor -- fell short of $100 is topped up to $100. A day that already earned $100+ keeps its full actual pay -- this is a floor, not a flat replacement.">
                       <td className="px-3 py-2 text-slate-300">Trainee Daily Match</td>
                       <td className="px-3 py-2 text-right text-slate-300">—</td>
                       <td className="px-3 py-2 text-right text-slate-300">$100/day</td>
