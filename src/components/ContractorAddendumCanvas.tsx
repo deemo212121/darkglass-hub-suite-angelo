@@ -15,7 +15,7 @@ import {
   CONTRACTOR_ADDENDUM_PAGE_H as PH,
   type Rect,
 } from "@/lib/contractorAddendumPdf";
-import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
+import pdfWorkerUrl from "pdfjs-dist/legacy/build/pdf.worker.min.mjs?url";
 
 export function rectStyle(r: Rect, scale: number): React.CSSProperties {
   return {
@@ -47,7 +47,7 @@ export function ContractorAddendumCanvas({ bytes, renderOverlay }: Props) {
     let cancelled = false;
     (async () => {
       try {
-        const pdfjs = await import("pdfjs-dist");
+        const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
         pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
         // .slice() — pdf.js detaches the buffer it's handed; keep the caller's copy usable.
         const pdf = await pdfjs.getDocument({ data: bytes.slice() }).promise;

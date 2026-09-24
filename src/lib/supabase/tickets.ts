@@ -2384,6 +2384,40 @@ export async function getTicketAuditLog(opts?: { ticketId?: string; startDate?: 
   return all;
 }
 
+export interface TicketStatusDailyStat {
+  status: string;
+  baselineCount: number;
+  enteredCount: number;
+  leftCount: number;
+}
+
+/**
+ * Read the per-day status "funnel" counters (ticket_status_daily_stats,
+ * migration 0303) for a single UTC calendar day ("YYYY-MM-DD") — one row
+ * per status that had ANY status-change activity that day, maintained
+ * incrementally by a DB trigger on `tickets`, not computed here. A status
+ * with no row for that day had zero status-change activity — the caller
+ * (TicketOperationReport.tsx) falls back to a live ticket count for
+ * "today" when a status has no row yet, since the trigger only creates
+ * one on that status's first change of the day.
+ */
+export async function getTicketStatusDailyStats(statDate: string): Promise<TicketStatusDailyStat[]> {
+  const { data, error } = await supabase
+    .from("ticket_status_daily_stats")
+    .select("status, baseline_count, entered_count, left_count")
+    .eq("stat_date", statDate);
+  if (error) {
+    console.error("getTicketStatusDailyStats error:", error.message);
+    throw new Error(error.message);
+  }
+  return (data ?? []).map((r: any) => ({
+    status: r.status,
+    baselineCount: r.baseline_count ?? 0,
+    enteredCount: r.entered_count ?? 0,
+    leftCount: r.left_count ?? 0,
+  }));
+}
+
 /**
  * Manually record a ticket audit entry (e.g. a visit edit, an SP status
  * send) — anything not already covered by the DB trigger's automatic

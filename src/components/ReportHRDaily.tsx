@@ -81,9 +81,10 @@ import {
   type OnboardingDocumentColumn,
   type OnboardingGroupKey,
 } from "@/lib/supabase/onboardingDocumentColumns";
-import { uploadCoeCertificate, uploadWarningForm, uploadPromotionForm, uploadActionPlanForm, uploadTerminationForm, uploadW8benForm, uploadW4Form, uploadW4RForm, uploadI9Form, uploadWageAckForm, uploadCarIqAgreementForm, uploadVehicleAgreementForm, uploadEmployeeConfidentialityForm, uploadMealRestBreakForm, uploadPtoAckForm, uploadPartsResponsibilityForm, uploadMileageFuelForm, uploadLocationConsentForm, uploadDamageForm, uploadContractorDataForm, uploadDirectDepositForm, uploadSubstanceScreeningForm, uploadFlashTechnicianTravelForm, uploadContractorAddendumForm, uploadMasterW2AgreementForm, uploadMasterW2OfficeAgreementForm, uploadMasterPhContractorAgreementForm, uploadMasterW2ExecutiveAgreementForm, uploadVehicleUseAgreementForm, uploadNdaForm, uploadSsnCardForm, uploadDriversLicenseForm, uploadValidIdForm, uploadSignableDocumentSignature, refreshStorageAuthToken } from "@/lib/firebase/storage";
+import { uploadCoeCertificate, uploadWarningForm, uploadPromotionForm, uploadActionPlanForm, uploadTerminationForm, uploadW8benForm, uploadW4Form, uploadW4RForm, uploadI9Form, uploadWageAckForm, uploadCarIqAgreementForm, uploadVehicleAgreementForm, uploadEmployeeConfidentialityForm, uploadMealRestBreakForm, uploadPtoAckForm, uploadPartsResponsibilityForm, uploadMileageFuelForm, uploadLocationConsentForm, uploadDamageForm, uploadContractorDataForm, uploadDirectDepositForm, uploadSubstanceScreeningForm, uploadFlashTechnicianTravelForm, uploadContractorAddendumForm, uploadMasterW2AgreementForm, uploadMasterW2OfficeAgreementForm, uploadMasterPhContractorAgreementForm, uploadMasterW2ExecutiveAgreementForm, uploadVehicleUseAgreementForm, uploadNdaForm, uploadSsnCardForm, uploadDriversLicenseForm, uploadValidIdForm, uploadSignableDocumentSignature, uploadSignableDocumentAttachment, refreshStorageAuthToken } from "@/lib/firebase/storage";
 import { regenerateSimpleSignableDocumentPdf, regenerateMasterAgreementPdf } from "@/lib/regenerateSignableDocumentPdf";
-import { captureHtmlToPdfBlob, captureHtmlPagesToPdfBlob, resolveSignaturesForCapture, loadAssetDataUrl as loadImageDataUrl } from "@/lib/pdfCapture";
+import { captureHtmlToPdfBlob, captureHtmlPagesToPdfBlob, resolveSignaturesForCapture, loadAssetDataUrl as loadImageDataUrl, fileToDataUrl } from "@/lib/pdfCapture";
+import { compressImage } from "@/lib/imageCompression";
 import { downloadSignableDocumentPdf } from "@/lib/downloadSignableDocumentPdf";
 import { repairMultiSignerPdfs, type RepairResult } from "@/lib/repairMultiSignerSignatures";
 import { useSortableSearchTable } from "@/hooks/useSortableSearchTable";
@@ -150,7 +151,7 @@ import { fillVehicleAgreementPdf } from "@/lib/vehicleAgreementPdfFill";
 import type { EmployeeConfidentialityFormData } from "@/lib/employeeConfidentialityFormTemplate";
 import { fillEmployeeConfidentialityPdf } from "@/lib/employeeConfidentialityPdfFill";
 import { buildSsnCardFormBodyMarkup, ssnCardFormStyles, type SsnCardFormData } from "@/lib/ssnCardFormTemplate";
-import { buildDriversLicenseFormBodyMarkup, driversLicenseFormStyles, type DriversLicenseFormData } from "@/lib/driversLicenseFormTemplate";
+import { buildDriversLicenseFormBodyMarkup, driversLicenseFormStyles, DRIVERS_LICENSE_STATES, type DriversLicenseFormData } from "@/lib/driversLicenseFormTemplate";
 import { buildValidIdFormBodyMarkup, validIdFormStyles, type ValidIdFormData } from "@/lib/validIdFormTemplate";
 import { MEAL_REST_BREAK_BRANCHES, type MealRestBreakFormData } from "@/lib/mealRestBreakFormTemplate";
 import { fillMealRestBreakPdf } from "@/lib/mealRestBreakPdfFill";
@@ -1071,6 +1072,18 @@ function FilterableTh<C extends string>({
       )}
     </th>
   );
+}
+
+/** Same compress-before-upload wrapper every Fill*Page.tsx ID-photo upload already uses (e.g. FillSsnCardPage.tsx) — shared here for the "File on Behalf" HR uploads (SSN Card/Driver's License), which go through the same uploadSignableDocumentAttachment path. Falls back to the original file rather than failing the whole submission over a compression error. */
+async function compressIdPhotoForUpload(file: File): Promise<File> {
+  try {
+    const result = await compressImage(file);
+    const ext = result.mimeType === "image/webp" ? "webp" : result.mimeType === "image/png" ? "png" : "jpg";
+    return new File([result.blob], file.name.replace(/\.[^.]+$/, `.${ext}`), { type: result.mimeType });
+  } catch (err) {
+    console.error("[hr-file-id] photo compression failed, uploading original:", err);
+    return file;
+  }
 }
 
 export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
@@ -3708,6 +3721,41 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     await downloadSignableDocumentPdf(doc.pdfUrl, `Employee Warning Form - ${employeeName}.pdf`);
   };
 
+  type WarningFormSortColumn = "employee" | "sentBy" | "status" | "sent";
+  const warningFormStatusLabel = (doc: SignableDocument): string =>
+    doc.status === "pending_signature" ? "Awaiting Signature" : doc.status === "signed" ? "Signed — Awaiting Confirmation" : doc.status === "confirmed" ? "Confirmed" : "Cancelled";
+  const {
+    search: warningFormSentSearch,
+    setSearch: setWarningFormSentSearch,
+    sortColumn: warningFormSentSortColumn,
+    sortDir: warningFormSentSortDir,
+    handleSort: handleWarningFormSentSort,
+    filterOptionsFor: warningFormFilterOptionsFor,
+    toggleFilterValue: warningFormToggleFilterValue,
+    clearColumnFilter: warningFormClearColumnFilter,
+    isColumnFiltered: warningFormIsColumnFiltered,
+    isValueChecked: warningFormIsValueChecked,
+    rows: sortedSentWarningForms,
+  } = useSortableSearchTable<SignableDocument, WarningFormSortColumn>(
+    sentWarningForms,
+    (doc, q) => ((doc.formData as unknown as WarningFormData).employeeName || "").toLowerCase().includes(q),
+    (doc, column) => {
+      switch (column) {
+        case "employee": return ((doc.formData as unknown as WarningFormData).employeeName || "").toLowerCase();
+        case "sentBy": return (doc.createdByName ?? "").toLowerCase();
+        case "status": return warningFormStatusLabel(doc).toLowerCase();
+        case "sent": return new Date(doc.createdAt).getTime();
+      }
+    },
+    (doc, column) => {
+      switch (column) {
+        case "sentBy": return doc.createdByName ?? "—";
+        case "status": return warningFormStatusLabel(doc);
+        default: return "";
+      }
+    }
+  );
+
   // ── W-8BEN — HR just picks a recipient; the recipient fills in their own
   // Part I fields on FillW8benPage.tsx and sends the completed PDF back. ──
   const [sentW8benForms, setSentW8benForms] = useState<SignableDocument[]>([]);
@@ -3726,6 +3774,45 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const visibleW8benForms = useMemo(
     () => sentW8benForms.filter((d) => (activeTab === "newW8ben" ? isNewAutomationDoc(d) : !isNewAutomationDoc(d))),
     [sentW8benForms, activeTab]
+  );
+
+  type W8benSortColumn = "employee" | "sentBy" | "status" | "sent";
+  const w8benStatusLabel = (doc: SignableDocument): string =>
+    doc.status === "signed" ? "Submitted" : doc.status === "cancelled" ? "Cancelled" : "Awaiting Completion";
+  const {
+    search: w8benSentSearch,
+    setSearch: setW8benSentSearch,
+    sortColumn: w8benSentSortColumn,
+    sortDir: w8benSentSortDir,
+    handleSort: handleW8benSentSort,
+    filterOptionsFor: w8benFilterOptionsFor,
+    toggleFilterValue: w8benToggleFilterValue,
+    clearColumnFilter: w8benClearColumnFilter,
+    isColumnFiltered: w8benIsColumnFiltered,
+    isValueChecked: w8benIsValueChecked,
+    rows: sortedVisibleW8benForms,
+  } = useSortableSearchTable<SignableDocument, W8benSortColumn>(
+    visibleW8benForms,
+    (doc, q) => {
+      const data = doc.formData as Partial<W8benFormData>;
+      return (data.employeeName || doc.recipientName || "").toLowerCase().includes(q);
+    },
+    (doc, column) => {
+      const data = doc.formData as Partial<W8benFormData>;
+      switch (column) {
+        case "employee": return (data.employeeName || doc.recipientName || "").toLowerCase();
+        case "sentBy": return (doc.createdByName ?? "").toLowerCase();
+        case "status": return w8benStatusLabel(doc).toLowerCase();
+        case "sent": return new Date(doc.createdAt).getTime();
+      }
+    },
+    (doc, column) => {
+      switch (column) {
+        case "sentBy": return doc.createdByName ?? "—";
+        case "status": return w8benStatusLabel(doc);
+        default: return "";
+      }
+    }
   );
 
   const [w8RecipientId, setW8RecipientId] = useState("");
@@ -3948,6 +4035,47 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const visibleW4Forms = useMemo(
     () => sentW4Forms.filter((d) => (activeTab === "newW4" ? isNewAutomationDoc(d) : !isNewAutomationDoc(d))),
     [sentW4Forms, activeTab]
+  );
+
+  type W4SortColumn = "employee" | "sentBy" | "status" | "sent";
+  const w4StatusLabel = (doc: SignableDocument): string =>
+    doc.status === "signed" ? "Submitted" : doc.status === "cancelled" ? "Cancelled" : "Awaiting Completion";
+  const {
+    search: w4SentSearch,
+    setSearch: setW4SentSearch,
+    sortColumn: w4SentSortColumn,
+    sortDir: w4SentSortDir,
+    handleSort: handleW4SentSort,
+    filterOptionsFor: w4FilterOptionsFor,
+    toggleFilterValue: w4ToggleFilterValue,
+    clearColumnFilter: w4ClearColumnFilter,
+    isColumnFiltered: w4IsColumnFiltered,
+    isValueChecked: w4IsValueChecked,
+    rows: sortedVisibleW4Forms,
+  } = useSortableSearchTable<SignableDocument, W4SortColumn>(
+    visibleW4Forms,
+    (doc, q) => {
+      const data = doc.formData as Partial<W4FormData>;
+      const name = `${data.firstNameMiddleInitial ?? ""} ${data.lastName ?? ""}`.trim();
+      return (name || doc.recipientName || "").toLowerCase().includes(q);
+    },
+    (doc, column) => {
+      const data = doc.formData as Partial<W4FormData>;
+      const name = `${data.firstNameMiddleInitial ?? ""} ${data.lastName ?? ""}`.trim();
+      switch (column) {
+        case "employee": return (name || doc.recipientName || "").toLowerCase();
+        case "sentBy": return (doc.createdByName ?? "").toLowerCase();
+        case "status": return w4StatusLabel(doc).toLowerCase();
+        case "sent": return new Date(doc.createdAt).getTime();
+      }
+    },
+    (doc, column) => {
+      switch (column) {
+        case "sentBy": return doc.createdByName ?? "—";
+        case "status": return w4StatusLabel(doc);
+        default: return "";
+      }
+    }
   );
 
   const [w4RecipientId, setW4RecipientId] = useState("");
@@ -4181,6 +4309,45 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     [sentW9Forms, activeTab]
   );
 
+  type W9SortColumn = "employee" | "sentBy" | "status" | "sent";
+  const w9StatusLabel = (doc: SignableDocument): string =>
+    doc.status === "signed" ? "Submitted" : doc.status === "cancelled" ? "Cancelled" : "Awaiting Completion";
+  const {
+    search: w9SentSearch,
+    setSearch: setW9SentSearch,
+    sortColumn: w9SentSortColumn,
+    sortDir: w9SentSortDir,
+    handleSort: handleW9SentSort,
+    filterOptionsFor: w9FilterOptionsFor,
+    toggleFilterValue: w9ToggleFilterValue,
+    clearColumnFilter: w9ClearColumnFilter,
+    isColumnFiltered: w9IsColumnFiltered,
+    isValueChecked: w9IsValueChecked,
+    rows: sortedVisibleW9Forms,
+  } = useSortableSearchTable<SignableDocument, W9SortColumn>(
+    visibleW9Forms,
+    (doc, q) => {
+      const data = doc.formData as Partial<W9FormData>;
+      return (data.name || doc.recipientName || "").toLowerCase().includes(q);
+    },
+    (doc, column) => {
+      const data = doc.formData as Partial<W9FormData>;
+      switch (column) {
+        case "employee": return (data.name || doc.recipientName || "").toLowerCase();
+        case "sentBy": return (doc.createdByName ?? "").toLowerCase();
+        case "status": return w9StatusLabel(doc).toLowerCase();
+        case "sent": return new Date(doc.createdAt).getTime();
+      }
+    },
+    (doc, column) => {
+      switch (column) {
+        case "sentBy": return doc.createdByName ?? "—";
+        case "status": return w9StatusLabel(doc);
+        default: return "";
+      }
+    }
+  );
+
   const [w9RecipientId, setW9RecipientId] = useState("");
   const [w9RecipientSearch, setW9RecipientSearch] = useState("");
   const [w9RecipientDropdownOpen, setW9RecipientDropdownOpen] = useState(false);
@@ -4369,6 +4536,47 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       console.error("Failed to load sent W-4R forms:", err);
     }
   };
+
+  type W4RSortColumn = "employee" | "sentBy" | "status" | "sent";
+  const w4rStatusLabel = (doc: SignableDocument): string =>
+    doc.status === "signed" ? "Submitted" : doc.status === "cancelled" ? "Cancelled" : "Awaiting Completion";
+  const {
+    search: w4rSentSearch,
+    setSearch: setW4rSentSearch,
+    sortColumn: w4rSentSortColumn,
+    sortDir: w4rSentSortDir,
+    handleSort: handleW4rSentSort,
+    filterOptionsFor: w4rFilterOptionsFor,
+    toggleFilterValue: w4rToggleFilterValue,
+    clearColumnFilter: w4rClearColumnFilter,
+    isColumnFiltered: w4rIsColumnFiltered,
+    isValueChecked: w4rIsValueChecked,
+    rows: sortedSentW4RForms,
+  } = useSortableSearchTable<SignableDocument, W4RSortColumn>(
+    sentW4RForms,
+    (doc, q) => {
+      const data = doc.formData as Partial<W4RFormData>;
+      const name = `${data.firstNameMiddleInitial ?? ""} ${data.lastName ?? ""}`.trim();
+      return (name || doc.recipientName || "").toLowerCase().includes(q);
+    },
+    (doc, column) => {
+      const data = doc.formData as Partial<W4RFormData>;
+      const name = `${data.firstNameMiddleInitial ?? ""} ${data.lastName ?? ""}`.trim();
+      switch (column) {
+        case "employee": return (name || doc.recipientName || "").toLowerCase();
+        case "sentBy": return (doc.createdByName ?? "").toLowerCase();
+        case "status": return w4rStatusLabel(doc).toLowerCase();
+        case "sent": return new Date(doc.createdAt).getTime();
+      }
+    },
+    (doc, column) => {
+      switch (column) {
+        case "sentBy": return doc.createdByName ?? "—";
+        case "status": return w4rStatusLabel(doc);
+        default: return "";
+      }
+    }
+  );
   useEffect(() => {
     if (activeTab === "w8ben" || activeTab === "jotformDocuments" || activeTab === "combineForms") void loadSentW4RForms();
   }, [activeTab]);
@@ -4626,6 +4834,45 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const visibleI9Forms = useMemo(
     () => sentI9Forms.filter((d) => (activeTab === "newI9" ? isNewAutomationDoc(d) : !isNewAutomationDoc(d))),
     [sentI9Forms, activeTab]
+  );
+
+  type I9SortColumn = "employee" | "sentBy" | "status" | "sent";
+  const i9StatusLabel = (doc: SignableDocument): string =>
+    doc.status === "confirmed" ? "Completed" : isAwaitingEmployerStep(doc) ? "Awaiting HR (Section 2)" : doc.status === "cancelled" ? "Cancelled" : "Awaiting Employee (Section 1)";
+  const {
+    search: i9SentSearch,
+    setSearch: setI9SentSearch,
+    sortColumn: i9SentSortColumn,
+    sortDir: i9SentSortDir,
+    handleSort: handleI9SentSort,
+    filterOptionsFor: i9FilterOptionsFor,
+    toggleFilterValue: i9ToggleFilterValue,
+    clearColumnFilter: i9ClearColumnFilter,
+    isColumnFiltered: i9IsColumnFiltered,
+    isValueChecked: i9IsValueChecked,
+    rows: sortedVisibleI9Forms,
+  } = useSortableSearchTable<SignableDocument, I9SortColumn>(
+    visibleI9Forms,
+    (doc, q) => {
+      const data = doc.formData as Partial<I9FormData>;
+      return (data.employeeName || doc.recipientName || "").toLowerCase().includes(q);
+    },
+    (doc, column) => {
+      const data = doc.formData as Partial<I9FormData>;
+      switch (column) {
+        case "employee": return (data.employeeName || doc.recipientName || "").toLowerCase();
+        case "sentBy": return (doc.createdByName ?? "").toLowerCase();
+        case "status": return i9StatusLabel(doc).toLowerCase();
+        case "sent": return new Date(doc.createdAt).getTime();
+      }
+    },
+    (doc, column) => {
+      switch (column) {
+        case "sentBy": return doc.createdByName ?? "—";
+        case "status": return i9StatusLabel(doc);
+        default: return "";
+      }
+    }
   );
 
   const [i9RecipientId, setI9RecipientId] = useState("");
@@ -6032,6 +6279,45 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       console.error("Failed to load sent Acknowledgment of Wage forms:", err);
     }
   };
+
+  type WageAckSortColumn = "employee" | "sentBy" | "status" | "sent";
+  const wageAckStatusLabel = (doc: SignableDocument): string =>
+    doc.status === "confirmed" ? "Completed" : isAwaitingEmployerStep(doc) ? "Awaiting Employer Signature" : doc.status === "cancelled" ? "Cancelled" : "Awaiting Employee";
+  const {
+    search: wageAckSentSearch,
+    setSearch: setWageAckSentSearch,
+    sortColumn: wageAckSentSortColumn,
+    sortDir: wageAckSentSortDir,
+    handleSort: handleWageAckSentSort,
+    filterOptionsFor: wageAckFilterOptionsFor,
+    toggleFilterValue: wageAckToggleFilterValue,
+    clearColumnFilter: wageAckClearColumnFilter,
+    isColumnFiltered: wageAckIsColumnFiltered,
+    isValueChecked: wageAckIsValueChecked,
+    rows: sortedSentWageAckForms,
+  } = useSortableSearchTable<SignableDocument, WageAckSortColumn>(
+    sentWageAckForms,
+    (doc, q) => {
+      const data = doc.formData as Partial<WageAckFormData>;
+      return (data.employeeName || doc.recipientName || "").toLowerCase().includes(q);
+    },
+    (doc, column) => {
+      const data = doc.formData as Partial<WageAckFormData>;
+      switch (column) {
+        case "employee": return (data.employeeName || doc.recipientName || "").toLowerCase();
+        case "sentBy": return (doc.createdByName ?? "").toLowerCase();
+        case "status": return wageAckStatusLabel(doc).toLowerCase();
+        case "sent": return new Date(doc.createdAt).getTime();
+      }
+    },
+    (doc, column) => {
+      switch (column) {
+        case "sentBy": return doc.createdByName ?? "—";
+        case "status": return wageAckStatusLabel(doc);
+        default: return "";
+      }
+    }
+  );
   useEffect(() => {
     if (activeTab === "wageAck" || activeTab === "jotformDocuments" || activeTab === "combineForms" || activeTab === "employerQueue") void loadSentWageAckForms();
   }, [activeTab]);
@@ -6302,6 +6588,50 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       console.error("Failed to load sent Meal and Rest Break forms:", err);
     }
   };
+
+  type MealRestBreakSortColumn = "employee" | "branch" | "sentBy" | "status" | "sent";
+  const mealRestBreakStatusLabel = (doc: SignableDocument): string =>
+    doc.status === "confirmed" ? "Completed" : isAwaitingEmployerStep(doc) ? "Awaiting Employer Signature" : doc.status === "cancelled" ? "Cancelled" : "Awaiting Employee";
+  const {
+    search: mealRestBreakSentSearch,
+    setSearch: setMealRestBreakSentSearch,
+    sortColumn: mealRestBreakSentSortColumn,
+    sortDir: mealRestBreakSentSortDir,
+    handleSort: handleMealRestBreakSentSort,
+    filterOptionsFor: mealRestBreakFilterOptionsFor,
+    toggleFilterValue: mealRestBreakToggleFilterValue,
+    clearColumnFilter: mealRestBreakClearColumnFilter,
+    isColumnFiltered: mealRestBreakIsColumnFiltered,
+    isValueChecked: mealRestBreakIsValueChecked,
+    rows: sortedSentMealRestBreakForms,
+  } = useSortableSearchTable<SignableDocument, MealRestBreakSortColumn>(
+    sentMealRestBreakForms,
+    (doc, q) => {
+      const data = doc.formData as Partial<MealRestBreakFormData>;
+      const employeeName = (data.employeeName || doc.recipientName || "").toLowerCase();
+      const branch = (data.branch || "").toLowerCase();
+      return employeeName.includes(q) || branch.includes(q);
+    },
+    (doc, column) => {
+      const data = doc.formData as Partial<MealRestBreakFormData>;
+      switch (column) {
+        case "employee": return (data.employeeName || doc.recipientName || "").toLowerCase();
+        case "branch": return (data.branch || "").toLowerCase();
+        case "sentBy": return (doc.createdByName ?? "").toLowerCase();
+        case "status": return mealRestBreakStatusLabel(doc).toLowerCase();
+        case "sent": return new Date(doc.createdAt).getTime();
+      }
+    },
+    (doc, column) => {
+      const data = doc.formData as Partial<MealRestBreakFormData>;
+      switch (column) {
+        case "branch": return data.branch || "—";
+        case "sentBy": return doc.createdByName ?? "—";
+        case "status": return mealRestBreakStatusLabel(doc);
+        default: return "";
+      }
+    }
+  );
   useEffect(() => {
     if (activeTab === "mealRestBreak" || activeTab === "jotformDocuments" || activeTab === "combineForms" || activeTab === "employerQueue") void loadSentMealRestBreakForms();
   }, [activeTab]);
@@ -6574,6 +6904,50 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       console.error("Failed to load sent Car IQ Technician Agreement forms:", err);
     }
   };
+
+  type CarIqSortColumn = "employee" | "branch" | "sentBy" | "status" | "sent";
+  const carIqStatusLabel = (doc: SignableDocument): string =>
+    doc.status === "signed" ? "Submitted" : doc.status === "cancelled" ? "Cancelled" : "Awaiting Completion";
+  const {
+    search: carIqSentSearch,
+    setSearch: setCarIqSentSearch,
+    sortColumn: carIqSentSortColumn,
+    sortDir: carIqSentSortDir,
+    handleSort: handleCarIqSentSort,
+    filterOptionsFor: carIqFilterOptionsFor,
+    toggleFilterValue: carIqToggleFilterValue,
+    clearColumnFilter: carIqClearColumnFilter,
+    isColumnFiltered: carIqIsColumnFiltered,
+    isValueChecked: carIqIsValueChecked,
+    rows: sortedSentCarIqAgreementForms,
+  } = useSortableSearchTable<SignableDocument, CarIqSortColumn>(
+    sentCarIqAgreementForms,
+    (doc, q) => {
+      const data = doc.formData as Partial<CarIqAgreementFormData>;
+      const employeeName = (data.employeeName || doc.recipientName || "").toLowerCase();
+      const branch = (data.branch || "").toLowerCase();
+      return employeeName.includes(q) || branch.includes(q);
+    },
+    (doc, column) => {
+      const data = doc.formData as Partial<CarIqAgreementFormData>;
+      switch (column) {
+        case "employee": return (data.employeeName || doc.recipientName || "").toLowerCase();
+        case "branch": return (data.branch || "").toLowerCase();
+        case "sentBy": return (doc.createdByName ?? "").toLowerCase();
+        case "status": return carIqStatusLabel(doc).toLowerCase();
+        case "sent": return new Date(doc.createdAt).getTime();
+      }
+    },
+    (doc, column) => {
+      const data = doc.formData as Partial<CarIqAgreementFormData>;
+      switch (column) {
+        case "branch": return data.branch || "—";
+        case "sentBy": return doc.createdByName ?? "—";
+        case "status": return carIqStatusLabel(doc);
+        default: return "";
+      }
+    }
+  );
   useEffect(() => {
     if (activeTab === "carIqAgreement" || activeTab === "jotformDocuments" || activeTab === "combineForms") void loadSentCarIqAgreementForms();
   }, [activeTab]);
@@ -6759,6 +7133,50 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       console.error("Failed to load sent Company Vehicle Use Agreement forms:", err);
     }
   };
+
+  type VehicleSortColumn = "employee" | "branch" | "sentBy" | "status" | "sent";
+  const vehicleStatusLabel = (doc: SignableDocument): string =>
+    doc.status === "signed" ? "Submitted" : doc.status === "cancelled" ? "Cancelled" : "Awaiting Completion";
+  const {
+    search: vehicleSentSearch,
+    setSearch: setVehicleSentSearch,
+    sortColumn: vehicleSentSortColumn,
+    sortDir: vehicleSentSortDir,
+    handleSort: handleVehicleSentSort,
+    filterOptionsFor: vehicleFilterOptionsFor,
+    toggleFilterValue: vehicleToggleFilterValue,
+    clearColumnFilter: vehicleClearColumnFilter,
+    isColumnFiltered: vehicleIsColumnFiltered,
+    isValueChecked: vehicleIsValueChecked,
+    rows: sortedSentVehicleAgreementForms,
+  } = useSortableSearchTable<SignableDocument, VehicleSortColumn>(
+    sentVehicleAgreementForms,
+    (doc, q) => {
+      const data = doc.formData as Partial<VehicleAgreementFormData>;
+      const employeeName = (data.employeeName || doc.recipientName || "").toLowerCase();
+      const branch = (data.branch || "").toLowerCase();
+      return employeeName.includes(q) || branch.includes(q);
+    },
+    (doc, column) => {
+      const data = doc.formData as Partial<VehicleAgreementFormData>;
+      switch (column) {
+        case "employee": return (data.employeeName || doc.recipientName || "").toLowerCase();
+        case "branch": return (data.branch || "").toLowerCase();
+        case "sentBy": return (doc.createdByName ?? "").toLowerCase();
+        case "status": return vehicleStatusLabel(doc).toLowerCase();
+        case "sent": return new Date(doc.createdAt).getTime();
+      }
+    },
+    (doc, column) => {
+      const data = doc.formData as Partial<VehicleAgreementFormData>;
+      switch (column) {
+        case "branch": return data.branch || "—";
+        case "sentBy": return doc.createdByName ?? "—";
+        case "status": return vehicleStatusLabel(doc);
+        default: return "";
+      }
+    }
+  );
   useEffect(() => {
     if (activeTab === "vehicleAgreement" || activeTab === "jotformDocuments" || activeTab === "combineForms") void loadSentVehicleAgreementForms();
   }, [activeTab]);
@@ -6943,6 +7361,50 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       console.error("Failed to load sent Employee Confidentiality Agreement forms:", err);
     }
   };
+
+  type ConfidentialitySortColumn = "employee" | "branch" | "sentBy" | "status" | "sent";
+  const confidentialityStatusLabel = (doc: SignableDocument): string =>
+    doc.status === "signed" ? "Submitted" : doc.status === "cancelled" ? "Cancelled" : "Awaiting Completion";
+  const {
+    search: confidentialitySentSearch,
+    setSearch: setConfidentialitySentSearch,
+    sortColumn: confidentialitySentSortColumn,
+    sortDir: confidentialitySentSortDir,
+    handleSort: handleConfidentialitySentSort,
+    filterOptionsFor: confidentialityFilterOptionsFor,
+    toggleFilterValue: confidentialityToggleFilterValue,
+    clearColumnFilter: confidentialityClearColumnFilter,
+    isColumnFiltered: confidentialityIsColumnFiltered,
+    isValueChecked: confidentialityIsValueChecked,
+    rows: sortedSentEmployeeConfidentialityForms,
+  } = useSortableSearchTable<SignableDocument, ConfidentialitySortColumn>(
+    sentEmployeeConfidentialityForms,
+    (doc, q) => {
+      const data = doc.formData as Partial<EmployeeConfidentialityFormData>;
+      const employeeName = (data.employeeName || doc.recipientName || "").toLowerCase();
+      const branch = (data.branch || "").toLowerCase();
+      return employeeName.includes(q) || branch.includes(q);
+    },
+    (doc, column) => {
+      const data = doc.formData as Partial<EmployeeConfidentialityFormData>;
+      switch (column) {
+        case "employee": return (data.employeeName || doc.recipientName || "").toLowerCase();
+        case "branch": return (data.branch || "").toLowerCase();
+        case "sentBy": return (doc.createdByName ?? "").toLowerCase();
+        case "status": return confidentialityStatusLabel(doc).toLowerCase();
+        case "sent": return new Date(doc.createdAt).getTime();
+      }
+    },
+    (doc, column) => {
+      const data = doc.formData as Partial<EmployeeConfidentialityFormData>;
+      switch (column) {
+        case "branch": return data.branch || "—";
+        case "sentBy": return doc.createdByName ?? "—";
+        case "status": return confidentialityStatusLabel(doc);
+        default: return "";
+      }
+    }
+  );
   useEffect(() => {
     if (activeTab === "employeeConfidentiality" || activeTab === "jotformDocuments" || activeTab === "combineForms") void loadSentEmployeeConfidentialityForms();
   }, [activeTab]);
@@ -7129,6 +7591,45 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       console.error("Failed to load sent SSN Card forms:", err);
     }
   };
+
+  type SsnCardSortColumn = "employee" | "sentBy" | "status" | "sent";
+  const ssnCardStatusLabel = (doc: SignableDocument): string =>
+    doc.status === "signed" ? "Submitted" : doc.status === "cancelled" ? "Cancelled" : "Awaiting Completion";
+  const {
+    search: ssnCardSentSearch,
+    setSearch: setSsnCardSentSearch,
+    sortColumn: ssnCardSentSortColumn,
+    sortDir: ssnCardSentSortDir,
+    handleSort: handleSsnCardSentSort,
+    filterOptionsFor: ssnCardFilterOptionsFor,
+    toggleFilterValue: ssnCardToggleFilterValue,
+    clearColumnFilter: ssnCardClearColumnFilter,
+    isColumnFiltered: ssnCardIsColumnFiltered,
+    isValueChecked: ssnCardIsValueChecked,
+    rows: sortedSentSsnCardForms,
+  } = useSortableSearchTable<SignableDocument, SsnCardSortColumn>(
+    sentSsnCardForms,
+    (doc, q) => {
+      const data = doc.formData as Partial<SsnCardFormData>;
+      return (data.employeeName || doc.recipientName || "").toLowerCase().includes(q);
+    },
+    (doc, column) => {
+      const data = doc.formData as Partial<SsnCardFormData>;
+      switch (column) {
+        case "employee": return (data.employeeName || doc.recipientName || "").toLowerCase();
+        case "sentBy": return (doc.createdByName ?? "").toLowerCase();
+        case "status": return ssnCardStatusLabel(doc).toLowerCase();
+        case "sent": return new Date(doc.createdAt).getTime();
+      }
+    },
+    (doc, column) => {
+      switch (column) {
+        case "sentBy": return doc.createdByName ?? "—";
+        case "status": return ssnCardStatusLabel(doc);
+        default: return "";
+      }
+    }
+  );
   useEffect(() => {
     if (activeTab === "ssnCard" || activeTab === "jotformDocuments" || activeTab === "combineForms") void loadSentSsnCardForms();
   }, [activeTab]);
@@ -7140,12 +7641,34 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [ssnCardSendError, setSsnCardSendError] = useState<string | null>(null);
   const [ssnCardActionBusyId, setSsnCardActionBusyId] = useState<string | null>(null);
   const [ssnCardActionError, setSsnCardActionError] = useState<string | null>(null);
+  const [ssnCardDocPreview, setSsnCardDocPreview] = useState<SignableDocument | null>(null);
   const [ssnCardExternalName, setSsnCardExternalName] = useState("");
   const [ssnCardSentLink, setSsnCardSentLink] = useState<{ link: string; recipientName: string } | null>(null);
   const [ssnCardSentLinkCopied, setSsnCardSentLinkCopied] = useState(false);
   const filteredSsnCardRecipients = useMemo(
     () => employees.filter((e) => e.status === "active" && e.name.toLowerCase().includes(ssnCardRecipientSearch.toLowerCase())),
     [employees, ssnCardRecipientSearch]
+  );
+
+  // "File on Behalf" — HR already has the technician's SSN card (emailed,
+  // handed over in person, etc.) and would rather enter it directly than
+  // send a fill-link and wait. Creates the document and signs it in one
+  // step, same PDF pipeline the employee's own Fill page uses, just with
+  // no signature pad — filedByHr/filedByHrName in formData tell
+  // buildSsnCardFormBodyMarkup to show who filed it instead of a forged
+  // signature (see ssnCardFormTemplate.ts).
+  const [ssnCardFileForRecipientId, setSsnCardFileForRecipientId] = useState("");
+  const [ssnCardFileForRecipientSearch, setSsnCardFileForRecipientSearch] = useState("");
+  const [ssnCardFileForRecipientDropdownOpen, setSsnCardFileForRecipientDropdownOpen] = useState(false);
+  const [ssnCardFileForNumber, setSsnCardFileForNumber] = useState("");
+  const [ssnCardFileForLivedInNewYork, setSsnCardFileForLivedInNewYork] = useState<"" | "Yes" | "No">("");
+  const [ssnCardFileForPhotos, setSsnCardFileForPhotos] = useState<File[]>([]);
+  const [ssnCardFiling, setSsnCardFiling] = useState(false);
+  const [ssnCardFilingStep, setSsnCardFilingStep] = useState<string | null>(null);
+  const [ssnCardFilingError, setSsnCardFilingError] = useState<string | null>(null);
+  const filteredSsnCardFileForRecipients = useMemo(
+    () => employees.filter((e) => e.status === "active" && e.name.toLowerCase().includes(ssnCardFileForRecipientSearch.toLowerCase())),
+    [employees, ssnCardFileForRecipientSearch]
   );
 
   const handleSendSsnCard = async () => {
@@ -7259,6 +7782,96 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
 
+  const handleFileSsnCardForHr = async () => {
+    if (!ssnCardFileForRecipientId || !uid) return;
+    const recipient = employees.find((e) => e.id === ssnCardFileForRecipientId);
+    if (!recipient) { setSsnCardFilingError("Select a technician first."); return; }
+    if (!ssnCardFileForNumber.trim()) { setSsnCardFilingError("Enter the Social Security Number."); return; }
+    if (!ssnCardFileForLivedInNewYork) { setSsnCardFilingError("Answer whether the technician has lived in New York in the past 7 years."); return; }
+    if (ssnCardFileForPhotos.length === 0) { setSsnCardFilingError("Upload at least one photo of the card."); return; }
+
+    setSsnCardFiling(true);
+    setSsnCardFilingError(null);
+    let createdDocId: string | null = null;
+    try {
+      const alreadySent = await getExistingActiveDocumentTypes(recipient.id, ["ssn_card_form"]);
+      if (alreadySent.length > 0 && !window.confirm(`${recipient.name} already has an SSN Card on file. File another one anyway?`)) {
+        return;
+      }
+
+      setSsnCardFilingStep("Creating record…");
+      const doc = await createSignableDocument({
+        documentType: "ssn_card_form",
+        formData: { employeeId: recipient.id, employeeName: recipient.name } as unknown as Record<string, any>,
+        recipientId: recipient.id,
+        recipientSlot: "employee",
+        pdfUrl: "",
+      });
+      createdDocId = doc.id;
+      const companyId = doc.companyId;
+
+      setSsnCardFilingStep("Preparing upload…");
+      await refreshStorageAuthToken();
+
+      setSsnCardFilingStep(`Uploading photo${ssnCardFileForPhotos.length > 1 ? "s" : ""}…`);
+      const compressedFiles = await Promise.all(ssnCardFileForPhotos.map(compressIdPhotoForUpload));
+      const cardPhotoUrls = await Promise.all(
+        compressedFiles.map((file, i) => uploadSignableDocumentAttachment(companyId, doc.id, "cardPhotoUrls", i, file))
+      );
+
+      const signedAt = new Date().toISOString();
+      const filedByHrName = displayName || "HR";
+      const finalData: SsnCardFormData = {
+        employeeId: recipient.id,
+        employeeName: recipient.name,
+        ssn: ssnCardFileForNumber.trim(),
+        livedInNewYork: ssnCardFileForLivedInNewYork,
+        cardPhotoUrls,
+        dateSigned: signedAt,
+        signatureDataUrl: "",
+        filedByHr: true,
+        filedByHrName,
+      };
+      // No real signature — HR typed this in, the technician never drew
+      // anything. url: "" is safe here specifically because the template
+      // checks filedByHr before ever rendering a <img src>; see this
+      // page's own header comment on resolveSignaturesForCapture handling
+      // a blank url gracefully too, for a later Regenerate PDF.
+      const entry = { name: `Filed by HR — ${filedByHrName}`, url: "", signedAt };
+
+      setSsnCardFilingStep("Generating document…");
+      const localCardPhotoUrls = await Promise.all(compressedFiles.map(fileToDataUrl));
+      const captureData: SsnCardFormData = { ...finalData, cardPhotoUrls: localCardPhotoUrls };
+      const logo = await loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png"));
+      const pdfBlob = await captureHtmlToPdfBlob(buildSsnCardFormBodyMarkup(captureData, logo, entry), ssnCardFormStyles);
+      const pdfUrl = await uploadSsnCardForm(companyId, recipient.name, pdfBlob);
+
+      setSsnCardFilingStep("Saving…");
+      await signDocument(doc.id, "employee", entry, pdfUrl, finalData as unknown as Record<string, any>);
+
+      void logActivity({ action: "ssn_card_filed_by_hr", targetType: "employee", targetId: recipient.id, targetLabel: recipient.name });
+
+      setSsnCardFileForRecipientId("");
+      setSsnCardFileForRecipientSearch("");
+      setSsnCardFileForNumber("");
+      setSsnCardFileForLivedInNewYork("");
+      setSsnCardFileForPhotos([]);
+      await loadSentSsnCardForms();
+    } catch (err) {
+      // A row created but never signed would otherwise sit as a phantom
+      // "Awaiting Completion" the technician can't actually complete
+      // (there's no fill link for it) — clean it up rather than leave it
+      // stuck.
+      if (createdDocId) {
+        try { await deleteSignableDocument(createdDocId); } catch { /* best effort */ }
+      }
+      setSsnCardFilingError(err instanceof Error ? err.message : "Failed to file this SSN Card.");
+    } finally {
+      setSsnCardFiling(false);
+      setSsnCardFilingStep(null);
+    }
+  };
+
   const handleDeleteSsnCard = async (doc: SignableDocument) => {
     if (!window.confirm("Permanently delete this SSN Card request?")) return;
     setSsnCardActionBusyId(doc.id);
@@ -7281,6 +7894,45 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       console.error("Failed to load sent Driver's License forms:", err);
     }
   };
+
+  type DriversLicenseSortColumn = "employee" | "sentBy" | "status" | "sent";
+  const driversLicenseStatusLabel = (doc: SignableDocument): string =>
+    doc.status === "signed" ? "Submitted" : doc.status === "cancelled" ? "Cancelled" : "Awaiting Completion";
+  const {
+    search: driversLicenseSentSearch,
+    setSearch: setDriversLicenseSentSearch,
+    sortColumn: driversLicenseSentSortColumn,
+    sortDir: driversLicenseSentSortDir,
+    handleSort: handleDriversLicenseSentSort,
+    filterOptionsFor: driversLicenseFilterOptionsFor,
+    toggleFilterValue: driversLicenseToggleFilterValue,
+    clearColumnFilter: driversLicenseClearColumnFilter,
+    isColumnFiltered: driversLicenseIsColumnFiltered,
+    isValueChecked: driversLicenseIsValueChecked,
+    rows: sortedSentDriversLicenseForms,
+  } = useSortableSearchTable<SignableDocument, DriversLicenseSortColumn>(
+    sentDriversLicenseForms,
+    (doc, q) => {
+      const data = doc.formData as Partial<DriversLicenseFormData>;
+      return (data.employeeName || doc.recipientName || "").toLowerCase().includes(q);
+    },
+    (doc, column) => {
+      const data = doc.formData as Partial<DriversLicenseFormData>;
+      switch (column) {
+        case "employee": return (data.employeeName || doc.recipientName || "").toLowerCase();
+        case "sentBy": return (doc.createdByName ?? "").toLowerCase();
+        case "status": return driversLicenseStatusLabel(doc).toLowerCase();
+        case "sent": return new Date(doc.createdAt).getTime();
+      }
+    },
+    (doc, column) => {
+      switch (column) {
+        case "sentBy": return doc.createdByName ?? "—";
+        case "status": return driversLicenseStatusLabel(doc);
+        default: return "";
+      }
+    }
+  );
   useEffect(() => {
     if (activeTab === "driversLicense" || activeTab === "jotformDocuments" || activeTab === "combineForms") void loadSentDriversLicenseForms();
   }, [activeTab]);
@@ -7292,12 +7944,31 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [driversLicenseSendError, setDriversLicenseSendError] = useState<string | null>(null);
   const [driversLicenseActionBusyId, setDriversLicenseActionBusyId] = useState<string | null>(null);
   const [driversLicenseActionError, setDriversLicenseActionError] = useState<string | null>(null);
+  const [driversLicenseDocPreview, setDriversLicenseDocPreview] = useState<SignableDocument | null>(null);
   const [driversLicenseExternalName, setDriversLicenseExternalName] = useState("");
   const [driversLicenseSentLink, setDriversLicenseSentLink] = useState<{ link: string; recipientName: string } | null>(null);
   const [driversLicenseSentLinkCopied, setDriversLicenseSentLinkCopied] = useState(false);
   const filteredDriversLicenseRecipients = useMemo(
     () => employees.filter((e) => e.status === "active" && e.name.toLowerCase().includes(driversLicenseRecipientSearch.toLowerCase())),
     [employees, driversLicenseRecipientSearch]
+  );
+
+  // "File on Behalf" — same reasoning as SSN Card's own version above:
+  // HR already has the technician's license (emailed, handed over in
+  // person, etc.) and would rather enter it directly than send a
+  // fill-link and wait.
+  const [driversLicenseFileForRecipientId, setDriversLicenseFileForRecipientId] = useState("");
+  const [driversLicenseFileForRecipientSearch, setDriversLicenseFileForRecipientSearch] = useState("");
+  const [driversLicenseFileForRecipientDropdownOpen, setDriversLicenseFileForRecipientDropdownOpen] = useState(false);
+  const [driversLicenseFileForNumber, setDriversLicenseFileForNumber] = useState("");
+  const [driversLicenseFileForState, setDriversLicenseFileForState] = useState("");
+  const [driversLicenseFileForPhotos, setDriversLicenseFileForPhotos] = useState<File[]>([]);
+  const [driversLicenseFiling, setDriversLicenseFiling] = useState(false);
+  const [driversLicenseFilingStep, setDriversLicenseFilingStep] = useState<string | null>(null);
+  const [driversLicenseFilingError, setDriversLicenseFilingError] = useState<string | null>(null);
+  const filteredDriversLicenseFileForRecipients = useMemo(
+    () => employees.filter((e) => e.status === "active" && e.name.toLowerCase().includes(driversLicenseFileForRecipientSearch.toLowerCase())),
+    [employees, driversLicenseFileForRecipientSearch]
   );
 
   const handleSendDriversLicense = async () => {
@@ -7411,6 +8082,87 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
 
+  const handleFileDriversLicenseForHr = async () => {
+    if (!driversLicenseFileForRecipientId || !uid) return;
+    const recipient = employees.find((e) => e.id === driversLicenseFileForRecipientId);
+    if (!recipient) { setDriversLicenseFilingError("Select a technician first."); return; }
+    if (!driversLicenseFileForNumber.trim()) { setDriversLicenseFilingError("Enter the license number."); return; }
+    if (!driversLicenseFileForState) { setDriversLicenseFilingError("Select the issuing state."); return; }
+    if (driversLicenseFileForPhotos.length === 0) { setDriversLicenseFilingError("Upload at least one photo of the license."); return; }
+
+    setDriversLicenseFiling(true);
+    setDriversLicenseFilingError(null);
+    let createdDocId: string | null = null;
+    try {
+      const alreadySent = await getExistingActiveDocumentTypes(recipient.id, ["drivers_license_form"]);
+      if (alreadySent.length > 0 && !window.confirm(`${recipient.name} already has a Driver's License on file. File another one anyway?`)) {
+        return;
+      }
+
+      setDriversLicenseFilingStep("Creating record…");
+      const doc = await createSignableDocument({
+        documentType: "drivers_license_form",
+        formData: { employeeId: recipient.id, employeeName: recipient.name } as unknown as Record<string, any>,
+        recipientId: recipient.id,
+        recipientSlot: "employee",
+        pdfUrl: "",
+      });
+      createdDocId = doc.id;
+      const companyId = doc.companyId;
+
+      setDriversLicenseFilingStep("Preparing upload…");
+      await refreshStorageAuthToken();
+
+      setDriversLicenseFilingStep(`Uploading photo${driversLicenseFileForPhotos.length > 1 ? "s" : ""}…`);
+      const compressedFiles = await Promise.all(driversLicenseFileForPhotos.map(compressIdPhotoForUpload));
+      const licensePhotoUrls = await Promise.all(
+        compressedFiles.map((file, i) => uploadSignableDocumentAttachment(companyId, doc.id, "licensePhotoUrls", i, file))
+      );
+
+      const signedAt = new Date().toISOString();
+      const filedByHrName = displayName || "HR";
+      const finalData: DriversLicenseFormData = {
+        employeeId: recipient.id,
+        employeeName: recipient.name,
+        licenseNumber: driversLicenseFileForNumber.trim(),
+        licenseState: driversLicenseFileForState,
+        licensePhotoUrls,
+        dateSigned: signedAt,
+        signatureDataUrl: "",
+        filedByHr: true,
+        filedByHrName,
+      };
+      const entry = { name: `Filed by HR — ${filedByHrName}`, url: "", signedAt };
+
+      setDriversLicenseFilingStep("Generating document…");
+      const localLicensePhotoUrls = await Promise.all(compressedFiles.map(fileToDataUrl));
+      const captureData: DriversLicenseFormData = { ...finalData, licensePhotoUrls: localLicensePhotoUrls };
+      const logo = await loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png"));
+      const pdfBlob = await captureHtmlToPdfBlob(buildDriversLicenseFormBodyMarkup(captureData, logo, entry), driversLicenseFormStyles);
+      const pdfUrl = await uploadDriversLicenseForm(companyId, recipient.name, pdfBlob);
+
+      setDriversLicenseFilingStep("Saving…");
+      await signDocument(doc.id, "employee", entry, pdfUrl, finalData as unknown as Record<string, any>);
+
+      void logActivity({ action: "drivers_license_filed_by_hr", targetType: "employee", targetId: recipient.id, targetLabel: recipient.name });
+
+      setDriversLicenseFileForRecipientId("");
+      setDriversLicenseFileForRecipientSearch("");
+      setDriversLicenseFileForNumber("");
+      setDriversLicenseFileForState("");
+      setDriversLicenseFileForPhotos([]);
+      await loadSentDriversLicenseForms();
+    } catch (err) {
+      if (createdDocId) {
+        try { await deleteSignableDocument(createdDocId); } catch { /* best effort */ }
+      }
+      setDriversLicenseFilingError(err instanceof Error ? err.message : "Failed to file this Driver's License.");
+    } finally {
+      setDriversLicenseFiling(false);
+      setDriversLicenseFilingStep(null);
+    }
+  };
+
   const handleDeleteDriversLicense = async (doc: SignableDocument) => {
     if (!window.confirm("Permanently delete this Driver's License request?")) return;
     setDriversLicenseActionBusyId(doc.id);
@@ -7433,6 +8185,45 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       console.error("Failed to load sent Valid ID forms:", err);
     }
   };
+
+  type ValidIdSortColumn = "employee" | "sentBy" | "status" | "sent";
+  const validIdStatusLabel = (doc: SignableDocument): string =>
+    doc.status === "signed" ? "Submitted" : doc.status === "cancelled" ? "Cancelled" : "Awaiting Completion";
+  const {
+    search: validIdSentSearch,
+    setSearch: setValidIdSentSearch,
+    sortColumn: validIdSentSortColumn,
+    sortDir: validIdSentSortDir,
+    handleSort: handleValidIdSentSort,
+    filterOptionsFor: validIdFilterOptionsFor,
+    toggleFilterValue: validIdToggleFilterValue,
+    clearColumnFilter: validIdClearColumnFilter,
+    isColumnFiltered: validIdIsColumnFiltered,
+    isValueChecked: validIdIsValueChecked,
+    rows: sortedSentValidIdForms,
+  } = useSortableSearchTable<SignableDocument, ValidIdSortColumn>(
+    sentValidIdForms,
+    (doc, q) => {
+      const data = doc.formData as Partial<ValidIdFormData>;
+      return (data.employeeName || doc.recipientName || "").toLowerCase().includes(q);
+    },
+    (doc, column) => {
+      const data = doc.formData as Partial<ValidIdFormData>;
+      switch (column) {
+        case "employee": return (data.employeeName || doc.recipientName || "").toLowerCase();
+        case "sentBy": return (doc.createdByName ?? "").toLowerCase();
+        case "status": return validIdStatusLabel(doc).toLowerCase();
+        case "sent": return new Date(doc.createdAt).getTime();
+      }
+    },
+    (doc, column) => {
+      switch (column) {
+        case "sentBy": return doc.createdByName ?? "—";
+        case "status": return validIdStatusLabel(doc);
+        default: return "";
+      }
+    }
+  );
   useEffect(() => {
     if (activeTab === "validId" || activeTab === "jotformDocuments" || activeTab === "combineForms") void loadSentValidIdForms();
   }, [activeTab]);
@@ -7596,6 +8387,50 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       console.error("Failed to load sent Non-Disclosure Agreement forms:", err);
     }
   };
+
+  type NdaSortColumn = "employee" | "branch" | "sentBy" | "status" | "sent";
+  const ndaStatusLabel = (doc: SignableDocument): string =>
+    doc.status === "signed" ? "Submitted" : doc.status === "cancelled" ? "Cancelled" : "Awaiting Completion";
+  const {
+    search: ndaSentSearch,
+    setSearch: setNdaSentSearch,
+    sortColumn: ndaSentSortColumn,
+    sortDir: ndaSentSortDir,
+    handleSort: handleNdaSentSort,
+    filterOptionsFor: ndaFilterOptionsFor,
+    toggleFilterValue: ndaToggleFilterValue,
+    clearColumnFilter: ndaClearColumnFilter,
+    isColumnFiltered: ndaIsColumnFiltered,
+    isValueChecked: ndaIsValueChecked,
+    rows: sortedSentNdaForms,
+  } = useSortableSearchTable<SignableDocument, NdaSortColumn>(
+    sentNdaForms,
+    (doc, q) => {
+      const data = doc.formData as { employeeName?: string; branch?: string };
+      const employeeName = (data.employeeName || doc.recipientName || "").toLowerCase();
+      const branch = (data.branch || "").toLowerCase();
+      return employeeName.includes(q) || branch.includes(q);
+    },
+    (doc, column) => {
+      const data = doc.formData as { employeeName?: string; branch?: string };
+      switch (column) {
+        case "employee": return (data.employeeName || doc.recipientName || "").toLowerCase();
+        case "branch": return (data.branch || "").toLowerCase();
+        case "sentBy": return (doc.createdByName ?? "").toLowerCase();
+        case "status": return ndaStatusLabel(doc).toLowerCase();
+        case "sent": return new Date(doc.createdAt).getTime();
+      }
+    },
+    (doc, column) => {
+      const data = doc.formData as { employeeName?: string; branch?: string };
+      switch (column) {
+        case "branch": return data.branch || "—";
+        case "sentBy": return doc.createdByName ?? "—";
+        case "status": return ndaStatusLabel(doc);
+        default: return "";
+      }
+    }
+  );
   useEffect(() => {
     if (activeTab === "ndaForm" || activeTab === "jotformDocuments" || activeTab === "combineForms") void loadSentNdaForms();
   }, [activeTab]);
@@ -7804,6 +8639,45 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       console.error("Failed to load sent Substance Screening & Conduct Agreement forms:", err);
     }
   };
+
+  type SubstanceScreeningSortColumn = "employee" | "sentBy" | "status" | "sent";
+  const substanceScreeningStatusLabel = (doc: SignableDocument): string =>
+    doc.status === "confirmed" ? "Completed" : isAwaitingEmployerStep(doc) ? "Awaiting Employer Signature" : doc.status === "cancelled" ? "Cancelled" : "Awaiting Employee";
+  const {
+    search: substanceScreeningSentSearch,
+    setSearch: setSubstanceScreeningSentSearch,
+    sortColumn: substanceScreeningSentSortColumn,
+    sortDir: substanceScreeningSentSortDir,
+    handleSort: handleSubstanceScreeningSentSort,
+    filterOptionsFor: substanceScreeningFilterOptionsFor,
+    toggleFilterValue: substanceScreeningToggleFilterValue,
+    clearColumnFilter: substanceScreeningClearColumnFilter,
+    isColumnFiltered: substanceScreeningIsColumnFiltered,
+    isValueChecked: substanceScreeningIsValueChecked,
+    rows: sortedSentSubstanceScreeningForms,
+  } = useSortableSearchTable<SignableDocument, SubstanceScreeningSortColumn>(
+    sentSubstanceScreeningForms,
+    (doc, q) => {
+      const data = doc.formData as Partial<SubstanceScreeningFormData>;
+      return (data.employeeName || doc.recipientName || "").toLowerCase().includes(q);
+    },
+    (doc, column) => {
+      const data = doc.formData as Partial<SubstanceScreeningFormData>;
+      switch (column) {
+        case "employee": return (data.employeeName || doc.recipientName || "").toLowerCase();
+        case "sentBy": return (doc.createdByName ?? "").toLowerCase();
+        case "status": return substanceScreeningStatusLabel(doc).toLowerCase();
+        case "sent": return new Date(doc.createdAt).getTime();
+      }
+    },
+    (doc, column) => {
+      switch (column) {
+        case "sentBy": return doc.createdByName ?? "—";
+        case "status": return substanceScreeningStatusLabel(doc);
+        default: return "";
+      }
+    }
+  );
   useEffect(() => {
     if (activeTab === "substanceScreening" || activeTab === "jotformDocuments") void loadSentSubstanceScreeningForms();
   }, [activeTab]);
@@ -8061,6 +8935,50 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       console.error("Failed to load sent PTO & Sick Leave Policy Acknowledgment forms:", err);
     }
   };
+
+  type PtoAckSortColumn = "employee" | "branch" | "sentBy" | "status" | "sent";
+  const ptoAckStatusLabel = (doc: SignableDocument): string =>
+    doc.status === "signed" ? "Submitted" : doc.status === "cancelled" ? "Cancelled" : "Awaiting Completion";
+  const {
+    search: ptoAckSentSearch,
+    setSearch: setPtoAckSentSearch,
+    sortColumn: ptoAckSentSortColumn,
+    sortDir: ptoAckSentSortDir,
+    handleSort: handlePtoAckSentSort,
+    filterOptionsFor: ptoAckFilterOptionsFor,
+    toggleFilterValue: ptoAckToggleFilterValue,
+    clearColumnFilter: ptoAckClearColumnFilter,
+    isColumnFiltered: ptoAckIsColumnFiltered,
+    isValueChecked: ptoAckIsValueChecked,
+    rows: sortedSentPtoAckForms,
+  } = useSortableSearchTable<SignableDocument, PtoAckSortColumn>(
+    sentPtoAckForms,
+    (doc, q) => {
+      const data = doc.formData as Partial<PtoAckFormData>;
+      const employeeName = (data.employeeName || doc.recipientName || "").toLowerCase();
+      const branch = (data.branch || "").toLowerCase();
+      return employeeName.includes(q) || branch.includes(q);
+    },
+    (doc, column) => {
+      const data = doc.formData as Partial<PtoAckFormData>;
+      switch (column) {
+        case "employee": return (data.employeeName || doc.recipientName || "").toLowerCase();
+        case "branch": return (data.branch || "").toLowerCase();
+        case "sentBy": return (doc.createdByName ?? "").toLowerCase();
+        case "status": return ptoAckStatusLabel(doc).toLowerCase();
+        case "sent": return new Date(doc.createdAt).getTime();
+      }
+    },
+    (doc, column) => {
+      const data = doc.formData as Partial<PtoAckFormData>;
+      switch (column) {
+        case "branch": return data.branch || "—";
+        case "sentBy": return doc.createdByName ?? "—";
+        case "status": return ptoAckStatusLabel(doc);
+        default: return "";
+      }
+    }
+  );
   useEffect(() => {
     if (activeTab === "ptoAck" || activeTab === "jotformDocuments" || activeTab === "combineForms") void loadSentPtoAckForms();
   }, [activeTab]);
@@ -8249,6 +9167,50 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       console.error("Failed to load sent Parts Responsibility forms:", err);
     }
   };
+
+  type PartsResponsibilitySortColumn = "employee" | "branch" | "sentBy" | "status" | "sent";
+  const partsResponsibilityStatusLabel = (doc: SignableDocument): string =>
+    doc.status === "confirmed" ? "Completed" : isAwaitingEmployerStep(doc) ? "Awaiting Manager Signature" : doc.status === "cancelled" ? "Cancelled" : "Awaiting Technician";
+  const {
+    search: partsResponsibilitySentSearch,
+    setSearch: setPartsResponsibilitySentSearch,
+    sortColumn: partsResponsibilitySentSortColumn,
+    sortDir: partsResponsibilitySentSortDir,
+    handleSort: handlePartsResponsibilitySentSort,
+    filterOptionsFor: partsResponsibilityFilterOptionsFor,
+    toggleFilterValue: partsResponsibilityToggleFilterValue,
+    clearColumnFilter: partsResponsibilityClearColumnFilter,
+    isColumnFiltered: partsResponsibilityIsColumnFiltered,
+    isValueChecked: partsResponsibilityIsValueChecked,
+    rows: sortedSentPartsResponsibilityForms,
+  } = useSortableSearchTable<SignableDocument, PartsResponsibilitySortColumn>(
+    sentPartsResponsibilityForms,
+    (doc, q) => {
+      const data = doc.formData as Partial<PartsResponsibilityFormData>;
+      const employeeName = (data.employeeName || doc.recipientName || "").toLowerCase();
+      const branch = (data.branch || "").toLowerCase();
+      return employeeName.includes(q) || branch.includes(q);
+    },
+    (doc, column) => {
+      const data = doc.formData as Partial<PartsResponsibilityFormData>;
+      switch (column) {
+        case "employee": return (data.employeeName || doc.recipientName || "").toLowerCase();
+        case "branch": return (data.branch || "").toLowerCase();
+        case "sentBy": return (doc.createdByName ?? "").toLowerCase();
+        case "status": return partsResponsibilityStatusLabel(doc).toLowerCase();
+        case "sent": return new Date(doc.createdAt).getTime();
+      }
+    },
+    (doc, column) => {
+      const data = doc.formData as Partial<PartsResponsibilityFormData>;
+      switch (column) {
+        case "branch": return data.branch || "—";
+        case "sentBy": return doc.createdByName ?? "—";
+        case "status": return partsResponsibilityStatusLabel(doc);
+        default: return "";
+      }
+    }
+  );
   useEffect(() => {
     if (activeTab === "partsResponsibility" || activeTab === "jotformDocuments" || activeTab === "combineForms" || activeTab === "employerQueue") void loadSentPartsResponsibilityForms();
   }, [activeTab]);
@@ -8845,6 +9807,45 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       console.error("Failed to load sent Flash Technician Travel forms:", err);
     }
   };
+
+  type FlashTechnicianTravelSortColumn = "employee" | "sentBy" | "status" | "sent";
+  const flashTechnicianTravelStatusLabel = (doc: SignableDocument): string =>
+    doc.status === "confirmed" ? "Completed" : isAwaitingEmployerStep(doc) ? "Awaiting Employer Signature" : doc.status === "cancelled" ? "Cancelled" : "Awaiting Employee";
+  const {
+    search: flashTechnicianTravelSentSearch,
+    setSearch: setFlashTechnicianTravelSentSearch,
+    sortColumn: flashTechnicianTravelSentSortColumn,
+    sortDir: flashTechnicianTravelSentSortDir,
+    handleSort: handleFlashTechnicianTravelSentSort,
+    filterOptionsFor: flashTechnicianTravelFilterOptionsFor,
+    toggleFilterValue: flashTechnicianTravelToggleFilterValue,
+    clearColumnFilter: flashTechnicianTravelClearColumnFilter,
+    isColumnFiltered: flashTechnicianTravelIsColumnFiltered,
+    isValueChecked: flashTechnicianTravelIsValueChecked,
+    rows: sortedSentFlashTechnicianTravelForms,
+  } = useSortableSearchTable<SignableDocument, FlashTechnicianTravelSortColumn>(
+    sentFlashTechnicianTravelForms,
+    (doc, q) => {
+      const data = doc.formData as Partial<FlashTechnicianTravelFormData>;
+      return (data.employeeName || doc.recipientName || "").toLowerCase().includes(q);
+    },
+    (doc, column) => {
+      const data = doc.formData as Partial<FlashTechnicianTravelFormData>;
+      switch (column) {
+        case "employee": return (data.employeeName || doc.recipientName || "").toLowerCase();
+        case "sentBy": return (doc.createdByName ?? "").toLowerCase();
+        case "status": return flashTechnicianTravelStatusLabel(doc).toLowerCase();
+        case "sent": return new Date(doc.createdAt).getTime();
+      }
+    },
+    (doc, column) => {
+      switch (column) {
+        case "sentBy": return doc.createdByName ?? "—";
+        case "status": return flashTechnicianTravelStatusLabel(doc);
+        default: return "";
+      }
+    }
+  );
   useEffect(() => {
     if (activeTab === "flashTechnicianTravel" || activeTab === "jotformDocuments" || activeTab === "combineForms" || activeTab === "employerQueue") void loadSentFlashTechnicianTravelForms();
   }, [activeTab]);
@@ -9126,6 +10127,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [contractorAddendumSendError, setContractorAddendumSendError] = useState<string | null>(null);
   const [contractorAddendumActionBusyId, setContractorAddendumActionBusyId] = useState<string | null>(null);
   const [contractorAddendumActionError, setContractorAddendumActionError] = useState<string | null>(null);
+  const [contractorAddendumDocPreview, setContractorAddendumDocPreview] = useState<SignableDocument | null>(null);
   const [contractorAddendumExternalName, setContractorAddendumExternalName] = useState("");
   // Position Level / Guaranteed Minimum Baseline Payout — compensation terms
   // HR sets, not something the Contractor should be self-reporting. Shared
@@ -9159,6 +10161,57 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
   const contractorAddendumNextSlot = (doc: SignableDocument): DocSignatureSlot | null =>
     CONTRACTOR_ADDENDUM_SLOT_ORDER.find((s) => !doc.signatures[s]) ?? null;
+
+  // Same per-slot logic the table row itself computes (statusLabel below,
+  // in the render) — duplicated here rather than shared, since the row's
+  // version also derives statusCls/contractorSigned/allSigned together in
+  // one pass and isn't worth splitting apart just for this.
+  const contractorAddendumStatusLabel = (doc: SignableDocument): string => {
+    const contractorSigned = !!doc.signatures.employee;
+    const next = contractorAddendumNextSlot(doc);
+    const allSigned = !next;
+    return doc.status === "confirmed" ? "Completed"
+      : doc.status === "cancelled" ? "Cancelled"
+      : !contractorSigned ? "Awaiting Contractor"
+      : allSigned ? "Ready to Finalize"
+      : `Awaiting ${CONTRACTOR_ADDENDUM_SLOT_LABEL[next]}`;
+  };
+  type ContractorAddendumSortColumn = "employee" | "sentBy" | "status" | "sent";
+  const {
+    search: contractorAddendumSentSearch,
+    setSearch: setContractorAddendumSentSearch,
+    sortColumn: contractorAddendumSentSortColumn,
+    sortDir: contractorAddendumSentSortDir,
+    handleSort: handleContractorAddendumSentSort,
+    filterOptionsFor: contractorAddendumFilterOptionsFor,
+    toggleFilterValue: contractorAddendumToggleFilterValue,
+    clearColumnFilter: contractorAddendumClearColumnFilter,
+    isColumnFiltered: contractorAddendumIsColumnFiltered,
+    isValueChecked: contractorAddendumIsValueChecked,
+    rows: sortedVisibleContractorAddendumForms,
+  } = useSortableSearchTable<SignableDocument, ContractorAddendumSortColumn>(
+    visibleContractorAddendumForms,
+    (doc, q) => {
+      const fd = doc.formData as ContractorAddendumFormData;
+      return (fd?.signerNames?.employee || doc.recipientName || "").toLowerCase().includes(q);
+    },
+    (doc, column) => {
+      const fd = doc.formData as ContractorAddendumFormData;
+      switch (column) {
+        case "employee": return (fd?.signerNames?.employee || doc.recipientName || "").toLowerCase();
+        case "sentBy": return (doc.createdByName ?? "").toLowerCase();
+        case "status": return contractorAddendumStatusLabel(doc).toLowerCase();
+        case "sent": return new Date(doc.createdAt).getTime();
+      }
+    },
+    (doc, column) => {
+      switch (column) {
+        case "sentBy": return doc.createdByName ?? "—";
+        case "status": return contractorAddendumStatusLabel(doc);
+        default: return "";
+      }
+    }
+  );
 
   const toggleContractorAddendumPreview = async () => {
     if (contractorAddendumPreviewExpanded) {
@@ -9411,39 +10464,53 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // — a view-only derived list, never fed back into sentLocationConsentForms
   // itself (that state also feeds the employer queue and the all-docs
   // combined list elsewhere, which must stay unfiltered).
-  const [locationConsentPositionFilter, setLocationConsentPositionFilter] = useState("all");
-  const [locationConsentSentByFilter, setLocationConsentSentByFilter] = useState("all");
-  const [locationConsentStatusFilter, setLocationConsentStatusFilter] = useState("all");
-  const [locationConsentSentSortDir, setLocationConsentSentSortDir] = useState<"asc" | "desc">("desc");
-
   const locationConsentStatusLabel = (doc: SignableDocument): string =>
     doc.status === "confirmed" ? "Completed"
     : isAwaitingEmployerStep(doc) ? "Awaiting Employer Signature"
     : doc.status === "cancelled" ? "Cancelled"
     : "Awaiting Employee";
 
-  const locationConsentPositionOptions = useMemo(
-    () => Array.from(new Set(
-      sentLocationConsentForms.map((doc) => (doc.formData as Partial<LocationConsentFormData>).positionTitle).filter((v): v is string => !!v)
-    )).sort((a, b) => a.localeCompare(b)),
-    [sentLocationConsentForms]
+  type LocationConsentSortColumn = "employee" | "position" | "sentBy" | "status" | "sent";
+  const {
+    search: locationConsentSentSearch,
+    setSearch: setLocationConsentSentSearch,
+    sortColumn: locationConsentSentSortColumn,
+    sortDir: locationConsentSentSortDir,
+    handleSort: handleLocationConsentSentSort,
+    filterOptionsFor: locationConsentFilterOptionsFor,
+    toggleFilterValue: locationConsentToggleFilterValue,
+    clearColumnFilter: locationConsentClearColumnFilter,
+    isColumnFiltered: locationConsentIsColumnFiltered,
+    isValueChecked: locationConsentIsValueChecked,
+    rows: filteredSentLocationConsentForms,
+  } = useSortableSearchTable<SignableDocument, LocationConsentSortColumn>(
+    sentLocationConsentForms,
+    (doc, q) => {
+      const data = doc.formData as Partial<LocationConsentFormData>;
+      const employeeName = (data.employeeName || doc.recipientName || "").toLowerCase();
+      const position = (data.positionTitle || "").toLowerCase();
+      return employeeName.includes(q) || position.includes(q);
+    },
+    (doc, column) => {
+      const data = doc.formData as Partial<LocationConsentFormData>;
+      switch (column) {
+        case "employee": return (data.employeeName || doc.recipientName || "").toLowerCase();
+        case "position": return (data.positionTitle || "").toLowerCase();
+        case "sentBy": return (doc.createdByName ?? "").toLowerCase();
+        case "status": return locationConsentStatusLabel(doc).toLowerCase();
+        case "sent": return new Date(doc.createdAt).getTime();
+      }
+    },
+    (doc, column) => {
+      const data = doc.formData as Partial<LocationConsentFormData>;
+      switch (column) {
+        case "position": return data.positionTitle || "—";
+        case "sentBy": return doc.createdByName ?? "—";
+        case "status": return locationConsentStatusLabel(doc);
+        default: return "";
+      }
+    }
   );
-  const locationConsentSentByOptions = useMemo(
-    () => Array.from(new Set(sentLocationConsentForms.map((doc) => doc.createdByName).filter((v): v is string => !!v))).sort((a, b) => a.localeCompare(b)),
-    [sentLocationConsentForms]
-  );
-  const locationConsentStatusOptions = ["Awaiting Employee", "Awaiting Employer Signature", "Completed", "Cancelled"];
-
-  const filteredSentLocationConsentForms = useMemo(() => {
-    return sentLocationConsentForms
-      .filter((doc) => locationConsentPositionFilter === "all" || (doc.formData as Partial<LocationConsentFormData>).positionTitle === locationConsentPositionFilter)
-      .filter((doc) => locationConsentSentByFilter === "all" || doc.createdByName === locationConsentSentByFilter)
-      .filter((doc) => locationConsentStatusFilter === "all" || locationConsentStatusLabel(doc) === locationConsentStatusFilter)
-      .sort((a, b) => {
-        const diff = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
-        return locationConsentSentSortDir === "asc" ? diff : -diff;
-      });
-  }, [sentLocationConsentForms, locationConsentPositionFilter, locationConsentSentByFilter, locationConsentStatusFilter, locationConsentSentSortDir]);
 
   const [locationConsentRecipientId, setLocationConsentRecipientId] = useState("");
   const [locationConsentRecipientSearch, setLocationConsentRecipientSearch] = useState("");
@@ -9705,6 +10772,50 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       console.error("Failed to load sent Damage Agreement forms:", err);
     }
   };
+
+  type DamageSortColumn = "employee" | "position" | "sentBy" | "status" | "sent";
+  const damageStatusLabel = (doc: SignableDocument): string =>
+    doc.status === "confirmed" ? "Completed" : isAwaitingEmployerStep(doc) ? "Awaiting Employer Signature" : doc.status === "cancelled" ? "Cancelled" : "Awaiting Employee";
+  const {
+    search: damageSentSearch,
+    setSearch: setDamageSentSearch,
+    sortColumn: damageSentSortColumn,
+    sortDir: damageSentSortDir,
+    handleSort: handleDamageSentSort,
+    filterOptionsFor: damageFilterOptionsFor,
+    toggleFilterValue: damageToggleFilterValue,
+    clearColumnFilter: damageClearColumnFilter,
+    isColumnFiltered: damageIsColumnFiltered,
+    isValueChecked: damageIsValueChecked,
+    rows: sortedSentDamageForms,
+  } = useSortableSearchTable<SignableDocument, DamageSortColumn>(
+    sentDamageForms,
+    (doc, q) => {
+      const data = doc.formData as Partial<DamageFormData>;
+      const employeeName = (data.employeeName || doc.recipientName || "").toLowerCase();
+      const position = (data.positionTitle || "").toLowerCase();
+      return employeeName.includes(q) || position.includes(q);
+    },
+    (doc, column) => {
+      const data = doc.formData as Partial<DamageFormData>;
+      switch (column) {
+        case "employee": return (data.employeeName || doc.recipientName || "").toLowerCase();
+        case "position": return (data.positionTitle || "").toLowerCase();
+        case "sentBy": return (doc.createdByName ?? "").toLowerCase();
+        case "status": return damageStatusLabel(doc).toLowerCase();
+        case "sent": return new Date(doc.createdAt).getTime();
+      }
+    },
+    (doc, column) => {
+      const data = doc.formData as Partial<DamageFormData>;
+      switch (column) {
+        case "position": return data.positionTitle || "—";
+        case "sentBy": return doc.createdByName ?? "—";
+        case "status": return damageStatusLabel(doc);
+        default: return "";
+      }
+    }
+  );
   useEffect(() => {
     if (activeTab === "damage" || activeTab === "jotformDocuments" || activeTab === "combineForms" || activeTab === "employerQueue") void loadSentDamageForms();
   }, [activeTab]);
@@ -9972,6 +11083,50 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       console.error("Failed to load sent Contractor Data forms:", err);
     }
   };
+
+  type ContractorDataSortColumn = "employee" | "branch" | "sentBy" | "status" | "sent";
+  const contractorDataStatusLabel = (doc: SignableDocument): string =>
+    doc.status === "signed" ? "Submitted" : doc.status === "cancelled" ? "Cancelled" : "Awaiting Completion";
+  const {
+    search: contractorDataSentSearch,
+    setSearch: setContractorDataSentSearch,
+    sortColumn: contractorDataSentSortColumn,
+    sortDir: contractorDataSentSortDir,
+    handleSort: handleContractorDataSentSort,
+    filterOptionsFor: contractorDataFilterOptionsFor,
+    toggleFilterValue: contractorDataToggleFilterValue,
+    clearColumnFilter: contractorDataClearColumnFilter,
+    isColumnFiltered: contractorDataIsColumnFiltered,
+    isValueChecked: contractorDataIsValueChecked,
+    rows: sortedSentContractorDataForms,
+  } = useSortableSearchTable<SignableDocument, ContractorDataSortColumn>(
+    sentContractorDataForms,
+    (doc, q) => {
+      const data = doc.formData as Partial<ContractorDataFormData>;
+      const employeeName = (data.employeeName || doc.recipientName || "").toLowerCase();
+      const branch = (data.branch || "").toLowerCase();
+      return employeeName.includes(q) || branch.includes(q);
+    },
+    (doc, column) => {
+      const data = doc.formData as Partial<ContractorDataFormData>;
+      switch (column) {
+        case "employee": return (data.employeeName || doc.recipientName || "").toLowerCase();
+        case "branch": return (data.branch || "").toLowerCase();
+        case "sentBy": return (doc.createdByName ?? "").toLowerCase();
+        case "status": return contractorDataStatusLabel(doc).toLowerCase();
+        case "sent": return new Date(doc.createdAt).getTime();
+      }
+    },
+    (doc, column) => {
+      const data = doc.formData as Partial<ContractorDataFormData>;
+      switch (column) {
+        case "branch": return data.branch || "—";
+        case "sentBy": return doc.createdByName ?? "—";
+        case "status": return contractorDataStatusLabel(doc);
+        default: return "";
+      }
+    }
+  );
   useEffect(() => {
     if (activeTab === "contractorData" || activeTab === "jotformDocuments" || activeTab === "combineForms") void loadSentContractorDataForms();
   }, [activeTab]);
@@ -10192,6 +11347,50 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       console.error("Failed to load sent Contractor Data (US) forms:", err);
     }
   };
+
+  type ContractorDataUsSortColumn = "employee" | "branch" | "sentBy" | "status" | "sent";
+  const contractorDataUsStatusLabel = (doc: SignableDocument): string =>
+    doc.status === "signed" ? "Submitted" : doc.status === "cancelled" ? "Cancelled" : "Awaiting Completion";
+  const {
+    search: contractorDataUsSentSearch,
+    setSearch: setContractorDataUsSentSearch,
+    sortColumn: contractorDataUsSentSortColumn,
+    sortDir: contractorDataUsSentSortDir,
+    handleSort: handleContractorDataUsSentSort,
+    filterOptionsFor: contractorDataUsFilterOptionsFor,
+    toggleFilterValue: contractorDataUsToggleFilterValue,
+    clearColumnFilter: contractorDataUsClearColumnFilter,
+    isColumnFiltered: contractorDataUsIsColumnFiltered,
+    isValueChecked: contractorDataUsIsValueChecked,
+    rows: sortedSentContractorDataUsForms,
+  } = useSortableSearchTable<SignableDocument, ContractorDataUsSortColumn>(
+    sentContractorDataUsForms,
+    (doc, q) => {
+      const data = doc.formData as Partial<ContractorDataUsFormData>;
+      const employeeName = (data.employeeName || doc.recipientName || "").toLowerCase();
+      const branch = (data.branch || "").toLowerCase();
+      return employeeName.includes(q) || branch.includes(q);
+    },
+    (doc, column) => {
+      const data = doc.formData as Partial<ContractorDataUsFormData>;
+      switch (column) {
+        case "employee": return (data.employeeName || doc.recipientName || "").toLowerCase();
+        case "branch": return (data.branch || "").toLowerCase();
+        case "sentBy": return (doc.createdByName ?? "").toLowerCase();
+        case "status": return contractorDataUsStatusLabel(doc).toLowerCase();
+        case "sent": return new Date(doc.createdAt).getTime();
+      }
+    },
+    (doc, column) => {
+      const data = doc.formData as Partial<ContractorDataUsFormData>;
+      switch (column) {
+        case "branch": return data.branch || "—";
+        case "sentBy": return doc.createdByName ?? "—";
+        case "status": return contractorDataUsStatusLabel(doc);
+        default: return "";
+      }
+    }
+  );
   useEffect(() => {
     if (activeTab === "contractorDataUs" || activeTab === "jotformDocuments" || activeTab === "combineForms") void loadSentContractorDataUsForms();
   }, [activeTab]);
@@ -10408,6 +11607,50 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       console.error("Failed to load sent Vehicle Use Agreement forms:", err);
     }
   };
+
+  type VehicleUseAgreementSortColumn = "employee" | "branch" | "sentBy" | "status" | "sent";
+  const vehicleUseAgreementStatusLabel = (doc: SignableDocument): string =>
+    doc.status === "signed" ? "Submitted" : doc.status === "cancelled" ? "Cancelled" : "Awaiting Completion";
+  const {
+    search: vehicleUseAgreementSentSearch,
+    setSearch: setVehicleUseAgreementSentSearch,
+    sortColumn: vehicleUseAgreementSentSortColumn,
+    sortDir: vehicleUseAgreementSentSortDir,
+    handleSort: handleVehicleUseAgreementSentSort,
+    filterOptionsFor: vehicleUseAgreementFilterOptionsFor,
+    toggleFilterValue: vehicleUseAgreementToggleFilterValue,
+    clearColumnFilter: vehicleUseAgreementClearColumnFilter,
+    isColumnFiltered: vehicleUseAgreementIsColumnFiltered,
+    isValueChecked: vehicleUseAgreementIsValueChecked,
+    rows: sortedSentVehicleUseAgreementForms,
+  } = useSortableSearchTable<SignableDocument, VehicleUseAgreementSortColumn>(
+    sentVehicleUseAgreementForms,
+    (doc, q) => {
+      const data = doc.formData as Partial<VehicleUseAgreementFormData>;
+      const employeeName = (data.employeeName || doc.recipientName || "").toLowerCase();
+      const branch = (data.branch || "").toLowerCase();
+      return employeeName.includes(q) || branch.includes(q);
+    },
+    (doc, column) => {
+      const data = doc.formData as Partial<VehicleUseAgreementFormData>;
+      switch (column) {
+        case "employee": return (data.employeeName || doc.recipientName || "").toLowerCase();
+        case "branch": return (data.branch || "").toLowerCase();
+        case "sentBy": return (doc.createdByName ?? "").toLowerCase();
+        case "status": return vehicleUseAgreementStatusLabel(doc).toLowerCase();
+        case "sent": return new Date(doc.createdAt).getTime();
+      }
+    },
+    (doc, column) => {
+      const data = doc.formData as Partial<VehicleUseAgreementFormData>;
+      switch (column) {
+        case "branch": return data.branch || "—";
+        case "sentBy": return doc.createdByName ?? "—";
+        case "status": return vehicleUseAgreementStatusLabel(doc);
+        default: return "";
+      }
+    }
+  );
   useEffect(() => {
     if (activeTab === "vehicleUseAgreement" || activeTab === "jotformDocuments" || activeTab === "combineForms") void loadSentVehicleUseAgreementForms();
   }, [activeTab]);
@@ -10616,6 +11859,50 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const visibleDirectDepositForms = useMemo(
     () => sentDirectDepositForms.filter((d) => (activeTab === "newDirectDeposit" ? isNewAutomationDoc(d) : !isNewAutomationDoc(d))),
     [sentDirectDepositForms, activeTab]
+  );
+
+  type DirectDepositSortColumn = "employee" | "bank" | "sentBy" | "status" | "sent";
+  const directDepositStatusLabel = (doc: SignableDocument): string =>
+    doc.status === "signed" ? "Submitted" : doc.status === "cancelled" ? "Cancelled" : "Awaiting Completion";
+  const {
+    search: directDepositSentSearch,
+    setSearch: setDirectDepositSentSearch,
+    sortColumn: directDepositSentSortColumn,
+    sortDir: directDepositSentSortDir,
+    handleSort: handleDirectDepositSentSort,
+    filterOptionsFor: directDepositFilterOptionsFor,
+    toggleFilterValue: directDepositToggleFilterValue,
+    clearColumnFilter: directDepositClearColumnFilter,
+    isColumnFiltered: directDepositIsColumnFiltered,
+    isValueChecked: directDepositIsValueChecked,
+    rows: sortedVisibleDirectDepositForms,
+  } = useSortableSearchTable<SignableDocument, DirectDepositSortColumn>(
+    visibleDirectDepositForms,
+    (doc, q) => {
+      const data = doc.formData as Partial<DirectDepositFormData>;
+      const employeeName = (data.employeeName || doc.recipientName || "").toLowerCase();
+      const bank = (data.bankName || "").toLowerCase();
+      return employeeName.includes(q) || bank.includes(q);
+    },
+    (doc, column) => {
+      const data = doc.formData as Partial<DirectDepositFormData>;
+      switch (column) {
+        case "employee": return (data.employeeName || doc.recipientName || "").toLowerCase();
+        case "bank": return (data.bankName || "").toLowerCase();
+        case "sentBy": return (doc.createdByName ?? "").toLowerCase();
+        case "status": return directDepositStatusLabel(doc).toLowerCase();
+        case "sent": return new Date(doc.createdAt).getTime();
+      }
+    },
+    (doc, column) => {
+      const data = doc.formData as Partial<DirectDepositFormData>;
+      switch (column) {
+        case "bank": return data.bankName || "—";
+        case "sentBy": return doc.createdByName ?? "—";
+        case "status": return directDepositStatusLabel(doc);
+        default: return "";
+      }
+    }
   );
 
   const [directDepositRecipientId, setDirectDepositRecipientId] = useState("");
@@ -11083,12 +12370,16 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     { type: "w4", label: "Form W-4" },
     { type: "i9", label: "Form I-9 (Employment Eligibility)" },
     { type: "direct_deposit", label: "Direct Deposit Authorization" },
+    { type: "ssn_card_form", label: "SSN Card" },
+    { type: "drivers_license_form", label: "Driver's License" },
   ];
   const NEW_OFFICE_BULK_FORM_TYPES: { type: SignableDocumentType; label: string }[] = [
     { type: "master_w2_office_agreement", label: "Master W-2 Office Agreement" },
     { type: "w4", label: "Form W-4" },
     { type: "i9", label: "Form I-9 (Employment Eligibility)" },
     { type: "direct_deposit", label: "Direct Deposit Authorization" },
+    { type: "ssn_card_form", label: "SSN Card" },
+    { type: "drivers_license_form", label: "Driver's License" },
   ];
   const NEW_PH_BULK_FORM_TYPES: { type: SignableDocumentType; label: string }[] = [
     { type: "master_ph_contractor_agreement", label: "Master PH Contractor Agreement" },
@@ -11929,6 +13220,41 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     await downloadSignableDocumentPdf(doc.pdfUrl, `Employee Promotion Form - ${employeeName}.pdf`);
   };
 
+  type PromotionFormSortColumn = "employee" | "sentBy" | "status" | "sent";
+  const promotionFormStatusLabel = (doc: SignableDocument): string =>
+    doc.status === "pending_signature" ? "Awaiting Signature" : doc.status === "signed" ? "Signed — Awaiting Confirmation" : doc.status === "confirmed" ? "Confirmed" : "Cancelled";
+  const {
+    search: promotionFormSentSearch,
+    setSearch: setPromotionFormSentSearch,
+    sortColumn: promotionFormSentSortColumn,
+    sortDir: promotionFormSentSortDir,
+    handleSort: handlePromotionFormSentSort,
+    filterOptionsFor: promotionFormFilterOptionsFor,
+    toggleFilterValue: promotionFormToggleFilterValue,
+    clearColumnFilter: promotionFormClearColumnFilter,
+    isColumnFiltered: promotionFormIsColumnFiltered,
+    isValueChecked: promotionFormIsValueChecked,
+    rows: sortedSentPromotionForms,
+  } = useSortableSearchTable<SignableDocument, PromotionFormSortColumn>(
+    sentPromotionForms,
+    (doc, q) => ((doc.formData as unknown as PromotionFormData).employeeName || "").toLowerCase().includes(q),
+    (doc, column) => {
+      switch (column) {
+        case "employee": return ((doc.formData as unknown as PromotionFormData).employeeName || "").toLowerCase();
+        case "sentBy": return (doc.createdByName ?? "").toLowerCase();
+        case "status": return promotionFormStatusLabel(doc).toLowerCase();
+        case "sent": return new Date(doc.createdAt).getTime();
+      }
+    },
+    (doc, column) => {
+      switch (column) {
+        case "sentBy": return doc.createdByName ?? "—";
+        case "status": return promotionFormStatusLabel(doc);
+        default: return "";
+      }
+    }
+  );
+
   const handleCopyPromotionFormLink = async (doc: SignableDocument) => {
     try {
       const path = doc.recipientId ? "sign-promotion-form" : "sign-promotion-external";
@@ -12337,6 +13663,41 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     await downloadSignableDocumentPdf(doc.pdfUrl, `Manager Action Plan Form - ${employeeName}.pdf`);
   };
 
+  type ActionPlanFormSortColumn = "employee" | "sentBy" | "status" | "sent";
+  const actionPlanFormStatusLabel = (doc: SignableDocument): string =>
+    doc.status === "pending_signature" ? "Awaiting Signature" : doc.status === "signed" ? "Signed — Awaiting Confirmation" : doc.status === "confirmed" ? "Confirmed" : "Cancelled";
+  const {
+    search: actionPlanFormSentSearch,
+    setSearch: setActionPlanFormSentSearch,
+    sortColumn: actionPlanFormSentSortColumn,
+    sortDir: actionPlanFormSentSortDir,
+    handleSort: handleActionPlanFormSentSort,
+    filterOptionsFor: actionPlanFormFilterOptionsFor,
+    toggleFilterValue: actionPlanFormToggleFilterValue,
+    clearColumnFilter: actionPlanFormClearColumnFilter,
+    isColumnFiltered: actionPlanFormIsColumnFiltered,
+    isValueChecked: actionPlanFormIsValueChecked,
+    rows: sortedSentActionPlanForms,
+  } = useSortableSearchTable<SignableDocument, ActionPlanFormSortColumn>(
+    sentActionPlanForms,
+    (doc, q) => ((doc.formData as unknown as ActionPlanFormData).employeeName || "").toLowerCase().includes(q),
+    (doc, column) => {
+      switch (column) {
+        case "employee": return ((doc.formData as unknown as ActionPlanFormData).employeeName || "").toLowerCase();
+        case "sentBy": return (doc.createdByName ?? "").toLowerCase();
+        case "status": return actionPlanFormStatusLabel(doc).toLowerCase();
+        case "sent": return new Date(doc.createdAt).getTime();
+      }
+    },
+    (doc, column) => {
+      switch (column) {
+        case "sentBy": return doc.createdByName ?? "—";
+        case "status": return actionPlanFormStatusLabel(doc);
+        default: return "";
+      }
+    }
+  );
+
   const handleCopyActionPlanFormLink = async (doc: SignableDocument) => {
     try {
       const path = doc.recipientId ? "sign-action-plan-form" : "sign-action-plan-external";
@@ -12709,6 +14070,41 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     const employeeName = (doc.formData as unknown as TerminationFormData).employeeName || "termination-form";
     await downloadSignableDocumentPdf(doc.pdfUrl, `Termination Notice - ${employeeName}.pdf`);
   };
+
+  type TerminationFormSortColumn = "employee" | "sentBy" | "status" | "sent";
+  const terminationFormStatusLabel = (doc: SignableDocument): string =>
+    doc.status === "pending_signature" ? "Awaiting Signature" : doc.status === "signed" ? "Signed — Awaiting Confirmation" : doc.status === "confirmed" ? "Confirmed" : "Cancelled";
+  const {
+    search: terminationFormSentSearch,
+    setSearch: setTerminationFormSentSearch,
+    sortColumn: terminationFormSentSortColumn,
+    sortDir: terminationFormSentSortDir,
+    handleSort: handleTerminationFormSentSort,
+    filterOptionsFor: terminationFormFilterOptionsFor,
+    toggleFilterValue: terminationFormToggleFilterValue,
+    clearColumnFilter: terminationFormClearColumnFilter,
+    isColumnFiltered: terminationFormIsColumnFiltered,
+    isValueChecked: terminationFormIsValueChecked,
+    rows: sortedSentTerminationForms,
+  } = useSortableSearchTable<SignableDocument, TerminationFormSortColumn>(
+    sentTerminationForms,
+    (doc, q) => ((doc.formData as unknown as TerminationFormData).employeeName || "").toLowerCase().includes(q),
+    (doc, column) => {
+      switch (column) {
+        case "employee": return ((doc.formData as unknown as TerminationFormData).employeeName || "").toLowerCase();
+        case "sentBy": return (doc.createdByName ?? "").toLowerCase();
+        case "status": return terminationFormStatusLabel(doc).toLowerCase();
+        case "sent": return new Date(doc.createdAt).getTime();
+      }
+    },
+    (doc, column) => {
+      switch (column) {
+        case "sentBy": return doc.createdByName ?? "—";
+        case "status": return terminationFormStatusLabel(doc);
+        default: return "";
+      }
+    }
+  );
 
   // ONE-TIME repair for documents signed before resolveSignaturesForCapture
   // existed — see repairMultiSignerSignatures.ts's doc comment. Remove this
@@ -15711,19 +17107,27 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     { key: "newW4", label: "Form W-4", count: 0, icon: Landmark },
     { key: "newI9", label: "Form I-9 (Employment Eligibility)", count: sentI9AwaitingSection2CountNew, icon: FileCheck },
     { key: "newDirectDeposit", label: "Direct Deposit Authorization", count: 0, icon: FileCheck },
+    // Same standalone-identity-doc tabs automatedFormsTechnicianTabs already
+    // has, reused as-is (no "new"-prefixed pair — same treatment "validId"
+    // already gets in newAutomationFormsPhTabs below) — the Staff Form
+    // Checklist's own NEW_TECHNICIAN_FORM_TYPES tier already expects both.
+    { key: "ssnCard", label: "SSN Card", count: 0, icon: FileCheck },
+    { key: "driversLicense", label: "Driver's License", count: 0, icon: FileCheck },
   ] as const;
 
   // "New Office Forms (US)" — the office/logistics counterpart to New
   // Technician Forms above: Master W-2 Office Agreement is its own document
   // (different content — see masterW2OfficeAgreementFormTemplate.ts), while
-  // Form W-4/I-9/Direct Deposit are the exact same shared tab keys reused
-  // from New Technician Forms (there's only one W-4/I-9/Direct Deposit flow
-  // regardless of which column links to it).
+  // Form W-4/I-9/Direct Deposit/SSN Card/Driver's License are the exact
+  // same shared tab keys reused from New Technician Forms (there's only one
+  // flow for each regardless of which column links to it).
   const newAutomationFormsOfficeTabs = [
     { key: "masterW2OfficeAgreement", label: "Master W-2 Office Agreement", count: sentMasterW2OfficeAgreementAwaitingEmployerCount, icon: FileCheck },
     { key: "newW4", label: "Form W-4", count: 0, icon: Landmark },
     { key: "newI9", label: "Form I-9 (Employment Eligibility)", count: sentI9AwaitingSection2CountNew, icon: FileCheck },
     { key: "newDirectDeposit", label: "Direct Deposit Authorization", count: 0, icon: FileCheck },
+    { key: "ssnCard", label: "SSN Card", count: 0, icon: FileCheck },
+    { key: "driversLicense", label: "Driver's License", count: 0, icon: FileCheck },
   ] as const;
 
   // "PH Staff" — the Philippines-contractor counterpart to New Technician/
@@ -21029,6 +22433,24 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <h2 className="font-semibold text-sm">Sent Warning Forms</h2>
           <p className="text-[10px] text-muted-foreground mt-0.5">Track signature status. Confirming finalizes the warning onto the employee's official record; cancelling voids it.</p>
         </div>
+        <div className="px-4 py-3 border-b border-white/10 bg-white/5 flex flex-wrap items-end gap-3">
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+            <input
+              type="text"
+              value={warningFormSentSearch}
+              onChange={(e) => setWarningFormSentSearch(e.target.value)}
+              placeholder="Employee name…"
+              className="glass-input text-sm py-1.5 pl-8 pr-3 rounded-md w-56"
+            />
+          </div>
+          {warningFormSentSearch && (
+            <button onClick={() => setWarningFormSentSearch("")} className="btn text-sm px-3 py-1.5">Clear</button>
+          )}
+          <span className="text-xs text-muted-foreground mb-1.5 ml-auto">
+            {sortedSentWarningForms.length}{warningFormSentSearch ? ` of ${sentWarningForms.length}` : ""} forms
+          </span>
+        </div>
         {warnActionError && (
           <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{warnActionError}</p>
         )}
@@ -21036,19 +22458,35 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-white/10 bg-white/5">
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Employee</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Issued By</th>
+                <SortableTh column="employee" label="Employee" sortColumn={warningFormSentSortColumn} sortDir={warningFormSentSortDir} onSort={handleWarningFormSentSort} />
+                <FilterableTh
+                  column="sentBy" label="Issued By"
+                  sortColumn={warningFormSentSortColumn} sortDir={warningFormSentSortDir} onSort={handleWarningFormSentSort}
+                  options={warningFormFilterOptionsFor("sentBy")}
+                  isChecked={(v) => warningFormIsValueChecked("sentBy", v)}
+                  onToggleValue={(v) => warningFormToggleFilterValue("sentBy", v)}
+                  onClear={() => warningFormClearColumnFilter("sentBy")}
+                  isFiltered={warningFormIsColumnFiltered("sentBy")}
+                />
                 <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Recipient</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Status</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent</th>
+                <FilterableTh
+                  column="status" label="Status"
+                  sortColumn={warningFormSentSortColumn} sortDir={warningFormSentSortDir} onSort={handleWarningFormSentSort}
+                  options={warningFormFilterOptionsFor("status")}
+                  isChecked={(v) => warningFormIsValueChecked("status", v)}
+                  onToggleValue={(v) => warningFormToggleFilterValue("status", v)}
+                  onClear={() => warningFormClearColumnFilter("status")}
+                  isFiltered={warningFormIsColumnFiltered("status")}
+                />
+                <SortableTh column="sent" label="Sent" sortColumn={warningFormSentSortColumn} sortDir={warningFormSentSortDir} onSort={handleWarningFormSentSort} />
                 <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {sentWarningForms.length === 0 ? (
-                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">No warning forms sent yet.</td></tr>
+              {sortedSentWarningForms.length === 0 ? (
+                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">{sentWarningForms.length === 0 ? "No warning forms sent yet." : "No forms match this search/filter."}</td></tr>
               ) : (
-                sentWarningForms.map((doc) => {
+                sortedSentWarningForms.map((doc) => {
                   const data = doc.formData as unknown as WarningFormData;
                   const recipient = employees.find((e) => e.id === doc.recipientId);
                   const busy = warnActionBusyId === doc.id;
@@ -21122,6 +22560,14 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                             </button>
                           )}
                           {doc.pdfUrl && (
+                            <>
+                            <button
+                              type="button"
+                              onClick={() => setWarnViewDoc(doc)}
+                              className="text-blue-300 hover:text-blue-200 underline text-xs"
+                            >
+                              View
+                            </button>
                             <button
                               type="button"
                               onClick={() => handleDownloadWarningFormPdf(doc)}
@@ -21129,6 +22575,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                             >
                               Download PDF
                             </button>
+                            </>
                           )}
                           <button
                             type="button"
@@ -21293,6 +22740,24 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <h2 className="font-semibold text-sm">Sent Promotion Forms</h2>
           <p className="text-[10px] text-muted-foreground mt-0.5">Track signature status. Confirming finalizes the record as signed; cancelling voids it. Document-only — nothing here changes the employee's profile automatically.</p>
         </div>
+        <div className="px-4 py-3 border-b border-white/10 bg-white/5 flex flex-wrap items-end gap-3">
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+            <input
+              type="text"
+              value={promotionFormSentSearch}
+              onChange={(e) => setPromotionFormSentSearch(e.target.value)}
+              placeholder="Employee name…"
+              className="glass-input text-sm py-1.5 pl-8 pr-3 rounded-md w-56"
+            />
+          </div>
+          {promotionFormSentSearch && (
+            <button onClick={() => setPromotionFormSentSearch("")} className="btn text-sm px-3 py-1.5">Clear</button>
+          )}
+          <span className="text-xs text-muted-foreground mb-1.5 ml-auto">
+            {sortedSentPromotionForms.length}{promotionFormSentSearch ? ` of ${sentPromotionForms.length}` : ""} forms
+          </span>
+        </div>
         {promoActionError && (
           <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{promoActionError}</p>
         )}
@@ -21300,19 +22765,35 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-white/10 bg-white/5">
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Employee</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Issued By</th>
+                <SortableTh column="employee" label="Employee" sortColumn={promotionFormSentSortColumn} sortDir={promotionFormSentSortDir} onSort={handlePromotionFormSentSort} />
+                <FilterableTh
+                  column="sentBy" label="Issued By"
+                  sortColumn={promotionFormSentSortColumn} sortDir={promotionFormSentSortDir} onSort={handlePromotionFormSentSort}
+                  options={promotionFormFilterOptionsFor("sentBy")}
+                  isChecked={(v) => promotionFormIsValueChecked("sentBy", v)}
+                  onToggleValue={(v) => promotionFormToggleFilterValue("sentBy", v)}
+                  onClear={() => promotionFormClearColumnFilter("sentBy")}
+                  isFiltered={promotionFormIsColumnFiltered("sentBy")}
+                />
                 <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Recipient</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Status</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent</th>
+                <FilterableTh
+                  column="status" label="Status"
+                  sortColumn={promotionFormSentSortColumn} sortDir={promotionFormSentSortDir} onSort={handlePromotionFormSentSort}
+                  options={promotionFormFilterOptionsFor("status")}
+                  isChecked={(v) => promotionFormIsValueChecked("status", v)}
+                  onToggleValue={(v) => promotionFormToggleFilterValue("status", v)}
+                  onClear={() => promotionFormClearColumnFilter("status")}
+                  isFiltered={promotionFormIsColumnFiltered("status")}
+                />
+                <SortableTh column="sent" label="Sent" sortColumn={promotionFormSentSortColumn} sortDir={promotionFormSentSortDir} onSort={handlePromotionFormSentSort} />
                 <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {sentPromotionForms.length === 0 ? (
-                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">No promotion forms sent yet.</td></tr>
+              {sortedSentPromotionForms.length === 0 ? (
+                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">{sentPromotionForms.length === 0 ? "No promotion forms sent yet." : "No forms match this search/filter."}</td></tr>
               ) : (
-                sentPromotionForms.map((doc) => {
+                sortedSentPromotionForms.map((doc) => {
                   const data = doc.formData as unknown as PromotionFormData;
                   const recipient = employees.find((e) => e.id === doc.recipientId);
                   const busy = promoActionBusyId === doc.id;
@@ -21495,6 +22976,24 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <h2 className="font-semibold text-sm">Sent Action Plan Forms</h2>
           <p className="text-[10px] text-muted-foreground mt-0.5">Track signature status. Confirming finalizes the record as signed; cancelling voids it. Document-only — nothing here changes the employee's warning record automatically.</p>
         </div>
+        <div className="px-4 py-3 border-b border-white/10 bg-white/5 flex flex-wrap items-end gap-3">
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+            <input
+              type="text"
+              value={actionPlanFormSentSearch}
+              onChange={(e) => setActionPlanFormSentSearch(e.target.value)}
+              placeholder="Employee name…"
+              className="glass-input text-sm py-1.5 pl-8 pr-3 rounded-md w-56"
+            />
+          </div>
+          {actionPlanFormSentSearch && (
+            <button onClick={() => setActionPlanFormSentSearch("")} className="btn text-sm px-3 py-1.5">Clear</button>
+          )}
+          <span className="text-xs text-muted-foreground mb-1.5 ml-auto">
+            {sortedSentActionPlanForms.length}{actionPlanFormSentSearch ? ` of ${sentActionPlanForms.length}` : ""} forms
+          </span>
+        </div>
         {actionPlanActionError && (
           <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{actionPlanActionError}</p>
         )}
@@ -21502,19 +23001,35 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-white/10 bg-white/5">
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Employee</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Issued By</th>
+                <SortableTh column="employee" label="Employee" sortColumn={actionPlanFormSentSortColumn} sortDir={actionPlanFormSentSortDir} onSort={handleActionPlanFormSentSort} />
+                <FilterableTh
+                  column="sentBy" label="Issued By"
+                  sortColumn={actionPlanFormSentSortColumn} sortDir={actionPlanFormSentSortDir} onSort={handleActionPlanFormSentSort}
+                  options={actionPlanFormFilterOptionsFor("sentBy")}
+                  isChecked={(v) => actionPlanFormIsValueChecked("sentBy", v)}
+                  onToggleValue={(v) => actionPlanFormToggleFilterValue("sentBy", v)}
+                  onClear={() => actionPlanFormClearColumnFilter("sentBy")}
+                  isFiltered={actionPlanFormIsColumnFiltered("sentBy")}
+                />
                 <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Recipient</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Status</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent</th>
+                <FilterableTh
+                  column="status" label="Status"
+                  sortColumn={actionPlanFormSentSortColumn} sortDir={actionPlanFormSentSortDir} onSort={handleActionPlanFormSentSort}
+                  options={actionPlanFormFilterOptionsFor("status")}
+                  isChecked={(v) => actionPlanFormIsValueChecked("status", v)}
+                  onToggleValue={(v) => actionPlanFormToggleFilterValue("status", v)}
+                  onClear={() => actionPlanFormClearColumnFilter("status")}
+                  isFiltered={actionPlanFormIsColumnFiltered("status")}
+                />
+                <SortableTh column="sent" label="Sent" sortColumn={actionPlanFormSentSortColumn} sortDir={actionPlanFormSentSortDir} onSort={handleActionPlanFormSentSort} />
                 <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {sentActionPlanForms.length === 0 ? (
-                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">No action plan forms sent yet.</td></tr>
+              {sortedSentActionPlanForms.length === 0 ? (
+                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">{sentActionPlanForms.length === 0 ? "No action plan forms sent yet." : "No forms match this search/filter."}</td></tr>
               ) : (
-                sentActionPlanForms.map((doc) => {
+                sortedSentActionPlanForms.map((doc) => {
                   const data = doc.formData as unknown as ActionPlanFormData;
                   const recipient = employees.find((e) => e.id === doc.recipientId);
                   const busy = actionPlanActionBusyId === doc.id;
@@ -21587,6 +23102,13 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                               Revert
                             </button>
                           )}
+                          <button
+                            type="button"
+                            onClick={() => handleViewActionPlanForm(doc)}
+                            className="btn text-[10px] px-2 py-1"
+                          >
+                            View
+                          </button>
                           {doc.pdfUrl && (
                             <button
                               type="button"
@@ -21724,23 +23246,57 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         {terminationActionError && (
           <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{terminationActionError}</p>
         )}
+        <div className="px-4 py-3 border-b border-white/10 bg-white/5 flex flex-wrap items-end gap-3">
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+            <input
+              type="text"
+              value={terminationFormSentSearch}
+              onChange={(e) => setTerminationFormSentSearch(e.target.value)}
+              placeholder="Employee name…"
+              className="glass-input text-sm py-1.5 pl-8 pr-3 rounded-md w-56"
+            />
+          </div>
+          {terminationFormSentSearch && (
+            <button onClick={() => setTerminationFormSentSearch("")} className="btn text-sm px-3 py-1.5">Clear</button>
+          )}
+          <span className="text-xs text-muted-foreground mb-1.5 ml-auto">
+            {sortedSentTerminationForms.length}{terminationFormSentSearch ? ` of ${sentTerminationForms.length}` : ""} forms
+          </span>
+        </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-white/10 bg-white/5">
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Employee</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Issued By</th>
+                <SortableTh column="employee" label="Employee" sortColumn={terminationFormSentSortColumn} sortDir={terminationFormSentSortDir} onSort={handleTerminationFormSentSort} />
+                <FilterableTh
+                  column="sentBy" label="Issued By"
+                  sortColumn={terminationFormSentSortColumn} sortDir={terminationFormSentSortDir} onSort={handleTerminationFormSentSort}
+                  options={terminationFormFilterOptionsFor("sentBy")}
+                  isChecked={(v) => terminationFormIsValueChecked("sentBy", v)}
+                  onToggleValue={(v) => terminationFormToggleFilterValue("sentBy", v)}
+                  onClear={() => terminationFormClearColumnFilter("sentBy")}
+                  isFiltered={terminationFormIsColumnFiltered("sentBy")}
+                />
                 <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Recipient</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Status</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent</th>
+                <FilterableTh
+                  column="status" label="Status"
+                  sortColumn={terminationFormSentSortColumn} sortDir={terminationFormSentSortDir} onSort={handleTerminationFormSentSort}
+                  options={terminationFormFilterOptionsFor("status")}
+                  isChecked={(v) => terminationFormIsValueChecked("status", v)}
+                  onToggleValue={(v) => terminationFormToggleFilterValue("status", v)}
+                  onClear={() => terminationFormClearColumnFilter("status")}
+                  isFiltered={terminationFormIsColumnFiltered("status")}
+                />
+                <SortableTh column="sent" label="Sent" sortColumn={terminationFormSentSortColumn} sortDir={terminationFormSentSortDir} onSort={handleTerminationFormSentSort} />
                 <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {sentTerminationForms.length === 0 ? (
-                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">No termination forms sent yet.</td></tr>
+              {sortedSentTerminationForms.length === 0 ? (
+                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">{sentTerminationForms.length === 0 ? "No termination forms sent yet." : "No forms match this search/filter."}</td></tr>
               ) : (
-                sentTerminationForms.map((doc) => {
+                sortedSentTerminationForms.map((doc) => {
                   const data = doc.formData as unknown as TerminationFormData;
                   const recipient = employees.find((e) => e.id === doc.recipientId);
                   const busy = terminationActionBusyId === doc.id;
@@ -21994,6 +23550,24 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <h2 className="font-semibold text-sm">W-8BEN Sent History</h2>
           <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status.</p>
         </div>
+        <div className="px-4 py-3 border-b border-white/10 bg-white/5 flex flex-wrap items-end gap-3">
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+            <input
+              type="text"
+              value={w8benSentSearch}
+              onChange={(e) => setW8benSentSearch(e.target.value)}
+              placeholder="Employee name…"
+              className="glass-input text-sm py-1.5 pl-8 pr-3 rounded-md w-56"
+            />
+          </div>
+          {w8benSentSearch && (
+            <button onClick={() => setW8benSentSearch("")} className="btn text-sm px-3 py-1.5">Clear</button>
+          )}
+          <span className="text-xs text-muted-foreground mb-1.5 ml-auto">
+            {sortedVisibleW8benForms.length}{w8benSentSearch ? ` of ${visibleW8benForms.length}` : ""} forms
+          </span>
+        </div>
         {w8ActionError && (
           <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{w8ActionError}</p>
         )}
@@ -22001,18 +23575,34 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-white/10 bg-white/5">
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Employee</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent By</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Status</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent</th>
+                <SortableTh column="employee" label="Employee" sortColumn={w8benSentSortColumn} sortDir={w8benSentSortDir} onSort={handleW8benSentSort} />
+                <FilterableTh
+                  column="sentBy" label="Sent By"
+                  sortColumn={w8benSentSortColumn} sortDir={w8benSentSortDir} onSort={handleW8benSentSort}
+                  options={w8benFilterOptionsFor("sentBy")}
+                  isChecked={(v) => w8benIsValueChecked("sentBy", v)}
+                  onToggleValue={(v) => w8benToggleFilterValue("sentBy", v)}
+                  onClear={() => w8benClearColumnFilter("sentBy")}
+                  isFiltered={w8benIsColumnFiltered("sentBy")}
+                />
+                <FilterableTh
+                  column="status" label="Status"
+                  sortColumn={w8benSentSortColumn} sortDir={w8benSentSortDir} onSort={handleW8benSentSort}
+                  options={w8benFilterOptionsFor("status")}
+                  isChecked={(v) => w8benIsValueChecked("status", v)}
+                  onToggleValue={(v) => w8benToggleFilterValue("status", v)}
+                  onClear={() => w8benClearColumnFilter("status")}
+                  isFiltered={w8benIsColumnFiltered("status")}
+                />
+                <SortableTh column="sent" label="Sent" sortColumn={w8benSentSortColumn} sortDir={w8benSentSortDir} onSort={handleW8benSentSort} />
                 <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {visibleW8benForms.length === 0 ? (
-                <tr><td colSpan={5} className="px-4 py-8 text-center text-muted-foreground text-sm">No W-8BEN requests sent yet.</td></tr>
+              {sortedVisibleW8benForms.length === 0 ? (
+                <tr><td colSpan={5} className="px-4 py-8 text-center text-muted-foreground text-sm">{visibleW8benForms.length === 0 ? "No W-8BEN requests sent yet." : "No forms match this search/filter."}</td></tr>
               ) : (
-                visibleW8benForms.map((doc) => {
+                sortedVisibleW8benForms.map((doc) => {
                   const data = doc.formData as Partial<W8benFormData>;
                   const recipient = employees.find((e) => e.id === doc.recipientId);
                   const busy = w8ActionBusyId === doc.id;
@@ -22043,6 +23633,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           {doc.status === "pending_signature" && (
                             <button type="button" onClick={() => handleCopyW8benLink(doc)} className="btn text-[10px] px-2 py-1">
                               Copy Link
+                            </button>
+                          )}
+                          {doc.pdfUrl && (
+                            <button type="button" onClick={() => setW8DocPreview(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
+                              View
                             </button>
                           )}
                           {doc.pdfUrl && (
@@ -22196,6 +23791,24 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <h2 className="font-semibold text-sm">W-4 Sent History</h2>
           <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status. "Submitted" means the employee signed — fill in the employer fields to finalize.</p>
         </div>
+        <div className="px-4 py-3 border-b border-white/10 bg-white/5 flex flex-wrap items-end gap-3">
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+            <input
+              type="text"
+              value={w4SentSearch}
+              onChange={(e) => setW4SentSearch(e.target.value)}
+              placeholder="Employee name…"
+              className="glass-input text-sm py-1.5 pl-8 pr-3 rounded-md w-56"
+            />
+          </div>
+          {w4SentSearch && (
+            <button onClick={() => setW4SentSearch("")} className="btn text-sm px-3 py-1.5">Clear</button>
+          )}
+          <span className="text-xs text-muted-foreground mb-1.5 ml-auto">
+            {sortedVisibleW4Forms.length}{w4SentSearch ? ` of ${visibleW4Forms.length}` : ""} forms
+          </span>
+        </div>
         {w4ActionError && (
           <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{w4ActionError}</p>
         )}
@@ -22203,18 +23816,34 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-white/10 bg-white/5">
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Employee</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent By</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Status</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent</th>
+                <SortableTh column="employee" label="Employee" sortColumn={w4SentSortColumn} sortDir={w4SentSortDir} onSort={handleW4SentSort} />
+                <FilterableTh
+                  column="sentBy" label="Sent By"
+                  sortColumn={w4SentSortColumn} sortDir={w4SentSortDir} onSort={handleW4SentSort}
+                  options={w4FilterOptionsFor("sentBy")}
+                  isChecked={(v) => w4IsValueChecked("sentBy", v)}
+                  onToggleValue={(v) => w4ToggleFilterValue("sentBy", v)}
+                  onClear={() => w4ClearColumnFilter("sentBy")}
+                  isFiltered={w4IsColumnFiltered("sentBy")}
+                />
+                <FilterableTh
+                  column="status" label="Status"
+                  sortColumn={w4SentSortColumn} sortDir={w4SentSortDir} onSort={handleW4SentSort}
+                  options={w4FilterOptionsFor("status")}
+                  isChecked={(v) => w4IsValueChecked("status", v)}
+                  onToggleValue={(v) => w4ToggleFilterValue("status", v)}
+                  onClear={() => w4ClearColumnFilter("status")}
+                  isFiltered={w4IsColumnFiltered("status")}
+                />
+                <SortableTh column="sent" label="Sent" sortColumn={w4SentSortColumn} sortDir={w4SentSortDir} onSort={handleW4SentSort} />
                 <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {visibleW4Forms.length === 0 ? (
-                <tr><td colSpan={5} className="px-4 py-8 text-center text-muted-foreground text-sm">No W-4 requests sent yet.</td></tr>
+              {sortedVisibleW4Forms.length === 0 ? (
+                <tr><td colSpan={5} className="px-4 py-8 text-center text-muted-foreground text-sm">{visibleW4Forms.length === 0 ? "No W-4 requests sent yet." : "No forms match this search/filter."}</td></tr>
               ) : (
-                visibleW4Forms.map((doc) => {
+                sortedVisibleW4Forms.map((doc) => {
                   const data = doc.formData as Partial<W4FormData>;
                   const recipient = employees.find((e) => e.id === doc.recipientId);
                   const employeeName = `${data.firstNameMiddleInitial ?? ""} ${data.lastName ?? ""}`.trim();
@@ -22247,6 +23876,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           {doc.status === "pending_signature" && (
                             <button type="button" onClick={() => handleCopyW4Link(doc)} className="btn text-[10px] px-2 py-1">
                               Copy Link
+                            </button>
+                          )}
+                          {doc.pdfUrl && (
+                            <button type="button" onClick={() => setW4DocPreview(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
+                              View
                             </button>
                           )}
                           {doc.pdfUrl && (
@@ -22405,6 +24039,24 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <h2 className="font-semibold text-sm">W-9 Sent History</h2>
           <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status.</p>
         </div>
+        <div className="px-4 py-3 border-b border-white/10 bg-white/5 flex flex-wrap items-end gap-3">
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+            <input
+              type="text"
+              value={w9SentSearch}
+              onChange={(e) => setW9SentSearch(e.target.value)}
+              placeholder="Name…"
+              className="glass-input text-sm py-1.5 pl-8 pr-3 rounded-md w-56"
+            />
+          </div>
+          {w9SentSearch && (
+            <button onClick={() => setW9SentSearch("")} className="btn text-sm px-3 py-1.5">Clear</button>
+          )}
+          <span className="text-xs text-muted-foreground mb-1.5 ml-auto">
+            {sortedVisibleW9Forms.length}{w9SentSearch ? ` of ${visibleW9Forms.length}` : ""} forms
+          </span>
+        </div>
         {w9ActionError && (
           <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{w9ActionError}</p>
         )}
@@ -22412,18 +24064,34 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-white/10 bg-white/5">
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Name</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent By</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Status</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent</th>
+                <SortableTh column="employee" label="Name" sortColumn={w9SentSortColumn} sortDir={w9SentSortDir} onSort={handleW9SentSort} />
+                <FilterableTh
+                  column="sentBy" label="Sent By"
+                  sortColumn={w9SentSortColumn} sortDir={w9SentSortDir} onSort={handleW9SentSort}
+                  options={w9FilterOptionsFor("sentBy")}
+                  isChecked={(v) => w9IsValueChecked("sentBy", v)}
+                  onToggleValue={(v) => w9ToggleFilterValue("sentBy", v)}
+                  onClear={() => w9ClearColumnFilter("sentBy")}
+                  isFiltered={w9IsColumnFiltered("sentBy")}
+                />
+                <FilterableTh
+                  column="status" label="Status"
+                  sortColumn={w9SentSortColumn} sortDir={w9SentSortDir} onSort={handleW9SentSort}
+                  options={w9FilterOptionsFor("status")}
+                  isChecked={(v) => w9IsValueChecked("status", v)}
+                  onToggleValue={(v) => w9ToggleFilterValue("status", v)}
+                  onClear={() => w9ClearColumnFilter("status")}
+                  isFiltered={w9IsColumnFiltered("status")}
+                />
+                <SortableTh column="sent" label="Sent" sortColumn={w9SentSortColumn} sortDir={w9SentSortDir} onSort={handleW9SentSort} />
                 <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {visibleW9Forms.length === 0 ? (
-                <tr><td colSpan={5} className="px-4 py-8 text-center text-muted-foreground text-sm">No W-9 requests sent yet.</td></tr>
+              {sortedVisibleW9Forms.length === 0 ? (
+                <tr><td colSpan={5} className="px-4 py-8 text-center text-muted-foreground text-sm">{visibleW9Forms.length === 0 ? "No W-9 requests sent yet." : "No forms match this search/filter."}</td></tr>
               ) : (
-                visibleW9Forms.map((doc) => {
+                sortedVisibleW9Forms.map((doc) => {
                   const data = doc.formData as Partial<W9FormData>;
                   const recipient = employees.find((e) => e.id === doc.recipientId);
                   const busy = w9ActionBusyId === doc.id;
@@ -22454,6 +24122,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           {doc.status === "pending_signature" && (
                             <button type="button" onClick={() => handleCopyW9Link(doc)} className="btn text-[10px] px-2 py-1">
                               Copy Link
+                            </button>
+                          )}
+                          {doc.pdfUrl && (
+                            <button type="button" onClick={() => setW9DocPreview(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
+                              View
                             </button>
                           )}
                           {doc.pdfUrl && (
@@ -22607,6 +24280,24 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <h2 className="font-semibold text-sm">W-4R Sent History</h2>
           <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status.</p>
         </div>
+        <div className="px-4 py-3 border-b border-white/10 bg-white/5 flex flex-wrap items-end gap-3">
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+            <input
+              type="text"
+              value={w4rSentSearch}
+              onChange={(e) => setW4rSentSearch(e.target.value)}
+              placeholder="Name…"
+              className="glass-input text-sm py-1.5 pl-8 pr-3 rounded-md w-56"
+            />
+          </div>
+          {w4rSentSearch && (
+            <button onClick={() => setW4rSentSearch("")} className="btn text-sm px-3 py-1.5">Clear</button>
+          )}
+          <span className="text-xs text-muted-foreground mb-1.5 ml-auto">
+            {sortedSentW4RForms.length}{w4rSentSearch ? ` of ${sentW4RForms.length}` : ""} forms
+          </span>
+        </div>
         {w4rActionError && (
           <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{w4rActionError}</p>
         )}
@@ -22614,18 +24305,34 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-white/10 bg-white/5">
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Name</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent By</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Status</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent</th>
+                <SortableTh column="employee" label="Name" sortColumn={w4rSentSortColumn} sortDir={w4rSentSortDir} onSort={handleW4rSentSort} />
+                <FilterableTh
+                  column="sentBy" label="Sent By"
+                  sortColumn={w4rSentSortColumn} sortDir={w4rSentSortDir} onSort={handleW4rSentSort}
+                  options={w4rFilterOptionsFor("sentBy")}
+                  isChecked={(v) => w4rIsValueChecked("sentBy", v)}
+                  onToggleValue={(v) => w4rToggleFilterValue("sentBy", v)}
+                  onClear={() => w4rClearColumnFilter("sentBy")}
+                  isFiltered={w4rIsColumnFiltered("sentBy")}
+                />
+                <FilterableTh
+                  column="status" label="Status"
+                  sortColumn={w4rSentSortColumn} sortDir={w4rSentSortDir} onSort={handleW4rSentSort}
+                  options={w4rFilterOptionsFor("status")}
+                  isChecked={(v) => w4rIsValueChecked("status", v)}
+                  onToggleValue={(v) => w4rToggleFilterValue("status", v)}
+                  onClear={() => w4rClearColumnFilter("status")}
+                  isFiltered={w4rIsColumnFiltered("status")}
+                />
+                <SortableTh column="sent" label="Sent" sortColumn={w4rSentSortColumn} sortDir={w4rSentSortDir} onSort={handleW4rSentSort} />
                 <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {sentW4RForms.length === 0 ? (
-                <tr><td colSpan={5} className="px-4 py-8 text-center text-muted-foreground text-sm">No W-4R requests sent yet.</td></tr>
+              {sortedSentW4RForms.length === 0 ? (
+                <tr><td colSpan={5} className="px-4 py-8 text-center text-muted-foreground text-sm">{sentW4RForms.length === 0 ? "No W-4R requests sent yet." : "No forms match this search/filter."}</td></tr>
               ) : (
-                sentW4RForms.map((doc) => {
+                sortedSentW4RForms.map((doc) => {
                   const data = doc.formData as Partial<W4RFormData>;
                   const recipient = employees.find((e) => e.id === doc.recipientId);
                   const busy = w4rActionBusyId === doc.id;
@@ -22657,6 +24364,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           {doc.status === "pending_signature" && (
                             <button type="button" onClick={() => handleCopyW4RLink(doc)} className="btn text-[10px] px-2 py-1">
                               Copy Link
+                            </button>
+                          )}
+                          {doc.pdfUrl && (
+                            <button type="button" onClick={() => setW4rDocPreview(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
+                              View
                             </button>
                           )}
                           {doc.pdfUrl && (
@@ -22812,6 +24524,24 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <h2 className="font-semibold text-sm">Sent I-9 Forms</h2>
           <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status. "Awaiting HR (Section 2)" means the employee finished Section 1 — review their documents and complete Section 2 to finalize.</p>
         </div>
+        <div className="px-4 py-3 border-b border-white/10 bg-white/5 flex flex-wrap items-end gap-3">
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+            <input
+              type="text"
+              value={i9SentSearch}
+              onChange={(e) => setI9SentSearch(e.target.value)}
+              placeholder="Employee name…"
+              className="glass-input text-sm py-1.5 pl-8 pr-3 rounded-md w-56"
+            />
+          </div>
+          {i9SentSearch && (
+            <button onClick={() => setI9SentSearch("")} className="btn text-sm px-3 py-1.5">Clear</button>
+          )}
+          <span className="text-xs text-muted-foreground mb-1.5 ml-auto">
+            {sortedVisibleI9Forms.length}{i9SentSearch ? ` of ${visibleI9Forms.length}` : ""} forms
+          </span>
+        </div>
         {i9ActionError && (
           <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{i9ActionError}</p>
         )}
@@ -22819,18 +24549,34 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-white/10 bg-white/5">
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Employee</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent By</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Status</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent</th>
+                <SortableTh column="employee" label="Employee" sortColumn={i9SentSortColumn} sortDir={i9SentSortDir} onSort={handleI9SentSort} />
+                <FilterableTh
+                  column="sentBy" label="Sent By"
+                  sortColumn={i9SentSortColumn} sortDir={i9SentSortDir} onSort={handleI9SentSort}
+                  options={i9FilterOptionsFor("sentBy")}
+                  isChecked={(v) => i9IsValueChecked("sentBy", v)}
+                  onToggleValue={(v) => i9ToggleFilterValue("sentBy", v)}
+                  onClear={() => i9ClearColumnFilter("sentBy")}
+                  isFiltered={i9IsColumnFiltered("sentBy")}
+                />
+                <FilterableTh
+                  column="status" label="Status"
+                  sortColumn={i9SentSortColumn} sortDir={i9SentSortDir} onSort={handleI9SentSort}
+                  options={i9FilterOptionsFor("status")}
+                  isChecked={(v) => i9IsValueChecked("status", v)}
+                  onToggleValue={(v) => i9ToggleFilterValue("status", v)}
+                  onClear={() => i9ClearColumnFilter("status")}
+                  isFiltered={i9IsColumnFiltered("status")}
+                />
+                <SortableTh column="sent" label="Sent" sortColumn={i9SentSortColumn} sortDir={i9SentSortDir} onSort={handleI9SentSort} />
                 <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {visibleI9Forms.length === 0 ? (
-                <tr><td colSpan={5} className="px-4 py-8 text-center text-muted-foreground text-sm">No I-9 requests sent yet.</td></tr>
+              {sortedVisibleI9Forms.length === 0 ? (
+                <tr><td colSpan={5} className="px-4 py-8 text-center text-muted-foreground text-sm">{visibleI9Forms.length === 0 ? "No I-9 requests sent yet." : "No forms match this search/filter."}</td></tr>
               ) : (
-                visibleI9Forms.map((doc) => {
+                sortedVisibleI9Forms.map((doc) => {
                   const data = doc.formData as Partial<I9FormData>;
                   const recipient = employees.find((e) => e.id === doc.recipientId);
                   const busy = i9ActionBusyId === doc.id;
@@ -22874,6 +24620,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                                 Send to Employer
                               </button>
                             </>
+                          )}
+                          {doc.pdfUrl && (
+                            <button type="button" onClick={() => setI9DocPreview(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
+                              View
+                            </button>
                           )}
                           {doc.pdfUrl && (
                             <button type="button" onClick={() => handleDownloadI9Pdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
@@ -23031,6 +24782,24 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <h2 className="font-semibold text-sm">Sent Acknowledgment of Wage Forms</h2>
           <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status. "Awaiting Employer Signature" means the employee finished — add your signature to finalize.</p>
         </div>
+        <div className="px-4 py-3 border-b border-white/10 bg-white/5 flex flex-wrap items-end gap-3">
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+            <input
+              type="text"
+              value={wageAckSentSearch}
+              onChange={(e) => setWageAckSentSearch(e.target.value)}
+              placeholder="Employee name…"
+              className="glass-input text-sm py-1.5 pl-8 pr-3 rounded-md w-56"
+            />
+          </div>
+          {wageAckSentSearch && (
+            <button onClick={() => setWageAckSentSearch("")} className="btn text-sm px-3 py-1.5">Clear</button>
+          )}
+          <span className="text-xs text-muted-foreground mb-1.5 ml-auto">
+            {sortedSentWageAckForms.length}{wageAckSentSearch ? ` of ${sentWageAckForms.length}` : ""} forms
+          </span>
+        </div>
         {wageAckActionError && (
           <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{wageAckActionError}</p>
         )}
@@ -23038,18 +24807,34 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-white/10 bg-white/5">
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Employee</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent By</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Status</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent</th>
+                <SortableTh column="employee" label="Employee" sortColumn={wageAckSentSortColumn} sortDir={wageAckSentSortDir} onSort={handleWageAckSentSort} />
+                <FilterableTh
+                  column="sentBy" label="Sent By"
+                  sortColumn={wageAckSentSortColumn} sortDir={wageAckSentSortDir} onSort={handleWageAckSentSort}
+                  options={wageAckFilterOptionsFor("sentBy")}
+                  isChecked={(v) => wageAckIsValueChecked("sentBy", v)}
+                  onToggleValue={(v) => wageAckToggleFilterValue("sentBy", v)}
+                  onClear={() => wageAckClearColumnFilter("sentBy")}
+                  isFiltered={wageAckIsColumnFiltered("sentBy")}
+                />
+                <FilterableTh
+                  column="status" label="Status"
+                  sortColumn={wageAckSentSortColumn} sortDir={wageAckSentSortDir} onSort={handleWageAckSentSort}
+                  options={wageAckFilterOptionsFor("status")}
+                  isChecked={(v) => wageAckIsValueChecked("status", v)}
+                  onToggleValue={(v) => wageAckToggleFilterValue("status", v)}
+                  onClear={() => wageAckClearColumnFilter("status")}
+                  isFiltered={wageAckIsColumnFiltered("status")}
+                />
+                <SortableTh column="sent" label="Sent" sortColumn={wageAckSentSortColumn} sortDir={wageAckSentSortDir} onSort={handleWageAckSentSort} />
                 <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {sentWageAckForms.length === 0 ? (
-                <tr><td colSpan={5} className="px-4 py-8 text-center text-muted-foreground text-sm">No requests sent yet.</td></tr>
+              {sortedSentWageAckForms.length === 0 ? (
+                <tr><td colSpan={5} className="px-4 py-8 text-center text-muted-foreground text-sm">{sentWageAckForms.length === 0 ? "No requests sent yet." : "No forms match this search/filter."}</td></tr>
               ) : (
-                sentWageAckForms.map((doc) => {
+                sortedSentWageAckForms.map((doc) => {
                   const data = doc.formData as Partial<WageAckFormData>;
                   const recipient = employees.find((e) => e.id === doc.recipientId);
                   const busy = wageAckActionBusyId === doc.id;
@@ -23093,6 +24878,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                                 Send to Employer
                               </button>
                             </>
+                          )}
+                          {doc.pdfUrl && (
+                            <button type="button" onClick={() => setWageAckDocPreview(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
+                              View
+                            </button>
                           )}
                           {doc.pdfUrl && (
                             <button type="button" onClick={() => handleDownloadWageAckPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
@@ -23250,6 +25040,24 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <h2 className="font-semibold text-sm">Sent Car IQ Technician Agreement Forms</h2>
           <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status.</p>
         </div>
+        <div className="px-4 py-3 border-b border-white/10 bg-white/5 flex flex-wrap items-end gap-3">
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+            <input
+              type="text"
+              value={carIqSentSearch}
+              onChange={(e) => setCarIqSentSearch(e.target.value)}
+              placeholder="Name or branch…"
+              className="glass-input text-sm py-1.5 pl-8 pr-3 rounded-md w-56"
+            />
+          </div>
+          {carIqSentSearch && (
+            <button onClick={() => setCarIqSentSearch("")} className="btn text-sm px-3 py-1.5">Clear</button>
+          )}
+          <span className="text-xs text-muted-foreground mb-1.5 ml-auto">
+            {sortedSentCarIqAgreementForms.length}{carIqSentSearch ? ` of ${sentCarIqAgreementForms.length}` : ""} forms
+          </span>
+        </div>
         {carIqActionError && (
           <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{carIqActionError}</p>
         )}
@@ -23257,19 +25065,43 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-white/10 bg-white/5">
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Employee</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Branch</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent By</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Status</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent</th>
+                <SortableTh column="employee" label="Employee" sortColumn={carIqSentSortColumn} sortDir={carIqSentSortDir} onSort={handleCarIqSentSort} />
+                <FilterableTh
+                  column="branch" label="Branch"
+                  sortColumn={carIqSentSortColumn} sortDir={carIqSentSortDir} onSort={handleCarIqSentSort}
+                  options={carIqFilterOptionsFor("branch")}
+                  isChecked={(v) => carIqIsValueChecked("branch", v)}
+                  onToggleValue={(v) => carIqToggleFilterValue("branch", v)}
+                  onClear={() => carIqClearColumnFilter("branch")}
+                  isFiltered={carIqIsColumnFiltered("branch")}
+                />
+                <FilterableTh
+                  column="sentBy" label="Sent By"
+                  sortColumn={carIqSentSortColumn} sortDir={carIqSentSortDir} onSort={handleCarIqSentSort}
+                  options={carIqFilterOptionsFor("sentBy")}
+                  isChecked={(v) => carIqIsValueChecked("sentBy", v)}
+                  onToggleValue={(v) => carIqToggleFilterValue("sentBy", v)}
+                  onClear={() => carIqClearColumnFilter("sentBy")}
+                  isFiltered={carIqIsColumnFiltered("sentBy")}
+                />
+                <FilterableTh
+                  column="status" label="Status"
+                  sortColumn={carIqSentSortColumn} sortDir={carIqSentSortDir} onSort={handleCarIqSentSort}
+                  options={carIqFilterOptionsFor("status")}
+                  isChecked={(v) => carIqIsValueChecked("status", v)}
+                  onToggleValue={(v) => carIqToggleFilterValue("status", v)}
+                  onClear={() => carIqClearColumnFilter("status")}
+                  isFiltered={carIqIsColumnFiltered("status")}
+                />
+                <SortableTh column="sent" label="Sent" sortColumn={carIqSentSortColumn} sortDir={carIqSentSortDir} onSort={handleCarIqSentSort} />
                 <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {sentCarIqAgreementForms.length === 0 ? (
-                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">No requests sent yet.</td></tr>
+              {sortedSentCarIqAgreementForms.length === 0 ? (
+                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">{sentCarIqAgreementForms.length === 0 ? "No requests sent yet." : "No forms match this search/filter."}</td></tr>
               ) : (
-                sentCarIqAgreementForms.map((doc) => {
+                sortedSentCarIqAgreementForms.map((doc) => {
                   const data = doc.formData as Partial<CarIqAgreementFormData>;
                   const recipient = employees.find((e) => e.id === doc.recipientId);
                   const busy = carIqActionBusyId === doc.id;
@@ -23301,6 +25133,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           {doc.status === "pending_signature" && (
                             <button type="button" onClick={() => handleCopyCarIqLink(doc)} className="btn text-[10px] px-2 py-1">
                               Copy Link
+                            </button>
+                          )}
+                          {doc.pdfUrl && (
+                            <button type="button" onClick={() => setCarIqDocPreview(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
+                              View
                             </button>
                           )}
                           {doc.pdfUrl && (
@@ -23454,6 +25291,24 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <h2 className="font-semibold text-sm">Sent Company Vehicle Use Agreement Forms</h2>
           <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status.</p>
         </div>
+        <div className="px-4 py-3 border-b border-white/10 bg-white/5 flex flex-wrap items-end gap-3">
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+            <input
+              type="text"
+              value={vehicleSentSearch}
+              onChange={(e) => setVehicleSentSearch(e.target.value)}
+              placeholder="Name or branch…"
+              className="glass-input text-sm py-1.5 pl-8 pr-3 rounded-md w-56"
+            />
+          </div>
+          {vehicleSentSearch && (
+            <button onClick={() => setVehicleSentSearch("")} className="btn text-sm px-3 py-1.5">Clear</button>
+          )}
+          <span className="text-xs text-muted-foreground mb-1.5 ml-auto">
+            {sortedSentVehicleAgreementForms.length}{vehicleSentSearch ? ` of ${sentVehicleAgreementForms.length}` : ""} forms
+          </span>
+        </div>
         {vehicleActionError && (
           <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{vehicleActionError}</p>
         )}
@@ -23461,19 +25316,43 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-white/10 bg-white/5">
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Employee</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Branch</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent By</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Status</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent</th>
+                <SortableTh column="employee" label="Employee" sortColumn={vehicleSentSortColumn} sortDir={vehicleSentSortDir} onSort={handleVehicleSentSort} />
+                <FilterableTh
+                  column="branch" label="Branch"
+                  sortColumn={vehicleSentSortColumn} sortDir={vehicleSentSortDir} onSort={handleVehicleSentSort}
+                  options={vehicleFilterOptionsFor("branch")}
+                  isChecked={(v) => vehicleIsValueChecked("branch", v)}
+                  onToggleValue={(v) => vehicleToggleFilterValue("branch", v)}
+                  onClear={() => vehicleClearColumnFilter("branch")}
+                  isFiltered={vehicleIsColumnFiltered("branch")}
+                />
+                <FilterableTh
+                  column="sentBy" label="Sent By"
+                  sortColumn={vehicleSentSortColumn} sortDir={vehicleSentSortDir} onSort={handleVehicleSentSort}
+                  options={vehicleFilterOptionsFor("sentBy")}
+                  isChecked={(v) => vehicleIsValueChecked("sentBy", v)}
+                  onToggleValue={(v) => vehicleToggleFilterValue("sentBy", v)}
+                  onClear={() => vehicleClearColumnFilter("sentBy")}
+                  isFiltered={vehicleIsColumnFiltered("sentBy")}
+                />
+                <FilterableTh
+                  column="status" label="Status"
+                  sortColumn={vehicleSentSortColumn} sortDir={vehicleSentSortDir} onSort={handleVehicleSentSort}
+                  options={vehicleFilterOptionsFor("status")}
+                  isChecked={(v) => vehicleIsValueChecked("status", v)}
+                  onToggleValue={(v) => vehicleToggleFilterValue("status", v)}
+                  onClear={() => vehicleClearColumnFilter("status")}
+                  isFiltered={vehicleIsColumnFiltered("status")}
+                />
+                <SortableTh column="sent" label="Sent" sortColumn={vehicleSentSortColumn} sortDir={vehicleSentSortDir} onSort={handleVehicleSentSort} />
                 <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {sentVehicleAgreementForms.length === 0 ? (
-                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">No requests sent yet.</td></tr>
+              {sortedSentVehicleAgreementForms.length === 0 ? (
+                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">{sentVehicleAgreementForms.length === 0 ? "No requests sent yet." : "No forms match this search/filter."}</td></tr>
               ) : (
-                sentVehicleAgreementForms.map((doc) => {
+                sortedSentVehicleAgreementForms.map((doc) => {
                   const data = doc.formData as Partial<VehicleAgreementFormData>;
                   const recipient = employees.find((e) => e.id === doc.recipientId);
                   const busy = vehicleActionBusyId === doc.id;
@@ -23505,6 +25384,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           {doc.status === "pending_signature" && (
                             <button type="button" onClick={() => handleCopyVehicleLink(doc)} className="btn text-[10px] px-2 py-1">
                               Copy Link
+                            </button>
+                          )}
+                          {doc.pdfUrl && (
+                            <button type="button" onClick={() => setVehicleDocPreview(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
+                              View
                             </button>
                           )}
                           {doc.pdfUrl && (
@@ -23658,6 +25542,24 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <h2 className="font-semibold text-sm">Sent Employee Confidentiality Agreement Forms</h2>
           <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status.</p>
         </div>
+        <div className="px-4 py-3 border-b border-white/10 bg-white/5 flex flex-wrap items-end gap-3">
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+            <input
+              type="text"
+              value={confidentialitySentSearch}
+              onChange={(e) => setConfidentialitySentSearch(e.target.value)}
+              placeholder="Name or branch…"
+              className="glass-input text-sm py-1.5 pl-8 pr-3 rounded-md w-56"
+            />
+          </div>
+          {confidentialitySentSearch && (
+            <button onClick={() => setConfidentialitySentSearch("")} className="btn text-sm px-3 py-1.5">Clear</button>
+          )}
+          <span className="text-xs text-muted-foreground mb-1.5 ml-auto">
+            {sortedSentEmployeeConfidentialityForms.length}{confidentialitySentSearch ? ` of ${sentEmployeeConfidentialityForms.length}` : ""} forms
+          </span>
+        </div>
         {confidentialityActionError && (
           <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{confidentialityActionError}</p>
         )}
@@ -23665,19 +25567,43 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-white/10 bg-white/5">
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Employee</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Branch</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent By</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Status</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent</th>
+                <SortableTh column="employee" label="Employee" sortColumn={confidentialitySentSortColumn} sortDir={confidentialitySentSortDir} onSort={handleConfidentialitySentSort} />
+                <FilterableTh
+                  column="branch" label="Branch"
+                  sortColumn={confidentialitySentSortColumn} sortDir={confidentialitySentSortDir} onSort={handleConfidentialitySentSort}
+                  options={confidentialityFilterOptionsFor("branch")}
+                  isChecked={(v) => confidentialityIsValueChecked("branch", v)}
+                  onToggleValue={(v) => confidentialityToggleFilterValue("branch", v)}
+                  onClear={() => confidentialityClearColumnFilter("branch")}
+                  isFiltered={confidentialityIsColumnFiltered("branch")}
+                />
+                <FilterableTh
+                  column="sentBy" label="Sent By"
+                  sortColumn={confidentialitySentSortColumn} sortDir={confidentialitySentSortDir} onSort={handleConfidentialitySentSort}
+                  options={confidentialityFilterOptionsFor("sentBy")}
+                  isChecked={(v) => confidentialityIsValueChecked("sentBy", v)}
+                  onToggleValue={(v) => confidentialityToggleFilterValue("sentBy", v)}
+                  onClear={() => confidentialityClearColumnFilter("sentBy")}
+                  isFiltered={confidentialityIsColumnFiltered("sentBy")}
+                />
+                <FilterableTh
+                  column="status" label="Status"
+                  sortColumn={confidentialitySentSortColumn} sortDir={confidentialitySentSortDir} onSort={handleConfidentialitySentSort}
+                  options={confidentialityFilterOptionsFor("status")}
+                  isChecked={(v) => confidentialityIsValueChecked("status", v)}
+                  onToggleValue={(v) => confidentialityToggleFilterValue("status", v)}
+                  onClear={() => confidentialityClearColumnFilter("status")}
+                  isFiltered={confidentialityIsColumnFiltered("status")}
+                />
+                <SortableTh column="sent" label="Sent" sortColumn={confidentialitySentSortColumn} sortDir={confidentialitySentSortDir} onSort={handleConfidentialitySentSort} />
                 <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {sentEmployeeConfidentialityForms.length === 0 ? (
-                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">No requests sent yet.</td></tr>
+              {sortedSentEmployeeConfidentialityForms.length === 0 ? (
+                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">{sentEmployeeConfidentialityForms.length === 0 ? "No requests sent yet." : "No forms match this search/filter."}</td></tr>
               ) : (
-                sentEmployeeConfidentialityForms.map((doc) => {
+                sortedSentEmployeeConfidentialityForms.map((doc) => {
                   const data = doc.formData as Partial<EmployeeConfidentialityFormData>;
                   const recipient = employees.find((e) => e.id === doc.recipientId);
                   const busy = confidentialityActionBusyId === doc.id;
@@ -23709,6 +25635,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           {doc.status === "pending_signature" && (
                             <button type="button" onClick={() => handleCopyConfidentialityLink(doc)} className="btn text-[10px] px-2 py-1">
                               Copy Link
+                            </button>
+                          )}
+                          {doc.pdfUrl && (
+                            <button type="button" onClick={() => setConfidentialityDocPreview(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
+                              View
                             </button>
                           )}
                           {doc.pdfUrl && (
@@ -23811,28 +25742,130 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         </div>
       </div>
 
+      <div className="panel p-0 overflow-visible mt-4 relative z-10">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">File on Behalf</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Already have their SSN and a photo of the card (emailed, handed to you in person)? Enter it directly here instead of sending a link — it's saved as complete right away, with no employee signature collected.</p>
+        </div>
+        <div className="p-4 flex flex-col gap-3 max-w-sm">
+          <div className="flex flex-col gap-1 relative">
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Technician</label>
+            <input
+              type="text"
+              value={ssnCardFileForRecipientSearch}
+              onChange={(e) => { setSsnCardFileForRecipientSearch(e.target.value); setSsnCardFileForRecipientId(""); setSsnCardFileForRecipientDropdownOpen(true); }}
+              onFocus={() => setSsnCardFileForRecipientDropdownOpen(true)}
+              onBlur={() => setTimeout(() => setSsnCardFileForRecipientDropdownOpen(false), 150)}
+              placeholder="Search a teammate…"
+              className="glass-input text-sm py-1.5 px-3 rounded-md"
+            />
+            {ssnCardFileForRecipientDropdownOpen && (
+              <div className="absolute z-50 top-full mt-1 w-full max-h-96 overflow-y-auto rounded-md border border-white/15 bg-slate-900 shadow-2xl">
+                {filteredSsnCardFileForRecipients.length === 0 ? (
+                  <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+                ) : (
+                  filteredSsnCardFileForRecipients.map((e) => (
+                    <button
+                      key={e.id}
+                      type="button"
+                      onMouseDown={(ev) => ev.preventDefault()}
+                      onClick={() => { setSsnCardFileForRecipientId(e.id); setSsnCardFileForRecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`); setSsnCardFileForRecipientDropdownOpen(false); }}
+                      className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${ssnCardFileForRecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                    >
+                      {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Social Security Number</label>
+            <input type="text" value={ssnCardFileForNumber} onChange={(e) => setSsnCardFileForNumber(e.target.value)} placeholder="XXX-XX-XXXX" className="glass-input text-sm py-1.5 px-3 rounded-md" />
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Have you lived in New York in the past 7 years?</label>
+            <select value={ssnCardFileForLivedInNewYork} onChange={(e) => setSsnCardFileForLivedInNewYork(e.target.value as "" | "Yes" | "No")} className="glass-input text-sm py-1.5 px-3 rounded-md">
+              <option value="">Please Select</option>
+              <option value="Yes">Yes</option>
+              <option value="No">No</option>
+            </select>
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Card Photo</label>
+            <label className="glass-input text-sm py-1.5 px-3 rounded-md flex items-center gap-2 cursor-pointer text-muted-foreground">
+              <Paperclip className="h-3.5 w-3.5 shrink-0" />
+              <span className="truncate">{ssnCardFileForPhotos.length > 0 ? `${ssnCardFileForPhotos.length} photo${ssnCardFileForPhotos.length > 1 ? "s" : ""} selected` : "Upload photo(s)…"}</span>
+              <input type="file" accept="image/*" multiple className="hidden" onChange={(e) => setSsnCardFileForPhotos(Array.from(e.target.files ?? []))} />
+            </label>
+          </div>
+
+          {ssnCardFilingError && <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{ssnCardFilingError}</p>}
+          <button onClick={() => void handleFileSsnCardForHr()} disabled={!ssnCardFileForRecipientId || ssnCardFiling} className="btn text-sm px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-50 w-fit">
+            {ssnCardFiling ? (ssnCardFilingStep || "Filing…") : "File This SSN Card"}
+          </button>
+        </div>
+      </div>
+
       <div className="panel p-0 overflow-hidden mt-4">
         <div className="px-4 py-4 border-b border-white/10">
           <h2 className="font-semibold text-sm">Sent SSN Card Forms</h2>
           <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status.</p>
+        </div>
+        <div className="px-4 py-3 border-b border-white/10 bg-white/5 flex flex-wrap items-end gap-3">
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+            <input
+              type="text"
+              value={ssnCardSentSearch}
+              onChange={(e) => setSsnCardSentSearch(e.target.value)}
+              placeholder="Employee name…"
+              className="glass-input text-sm py-1.5 pl-8 pr-3 rounded-md w-56"
+            />
+          </div>
+          {ssnCardSentSearch && (
+            <button onClick={() => setSsnCardSentSearch("")} className="btn text-sm px-3 py-1.5">Clear</button>
+          )}
+          <span className="text-xs text-muted-foreground mb-1.5 ml-auto">
+            {sortedSentSsnCardForms.length}{ssnCardSentSearch ? ` of ${sentSsnCardForms.length}` : ""} forms
+          </span>
         </div>
         {ssnCardActionError && <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{ssnCardActionError}</p>}
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-white/10 bg-white/5">
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Employee</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent By</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Status</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent</th>
+                <SortableTh column="employee" label="Employee" sortColumn={ssnCardSentSortColumn} sortDir={ssnCardSentSortDir} onSort={handleSsnCardSentSort} />
+                <FilterableTh
+                  column="sentBy" label="Sent By"
+                  sortColumn={ssnCardSentSortColumn} sortDir={ssnCardSentSortDir} onSort={handleSsnCardSentSort}
+                  options={ssnCardFilterOptionsFor("sentBy")}
+                  isChecked={(v) => ssnCardIsValueChecked("sentBy", v)}
+                  onToggleValue={(v) => ssnCardToggleFilterValue("sentBy", v)}
+                  onClear={() => ssnCardClearColumnFilter("sentBy")}
+                  isFiltered={ssnCardIsColumnFiltered("sentBy")}
+                />
+                <FilterableTh
+                  column="status" label="Status"
+                  sortColumn={ssnCardSentSortColumn} sortDir={ssnCardSentSortDir} onSort={handleSsnCardSentSort}
+                  options={ssnCardFilterOptionsFor("status")}
+                  isChecked={(v) => ssnCardIsValueChecked("status", v)}
+                  onToggleValue={(v) => ssnCardToggleFilterValue("status", v)}
+                  onClear={() => ssnCardClearColumnFilter("status")}
+                  isFiltered={ssnCardIsColumnFiltered("status")}
+                />
+                <SortableTh column="sent" label="Sent" sortColumn={ssnCardSentSortColumn} sortDir={ssnCardSentSortDir} onSort={handleSsnCardSentSort} />
                 <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {sentSsnCardForms.length === 0 ? (
-                <tr><td colSpan={5} className="px-4 py-8 text-center text-muted-foreground text-sm">No requests sent yet.</td></tr>
+              {sortedSentSsnCardForms.length === 0 ? (
+                <tr><td colSpan={5} className="px-4 py-8 text-center text-muted-foreground text-sm">{sentSsnCardForms.length === 0 ? "No requests sent yet." : "No forms match this search/filter."}</td></tr>
               ) : (
-                sentSsnCardForms.map((doc) => {
+                sortedSentSsnCardForms.map((doc) => {
                   const data = doc.formData as Partial<SsnCardFormData>;
                   const busy = ssnCardActionBusyId === doc.id;
                   return (
@@ -23849,6 +25882,9 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                         <div className="flex flex-wrap items-center gap-1.5">
                           {doc.status === "pending_signature" && (
                             <button type="button" onClick={() => handleCopySsnCardLink(doc)} className="btn text-[10px] px-2 py-1">Copy Link</button>
+                          )}
+                          {doc.pdfUrl && (
+                            <button type="button" onClick={() => setSsnCardDocPreview(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">View</button>
                           )}
                           {doc.pdfUrl && (
                             <button type="button" onClick={() => handleDownloadSsnCardPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">Download PDF</button>
@@ -23870,6 +25906,31 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         </div>
       </div>
       </>
+      )}
+
+      {/* SSN Card Sent History PDF preview — same inline-frame pattern used for the other Sent History tables */}
+      {ssnCardDocPreview && (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => setSsnCardDocPreview(null)}>
+          <div className="bg-slate-900 border border-white/10 rounded-lg shadow-2xl w-full max-w-6xl h-[92vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold">{(ssnCardDocPreview.formData as Partial<SsnCardFormData>).employeeName || ssnCardDocPreview.recipientName || "—"}</p>
+                <p className="text-[10px] text-muted-foreground">
+                  {ssnCardDocPreview.status === "signed" ? "Submitted" : "Pending"} {new Date(ssnCardDocPreview.signedAt ?? ssnCardDocPreview.createdAt).toLocaleString()}
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                {ssnCardDocPreview.pdfUrl && (
+                  <a href={ssnCardDocPreview.pdfUrl} target="_blank" rel="noopener noreferrer" className="btn text-xs px-2.5 py-1.5 flex items-center gap-1"><Download className="h-3 w-3" /> Download</a>
+                )}
+                <button type="button" onClick={() => setSsnCardDocPreview(null)} className="btn text-xs px-2.5 py-1.5">Close</button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-hidden bg-slate-950">
+              {ssnCardDocPreview.pdfUrl && <iframe src={ssnCardDocPreview.pdfUrl} title="SSN Card" className="w-full h-full min-h-[70vh] border-0" />}
+            </div>
+          </div>
+        </div>
       )}
 
       {activeTab === "driversLicense" && (
@@ -23945,28 +26006,129 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         </div>
       </div>
 
+      <div className="panel p-0 overflow-visible mt-4 relative z-10">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">File on Behalf</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Already have their license number/state and a photo (emailed, handed to you in person)? Enter it directly here instead of sending a link — it's saved as complete right away, with no employee signature collected.</p>
+        </div>
+        <div className="p-4 flex flex-col gap-3 max-w-sm">
+          <div className="flex flex-col gap-1 relative">
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Technician</label>
+            <input
+              type="text"
+              value={driversLicenseFileForRecipientSearch}
+              onChange={(e) => { setDriversLicenseFileForRecipientSearch(e.target.value); setDriversLicenseFileForRecipientId(""); setDriversLicenseFileForRecipientDropdownOpen(true); }}
+              onFocus={() => setDriversLicenseFileForRecipientDropdownOpen(true)}
+              onBlur={() => setTimeout(() => setDriversLicenseFileForRecipientDropdownOpen(false), 150)}
+              placeholder="Search a teammate…"
+              className="glass-input text-sm py-1.5 px-3 rounded-md"
+            />
+            {driversLicenseFileForRecipientDropdownOpen && (
+              <div className="absolute z-50 top-full mt-1 w-full max-h-96 overflow-y-auto rounded-md border border-white/15 bg-slate-900 shadow-2xl">
+                {filteredDriversLicenseFileForRecipients.length === 0 ? (
+                  <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+                ) : (
+                  filteredDriversLicenseFileForRecipients.map((e) => (
+                    <button
+                      key={e.id}
+                      type="button"
+                      onMouseDown={(ev) => ev.preventDefault()}
+                      onClick={() => { setDriversLicenseFileForRecipientId(e.id); setDriversLicenseFileForRecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`); setDriversLicenseFileForRecipientDropdownOpen(false); }}
+                      className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${driversLicenseFileForRecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                    >
+                      {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Driver's License Number</label>
+            <input type="text" value={driversLicenseFileForNumber} onChange={(e) => setDriversLicenseFileForNumber(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">State Issued</label>
+            <select value={driversLicenseFileForState} onChange={(e) => setDriversLicenseFileForState(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md">
+              <option value="">Select a state…</option>
+              {DRIVERS_LICENSE_STATES.map((s) => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">License Photo (Front / Back)</label>
+            <label className="glass-input text-sm py-1.5 px-3 rounded-md flex items-center gap-2 cursor-pointer text-muted-foreground">
+              <Paperclip className="h-3.5 w-3.5 shrink-0" />
+              <span className="truncate">{driversLicenseFileForPhotos.length > 0 ? `${driversLicenseFileForPhotos.length} photo${driversLicenseFileForPhotos.length > 1 ? "s" : ""} selected` : "Upload photo(s)…"}</span>
+              <input type="file" accept="image/*" multiple className="hidden" onChange={(e) => setDriversLicenseFileForPhotos(Array.from(e.target.files ?? []))} />
+            </label>
+          </div>
+
+          {driversLicenseFilingError && <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{driversLicenseFilingError}</p>}
+          <button onClick={() => void handleFileDriversLicenseForHr()} disabled={!driversLicenseFileForRecipientId || driversLicenseFiling} className="btn text-sm px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-50 w-fit">
+            {driversLicenseFiling ? (driversLicenseFilingStep || "Filing…") : "File This Driver's License"}
+          </button>
+        </div>
+      </div>
+
       <div className="panel p-0 overflow-hidden mt-4">
         <div className="px-4 py-4 border-b border-white/10">
           <h2 className="font-semibold text-sm">Sent Driver's License Forms</h2>
           <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status.</p>
+        </div>
+        <div className="px-4 py-3 border-b border-white/10 bg-white/5 flex flex-wrap items-end gap-3">
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+            <input
+              type="text"
+              value={driversLicenseSentSearch}
+              onChange={(e) => setDriversLicenseSentSearch(e.target.value)}
+              placeholder="Employee name…"
+              className="glass-input text-sm py-1.5 pl-8 pr-3 rounded-md w-56"
+            />
+          </div>
+          {driversLicenseSentSearch && (
+            <button onClick={() => setDriversLicenseSentSearch("")} className="btn text-sm px-3 py-1.5">Clear</button>
+          )}
+          <span className="text-xs text-muted-foreground mb-1.5 ml-auto">
+            {sortedSentDriversLicenseForms.length}{driversLicenseSentSearch ? ` of ${sentDriversLicenseForms.length}` : ""} forms
+          </span>
         </div>
         {driversLicenseActionError && <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{driversLicenseActionError}</p>}
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-white/10 bg-white/5">
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Employee</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent By</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Status</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent</th>
+                <SortableTh column="employee" label="Employee" sortColumn={driversLicenseSentSortColumn} sortDir={driversLicenseSentSortDir} onSort={handleDriversLicenseSentSort} />
+                <FilterableTh
+                  column="sentBy" label="Sent By"
+                  sortColumn={driversLicenseSentSortColumn} sortDir={driversLicenseSentSortDir} onSort={handleDriversLicenseSentSort}
+                  options={driversLicenseFilterOptionsFor("sentBy")}
+                  isChecked={(v) => driversLicenseIsValueChecked("sentBy", v)}
+                  onToggleValue={(v) => driversLicenseToggleFilterValue("sentBy", v)}
+                  onClear={() => driversLicenseClearColumnFilter("sentBy")}
+                  isFiltered={driversLicenseIsColumnFiltered("sentBy")}
+                />
+                <FilterableTh
+                  column="status" label="Status"
+                  sortColumn={driversLicenseSentSortColumn} sortDir={driversLicenseSentSortDir} onSort={handleDriversLicenseSentSort}
+                  options={driversLicenseFilterOptionsFor("status")}
+                  isChecked={(v) => driversLicenseIsValueChecked("status", v)}
+                  onToggleValue={(v) => driversLicenseToggleFilterValue("status", v)}
+                  onClear={() => driversLicenseClearColumnFilter("status")}
+                  isFiltered={driversLicenseIsColumnFiltered("status")}
+                />
+                <SortableTh column="sent" label="Sent" sortColumn={driversLicenseSentSortColumn} sortDir={driversLicenseSentSortDir} onSort={handleDriversLicenseSentSort} />
                 <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {sentDriversLicenseForms.length === 0 ? (
-                <tr><td colSpan={5} className="px-4 py-8 text-center text-muted-foreground text-sm">No requests sent yet.</td></tr>
+              {sortedSentDriversLicenseForms.length === 0 ? (
+                <tr><td colSpan={5} className="px-4 py-8 text-center text-muted-foreground text-sm">{sentDriversLicenseForms.length === 0 ? "No requests sent yet." : "No forms match this search/filter."}</td></tr>
               ) : (
-                sentDriversLicenseForms.map((doc) => {
+                sortedSentDriversLicenseForms.map((doc) => {
                   const data = doc.formData as Partial<DriversLicenseFormData>;
                   const busy = driversLicenseActionBusyId === doc.id;
                   return (
@@ -23983,6 +26145,9 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                         <div className="flex flex-wrap items-center gap-1.5">
                           {doc.status === "pending_signature" && (
                             <button type="button" onClick={() => handleCopyDriversLicenseLink(doc)} className="btn text-[10px] px-2 py-1">Copy Link</button>
+                          )}
+                          {doc.pdfUrl && (
+                            <button type="button" onClick={() => setDriversLicenseDocPreview(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">View</button>
                           )}
                           {doc.pdfUrl && (
                             <button type="button" onClick={() => handleDownloadDriversLicensePdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">Download PDF</button>
@@ -24004,6 +26169,31 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         </div>
       </div>
       </>
+      )}
+
+      {/* Driver's License Sent History PDF preview — same inline-frame pattern used for the other Sent History tables */}
+      {driversLicenseDocPreview && (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => setDriversLicenseDocPreview(null)}>
+          <div className="bg-slate-900 border border-white/10 rounded-lg shadow-2xl w-full max-w-6xl h-[92vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold">{(driversLicenseDocPreview.formData as Partial<DriversLicenseFormData>).employeeName || driversLicenseDocPreview.recipientName || "—"}</p>
+                <p className="text-[10px] text-muted-foreground">
+                  {driversLicenseDocPreview.status === "signed" ? "Submitted" : "Pending"} {new Date(driversLicenseDocPreview.signedAt ?? driversLicenseDocPreview.createdAt).toLocaleString()}
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                {driversLicenseDocPreview.pdfUrl && (
+                  <a href={driversLicenseDocPreview.pdfUrl} target="_blank" rel="noopener noreferrer" className="btn text-xs px-2.5 py-1.5 flex items-center gap-1"><Download className="h-3 w-3" /> Download</a>
+                )}
+                <button type="button" onClick={() => setDriversLicenseDocPreview(null)} className="btn text-xs px-2.5 py-1.5">Close</button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-hidden bg-slate-950">
+              {driversLicenseDocPreview.pdfUrl && <iframe src={driversLicenseDocPreview.pdfUrl} title="Driver's License" className="w-full h-full min-h-[70vh] border-0" />}
+            </div>
+          </div>
+        </div>
       )}
 
       {activeTab === "validId" && (
@@ -24084,23 +26274,57 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <h2 className="font-semibold text-sm">Sent Valid ID Forms</h2>
           <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status.</p>
         </div>
+        <div className="px-4 py-3 border-b border-white/10 bg-white/5 flex flex-wrap items-end gap-3">
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+            <input
+              type="text"
+              value={validIdSentSearch}
+              onChange={(e) => setValidIdSentSearch(e.target.value)}
+              placeholder="Employee name…"
+              className="glass-input text-sm py-1.5 pl-8 pr-3 rounded-md w-56"
+            />
+          </div>
+          {validIdSentSearch && (
+            <button onClick={() => setValidIdSentSearch("")} className="btn text-sm px-3 py-1.5">Clear</button>
+          )}
+          <span className="text-xs text-muted-foreground mb-1.5 ml-auto">
+            {sortedSentValidIdForms.length}{validIdSentSearch ? ` of ${sentValidIdForms.length}` : ""} forms
+          </span>
+        </div>
         {validIdActionError && <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{validIdActionError}</p>}
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-white/10 bg-white/5">
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Employee</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent By</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Status</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent</th>
+                <SortableTh column="employee" label="Employee" sortColumn={validIdSentSortColumn} sortDir={validIdSentSortDir} onSort={handleValidIdSentSort} />
+                <FilterableTh
+                  column="sentBy" label="Sent By"
+                  sortColumn={validIdSentSortColumn} sortDir={validIdSentSortDir} onSort={handleValidIdSentSort}
+                  options={validIdFilterOptionsFor("sentBy")}
+                  isChecked={(v) => validIdIsValueChecked("sentBy", v)}
+                  onToggleValue={(v) => validIdToggleFilterValue("sentBy", v)}
+                  onClear={() => validIdClearColumnFilter("sentBy")}
+                  isFiltered={validIdIsColumnFiltered("sentBy")}
+                />
+                <FilterableTh
+                  column="status" label="Status"
+                  sortColumn={validIdSentSortColumn} sortDir={validIdSentSortDir} onSort={handleValidIdSentSort}
+                  options={validIdFilterOptionsFor("status")}
+                  isChecked={(v) => validIdIsValueChecked("status", v)}
+                  onToggleValue={(v) => validIdToggleFilterValue("status", v)}
+                  onClear={() => validIdClearColumnFilter("status")}
+                  isFiltered={validIdIsColumnFiltered("status")}
+                />
+                <SortableTh column="sent" label="Sent" sortColumn={validIdSentSortColumn} sortDir={validIdSentSortDir} onSort={handleValidIdSentSort} />
                 <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {sentValidIdForms.length === 0 ? (
-                <tr><td colSpan={5} className="px-4 py-8 text-center text-muted-foreground text-sm">No requests sent yet.</td></tr>
+              {sortedSentValidIdForms.length === 0 ? (
+                <tr><td colSpan={5} className="px-4 py-8 text-center text-muted-foreground text-sm">{sentValidIdForms.length === 0 ? "No requests sent yet." : "No forms match this search/filter."}</td></tr>
               ) : (
-                sentValidIdForms.map((doc) => {
+                sortedSentValidIdForms.map((doc) => {
                   const data = doc.formData as Partial<ValidIdFormData>;
                   const busy = validIdActionBusyId === doc.id;
                   return (
@@ -24292,6 +26516,24 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <h2 className="font-semibold text-sm">Sent Non-Disclosure Agreement Forms</h2>
           <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status.</p>
         </div>
+        <div className="px-4 py-3 border-b border-white/10 bg-white/5 flex flex-wrap items-end gap-3">
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+            <input
+              type="text"
+              value={ndaSentSearch}
+              onChange={(e) => setNdaSentSearch(e.target.value)}
+              placeholder="Name or branch…"
+              className="glass-input text-sm py-1.5 pl-8 pr-3 rounded-md w-56"
+            />
+          </div>
+          {ndaSentSearch && (
+            <button onClick={() => setNdaSentSearch("")} className="btn text-sm px-3 py-1.5">Clear</button>
+          )}
+          <span className="text-xs text-muted-foreground mb-1.5 ml-auto">
+            {sortedSentNdaForms.length}{ndaSentSearch ? ` of ${sentNdaForms.length}` : ""} forms
+          </span>
+        </div>
         {ndaActionError && (
           <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{ndaActionError}</p>
         )}
@@ -24299,19 +26541,43 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-white/10 bg-white/5">
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Employee</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Branch</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent By</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Status</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent</th>
+                <SortableTh column="employee" label="Employee" sortColumn={ndaSentSortColumn} sortDir={ndaSentSortDir} onSort={handleNdaSentSort} />
+                <FilterableTh
+                  column="branch" label="Branch"
+                  sortColumn={ndaSentSortColumn} sortDir={ndaSentSortDir} onSort={handleNdaSentSort}
+                  options={ndaFilterOptionsFor("branch")}
+                  isChecked={(v) => ndaIsValueChecked("branch", v)}
+                  onToggleValue={(v) => ndaToggleFilterValue("branch", v)}
+                  onClear={() => ndaClearColumnFilter("branch")}
+                  isFiltered={ndaIsColumnFiltered("branch")}
+                />
+                <FilterableTh
+                  column="sentBy" label="Sent By"
+                  sortColumn={ndaSentSortColumn} sortDir={ndaSentSortDir} onSort={handleNdaSentSort}
+                  options={ndaFilterOptionsFor("sentBy")}
+                  isChecked={(v) => ndaIsValueChecked("sentBy", v)}
+                  onToggleValue={(v) => ndaToggleFilterValue("sentBy", v)}
+                  onClear={() => ndaClearColumnFilter("sentBy")}
+                  isFiltered={ndaIsColumnFiltered("sentBy")}
+                />
+                <FilterableTh
+                  column="status" label="Status"
+                  sortColumn={ndaSentSortColumn} sortDir={ndaSentSortDir} onSort={handleNdaSentSort}
+                  options={ndaFilterOptionsFor("status")}
+                  isChecked={(v) => ndaIsValueChecked("status", v)}
+                  onToggleValue={(v) => ndaToggleFilterValue("status", v)}
+                  onClear={() => ndaClearColumnFilter("status")}
+                  isFiltered={ndaIsColumnFiltered("status")}
+                />
+                <SortableTh column="sent" label="Sent" sortColumn={ndaSentSortColumn} sortDir={ndaSentSortDir} onSort={handleNdaSentSort} />
                 <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {sentNdaForms.length === 0 ? (
-                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">No requests sent yet.</td></tr>
+              {sortedSentNdaForms.length === 0 ? (
+                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">{sentNdaForms.length === 0 ? "No requests sent yet." : "No forms match this search/filter."}</td></tr>
               ) : (
-                sentNdaForms.map((doc) => {
+                sortedSentNdaForms.map((doc) => {
                   const data = doc.formData as { employeeName?: string; branch?: string };
                   const recipient = employees.find((e) => e.id === doc.recipientId);
                   const busy = ndaActionBusyId === doc.id;
@@ -24343,6 +26609,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           {doc.status === "pending_signature" && (
                             <button type="button" onClick={() => handleCopyNdaLink(doc)} className="btn text-[10px] px-2 py-1">
                               Copy Link
+                            </button>
+                          )}
+                          {doc.pdfUrl && (
+                            <button type="button" onClick={() => setNdaDocPreview(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
+                              View
                             </button>
                           )}
                           {doc.pdfUrl && (
@@ -24501,6 +26772,24 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <h2 className="font-semibold text-sm">Sent Substance Screening & Conduct Agreement Forms</h2>
           <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status. "Awaiting Employer Signature" means the employee finished — add your signature to finalize.</p>
         </div>
+        <div className="px-4 py-3 border-b border-white/10 bg-white/5 flex flex-wrap items-end gap-3">
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+            <input
+              type="text"
+              value={substanceScreeningSentSearch}
+              onChange={(e) => setSubstanceScreeningSentSearch(e.target.value)}
+              placeholder="Employee name…"
+              className="glass-input text-sm py-1.5 pl-8 pr-3 rounded-md w-56"
+            />
+          </div>
+          {substanceScreeningSentSearch && (
+            <button onClick={() => setSubstanceScreeningSentSearch("")} className="btn text-sm px-3 py-1.5">Clear</button>
+          )}
+          <span className="text-xs text-muted-foreground mb-1.5 ml-auto">
+            {sortedSentSubstanceScreeningForms.length}{substanceScreeningSentSearch ? ` of ${sentSubstanceScreeningForms.length}` : ""} forms
+          </span>
+        </div>
         {substanceScreeningActionError && (
           <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{substanceScreeningActionError}</p>
         )}
@@ -24508,18 +26797,34 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-white/10 bg-white/5">
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Employee</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent By</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Status</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent</th>
+                <SortableTh column="employee" label="Employee" sortColumn={substanceScreeningSentSortColumn} sortDir={substanceScreeningSentSortDir} onSort={handleSubstanceScreeningSentSort} />
+                <FilterableTh
+                  column="sentBy" label="Sent By"
+                  sortColumn={substanceScreeningSentSortColumn} sortDir={substanceScreeningSentSortDir} onSort={handleSubstanceScreeningSentSort}
+                  options={substanceScreeningFilterOptionsFor("sentBy")}
+                  isChecked={(v) => substanceScreeningIsValueChecked("sentBy", v)}
+                  onToggleValue={(v) => substanceScreeningToggleFilterValue("sentBy", v)}
+                  onClear={() => substanceScreeningClearColumnFilter("sentBy")}
+                  isFiltered={substanceScreeningIsColumnFiltered("sentBy")}
+                />
+                <FilterableTh
+                  column="status" label="Status"
+                  sortColumn={substanceScreeningSentSortColumn} sortDir={substanceScreeningSentSortDir} onSort={handleSubstanceScreeningSentSort}
+                  options={substanceScreeningFilterOptionsFor("status")}
+                  isChecked={(v) => substanceScreeningIsValueChecked("status", v)}
+                  onToggleValue={(v) => substanceScreeningToggleFilterValue("status", v)}
+                  onClear={() => substanceScreeningClearColumnFilter("status")}
+                  isFiltered={substanceScreeningIsColumnFiltered("status")}
+                />
+                <SortableTh column="sent" label="Sent" sortColumn={substanceScreeningSentSortColumn} sortDir={substanceScreeningSentSortDir} onSort={handleSubstanceScreeningSentSort} />
                 <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {sentSubstanceScreeningForms.length === 0 ? (
-                <tr><td colSpan={5} className="px-4 py-8 text-center text-muted-foreground text-sm">No requests sent yet.</td></tr>
+              {sortedSentSubstanceScreeningForms.length === 0 ? (
+                <tr><td colSpan={5} className="px-4 py-8 text-center text-muted-foreground text-sm">{sentSubstanceScreeningForms.length === 0 ? "No requests sent yet." : "No forms match this search/filter."}</td></tr>
               ) : (
-                sentSubstanceScreeningForms.map((doc) => {
+                sortedSentSubstanceScreeningForms.map((doc) => {
                   const data = doc.formData as Partial<SubstanceScreeningFormData>;
                   const recipient = employees.find((e) => e.id === doc.recipientId);
                   const busy = substanceScreeningActionBusyId === doc.id;
@@ -24563,6 +26868,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                                 Send to Employer
                               </button>
                             </>
+                          )}
+                          {doc.pdfUrl && (
+                            <button type="button" onClick={() => setSubstanceScreeningDocPreview(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
+                              View
+                            </button>
                           )}
                           {doc.pdfUrl && (
                             <button type="button" onClick={() => handleDownloadSubstanceScreeningPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
@@ -24720,6 +27030,24 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <h2 className="font-semibold text-sm">Sent Meal & Rest Break Acknowledgment Forms</h2>
           <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status. "Awaiting Employer Signature" means the employee finished — add your signature to finalize.</p>
         </div>
+        <div className="px-4 py-3 border-b border-white/10 bg-white/5 flex flex-wrap items-end gap-3">
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+            <input
+              type="text"
+              value={mealRestBreakSentSearch}
+              onChange={(e) => setMealRestBreakSentSearch(e.target.value)}
+              placeholder="Name or branch…"
+              className="glass-input text-sm py-1.5 pl-8 pr-3 rounded-md w-56"
+            />
+          </div>
+          {mealRestBreakSentSearch && (
+            <button onClick={() => setMealRestBreakSentSearch("")} className="btn text-sm px-3 py-1.5">Clear</button>
+          )}
+          <span className="text-xs text-muted-foreground mb-1.5 ml-auto">
+            {sortedSentMealRestBreakForms.length}{mealRestBreakSentSearch ? ` of ${sentMealRestBreakForms.length}` : ""} forms
+          </span>
+        </div>
         {mealRestBreakActionError && (
           <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{mealRestBreakActionError}</p>
         )}
@@ -24727,19 +27055,43 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-white/10 bg-white/5">
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Employee</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Branch</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent By</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Status</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent</th>
+                <SortableTh column="employee" label="Employee" sortColumn={mealRestBreakSentSortColumn} sortDir={mealRestBreakSentSortDir} onSort={handleMealRestBreakSentSort} />
+                <FilterableTh
+                  column="branch" label="Branch"
+                  sortColumn={mealRestBreakSentSortColumn} sortDir={mealRestBreakSentSortDir} onSort={handleMealRestBreakSentSort}
+                  options={mealRestBreakFilterOptionsFor("branch")}
+                  isChecked={(v) => mealRestBreakIsValueChecked("branch", v)}
+                  onToggleValue={(v) => mealRestBreakToggleFilterValue("branch", v)}
+                  onClear={() => mealRestBreakClearColumnFilter("branch")}
+                  isFiltered={mealRestBreakIsColumnFiltered("branch")}
+                />
+                <FilterableTh
+                  column="sentBy" label="Sent By"
+                  sortColumn={mealRestBreakSentSortColumn} sortDir={mealRestBreakSentSortDir} onSort={handleMealRestBreakSentSort}
+                  options={mealRestBreakFilterOptionsFor("sentBy")}
+                  isChecked={(v) => mealRestBreakIsValueChecked("sentBy", v)}
+                  onToggleValue={(v) => mealRestBreakToggleFilterValue("sentBy", v)}
+                  onClear={() => mealRestBreakClearColumnFilter("sentBy")}
+                  isFiltered={mealRestBreakIsColumnFiltered("sentBy")}
+                />
+                <FilterableTh
+                  column="status" label="Status"
+                  sortColumn={mealRestBreakSentSortColumn} sortDir={mealRestBreakSentSortDir} onSort={handleMealRestBreakSentSort}
+                  options={mealRestBreakFilterOptionsFor("status")}
+                  isChecked={(v) => mealRestBreakIsValueChecked("status", v)}
+                  onToggleValue={(v) => mealRestBreakToggleFilterValue("status", v)}
+                  onClear={() => mealRestBreakClearColumnFilter("status")}
+                  isFiltered={mealRestBreakIsColumnFiltered("status")}
+                />
+                <SortableTh column="sent" label="Sent" sortColumn={mealRestBreakSentSortColumn} sortDir={mealRestBreakSentSortDir} onSort={handleMealRestBreakSentSort} />
                 <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {sentMealRestBreakForms.length === 0 ? (
-                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">No requests sent yet.</td></tr>
+              {sortedSentMealRestBreakForms.length === 0 ? (
+                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">{sentMealRestBreakForms.length === 0 ? "No requests sent yet." : "No forms match this search/filter."}</td></tr>
               ) : (
-                sentMealRestBreakForms.map((doc) => {
+                sortedSentMealRestBreakForms.map((doc) => {
                   const data = doc.formData as Partial<MealRestBreakFormData>;
                   const recipient = employees.find((e) => e.id === doc.recipientId);
                   const busy = mealRestBreakActionBusyId === doc.id;
@@ -24784,6 +27136,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                                 Send to Employer
                               </button>
                             </>
+                          )}
+                          {doc.pdfUrl && (
+                            <button type="button" onClick={() => setMealRestBreakDocPreview(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
+                              View
+                            </button>
                           )}
                           {doc.pdfUrl && (
                             <button type="button" onClick={() => handleDownloadMealRestBreakPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
@@ -24941,6 +27298,24 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <h2 className="font-semibold text-sm">Sent PTO & Sick Leave Policy Acknowledgment Forms</h2>
           <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status.</p>
         </div>
+        <div className="px-4 py-3 border-b border-white/10 bg-white/5 flex flex-wrap items-end gap-3">
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+            <input
+              type="text"
+              value={ptoAckSentSearch}
+              onChange={(e) => setPtoAckSentSearch(e.target.value)}
+              placeholder="Name or branch…"
+              className="glass-input text-sm py-1.5 pl-8 pr-3 rounded-md w-56"
+            />
+          </div>
+          {ptoAckSentSearch && (
+            <button onClick={() => setPtoAckSentSearch("")} className="btn text-sm px-3 py-1.5">Clear</button>
+          )}
+          <span className="text-xs text-muted-foreground mb-1.5 ml-auto">
+            {sortedSentPtoAckForms.length}{ptoAckSentSearch ? ` of ${sentPtoAckForms.length}` : ""} forms
+          </span>
+        </div>
         {ptoAckActionError && (
           <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{ptoAckActionError}</p>
         )}
@@ -24948,19 +27323,43 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-white/10 bg-white/5">
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Employee</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Branch</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent By</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Status</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent</th>
+                <SortableTh column="employee" label="Employee" sortColumn={ptoAckSentSortColumn} sortDir={ptoAckSentSortDir} onSort={handlePtoAckSentSort} />
+                <FilterableTh
+                  column="branch" label="Branch"
+                  sortColumn={ptoAckSentSortColumn} sortDir={ptoAckSentSortDir} onSort={handlePtoAckSentSort}
+                  options={ptoAckFilterOptionsFor("branch")}
+                  isChecked={(v) => ptoAckIsValueChecked("branch", v)}
+                  onToggleValue={(v) => ptoAckToggleFilterValue("branch", v)}
+                  onClear={() => ptoAckClearColumnFilter("branch")}
+                  isFiltered={ptoAckIsColumnFiltered("branch")}
+                />
+                <FilterableTh
+                  column="sentBy" label="Sent By"
+                  sortColumn={ptoAckSentSortColumn} sortDir={ptoAckSentSortDir} onSort={handlePtoAckSentSort}
+                  options={ptoAckFilterOptionsFor("sentBy")}
+                  isChecked={(v) => ptoAckIsValueChecked("sentBy", v)}
+                  onToggleValue={(v) => ptoAckToggleFilterValue("sentBy", v)}
+                  onClear={() => ptoAckClearColumnFilter("sentBy")}
+                  isFiltered={ptoAckIsColumnFiltered("sentBy")}
+                />
+                <FilterableTh
+                  column="status" label="Status"
+                  sortColumn={ptoAckSentSortColumn} sortDir={ptoAckSentSortDir} onSort={handlePtoAckSentSort}
+                  options={ptoAckFilterOptionsFor("status")}
+                  isChecked={(v) => ptoAckIsValueChecked("status", v)}
+                  onToggleValue={(v) => ptoAckToggleFilterValue("status", v)}
+                  onClear={() => ptoAckClearColumnFilter("status")}
+                  isFiltered={ptoAckIsColumnFiltered("status")}
+                />
+                <SortableTh column="sent" label="Sent" sortColumn={ptoAckSentSortColumn} sortDir={ptoAckSentSortDir} onSort={handlePtoAckSentSort} />
                 <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {sentPtoAckForms.length === 0 ? (
-                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">No requests sent yet.</td></tr>
+              {sortedSentPtoAckForms.length === 0 ? (
+                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">{sentPtoAckForms.length === 0 ? "No requests sent yet." : "No forms match this search/filter."}</td></tr>
               ) : (
-                sentPtoAckForms.map((doc) => {
+                sortedSentPtoAckForms.map((doc) => {
                   const data = doc.formData as Partial<PtoAckFormData>;
                   const recipient = employees.find((e) => e.id === doc.recipientId);
                   const busy = ptoAckActionBusyId === doc.id;
@@ -24992,6 +27391,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           {doc.status === "pending_signature" && (
                             <button type="button" onClick={() => handleCopyPtoAckLink(doc)} className="btn text-[10px] px-2 py-1">
                               Copy Link
+                            </button>
+                          )}
+                          {doc.pdfUrl && (
+                            <button type="button" onClick={() => setPtoAckDocPreview(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
+                              View
                             </button>
                           )}
                           {doc.pdfUrl && (
@@ -25145,6 +27549,24 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <h2 className="font-semibold text-sm">Sent Parts Responsibility Acknowledgment Forms</h2>
           <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status. "Awaiting Manager Signature" means the technician finished — add your signature to finalize.</p>
         </div>
+        <div className="px-4 py-3 border-b border-white/10 bg-white/5 flex flex-wrap items-end gap-3">
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+            <input
+              type="text"
+              value={partsResponsibilitySentSearch}
+              onChange={(e) => setPartsResponsibilitySentSearch(e.target.value)}
+              placeholder="Name or branch…"
+              className="glass-input text-sm py-1.5 pl-8 pr-3 rounded-md w-56"
+            />
+          </div>
+          {partsResponsibilitySentSearch && (
+            <button onClick={() => setPartsResponsibilitySentSearch("")} className="btn text-sm px-3 py-1.5">Clear</button>
+          )}
+          <span className="text-xs text-muted-foreground mb-1.5 ml-auto">
+            {sortedSentPartsResponsibilityForms.length}{partsResponsibilitySentSearch ? ` of ${sentPartsResponsibilityForms.length}` : ""} forms
+          </span>
+        </div>
         {partsResponsibilityActionError && (
           <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{partsResponsibilityActionError}</p>
         )}
@@ -25152,19 +27574,43 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-white/10 bg-white/5">
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Technician</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Branch</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent By</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Status</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent</th>
+                <SortableTh column="employee" label="Technician" sortColumn={partsResponsibilitySentSortColumn} sortDir={partsResponsibilitySentSortDir} onSort={handlePartsResponsibilitySentSort} />
+                <FilterableTh
+                  column="branch" label="Branch"
+                  sortColumn={partsResponsibilitySentSortColumn} sortDir={partsResponsibilitySentSortDir} onSort={handlePartsResponsibilitySentSort}
+                  options={partsResponsibilityFilterOptionsFor("branch")}
+                  isChecked={(v) => partsResponsibilityIsValueChecked("branch", v)}
+                  onToggleValue={(v) => partsResponsibilityToggleFilterValue("branch", v)}
+                  onClear={() => partsResponsibilityClearColumnFilter("branch")}
+                  isFiltered={partsResponsibilityIsColumnFiltered("branch")}
+                />
+                <FilterableTh
+                  column="sentBy" label="Sent By"
+                  sortColumn={partsResponsibilitySentSortColumn} sortDir={partsResponsibilitySentSortDir} onSort={handlePartsResponsibilitySentSort}
+                  options={partsResponsibilityFilterOptionsFor("sentBy")}
+                  isChecked={(v) => partsResponsibilityIsValueChecked("sentBy", v)}
+                  onToggleValue={(v) => partsResponsibilityToggleFilterValue("sentBy", v)}
+                  onClear={() => partsResponsibilityClearColumnFilter("sentBy")}
+                  isFiltered={partsResponsibilityIsColumnFiltered("sentBy")}
+                />
+                <FilterableTh
+                  column="status" label="Status"
+                  sortColumn={partsResponsibilitySentSortColumn} sortDir={partsResponsibilitySentSortDir} onSort={handlePartsResponsibilitySentSort}
+                  options={partsResponsibilityFilterOptionsFor("status")}
+                  isChecked={(v) => partsResponsibilityIsValueChecked("status", v)}
+                  onToggleValue={(v) => partsResponsibilityToggleFilterValue("status", v)}
+                  onClear={() => partsResponsibilityClearColumnFilter("status")}
+                  isFiltered={partsResponsibilityIsColumnFiltered("status")}
+                />
+                <SortableTh column="sent" label="Sent" sortColumn={partsResponsibilitySentSortColumn} sortDir={partsResponsibilitySentSortDir} onSort={handlePartsResponsibilitySentSort} />
                 <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {sentPartsResponsibilityForms.length === 0 ? (
-                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">No requests sent yet.</td></tr>
+              {sortedSentPartsResponsibilityForms.length === 0 ? (
+                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">{sentPartsResponsibilityForms.length === 0 ? "No requests sent yet." : "No forms match this search/filter."}</td></tr>
               ) : (
-                sentPartsResponsibilityForms.map((doc) => {
+                sortedSentPartsResponsibilityForms.map((doc) => {
                   const data = doc.formData as Partial<PartsResponsibilityFormData>;
                   const recipient = employees.find((e) => e.id === doc.recipientId);
                   const busy = partsResponsibilityActionBusyId === doc.id;
@@ -25209,6 +27655,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                                 Send to Manager
                               </button>
                             </>
+                          )}
+                          {doc.pdfUrl && (
+                            <button type="button" onClick={() => setPartsResponsibilityDocPreview(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
+                              View
+                            </button>
                           )}
                           {doc.pdfUrl && (
                             <button type="button" onClick={() => handleDownloadPartsResponsibilityPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
@@ -25474,6 +27925,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                             </>
                           )}
                           {doc.pdfUrl && (
+                            <button type="button" onClick={() => setMileageFuelDocPreview(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
+                              View
+                            </button>
+                          )}
+                          {doc.pdfUrl && (
                             <button type="button" onClick={() => handleDownloadMileageFuelPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
                               Download PDF
                             </button>
@@ -25723,6 +28179,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                                 Send to Employer
                               </button>
                             </>
+                          )}
+                          {doc.pdfUrl && (
+                            <button type="button" onClick={() => setMasterW2AgreementDocPreview(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
+                              View
+                            </button>
                           )}
                           {doc.pdfUrl && (
                             <button type="button" onClick={() => handleDownloadMasterW2AgreementPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
@@ -26042,6 +28503,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                             </>
                           )}
                           {doc.pdfUrl && (
+                            <button type="button" onClick={() => setMasterW2OfficeAgreementDocPreview(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
+                              View
+                            </button>
+                          )}
+                          {doc.pdfUrl && (
                             <button type="button" onClick={() => handleDownloadMasterW2OfficeAgreementPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
                               Download PDF
                             </button>
@@ -26333,6 +28799,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                                 Send to Employer
                               </button>
                             </>
+                          )}
+                          {doc.pdfUrl && (
+                            <button type="button" onClick={() => setMasterW2ExecutiveAgreementDocPreview(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
+                              View
+                            </button>
                           )}
                           {doc.pdfUrl && (
                             <button type="button" onClick={() => handleDownloadMasterW2ExecutiveAgreementPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
@@ -26892,6 +29363,24 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <h2 className="font-semibold text-sm">Sent Flash Technician Travel & Out-of-State Policy Forms</h2>
           <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status. "Awaiting Employer Signature" means the employee finished — add your signature to finalize.</p>
         </div>
+        <div className="px-4 py-3 border-b border-white/10 bg-white/5 flex flex-wrap items-end gap-3">
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+            <input
+              type="text"
+              value={flashTechnicianTravelSentSearch}
+              onChange={(e) => setFlashTechnicianTravelSentSearch(e.target.value)}
+              placeholder="Employee name…"
+              className="glass-input text-sm py-1.5 pl-8 pr-3 rounded-md w-56"
+            />
+          </div>
+          {flashTechnicianTravelSentSearch && (
+            <button onClick={() => setFlashTechnicianTravelSentSearch("")} className="btn text-sm px-3 py-1.5">Clear</button>
+          )}
+          <span className="text-xs text-muted-foreground mb-1.5 ml-auto">
+            {sortedSentFlashTechnicianTravelForms.length}{flashTechnicianTravelSentSearch ? ` of ${sentFlashTechnicianTravelForms.length}` : ""} forms
+          </span>
+        </div>
         {flashTechnicianTravelActionError && (
           <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{flashTechnicianTravelActionError}</p>
         )}
@@ -26899,18 +29388,34 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-white/10 bg-white/5">
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Employee</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent By</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Status</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent</th>
+                <SortableTh column="employee" label="Employee" sortColumn={flashTechnicianTravelSentSortColumn} sortDir={flashTechnicianTravelSentSortDir} onSort={handleFlashTechnicianTravelSentSort} />
+                <FilterableTh
+                  column="sentBy" label="Sent By"
+                  sortColumn={flashTechnicianTravelSentSortColumn} sortDir={flashTechnicianTravelSentSortDir} onSort={handleFlashTechnicianTravelSentSort}
+                  options={flashTechnicianTravelFilterOptionsFor("sentBy")}
+                  isChecked={(v) => flashTechnicianTravelIsValueChecked("sentBy", v)}
+                  onToggleValue={(v) => flashTechnicianTravelToggleFilterValue("sentBy", v)}
+                  onClear={() => flashTechnicianTravelClearColumnFilter("sentBy")}
+                  isFiltered={flashTechnicianTravelIsColumnFiltered("sentBy")}
+                />
+                <FilterableTh
+                  column="status" label="Status"
+                  sortColumn={flashTechnicianTravelSentSortColumn} sortDir={flashTechnicianTravelSentSortDir} onSort={handleFlashTechnicianTravelSentSort}
+                  options={flashTechnicianTravelFilterOptionsFor("status")}
+                  isChecked={(v) => flashTechnicianTravelIsValueChecked("status", v)}
+                  onToggleValue={(v) => flashTechnicianTravelToggleFilterValue("status", v)}
+                  onClear={() => flashTechnicianTravelClearColumnFilter("status")}
+                  isFiltered={flashTechnicianTravelIsColumnFiltered("status")}
+                />
+                <SortableTh column="sent" label="Sent" sortColumn={flashTechnicianTravelSentSortColumn} sortDir={flashTechnicianTravelSentSortDir} onSort={handleFlashTechnicianTravelSentSort} />
                 <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {sentFlashTechnicianTravelForms.length === 0 ? (
-                <tr><td colSpan={5} className="px-4 py-8 text-center text-muted-foreground text-sm">No requests sent yet.</td></tr>
+              {sortedSentFlashTechnicianTravelForms.length === 0 ? (
+                <tr><td colSpan={5} className="px-4 py-8 text-center text-muted-foreground text-sm">{sentFlashTechnicianTravelForms.length === 0 ? "No requests sent yet." : "No forms match this search/filter."}</td></tr>
               ) : (
-                sentFlashTechnicianTravelForms.map((doc) => {
+                sortedSentFlashTechnicianTravelForms.map((doc) => {
                   const data = doc.formData as Partial<FlashTechnicianTravelFormData>;
                   const recipient = employees.find((e) => e.id === doc.recipientId);
                   const busy = flashTechnicianTravelActionBusyId === doc.id;
@@ -26954,6 +29459,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                                 Send to Employer
                               </button>
                             </>
+                          )}
+                          {doc.pdfUrl && (
+                            <button type="button" onClick={() => setFlashTechnicianTravelDocPreview(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
+                              View
+                            </button>
                           )}
                           {doc.pdfUrl && (
                             <button type="button" onClick={() => handleDownloadFlashTechnicianTravelPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
@@ -27130,6 +29640,24 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <h2 className="font-semibold text-sm">Sent Addendum Forms</h2>
           <p className="text-[10px] text-muted-foreground mt-0.5">The status shows which signer the document is waiting on. Use "Send to next signer" to route it along the chain: Contractor → Company HR Representative → Technical COO → Technical Director → CEO.</p>
         </div>
+        <div className="px-4 py-3 border-b border-white/10 bg-white/5 flex flex-wrap items-end gap-3">
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+            <input
+              type="text"
+              value={contractorAddendumSentSearch}
+              onChange={(e) => setContractorAddendumSentSearch(e.target.value)}
+              placeholder="Contractor name…"
+              className="glass-input text-sm py-1.5 pl-8 pr-3 rounded-md w-56"
+            />
+          </div>
+          {contractorAddendumSentSearch && (
+            <button onClick={() => setContractorAddendumSentSearch("")} className="btn text-sm px-3 py-1.5">Clear</button>
+          )}
+          <span className="text-xs text-muted-foreground mb-1.5 ml-auto">
+            {sortedVisibleContractorAddendumForms.length}{contractorAddendumSentSearch ? ` of ${visibleContractorAddendumForms.length}` : ""} forms
+          </span>
+        </div>
         {contractorAddendumActionError && (
           <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{contractorAddendumActionError}</p>
         )}
@@ -27137,18 +29665,34 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-white/10 bg-white/5">
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Contractor</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent By</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Status</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent</th>
+                <SortableTh column="employee" label="Contractor" sortColumn={contractorAddendumSentSortColumn} sortDir={contractorAddendumSentSortDir} onSort={handleContractorAddendumSentSort} />
+                <FilterableTh
+                  column="sentBy" label="Sent By"
+                  sortColumn={contractorAddendumSentSortColumn} sortDir={contractorAddendumSentSortDir} onSort={handleContractorAddendumSentSort}
+                  options={contractorAddendumFilterOptionsFor("sentBy")}
+                  isChecked={(v) => contractorAddendumIsValueChecked("sentBy", v)}
+                  onToggleValue={(v) => contractorAddendumToggleFilterValue("sentBy", v)}
+                  onClear={() => contractorAddendumClearColumnFilter("sentBy")}
+                  isFiltered={contractorAddendumIsColumnFiltered("sentBy")}
+                />
+                <FilterableTh
+                  column="status" label="Status"
+                  sortColumn={contractorAddendumSentSortColumn} sortDir={contractorAddendumSentSortDir} onSort={handleContractorAddendumSentSort}
+                  options={contractorAddendumFilterOptionsFor("status")}
+                  isChecked={(v) => contractorAddendumIsValueChecked("status", v)}
+                  onToggleValue={(v) => contractorAddendumToggleFilterValue("status", v)}
+                  onClear={() => contractorAddendumClearColumnFilter("status")}
+                  isFiltered={contractorAddendumIsColumnFiltered("status")}
+                />
+                <SortableTh column="sent" label="Sent" sortColumn={contractorAddendumSentSortColumn} sortDir={contractorAddendumSentSortDir} onSort={handleContractorAddendumSentSort} />
                 <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {visibleContractorAddendumForms.length === 0 ? (
-                <tr><td colSpan={5} className="px-4 py-8 text-center text-muted-foreground text-sm">No requests sent yet.</td></tr>
+              {sortedVisibleContractorAddendumForms.length === 0 ? (
+                <tr><td colSpan={5} className="px-4 py-8 text-center text-muted-foreground text-sm">{visibleContractorAddendumForms.length === 0 ? "No requests sent yet." : "No forms match this search/filter."}</td></tr>
               ) : (
-                visibleContractorAddendumForms.map((doc) => {
+                sortedVisibleContractorAddendumForms.map((doc) => {
                   const fd = doc.formData as ContractorAddendumFormData;
                   const recipient = employees.find((e) => e.id === doc.recipientId);
                   const busy = contractorAddendumActionBusyId === doc.id;
@@ -27197,6 +29741,9 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                             <button type="button" disabled={busy} onClick={() => handleFinalizeContractorAddendum(doc)} className="btn text-[10px] px-2 py-1 bg-green-600 hover:bg-green-700 text-white disabled:opacity-50">
                               Finalize
                             </button>
+                          )}
+                          {doc.pdfUrl && (
+                            <button type="button" onClick={() => setContractorAddendumDocPreview(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">View</button>
                           )}
                           {doc.pdfUrl && (
                             <button type="button" onClick={() => handleDownloadContractorAddendumPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">Download PDF</button>
@@ -27315,6 +29862,31 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         </div>
       )}
       </>
+      )}
+
+      {/* Contractor Addendum Sent History PDF preview — same inline-frame pattern used for the other Sent History tables */}
+      {contractorAddendumDocPreview && (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => setContractorAddendumDocPreview(null)}>
+          <div className="bg-slate-900 border border-white/10 rounded-lg shadow-2xl w-full max-w-6xl h-[92vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold">{(contractorAddendumDocPreview.formData as ContractorAddendumFormData).signerNames?.employee || contractorAddendumDocPreview.recipientName || "—"}</p>
+                <p className="text-[10px] text-muted-foreground">
+                  {contractorAddendumDocPreview.status === "confirmed" ? "Completed" : "Submitted"} {new Date(contractorAddendumDocPreview.signedAt ?? contractorAddendumDocPreview.createdAt).toLocaleString()}
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                {contractorAddendumDocPreview.pdfUrl && (
+                  <a href={contractorAddendumDocPreview.pdfUrl} target="_blank" rel="noopener noreferrer" className="btn text-xs px-2.5 py-1.5 flex items-center gap-1"><Download className="h-3 w-3" /> Download</a>
+                )}
+                <button type="button" onClick={() => setContractorAddendumDocPreview(null)} className="btn text-xs px-2.5 py-1.5">Close</button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-hidden bg-slate-950">
+              {contractorAddendumDocPreview.pdfUrl && <iframe src={contractorAddendumDocPreview.pdfUrl} title="Contractor Addendum" className="w-full h-full min-h-[70vh] border-0" />}
+            </div>
+          </div>
+        </div>
       )}
 
       {activeTab === "locationConsent" && (
@@ -27441,37 +30013,23 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <h2 className="font-semibold text-sm">Sent Location Sharing Consent Forms</h2>
           <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status. "Awaiting Employer Signature" means the employee finished — add your signature to finalize.</p>
         </div>
-        <div className="px-4 py-3 border-b border-white/10 flex flex-wrap items-center gap-2">
-          <select
-            value={locationConsentPositionFilter}
-            onChange={(e) => setLocationConsentPositionFilter(e.target.value)}
-            className="glass-input text-xs py-1.5 px-2.5 rounded-md"
-          >
-            <option value="all">All Positions / Titles</option>
-            {locationConsentPositionOptions.map((p) => (
-              <option key={p} value={p}>{p}</option>
-            ))}
-          </select>
-          <select
-            value={locationConsentSentByFilter}
-            onChange={(e) => setLocationConsentSentByFilter(e.target.value)}
-            className="glass-input text-xs py-1.5 px-2.5 rounded-md"
-          >
-            <option value="all">All Senders</option>
-            {locationConsentSentByOptions.map((s) => (
-              <option key={s} value={s}>{s}</option>
-            ))}
-          </select>
-          <select
-            value={locationConsentStatusFilter}
-            onChange={(e) => setLocationConsentStatusFilter(e.target.value)}
-            className="glass-input text-xs py-1.5 px-2.5 rounded-md"
-          >
-            <option value="all">All Statuses</option>
-            {locationConsentStatusOptions.map((s) => (
-              <option key={s} value={s}>{s}</option>
-            ))}
-          </select>
+        <div className="px-4 py-3 border-b border-white/10 bg-white/5 flex flex-wrap items-end gap-3">
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+            <input
+              type="text"
+              value={locationConsentSentSearch}
+              onChange={(e) => setLocationConsentSentSearch(e.target.value)}
+              placeholder="Name or position…"
+              className="glass-input text-sm py-1.5 pl-8 pr-3 rounded-md w-56"
+            />
+          </div>
+          {locationConsentSentSearch && (
+            <button onClick={() => setLocationConsentSentSearch("")} className="btn text-sm px-3 py-1.5">Clear</button>
+          )}
+          <span className="text-xs text-muted-foreground mb-1.5 ml-auto">
+            {filteredSentLocationConsentForms.length}{locationConsentSentSearch ? ` of ${sentLocationConsentForms.length}` : ""} forms
+          </span>
         </div>
         {locationConsentActionError && (
           <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{locationConsentActionError}</p>
@@ -27480,27 +30038,41 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-white/10 bg-white/5">
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Employee</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Position / Title</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent By</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Status</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">
-                  <button
-                    type="button"
-                    onClick={() => setLocationConsentSentSortDir((d) => (d === "asc" ? "desc" : "asc"))}
-                    className="flex items-center gap-1 uppercase hover:text-white transition-colors"
-                    title={`Sort ${locationConsentSentSortDir === "asc" ? "oldest first (click for newest first)" : "newest first (click for oldest first)"}`}
-                  >
-                    Sent
-                    {locationConsentSentSortDir === "asc" ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-                  </button>
-                </th>
+                <SortableTh column="employee" label="Employee" sortColumn={locationConsentSentSortColumn} sortDir={locationConsentSentSortDir} onSort={handleLocationConsentSentSort} />
+                <FilterableTh
+                  column="position" label="Position / Title"
+                  sortColumn={locationConsentSentSortColumn} sortDir={locationConsentSentSortDir} onSort={handleLocationConsentSentSort}
+                  options={locationConsentFilterOptionsFor("position")}
+                  isChecked={(v) => locationConsentIsValueChecked("position", v)}
+                  onToggleValue={(v) => locationConsentToggleFilterValue("position", v)}
+                  onClear={() => locationConsentClearColumnFilter("position")}
+                  isFiltered={locationConsentIsColumnFiltered("position")}
+                />
+                <FilterableTh
+                  column="sentBy" label="Sent By"
+                  sortColumn={locationConsentSentSortColumn} sortDir={locationConsentSentSortDir} onSort={handleLocationConsentSentSort}
+                  options={locationConsentFilterOptionsFor("sentBy")}
+                  isChecked={(v) => locationConsentIsValueChecked("sentBy", v)}
+                  onToggleValue={(v) => locationConsentToggleFilterValue("sentBy", v)}
+                  onClear={() => locationConsentClearColumnFilter("sentBy")}
+                  isFiltered={locationConsentIsColumnFiltered("sentBy")}
+                />
+                <FilterableTh
+                  column="status" label="Status"
+                  sortColumn={locationConsentSentSortColumn} sortDir={locationConsentSentSortDir} onSort={handleLocationConsentSentSort}
+                  options={locationConsentFilterOptionsFor("status")}
+                  isChecked={(v) => locationConsentIsValueChecked("status", v)}
+                  onToggleValue={(v) => locationConsentToggleFilterValue("status", v)}
+                  onClear={() => locationConsentClearColumnFilter("status")}
+                  isFiltered={locationConsentIsColumnFiltered("status")}
+                />
+                <SortableTh column="sent" label="Sent" sortColumn={locationConsentSentSortColumn} sortDir={locationConsentSentSortDir} onSort={handleLocationConsentSentSort} />
                 <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Actions</th>
               </tr>
             </thead>
             <tbody>
               {filteredSentLocationConsentForms.length === 0 ? (
-                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">{sentLocationConsentForms.length === 0 ? "No requests sent yet." : "No requests match these filters."}</td></tr>
+                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">{sentLocationConsentForms.length === 0 ? "No requests sent yet." : "No forms match this search/filter."}</td></tr>
               ) : (
                 filteredSentLocationConsentForms.map((doc) => {
                   const data = doc.formData as Partial<LocationConsentFormData>;
@@ -27547,6 +30119,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                                 Send to Employer
                               </button>
                             </>
+                          )}
+                          {doc.pdfUrl && (
+                            <button type="button" onClick={() => setLocationConsentDocPreview(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
+                              View
+                            </button>
                           )}
                           {doc.pdfUrl && (
                             <button type="button" onClick={() => handleDownloadLocationConsentPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
@@ -27704,6 +30281,24 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <h2 className="font-semibold text-sm">Sent Damage Agreement Forms</h2>
           <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status. "Awaiting Employer Signature" means the employee finished — add your signature to finalize.</p>
         </div>
+        <div className="px-4 py-3 border-b border-white/10 bg-white/5 flex flex-wrap items-end gap-3">
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+            <input
+              type="text"
+              value={damageSentSearch}
+              onChange={(e) => setDamageSentSearch(e.target.value)}
+              placeholder="Name or position…"
+              className="glass-input text-sm py-1.5 pl-8 pr-3 rounded-md w-56"
+            />
+          </div>
+          {damageSentSearch && (
+            <button onClick={() => setDamageSentSearch("")} className="btn text-sm px-3 py-1.5">Clear</button>
+          )}
+          <span className="text-xs text-muted-foreground mb-1.5 ml-auto">
+            {sortedSentDamageForms.length}{damageSentSearch ? ` of ${sentDamageForms.length}` : ""} forms
+          </span>
+        </div>
         {damageActionError && (
           <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{damageActionError}</p>
         )}
@@ -27711,19 +30306,43 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-white/10 bg-white/5">
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Employee</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Position / Title</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent By</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Status</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent</th>
+                <SortableTh column="employee" label="Employee" sortColumn={damageSentSortColumn} sortDir={damageSentSortDir} onSort={handleDamageSentSort} />
+                <FilterableTh
+                  column="position" label="Position / Title"
+                  sortColumn={damageSentSortColumn} sortDir={damageSentSortDir} onSort={handleDamageSentSort}
+                  options={damageFilterOptionsFor("position")}
+                  isChecked={(v) => damageIsValueChecked("position", v)}
+                  onToggleValue={(v) => damageToggleFilterValue("position", v)}
+                  onClear={() => damageClearColumnFilter("position")}
+                  isFiltered={damageIsColumnFiltered("position")}
+                />
+                <FilterableTh
+                  column="sentBy" label="Sent By"
+                  sortColumn={damageSentSortColumn} sortDir={damageSentSortDir} onSort={handleDamageSentSort}
+                  options={damageFilterOptionsFor("sentBy")}
+                  isChecked={(v) => damageIsValueChecked("sentBy", v)}
+                  onToggleValue={(v) => damageToggleFilterValue("sentBy", v)}
+                  onClear={() => damageClearColumnFilter("sentBy")}
+                  isFiltered={damageIsColumnFiltered("sentBy")}
+                />
+                <FilterableTh
+                  column="status" label="Status"
+                  sortColumn={damageSentSortColumn} sortDir={damageSentSortDir} onSort={handleDamageSentSort}
+                  options={damageFilterOptionsFor("status")}
+                  isChecked={(v) => damageIsValueChecked("status", v)}
+                  onToggleValue={(v) => damageToggleFilterValue("status", v)}
+                  onClear={() => damageClearColumnFilter("status")}
+                  isFiltered={damageIsColumnFiltered("status")}
+                />
+                <SortableTh column="sent" label="Sent" sortColumn={damageSentSortColumn} sortDir={damageSentSortDir} onSort={handleDamageSentSort} />
                 <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {sentDamageForms.length === 0 ? (
-                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">No requests sent yet.</td></tr>
+              {sortedSentDamageForms.length === 0 ? (
+                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">{sentDamageForms.length === 0 ? "No requests sent yet." : "No forms match this search/filter."}</td></tr>
               ) : (
-                sentDamageForms.map((doc) => {
+                sortedSentDamageForms.map((doc) => {
                   const data = doc.formData as Partial<DamageFormData>;
                   const recipient = employees.find((e) => e.id === doc.recipientId);
                   const busy = damageActionBusyId === doc.id;
@@ -27768,6 +30387,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                                 Send to Employer
                               </button>
                             </>
+                          )}
+                          {doc.pdfUrl && (
+                            <button type="button" onClick={() => setDamageDocPreview(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
+                              View
+                            </button>
                           )}
                           {doc.pdfUrl && (
                             <button type="button" onClick={() => handleDownloadDamagePdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
@@ -27925,6 +30549,24 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <h2 className="font-semibold text-sm">Sent Employee Data Forms</h2>
           <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status.</p>
         </div>
+        <div className="px-4 py-3 border-b border-white/10 bg-white/5 flex flex-wrap items-end gap-3">
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+            <input
+              type="text"
+              value={contractorDataSentSearch}
+              onChange={(e) => setContractorDataSentSearch(e.target.value)}
+              placeholder="Name or branch…"
+              className="glass-input text-sm py-1.5 pl-8 pr-3 rounded-md w-56"
+            />
+          </div>
+          {contractorDataSentSearch && (
+            <button onClick={() => setContractorDataSentSearch("")} className="btn text-sm px-3 py-1.5">Clear</button>
+          )}
+          <span className="text-xs text-muted-foreground mb-1.5 ml-auto">
+            {sortedSentContractorDataForms.length}{contractorDataSentSearch ? ` of ${sentContractorDataForms.length}` : ""} forms
+          </span>
+        </div>
         {contractorDataActionError && (
           <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{contractorDataActionError}</p>
         )}
@@ -27932,19 +30574,43 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-white/10 bg-white/5">
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Employee</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Branch</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent By</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Status</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent</th>
+                <SortableTh column="employee" label="Employee" sortColumn={contractorDataSentSortColumn} sortDir={contractorDataSentSortDir} onSort={handleContractorDataSentSort} />
+                <FilterableTh
+                  column="branch" label="Branch"
+                  sortColumn={contractorDataSentSortColumn} sortDir={contractorDataSentSortDir} onSort={handleContractorDataSentSort}
+                  options={contractorDataFilterOptionsFor("branch")}
+                  isChecked={(v) => contractorDataIsValueChecked("branch", v)}
+                  onToggleValue={(v) => contractorDataToggleFilterValue("branch", v)}
+                  onClear={() => contractorDataClearColumnFilter("branch")}
+                  isFiltered={contractorDataIsColumnFiltered("branch")}
+                />
+                <FilterableTh
+                  column="sentBy" label="Sent By"
+                  sortColumn={contractorDataSentSortColumn} sortDir={contractorDataSentSortDir} onSort={handleContractorDataSentSort}
+                  options={contractorDataFilterOptionsFor("sentBy")}
+                  isChecked={(v) => contractorDataIsValueChecked("sentBy", v)}
+                  onToggleValue={(v) => contractorDataToggleFilterValue("sentBy", v)}
+                  onClear={() => contractorDataClearColumnFilter("sentBy")}
+                  isFiltered={contractorDataIsColumnFiltered("sentBy")}
+                />
+                <FilterableTh
+                  column="status" label="Status"
+                  sortColumn={contractorDataSentSortColumn} sortDir={contractorDataSentSortDir} onSort={handleContractorDataSentSort}
+                  options={contractorDataFilterOptionsFor("status")}
+                  isChecked={(v) => contractorDataIsValueChecked("status", v)}
+                  onToggleValue={(v) => contractorDataToggleFilterValue("status", v)}
+                  onClear={() => contractorDataClearColumnFilter("status")}
+                  isFiltered={contractorDataIsColumnFiltered("status")}
+                />
+                <SortableTh column="sent" label="Sent" sortColumn={contractorDataSentSortColumn} sortDir={contractorDataSentSortDir} onSort={handleContractorDataSentSort} />
                 <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {sentContractorDataForms.length === 0 ? (
-                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">No requests sent yet.</td></tr>
+              {sortedSentContractorDataForms.length === 0 ? (
+                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">{sentContractorDataForms.length === 0 ? "No requests sent yet." : "No forms match this search/filter."}</td></tr>
               ) : (
-                sentContractorDataForms.map((doc) => {
+                sortedSentContractorDataForms.map((doc) => {
                   const data = doc.formData as Partial<ContractorDataFormData>;
                   const recipient = employees.find((e) => e.id === doc.recipientId);
                   const busy = contractorDataActionBusyId === doc.id;
@@ -27976,6 +30642,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           {doc.status === "pending_signature" && (
                             <button type="button" onClick={() => handleCopyContractorDataLink(doc)} className="btn text-[10px] px-2 py-1">
                               Copy Link
+                            </button>
+                          )}
+                          {doc.pdfUrl && (
+                            <button type="button" onClick={() => setContractorDataDocPreview(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
+                              View
                             </button>
                           )}
                           {doc.pdfUrl && (
@@ -28134,6 +30805,24 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <h2 className="font-semibold text-sm">Sent Contractor Data (US) Forms</h2>
           <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status.</p>
         </div>
+        <div className="px-4 py-3 border-b border-white/10 bg-white/5 flex flex-wrap items-end gap-3">
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+            <input
+              type="text"
+              value={contractorDataUsSentSearch}
+              onChange={(e) => setContractorDataUsSentSearch(e.target.value)}
+              placeholder="Name or branch…"
+              className="glass-input text-sm py-1.5 pl-8 pr-3 rounded-md w-56"
+            />
+          </div>
+          {contractorDataUsSentSearch && (
+            <button onClick={() => setContractorDataUsSentSearch("")} className="btn text-sm px-3 py-1.5">Clear</button>
+          )}
+          <span className="text-xs text-muted-foreground mb-1.5 ml-auto">
+            {sortedSentContractorDataUsForms.length}{contractorDataUsSentSearch ? ` of ${sentContractorDataUsForms.length}` : ""} forms
+          </span>
+        </div>
         {contractorDataUsActionError && (
           <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{contractorDataUsActionError}</p>
         )}
@@ -28141,19 +30830,43 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-white/10 bg-white/5">
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Employee</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Branch</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent By</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Status</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent</th>
+                <SortableTh column="employee" label="Employee" sortColumn={contractorDataUsSentSortColumn} sortDir={contractorDataUsSentSortDir} onSort={handleContractorDataUsSentSort} />
+                <FilterableTh
+                  column="branch" label="Branch"
+                  sortColumn={contractorDataUsSentSortColumn} sortDir={contractorDataUsSentSortDir} onSort={handleContractorDataUsSentSort}
+                  options={contractorDataUsFilterOptionsFor("branch")}
+                  isChecked={(v) => contractorDataUsIsValueChecked("branch", v)}
+                  onToggleValue={(v) => contractorDataUsToggleFilterValue("branch", v)}
+                  onClear={() => contractorDataUsClearColumnFilter("branch")}
+                  isFiltered={contractorDataUsIsColumnFiltered("branch")}
+                />
+                <FilterableTh
+                  column="sentBy" label="Sent By"
+                  sortColumn={contractorDataUsSentSortColumn} sortDir={contractorDataUsSentSortDir} onSort={handleContractorDataUsSentSort}
+                  options={contractorDataUsFilterOptionsFor("sentBy")}
+                  isChecked={(v) => contractorDataUsIsValueChecked("sentBy", v)}
+                  onToggleValue={(v) => contractorDataUsToggleFilterValue("sentBy", v)}
+                  onClear={() => contractorDataUsClearColumnFilter("sentBy")}
+                  isFiltered={contractorDataUsIsColumnFiltered("sentBy")}
+                />
+                <FilterableTh
+                  column="status" label="Status"
+                  sortColumn={contractorDataUsSentSortColumn} sortDir={contractorDataUsSentSortDir} onSort={handleContractorDataUsSentSort}
+                  options={contractorDataUsFilterOptionsFor("status")}
+                  isChecked={(v) => contractorDataUsIsValueChecked("status", v)}
+                  onToggleValue={(v) => contractorDataUsToggleFilterValue("status", v)}
+                  onClear={() => contractorDataUsClearColumnFilter("status")}
+                  isFiltered={contractorDataUsIsColumnFiltered("status")}
+                />
+                <SortableTh column="sent" label="Sent" sortColumn={contractorDataUsSentSortColumn} sortDir={contractorDataUsSentSortDir} onSort={handleContractorDataUsSentSort} />
                 <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {sentContractorDataUsForms.length === 0 ? (
-                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">No requests sent yet.</td></tr>
+              {sortedSentContractorDataUsForms.length === 0 ? (
+                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">{sentContractorDataUsForms.length === 0 ? "No requests sent yet." : "No forms match this search/filter."}</td></tr>
               ) : (
-                sentContractorDataUsForms.map((doc) => {
+                sortedSentContractorDataUsForms.map((doc) => {
                   const data = doc.formData as Partial<ContractorDataUsFormData>;
                   const recipient = employees.find((e) => e.id === doc.recipientId);
                   const busy = contractorDataUsActionBusyId === doc.id;
@@ -28185,6 +30898,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           {doc.status === "pending_signature" && (
                             <button type="button" onClick={() => handleCopyContractorDataUsLink(doc)} className="btn text-[10px] px-2 py-1">
                               Copy Link
+                            </button>
+                          )}
+                          {doc.pdfUrl && (
+                            <button type="button" onClick={() => setContractorDataUsDocPreview(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
+                              View
                             </button>
                           )}
                           {doc.pdfUrl && (
@@ -28343,6 +31061,24 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <h2 className="font-semibold text-sm">Sent Vehicle Use Agreement Forms</h2>
           <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status.</p>
         </div>
+        <div className="px-4 py-3 border-b border-white/10 bg-white/5 flex flex-wrap items-end gap-3">
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+            <input
+              type="text"
+              value={vehicleUseAgreementSentSearch}
+              onChange={(e) => setVehicleUseAgreementSentSearch(e.target.value)}
+              placeholder="Name or branch…"
+              className="glass-input text-sm py-1.5 pl-8 pr-3 rounded-md w-56"
+            />
+          </div>
+          {vehicleUseAgreementSentSearch && (
+            <button onClick={() => setVehicleUseAgreementSentSearch("")} className="btn text-sm px-3 py-1.5">Clear</button>
+          )}
+          <span className="text-xs text-muted-foreground mb-1.5 ml-auto">
+            {sortedSentVehicleUseAgreementForms.length}{vehicleUseAgreementSentSearch ? ` of ${sentVehicleUseAgreementForms.length}` : ""} forms
+          </span>
+        </div>
         {vehicleUseAgreementActionError && (
           <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{vehicleUseAgreementActionError}</p>
         )}
@@ -28350,19 +31086,43 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-white/10 bg-white/5">
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Employee</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Branch</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent By</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Status</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent</th>
+                <SortableTh column="employee" label="Employee" sortColumn={vehicleUseAgreementSentSortColumn} sortDir={vehicleUseAgreementSentSortDir} onSort={handleVehicleUseAgreementSentSort} />
+                <FilterableTh
+                  column="branch" label="Branch"
+                  sortColumn={vehicleUseAgreementSentSortColumn} sortDir={vehicleUseAgreementSentSortDir} onSort={handleVehicleUseAgreementSentSort}
+                  options={vehicleUseAgreementFilterOptionsFor("branch")}
+                  isChecked={(v) => vehicleUseAgreementIsValueChecked("branch", v)}
+                  onToggleValue={(v) => vehicleUseAgreementToggleFilterValue("branch", v)}
+                  onClear={() => vehicleUseAgreementClearColumnFilter("branch")}
+                  isFiltered={vehicleUseAgreementIsColumnFiltered("branch")}
+                />
+                <FilterableTh
+                  column="sentBy" label="Sent By"
+                  sortColumn={vehicleUseAgreementSentSortColumn} sortDir={vehicleUseAgreementSentSortDir} onSort={handleVehicleUseAgreementSentSort}
+                  options={vehicleUseAgreementFilterOptionsFor("sentBy")}
+                  isChecked={(v) => vehicleUseAgreementIsValueChecked("sentBy", v)}
+                  onToggleValue={(v) => vehicleUseAgreementToggleFilterValue("sentBy", v)}
+                  onClear={() => vehicleUseAgreementClearColumnFilter("sentBy")}
+                  isFiltered={vehicleUseAgreementIsColumnFiltered("sentBy")}
+                />
+                <FilterableTh
+                  column="status" label="Status"
+                  sortColumn={vehicleUseAgreementSentSortColumn} sortDir={vehicleUseAgreementSentSortDir} onSort={handleVehicleUseAgreementSentSort}
+                  options={vehicleUseAgreementFilterOptionsFor("status")}
+                  isChecked={(v) => vehicleUseAgreementIsValueChecked("status", v)}
+                  onToggleValue={(v) => vehicleUseAgreementToggleFilterValue("status", v)}
+                  onClear={() => vehicleUseAgreementClearColumnFilter("status")}
+                  isFiltered={vehicleUseAgreementIsColumnFiltered("status")}
+                />
+                <SortableTh column="sent" label="Sent" sortColumn={vehicleUseAgreementSentSortColumn} sortDir={vehicleUseAgreementSentSortDir} onSort={handleVehicleUseAgreementSentSort} />
                 <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {sentVehicleUseAgreementForms.length === 0 ? (
-                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">No requests sent yet.</td></tr>
+              {sortedSentVehicleUseAgreementForms.length === 0 ? (
+                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">{sentVehicleUseAgreementForms.length === 0 ? "No requests sent yet." : "No forms match this search/filter."}</td></tr>
               ) : (
-                sentVehicleUseAgreementForms.map((doc) => {
+                sortedSentVehicleUseAgreementForms.map((doc) => {
                   const data = doc.formData as Partial<VehicleUseAgreementFormData>;
                   const recipient = employees.find((e) => e.id === doc.recipientId);
                   const busy = vehicleUseAgreementActionBusyId === doc.id;
@@ -28394,6 +31154,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           {doc.status === "pending_signature" && (
                             <button type="button" onClick={() => handleCopyVehicleUseAgreementLink(doc)} className="btn text-[10px] px-2 py-1">
                               Copy Link
+                            </button>
+                          )}
+                          {doc.pdfUrl && (
+                            <button type="button" onClick={() => setVehicleUseAgreementDocPreview(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
+                              View
                             </button>
                           )}
                           {doc.pdfUrl && (
@@ -28552,6 +31317,24 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <h2 className="font-semibold text-sm">Sent Direct Deposit Authorization Forms</h2>
           <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status.</p>
         </div>
+        <div className="px-4 py-3 border-b border-white/10 bg-white/5 flex flex-wrap items-end gap-3">
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+            <input
+              type="text"
+              value={directDepositSentSearch}
+              onChange={(e) => setDirectDepositSentSearch(e.target.value)}
+              placeholder="Name or bank…"
+              className="glass-input text-sm py-1.5 pl-8 pr-3 rounded-md w-56"
+            />
+          </div>
+          {directDepositSentSearch && (
+            <button onClick={() => setDirectDepositSentSearch("")} className="btn text-sm px-3 py-1.5">Clear</button>
+          )}
+          <span className="text-xs text-muted-foreground mb-1.5 ml-auto">
+            {sortedVisibleDirectDepositForms.length}{directDepositSentSearch ? ` of ${visibleDirectDepositForms.length}` : ""} forms
+          </span>
+        </div>
         {directDepositActionError && (
           <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{directDepositActionError}</p>
         )}
@@ -28559,19 +31342,43 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-white/10 bg-white/5">
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Employee</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Bank</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent By</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Status</th>
-                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent</th>
+                <SortableTh column="employee" label="Employee" sortColumn={directDepositSentSortColumn} sortDir={directDepositSentSortDir} onSort={handleDirectDepositSentSort} />
+                <FilterableTh
+                  column="bank" label="Bank"
+                  sortColumn={directDepositSentSortColumn} sortDir={directDepositSentSortDir} onSort={handleDirectDepositSentSort}
+                  options={directDepositFilterOptionsFor("bank")}
+                  isChecked={(v) => directDepositIsValueChecked("bank", v)}
+                  onToggleValue={(v) => directDepositToggleFilterValue("bank", v)}
+                  onClear={() => directDepositClearColumnFilter("bank")}
+                  isFiltered={directDepositIsColumnFiltered("bank")}
+                />
+                <FilterableTh
+                  column="sentBy" label="Sent By"
+                  sortColumn={directDepositSentSortColumn} sortDir={directDepositSentSortDir} onSort={handleDirectDepositSentSort}
+                  options={directDepositFilterOptionsFor("sentBy")}
+                  isChecked={(v) => directDepositIsValueChecked("sentBy", v)}
+                  onToggleValue={(v) => directDepositToggleFilterValue("sentBy", v)}
+                  onClear={() => directDepositClearColumnFilter("sentBy")}
+                  isFiltered={directDepositIsColumnFiltered("sentBy")}
+                />
+                <FilterableTh
+                  column="status" label="Status"
+                  sortColumn={directDepositSentSortColumn} sortDir={directDepositSentSortDir} onSort={handleDirectDepositSentSort}
+                  options={directDepositFilterOptionsFor("status")}
+                  isChecked={(v) => directDepositIsValueChecked("status", v)}
+                  onToggleValue={(v) => directDepositToggleFilterValue("status", v)}
+                  onClear={() => directDepositClearColumnFilter("status")}
+                  isFiltered={directDepositIsColumnFiltered("status")}
+                />
+                <SortableTh column="sent" label="Sent" sortColumn={directDepositSentSortColumn} sortDir={directDepositSentSortDir} onSort={handleDirectDepositSentSort} />
                 <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {visibleDirectDepositForms.length === 0 ? (
-                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">No requests sent yet.</td></tr>
+              {sortedVisibleDirectDepositForms.length === 0 ? (
+                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">{visibleDirectDepositForms.length === 0 ? "No requests sent yet." : "No forms match this search/filter."}</td></tr>
               ) : (
-                visibleDirectDepositForms.map((doc) => {
+                sortedVisibleDirectDepositForms.map((doc) => {
                   const data = doc.formData as Partial<DirectDepositFormData>;
                   const recipient = employees.find((e) => e.id === doc.recipientId);
                   const busy = directDepositActionBusyId === doc.id;
@@ -28603,6 +31410,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           {doc.status === "pending_signature" && (
                             <button type="button" onClick={() => handleCopyDirectDepositLink(doc)} className="btn text-[10px] px-2 py-1">
                               Copy Link
+                            </button>
+                          )}
+                          {doc.pdfUrl && (
+                            <button type="button" onClick={() => setDirectDepositDocPreview(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
+                              View
                             </button>
                           )}
                           {doc.pdfUrl && (

@@ -11,10 +11,15 @@ export interface SsnCardFormData {
   employeeId: string;
   employeeName: string;
   ssn: string;
+  /** Same question/wording as ContractorDataFormData.livedInNewYork — kept as its own independent field here rather than shared, since this form has no dependency on Contractor Data Sheet being filled at all. */
+  livedInNewYork: "" | "Yes" | "No";
   /** Front (and, if provided, back) of the SSN card — uploaded via uploadSignableDocumentAttachment, same as Contractor Data Sheet's ssnCardUrls. */
   cardPhotoUrls: string[];
   dateSigned: string;
   signatureDataUrl: string;
+  /** Set when HR filed this directly (ReportHRDaily.tsx's "File on Behalf" action) instead of the employee filling/signing it themselves — there's no hand-drawn signature in that case, so the markup below shows who filed it instead of forging one. */
+  filedByHr?: boolean;
+  filedByHrName?: string;
 }
 
 export interface SsnCardSignature {
@@ -73,19 +78,26 @@ export function buildSsnCardFormBodyMarkup(data: SsnCardFormData, logoDataUrl: s
       <div class="ssncard-section-title">EMPLOYEE INFORMATION</div>
       <div class="ssncard-row"><span class="ssncard-label">Employee Name</span><span class="ssncard-value">${blank(data.employeeName)}</span></div>
       <div class="ssncard-row"><span class="ssncard-label">Social Security Number</span><span class="ssncard-value">${blank(data.ssn)}</span></div>
+      <div class="ssncard-row"><span class="ssncard-label">Have you lived in New York in the past 7 years?</span><span class="ssncard-value">${blank(data.livedInNewYork)}</span></div>
 
       <div class="ssncard-section-title">SOCIAL SECURITY CARD PHOTO</div>
       <div class="ssncard-row">
         <div class="ssncard-photos">${data.cardPhotoUrls.map((u) => `<img src="${u}" alt="" />`).join("")}</div>
       </div>
 
-      <p class="ssncard-cert">By signing below, I certify that the Social Security Number and card photo provided above are true, accurate, and belong to me.</p>
+      ${data.filedByHr
+        ? `<p class="ssncard-cert">Filed by HR (${blank(data.filedByHrName || "")}) on behalf of ${blank(data.employeeName)} — no employee signature was collected for this submission.</p>
+      <div class="ssncard-sign-row">
+        <div>Filed by: <strong>${blank(data.filedByHrName || "")}</strong></div>
+        <div>${signature ? `Date: ${escapeHtml(fmtDate(signature.signedAt))}` : ""}</div>
+      </div>`
+        : `<p class="ssncard-cert">By signing below, I certify that the Social Security Number and card photo provided above are true, accurate, and belong to me.</p>
 
       <div class="ssncard-sig-line">${signature ? `<img class="ssncard-sig-img" src="${signature.url}" alt="Signature" />` : ""}</div>
       <div class="ssncard-sign-row">
         <div>${signature ? `Signature: <strong>${blank(data.employeeName)}</strong>` : "Signature:"}</div>
         <div>${signature ? `Date: ${escapeHtml(fmtDate(signature.signedAt))}` : ""}</div>
-      </div>
+      </div>`}
     </div>
   `;
 }

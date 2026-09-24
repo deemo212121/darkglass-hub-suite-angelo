@@ -25,6 +25,9 @@ export interface DriversLicenseFormData {
   licensePhotoUrls: string[];
   dateSigned: string;
   signatureDataUrl: string;
+  /** Set when HR filed this directly (ReportHRDaily.tsx's "File on Behalf" action) instead of the employee filling/signing it themselves — there's no hand-drawn signature in that case, so the markup below shows who filed it instead of forging one. */
+  filedByHr?: boolean;
+  filedByHrName?: string;
 }
 
 export interface DriversLicenseSignature {
@@ -93,13 +96,19 @@ export function buildDriversLicenseFormBodyMarkup(data: DriversLicenseFormData, 
         <div class="dlicense-photos">${data.licensePhotoUrls.map((u) => `<img src="${u}" alt="" />`).join("")}</div>
       </div>
 
-      <p class="dlicense-cert">By signing below, I certify that the driver's license information and photo provided above are true, accurate, and belong to me.</p>
+      ${data.filedByHr
+        ? `<p class="dlicense-cert">Filed by HR (${blank(data.filedByHrName || "")}) on behalf of ${blank(data.employeeName)} — no employee signature was collected for this submission.</p>
+      <div class="dlicense-sign-row">
+        <div>Filed by: <strong>${blank(data.filedByHrName || "")}</strong></div>
+        <div>${signature ? `Date: ${escapeHtml(fmtDate(signature.signedAt))}` : ""}</div>
+      </div>`
+        : `<p class="dlicense-cert">By signing below, I certify that the driver's license information and photo provided above are true, accurate, and belong to me.</p>
 
       <div class="dlicense-sig-line">${signature ? `<img class="dlicense-sig-img" src="${signature.url}" alt="Signature" />` : ""}</div>
       <div class="dlicense-sign-row">
         <div>${signature ? `Signature: <strong>${blank(data.employeeName)}</strong>` : "Signature:"}</div>
         <div>${signature ? `Date: ${escapeHtml(fmtDate(signature.signedAt))}` : ""}</div>
-      </div>
+      </div>`}
     </div>
   `;
 }

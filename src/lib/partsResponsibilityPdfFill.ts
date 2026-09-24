@@ -18,6 +18,7 @@ import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import type { PartsResponsibilityFormData } from "./partsResponsibilityFormTemplate";
 import { addLogoHeader } from "./pdfLogoHeader";
 import { dateBlankPositions, fmtDateParts } from "./pdfDateBlankSplit";
+import { sanitizeForFont } from "./pdfFillSanitize";
 
 /** x position of each of the three date blanks on page 2's two "Date:" lines (technician y=653.62, manager y=519.79) — see pdfDateBlankSplit.ts; both labels start at x=101.54. */
 const PARTS_RESP_DATE_X = dateBlankPositions(101.54);
@@ -44,7 +45,7 @@ export async function fillPartsResponsibilityPdf(
   const page1 = pdfDoc.getPage(0);
   const draw1 = (text: string, x: number, y: number, size = 10) => {
     if (!text) return;
-    page1.drawText(text, { x, y, size, font, color: rgb(0, 0, 0.545) });
+    page1.drawText(sanitizeForFont(text, font), { x, y, size, font, color: rgb(0, 0, 0.545) });
   };
   draw1(data.firstName, 223, 645.6);
   draw1(data.middleName, 396, 645.6);
@@ -54,7 +55,7 @@ export async function fillPartsResponsibilityPdf(
   const page2 = pdfDoc.getPage(1);
   const draw2 = (text: string, x: number, y: number, size = 10) => {
     if (!text) return;
-    page2.drawText(text, { x, y, size, font, color: rgb(0, 0, 0.545) });
+    page2.drawText(sanitizeForFont(text, font), { x, y, size, font, color: rgb(0, 0, 0.545) });
   };
   const technicianDateParts = fmtDateParts(data.technicianDateSigned);
   draw2(technicianDateParts.mm, PARTS_RESP_DATE_X.mm, 653.6, 9);

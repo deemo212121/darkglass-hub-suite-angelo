@@ -122,6 +122,32 @@ export async function getExistingActiveDocumentTypes(
   return Array.from(new Set((data ?? []).map((r: any) => r.document_type as SignableDocumentType)));
 }
 
+/**
+ * Like getExistingActiveDocumentTypes, but returns each match's formData
+ * too, for a caller that needs to tell an old-tab document apart from a
+ * "New Automation Forms" one (see SHARED_OLD_NEW_AUTOMATION_TYPES/
+ * isNewAutomationDoc in signableDocumentRegistry.ts) before deciding it's a
+ * real duplicate. TechnicianFormChecklistPage.tsx's own "not sent" status
+ * for w8ben/w9/contractor_addendum already only counts the active tab's
+ * bucket — its pre-send duplicate check needs to match that, or it wrongly
+ * refuses to send a "new automation" form because an old-bucket document
+ * (invisible on that tab) is still on file for the same person.
+ */
+export async function getExistingActiveDocuments(
+  recipientId: string,
+  types: SignableDocumentType[]
+): Promise<{ documentType: SignableDocumentType; formData: Record<string, any> }[]> {
+  if (types.length === 0) return [];
+  const { data, error } = await supabase
+    .from("hr_signable_documents")
+    .select("document_type, form_data")
+    .eq("recipient_id", recipientId)
+    .in("document_type", types)
+    .neq("status", "cancelled");
+  if (error) throw new Error(error.message);
+  return (data ?? []).map((r: any) => ({ documentType: r.document_type as SignableDocumentType, formData: r.form_data ?? {} }));
+}
+
 export async function getSignableDocument(id: string): Promise<SignableDocument | null> {
   const { data, error } = await supabase.from("hr_signable_documents").select(SELECT).eq("id", id).maybeSingle();
   if (error) throw new Error(error.message);

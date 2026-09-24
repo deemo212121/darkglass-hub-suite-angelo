@@ -33,7 +33,7 @@ import { notifyHrRoleUsers } from "@/lib/supabase/hrRoleNotify";
 import { useSignaturePad } from "@/hooks/useSignaturePad";
 import { useResponsivePdfScale } from "@/hooks/useResponsivePdfScale";
 import { SignaturePadControls } from "@/components/SignaturePad";
-import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
+import pdfWorkerUrl from "pdfjs-dist/legacy/build/pdf.worker.min.mjs?url";
 
 interface Props {
   docId: string;
@@ -47,6 +47,9 @@ const BLANK_ADDRESS: W8benAddress = { street: "", cityStateZip: "", country: "" 
 // w8benPdfFill.ts's field mapping was derived from.
 const PAGE_WIDTH = 612;
 const PAGE_HEIGHT = 792.008;
+
+/** Fixed canvas render density (times devicePixelRatio) — independent of the responsive display `scale`, which is applied purely via CSS. Matches useResponsivePdfScale's own desktop maxScale so nothing looks softer than before on a wide screen. */
+const PDF_RENDER_SCALE = 1.3;
 
 const RECT = {
   employeeName: { x: 36, y: 540, w: 338, h: 14 },
@@ -89,6 +92,8 @@ export function FillW8benPage({ docId }: Props) {
   const [submitted, setSubmitted] = useState(false);
 
   const [pageLoading, setPageLoading] = useState(true);
+  const [pageError, setPageError] = useState<string | null>(null);
+  const [renderAttempt, setRenderAttempt] = useState(0);
   const { scale, containerRef } = useResponsivePdfScale(PAGE_WIDTH);
   const bgCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
@@ -147,35 +152,44 @@ export function FillW8benPage({ docId }: Props) {
 
   // Render the real PDF's page 1 onto a <canvas> â this is the visual
   // background the input overlays sit on top of, not a redrawn lookalike.
+  // Rendered ONCE per document load, at a fixed pixel density independent
+  // of the responsive display `scale` (from useResponsivePdfScale) — the
+  // canvas's `absolute inset-0` class already stretches its bitmap to fill
+  // the outer container via pure CSS, so `scale` doesn't need to be baked
+  // into the render. It used to be a dependency here, forcing a full
+  // pdf.js reload+re-render every time it changed — which fires almost
+  // immediately after mount on any container narrower than the ~812px
+  // default (i.e. most phones), racing a second render against the first
+  // on the same <canvas> with only a single, easily-outrun cancellation
+  // check, and occasionally leaving the canvas blank while the overlay
+  // <input>s (which DO track `scale`) still rendered on top of it.
   useEffect(() => {
     if (loading || error || submitted) return;
     let cancelled = false;
     (async () => {
       setPageLoading(true);
+      setPageError(null);
       try {
-        const [pdfjsLib, bytes] = await Promise.all([import("pdfjs-dist"), loadBlankW8benBytes()]);
+        const [pdfjsLib, bytes] = await Promise.all([import("pdfjs-dist/legacy/build/pdf.mjs"), loadBlankW8benBytes()]);
         pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
         const pdf = await pdfjsLib.getDocument({ data: bytes }).promise;
         const page = await pdf.getPage(1);
-        const viewport = page.getViewport({ scale });
         const canvas = bgCanvasRef.current;
         if (!canvas || cancelled) return;
         const dpr = window.devicePixelRatio || 1;
-        canvas.width = viewport.width * dpr;
-        canvas.height = viewport.height * dpr;
-        canvas.style.width = `${viewport.width}px`;
-        canvas.style.height = `${viewport.height}px`;
+        const viewport = page.getViewport({ scale: PDF_RENDER_SCALE * dpr });
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
         const ctx = canvas.getContext("2d")!;
-        ctx.scale(dpr, dpr);
         await page.render({ canvas, canvasContext: ctx, viewport }).promise;
       } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : "Failed to render the form.");
+        if (!cancelled) setPageError(err instanceof Error ? err.message : "Failed to render the form.");
       } finally {
         if (!cancelled) setPageLoading(false);
       }
     })();
     return () => { cancelled = true; };
-  }, [loading, error, submitted, scale]);
+  }, [loading, error, submitted, renderAttempt]);
 
   const updateField = <K extends keyof W8benFormData>(key: K, value: W8benFormData[K]) => setForm((f) => ({ ...f, [key]: value }));
   const updateAddress = (which: "permanentAddress" | "mailingAddress", key: keyof W8benAddress, value: string) =>
@@ -307,14 +321,46 @@ export function FillW8benPage({ docId }: Props) {
 
             <div ref={containerRef} className="overflow-x-auto flex justify-center bg-white/5 rounded-md p-4">
               <div className="relative bg-white shadow-lg" style={{ width: PAGE_WIDTH * scale, height: PAGE_HEIGHT * scale }}>
-                <canvas ref={bgCanvasRef} className="absolute inset-0" />
+                {/* `absolute inset-0` alone does NOT reliably stretch a
+                    <canvas> down to its container: once the canvas's own
+                    intrinsic pixel buffer (canvas.width/height, set to
+                    PAGE_WIDTH/HEIGHT * PDF_RENDER_SCALE * devicePixelRatio
+                    in the render effect below) is LARGER than the
+                    container — true on any devicePixelRatio > 1, i.e. most
+                    Windows laptops at their default 125–150% display
+                    scaling — Chromium lays the canvas out at its own
+                    intrinsic size instead of the inset-constrained one,
+                    confirmed empirically (getBoundingClientRect showed the
+                    full intrinsic 1193×1544 instead of the intended
+                    795×1030 at devicePixelRatio 1.5). The overlay inputs
+                    below correctly track the smaller container via `scale`
+                    regardless, so the two silently drifted apart — every
+                    field read as uniformly shifted down/right relative to
+                    the (too-large, cropped-looking) background. Setting
+                    the CSS size explicitly here — reactive to `scale`,
+                    independent of the canvas's own pixel buffer — is what
+                    actually pins the display size to the container. */}
+                <canvas ref={bgCanvasRef} className="absolute inset-0" style={{ width: PAGE_WIDTH * scale, height: PAGE_HEIGHT * scale }} />
                 {pageLoading && (
                   <div className="absolute inset-0 flex items-center justify-center bg-white/70 text-sm text-muted-foreground gap-2">
                     <Loader2 className="h-4 w-4 animate-spin" /> Loading formâ¦
                   </div>
                 )}
 
-                {!pageLoading && (
+                {!pageLoading && pageError && (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-white p-6 text-center">
+                    <p className="text-sm text-red-600">{pageError}</p>
+                    <button
+                      type="button"
+                      onClick={() => setRenderAttempt((n) => n + 1)}
+                      className="btn text-xs px-3 py-1.5"
+                    >
+                      Try Again
+                    </button>
+                  </div>
+                )}
+
+                {!pageLoading && !pageError && (
                   <>
                     <input style={overlayStyle(RECT.employeeName)} className={overlayInputCls} value={form.employeeName} onChange={(e) => updateField("employeeName", e.target.value)} />
                     <input style={overlayStyle(RECT.countryOfCitizenship)} className={overlayInputCls} value={form.countryOfCitizenship} onChange={(e) => updateField("countryOfCitizenship", e.target.value)} />

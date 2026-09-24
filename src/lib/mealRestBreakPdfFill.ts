@@ -12,6 +12,7 @@ import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import type { MealRestBreakFormData } from "./mealRestBreakFormTemplate";
 import { addLogoHeader } from "./pdfLogoHeader";
 import { dateBlankPositions, fmtDateParts } from "./pdfDateBlankSplit";
+import { sanitizeForFont } from "./pdfFillSanitize";
 
 /** x position of each of the three date blanks on the two "Date:" lines (employee y=242.95, employer y=193.03) — see pdfDateBlankSplit.ts; both labels start at x=101.57. */
 const MEAL_REST_BREAK_DATE_X = dateBlankPositions(101.57);
@@ -36,7 +37,7 @@ export async function fillMealRestBreakPdf(
   const font = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
   const draw = (text: string, x: number, y: number, size = 10) => {
     if (!text) return;
-    page.drawText(text, { x, y, size, font, color: rgb(0, 0, 0.545) });
+    page.drawText(sanitizeForFont(text, font), { x, y, size, font, color: rgb(0, 0, 0.545) });
   };
 
   const page = pdfDoc.getPage(0);

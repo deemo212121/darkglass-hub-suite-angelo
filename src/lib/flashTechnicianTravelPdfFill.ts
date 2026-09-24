@@ -18,6 +18,7 @@
  */
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import type { FlashTechnicianTravelFormData } from "./flashTechnicianTravelFormTemplate";
+import { sanitizeForFont } from "./pdfFillSanitize";
 
 export async function loadBlankFlashTechnicianTravelBytes(): Promise<Uint8Array> {
   const mod = await import("@/assets/Flash Technician Travel & Out-of-State Policy 1.pdf");
@@ -29,7 +30,13 @@ export async function loadBlankFlashTechnicianTravelBytes(): Promise<Uint8Array>
 
 function fmtSignedDate(iso: string): string {
   if (!iso) return "";
-  const d = new Date(iso);
+  // A date-only string ("2026-09-17") parses as UTC midnight; formatting
+  // it back out in the browser's local timezone (anything behind UTC,
+  // i.e. all of the US) rolls it back a day — "9/17" printing as "9/16".
+  // Parsing the y/m/d parts directly into a local Date avoids that. A
+  // full timestamp has no such ambiguity and is left to the normal parse.
+  const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  const d = dateOnly ? new Date(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3])) : new Date(iso);
   return isNaN(d.getTime()) ? iso : d.toLocaleDateString("en-US");
 }
 
@@ -45,7 +52,7 @@ export async function fillFlashTechnicianTravelPdf(
   const page = pdfDoc.getPage(2);
   const drawDate = (text: string, x: number, y: number) => {
     if (!text) return;
-    page.drawText(text, { x, y, size: 11, font, color: rgb(0, 0, 0.545) });
+    page.drawText(sanitizeForFont(text, font), { x, y, size: 11, font, color: rgb(0, 0, 0.545) });
   };
   const drawSig = async (bytes: Uint8Array, x: number, y: number, maxW: number, maxH: number) => {
     const png = await pdfDoc.embedPng(bytes);

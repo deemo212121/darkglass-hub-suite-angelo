@@ -23,12 +23,20 @@
  */
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import type { W4RFormData } from "./w4rFormTemplate";
+import { sanitizeForFont } from "./pdfFillSanitize";
 
 const P = (n: string) => `topmostSubform[0].Page1[0].${n}`;
 
 const fmtDate = (v: string) => {
   if (!v) return "";
-  const d = new Date(v);
+  // A date-only string ("2026-09-17") parses as UTC midnight; reading
+  // .getMonth()/.getDate() back out in the browser's local timezone
+  // (anything behind UTC, i.e. all of the US) rolls it back a day —
+  // "09-17" printing as "09-16". Parsing the y/m/d parts directly into a
+  // local Date avoids that. A full timestamp has no such ambiguity and is
+  // left to the normal parse.
+  const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v);
+  const d = dateOnly ? new Date(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3])) : new Date(v);
   if (isNaN(d.getTime())) return v;
   const mm = String(d.getMonth() + 1).padStart(2, "0");
   const dd = String(d.getDate()).padStart(2, "0");
@@ -45,10 +53,11 @@ export async function fillW4RPdf(data: W4RFormData, signaturePngBytes?: Uint8Arr
   const blankBytes = await loadBlankW4RBytes();
   const pdfDoc = await PDFDocument.load(blankBytes);
   const form = pdfDoc.getForm();
+  const helveticaBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
 
   const setText = (name: string, value: string) => {
     try {
-      form.getTextField(name).setText(value ?? "");
+      form.getTextField(name).setText(sanitizeForFont(value, helveticaBold));
     } catch (err) {
       console.error(`W-4R PDF: failed to set field ${name}:`, err);
     }
@@ -66,7 +75,6 @@ export async function fillW4RPdf(data: W4RFormData, signaturePngBytes?: Uint8Arr
   // i9PdfFill.ts's middle-initial/SSN fields).
   setText(P("f1_06[0]"), (data.withholdingRatePercent || "").slice(0, 3));
 
-  const helveticaBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
   form.updateFieldAppearances(helveticaBold);
 
   // "Sign Here" row's signature/date have no AcroForm field on this PDF at

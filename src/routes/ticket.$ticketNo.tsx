@@ -3460,7 +3460,7 @@ function TicketDetailsPage() {
   // parts (which go through the existing silent batch flow).
   const submitAllPOs = async () => {
     if (!canOrderParts) {
-      alert("Only Parts Team Leader, Admin, or Super Admin can submit part orders.");
+      alert("Only Parts Team Leader, Parts Manager, Admin, or Super Admin can submit part orders.");
       return;
     }
     // First, fix any parts that have PO numbers but incorrect status
@@ -4439,7 +4439,7 @@ function TicketDetailsPage() {
   // ADMIN + extra_roles PARTS_MANAGER) gets the union of both, same as
   // every other multi-role check in this file.
   const PARTS_ORDER_ONLY_ROLES = useMemo(
-    () => new Set(["PARTS_TEAM_LEADER", "ADMIN", "SUPERADMIN"]),
+    () => new Set(["PARTS_TEAM_LEADER", "PARTS_MANAGER", "ADMIN", "SUPERADMIN"]),
     [],
   );
   const PARTS_EDIT_ONLY_ROLES = useMemo(
@@ -7227,7 +7227,7 @@ function TicketDetailsPage() {
                       partsEditDisabled
                         ? "Locked: Parts / Claims / Manager roles only"
                         : !canOrderParts
-                          ? "Only Parts Team Leader, Admin, or Super Admin can submit part orders."
+                          ? "Only Parts Team Leader, Parts Manager, Admin, or Super Admin can submit part orders."
                           : "Submit POs for parts that need ordering"
                     }
                   >
@@ -7997,6 +7997,7 @@ function TicketDetailsPage() {
                             <option value="">— select —</option>
                             <option>2 Man Job</option>
                             <option>Back Tub</option>
+                            <option>Drum Replacement</option>
                             <option>Major Repair</option>
                             <option>Panel 60 Over</option>
                             <option>Panel 80 Over</option>

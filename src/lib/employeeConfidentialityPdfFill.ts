@@ -15,6 +15,7 @@
  */
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import type { EmployeeConfidentialityFormData } from "./employeeConfidentialityFormTemplate";
+import { sanitizeForFont } from "./pdfFillSanitize";
 import { addLogoHeader } from "./pdfLogoHeader";
 
 // The "Branch:" line ends with a bracketed placeholder — "[Please Select
@@ -39,7 +40,14 @@ const BRANCH_PLACEHOLDER_COVER = { x: 180, y: 448, width: 256, height: 24 };
 
 const fmtDate = (v: string) => {
   if (!v) return "";
-  const d = new Date(v);
+  // A date-only string ("2026-09-17") parses as UTC midnight; reading
+  // .getMonth()/.getDate() back out in the browser's local timezone
+  // (anything behind UTC, i.e. all of the US) rolls it back a day —
+  // "9/17" printing as "9/16". Parsing the y/m/d parts directly into a
+  // local Date avoids that. A full timestamp has no such ambiguity and is
+  // left to the normal parse.
+  const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v);
+  const d = dateOnly ? new Date(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3])) : new Date(v);
   if (isNaN(d.getTime())) return v;
   const mm = String(d.getMonth() + 1).padStart(2, "0");
   const dd = String(d.getDate()).padStart(2, "0");
@@ -65,7 +73,7 @@ export async function fillEmployeeConfidentialityPdf(
   const font = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
   const draw = (page: ReturnType<typeof pdfDoc.getPage>, text: string, x: number, y: number, size = 10) => {
     if (!text) return;
-    page.drawText(text, { x, y, size, font, color: rgb(0, 0, 0.545) });
+    page.drawText(sanitizeForFont(text, font), { x, y, size, font, color: rgb(0, 0, 0.545) });
   };
 
   const page1 = pdfDoc.getPage(0);

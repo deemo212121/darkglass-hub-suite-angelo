@@ -30,6 +30,7 @@ import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import type { VehicleAgreementFormData } from "./vehicleAgreementFormTemplate";
 import { addLogoHeader } from "./pdfLogoHeader";
 import { dateBlankPositions, fmtDateParts } from "./pdfDateBlankSplit";
+import { sanitizeForFont } from "./pdfFillSanitize";
 
 /** x position of each of the three date blanks on the "Date:" line (page 2, y=193.03) — see pdfDateBlankSplit.ts; the label starts at x=101.57. */
 const VEHICLE_AGREEMENT_DATE_X = dateBlankPositions(101.57);
@@ -61,7 +62,7 @@ export async function fillVehicleAgreementPdf(data: VehicleAgreementFormData, si
   const font = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
   const draw = (page: ReturnType<typeof pdfDoc.getPage>, text: string, x: number, y: number, size = 10) => {
     if (!text) return;
-    page.drawText(text, { x, y, size, font, color: rgb(0, 0, 0.545) });
+    page.drawText(sanitizeForFont(text, font), { x, y, size, font, color: rgb(0, 0, 0.545) });
   };
 
   const page2 = pdfDoc.getPage(1);

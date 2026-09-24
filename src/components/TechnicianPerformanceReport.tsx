@@ -12,8 +12,19 @@
  * report in this app already computes from (getTechCompletedRepairCounts,
  * getTechRedoTickets, mileage.ts, timecards.ts) rather than a new data
  * pipeline — this module is a different VIEW of that data, not a new
- * source of truth. No Minor/Major split (the app has no such concept —
- * see conversation): Total Tickets is simply every completed ticket.
+ * source of truth. Minor/Major Ticket split (explicit user rule, not
+ * derived): a completed ticket's repair_type (the "Repair Type (2nd
+ * Tech)" dropdown on the ticket's Visit Log, techPayroll.ts's
+ * REPAIR_TYPES — despite the label, set on every visit, not just 2nd-
+ * tech ones) counts as MAJOR when it's Sealed System (any of its 3
+ * variants), Drum Replacement, or Major Repair; every other repair_type
+ * (2 Man Job included — explicitly confirmed minor) and no-repair-type-
+ * set tickets are MINOR. Computed from getTechCompletedRepairCounts'
+ * per-(technician, repairType) totals, so — unlike Total Tickets — it
+ * does NOT reflect the day-level manual correction overrides (those only
+ * ever replace a day's raw total, with no repair_type attached), which
+ * is why Minor+Major can occasionally undercount a corrected period's
+ * Total Tickets by a small margin.
  *
  * "Tier Level" here is whatever's on profiles.tier_level verbatim — a
  * pre-existing, loosely-defined column (a mix of pay-tier labels like
@@ -27,13 +38,29 @@
  * separate free-text HR field that's a different piece of data entirely
  * and was almost always empty, which is why every row showed "—" here.
  * Falls back to "—" rather than fabricating an ID when it hasn't been set.
+ *
+ * Export CSV / Download Import Template / Import Excel all share one
+ * column arrangement (per an explicit reference spreadsheet): Name,
+ * Variance, [Date — import template only], Redo, Total Completion,
+ * Average Completion, Mileage, Working Days, Off Days, Unexcused Off Days
+ * Total 2026, Hours Worked, Location, Manager, Tier — plus this report's
+ * own extra analytical columns (Technician ID, Redo Rate %, Miles/Ticket,
+ * Tickets/Hour, the 3 threshold alerts) appended after, not dropped.
+ * "Off Days" = scheduled weekly RDOs within the period (profiles.off_days),
+ * not days actually missed. "Unexcused Off Days Total 2026" is a blank,
+ * manually-filled column by design — this app has no excused/unexcused
+ * absence tracking yet, so there's nothing live to put there; it's not
+ * parsed back out on import (same as Location/Manager/Tier). "Variance" =
+ * this technician's Total Completion vs. the average of every technician
+ * CURRENTLY in view (filteredRows), as a signed %, colored green/red in
+ * the .xlsx export (CSV can't carry color).
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
 import { Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { ChevronDown, ChevronLeft, Download, RefreshCw, X, MapPin, UserSquare2, Star, CalendarClock, ChevronRight } from "lucide-react";
+import { ChevronDown, ChevronLeft, Download, Upload, RefreshCw, X, MapPin, UserSquare2, Star, CalendarClock, ChevronRight, PencilLine } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { BrandedLoader } from "@/components/BrandedLoader";
@@ -43,8 +70,13 @@ import { getMileageEntries, mileageEffectiveTotal } from "@/lib/supabase/mileage
 import { getCompanyTimecardEntries, calcWorkedHours, computeMealTimeCredit, startOfWeekSunday, addDaysISO } from "@/lib/supabase/timecards";
 import { getCsrTeamComposition, type CsrTeamComposition } from "@/lib/supabase/csrTeams";
 import { visibleAttendanceProfileIds } from "@/lib/notifyRouting";
-import { TECHNICIAN_PAY_ROLES, normalizeRole, isMealAlwaysPaidRole } from "@/lib/roleLabels";
+import { TECHNICIAN_PAY_ROLES, normalizeRole, isMealAlwaysPaidRole, isFinanceRole, isCompanySuperAdminRole } from "@/lib/roleLabels";
 import { exportToCSV } from "@/lib/csvExport";
+import {
+  getTechnicianPerformanceOverrides,
+  bulkUpsertTechnicianPerformanceOverrides,
+  type DailyPerformanceOverride,
+} from "@/lib/supabase/technicianPerformanceOverrides";
 
 const TOOLTIP_STYLE = {
   background: "#ffffff",
@@ -152,7 +184,7 @@ function MultiSelect({
 }
 
 type PeriodMode = "weekly" | "monthly" | "custom";
-type SortKey = "techId" | "name" | "location" | "manager" | "tier" | "daysWorked" | "hoursWorked" | "totalTickets" | "redoCount" | "redoRatePct" | "miles" | "milesPerTicket" | "ticketsPerHour";
+type SortKey = "techId" | "name" | "location" | "manager" | "tier" | "daysWorked" | "hoursWorked" | "totalTickets" | "minorTicketCount" | "majorTicketCount" | "redoCount" | "redoRatePct" | "miles" | "milesPerTicket" | "ticketsPerHour";
 type GroupBy = "none" | "location" | "manager" | "tier";
 
 interface TechPerfRow {
@@ -166,14 +198,27 @@ interface TechPerfRow {
   daysWorked: number;
   hoursWorked: number;
   totalTickets: number;
+  minorTicketCount: number;
+  majorTicketCount: number;
   redoCount: number;
   redoRatePct: number | null;
   miles: number;
   milesPerTicket: number | null;
   ticketsPerHour: number | null;
+  /** Count of the technician's scheduled weekly off days (profiles.off_days,
+   *  weekday indices 0=Sun..6=Sat) that fall within the current period —
+   *  NOT days actually missed, just the normal RDO/weekend pattern. See
+   *  this file's header comment on why "unexcused off days" (a real
+   *  excused/unexcused absence count) is a separate, still-unbuilt concept. */
+  offDaysCount: number;
+  /** Raw weekday indices (profiles.off_days) backing offDaysCount — kept
+   *  on the row too so the Off Days popup can list the actual dates. */
+  offDays: number[];
   highRedoAlert: boolean;
   routeMileageAlert: boolean;
   lowUtilizationAlert: boolean;
+  /** True if at least one day within the current period has a manual correction (technician_daily_performance_overrides) feeding Total Tickets/Miles/Hours Worked. */
+  hasOverride: boolean;
 }
 
 /** One day's mileage_entries dedup result behind a technician's Miles
@@ -207,10 +252,37 @@ const daysBetween = (start: string, end: string) => Math.round((new Date(`${end}
 
 const fmt1 = (n: number) => n.toLocaleString("en-US", { maximumFractionDigits: 1 });
 
+/** Count of dates in [start, end] whose weekday (Date.getDay(): 0=Sun..
+ *  6=Sat) is in `offDays` — the same weekday-index convention profiles.
+ *  off_days is stored/read with everywhere else (AttendanceMonitoringPage,
+ *  timecards.ts, attendanceAlerts.ts). */
+const countOffDaysInRange = (offDays: number[] | null | undefined, start: string, end: string): number => {
+  if (!offDays || offDays.length === 0) return 0;
+  const set = new Set(offDays);
+  let count = 0;
+  for (let d = start; d <= end; d = addDaysISO(d, 1)) {
+    if (set.has(new Date(`${d}T00:00:00`).getDay())) count++;
+  }
+  return count;
+};
+
+/** Signed "+12.3% / -4.5%" display for the Variance column — null (no
+ *  team average to compare against, i.e. every visible technician has 0
+ *  Total Completion) renders as "—". */
+const fmtVariance = (v: number | null): string => (v == null ? "—" : `${v > 0 ? "+" : ""}${fmt1(v)}%`);
+
+/** Repair types (techPayroll.ts's REPAIR_TYPES) that count as a MAJOR
+ *  ticket for the Minor/Major Ticket columns — an explicit business rule,
+ *  not derivable from anything else. Everything else (2 Man Job included,
+ *  and no repair_type set at all) is minor. */
+const MAJOR_REPAIR_TYPES = new Set([
+  "Sealed System", "Sealed System Follow Up", "Sealed System(R600)", "Drum Replacement", "Major Repair",
+]);
+
 export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubModuleDef }) {
   const navigate = useNavigate();
   const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
-  const { uid } = useAuth();
+  const { uid, displayName, role, extraRoles } = useAuth();
 
   const [periodMode, setPeriodMode] = useState<PeriodMode>("weekly");
   const [anchor, setAnchor] = useState(todayStr());
@@ -221,11 +293,19 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
   const [rows, setRows] = useState<TechPerfRow[]>([]);
   const [dailyTickets, setDailyTickets] = useState<TechCompletedTicketDaily[]>([]);
   const [mileageDaily, setMileageDaily] = useState<MileageDayDetail[]>([]);
+  /** profileId -> workDate -> hours worked that day, for the current period — mirrors mileageDaily/dailyTickets, kept for the import-template export (see handleDownloadImportTemplate). */
+  const [hoursDaily, setHoursDaily] = useState<Map<string, Map<string, number>>>(new Map());
   const [techDimensionByName, setTechDimensionByName] = useState<Map<string, { location: string; manager: string; tier: string }>>(new Map());
+  /** profileId -> workDate -> correction, for the current period — see technicianPerformanceOverrides.ts. */
+  const [dailyOverrides, setDailyOverrides] = useState<Map<string, Map<string, DailyPerformanceOverride>>>(new Map());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [ticketListFor, setTicketListFor] = useState<{ id: string; name: string } | null>(null);
   const [mileageListFor, setMileageListFor] = useState<{ id: string; name: string } | null>(null);
+  const [offDaysListFor, setOffDaysListFor] = useState<{ id: string; name: string } | null>(null);
+  const [importing, setImporting] = useState(false);
+  const [templateGenerating, setTemplateGenerating] = useState(false);
+  const [importResult, setImportResult] = useState<{ rowsApplied: number; skipped: string[] } | null>(null);
 
   const [search, setSearch] = useState("");
   const [locationFilter, setLocationFilter] = useState<string[]>([]);
@@ -251,7 +331,7 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
     setLoading(true);
     setError(null);
     try {
-      const [allUsers, composition, repairCounts, redoMap, mileageEntries, timecardEntries, dailyCompleted] = await Promise.all([
+      const [allUsers, composition, repairCounts, redoMap, mileageEntries, timecardEntries, dailyCompleted, overrides] = await Promise.all([
         getCompanyUsers(),
         getCsrTeamComposition().catch(() => null),
         getTechCompletedRepairCounts(periodStart, periodEnd),
@@ -259,10 +339,12 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
         getMileageEntries(),
         getCompanyTimecardEntries(periodStart, periodEnd),
         getTechCompletedTicketsDaily(periodStart, periodEnd),
+        getTechnicianPerformanceOverrides(periodStart, periodEnd),
       ]);
       setUsers(allUsers);
       setCsrComposition(composition);
       setDailyTickets(dailyCompleted);
+      setDailyOverrides(overrides);
 
       const techs = allUsers.filter((u) => u.is_active && TECHNICIAN_PAY_ROLES.has(normalizeRole(u.role)));
       const dimensionByName = new Map<string, { location: string; manager: string; tier: string }>();
@@ -276,11 +358,41 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
       setTechDimensionByName(dimensionByName);
 
       // Total completed tickets per technician (every repair-type category
-      // summed — no Minor/Major split, see this file's header comment).
+      // summed), plus the Minor/Major split — see this file's header
+      // comment for the MAJOR_REPAIR_TYPES rule.
       const ticketsByName = new Map<string, number>();
+      const minorByName = new Map<string, number>();
+      const majorByName = new Map<string, number>();
       for (const rc of repairCounts) {
         const key = rc.technician.trim().toLowerCase();
         ticketsByName.set(key, (ticketsByName.get(key) ?? 0) + rc.count);
+        const bucket = MAJOR_REPAIR_TYPES.has(rc.repairType) ? majorByName : minorByName;
+        bucket.set(key, (bucket.get(key) ?? 0) + rc.count);
+      }
+
+      // Same total, broken down per day (getTechCompletedTicketsDaily
+      // excludes redo/on-hold the same way getTechCompletedRepairCounts
+      // does, but additionally requires a schedule date to bucket a ticket
+      // into a day) — used so a manual per-day correction
+      // (technician_daily_performance_overrides) can replace just ONE
+      // day's contribution. Any ticket that DOES have redo/onHold=false
+      // but no schedule date (so it can't appear here) still needs to
+      // count toward the total; see `unscheduledTicketsByName` below,
+      // which is exactly ticketsByName minus what this breakdown can
+      // account for, and always gets added back in untouched — so a
+      // technician with zero overrides ends up with the EXACT same total
+      // as before this feature existed.
+      const ticketsByNameByDay = new Map<string, Map<string, number>>();
+      for (const d of dailyCompleted) {
+        const key = d.technician.trim().toLowerCase();
+        if (!ticketsByNameByDay.has(key)) ticketsByNameByDay.set(key, new Map());
+        const days = ticketsByNameByDay.get(key)!;
+        days.set(d.date, (days.get(d.date) ?? 0) + 1);
+      }
+      const unscheduledTicketsByName = new Map<string, number>();
+      for (const [key, total] of ticketsByName) {
+        const dailySum = Array.from(ticketsByNameByDay.get(key)?.values() ?? []).reduce((s, n) => s + n, 0);
+        unscheduledTicketsByName.set(key, Math.max(0, total - dailySum));
       }
 
       // Mileage: one effective total per distinct (technician, work_date) —
@@ -340,11 +452,6 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
         const prev = days.get(e.workDate);
         days.set(e.workDate, { miles, branch: e.branch, entryCount: (prev?.entryCount ?? 0) + 1, excludedEntryCount: prev?.excludedEntryCount ?? 0 });
       }
-      const milesByProfile = new Map<string, number>();
-      for (const [id, days] of dayTotalsByProfile) milesByProfile.set(id, Array.from(days.values()).reduce((s, d) => s + d.miles, 0));
-      const milesByName = new Map<string, number>();
-      for (const [name, days] of dayTotalsByName) milesByName.set(name, Array.from(days.values()).reduce((s, d) => s + d.miles, 0));
-
       const mileageDailyFlat: MileageDayDetail[] = [];
       for (const [id, days] of dayTotalsByProfile) {
         for (const [date, d] of days) mileageDailyFlat.push({ techKey: id, isProfileId: true, date, miles: d.miles, branch: d.branch, entryCount: d.entryCount, excludedEntryCount: d.excludedEntryCount });
@@ -356,8 +463,12 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
 
       // Hours + distinct days worked per technician, from raw punches —
       // same calcWorkedHours + paid-meal-credit combination used
-      // everywhere else pay/hours are computed in this app.
-      const hoursByProfile = new Map<string, number>();
+      // everywhere else pay/hours are computed in this app. Kept per-day
+      // (every raw punch already carries its own workDate, so this
+      // reconstructs the period sum exactly — no "leftover" term needed
+      // the way ticketsByNameByDay above needs one) so a manual per-day
+      // correction can replace just one day's hours.
+      const hoursByProfileByDay = new Map<string, Map<string, number>>();
       const daysByProfile = new Map<string, Set<string>>();
       const entriesByProfile = new Map<string, typeof timecardEntries>();
       for (const e of timecardEntries) {
@@ -367,24 +478,71 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
       for (const tech of techs) {
         const entries = entriesByProfile.get(tech.id) ?? [];
         const mealAlwaysPaid = isMealAlwaysPaidRole(tech.role, tech.extra_roles);
-        let hours = 0;
+        const dayHours = new Map<string, number>();
         const days = new Set<string>();
         for (const e of entries) {
           if (!e.checkIn) continue;
           days.add(e.workDate);
           const uiEntry = { checkIn: e.checkIn, checkOut: e.checkOut, mealStart: e.mealStart, mealEnd: e.mealEnd, notes: "" };
-          hours += calcWorkedHours(uiEntry) + computeMealTimeCredit(uiEntry, mealAlwaysPaid);
+          const hrs = calcWorkedHours(uiEntry) + computeMealTimeCredit(uiEntry, mealAlwaysPaid);
+          dayHours.set(e.workDate, (dayHours.get(e.workDate) ?? 0) + hrs);
         }
-        hoursByProfile.set(tech.id, hours);
+        hoursByProfileByDay.set(tech.id, dayHours);
         daysByProfile.set(tech.id, days);
       }
+      setHoursDaily(hoursByProfileByDay);
+
+      // Merges a technician's live per-day figures with any manual
+      // corrections for the same days (technician_daily_performance_
+      // overrides) — a corrected day replaces the live value for just
+      // that day and that field; every other day keeps computing live.
+      // Deliberately per-day (not one override per period) so a
+      // correction keeps applying no matter what date range later
+      // contains that day — Weekly/Monthly/Custom here are all just a
+      // client-side window over the same daily data.
+      const sumWithDailyOverride = (
+        liveByDay: Map<string, number> | undefined,
+        overrideByDay: Map<string, DailyPerformanceOverride> | undefined,
+        field: "totalTickets" | "miles" | "hoursWorked"
+      ): number => {
+        const dayKeys = new Set<string>([...(liveByDay?.keys() ?? []), ...(overrideByDay?.keys() ?? [])]);
+        let sum = 0;
+        for (const day of dayKeys) {
+          const overrideVal = overrideByDay?.get(day)?.[field];
+          sum += overrideVal != null ? overrideVal : (liveByDay?.get(day) ?? 0);
+        }
+        return sum;
+      };
 
       const computed: TechPerfRow[] = techs.map((t) => {
         const nameKey = (t.display_name || t.email).trim().toLowerCase();
-        const totalTickets = ticketsByName.get(nameKey) ?? 0;
-        const redoCount = redoMap.get(nameKey)?.length ?? 0;
-        const miles = (milesByProfile.get(t.id) ?? 0) + (milesByName.get(nameKey) ?? 0);
-        const hoursWorked = hoursByProfile.get(t.id) ?? 0;
+        const techOverrides = overrides.get(t.id);
+        const milesByDayForTech = new Map<string, number>();
+        for (const [date, d] of dayTotalsByProfile.get(t.id) ?? []) milesByDayForTech.set(date, (milesByDayForTech.get(date) ?? 0) + d.miles);
+        for (const [date, d] of dayTotalsByName.get(nameKey) ?? []) milesByDayForTech.set(date, (milesByDayForTech.get(date) ?? 0) + d.miles);
+
+        const totalTickets = sumWithDailyOverride(ticketsByNameByDay.get(nameKey), techOverrides, "totalTickets") + (unscheduledTicketsByName.get(nameKey) ?? 0);
+        // Redo has no day-level live breakdown to "replace one day of" the
+        // way the 3 figures above do (getTechRedoTickets returns a period
+        // total with no date per ticket) — so a correction here isn't a
+        // per-day merge, it's a full replacement: if ANY day in the period
+        // has a redoCount override set, the whole period's total becomes
+        // the SUM of every set override, dropping the live count entirely
+        // (a human corrects however many days they can actually attribute
+        // redos to, and the total follows from that).
+        const redoOverrideEntries = Array.from(techOverrides?.values() ?? []).filter((o) => o.redoCount != null);
+        const redoCount = redoOverrideEntries.length > 0
+          ? redoOverrideEntries.reduce((s, o) => s + (o.redoCount ?? 0), 0)
+          : redoMap.get(nameKey)?.length ?? 0;
+        const miles = sumWithDailyOverride(milesByDayForTech, techOverrides, "miles");
+        const hoursWorked = sumWithDailyOverride(hoursByProfileByDay.get(t.id), techOverrides, "hoursWorked");
+        const hasOverride = Array.from(techOverrides?.values() ?? []).some(
+          (o) => o.totalTickets != null || o.redoCount != null || o.miles != null || o.hoursWorked != null
+        );
+        const overrideWorkedDays = Array.from(techOverrides?.entries() ?? [])
+          .filter(([, o]) => o.hoursWorked != null && o.hoursWorked > 0)
+          .map(([date]) => date);
+        const daysWorked = new Set([...(daysByProfile.get(t.id) ?? []), ...overrideWorkedDays]).size;
         const redoRatePct = totalTickets > 0 ? (redoCount / totalTickets) * 100 : null;
         const milesPerTicket = totalTickets > 0 ? miles / totalTickets : null;
         const ticketsPerHour = hoursWorked > 0 ? totalTickets / hoursWorked : null;
@@ -397,17 +555,22 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
           manager: t.manager_name || "—",
           tier: t.tier_level || "—",
           isActive: t.is_active,
-          daysWorked: daysByProfile.get(t.id)?.size ?? 0,
+          daysWorked,
           hoursWorked,
           totalTickets,
+          minorTicketCount: minorByName.get(nameKey) ?? 0,
+          majorTicketCount: majorByName.get(nameKey) ?? 0,
           redoCount,
           redoRatePct,
           miles,
           milesPerTicket,
           ticketsPerHour,
+          offDaysCount: countOffDaysInRange(t.off_days, periodStart, periodEnd),
+          offDays: t.off_days ?? [],
           highRedoAlert: redoRatePct != null && redoRatePct > 5,
           routeMileageAlert: milesPerTicket != null && milesPerTicket > 30,
           lowUtilizationAlert: weeklyEquivalentHours < 32,
+          hasOverride,
         };
       });
       setRows(computed);
@@ -529,6 +692,22 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
       .sort((a, b) => b.date.localeCompare(a.date));
   }, [mileageListFor, mileageDaily]);
 
+  // The actual dates behind a clicked Off Days count — every date in the
+  // period whose weekday falls in this technician's scheduled off_days
+  // (Admin User Management's Off Days picker), same rule
+  // countOffDaysInRange uses to produce the count itself.
+  const offDaysListRows = useMemo(() => {
+    if (!offDaysListFor) return [];
+    const row = rows.find((r) => r.id === offDaysListFor.id);
+    if (!row) return [];
+    const offDaySet = new Set(row.offDays);
+    const dates: string[] = [];
+    for (let d = periodStart; d <= periodEnd; d = addDaysISO(d, 1)) {
+      if (offDaySet.has(new Date(`${d}T00:00:00`).getDay())) dates.push(d);
+    }
+    return dates;
+  }, [offDaysListFor, rows, periodStart, periodEnd]);
+
   const sortedRows = useMemo(() => {
     const dir = sortDir === "asc" ? 1 : -1;
     const val = (r: TechPerfRow): string | number => {
@@ -541,6 +720,8 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
         case "daysWorked": return r.daysWorked;
         case "hoursWorked": return r.hoursWorked;
         case "totalTickets": return r.totalTickets;
+        case "minorTicketCount": return r.minorTicketCount;
+        case "majorTicketCount": return r.majorTicketCount;
         case "redoCount": return r.redoCount;
         case "redoRatePct": return r.redoRatePct ?? -1;
         case "miles": return r.miles;
@@ -600,18 +781,312 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
     };
   }, [filteredRows]);
 
+  // Variance = each technician's Total Completion vs. the average of
+  // every technician CURRENTLY in view (Location/Manager/Tier/Search-
+  // filtered, same population pageKpis rolls up), as a signed %. Keyed
+  // off filteredRows rather than sortedRows since the average itself
+  // must not depend on sort order.
+  const varianceByRowId = useMemo(() => {
+    const map = new Map<string, number | null>();
+    const avg = filteredRows.length > 0 ? filteredRows.reduce((s, r) => s + r.totalTickets, 0) / filteredRows.length : 0;
+    for (const r of filteredRows) {
+      map.set(r.id, avg > 0 ? ((r.totalTickets - avg) / avg) * 100 : null);
+    }
+    return map;
+  }, [filteredRows]);
+
   const handleExportCsv = () => {
     exportToCSV(
       "technician_performance",
-      ["Technician ID", "Name", "Location", "Manager", "Tier", "Days Worked", "Hours Worked", "Total Tickets", "Redo Count", "Redo Rate %", "Miles", "Miles/Ticket", "Tickets/Hour", "High Redo", "Route Mileage Audit", "Low Utilization"],
+      [
+        "Name", "Variance", "Minor Ticket", "Major Ticket", "Redo", "Total Completion", "Average Completion", "Mileage",
+        "Working Days", "Off Days", "Unexcused Off Days Total 2026", "Hours Worked", "Location", "Manager", "Tier",
+        "Redo Rate %", "Miles/Ticket", "Tickets/Hour", "High Redo", "Route Mileage Audit", "Low Utilization",
+      ],
       sortedRows.map((r) => [
-        r.techId, r.name, r.location, r.manager, r.tier, r.daysWorked, fmt1(r.hoursWorked), r.totalTickets, r.redoCount,
-        r.redoRatePct != null ? fmt1(r.redoRatePct) : "—", fmt1(r.miles),
-        r.milesPerTicket != null ? fmt1(r.milesPerTicket) : "—", r.ticketsPerHour != null ? fmt1(r.ticketsPerHour) : "—",
-        r.highRedoAlert ? "Yes" : "", r.routeMileageAlert ? "Yes" : "", r.lowUtilizationAlert ? "Yes" : "",
+        r.name, fmtVariance(varianceByRowId.get(r.id) ?? null), r.minorTicketCount, r.majorTicketCount, r.redoCount, r.totalTickets,
+        r.daysWorked > 0 ? fmt1(r.totalTickets / r.daysWorked) : "—", fmt1(r.miles), r.daysWorked, r.offDaysCount,
+        "", fmt1(r.hoursWorked), r.location, r.manager, r.tier,
+        r.redoRatePct != null ? fmt1(r.redoRatePct) : "—", r.milesPerTicket != null ? fmt1(r.milesPerTicket) : "—",
+        r.ticketsPerHour != null ? fmt1(r.ticketsPerHour) : "—", r.highRedoAlert ? "Yes" : "", r.routeMileageAlert ? "Yes" : "", r.lowUtilizationAlert ? "Yes" : "",
       ]),
     );
   };
+
+  // Import-template export: one row per (technician, day-with-activity-
+  // or-existing-correction) within the current period, pre-filled with
+  // today's EFFECTIVE (override-applied) Total Tickets — so whoever fills
+  // this in only has to change what's actually wrong. A real .xlsx, not
+  // CSV — CSV has no concept of cell color (can't satisfy "the header is
+  // too plain"), and a raw CSV's non-ASCII characters (an em dash, say)
+  // get mangled by Excel's default ANSI import unless a BOM is added,
+  // which a real workbook sidesteps entirely. No Profile ID/Technician ID
+  // columns — nothing here needs to expose an internal id to a human
+  // filling this in; matching on import is by Name (+ Location to break
+  // a tie — see handleImportFile) instead.
+  const handleDownloadImportTemplate = async () => {
+    // Every day in the period gets a row for every technician now (not
+    // just days with activity — see the loop below), so an unbounded
+    // Custom range could otherwise try to generate an enormous sheet and
+    // hang the browser doing it.
+    const dayCount = daysBetween(periodStart, periodEnd);
+    if (dayCount * sortedRows.length > 20000) {
+      setError(`That's ${dayCount} days × ${sortedRows.length} technicians — too many rows for one template. Pick a narrower period.`);
+      return;
+    }
+    setTemplateGenerating(true);
+    try {
+      const ExcelJS = await import("exceljs");
+      const workbook = new ExcelJS.Workbook();
+      const sheet = workbook.addWorksheet("Import Template");
+
+      sheet.columns = [
+        { header: "Name", key: "name", width: 26 },
+        { header: "Variance", key: "variance", width: 12 },
+        { header: "Date", key: "date", width: 12 },
+        { header: "Minor Ticket", key: "minorTicket", width: 14 },
+        { header: "Major Ticket", key: "majorTicket", width: 14 },
+        { header: "Redo", key: "redoCount", width: 10 },
+        { header: "Total Completion", key: "totalTickets", width: 16 },
+        { header: "Average Completion", key: "avgCompletion", width: 18 },
+        { header: "Mileage", key: "miles", width: 12 },
+        { header: "Working Days", key: "daysWorked", width: 14 },
+        { header: "Off Days", key: "offDays", width: 12 },
+        { header: "Unexcused Off Days Total 2026", key: "unexcusedOffDays", width: 26 },
+        { header: "Hours Worked", key: "hoursWorked", width: 14 },
+        { header: "Location", key: "location", width: 16 },
+        { header: "Manager", key: "manager", width: 20 },
+        { header: "Tier", key: "tier", width: 12 },
+      ];
+      // Kept as plain text, never a real Excel date — so it round-trips
+      // exactly on re-import (no serial-number/timezone conversion to
+      // undo) and so Excel doesn't reformat a typed "2026-09-21" into
+      // something else on its own.
+      sheet.getColumn("date").numFmt = "@";
+
+      const headerRow = sheet.getRow(1);
+      headerRow.eachCell((cell) => {
+        cell.font = { bold: true, color: { argb: "FFFFFFFF" } };
+        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF2563EB" } };
+        cell.alignment = { vertical: "middle" };
+      });
+      sheet.views = [{ state: "frozen", ySplit: 1 }];
+
+      // Green when a technician is above the team average Total
+      // Completion, red when below, left unstyled at "—" (no team
+      // average to compare against).
+      const styleVarianceCell = (cell: import("exceljs").Cell, v: number | null) => {
+        if (v == null) return;
+        if (v > 0) {
+          cell.font = { bold: true, color: { argb: "FF166534" } };
+          cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFDCFCE7" } };
+        } else if (v < 0) {
+          cell.font = { bold: true, color: { argb: "FFB91C1C" } };
+          cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFEE2E2" } };
+        } else {
+          cell.font = { color: { argb: "FF64748B" } };
+        }
+      };
+
+      for (const r of sortedRows) {
+        // EVERY day in the period gets a row here, not just days that
+        // already have some activity — a gap used to read as "there's
+        // nothing to correct here," when it actually meant "there's
+        // nothing missing a row to correct it with," which is a very
+        // different (and much more confusing) thing to a technician who
+        // really did work that day but has zero logged for it.
+        //
+        // Every value column is left BLANK on every day row: for the 4
+        // fields that actually support a per-day override (Total
+        // Completion/Redo/Mileage/Hours Worked), blank means "no change"
+        // on import, so leaving them blank is what makes re-importing an
+        // untouched row a true no-op instead of silently re-asserting a
+        // number as a permanent override. The rest (Variance, Minor/Major
+        // Ticket, Average Completion, Working Days, Off Days) are period-
+        // level, not per-day, figures that aren't read back on import at
+        // all — repeating them on every one of a technician's day rows
+        // read as if they were themselves per-day data, so they're blank
+        // here too and shown once instead, in the reference block below.
+        // Unexcused Off Days Total 2026 is always blank (no live source,
+        // see this file's header comment) — a place for HR to type a
+        // number by hand, not something this export or the importer
+        // reads back.
+        for (let date = periodStart; date <= periodEnd; date = addDaysISO(date, 1)) {
+          sheet.addRow({
+            name: r.name,
+            variance: "",
+            date,
+            minorTicket: "",
+            majorTicket: "",
+            redoCount: "",
+            totalTickets: "",
+            avgCompletion: "",
+            miles: "",
+            daysWorked: "",
+            offDays: "",
+            unexcusedOffDays: "",
+            hoursWorked: "",
+            location: r.location,
+            manager: r.manager,
+            tier: r.tier,
+          });
+        }
+      }
+
+      // Reference block — every technician currently in view, even ones
+      // with no activity/correction this period (so they'd have no
+      // day-row above at all). Location/Manager/Tier/Variance/Average
+      // Completion/Working Days/Off Days are here purely so a human can
+      // tell two same-named technicians apart, or see current totals,
+      // before typing a new row; Redo/Total Completion/Mileage/Hours
+      // Worked here are the CURRENT totals (reference only — a blank
+      // Date keeps this whole block from being read as real data on
+      // re-import, see handleImportFile).
+      sheet.addRow({});
+      const noteRow = sheet.addRow({
+        name: "All technicians — add a row below (Name + Date + at least one value) to correct a day with no activity yet. Redo/Total Completion/Mileage/Hours Worked below are the CURRENT totals, for reference.",
+      });
+      noteRow.font = { italic: true, color: { argb: "FF64748B" } };
+      for (const r of sortedRows) {
+        const variance = varianceByRowId.get(r.id) ?? null;
+        const row = sheet.addRow({
+          name: r.name,
+          variance: fmtVariance(variance),
+          minorTicket: r.minorTicketCount,
+          majorTicket: r.majorTicketCount,
+          redoCount: r.redoCount,
+          totalTickets: r.totalTickets,
+          avgCompletion: r.daysWorked > 0 ? fmt1(r.totalTickets / r.daysWorked) : "—",
+          miles: fmt1(r.miles),
+          daysWorked: r.daysWorked,
+          offDays: r.offDaysCount,
+          hoursWorked: fmt1(r.hoursWorked),
+          location: r.location,
+          manager: r.manager,
+          tier: r.tier,
+        });
+        styleVarianceCell(row.getCell("variance"), variance);
+      }
+
+      const buffer = await workbook.xlsx.writeBuffer();
+      const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      // Named after the selected period, not today's date — the day-rows
+      // themselves are already scoped to periodStart/periodEnd (both feed
+      // load(), which everything above is read from), but the filename
+      // used to be stamped with today's date regardless, which read as
+      // "today's data" even when Weekly/Monthly/Custom was pointed at a
+      // past range.
+      const periodLabel =
+        periodMode === "weekly" ? `week_${periodStart}`
+        : periodMode === "monthly" ? `month_${periodStart.slice(0, 7)}`
+        : `${periodStart}_to_${periodEnd}`;
+      a.download = `technician_performance_import_template_${periodLabel}.xlsx`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to generate the import template.");
+    } finally {
+      setTemplateGenerating(false);
+    }
+  };
+
+  const handleImportFile = (file: File) => {
+    setImporting(true);
+    setImportResult(null);
+    setError(null);
+    void (async () => {
+      try {
+        const XLSX = await import("xlsx");
+        const buffer = await file.arrayBuffer();
+        const workbook = XLSX.read(buffer, { type: "array", cellDates: true });
+        const sheet = workbook.Sheets[workbook.SheetNames[0]];
+        const aoa = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "" }) as any[][];
+        if (aoa.length < 2) throw new Error("The file has no data rows.");
+        const header = aoa[0].map((h) => String(h ?? "").trim().toLowerCase());
+        const idx = (label: string) => header.indexOf(label);
+        // Accepts both the current header names and the pre-rename ones,
+        // so a template downloaded before this column rework (or an old
+        // saved copy of one) still imports correctly.
+        const idxAny = (...labels: string[]) => {
+          for (const label of labels) {
+            const i = idx(label);
+            if (i !== -1) return i;
+          }
+          return -1;
+        };
+        const nameIdx = idx("name");
+        const dateIdx = idx("date");
+        const ticketsIdx = idxAny("total completion", "total tickets");
+        const redoIdx = idxAny("redo", "redo count");
+        const milesIdx = idxAny("mileage", "miles");
+        const hoursIdx = idx("hours worked");
+        const locationIdx = idx("location");
+        if (nameIdx === -1 || dateIdx === -1) {
+          throw new Error('This doesn\'t look like a Technician Performance import file — missing "Name"/"Date" columns.');
+        }
+
+        // Name -> matching technician(s) currently on the report; Location
+        // disambiguates when a name alone isn't unique.
+        const byName = new Map<string, TechPerfRow[]>();
+        for (const r of rows) {
+          const key = r.name.trim().toLowerCase();
+          if (!byName.has(key)) byName.set(key, []);
+          byName.get(key)!.push(r);
+        }
+
+        const cellToStr = (v: unknown): string => {
+          if (v instanceof Date) return `${v.getFullYear()}-${String(v.getMonth() + 1).padStart(2, "0")}-${String(v.getDate()).padStart(2, "0")}`;
+          return String(v ?? "").trim();
+        };
+        const parseNum = (v: unknown): number | undefined => {
+          const s = cellToStr(v);
+          if (s === "") return undefined;
+          const n = Number(s.replace(/,/g, ""));
+          return Number.isFinite(n) ? n : undefined;
+        };
+
+        const skipped: string[] = [];
+        const toWrite: { profileId: string; workDate: string; totalTickets?: number | null; redoCount?: number | null; miles?: number | null; hoursWorked?: number | null }[] = [];
+        for (let i = 1; i < aoa.length; i++) {
+          const cells = aoa[i];
+          const name = cellToStr(cells[nameIdx]);
+          const date = cellToStr(cells[dateIdx]);
+          if (!name || !date) continue;
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) { skipped.push(`${name} (bad date "${date}")`); continue; }
+          let candidates = byName.get(name.trim().toLowerCase()) ?? [];
+          if (candidates.length > 1 && locationIdx !== -1) {
+            const loc = cellToStr(cells[locationIdx]).toLowerCase();
+            const narrowed = candidates.filter((c) => c.location.trim().toLowerCase() === loc);
+            if (narrowed.length > 0) candidates = narrowed;
+          }
+          if (candidates.length === 0) { skipped.push(`${name} (not a technician on this report)`); continue; }
+          if (candidates.length > 1) { skipped.push(`${name} (matches ${candidates.length} technicians — add a Location to disambiguate)`); continue; }
+          const profileId = candidates[0].id;
+
+          const entry: (typeof toWrite)[number] = { profileId, workDate: date };
+          if (ticketsIdx !== -1) { const n = parseNum(cells[ticketsIdx]); if (n !== undefined) entry.totalTickets = n; }
+          if (redoIdx !== -1) { const n = parseNum(cells[redoIdx]); if (n !== undefined) entry.redoCount = n; }
+          if (milesIdx !== -1) { const n = parseNum(cells[milesIdx]); if (n !== undefined) entry.miles = n; }
+          if (hoursIdx !== -1) { const n = parseNum(cells[hoursIdx]); if (n !== undefined) entry.hoursWorked = n; }
+          if (entry.totalTickets === undefined && entry.redoCount === undefined && entry.miles === undefined && entry.hoursWorked === undefined) continue;
+          toWrite.push(entry);
+        }
+        if (toWrite.length === 0) throw new Error("No usable rows found — every row was either unmatched or had no values to import.");
+        await bulkUpsertTechnicianPerformanceOverrides(toWrite, displayName || "HR");
+        setImportResult({ rowsApplied: toWrite.length, skipped });
+        await load();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to import the file.");
+      } finally {
+        setImporting(false);
+      }
+    })();
+  };
+
+  const canImport = role === "ADMIN" || role === "SUPERADMIN" || isFinanceRole(role, extraRoles) || isCompanySuperAdminRole(role, extraRoles);
 
   const shiftPeriod = (dir: -1 | 1) => {
     setAnchor((prev) => periodMode === "weekly" ? addDaysISO(prev, dir * 7) : (() => {
@@ -658,14 +1133,50 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                   <Download className="h-3.5 w-3.5" /> Export CSV
                 </button>
               )}
+              {canImport && (
+                <>
+                  <button
+                    onClick={() => void handleDownloadImportTemplate()}
+                    className="btn text-xs px-2.5 py-1.5 flex items-center gap-1.5"
+                    disabled={templateGenerating}
+                    title="A per-day Excel file for the current period, pre-filled with today's numbers — hand it to someone to correct, then Import Excel it back."
+                  >
+                    {templateGenerating ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+                    {templateGenerating ? "Generating…" : "Download Import Template"}
+                  </button>
+                  <label className="btn text-xs px-2.5 py-1.5 flex items-center gap-1.5 cursor-pointer">
+                    {importing ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+                    {importing ? "Importing…" : "Import Excel"}
+                    <input
+                      type="file"
+                      accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                      className="hidden"
+                      disabled={importing}
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        e.target.value = "";
+                        if (file) handleImportFile(file);
+                      }}
+                    />
+                  </label>
+                </>
+              )}
               <button onClick={() => void load()} className="btn text-xs px-2.5 py-1.5 flex items-center gap-1.5" disabled={loading}>
                 <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} /> Refresh
               </button>
             </div>
           </div>
           <p className="text-xs text-muted-foreground mt-3 max-w-3xl">
-            Total Tickets, Redo Rate %, Tickets/Hour, and Miles/Ticket per technician — read-only. High Redo (&gt;5%), Route Mileage Audit (&gt;30 mi/ticket), and Low Utilization (&lt;32 hrs/week) are flagged automatically.
+            Total Tickets, Redo Rate %, Tickets/Hour, and Miles/Ticket per technician — computed live from tickets/mileage/timecards, with day-level manual corrections where needed (rows marked <PencilLine className="h-3 w-3 inline -mt-0.5" />). High Redo (&gt;5%), Route Mileage Audit (&gt;30 mi/ticket), and Low Utilization (&lt;32 hrs/week) are flagged automatically.
           </p>
+          {importResult && (
+            <div className="mt-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-200">
+              Imported {importResult.rowsApplied} day{importResult.rowsApplied === 1 ? "" : "s"} of corrections.
+              {importResult.skipped.length > 0 && (
+                <> {importResult.skipped.length} row{importResult.skipped.length === 1 ? "" : "s"} skipped: {importResult.skipped.slice(0, 5).join(", ")}{importResult.skipped.length > 5 ? `, +${importResult.skipped.length - 5} more` : ""}.</>
+              )}
+            </div>
+          )}
         </div>
 
         {!loading && (
@@ -875,17 +1386,22 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b border-white/10 bg-white/5">
-                        <th className={thClass} onClick={() => toggleSort("techId")}>Technician ID{sortIndicator("techId")}</th>
                         <th className={thClass} onClick={() => toggleSort("name")}>Name{sortIndicator("name")}</th>
+                        <th className="px-3 py-2 text-right text-xs text-muted-foreground uppercase">Variance</th>
+                        <th className={`${thClass} text-right`} onClick={() => toggleSort("minorTicketCount")}>Minor Ticket{sortIndicator("minorTicketCount")}</th>
+                        <th className={`${thClass} text-right`} onClick={() => toggleSort("majorTicketCount")}>Major Ticket{sortIndicator("majorTicketCount")}</th>
+                        <th className={`${thClass} text-right`} onClick={() => toggleSort("redoCount")}>Redo{sortIndicator("redoCount")}</th>
+                        <th className={`${thClass} text-right`} onClick={() => toggleSort("totalTickets")}>Total Completion{sortIndicator("totalTickets")}</th>
+                        <th className="px-3 py-2 text-right text-xs text-muted-foreground uppercase">Average Completion</th>
+                        <th className={`${thClass} text-right`} onClick={() => toggleSort("miles")}>Mileage{sortIndicator("miles")}</th>
+                        <th className={`${thClass} text-right`} onClick={() => toggleSort("daysWorked")}>Working Days{sortIndicator("daysWorked")}</th>
+                        <th className="px-3 py-2 text-right text-xs text-muted-foreground uppercase">Off Days</th>
+                        <th className="px-3 py-2 text-right text-xs text-muted-foreground uppercase">Unexcused Off Days Total 2026</th>
+                        <th className={`${thClass} text-right`} onClick={() => toggleSort("hoursWorked")}>Hours Worked{sortIndicator("hoursWorked")}</th>
                         <th className={thClass} onClick={() => toggleSort("location")}>Location{sortIndicator("location")}</th>
                         <th className={thClass} onClick={() => toggleSort("manager")}>Manager{sortIndicator("manager")}</th>
                         <th className={thClass} onClick={() => toggleSort("tier")}>Tier{sortIndicator("tier")}</th>
-                        <th className={`${thClass} text-right`} onClick={() => toggleSort("daysWorked")}>Days{sortIndicator("daysWorked")}</th>
-                        <th className={`${thClass} text-right`} onClick={() => toggleSort("hoursWorked")}>Hrs{sortIndicator("hoursWorked")}</th>
-                        <th className={`${thClass} text-right`} onClick={() => toggleSort("totalTickets")}>Total Tickets{sortIndicator("totalTickets")}</th>
-                        <th className={`${thClass} text-right`} onClick={() => toggleSort("redoCount")}>Redo{sortIndicator("redoCount")}</th>
                         <th className={`${thClass} text-right`} onClick={() => toggleSort("redoRatePct")}>Redo %{sortIndicator("redoRatePct")}</th>
-                        <th className={`${thClass} text-right`} onClick={() => toggleSort("miles")}>Miles{sortIndicator("miles")}</th>
                         <th className={`${thClass} text-right`} onClick={() => toggleSort("milesPerTicket")}>Mi/Ticket{sortIndicator("milesPerTicket")}</th>
                         <th className={`${thClass} text-right`} onClick={() => toggleSort("ticketsPerHour")}>Tickets/Hr{sortIndicator("ticketsPerHour")}</th>
                         <th className="px-3 py-2 text-left text-xs text-muted-foreground uppercase">Alerts</th>
@@ -893,26 +1409,31 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                     </thead>
                     <tbody>
                       {groupRows.length === 0 ? (
-                        <tr><td colSpan={14} className="px-4 py-8 text-center text-muted-foreground text-sm">No technicians match.</td></tr>
+                        <tr><td colSpan={18} className="px-4 py-8 text-center text-muted-foreground text-sm">No technicians match.</td></tr>
                       ) : (
-                        groupRows.map((r) => (
+                        groupRows.map((r) => {
+                          const variance = varianceByRowId.get(r.id) ?? null;
+                          return (
                           <tr key={r.id} className="border-b border-white/5 hover:bg-white/5">
-                            <td className="px-3 py-2 text-muted-foreground">{r.techId}</td>
                             <td className="px-3 py-2 font-medium">
                               <button
                                 type="button"
                                 onClick={() => { setSelectedTechId(r.id); setShowActivityLog(false); }}
-                                className="hover:text-blue-300 hover:underline underline-offset-2 transition"
+                                className="hover:text-blue-300 hover:underline underline-offset-2 transition inline-flex items-center gap-1.5"
                                 title="Click the name to view details"
                               >
                                 {r.name}
+                                {r.hasOverride && (
+                                  <PencilLine className="h-3 w-3 text-amber-400 shrink-0" aria-label="Has manual corrections this period" />
+                                )}
                               </button>
                             </td>
-                            <td className="px-3 py-2 text-muted-foreground">{r.location}</td>
-                            <td className="px-3 py-2 text-muted-foreground">{r.manager}</td>
-                            <td className="px-3 py-2 text-muted-foreground">{r.tier}</td>
-                            <td className="px-3 py-2 text-right">{r.daysWorked}</td>
-                            <td className="px-3 py-2 text-right">{fmt1(r.hoursWorked)}</td>
+                            <td className={`px-3 py-2 text-right font-semibold ${variance == null ? "text-muted-foreground" : variance > 0 ? "text-emerald-400" : variance < 0 ? "text-red-400" : "text-muted-foreground"}`}>
+                              {fmtVariance(variance)}
+                            </td>
+                            <td className="px-3 py-2 text-right">{r.minorTicketCount}</td>
+                            <td className="px-3 py-2 text-right">{r.majorTicketCount}</td>
+                            <td className="px-3 py-2 text-right">{r.redoCount}</td>
                             <td className="px-3 py-2 text-right">
                               {r.totalTickets > 0 ? (
                                 <button
@@ -927,8 +1448,7 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                                 r.totalTickets
                               )}
                             </td>
-                            <td className="px-3 py-2 text-right">{r.redoCount}</td>
-                            <td className={`px-3 py-2 text-right ${r.highRedoAlert ? "text-red-300 font-semibold" : ""}`}>{r.redoRatePct != null ? `${fmt1(r.redoRatePct)}%` : "—"}</td>
+                            <td className="px-3 py-2 text-right">{r.daysWorked > 0 ? fmt1(r.totalTickets / r.daysWorked) : "—"}</td>
                             <td className="px-3 py-2 text-right">
                               {r.miles > 0 ? (
                                 <button
@@ -943,6 +1463,27 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                                 fmt1(r.miles)
                               )}
                             </td>
+                            <td className="px-3 py-2 text-right">{r.daysWorked}</td>
+                            <td className="px-3 py-2 text-right">
+                              {r.offDaysCount > 0 ? (
+                                <button
+                                  type="button"
+                                  onClick={() => setOffDaysListFor({ id: r.id, name: r.name })}
+                                  className="text-blue-400 hover:text-blue-300 hover:underline underline-offset-2"
+                                  title="View off-duty dates"
+                                >
+                                  {r.offDaysCount}
+                                </button>
+                              ) : (
+                                r.offDaysCount
+                              )}
+                            </td>
+                            <td className="px-3 py-2 text-right text-muted-foreground">—</td>
+                            <td className="px-3 py-2 text-right">{fmt1(r.hoursWorked)}</td>
+                            <td className="px-3 py-2 text-muted-foreground">{r.location}</td>
+                            <td className="px-3 py-2 text-muted-foreground">{r.manager}</td>
+                            <td className="px-3 py-2 text-muted-foreground">{r.tier}</td>
+                            <td className={`px-3 py-2 text-right ${r.highRedoAlert ? "text-red-300 font-semibold" : ""}`}>{r.redoRatePct != null ? `${fmt1(r.redoRatePct)}%` : "—"}</td>
                             <td className={`px-3 py-2 text-right ${r.routeMileageAlert ? "text-amber-300 font-semibold" : ""}`}>{r.milesPerTicket != null ? fmt1(r.milesPerTicket) : "—"}</td>
                             <td className="px-3 py-2 text-right">{r.ticketsPerHour != null ? r.ticketsPerHour.toFixed(2) : "—"}</td>
                             <td className="px-3 py-2">
@@ -953,7 +1494,8 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                               </div>
                             </td>
                           </tr>
-                        ))
+                          );
+                        })
                       )}
                     </tbody>
                   </table>
@@ -1059,6 +1601,50 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                             </span>
                           )}
                         </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {offDaysListFor && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={() => setOffDaysListFor(null)}>
+          <div
+            className="bg-slate-900 border border-white/15 rounded-xl w-full max-w-sm max-h-[80vh] flex flex-col shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-5 py-4 border-b border-white/10 bg-slate-950 rounded-t-xl">
+              <div>
+                <p className="font-semibold text-white">Off Days — {offDaysListFor.name}</p>
+                <p className="text-xs text-slate-400">{periodStart} – {periodEnd} · {offDaysListRows.length} day{offDaysListRows.length === 1 ? "" : "s"}</p>
+              </div>
+              <button onClick={() => setOffDaysListFor(null)} className="text-white/40 hover:text-white/80 transition">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <p className="px-5 pt-3 text-[11px] text-slate-400">
+              Scheduled weekly off days (Admin User Management's Off Days picker) falling within this period — not days actually missed.
+            </p>
+            <div className="overflow-y-auto flex-1 p-2">
+              {offDaysListRows.length === 0 ? (
+                <p className="text-sm text-slate-400 text-center py-8">No off days in this period.</p>
+              ) : (
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-xs text-slate-400 uppercase">
+                      <th className="px-3 py-2">Date</th>
+                      <th className="px-3 py-2">Day</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5">
+                    {offDaysListRows.map((d) => (
+                      <tr key={d} className="hover:bg-white/5">
+                        <td className="px-3 py-2 text-slate-300">{d}</td>
+                        <td className="px-3 py-2 text-slate-300">{new Date(`${d}T00:00:00`).toLocaleDateString("en-US", { weekday: "long" })}</td>
                       </tr>
                     ))}
                   </tbody>

@@ -1,13 +1,12 @@
 /**
  * "Who can access this module?" pop-out — opens right where you clicked
  * the gear on a home-page tile (home.tsx), instead of navigating away to
- * the full Accessibility Management page. Same click-to-move editor as that
- * page's "Module Access by Role" section (ModuleAccessCard/AccessListContainer,
- * reused from there), just scoped to one module's own submodules and shown
- * as a dialog instead of a full page section — this is a shortcut into the
- * SAME underlying data (module_role_gate_overrides), not a parallel
- * access-control system. The full page still exists for the complete
- * all-modules view; this is the "quick edit" version.
+ * the full Accessibility Management page. Drag-a-role-card-onto-a-container
+ * editor, scoped to one module's own submodules and shown as a dialog
+ * instead of a full page section — this is a shortcut into the SAME
+ * underlying data (module_role_gate_overrides), not a parallel access-
+ * control system. The full page still exists for the complete all-modules
+ * view; this is the "quick edit" version.
  *
  * Same explicit Save/Discard bar as the full page — a card click only
  * stages a local change, nothing writes to the database until "Save
@@ -16,14 +15,13 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { X, Inbox, CheckCircle2, Loader2 } from "lucide-react";
+import { X, Inbox, Loader2 } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { ROLE_LABELS } from "@/lib/roleLabels";
 import { useAllRoleOptions } from "@/lib/customRoles";
 import { DASHBOARD_ROLE_GATES } from "@/lib/dashboardAccess";
 import { hydrateModuleRoleGates, MODULE_LEVEL_GATE_SLUG } from "@/lib/moduleAccess";
 import { getModuleRoleGateOverrides, setModuleRoleGateOverride } from "@/lib/supabase/moduleRoleGates";
-import { ModuleAccessCard, AccessListContainer } from "@/components/AccessibilityManagementPage";
 
 interface GateRow {
   moduleSlug: string;
@@ -38,7 +36,7 @@ const HARDCODED_DEFAULT_MODULES = new Set(["dashboard", "hr", "accounting", "csr
 
 const ROLE_DRAG_TYPE = "application/x-ahs-role";
 
-/** A draggable role card — the source you drag FROM in the "New" tab. Revoking is a click (X) on the granted chip instead, not a drag back, since that source container has no single row to attribute the drop to. */
+/** A draggable role card — the source you drag FROM. Revoking is a click (X) on the granted chip instead, not a drag back, since that source container has no single row to attribute the drop to. */
 function DraggableRoleCard({ role }: { role: string }) {
   return (
     <div
@@ -142,12 +140,6 @@ export function ModuleAccessQuickEditModal({
 
   const [gates, setGates] = useState<Record<string, string[]>>({});
   const [loading, setLoading] = useState(true);
-  const [selectedRole, setSelectedRole] = useState(roleOptions[0]?.value ?? "");
-  // Kept alongside the new role-list layout, not replaced by it — per the
-  // user's explicit call, until they confirm the new one and ask for this
-  // to be removed. Both read/write the exact same gates/pendingSaves state,
-  // so switching tabs never loses a staged change.
-  const [viewMode, setViewMode] = useState<"classic" | "new">("classic");
   const rawOverridesRef = useRef<Record<string, string[]>>({});
 
   // Staged-but-unsaved edits — see the file-level comment above.
@@ -187,25 +179,9 @@ export function ModuleAccessQuickEditModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mod.slug, submodule?.slug, roleOptions.length]);
 
-  const isGranted = (row: GateRow) => (gates[`${row.moduleSlug}:${row.slug}`] ?? allRoleValues).includes(selectedRole);
-  const granted = gateRows.filter(isGranted);
-  const available = gateRows.filter((r) => !isGranted(r));
-
-  // Local-only — records the intended change and updates the display, but
-  // does NOT write to the database. See handleSaveAll for the actual write.
-  const move = (row: GateRow, toGranted: boolean) => {
-    const key = `${row.moduleSlug}:${row.slug}`;
-    const prev = gates[key] ?? [];
-    const next = toGranted ? Array.from(new Set([...prev, selectedRole])) : prev.filter((r) => r !== selectedRole);
-    setGates((p) => ({ ...p, [key]: next }));
-    setPendingSaves((p) => ({ ...p, [key]: { moduleSlug: row.moduleSlug, submoduleSlug: row.slug, roles: next } }));
-    setOriginalValues((p) => (key in p ? p : { ...p, [key]: prev }));
-    setSaveError(null);
-  };
-
-  // Same as `move` above but takes the role explicitly instead of reading
-  // `selectedRole` — the drag-and-drop tab has no single "current role",
-  // any role card can be dropped onto any row's container at any time.
+  // Takes the role explicitly rather than a single "current role" — the
+  // drag-and-drop UI has no such concept, any role card can be dropped
+  // onto any row's container at any time.
   const setRoleForRow = (row: GateRow, role: string, granted: boolean) => {
     const key = `${row.moduleSlug}:${row.slug}`;
     const prev = gates[key] ?? [];
@@ -277,32 +253,9 @@ export function ModuleAccessQuickEditModal({
           </button>
         </div>
         <p className="text-[11px] text-muted-foreground mb-3">
-          {viewMode === "classic"
-            ? "Pick a role, then click a page's arrow/X to grant or revoke its access."
-            : "Drag a role card onto a container to grant it — click the X on a granted chip to revoke it."}{" "}
+          Drag a role card onto a container to grant it — click the X on a granted chip to revoke it.{" "}
           Nothing is saved until you click "Save Changes" below. Super Admin can always open every page regardless of this.
         </p>
-
-        <div className="inline-flex items-center rounded-lg border border-white/10 bg-white/5 p-0.5 mb-4">
-          <button
-            type="button"
-            onClick={() => setViewMode("classic")}
-            className={`rounded-md px-3 py-1 text-xs font-semibold transition ${
-              viewMode === "classic" ? "bg-white/10 text-white" : "text-slate-400 hover:text-slate-200"
-            }`}
-          >
-            Classic
-          </button>
-          <button
-            type="button"
-            onClick={() => setViewMode("new")}
-            className={`rounded-md px-3 py-1 text-xs font-semibold transition ${
-              viewMode === "new" ? "bg-white/10 text-white" : "text-slate-400 hover:text-slate-200"
-            }`}
-          >
-            New
-          </button>
-        </div>
 
         {(pendingCount > 0 || saveError) && (
           <div className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3">
@@ -331,96 +284,49 @@ export function ModuleAccessQuickEditModal({
           </div>
         )}
 
-        {viewMode === "classic" && (
-          <>
-            <div className="flex flex-wrap items-center gap-3 mb-4">
-              <label className="text-sm font-medium text-muted-foreground uppercase tracking-wide">Role</label>
-              <select
-                value={selectedRole}
-                onChange={(e) => setSelectedRole(e.target.value)}
-                className="glass-input text-base py-2 px-3 rounded-md"
-              >
-                {roleOptions.map((r) => (
-                  <option key={r.value} value={r.value}>{r.label}</option>
-                ))}
-              </select>
+        <div className="flex gap-4 flex-col sm:flex-row">
+          {/* Left — the draggable role catalog, always the full roster (dragging never removes a role from here — the same role can be dropped onto as many containers as needed). */}
+          <div className="sm:w-48 shrink-0">
+            <div className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-slate-400">
+              <Inbox className="h-3.5 w-3.5" /> Available · {roleOptions.length}
             </div>
-            <div className="flex gap-4 flex-col md:flex-row">
-              <AccessListContainer label="Available" count={available.length} icon={<Inbox className="h-4 w-4" />} tint="neutral">
-                {available.map((row) => (
-                  <ModuleAccessCard
-                    key={`${row.moduleSlug}:${row.slug}`}
-                    title={row.title}
-                    moduleLabel={row.moduleLabel}
-                    moduleSlug={row.moduleSlug}
-                    direction="grant"
-                    onMove={() => move(row, true)}
-                  />
-                ))}
-                {!loading && available.length === 0 && <div className="text-sm text-muted-foreground italic px-1 py-4 text-center">Nothing here.</div>}
-              </AccessListContainer>
-              <AccessListContainer label={`Granted to ${ROLE_LABELS[selectedRole] ?? selectedRole}`} count={granted.length} icon={<CheckCircle2 className="h-4 w-4" />} tint="granted">
-                {granted.map((row) => (
-                  <ModuleAccessCard
-                    key={`${row.moduleSlug}:${row.slug}`}
-                    title={row.title}
-                    moduleLabel={row.moduleLabel}
-                    moduleSlug={row.moduleSlug}
-                    direction="revoke"
-                    onMove={() => move(row, false)}
-                  />
-                ))}
-                {!loading && granted.length === 0 && <div className="text-sm text-muted-foreground italic px-1 py-4 text-center">Nothing here.</div>}
-              </AccessListContainer>
-            </div>
-          </>
-        )}
-
-        {viewMode === "new" && (
-          <div className="flex gap-4 flex-col sm:flex-row">
-            {/* Left — the draggable role catalog, always the full roster (dragging never removes a role from here — the same role can be dropped onto as many containers as needed). */}
-            <div className="sm:w-48 shrink-0">
-              <div className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-slate-400">
-                <Inbox className="h-3.5 w-3.5" /> Available · {roleOptions.length}
-              </div>
-              <div className="flex sm:flex-col gap-1.5 overflow-x-auto sm:overflow-visible sm:max-h-[55vh] sm:overflow-y-auto pb-1 sm:pb-0">
-                {roleOptions.map((r) => (
-                  <DraggableRoleCard key={r.value} role={r.value} />
-                ))}
-              </div>
-            </div>
-
-            {/* Right — drop targets: the whole module (module-level view only) plus one container per submodule. */}
-            <div className="flex-1 min-w-0 flex flex-col gap-3 sm:max-h-[55vh] sm:overflow-y-auto pr-1">
-              {!submodule && (
-                <div>
-                  <RoleDropZone
-                    label={`Whole Module — ${mod.label}`}
-                    accent
-                    roles={gates[`${moduleLevelRow.moduleSlug}:${moduleLevelRow.slug}`] ?? allRoleValues}
-                    onDropRole={(role) => setRoleForRow(moduleLevelRow, role, true)}
-                    onRemoveRole={(role) => setRoleForRow(moduleLevelRow, role, false)}
-                  />
-                  <p className="mt-1.5 text-[11px] text-muted-foreground">
-                    This is the module's front door — a role not here can't open {mod.label} at all, even if it's granted one of the pages below.
-                  </p>
-                </div>
-              )}
-              {gateRows.map((row) => {
-                const key = `${row.moduleSlug}:${row.slug}`;
-                return (
-                  <RoleDropZone
-                    key={key}
-                    label={submodule ? `Granted to ${row.title}` : row.title}
-                    roles={gates[key] ?? allRoleValues}
-                    onDropRole={(role) => setRoleForRow(row, role, true)}
-                    onRemoveRole={(role) => setRoleForRow(row, role, false)}
-                  />
-                );
-              })}
+            <div className="flex sm:flex-col gap-1.5 overflow-x-auto sm:overflow-visible sm:max-h-[55vh] sm:overflow-y-auto pb-1 sm:pb-0">
+              {roleOptions.map((r) => (
+                <DraggableRoleCard key={r.value} role={r.value} />
+              ))}
             </div>
           </div>
-        )}
+
+          {/* Right — drop targets: the whole module (module-level view only) plus one container per submodule. */}
+          <div className="flex-1 min-w-0 flex flex-col gap-3 sm:max-h-[55vh] sm:overflow-y-auto pr-1">
+            {!submodule && (
+              <div>
+                <RoleDropZone
+                  label={`Whole Module — ${mod.label}`}
+                  accent
+                  roles={gates[`${moduleLevelRow.moduleSlug}:${moduleLevelRow.slug}`] ?? allRoleValues}
+                  onDropRole={(role) => setRoleForRow(moduleLevelRow, role, true)}
+                  onRemoveRole={(role) => setRoleForRow(moduleLevelRow, role, false)}
+                />
+                <p className="mt-1.5 text-[11px] text-muted-foreground">
+                  This is the module's front door — a role not here can't open {mod.label} at all, even if it's granted one of the pages below.
+                </p>
+              </div>
+            )}
+            {gateRows.map((row) => {
+              const key = `${row.moduleSlug}:${row.slug}`;
+              return (
+                <RoleDropZone
+                  key={key}
+                  label={submodule ? `Granted to ${row.title}` : row.title}
+                  roles={gates[key] ?? allRoleValues}
+                  onDropRole={(role) => setRoleForRow(row, role, true)}
+                  onRemoveRole={(role) => setRoleForRow(row, role, false)}
+                />
+              );
+            })}
+          </div>
+        </div>
         <p className="mt-4 text-xs text-muted-foreground">
           For every module at once, or to manage roles themselves,{" "}
           <Link

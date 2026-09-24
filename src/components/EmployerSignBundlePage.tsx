@@ -44,7 +44,7 @@ import { fillMileageFuelPdf, loadBlankMileageFuelBytes } from "@/lib/mileageFuel
 import { fillFlashTechnicianTravelPdf, loadBlankFlashTechnicianTravelBytes } from "@/lib/flashTechnicianTravelPdfFill";
 import { useSignaturePad, type SignaturePadHandle } from "@/hooks/useSignaturePad";
 import { SignaturePadControls } from "@/components/SignaturePad";
-import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
+import pdfWorkerUrl from "pdfjs-dist/legacy/build/pdf.worker.min.mjs?url";
 
 // Standard US Letter height in points — every one of these PDFs uses it.
 // Needed to flip pdf-lib's bottom-left-origin y coordinates into the
@@ -147,7 +147,7 @@ function LiveDocumentPreview({
       setPageError(null);
       try {
         const [pdfjsLib, bytes] = await Promise.all([
-          import("pdfjs-dist"),
+          import("pdfjs-dist/legacy/build/pdf.mjs"),
           (async () => {
             // Prefer the document's actual current PDF — it already has the
             // employee's filled-in fields/signature composited in — and

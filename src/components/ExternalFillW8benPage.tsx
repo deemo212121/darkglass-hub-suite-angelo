@@ -22,7 +22,7 @@ import type { W8benAddress, W8benFormData } from "@/lib/w8benFormTemplate";
 import { useSignaturePad } from "@/hooks/useSignaturePad";
 import { useResponsivePdfScale } from "@/hooks/useResponsivePdfScale";
 import { SignaturePadControls } from "@/components/SignaturePad";
-import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
+import pdfWorkerUrl from "pdfjs-dist/legacy/build/pdf.worker.min.mjs?url";
 
 interface Props {
   docId: string;
@@ -134,7 +134,7 @@ export function ExternalFillW8benPage({ docId }: Props) {
     (async () => {
       setPageLoading(true);
       try {
-        const [pdfjsLib, bytes] = await Promise.all([import("pdfjs-dist"), loadBlankW8benBytes()]);
+        const [pdfjsLib, bytes] = await Promise.all([import("pdfjs-dist/legacy/build/pdf.mjs"), loadBlankW8benBytes()]);
         pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
         const pdf = await pdfjsLib.getDocument({ data: bytes }).promise;
         const page = await pdf.getPage(1);

@@ -118,9 +118,9 @@ function fmtShortDate(iso: string): string {
   return `${m}/${d}`;
 }
 
-/** 7.192 -> "7.1920" — decimal format for displayed hour quantities (Regular/Meal/Overtime/Total Hours, Weekly Breakdown). Used to be a rounded-to-the-minute "H:MM" clock format, which silently threw away real seconds-level precision that the underlying math (used by payment calculations everywhere) already carries — 4 decimal places keeps that precision visible (0.0001hr ≈ 0.36s, well under a full second). */
+/** 7.192 -> "7.192" — decimal format for displayed hour quantities (Regular/Meal/Overtime/Total Hours, Weekly Breakdown). Used to be a rounded-to-the-minute "H:MM" clock format, which silently threw away real seconds-level precision that the underlying math (used by payment calculations everywhere) already carries — 3 decimal places keeps that precision visible (0.001hr ≈ 3.6s) while staying compact. */
 function fmtDecimal(hours: number): string {
-  return hours.toFixed(4);
+  return hours.toFixed(3);
 }
 
 /**
@@ -801,7 +801,12 @@ export function EmployeePayrollDetailModal({
 
   const payViewTotals = useMemo(() => {
     if (isCurrentlyFixed && currentEntry?.annualSalary) {
-      const fixed = monthlySalary(currentEntry.annualSalary);
+      // perCutoffSalary (annual / 26), not monthlySalary (annual / 12) — this
+      // tile is scoped to the same biweekly cutoff period as everywhere else
+      // pay is shown (Current Rate tile, Tech Activity Report's Hourly Pay
+      // line). Using monthlySalary here inflated it to annual/12 (e.g. a
+      // $72,000/yr salary showed $6,000.00 instead of the correct $2,769.23).
+      const fixed = perCutoffSalary(currentEntry.annualSalary);
       return {
         calculated: { regularPay: fixed, overtimePay: 0, total: fixed },
         compliant: { regularPay: fixed, overtimePay: 0, total: fixed },
@@ -1229,7 +1234,7 @@ export function EmployeePayrollDetailModal({
               <p className="text-xl font-bold text-green-300 mt-1">${displayedPayFlat.toFixed(2)}</p>
               {!isCurrentlyFixed && (
                 <p className="text-xs text-slate-400 mt-0.5" title="Flat — every hour (regular and overtime alike) at the same rate, no 1.5× multiplier. The Tech Activity Report step computes the real Hourly + OT total, including the FLSA weighted-regular-rate overtime premium once this period's incentive/bonus pay is folded in — this tile is just the state-floor check, not that final figure.">
-                  {(totalHoursSplit.regular + totalHoursSplit.overtime).toFixed(4)} hrs flat = ${displayedPayFlat.toFixed(2)}
+                  {(totalHoursSplit.regular + totalHoursSplit.overtime).toFixed(3)} hrs flat = ${displayedPayFlat.toFixed(2)}
                 </p>
               )}
             </div>

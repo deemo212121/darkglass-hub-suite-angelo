@@ -54,7 +54,7 @@ function isCompletedStatus(status: string): boolean {
 /** Matches the real "Repair Type" dropdown on a ticket's Visit Log (ticket.$ticketNo.tsx), plus DEFAULT_REPAIR_TYPE. */
 export const REPAIR_TYPES = [
   DEFAULT_REPAIR_TYPE,
-  "2 Man Job", "Back Tub", "Major Repair", "Panel 60 Over", "Panel 80 Over",
+  "2 Man Job", "Back Tub", "Drum Replacement", "Major Repair", "Panel 60 Over", "Panel 80 Over",
   "Seal with Trainee", "Sealed System", "Sealed System Follow Up",
   "Sealed System(R600)", "Stacked Unit(Washer Only)", "Wall Oven",
 ];

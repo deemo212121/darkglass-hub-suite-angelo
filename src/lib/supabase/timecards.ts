@@ -626,11 +626,18 @@ function hoursBetween(t1: string, t2: string): number {
 
 export function calcWorkedHours(entry: UITimeEntry): number {
   if (!entry || !entry.checkIn || !entry.checkOut) return 0;
-  let hrs = hoursBetween(entry.checkIn, entry.checkOut);
+  const span = hoursBetween(entry.checkIn, entry.checkOut);
   if (entry.mealStart && entry.mealEnd) {
-    hrs -= hoursBetween(entry.mealStart, entry.mealEnd);
+    const mealDuration = hoursBetween(entry.mealStart, entry.mealEnd);
+    // A punched meal duration of 0, negative, or longer than the shift
+    // itself isn't a real break — it's bad punch data (e.g. a stray/
+    // mistimed Meal In or Meal Out) — so don't subtract it. Previously this
+    // subtracted unconditionally and let Math.max(0, hrs) clamp a resulting
+    // negative to 0, silently erasing the whole day's real Check In/Check
+    // Out hours instead of surfacing that the meal punch was wrong.
+    if (mealDuration > 0 && mealDuration < span) return span - mealDuration;
   }
-  return Math.max(0, hrs);
+  return Math.max(0, span);
 }
 
 /** Policy meal-break length (30 min) for meal-always-paid roles — no longer used to size the pay credit itself (see computeMealTimeCredit), only as the threshold a real punched meal duration is flagged against as running long. */
@@ -681,9 +688,17 @@ export function computeMealTimeCredit(
   mealAlwaysPaid: boolean
 ): number {
   if (!mealAlwaysPaid) return 0;
-  if (!entry.checkIn || !entry.checkOut || hoursBetween(entry.checkIn, entry.checkOut) <= 6) return 0;
+  if (!entry.checkIn || !entry.checkOut) return 0;
+  const span = hoursBetween(entry.checkIn, entry.checkOut);
+  if (span <= 6) return 0;
   if (!entry.mealStart || !entry.mealEnd) return 0;
-  return Math.max(0, hoursBetween(entry.mealStart, entry.mealEnd));
+  const mealDuration = hoursBetween(entry.mealStart, entry.mealEnd);
+  // Same sanity guard as calcWorkedHours above — a meal duration of 0,
+  // negative, or longer than the shift itself is bad punch data, not a
+  // real break calcWorkedHours actually subtracted, so there's nothing
+  // real to credit back here either.
+  if (mealDuration <= 0 || mealDuration >= span) return 0;
+  return mealDuration;
 }
 
 /** Public helper for components that need the raw HH:MM diff. */

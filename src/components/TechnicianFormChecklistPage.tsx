@@ -41,7 +41,7 @@ import { Switch } from "@/components/ui/switch";
 import { ManagerReviewPage, SUPPORTED_TYPES as EMPLOYER_SIGN_SUPPORTED_TYPES } from "@/components/ManagerReviewPage";
 import { getCompanyUsers, getMyProfileId, setProfileFrozen, type ProfileRow } from "@/lib/supabase/users";
 import { isEligibleForTechnicianFormChecklist, isBmAndUpRole, getRoleDepartmentBreakdown } from "@/lib/roleLabels";
-import { getSignableDocumentsByTypes, getExistingActiveDocumentTypes, createSignableDocument, updateSignableDocumentPdfUrl, confirmSignableDocument, type SignableDocument, type SignableDocumentType } from "@/lib/supabase/signableDocuments";
+import { getSignableDocumentsByTypes, getExistingActiveDocuments, createSignableDocument, updateSignableDocumentPdfUrl, confirmSignableDocument, type SignableDocument, type SignableDocumentType } from "@/lib/supabase/signableDocuments";
 import {
   SIGNABLE_DOCUMENT_REGISTRY,
   TECHNICIAN_FORM_TYPES,
@@ -681,7 +681,15 @@ export function TechnicianFormChecklistPage({ embedded }: { embedded?: boolean }
       // checklist, "Send" only ever means "this hasn't been sent yet", so a
       // hit here means the screen was wrong, not that HR actually wants a
       // second one.
-      const alreadySent = await getExistingActiveDocumentTypes(personId, [type]);
+      // Bucket-filtered the same way the "not sent" status above is (see
+      // line ~476) — an old-tab w8ben/w9/contractor_addendum document is
+      // invisible on this tab's own completeness count, so it shouldn't
+      // block a send from here either, or "not sent" and "can't send,
+      // already on file" would both be true at once for the same row.
+      const alreadySentRaw = await getExistingActiveDocuments(personId, [type]);
+      const alreadySent = alreadySentRaw.filter(
+        (d) => !SHARED_OLD_NEW_AUTOMATION_TYPES.has(d.documentType) || isNewAutomationDoc(d) === (activeConfig.formSourceBucket === "new")
+      );
       if (alreadySent.length > 0) {
         setActionError(`${personName} already has a ${SIGNABLE_DOCUMENT_REGISTRY[type]?.label ?? type} on file (most likely just sent from another session) — refreshing to show its current status.`);
         await loadDocsForActiveTab();
@@ -754,7 +762,17 @@ export function TechnicianFormChecklistPage({ embedded }: { embedded?: boolean }
       // the live database right before creating anything, in case another
       // session already sent one or more of these since this session's
       // last load.
-      const alreadyActive = await getExistingActiveDocumentTypes(r.profileId, outstanding);
+      // Bucket-filtered the same way as handleSendForm's own check above —
+      // an old-tab w8ben/w9/contractor_addendum document shouldn't count as
+      // "already active" for a bundle sent from the new-automation bucket.
+      const alreadyActiveRaw = await getExistingActiveDocuments(r.profileId, outstanding);
+      const alreadyActive = Array.from(
+        new Set(
+          alreadyActiveRaw
+            .filter((d) => !SHARED_OLD_NEW_AUTOMATION_TYPES.has(d.documentType) || isNewAutomationDoc(d) === (activeConfig.formSourceBucket === "new"))
+            .map((d) => d.documentType)
+        )
+      );
       const toCreate = outstanding.filter((type) => !alreadyActive.includes(type));
       if (toCreate.length === 0) {
         setActionError(`${r.name} already has all of these on file (most likely just sent from another session) — refreshing to show current status.`);

@@ -98,7 +98,7 @@ export function TechActivityReportModal({
   onSetHourlyOtMode,
   hourlyOtModeBusy,
 }: Props) {
-  const { employee, techManual, techCategoryCounts, techCarryover, ticketsAssigned, ticketsCompleted, workingDays, twoTechCount, hoursWorked, overtimeHours, hourlyRate, techHourlyPay, techHourlyPayStraight, techHourlyPayOtPremium, techWeightedRegularRate, techGuaranteedSalaryTarget, techHolidayPremium, techTraineeMatch, techIncludablePay } = row;
+  const { employee, techManual, techCategoryCounts, techCarryover, ticketsAssigned, ticketsCompleted, workingDays, twoTechCount, hoursWorked, overtimeHours, hourlyRate, techHourlyPay, techHourlyPayStraight, techHourlyPayOtPremium, techWeightedRegularRate, techGuaranteedSalaryTarget, techHolidayPremium, techIncludablePay } = row;
   const branch = employee.assigned_branch || "";
 
   // Live Company-vs-State comparison for the Hourly Pay figure — fetched
@@ -228,25 +228,66 @@ export function TechActivityReportModal({
   const matchOt = Math.max(requiredPremiumAfterMinMatch - techHourlyPayOtPremium, 0);
   const stateHourlyOtTotal = companyHourlyOtTotal + matchMin + matchOt;
 
-  // The Guaranteed Minimum Salary Match, recomputed HERE against the live,
-  // per-day state-matched total (stateHourlyOtTotal) rather than
-  // row.techGuaranteedSalaryMatch (computed in AccountingDashboard.tsx
-  // against the Company-only figure, since that module has no per-day
-  // attendance/state data to compute a state-matched total for every
-  // technician — only this modal, opened for one technician at a time,
-  // ever fetches that). The reference payroll workbook's own 15-step chain
-  // checks the guarantee against the state-corrected earned total
-  // unconditionally, not whichever of Company/State happens to be applied —
-  // so this is the authoritative figure once this report has been opened;
-  // AccountingDashboard's own total for this technician only matches it
-  // once a State override has actually been saved (see onSetHourlyOtMode).
+  // Trainee daily $100 guarantee, recomputed HERE against each day's real
+  // EFFECTIVE rate (state floor if higher than the company rate on file —
+  // same per-day floor lookup as stateMinFloor above), rather than using
+  // row.techTraineeMatch (AccountingDashboard.tsx), which has no per-day
+  // state data and sizes the shortfall against the bare company rate. That
+  // understates a trainee's actual pay on any day a state floor bumped
+  // their rate up — e.g. Bilal Poole, 2026-08-28: Virginia's $12.77 floor
+  // already pays him $153.72 for the day (well past $100), but the
+  // Company-only calc sees only 12.037 hrs * $7.25 = $87.27 and manufactures
+  // a phantom $12.73 shortfall against the $100 target.
+  const TRAINEE_DAILY_MATCH_TARGET = 100;
+  const techTraineeMatch = useMemo(() => {
+    const trainingEndDate = employee.trainingEndDate;
+    if (!trainingEndDate) return 0;
+    let match = 0;
+    for (const d of periodDayInfo) {
+      if (d.date < periodStart || d.date > periodEnd) continue;
+      if (hireDate && d.date < hireDate) continue;
+      if (d.date > trainingEndDate) continue;
+      const split = dailySplit.get(d.date) ?? { regular: 0, overtime: 0 };
+      const dayHours = split.regular + split.overtime;
+      if (dayHours <= 0) continue;
+      const companyRate = rateOnDate(d.date);
+      const floorRate = d.state ? STATE_MIN_WAGE_2026.find((s) => s.state === d.state)?.rate ?? null : null;
+      const effectiveRate = floorRate != null ? Math.max(floorRate, companyRate) : companyRate;
+      const actualDailyPay = dayHours * effectiveRate + split.overtime * techWeightedRegularRate * 0.5;
+      if (actualDailyPay < TRAINEE_DAILY_MATCH_TARGET) {
+        match += TRAINEE_DAILY_MATCH_TARGET - actualDailyPay;
+      }
+    }
+    return match;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [periodDayInfo, dailySplit, periodStart, periodEnd, hireDate, employee.trainingEndDate, salaryHistory, hourlyRate, techWeightedRegularRate]);
+
+  // The Guaranteed Minimum Salary Match, recomputed HERE (rather than using
+  // row.techGuaranteedSalaryMatch from AccountingDashboard.tsx) because that
+  // module has no per-day attendance/state data to compute companyHourlyOtTotal
+  // itself for every technician — only this modal, opened for one technician
+  // at a time, ever fetches that; this local copy has to match
+  // AccountingDashboard.tsx's formula, not diverge from it.
+  //
+  // Keyed off companyHourlyOtTotal, NOT stateHourlyOtTotal — company policy
+  // (2026-09-23) treats the state minimum-wage floor match as separate money
+  // that doesn't count toward satisfying the salary guarantee; it's still
+  // paid in full via the Hourly Pay line/Min Wage Floor Check box above once
+  // State mode is applied, just not counted toward this comparison. See the
+  // matching comment in AccountingDashboard.tsx's own copy of this calc.
+  //
   // techHolidayPremium is folded into the earned baseline too, for the same
   // reason as in AccountingDashboard.tsx's own copy of this calc — it's
   // paid as its own line further down (techGrossTotal), so leaving it out
   // here sizes the match as if it hadn't been earned yet and overpays by
   // exactly that amount whenever the guarantee triggers.
+  // Earned Toward Minimum ("A" — Company Hourly/OT + Includable + Holiday
+  // Premium) — broken out as its own value so the match's derivation
+  // (Per-Cutoff Minimum minus this) is visible on the report, not just the
+  // final Match to pay figure.
+  const techEarnedTowardMinimum = companyHourlyOtTotal + techIncludablePay + techHolidayPremium;
   const techGuaranteedSalaryMatch = techGuaranteedSalaryTarget > 0
-    ? Math.max(techGuaranteedSalaryTarget - (stateHourlyOtTotal + techIncludablePay + techHolidayPremium), 0)
+    ? Math.max(techGuaranteedSalaryTarget - techEarnedTowardMinimum, 0)
     : 0;
 
   // Temporary, NOT persisted — lets HR type in a what-if Completed Tickets
@@ -582,7 +623,7 @@ export function TechActivityReportModal({
                     </tr>
                   )}
                   {techTraineeMatch > 0.005 && (
-                    <tr title="Trainee daily $100 guarantee: any day within this technician's trainee window (hireDate through Training End Date) whose actual pay fell short of $100 is topped up to $100. A day that already earned $100+ keeps its full actual pay -- this is a floor, not a flat replacement.">
+                    <tr title="Trainee daily $100 guarantee: any day within this technician's trainee window (hireDate through Training End Date) whose actual pay -- at whichever rate was really in effect that day, including any state minimum-wage floor -- fell short of $100 is topped up to $100. A day that already earned $100+ keeps its full actual pay -- this is a floor, not a flat replacement.">
                       <td className="px-3 py-2 text-slate-300">Trainee Daily Match</td>
                       <td className="px-3 py-2 text-right text-slate-300">—</td>
                       <td className="px-3 py-2 text-right text-slate-300">$100/day</td>
@@ -995,125 +1036,6 @@ export function TechActivityReportModal({
                           <div className="flex items-center rounded-full bg-slate-900 border border-white/10 p-0.5 text-[10px] shrink-0">
                             <button
                               type="button"
-                              disabled={hourlyOtModeBusy}
-                              onClick={() => onSetHourlyOtMode("company", companyHourlyOtTotal)}
-                              className={`px-2 py-0.5 rounded-full transition ${!appliedIsState ? "bg-slate-700 text-white" : "text-slate-500 hover:text-slate-300"}`}
-                            >
-                              Company
-                            </button>
-                            <button
-                              type="button"
-                              disabled={hourlyOtModeBusy}
-                              onClick={() => onSetHourlyOtMode("state", stateHourlyOtTotal)}
-                              className={`px-2 py-0.5 rounded-full transition ${appliedIsState ? "bg-emerald-700 text-white" : "text-slate-500 hover:text-slate-300"}`}
-                            >
-                              State
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="text-slate-400">Company</span>
-                        <span className={!appliedIsState ? "text-emerald-300 font-semibold" : "text-slate-200"}>{fmt(companyHourlyOtTotal)}</span>
-                      </div>
-                      <div className="flex items-center justify-between text-xs mt-0.5">
-                        <span className="text-slate-400">State</span>
-                        <span className={appliedIsState ? "text-emerald-300 font-semibold" : "text-slate-200"}>{fmt(stateHourlyOtTotal)}</span>
-                      </div>
-                      {stateIsDue && (
-                        <p className="text-[10px] text-amber-300 mt-1 pt-1 border-t border-white/10">
-                          State pays {fmt(stateHourlyOtTotal - companyHourlyOtTotal)} more — switch to State.
-                        </p>
-                      )}
-                    </div>
-                  </>
-                );
-              })()}
-
-              {techGuaranteedSalaryTarget > 0 && (
-                <div className="bg-slate-800/50 border border-white/10 rounded-lg px-3 py-2.5" title="A fixed annual salary on file for this technician (even if not yet effective this period) acts as an ongoing floor under their hourly + incentive pay — if actual earned compensation (excluding reimbursements) falls short of that salary's per-cutoff equivalent, the shortfall is added on top, already folded into grossPay/Total Payment below.">
-                  <p className="text-[10px] text-slate-400 uppercase tracking-wide mb-1.5">Guaranteed Minimum Salary Match</p>
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="text-slate-400">Per-Cutoff Minimum</span>
-                    <span className="text-slate-200">{fmt(techGuaranteedSalaryTarget)}</span>
-                  </div>
-                  <div className="flex items-center justify-between text-xs mt-1 pt-1 border-t border-white/10">
-                    <span className="text-slate-400">Match to pay</span>
-                    <span className={techGuaranteedSalaryMatch > 0.005 ? "text-amber-300 font-semibold" : "text-slate-200"}>{fmt(techGuaranteedSalaryMatch)}</span>
-                  </div>
-                </div>
-              )}
-
-              <div className="bg-slate-800/50 border border-white/10 rounded-lg px-3 py-2.5" title="How many days in this period this technician's total drive that day (Mileage tab's Total Mileage, adjustments/overrides included) exceeded each threshold — not a raw mileage_entries row count, since a day with several tickets still shares one day total.">
-                <p className="text-[10px] text-slate-400 uppercase tracking-wide mb-1.5">Days Over Mileage Threshold</p>
-                {loadingExtras ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin text-slate-400" />
-                ) : (
-                  <div className="flex flex-col gap-1">
-                    {mileageThresholdCounts.map(({ threshold, count }) => (
-                      <div key={threshold} className="flex items-center justify-between text-xs">
-                        <span className="text-slate-400">&gt;{threshold} miles</span>
-                        <span className={count > 0 ? "text-amber-300 font-semibold" : "text-slate-300"}>{count}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {companyHourlyOtTotal > 0 && (() => {
-                // Currently applied = whichever side techHourlyPay (the
-                // real, paid figure) matches. With no override saved yet,
-                // that's always Company by construction (see
-                // AccountingDashboard.tsx), even on days State would be
-                // legally required — so also flag that case (stateIsDue)
-                // so it doesn't read as "Company is fine" when it isn't.
-                const appliedIsState = Math.abs(techHourlyPay - companyHourlyOtTotal) > 0.005;
-                const stateIsDue = !appliedIsState && stateHourlyOtTotal > companyHourlyOtTotal + 0.005;
-                return (
-                  <>
-                    <div className="bg-slate-800/50 border border-white/10 rounded-lg px-3 py-2.5" title="Regular + meal hours at each day's own assigned state minimum wage, vs. those same regular hours at the flat company rate — same Min-floor check as the reference payroll workbook. Excludes OT hours' flat pay, which would otherwise pad this comparison and hide a real regular-hours shortfall.">
-                      <p className="text-[10px] text-slate-400 uppercase tracking-wide mb-1.5">Min Wage Floor Check</p>
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="text-slate-400">State Req Min Floor</span>
-                        <span className="text-slate-200">{fmt(stateMinFloor)}</span>
-                      </div>
-                      <div className="flex items-center justify-between text-xs mt-0.5">
-                        <span className="text-slate-400">Company PD Min</span>
-                        <span className="text-slate-200">{fmt(companyRegularPayBlended)}</span>
-                      </div>
-                      <div className="flex items-center justify-between text-xs mt-1 pt-1 border-t border-white/10">
-                        <span className="text-slate-400">Match to pay</span>
-                        <span className={matchMin > 0.005 ? "text-amber-300 font-semibold" : "text-slate-200"}>{fmt(matchMin)}</span>
-                      </div>
-                    </div>
-
-                    <div className="bg-slate-800/50 border border-white/10 rounded-lg px-3 py-2.5" title="Once the Min-floor match above adds pay, the regular rate the OT premium is based on has to be recomputed with it folded in — this is the required premium at that recomputed rate, vs. what's already been paid. Not an independent state-OT-floor check; a cascade off the Min match.">
-                      <p className="text-[10px] text-slate-400 uppercase tracking-wide mb-1.5">
-                        OT Match After Min{loadingStateComparison ? " (loading…)" : ""}
-                      </p>
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="text-slate-400">Required Premium After Match</span>
-                        <span className="text-slate-200">{fmt(requiredPremiumAfterMinMatch)}</span>
-                      </div>
-                      <div className="flex items-center justify-between text-xs mt-0.5">
-                        <span className="text-slate-400">Company PD OT</span>
-                        <span className="text-slate-200">{fmt(techHourlyPayOtPremium)}</span>
-                      </div>
-                      <div className="flex items-center justify-between text-xs mt-1 pt-1 border-t border-white/10">
-                        <span className="text-slate-400">Match to pay</span>
-                        <span className={matchOt > 0.005 ? "text-amber-300 font-semibold" : "text-slate-200"}>{fmt(matchOt)}</span>
-                      </div>
-                    </div>
-
-                    <div className="bg-slate-800/50 border border-white/10 rounded-lg px-3 py-2.5">
-                      <div className="flex items-center justify-between gap-2 mb-1.5">
-                        <p className="text-[10px] text-slate-400 uppercase tracking-wide" title="Company + any Min/OT match owed above — not the full grossPay total below.">
-                          Hourly + OT Pay
-                        </p>
-                        {onSetHourlyOtMode && (
-                          <div className="flex items-center rounded-full bg-slate-900 border border-white/10 p-0.5 text-[10px] shrink-0">
-                            <button
-                              type="button"
                               disabled={hourlyOtModeBusy || loadingStateComparison}
                               title={loadingStateComparison ? "Still loading this technician's per-day state comparison — wait for it to finish before switching modes." : undefined}
                               onClick={() => onSetHourlyOtMode("company", companyHourlyOtTotal)}
@@ -1152,9 +1074,13 @@ export function TechActivityReportModal({
               })()}
 
               {techGuaranteedSalaryTarget > 0 && (
-                <div className="bg-slate-800/50 border border-white/10 rounded-lg px-3 py-2.5" title="A fixed annual salary on file for this technician (even if not yet effective this period) acts as an ongoing floor under their hourly + incentive pay — if actual earned compensation (excluding reimbursements) falls short of that salary's per-cutoff equivalent, the shortfall is added on top, already folded into grossPay/Total Payment below.">
+                <div className="bg-slate-800/50 border border-white/10 rounded-lg px-3 py-2.5" title="A fixed annual salary on file for this technician (even if not yet effective this period) acts as an ongoing floor under their hourly + incentive pay — if actual earned compensation (excluding reimbursements and any state minimum-wage floor match) falls short of that salary's per-cutoff equivalent, the shortfall is added on top, already folded into grossPay/Total Payment below. Earned Toward Minimum = Company Hourly/OT + Includable + Holiday Premium — company-rate earnings before any state floor match, which is paid separately and doesn't count toward this guarantee.">
                   <p className="text-[10px] text-slate-400 uppercase tracking-wide mb-1.5">Guaranteed Minimum Salary Match</p>
                   <div className="flex items-center justify-between text-xs">
+                    <span className="text-slate-400">Earned Toward Minimum</span>
+                    <span className="text-slate-200">{fmt(techEarnedTowardMinimum)}</span>
+                  </div>
+                  <div className="flex items-center justify-between text-xs mt-1">
                     <span className="text-slate-400">Per-Cutoff Minimum</span>
                     <span className="text-slate-200">{fmt(techGuaranteedSalaryTarget)}</span>
                   </div>
@@ -1164,6 +1090,22 @@ export function TechActivityReportModal({
                   </div>
                 </div>
               )}
+
+              <div className="bg-slate-800/50 border border-white/10 rounded-lg px-3 py-2.5" title="How many days in this period this technician's total drive that day (Mileage tab's Total Mileage, adjustments/overrides included) exceeded each threshold — not a raw mileage_entries row count, since a day with several tickets still shares one day total.">
+                <p className="text-[10px] text-slate-400 uppercase tracking-wide mb-1.5">Days Over Mileage Threshold</p>
+                {loadingExtras ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin text-slate-400" />
+                ) : (
+                  <div className="flex flex-col gap-1">
+                    {mileageThresholdCounts.map(({ threshold, count }) => (
+                      <div key={threshold} className="flex items-center justify-between text-xs">
+                        <span className="text-slate-400">&gt;{threshold} miles</span>
+                        <span className={count > 0 ? "text-amber-300 font-semibold" : "text-slate-300"}>{count}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </div>
