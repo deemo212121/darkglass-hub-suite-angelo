@@ -20,9 +20,10 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { ChevronLeft, ClipboardList, Loader2, RefreshCw, FileText, Check } from "lucide-react";
+import { ChevronLeft, ClipboardList, Loader2, RefreshCw, FileText, Check, Calendar as CalendarIcon, List as ListIcon } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { getMyProfileId, getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
+import { InterviewCalendarTab, type InterviewCalendarCandidate } from "@/components/InterviewCalendarTab";
 import {
   getCvForwardsForRecipient,
   getCandidateCvUrlForForwarding,
@@ -132,6 +133,14 @@ export function CandidateReviewsPage() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [cvLoadingId, setCvLoadingId] = useState<string | null>(null);
+  // "List" (the original view) vs "Calendar" — the same InterviewCalendarTab
+  // HR's own dashboard uses, just fed only the candidates forwarded to THIS
+  // viewer (rows, already personalized by getCvForwardsForRecipient above)
+  // instead of the company's full interviewing list. Since Candidate Reviews
+  // is reachable from every module now, this gives each module's own
+  // recipients a personalized interview calendar without needing a separate
+  // page/tile per module.
+  const [viewMode, setViewMode] = useState<"list" | "calendar">("list");
   // Deep-linked from a Forward Candidate message's "Open in Candidate
   // Reviews" link (MessageBody.tsx's candidate-review: pseudo-link) — a
   // #candidateId=... hash, same style as the Staff Checklist deep link.
@@ -167,6 +176,29 @@ export function CandidateReviewsPage() {
   // rather than showing the raw id.
   const profileNameById = useMemo(() => new Map(profiles.map((p) => [p.id, p.display_name || p.email])), [profiles]);
 
+  // Same "interviewing status + a date on record" filter InterviewCalendarTab's
+  // one other caller (ReportHRDaily.tsx) uses — just over `rows` (already
+  // scoped to this viewer) instead of the company's whole candidate list.
+  const calendarCandidates = useMemo<InterviewCalendarCandidate[]>(
+    () =>
+      rows
+        .filter((r): r is ForwardedRow & { candidate: Candidate & { interviewDate: string } } => r.candidate.status === "interviewing" && !!r.candidate.interviewDate)
+        .map(({ candidate: c }) => ({
+          id: c.id,
+          name: c.name,
+          position: c.position,
+          branch: c.branch,
+          phone: c.phone,
+          email: c.email,
+          interviewDate: c.interviewDate,
+          interviewTime: c.interviewTime,
+          interviewTimezone: c.interviewTimezone,
+          interviewerName: (c.assignedInterviewerId && profileNameById.get(c.assignedInterviewerId)) || null,
+          notes: c.notes,
+        })),
+    [rows, profileNameById]
+  );
+
   useEffect(() => {
     if (!focusedCandidateId || rows.length === 0) return;
     document.getElementById(`candidate-${focusedCandidateId}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -201,6 +233,26 @@ export function CandidateReviewsPage() {
           </h1>
           <p className="text-sm text-slate-400">Candidates HR has forwarded to you — leave your interviewer notes here.</p>
         </div>
+        <div className="inline-flex items-center rounded-lg border border-white/10 bg-white/5 p-0.5 shrink-0">
+          <button
+            type="button"
+            onClick={() => setViewMode("list")}
+            className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-semibold transition ${
+              viewMode === "list" ? "bg-white/10 text-white" : "text-slate-400 hover:text-slate-200"
+            }`}
+          >
+            <ListIcon className="h-3.5 w-3.5" /> List
+          </button>
+          <button
+            type="button"
+            onClick={() => setViewMode("calendar")}
+            className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-semibold transition ${
+              viewMode === "calendar" ? "bg-white/10 text-white" : "text-slate-400 hover:text-slate-200"
+            }`}
+          >
+            <CalendarIcon className="h-3.5 w-3.5" /> Calendar
+          </button>
+        </div>
         <button
           type="button"
           onClick={() => void load()}
@@ -214,6 +266,8 @@ export function CandidateReviewsPage() {
 
       {loading ? (
         <p className="text-sm text-slate-400 py-8 text-center">Loading…</p>
+      ) : viewMode === "calendar" ? (
+        <InterviewCalendarTab candidates={calendarCandidates} onGoToHiring={() => setViewMode("list")} goToLabel="View in List" />
       ) : rows.length === 0 ? (
         <p className="text-sm text-slate-400 py-8 text-center">
           No candidates have been forwarded to you yet — check back after HR sends you one.

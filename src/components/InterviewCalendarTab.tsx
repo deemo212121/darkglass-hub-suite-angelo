@@ -33,6 +33,8 @@ function formatInterviewTime(time: string | null, timezone: string | null): stri
 interface Props {
   candidates: InterviewCalendarCandidate[];
   onGoToHiring: () => void;
+  /** Button label for onGoToHiring — defaults to "Go to Hiring" (HR's own Hiring table); a personalized instance (InterviewCalendarPage) points this at Candidate Reviews instead, since a non-HR viewer has no access to Hiring. */
+  goToLabel?: string;
 }
 
 const DOW_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -54,7 +56,7 @@ function formatHHMM(hhmm: string): string {
   return `${hour12}:${String(m).padStart(2, "0")} ${period}`;
 }
 
-export function InterviewCalendarTab({ candidates, onGoToHiring }: Props) {
+export function InterviewCalendarTab({ candidates, onGoToHiring, goToLabel = "Go to Hiring" }: Props) {
   const [monthOffset, setMonthOffset] = useState(0);
   const [detail, setDetail] = useState<InterviewCalendarCandidate | null>(null);
 
@@ -249,7 +251,7 @@ export function InterviewCalendarTab({ candidates, onGoToHiring }: Props) {
               </div>
               <div className="flex items-center gap-2 pt-3">
                 <button type="button" onClick={onGoToHiring} className="btn text-xs px-3 py-1.5">
-                  Go to Hiring
+                  {goToLabel}
                 </button>
                 <button type="button" onClick={() => setDetail(null)} className="btn text-xs px-3 py-1.5">
                   Close

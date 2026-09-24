@@ -248,6 +248,18 @@ const csrMod: ModuleDef = {
       seed: () => ({}),
     },
     // Same shortcut-copy pattern as Branch/Technician's own tiles below —
+    // reuses HR's exact page (dispatch is by `custom` alone), just
+    // reachable from here too.
+    {
+      slug: "candidate-reviews",
+      title: "Candidate Reviews",
+      description: "Candidates forwarded to you for review — view their CV and leave your interviewer notes.",
+      custom: "candidate-reviews" as any,
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
+    // Same shortcut-copy pattern as Branch/Technician's own tiles below —
     // reuses Dashboard's exact page (dispatch is by `custom` alone), just
     // reachable from here too, per the user's explicit call that every
     // module except Admin/Tickets/Report should carry these two.
@@ -317,6 +329,16 @@ const accountingMod: ModuleDef = {
       title: "Expenses",
       description: "Expense tracking by category — Flash Tech for now, more categories to come.",
       custom: "expenses" as any,
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
+    // Same shortcut-copy pattern as HR's own Candidate Reviews tile.
+    {
+      slug: "candidate-reviews",
+      title: "Candidate Reviews",
+      description: "Candidates forwarded to you for review — view their CV and leave your interviewer notes.",
+      custom: "candidate-reviews" as any,
       fields: [],
       count: 0,
       seed: () => ({}),
@@ -756,6 +778,16 @@ const partsMod: ModuleDef = {
       description: "Parts Order overview — distributor spend, daily PO balances, warranty/vendor breakdown, part lines, and Parts Order staff.",
       custom: "parts-order-dashboard" as any,
       fields: [],
+      seed: () => ({}),
+    },
+    // Same shortcut-copy pattern as HR's own Candidate Reviews tile.
+    {
+      slug: "candidate-reviews",
+      title: "Candidate Reviews",
+      description: "Candidates forwarded to you for review — view their CV and leave your interviewer notes.",
+      custom: "candidate-reviews" as any,
+      fields: [],
+      count: 0,
       seed: () => ({}),
     },
     // Same shortcut-copy pattern as CSR/Accounting/HR's own tiles above —
@@ -1491,6 +1523,16 @@ const claimsMod: ModuleDef = {
         claimStatus: pick(["Not Claimed","Pending","Approved","Denied"], i),
       }),
     },
+    // Same shortcut-copy pattern as HR's own Candidate Reviews tile.
+    {
+      slug: "candidate-reviews",
+      title: "Candidate Reviews",
+      description: "Candidates forwarded to you for review — view their CV and leave your interviewer notes.",
+      custom: "candidate-reviews" as any,
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
     // Same shortcut-copy pattern as CSR/Accounting/HR/Logistics' own tiles
     // above — reuses Dashboard's exact page (dispatch is by `custom` alone).
     {
@@ -1945,6 +1987,16 @@ const triageMod: ModuleDef = {
       count: 0,
       seed: () => ({}),
     },
+    // Same shortcut-copy pattern as HR's own Candidate Reviews tile.
+    {
+      slug: "candidate-reviews",
+      title: "Candidate Reviews",
+      description: "Candidates forwarded to you for review — view their CV and leave your interviewer notes.",
+      custom: "candidate-reviews" as any,
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
     // Same shortcut-copy pattern as CSR/Accounting/HR/Logistics/Claims'
     // own tiles above — reuses Dashboard's exact page (dispatch is by
     // `custom` alone).
@@ -1991,6 +2043,16 @@ const bizOpsMod: ModuleDef = {
       title: "Operations Daily Report",
       description: "Operations staff tasks, mishandled tickets, and Eastern/Western/Central TX branch metrics.",
       custom: "report-operations-daily" as any,
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
+    // Same shortcut-copy pattern as HR's own Candidate Reviews tile.
+    {
+      slug: "candidate-reviews",
+      title: "Candidate Reviews",
+      description: "Candidates forwarded to you for review — view their CV and leave your interviewer notes.",
+      custom: "candidate-reviews" as any,
       fields: [],
       count: 0,
       seed: () => ({}),

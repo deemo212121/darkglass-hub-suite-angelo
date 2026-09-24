@@ -28,7 +28,7 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
-import { ChevronLeft, Pencil, Check, Loader2, Filter, CalendarDays, ListChecks, ClipboardList, Paperclip, Flag, History, X, BarChart3 } from "lucide-react";
+import { ChevronLeft, Pencil, Check, Loader2, Filter, CalendarDays, ListChecks, ClipboardList, Paperclip, Flag, History, X, BarChart3, AlertTriangle, Umbrella, FileText } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { ROLE_LABELS } from "@/lib/roleLabels";
@@ -40,6 +40,9 @@ import { getAttendanceNotes, upsertAttendanceNote, upsertAttendanceHrNote, uploa
 import { getCompanyPtoRequests, type PtoRequestRow } from "@/lib/supabase/pto";
 import { HrCalendarTab } from "@/components/HrCalendarTab";
 import { TicketAttendanceTab } from "@/components/TicketAttendanceTab";
+import { TicketTimeDisputesTab } from "@/components/TicketTimeDisputesTab";
+import { PtoManagementTab } from "@/components/PtoManagementTab";
+import { CorrectionsTab } from "@/components/CorrectionsTab";
 import { HolidayCalendarTab } from "@/components/HolidayCalendarTab";
 import { AttachmentPreviewModal } from "@/components/AttachmentPreviewModal";
 import { getCompanyHolidaysInRange, type CompanyHolidayRow } from "@/lib/supabase/companyHolidays";
@@ -141,7 +144,7 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
   // Monitoring already mount (TicketAttendanceTab.tsx takes no props and
   // fetches its own data), added as a third view so HR can check on-site
   // check-ins without leaving this page.
-  const [view, setView] = useState<"list" | "calendar" | "ticketAttendance" | "holidays">("list");
+  const [view, setView] = useState<"list" | "calendar" | "ticketAttendance" | "ticketTimeDisputes" | "ptoManagement" | "corrections" | "holidays">("list");
   const [statsCardHidden, setStatsCardHidden] = useState(false);
   const [dateFrom, setDateFrom] = useState(todayISO());
   const [dateTo, setDateTo] = useState(todayISO());
@@ -897,6 +900,27 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
           </button>
           <button
             type="button"
+            onClick={() => setView("ticketTimeDisputes")}
+            className={`btn text-sm px-3 py-1.5 inline-flex items-center gap-1.5 ${view === "ticketTimeDisputes" ? "bg-primary/20 text-primary" : ""}`}
+          >
+            <AlertTriangle className="h-3.5 w-3.5" /> Ticket Time Disputes
+          </button>
+          <button
+            type="button"
+            onClick={() => setView("ptoManagement")}
+            className={`btn text-sm px-3 py-1.5 inline-flex items-center gap-1.5 ${view === "ptoManagement" ? "bg-primary/20 text-primary" : ""}`}
+          >
+            <Umbrella className="h-3.5 w-3.5" /> PTO Management
+          </button>
+          <button
+            type="button"
+            onClick={() => setView("corrections")}
+            className={`btn text-sm px-3 py-1.5 inline-flex items-center gap-1.5 ${view === "corrections" ? "bg-primary/20 text-primary" : ""}`}
+          >
+            <FileText className="h-3.5 w-3.5" /> Corrections
+          </button>
+          <button
+            type="button"
             onClick={() => setView("holidays")}
             className={`btn text-sm px-3 py-1.5 inline-flex items-center gap-1.5 ${view === "holidays" ? "bg-primary/20 text-primary" : ""}`}
           >
@@ -909,6 +933,12 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
         )}
 
         {view === "ticketAttendance" && <TicketAttendanceTab />}
+
+        {view === "ticketTimeDisputes" && <TicketTimeDisputesTab />}
+
+        {view === "ptoManagement" && <PtoManagementTab />}
+
+        {view === "corrections" && <CorrectionsTab />}
 
         {view === "holidays" && <HolidayCalendarTab myProfileId={myProfileId} />}
 

@@ -68,8 +68,8 @@ export const driversLicenseFormStyles = `
   .dlicense-row { border-bottom: 1px solid #d1d5db; padding: 5px 2px; }
   .dlicense-label { color: #374151; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.2px; display: block; }
   .dlicense-value { font-weight: 700; }
-  .dlicense-photos { display: flex; gap: 10px; margin-top: 6px; flex-wrap: wrap; }
-  .dlicense-photos img { width: 320px; height: 202px; object-fit: cover; border: 1px solid #d1d5db; border-radius: 4px; }
+  .dlicense-photos { display: flex; flex-direction: column; gap: 12px; margin-top: 6px; }
+  .dlicense-photos img { max-width: 660px; max-height: 600px; width: auto; height: auto; object-fit: contain; border: 1px solid #d1d5db; border-radius: 4px; }
   .dlicense-cert { margin-top: 20px; font-style: italic; }
   .dlicense-sig-line { border-bottom: 1px solid #9ca3af; min-height: 44px; padding: 4px 2px; display: flex; align-items: flex-end; margin-top: 16px; }
   .dlicense-sign-row { display: flex; justify-content: space-between; gap: 16px; padding: 6px 2px 0; }

@@ -13385,20 +13385,36 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   };
 
   const handleCancelPromotionForm = async (doc: SignableDocument) => {
-    const isRevert = doc.status === "confirmed";
-    const message = isRevert
-      ? "Revert this confirmed promotion form? It goes back to voided — it was never applied to the employee's profile in the first place, so there's nothing else to undo."
-      : "Cancel this promotion form? This voids it entirely.";
-    if (!window.confirm(message)) return;
+    if (!window.confirm("Cancel this promotion form? This voids it entirely.")) return;
     setPromoActionBusyId(doc.id);
     setPromoActionError(null);
     try {
       await cancelSignableDocument(doc.id);
       await loadSentPromotionForms();
       const data = doc.formData as unknown as PromotionFormData;
-      void logActivity({ action: isRevert ? "promotion_form_reverted" : "promotion_form_cancelled", targetType: "employee", targetId: data.employeeId, targetLabel: data.employeeName });
+      void logActivity({ action: "promotion_form_cancelled", targetType: "employee", targetId: data.employeeId, targetLabel: data.employeeName });
     } catch (err) {
-      setPromoActionError(err instanceof Error ? err.message : `Failed to ${isRevert ? "revert" : "cancel"} promotion form.`);
+      setPromoActionError(err instanceof Error ? err.message : "Failed to cancel promotion form.");
+    } finally {
+      setPromoActionBusyId(null);
+    }
+  };
+
+  // Confirmed doesn't need a full void to fix a bad HR signature — same
+  // "reopen just the employer/HR step, employee's own signature and
+  // formData untouched" primitive every other document type's Re-sign
+  // button already uses (see handleReopenI9Section2's own comment). No
+  // logActivity call, matching every other document type's Re-sign action —
+  // only the more consequential confirm/cancel/revert events get logged.
+  const handleReopenPromotionFormForHr = async (doc: SignableDocument) => {
+    if (!window.confirm("Re-open this promotion form for HR to re-sign? The earlier signature(s) and form data stay as-is.")) return;
+    setPromoActionBusyId(doc.id);
+    setPromoActionError(null);
+    try {
+      await reopenEmployerSignature(doc.id);
+      await loadSentPromotionForms();
+    } catch (err) {
+      setPromoActionError(err instanceof Error ? err.message : "Failed to reopen for re-signing.");
     } finally {
       setPromoActionBusyId(null);
     }
@@ -22860,10 +22876,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                             <button
                               type="button"
                               disabled={busy}
-                              onClick={() => handleCancelPromotionForm(doc)}
+                              onClick={() => handleReopenPromotionFormForHr(doc)}
                               className="btn text-[10px] px-2 py-1 text-yellow-300 hover:bg-yellow-500/10 disabled:opacity-50"
                             >
-                              Revert
+                              Re-sign for HR
                             </button>
                           )}
                           <button

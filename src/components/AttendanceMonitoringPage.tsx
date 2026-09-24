@@ -22,6 +22,7 @@ import {
   type CompanyTimecardEntry,
 } from "@/lib/supabase/timecards";
 import { getAttendanceNotes, upsertAttendanceNote } from "@/lib/supabase/attendanceNotes";
+import { getCompanyTraineeEntries, type TraineeTimecardEntry } from "@/lib/supabase/traineeTimecards";
 import { getCompanyHolidaysInRange, type CompanyHolidayRow } from "@/lib/supabase/companyHolidays";
 import { getBranchRoles, type BranchRoles } from "@/lib/supabase/generalInfo";
 import { ActivityLogPanel } from "@/components/ActivityLogPanel";
@@ -328,6 +329,12 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   const [profiles, setProfiles] = useState<ProfileRow[]>([]);
   const [csrComposition, setCsrComposition] = useState<CsrTeamComposition | null>(null);
   const [entries, setEntries] = useState<CompanyTimecardEntry[]>([]);
+  // Trainee punches (see traineeTimecards.ts) land in their own table, not
+  // timecard_entries, until a manager approves the day — so the Weekly
+  // Attendance Summary needs this separately to tell "genuinely absent"
+  // apart from "clocked in, awaiting approval" instead of showing both as
+  // a plain red X.
+  const [traineeEntries, setTraineeEntries] = useState<TraineeTimecardEntry[]>([]);
   const [checkoutProposals, setCheckoutProposals] = useState<CheckoutProposal[]>([]);
   // Company Holidays (Absent List's Holiday Calendar tab) — treated exactly
   // like a scheduled off-day for alert purposes (no "missing clock-in"
@@ -477,11 +484,12 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     }
     setLoading(true);
     try {
-      const [profileId, profileRows, csrCompositionResult, entryRows, noteRows, ptoRows, correctionRows, historyRows, conductNoteRows, employeeRequestRows, checkoutProposalRows, branchRoleRows, holidayRows] = await Promise.all([
+      const [profileId, profileRows, csrCompositionResult, entryRows, traineeEntryRows, noteRows, ptoRows, correctionRows, historyRows, conductNoteRows, employeeRequestRows, checkoutProposalRows, branchRoleRows, holidayRows] = await Promise.all([
         getProfileIdByFirebaseUid(uid),
         getCompanyUsers(),
         getCsrTeamComposition().catch(() => null),
         getCompanyTimecardEntries(rangeStart, rangeEnd),
+        getCompanyTraineeEntries(rangeStart, rangeEnd).catch(() => []),
         getAttendanceNotes(todayISO, todayISO),
         getCompanyPtoRequests(),
         getCompanyTimecardCorrections(),
@@ -496,6 +504,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
       setProfiles(profileRows);
       setCsrComposition(csrCompositionResult);
       setEntries(entryRows);
+      setTraineeEntries(traineeEntryRows);
       setCheckoutProposals(checkoutProposalRows);
       setBranchRoles(branchRoleRows);
       setCompanyHolidays(holidayRows);
@@ -777,6 +786,18 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     return map;
   }, [entries]);
 
+  // Only "pending" matters here — an approved trainee day has already been
+  // copied onto the real timecard_entries row by approveTraineeDay (see
+  // traineeTimecards.ts), so it's already covered by entriesByKey above; a
+  // rejected day never becomes real attendance, same as a plain absence.
+  const traineePendingByKey = useMemo(() => {
+    const map = new Map<string, TraineeTimecardEntry>();
+    traineeEntries.forEach((e) => {
+      if (e.status === "pending" && e.checkIn) map.set(`${e.profileId}|${e.workDate}`, e);
+    });
+    return map;
+  }, [traineeEntries]);
+
   const customEntriesByKey = useMemo(() => {
     if (customRangeCovered) return entriesByKey;
     const map = new Map<string, CompanyTimecardEntry>();
@@ -1009,12 +1030,14 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
         const entry = entriesByKey.get(`${p.id}|${iso}`);
         const present = Boolean(entry?.checkIn);
         if (present) presentCount++;
-        return present ? ("present" as const) : ("absent" as const);
+        if (present) return "present" as const;
+        if (p.employment_type === "trainee" && traineePendingByKey.has(`${p.id}|${iso}`)) return "pending" as const;
+        return "absent" as const;
       });
       const pct = workingDays > 0 ? Math.round((presentCount / workingDays) * 100) : 100;
       return { profileId: p.id, name: p.display_name || p.email, cells, presentCount, workingDays, pct };
     });
-  }, [summaryProfiles, weekDates, entriesByKey, todayISO]);
+  }, [summaryProfiles, weekDates, entriesByKey, traineePendingByKey, todayISO]);
 
   // Narrows weeklySummary to rows matching the selected day + status (e.g.
   // "who was absent on Wednesday") — "all" for either just shows everyone,
@@ -2252,6 +2275,13 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                               <span className="text-slate-600">—</span>
                             ) : cell === "present" ? (
                               <span className="inline-block px-2 py-1 rounded bg-green-500/20 text-green-300">✓</span>
+                            ) : cell === "pending" ? (
+                              <span
+                                className="inline-block px-2 py-1 rounded bg-amber-500/20 text-amber-300"
+                                title="Pending — needs to be approved by the manager by the end of the day"
+                              >
+                                ⏳
+                              </span>
                             ) : (
                               <span className="inline-block px-2 py-1 rounded bg-red-500/20 text-red-300">✗</span>
                             )}

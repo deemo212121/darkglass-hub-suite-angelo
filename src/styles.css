@@ -6134,6 +6134,98 @@ a.mtech-phone-link:active { opacity: 0.7; }
   opacity: 0.5;
   cursor: not-allowed;
 }
+.mtech-clockin-row-flag {
+  margin-top: 0.3rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #fbbf24;
+}
+
+/* ── Team Approvals (Trainee / Corrections / PTO, manager stage only) ──── */
+.mtech-approvals-tabs {
+  display: flex;
+  gap: 0.4rem;
+}
+.mtech-approvals-tab {
+  appearance: none;
+  flex: 1;
+  padding: 0.5rem 0.4rem;
+  border: 1px solid var(--mt-surface-border);
+  border-radius: 10px;
+  background: var(--mt-surface);
+  color: rgba(255, 255, 255, 0.75);
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: inherit;
+}
+.mtech-approvals-tab.active {
+  background: var(--mt-blue);
+  border-color: var(--mt-blue);
+  color: #fff;
+}
+.mtech-approvals-row {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.5rem;
+  width: 100%;
+  text-align: left;
+  appearance: none;
+  font-family: inherit;
+  cursor: pointer;
+}
+.mtech-approvals-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 0.9rem;
+  background: var(--mt-surface);
+  border: 1px solid var(--mt-surface-border);
+  border-radius: 12px;
+}
+.mtech-approvals-back {
+  appearance: none;
+  align-self: flex-start;
+  background: none;
+  border: none;
+  color: var(--mt-blue);
+  font-size: 0.8rem;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 0;
+  font-family: inherit;
+}
+.mtech-approvals-times {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  font-size: 0.78rem;
+  color: rgba(255, 255, 255, 0.85);
+}
+.mtech-approvals-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+.mtech-approvals-reject {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--mt-surface-border);
+}
+.mtech-approvals-select {
+  appearance: none;
+  padding: 0.5rem 0.7rem;
+  border: 1px solid var(--mt-surface-border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #fff;
+  font-size: 0.8rem;
+  font-family: inherit;
+}
+.mtech-approvals-reject-btn {
+  background: #dc2626;
+}
 
 /* ── Stub view ─────────────────────────────────────────────────────────── */
 .mtech-stub {
@@ -12575,6 +12667,98 @@ a.mtech-phone-link:active { opacity: 0.7; }
 .mtech-clockin-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+.mtech-clockin-row-flag {
+  margin-top: 0.3rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #fbbf24;
+}
+
+/* ── Team Approvals (Trainee / Corrections / PTO, manager stage only) ──── */
+.mtech-approvals-tabs {
+  display: flex;
+  gap: 0.4rem;
+}
+.mtech-approvals-tab {
+  appearance: none;
+  flex: 1;
+  padding: 0.5rem 0.4rem;
+  border: 1px solid var(--mt-surface-border);
+  border-radius: 10px;
+  background: var(--mt-surface);
+  color: rgba(255, 255, 255, 0.75);
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: inherit;
+}
+.mtech-approvals-tab.active {
+  background: var(--mt-blue);
+  border-color: var(--mt-blue);
+  color: #fff;
+}
+.mtech-approvals-row {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.5rem;
+  width: 100%;
+  text-align: left;
+  appearance: none;
+  font-family: inherit;
+  cursor: pointer;
+}
+.mtech-approvals-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 0.9rem;
+  background: var(--mt-surface);
+  border: 1px solid var(--mt-surface-border);
+  border-radius: 12px;
+}
+.mtech-approvals-back {
+  appearance: none;
+  align-self: flex-start;
+  background: none;
+  border: none;
+  color: var(--mt-blue);
+  font-size: 0.8rem;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 0;
+  font-family: inherit;
+}
+.mtech-approvals-times {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  font-size: 0.78rem;
+  color: rgba(255, 255, 255, 0.85);
+}
+.mtech-approvals-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+.mtech-approvals-reject {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--mt-surface-border);
+}
+.mtech-approvals-select {
+  appearance: none;
+  padding: 0.5rem 0.7rem;
+  border: 1px solid var(--mt-surface-border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #fff;
+  font-size: 0.8rem;
+  font-family: inherit;
+}
+.mtech-approvals-reject-btn {
+  background: #dc2626;
 }
 
 /* ── Stub view ─────────────────────────────────────────────────────────── */

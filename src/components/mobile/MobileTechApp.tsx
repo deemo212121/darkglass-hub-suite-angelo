@@ -63,7 +63,19 @@ import {
 import { getTicketBilling, saveTicketBilling, type TicketBilling } from "@/lib/supabase/billing";
 import { getMyPayslips, payslipStatusLabel, type MyPayslipRow } from "@/lib/supabase/payslips";
 import { getMyProfileSchedule, getMonthEntries, getCompanyTimecardEntries, saveEntry as saveTimecardEntry, savePunch, clearPunch, canEditPunch, resolveScheduledShiftHours, type UITimeEntry, type CompanyTimecardEntry, type PunchField } from "@/lib/supabase/timecards";
-import { getTraineeEntryForDate, saveTraineePunch, clearTraineePunch, getPendingTraineeReviewCount, type TraineeTimecardStatus } from "@/lib/supabase/traineeTimecards";
+import {
+  getTraineeEntryForDate,
+  saveTraineePunch,
+  clearTraineePunch,
+  getPendingTraineeReviewCount,
+  getTraineeReviewQueue,
+  approveTraineeDay,
+  rejectTraineeDay,
+  recordTraineeDayWithoutPunch,
+  approveTraineeDayOnField,
+  type TraineeTimecardStatus,
+  type TraineeReviewQueueItem,
+} from "@/lib/supabase/traineeTimecards";
 import { resolveTeamLeadOrManager } from "@/lib/notifyRouting";
 import { visibleAttendanceProfileIds } from "@/lib/notifyRouting";
 import { getCsrTeamComposition, type CsrTeamComposition } from "@/lib/supabase/csrTeams";
@@ -99,8 +111,8 @@ import { getModelResources, saveModelResources, type ModelResources } from "@/li
 import { getUndismissedMobilePopupAlerts, dismissTicketAlert, type TicketAlert } from "@/lib/supabase/ticketAlerts";
 import { createItTicket, getItTickets, type ItTicketRow, type ItTicketPriority } from "@/lib/supabase/itTickets";
 import { createEmployeeRequest, getCompanyEmployeeRequests, notifyRequestReviewers, type EmployeeRequestRow } from "@/lib/supabase/employeeRequests";
-import { createPtoRequest, getCompanyPtoRequests, weekdayCount, type PtoType, type PtoRequestRow } from "@/lib/supabase/pto";
-import { createTimecardCorrection, getCompanyTimecardCorrections, type TimecardCorrectionRow } from "@/lib/supabase/timecardCorrections";
+import { createPtoRequest, getCompanyPtoRequests, weekdayCount, canReviewPtoStage, reviewPtoStage, type PtoType, type PtoRequestRow } from "@/lib/supabase/pto";
+import { createTimecardCorrection, getCompanyTimecardCorrections, canReviewCorrectionStage, reviewCorrectionStage, type TimecardCorrectionRow } from "@/lib/supabase/timecardCorrections";
 import { createNotification } from "@/lib/supabase/notifications";
 import { getMileageEntries, type MileageEntry } from "@/lib/supabase/mileage";
 import { NotificationsMenu } from "@/components/NotificationsMenu";
@@ -131,6 +143,9 @@ type View =
   | "payroll"
   | "timecard"
   | "clockinteam"
+  | "teamattendance"
+  | "teamapprovals"
+  | "viewasteam"
   | "ticketattendance"
   | "parts"
   | "onhold"
@@ -519,6 +534,8 @@ export function MobileTechApp() {
       "payroll",
       "timecard",
       "clockinteam",
+      "teamattendance",
+      "teamapprovals",
       "ticketattendance",
       "parts",
       "onhold",
@@ -879,6 +896,27 @@ export function MobileTechApp() {
       .sort(sortByName);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [users, profileId, csrComposition, isSelfRole, role, extraRoles, ownName]);
+
+  // Gates Clock In Team / Team Attendance / Team Approvals — holding a
+  // manager-tier role isn't enough on its own; per the user's explicit call,
+  // someone whose role is manager-tier but who has zero actual direct
+  // reports (a brand-new promotion, a role assigned without a real team)
+  // shouldn't see these tiles at all, not just see them always-empty.
+  // isAttendanceFullAccessRole (Admin/SuperAdmin/HR/Finance) always passes —
+  // visibleAttendanceProfileIds returns null for them (unrestricted), which
+  // correctly reads as "has a team" here too. False (hidden) until `users`
+  // finishes loading, same fail-closed default `roster` above uses.
+  const hasTeamUnderMe = useMemo(() => {
+    if (!isAttendanceManagerTierRole(role, extraRoles) || users.length === 0) return false;
+    const myProfile = users.find((u) => u.id === profileId) ?? null;
+    if (!myProfile) return false;
+    const scoped = visibleAttendanceProfileIds(myProfile, users, csrComposition);
+    return scoped === null || scoped.size > 0;
+  }, [role, extraRoles, users, profileId, csrComposition]);
+
+  // View as Manager — Super Admin only, gated on the REAL signed-in role
+  // (mobile has no desktop-style role-preview layer to spoof this through).
+  const isRealSuperAdmin = role === "SUPERADMIN" || role === "SUPERSUPERADMIN";
 
   // A self-role lead's direct reports' tickets aren't covered by the main
   // ticket-load effect above — that one only knows `ownName` at the time it
@@ -1276,6 +1314,9 @@ export function MobileTechApp() {
       : effectiveView === "home" ||
         effectiveView === "timecard" ||
         effectiveView === "clockinteam" ||
+        effectiveView === "teamattendance" ||
+        effectiveView === "teamapprovals" ||
+        effectiveView === "viewasteam" ||
         effectiveView === "ticketattendance" ||
         effectiveView === "itsupport" ||
         effectiveView === "payrolldispute" ||
@@ -1325,8 +1366,10 @@ export function MobileTechApp() {
         showBack={showTopBack}
         onBack={handleTopBack}
         onOpenTimecard={() => setView("timecard")}
-        showClockInTeam={isAttendanceManagerTierRole(role, extraRoles)}
+        showClockInTeam={hasTeamUnderMe}
         onOpenClockInTeam={() => setView("clockinteam")}
+        showViewAsTeam={isRealSuperAdmin}
+        onOpenViewAsTeam={() => setView("viewasteam")}
         onNotificationLink={handleNotificationLink}
         onOpenNotifications={() => setView("notifications")}
         onOpenAnnouncements={() => setView("announcements")}
@@ -1511,6 +1554,18 @@ export function MobileTechApp() {
           <MobileClockInTeamView profileId={profileId} />
         )}
 
+        {effectiveView === "teamattendance" && (
+          <MobileTeamAttendanceView profileId={profileId} />
+        )}
+
+        {effectiveView === "teamapprovals" && (
+          <MobileTeamApprovalsView profileId={profileId} role={role} extraRoles={extraRoles} userName={headerName} />
+        )}
+
+        {effectiveView === "viewasteam" && (
+          <MobileViewAsTeamView users={users} />
+        )}
+
         {effectiveView === "ticketattendance" && (
           <MobileTicketAttendanceView profileId={profileId} />
         )}
@@ -1575,8 +1630,10 @@ export function MobileTechApp() {
             onHoldTickets={onHoldTickets}
             onOpenTicketsTab={() => setView("tickets")}
             onOpenOnHoldTab={() => setView("onhold")}
-            showClockInTeam={isAttendanceManagerTierRole(role, extraRoles)}
+            showClockInTeam={hasTeamUnderMe}
             onOpenClockInTeam={() => setView("clockinteam")}
+            onOpenTeamAttendance={() => setView("teamattendance")}
+            onOpenTeamApprovals={() => setView("teamapprovals")}
             onOpenItSupport={() => setView("itsupport")}
             onOpenPayrollDispute={() => { setPayrollDisputePrefill(null); setView("payrolldispute"); }}
             onOpenTimeOff={() => setView("timeoff")}
@@ -1703,6 +1760,8 @@ function AppHeaderMobile({
   onOpenTimecard,
   showClockInTeam,
   onOpenClockInTeam,
+  showViewAsTeam,
+  onOpenViewAsTeam,
   onNotificationLink,
   onOpenNotifications,
   onOpenAnnouncements,
@@ -1717,6 +1776,9 @@ function AppHeaderMobile({
   onOpenTimecard: () => void;
   showClockInTeam: boolean;
   onOpenClockInTeam: () => void;
+  /** Real (not simulated — mobile has no desktop-style role preview) SUPERADMIN/SUPERSUPERADMIN only. */
+  showViewAsTeam: boolean;
+  onOpenViewAsTeam: () => void;
   onNotificationLink: (linkTo: string) => void;
   onOpenNotifications: () => void;
   onOpenAnnouncements: () => void;
@@ -1881,6 +1943,16 @@ function AppHeaderMobile({
                   onClick={() => { setMenu(false); onOpenClockInTeam(); }}
                 >
                   👥 Clock In Team
+                </button>
+              )}
+              {showViewAsTeam && (
+                <button
+                  type="button"
+                  className="mtech-app-profile-timecard"
+                  title="Super Admin only — preview a specific manager's team screens read-only, to verify their scoping is correct"
+                  onClick={() => { setMenu(false); onOpenViewAsTeam(); }}
+                >
+                  🔎 View as Manager
                 </button>
               )}
               <button
@@ -5864,6 +5936,8 @@ function MobileHomeView({
   onOpenOnHoldTab,
   showClockInTeam,
   onOpenClockInTeam,
+  onOpenTeamAttendance,
+  onOpenTeamApprovals,
   onOpenItSupport,
   onOpenPayrollDispute,
   onOpenTimeOff,
@@ -5894,6 +5968,8 @@ function MobileHomeView({
   onOpenOnHoldTab: () => void;
   showClockInTeam: boolean;
   onOpenClockInTeam: () => void;
+  onOpenTeamAttendance: () => void;
+  onOpenTeamApprovals: () => void;
   onOpenItSupport: () => void;
   onOpenPayrollDispute: () => void;
   onOpenTimeOff: () => void;
@@ -6219,6 +6295,24 @@ function MobileHomeView({
   };
 
   const menuTiles = [
+    // Manager-only team tiles lead the grid, per the user's explicit call —
+    // a manager cares about their team's pending items/attendance before
+    // their own self-service requests below.
+    {
+      key: "teamapprovals", label: "Team Approvals",
+      description: "Pending trainee days, time corrections, and PTO for your team",
+      onClick: onOpenTeamApprovals, show: showClockInTeam,
+    },
+    {
+      key: "clockinteam", label: "Clock In Team",
+      description: "Your team's technicians, today",
+      onClick: onOpenClockInTeam, show: showClockInTeam,
+    },
+    {
+      key: "teamattendance", label: "Team Attendance",
+      description: "Your team's check-in/out and attendance, today",
+      onClick: onOpenTeamAttendance, show: showClockInTeam,
+    },
     {
       key: "correction", label: "Time Correction",
       description: "Request a fix to a check-in, check-out, or meal punch",
@@ -6243,11 +6337,6 @@ function MobileHomeView({
       key: "itsupport", label: "IT Support",
       description: "Submit a ticket and track your own requests",
       onClick: onOpenItSupport, show: true,
-    },
-    {
-      key: "clockinteam", label: "Clock In Team",
-      description: "Your team's technicians, today",
-      onClick: onOpenClockInTeam, show: showClockInTeam,
     },
     {
       key: "timecard", label: "Monitor My Attendance",
@@ -6825,7 +6914,7 @@ interface ClockInTechRow {
   clockedInByName: string | null;
 }
 
-function MobileClockInTeamView({ profileId }: { profileId: string | null }) {
+function MobileClockInTeamView({ profileId, readOnly }: { profileId: string | null; readOnly?: boolean }) {
   const [rows, setRows] = useState<ClockInTechRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [clockingIn, setClockingIn] = useState<Set<string>>(new Set());
@@ -6934,7 +7023,7 @@ function MobileClockInTeamView({ profileId }: { profileId: string | null }) {
                   : "Not clocked in yet"}
               </div>
             </div>
-            {!tech.checkIn && (
+            {!tech.checkIn && !readOnly && (
               <button
                 type="button"
                 className="mtech-clockin-btn"
@@ -6947,6 +7036,580 @@ function MobileClockInTeamView({ profileId }: { profileId: string | null }) {
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+// Team Attendance: a manager-tier viewer's whole visible team (not just
+// technicians, unlike Clock In Team above — a CSR/Claims/BizOps manager's
+// direct reports never clock in through the Clock In Team flow but still
+// need to be checkable here), each with today's real check-in/check-out/
+// meal punches. Read-only — this is a monitoring view, not an action
+// surface; corrections/approvals live in Team Approvals instead. Flags kept
+// intentionally simple (just "not clocked in" / "missing clock-out") rather
+// than desktop's full late/grace-period alert engine (AttendanceMonitoringPage's
+// computeAlerts, which isn't exported for reuse and needs each person's own
+// required_check_in/out + timezone to be meaningful).
+interface TeamAttendanceRow {
+  id: string;
+  name: string;
+  branch: string | null;
+  checkIn: string;
+  checkOut: string;
+  mealStart: string;
+  mealEnd: string;
+}
+
+function MobileTeamAttendanceView({ profileId }: { profileId: string | null }) {
+  const [rows, setRows] = useState<TeamAttendanceRow[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const now = new Date();
+  const todayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+
+  const load = async () => {
+    if (!profileId) {
+      setRows([]);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    try {
+      const [allProfiles, csrComposition, todayEntries] = await Promise.all([
+        getCompanyUsers(),
+        getCsrTeamComposition().catch(() => null),
+        getCompanyTimecardEntries(todayKey, todayKey),
+      ]);
+      const myProfile = allProfiles.find((p) => p.id === profileId) ?? null;
+      if (!myProfile) {
+        setRows([]);
+        return;
+      }
+      const entryByProfile = new Map<string, CompanyTimecardEntry>(todayEntries.map((e) => [e.profileId, e]));
+      const scoped = visibleAttendanceProfileIds(myProfile, allProfiles, csrComposition);
+      const myTeam = allProfiles.filter((p) => p.id !== profileId && p.is_active && (scoped === null || scoped.has(p.id)));
+      setRows(
+        myTeam
+          .map((p) => {
+            const entry = entryByProfile.get(p.id);
+            return {
+              id: p.id,
+              name: p.display_name || p.email,
+              branch: p.assigned_branch,
+              checkIn: entry?.checkIn || "",
+              checkOut: entry?.checkOut || "",
+              mealStart: entry?.mealStart || "",
+              mealEnd: entry?.mealEnd || "",
+            };
+          })
+          .sort((a, b) => a.name.localeCompare(b.name))
+      );
+    } catch (e) {
+      console.error("MobileTeamAttendanceView: load failed", e);
+      setRows([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profileId]);
+
+  return (
+    <div className="mtech-scroll mtech-clockin">
+      <div className="mtech-clockin-heading">
+        <div className="mtech-clockin-title">Team Attendance</div>
+        <div className="mtech-clockin-sub">Your direct reports' check-in/out, today</div>
+      </div>
+
+      {loading && <div className="mtech-muted">Loading your team…</div>}
+      {!loading && rows.length === 0 && <div className="mtech-muted">No one reports to you.</div>}
+
+      <div className="mtech-clockin-list">
+        {rows.map((r) => {
+          const flag = !r.checkIn ? "Not clocked in yet" : !r.checkOut ? "Missing clock-out" : null;
+          return (
+            <div key={r.id} className="mtech-clockin-row">
+              <div className="mtech-clockin-row-info">
+                <div className="mtech-clockin-row-name">{r.name}</div>
+                <div className="mtech-clockin-row-status">
+                  {r.checkIn ? `In ${r.checkIn.slice(0, 5)}` : "—"}
+                  {" · "}
+                  {r.checkOut ? `Out ${r.checkOut.slice(0, 5)}` : "—"}
+                  {r.mealStart && (
+                    <>
+                      {" · Meal "}
+                      {r.mealStart.slice(0, 5)}
+                      {r.mealEnd ? `–${r.mealEnd.slice(0, 5)}` : ""}
+                    </>
+                  )}
+                </div>
+                {flag && <div className="mtech-clockin-row-flag">{flag}</div>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/** entry items key by the real row's id; a "noshow" item has no row yet, so its trainee's profile id stands in. Same convention TraineeAttendanceMobileModal.tsx uses. */
+const teamApprovalTraineeKey = (item: TraineeReviewQueueItem) => (item.kind === "entry" ? item.entry!.id : `noshow:${item.trainee.id}`);
+
+const REJECT_REASON_OPTIONS = ["On Field", "Termination", "Absent", "Quit", "Other"] as const;
+
+// Team Approvals: everything a manager-tier viewer can act on for their
+// team from mobile — pending trainee days (own tab, same review model as
+// TraineeAttendanceMobileModal but browsable rather than a blocking
+// checkout overlay), plus their team's Time Correction and PTO/Leave
+// requests still waiting on the MANAGER stage specifically (HR/Accounting's
+// own stages stay desktop-only — AttendanceMonitoringPage's Corrections/
+// PTO Management tabs — since this viewer usually can't act on those
+// anyway). Corrections/PTO are approved/rejected as submitted; unlike
+// desktop, there's no inline "adjust the corrected punch" editor here.
+type TeamApprovalsTab = "trainee" | "corrections" | "pto";
+
+function MobileTeamApprovalsView({
+  profileId,
+  role,
+  extraRoles,
+  userName,
+  readOnly,
+}: {
+  profileId: string | null;
+  role: string | null;
+  extraRoles: string[] | null;
+  userName: string;
+  /** View as Manager preview — browsing is fine, but nothing gets approved/rejected under a false identity, per the user's explicit call. */
+  readOnly?: boolean;
+}) {
+  const [tab, setTab] = useState<TeamApprovalsTab>("trainee");
+  const [profiles, setProfiles] = useState<ProfileRow[]>([]);
+  const [traineeQueue, setTraineeQueue] = useState<TraineeReviewQueueItem[]>([]);
+  const [corrections, setCorrections] = useState<TimecardCorrectionRow[]>([]);
+  const [ptoRequests, setPtoRequests] = useState<PtoRequestRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedTraineeKey, setSelectedTraineeKey] = useState<string | null>(null);
+  const [rejectReasonOption, setRejectReasonOption] = useState("");
+  const [rejectReasonCustom, setRejectReasonCustom] = useState("");
+  const [onFieldStart, setOnFieldStart] = useState("");
+  const [onFieldEnd, setOnFieldEnd] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  const load = async () => {
+    if (!profileId) {
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    try {
+      const [allProfiles, queue, correctionRows, ptoRows] = await Promise.all([
+        getCompanyUsers(),
+        getTraineeReviewQueue(profileId),
+        getCompanyTimecardCorrections(),
+        getCompanyPtoRequests(),
+      ]);
+      setProfiles(allProfiles);
+      queue.sort((a, b) => b.workDate.localeCompare(a.workDate) || (a.trainee.display_name || "").localeCompare(b.trainee.display_name || ""));
+      setTraineeQueue(queue);
+      setCorrections(correctionRows);
+      setPtoRequests(ptoRows);
+    } catch (e) {
+      console.error("MobileTeamApprovalsView: load failed", e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profileId]);
+
+  const profileById = new Map(profiles.map((p) => [p.id, p]));
+  // Same "requester's current manager, and their manager's own manager"
+  // fallback lookup AttendanceMonitoringPage.tsx does for canReviewX Stage's
+  // stale-managerId-snapshot fallback — see that file's own comment.
+  const managerChainFor = (requesterProfileId: string) => {
+    const requesterManagerName = profileById.get(requesterProfileId)?.manager_name ?? null;
+    const requesterManagersManagerName = requesterManagerName
+      ? profiles.find((p) => (p.display_name || "").trim().toLowerCase() === requesterManagerName.trim().toLowerCase())?.manager_name ?? null
+      : null;
+    return { requesterManagerName, requesterManagersManagerName };
+  };
+
+  const pendingCorrections = corrections.filter((c) => {
+    if (c.managerStatus !== "pending") return false;
+    const { requesterManagerName, requesterManagersManagerName } = managerChainFor(c.profileId);
+    return canReviewCorrectionStage(c, "manager", profileId, role, extraRoles, userName, requesterManagerName, requesterManagersManagerName);
+  });
+  const pendingPto = ptoRequests.filter((r) => {
+    if (r.status !== "pending" || r.managerStatus !== "pending") return false;
+    const { requesterManagerName, requesterManagersManagerName } = managerChainFor(r.profileId);
+    return canReviewPtoStage(r, "manager", profileId, role, extraRoles, userName, requesterManagerName, requesterManagersManagerName);
+  });
+
+  const selectedTrainee = traineeQueue.find((t) => teamApprovalTraineeKey(t) === selectedTraineeKey) ?? null;
+  const resetTraineeRejectForm = () => {
+    setRejectReasonOption("");
+    setRejectReasonCustom("");
+    setOnFieldStart("");
+    setOnFieldEnd("");
+  };
+  const finalRejectReason = rejectReasonOption === "Other" ? rejectReasonCustom.trim() : rejectReasonOption;
+  const canSubmitTraineeReject =
+    rejectReasonOption !== "" &&
+    (rejectReasonOption !== "Other" || rejectReasonCustom.trim() !== "") &&
+    (rejectReasonOption !== "On Field" || (onFieldStart !== "" && onFieldEnd !== ""));
+
+  const handleApproveTrainee = async (item: TraineeReviewQueueItem) => {
+    if (readOnly || !profileId || submitting || item.kind !== "entry" || !item.entry) return;
+    setSubmitting(true);
+    try {
+      await approveTraineeDay(item.entry, profileId);
+      setTraineeQueue((prev) => prev.filter((p) => teamApprovalTraineeKey(p) !== teamApprovalTraineeKey(item)));
+      setSelectedTraineeKey(null);
+    } catch (err) {
+      console.error("Failed to approve trainee day:", err);
+      alert("Couldn't approve this day — please try again.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleMarkTraineePresent = async (item: TraineeReviewQueueItem) => {
+    if (readOnly || !profileId || submitting) return;
+    setSubmitting(true);
+    try {
+      const entry = await getTraineeEntryForDate(item.trainee.id, item.workDate);
+      if (!entry || (!entry.checkIn && !entry.checkOut)) {
+        alert(`${item.trainee.display_name || "This trainee"} hasn't punched in yet for ${item.workDate} — nothing to fetch yet.`);
+        return;
+      }
+      await approveTraineeDay(entry, profileId);
+      setTraineeQueue((prev) => prev.filter((p) => teamApprovalTraineeKey(p) !== teamApprovalTraineeKey(item)));
+      setSelectedTraineeKey(null);
+    } catch (err) {
+      console.error("Failed to mark trainee present:", err);
+      alert("Couldn't fetch their punch — please try again.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const submitTraineeReject = async (item: TraineeReviewQueueItem) => {
+    if (readOnly || !profileId || submitting || !canSubmitTraineeReject) return;
+    setSubmitting(true);
+    try {
+      if (rejectReasonOption === "On Field") {
+        await approveTraineeDayOnField(item.trainee.id, item.workDate, onFieldStart, onFieldEnd, profileId, profileId);
+      } else if (item.kind === "entry" && item.entry) {
+        await rejectTraineeDay(item.entry.id, profileId, finalRejectReason);
+      } else {
+        await recordTraineeDayWithoutPunch(item.trainee.id, item.workDate, profileId, profileId, finalRejectReason);
+      }
+      setTraineeQueue((prev) => prev.filter((p) => teamApprovalTraineeKey(p) !== teamApprovalTraineeKey(item)));
+      setSelectedTraineeKey(null);
+      resetTraineeRejectForm();
+    } catch (err) {
+      console.error("Failed to submit trainee status:", err);
+      alert("Couldn't submit this — please try again.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleCorrectionDecision = async (c: TimecardCorrectionRow, decision: "approved" | "rejected") => {
+    if (readOnly || !profileId || submitting) return;
+    setSubmitting(true);
+    try {
+      await reviewCorrectionStage(c, "manager", decision, profileId, userName);
+      setCorrections((prev) => prev.filter((x) => x.id !== c.id));
+    } catch (err) {
+      console.error("Failed to review correction:", err);
+      alert("Couldn't submit this — please try again.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handlePtoDecision = async (r: PtoRequestRow, decision: "approved" | "rejected") => {
+    if (readOnly || !profileId || submitting) return;
+    setSubmitting(true);
+    try {
+      await reviewPtoStage(r, "manager", decision, profileId, userName);
+      setPtoRequests((prev) => prev.filter((x) => x.id !== r.id));
+    } catch (err) {
+      console.error("Failed to review PTO request:", err);
+      alert("Couldn't submit this — please try again.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const nameFor = (id: string) => profileById.get(id)?.display_name || profileById.get(id)?.email || "Unknown";
+
+  return (
+    <div className="mtech-scroll mtech-clockin">
+      <div className="mtech-clockin-heading">
+        <div className="mtech-clockin-title">Team Approvals</div>
+        <div className="mtech-clockin-sub">Pending items for your team</div>
+      </div>
+
+      <div className="mtech-approvals-tabs">
+        <button type="button" className={`mtech-approvals-tab ${tab === "trainee" ? "active" : ""}`} onClick={() => { setTab("trainee"); setSelectedTraineeKey(null); }}>
+          Trainee ({traineeQueue.length})
+        </button>
+        <button type="button" className={`mtech-approvals-tab ${tab === "corrections" ? "active" : ""}`} onClick={() => setTab("corrections")}>
+          Corrections ({pendingCorrections.length})
+        </button>
+        <button type="button" className={`mtech-approvals-tab ${tab === "pto" ? "active" : ""}`} onClick={() => setTab("pto")}>
+          PTO ({pendingPto.length})
+        </button>
+      </div>
+
+      {loading && <div className="mtech-muted">Loading…</div>}
+
+      {!loading && tab === "trainee" && !selectedTrainee && (
+        <div className="mtech-clockin-list">
+          {traineeQueue.length === 0 && <div className="mtech-muted">No pending trainee days.</div>}
+          {traineeQueue.map((item) => (
+            <button
+              key={teamApprovalTraineeKey(item)}
+              type="button"
+              className="mtech-clockin-row mtech-approvals-row"
+              onClick={() => { setSelectedTraineeKey(teamApprovalTraineeKey(item)); resetTraineeRejectForm(); }}
+            >
+              <div className="mtech-clockin-row-info">
+                <div className="mtech-clockin-row-name">{item.trainee.display_name || item.trainee.email}</div>
+                <div className="mtech-clockin-row-status">{item.kind === "noshow" ? `Not clocked in — ${item.workDate}` : item.workDate}</div>
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {!loading && tab === "trainee" && selectedTrainee && (
+        <div className="mtech-approvals-detail">
+          <button type="button" className="mtech-approvals-back" onClick={() => { setSelectedTraineeKey(null); resetTraineeRejectForm(); }}>
+            ‹ Back to list
+          </button>
+          <div className="mtech-clockin-row-name">{selectedTrainee.trainee.display_name || selectedTrainee.trainee.email}</div>
+          <div className="mtech-clockin-row-status">
+            {selectedTrainee.kind === "noshow" ? `Not clocked in — ${selectedTrainee.workDate}` : selectedTrainee.workDate}
+          </div>
+
+          {selectedTrainee.kind === "entry" && selectedTrainee.entry && (
+            <div className="mtech-approvals-times">
+              <div>Check In: {selectedTrainee.entry.checkIn || "—"}</div>
+              <div>Check Out: {selectedTrainee.entry.checkOut || "—"}</div>
+              <div>Meal In: {selectedTrainee.entry.mealStart || "—"}</div>
+              <div>Meal Out: {selectedTrainee.entry.mealEnd || "—"}</div>
+            </div>
+          )}
+
+          {readOnly ? (
+            <div className="mtech-muted">Preview only — actions disabled.</div>
+          ) : (
+            <>
+              <div className="mtech-approvals-actions">
+                {selectedTrainee.kind === "entry" && (
+                  <button type="button" className="mtech-clockin-btn" disabled={submitting} onClick={() => void handleApproveTrainee(selectedTrainee)}>
+                    Approve
+                  </button>
+                )}
+                {selectedTrainee.kind === "noshow" && (
+                  <button type="button" className="mtech-clockin-btn" disabled={submitting} onClick={() => void handleMarkTraineePresent(selectedTrainee)}>
+                    Check for Punch / Mark Present
+                  </button>
+                )}
+              </div>
+
+              <div className="mtech-approvals-reject">
+                <div className="mtech-clockin-sub">Reject / flag instead:</div>
+                <select value={rejectReasonOption} onChange={(e) => setRejectReasonOption(e.target.value)} className="mtech-approvals-select">
+                  <option value="">Choose a reason…</option>
+                  {REJECT_REASON_OPTIONS.map((r) => (
+                    <option key={r} value={r}>{r}</option>
+                  ))}
+                </select>
+                {rejectReasonOption === "Other" && (
+                  <input
+                    type="text"
+                    placeholder="Reason…"
+                    value={rejectReasonCustom}
+                    onChange={(e) => setRejectReasonCustom(e.target.value)}
+                    className="mtech-approvals-select"
+                  />
+                )}
+                {rejectReasonOption === "On Field" && (
+                  <div className="mtech-approvals-times">
+                    <input type="time" value={onFieldStart} onChange={(e) => setOnFieldStart(e.target.value)} className="mtech-approvals-select" />
+                    <input type="time" value={onFieldEnd} onChange={(e) => setOnFieldEnd(e.target.value)} className="mtech-approvals-select" />
+                  </div>
+                )}
+                <button
+                  type="button"
+                  className="mtech-clockin-btn"
+                  disabled={submitting || !canSubmitTraineeReject}
+                  onClick={() => void submitTraineeReject(selectedTrainee)}
+                >
+                  Submit
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {!loading && tab === "corrections" && (
+        <div className="mtech-clockin-list">
+          {pendingCorrections.length === 0 && <div className="mtech-muted">No pending time corrections.</div>}
+          {pendingCorrections.map((c) => (
+            <div key={c.id} className="mtech-clockin-row mtech-approvals-row">
+              <div className="mtech-clockin-row-info">
+                <div className="mtech-clockin-row-name">{nameFor(c.profileId)}</div>
+                <div className="mtech-clockin-row-status">{c.workDate}</div>
+                <div className="mtech-approvals-times">
+                  <div>In: {c.originalCheckIn || "—"} → {c.correctedCheckIn || "—"}</div>
+                  <div>Out: {c.originalCheckOut || "—"} → {c.correctedCheckOut || "—"}</div>
+                </div>
+                {c.reason && <div className="mtech-clockin-row-flag">{c.reason}</div>}
+              </div>
+              {readOnly ? (
+                <div className="mtech-clockin-row-status">Preview only</div>
+              ) : (
+                <div className="mtech-approvals-actions">
+                  <button type="button" className="mtech-clockin-btn" disabled={submitting} onClick={() => void handleCorrectionDecision(c, "approved")}>
+                    Approve
+                  </button>
+                  <button type="button" className="mtech-clockin-btn mtech-approvals-reject-btn" disabled={submitting} onClick={() => void handleCorrectionDecision(c, "rejected")}>
+                    Reject
+                  </button>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {!loading && tab === "pto" && (
+        <div className="mtech-clockin-list">
+          {pendingPto.length === 0 && <div className="mtech-muted">No pending PTO requests.</div>}
+          {pendingPto.map((r) => (
+            <div key={r.id} className="mtech-clockin-row mtech-approvals-row">
+              <div className="mtech-clockin-row-info">
+                <div className="mtech-clockin-row-name">{nameFor(r.profileId)}</div>
+                <div className="mtech-clockin-row-status">{r.ptoType} · {r.startDate} – {r.endDate} ({r.hoursRequested}h)</div>
+                {r.reason && <div className="mtech-clockin-row-flag">{r.reason}</div>}
+              </div>
+              {readOnly ? (
+                <div className="mtech-clockin-row-status">Preview only</div>
+              ) : (
+                <div className="mtech-approvals-actions">
+                  <button type="button" className="mtech-clockin-btn" disabled={submitting} onClick={() => void handlePtoDecision(r, "approved")}>
+                    Approve
+                  </button>
+                  <button type="button" className="mtech-clockin-btn mtech-approvals-reject-btn" disabled={submitting} onClick={() => void handlePtoDecision(r, "rejected")}>
+                    Reject
+                  </button>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// View as Manager — Super Admin only (gated by the caller via isRealSuperAdmin
+// on the profile-menu entry point). Lets a Super Admin pick a real
+// Branch/Senior Branch Manager and preview exactly what THAT person would
+// see on Clock In Team / Team Attendance / Team Approvals — real scoping
+// (their manager_name chain, their branch), not just a role-code simulation
+// like desktop's "View as" (which never changes who the profile actually is,
+// so it can't answer "are this specific manager's underlings showing up
+// right"). Deliberately read-only throughout (see readOnly props below) —
+// this is a verification tool, not a way to act as someone else.
+function MobileViewAsTeamView({ users }: { users: ProfileRow[] }) {
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [subTab, setSubTab] = useState<"clockin" | "attendance" | "approvals">("attendance");
+
+  const managers = useMemo(
+    () =>
+      users
+        .filter((u) => u.is_active && (u.role === "BRANCH_MANAGER" || u.role === "SENIOR_BRANCH_MANAGER"))
+        .map((u) => ({ id: u.id, name: u.display_name || u.email || "Unnamed", branch: u.assigned_branch, role: u.role }))
+        .sort((a, b) => (a.branch || "").localeCompare(b.branch || "") || a.name.localeCompare(b.name)),
+    [users]
+  );
+
+  const selected = users.find((u) => u.id === selectedId) ?? null;
+
+  if (!selected) {
+    return (
+      <div className="mtech-scroll mtech-clockin">
+        <div className="mtech-clockin-heading">
+          <div className="mtech-clockin-title">View as Manager</div>
+          <div className="mtech-clockin-sub">Pick a Branch/Senior Branch Manager to preview their team screens, read-only</div>
+        </div>
+        <div className="mtech-clockin-list">
+          {managers.length === 0 && <div className="mtech-muted">No active Branch/Senior Branch Managers found.</div>}
+          {managers.map((m) => (
+            <button
+              key={m.id}
+              type="button"
+              className="mtech-clockin-row mtech-approvals-row"
+              onClick={() => setSelectedId(m.id)}
+            >
+              <div className="mtech-clockin-row-info">
+                <div className="mtech-clockin-row-name">{m.name}</div>
+                <div className="mtech-clockin-row-status">{ROLE_LABELS[m.role] ?? m.role} · {m.branch || "No branch"}</div>
+              </div>
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mtech-scroll mtech-clockin">
+      <div className="mtech-clockin-heading">
+        <button type="button" className="mtech-approvals-back" onClick={() => setSelectedId(null)}>
+          ‹ Choose someone else
+        </button>
+        <div className="mtech-clockin-title">👀 Viewing as {selected.display_name || selected.email}</div>
+        <div className="mtech-clockin-sub">{ROLE_LABELS[selected.role] ?? selected.role} · {selected.assigned_branch || "No branch"} — read-only preview</div>
+      </div>
+
+      <div className="mtech-approvals-tabs">
+        <button type="button" className={`mtech-approvals-tab ${subTab === "clockin" ? "active" : ""}`} onClick={() => setSubTab("clockin")}>
+          Clock In Team
+        </button>
+        <button type="button" className={`mtech-approvals-tab ${subTab === "attendance" ? "active" : ""}`} onClick={() => setSubTab("attendance")}>
+          Attendance
+        </button>
+        <button type="button" className={`mtech-approvals-tab ${subTab === "approvals" ? "active" : ""}`} onClick={() => setSubTab("approvals")}>
+          Approvals
+        </button>
+      </div>
+
+      {subTab === "clockin" && <MobileClockInTeamView profileId={selected.id} readOnly />}
+      {subTab === "attendance" && <MobileTeamAttendanceView profileId={selected.id} />}
+      {subTab === "approvals" && (
+        <MobileTeamApprovalsView
+          profileId={selected.id}
+          role={selected.role}
+          extraRoles={selected.extra_roles ?? []}
+          userName={selected.display_name || selected.email || ""}
+          readOnly
+        />
+      )}
     </div>
   );
 }
