@@ -36,7 +36,7 @@ const HARDCODED_DEFAULT_MODULES = new Set(["dashboard", "hr", "accounting", "csr
 
 const ROLE_DRAG_TYPE = "application/x-ahs-role";
 
-/** A draggable role card — the source you drag FROM in the "New" tab. Revoking is a click (X) on the granted chip instead, not a drag back, since that source container has no single row to attribute the drop to. */
+/** A draggable role card — the source you drag FROM. Revoking is a click (X) on the granted chip instead, not a drag back, since that source container has no single row to attribute the drop to. */
 function DraggableRoleCard({ role }: { role: string }) {
   return (
     <div

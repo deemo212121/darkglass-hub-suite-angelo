@@ -17,32 +17,37 @@
 import { useEffect, useState } from "react";
 import { Paperclip, X } from "lucide-react";
 import { useAuth } from "@/lib/auth";
-import { normalizeRole } from "@/lib/roleLabels";
+import { normalizeRole, isAttendanceManagerTierRole } from "@/lib/roleLabels";
 import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
 import { getProfileIdByFirebaseUid } from "@/lib/supabase/timecards";
-import { getCompanyEmployeeRequests, updateEmployeeRequestStatus, type EmployeeRequestRow } from "@/lib/supabase/employeeRequests";
+import { getCompanyEmployeeRequests, updateEmployeeRequestStatus, canReviewTicketDispute, type EmployeeRequestRow } from "@/lib/supabase/employeeRequests";
 import { setTicketOnsiteCheckIn } from "@/lib/supabase/tickets";
 import { resetMileageRouteConfirmation } from "@/lib/supabase/mileage";
 import { TIME_ZONES, type ScheduleTimezone } from "@/lib/serverTime";
+import { TicketDisputeManagerSignModal, TicketDisputeHrSignModal } from "@/components/TicketDisputeSignModals";
 
 const isPdfAttachment = (url: string) => /\.pdf(\?|$)/i.test(url);
 
 export function TicketTimeDisputesTab() {
-  const { uid, role, extraRoles } = useAuth();
+  const { uid, role, extraRoles, displayName, companyId } = useAuth();
   const [myProfileId, setMyProfileId] = useState<string | null>(null);
   useEffect(() => {
     if (!uid) return;
     getProfileIdByFirebaseUid(uid).then(setMyProfileId).catch(() => {});
   }, [uid]);
 
-  // Same gate Attendance Monitoring's Disputes & Inquiries tab uses.
+  // ADMIN/SUPERADMIN/HR/FINANCE see and act on every dispute company-wide.
+  // Any other manager-tier role only sees their own team's (hierarchy
+  // fallback to that manager's own manager when the direct manager isn't
+  // available — see canReviewTicketDispute in employeeRequests.ts).
   const isFullRequestsAdmin = [role, ...(extraRoles ?? [])].some((r) => ["ADMIN", "SUPERADMIN", "HR", "FINANCE"].includes(normalizeRole(r)));
+  const canAccessTab = isFullRequestsAdmin || isAttendanceManagerTierRole(role, extraRoles);
 
   const [employees, setEmployees] = useState<ProfileRow[]>([]);
   useEffect(() => {
-    if (!isFullRequestsAdmin) return;
+    if (!canAccessTab) return;
     getCompanyUsers().then(setEmployees).catch((err) => console.error("Failed to load employees:", err));
-  }, [isFullRequestsAdmin]);
+  }, [canAccessTab]);
   const employeeById = new Map(employees.map((e) => [e.id, e]));
   const profileName = (id: string | null) => {
     if (!id) return "—";
@@ -66,14 +71,29 @@ export function TicketTimeDisputesTab() {
   const [ticketTimeDisputesLoaded, setTicketTimeDisputesLoaded] = useState(false);
   const [ticketTimeDisputeNote, setTicketTimeDisputeNote] = useState<Record<string, string>>({});
   useEffect(() => {
-    if (!isFullRequestsAdmin || ticketTimeDisputesLoaded) return;
+    if (!canAccessTab || ticketTimeDisputesLoaded) return;
     getCompanyEmployeeRequests()
       .then((rows) => { setTicketTimeDisputes(rows.filter((r) => r.requestType === "ticket_time_dispute")); setTicketTimeDisputesLoaded(true); })
       .catch((err) => console.error("Failed to load ticket time disputes:", err));
-  }, [isFullRequestsAdmin, ticketTimeDisputesLoaded]);
+  }, [canAccessTab, ticketTimeDisputesLoaded]);
   const [ticketTimeDisputeSubTab, setTicketTimeDisputeSubTab] = useState<"pending" | "history">("pending");
-  const pendingTicketTimeDisputes = ticketTimeDisputes.filter((r) => r.status === "pending");
-  const historyTicketTimeDisputes = ticketTimeDisputes
+  // "New" = has the Exception Report fields (exceptionType set at
+  // submission, migration 0305) — every dispute submitted from now on.
+  // "Old" = submitted before this feature, kept as a read-only-ish archive
+  // (still plain approve/reject, just never routed through the signature
+  // popup) — same split CorrectionsTab.tsx uses for Time Correction.
+  const [ticketDisputeEraFilter, setTicketDisputeEraFilter] = useState<"new" | "old">("new");
+  const [signingManagerFor, setSigningManagerFor] = useState<EmployeeRequestRow | null>(null);
+  const [signingHrFor, setSigningHrFor] = useState<EmployeeRequestRow | null>(null);
+  // Full admins see every dispute; a manager-tier viewer only sees the ones
+  // they're actually allowed to review (their own team, with hierarchy
+  // fallback) — same "don't even show it" scoping PTO/Corrections tabs use.
+  const reviewableDisputes = isFullRequestsAdmin
+    ? ticketTimeDisputes
+    : ticketTimeDisputes.filter((r) => canReviewTicketDispute(r.profileId, role, extraRoles, displayName, employees));
+  const eraFilteredDisputes = reviewableDisputes.filter((r) => (r.exceptionType !== null) === (ticketDisputeEraFilter === "new"));
+  const pendingTicketTimeDisputes = eraFilteredDisputes.filter((r) => r.status === "pending");
+  const historyTicketTimeDisputes = eraFilteredDisputes
     .filter((r) => r.status === "approved" || r.status === "rejected")
     .sort((a, b) => (b.reviewedAt || b.createdAt).localeCompare(a.reviewedAt || a.createdAt));
 
@@ -111,10 +131,30 @@ export function TicketTimeDisputesTab() {
     }
   };
 
-  if (!isFullRequestsAdmin) return null;
+  if (!canAccessTab) return null;
 
   return (
     <div className="space-y-6">
+      <div className="flex items-center justify-end gap-1.5">
+        <button
+          type="button"
+          onClick={() => setTicketDisputeEraFilter("new")}
+          className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition ${ticketDisputeEraFilter === "new" ? "bg-primary/20 text-primary" : "bg-slate-800/50 text-slate-400 hover:text-white"}`}
+        >
+          New Ticket Dispute
+        </button>
+        <button
+          type="button"
+          onClick={() => setTicketDisputeEraFilter("old")}
+          className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition ${ticketDisputeEraFilter === "old" ? "bg-primary/20 text-primary" : "bg-slate-800/50 text-slate-400 hover:text-white"}`}
+        >
+          Old Ticket Dispute
+        </button>
+      </div>
+      {ticketDisputeEraFilter === "old" && (
+        <p className="text-xs text-slate-500 -mt-3">Submitted before the Exception Report requirement — kept here for the record only.</p>
+      )}
+
       <div className="grid grid-cols-2 gap-4">
         <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
           <p className="text-xs text-slate-400 mb-1">Pending Ticket Time Disputes</p>
@@ -176,6 +216,14 @@ export function TicketTimeDisputesTab() {
                     </span>
                   </p>
                 )}
+                {r.disputeMode === "reschedule" && (r.rescheduleActualDay || r.rescheduleDate) && (
+                  <p className="text-sm text-slate-300 mt-1">
+                    Rescheduled:{" "}
+                    <span className="font-semibold text-white">
+                      {r.rescheduleActualDay || "—"} → {r.rescheduleDate || "—"}
+                    </span>
+                  </p>
+                )}
                 <p className="text-sm text-slate-300 mt-2">{r.details}</p>
                 {r.attachments.length > 0 && (
                   <div className="flex flex-wrap gap-2 mt-2">
@@ -206,13 +254,24 @@ export function TicketTimeDisputesTab() {
                   className="w-full mt-2 px-3 py-2 bg-slate-800 border border-white/10 rounded text-white text-sm focus:outline-none focus:border-blue-500 placeholder-slate-500"
                 />
                 <div className="flex gap-2 mt-2">
-                  <button
-                    type="button"
-                    onClick={() => handleTicketTimeDisputeAction(r.id, "approved")}
-                    className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded text-xs font-semibold transition"
-                  >
-                    Approve
-                  </button>
+                  {r.exceptionType !== null ? (
+                    <button
+                      type="button"
+                      onClick={() => setSigningManagerFor(r)}
+                      className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded text-xs font-semibold transition"
+                    >
+                      Approve &amp; Sign
+                    </button>
+                  ) : (
+                    // Pre-Exception-Report dispute — plain approve, no signature (never asked of them at submission).
+                    <button
+                      type="button"
+                      onClick={() => handleTicketTimeDisputeAction(r.id, "approved")}
+                      className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded text-xs font-semibold transition"
+                    >
+                      Approve
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => handleTicketTimeDisputeAction(r.id, "rejected")}
@@ -221,6 +280,19 @@ export function TicketTimeDisputesTab() {
                     Reject
                   </button>
                 </div>
+                {isFullRequestsAdmin && r.exceptionType !== null && r.hrPaperworkStatus === "pending" && (
+                  r.managerSignatureUrl ? (
+                    <button
+                      type="button"
+                      onClick={() => setSigningHrFor(r)}
+                      className="mt-2 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs font-semibold transition"
+                    >
+                      Sign Exception Report (HR)
+                    </button>
+                  ) : (
+                    <p className="text-[11px] text-slate-500 mt-2">Exception Report: awaiting manager signature</p>
+                  )
+                )}
               </div>
             ))}
           </div>
@@ -265,6 +337,14 @@ export function TicketTimeDisputesTab() {
                     </span>
                   </p>
                 )}
+                {r.disputeMode === "reschedule" && (r.rescheduleActualDay || r.rescheduleDate) && (
+                  <p className="text-sm text-slate-300 mt-1">
+                    Rescheduled:{" "}
+                    <span className="font-semibold text-white">
+                      {r.rescheduleActualDay || "—"} → {r.rescheduleDate || "—"}
+                    </span>
+                  </p>
+                )}
                 <p className="text-sm text-slate-300 mt-2">{r.details}</p>
                 {r.attachments.length > 0 && (
                   <div className="flex flex-wrap gap-2 mt-2">
@@ -289,6 +369,19 @@ export function TicketTimeDisputesTab() {
                 )}
                 {r.reviewNote && (
                   <p className="text-sm text-emerald-300 font-semibold mt-2">Response: {r.reviewNote}</p>
+                )}
+                {isFullRequestsAdmin && r.exceptionType !== null && r.hrPaperworkStatus === "pending" && (
+                  r.managerSignatureUrl ? (
+                    <button
+                      type="button"
+                      onClick={() => setSigningHrFor(r)}
+                      className="mt-2 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs font-semibold transition"
+                    >
+                      Sign Exception Report (HR)
+                    </button>
+                  ) : (
+                    <p className="text-[11px] text-slate-500 mt-2">Exception Report: awaiting manager signature</p>
+                  )
                 )}
               </div>
             ))}
@@ -322,6 +415,37 @@ export function TicketTimeDisputesTab() {
             </a>
           </div>
         </div>
+      )}
+
+      {signingManagerFor && (
+        <TicketDisputeManagerSignModal
+          request={signingManagerFor}
+          companyId={companyId}
+          profiles={employees}
+          reviewerId={myProfileId}
+          reviewerName={displayName || "Manager"}
+          onClose={() => setSigningManagerFor(null)}
+          onSigned={async () => {
+            setSigningManagerFor(null);
+            const rows = await getCompanyEmployeeRequests();
+            setTicketTimeDisputes(rows.filter((r) => r.requestType === "ticket_time_dispute"));
+          }}
+        />
+      )}
+      {signingHrFor && (
+        <TicketDisputeHrSignModal
+          request={signingHrFor}
+          companyId={companyId}
+          profiles={employees}
+          reviewerId={myProfileId}
+          reviewerName={displayName || "HR"}
+          onClose={() => setSigningHrFor(null)}
+          onSigned={async () => {
+            setSigningHrFor(null);
+            const rows = await getCompanyEmployeeRequests();
+            setTicketTimeDisputes(rows.filter((r) => r.requestType === "ticket_time_dispute"));
+          }}
+        />
       )}
     </div>
   );

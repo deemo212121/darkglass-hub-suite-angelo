@@ -22,6 +22,8 @@ import { isAttendanceManagerTierRole } from "@/lib/roleLabels";
 
 export type CorrectionStatus = "pending" | "approved" | "rejected";
 export type CorrectionStage = "manager" | "hr" | "accounting";
+export type ExceptionType = "missed_workday" | "late_early" | "missed_visit" | "other";
+export type HrPaperworkStatus = "pending" | "approved" | "additional_review_required";
 
 export interface TimecardCorrectionRow {
   id: string;
@@ -51,6 +53,29 @@ export interface TimecardCorrectionRow {
   accountingStatus: CorrectionStatus;
   accountingReviewedBy: string | null;
   accountingReviewedAt: string | null;
+  // "Employee Attendance & Visit Exception Report" fields — folded directly
+  // into this same request instead of a separate document type (see
+  // timecardCorrectionPdf.ts). exceptionType/employee signature are
+  // captured at submission; managerSignature is captured the instant the
+  // manager stage is approved (any of the 5 places that can approve it);
+  // the HR signature is a SEPARATE track from hrStatus (the quorum vote) —
+  // see migration 0304's header comment for why.
+  exceptionType: ExceptionType | null;
+  otherDescription: string;
+  employeeSignatureUrl: string | null;
+  employeeSignatureName: string | null;
+  employeeSignedAt: string | null;
+  managerComments: string;
+  managerSignatureUrl: string | null;
+  managerSignatureName: string | null;
+  managerSignedAt: string | null;
+  hrPaperworkStatus: HrPaperworkStatus;
+  hrSignatureUrl: string | null;
+  hrSignatureName: string | null;
+  hrSignedAt: string | null;
+  hrReceivedDate: string | null;
+  hrReviewerName: string | null;
+  pdfUrl: string | null;
 }
 
 export interface TimecardCorrectionHistoryRow {
@@ -64,7 +89,7 @@ export interface TimecardCorrectionHistoryRow {
 }
 
 const SELECT_COLUMNS =
-  "id, profile_id, work_date, original_check_in, original_check_out, corrected_check_in, corrected_check_out, original_meal_start, original_meal_end, corrected_meal_start, corrected_meal_end, reason, status, requested_by, reviewed_by, reviewed_at, created_at, manager_id, manager_status, manager_reviewed_by, manager_reviewed_at, hr_status, hr_reviewed_by, hr_reviewed_at, accounting_status, accounting_reviewed_by, accounting_reviewed_at";
+  "id, profile_id, work_date, original_check_in, original_check_out, corrected_check_in, corrected_check_out, original_meal_start, original_meal_end, corrected_meal_start, corrected_meal_end, reason, status, requested_by, reviewed_by, reviewed_at, created_at, manager_id, manager_status, manager_reviewed_by, manager_reviewed_at, hr_status, hr_reviewed_by, hr_reviewed_at, accounting_status, accounting_reviewed_by, accounting_reviewed_at, exception_type, other_description, employee_signature_url, employee_signature_name, employee_signed_at, manager_comments, manager_signature_url, manager_signature_name, manager_signed_at, hr_paperwork_status, hr_signature_url, hr_signature_name, hr_signed_at, hr_received_date, hr_reviewer_name, pdf_url";
 
 function mapRow(row: any): TimecardCorrectionRow {
   return {
@@ -95,6 +120,22 @@ function mapRow(row: any): TimecardCorrectionRow {
     accountingStatus: row.accounting_status,
     accountingReviewedBy: row.accounting_reviewed_by ?? null,
     accountingReviewedAt: row.accounting_reviewed_at ?? null,
+    exceptionType: row.exception_type ?? null,
+    otherDescription: row.other_description ?? "",
+    employeeSignatureUrl: row.employee_signature_url ?? null,
+    employeeSignatureName: row.employee_signature_name ?? null,
+    employeeSignedAt: row.employee_signed_at ?? null,
+    managerComments: row.manager_comments ?? "",
+    managerSignatureUrl: row.manager_signature_url ?? null,
+    managerSignatureName: row.manager_signature_name ?? null,
+    managerSignedAt: row.manager_signed_at ?? null,
+    hrPaperworkStatus: row.hr_paperwork_status ?? "pending",
+    hrSignatureUrl: row.hr_signature_url ?? null,
+    hrSignatureName: row.hr_signature_name ?? null,
+    hrSignedAt: row.hr_signed_at ?? null,
+    hrReceivedDate: row.hr_received_date ?? null,
+    hrReviewerName: row.hr_reviewer_name ?? null,
+    pdfUrl: row.pdf_url ?? null,
   };
 }
 
@@ -241,8 +282,18 @@ export function canReviewCorrectionStage(
   return has("FINANCE");
 }
 
-/** Submit a new correction request on behalf of an employee (profileId). */
+/**
+ * Submit a new correction request on behalf of an employee (profileId).
+ * Every submission now carries the "Employee Attendance & Visit Exception
+ * Report" fields (exceptionType + the employee's own signature) — see
+ * migration 0304 and timecardCorrectionPdf.ts, which builds/uploads the PDF
+ * and the signature image BEFORE this call using a client-generated `id` (so
+ * the storage path can be keyed by the row's id before the row exists —
+ * same pre-generated-key pattern MobileTicketTimeDisputeView already uses
+ * for its own attachments) and passes the resulting URLs in here.
+ */
 export async function createTimecardCorrection(input: {
+  id: string;
   profileId: string;
   workDate: string;
   originalCheckIn: string;
@@ -256,8 +307,22 @@ export async function createTimecardCorrection(input: {
   reason: string;
   requestedBy: string | null;
   managerId?: string | null;
+  /**
+   * Optional — AttendanceMonitoringPage.tsx's own "file a correction on
+   * behalf of an employee" utility (HR/Admin fixing someone's punch
+   * directly, the employee not present to sign anything) still creates a
+   * plain correction with no exception paperwork. Every technician-facing
+   * self-service submission (EmployeeSelfServicePage.tsx, mobile) always
+   * provides these — see buildCorrectionSubmissionPdf.
+   */
+  exceptionType?: ExceptionType;
+  otherDescription?: string;
+  employeeSignatureUrl?: string;
+  employeeSignatureName?: string;
+  pdfUrl?: string;
 }): Promise<void> {
   const { error } = await supabase.from("timecard_corrections").insert({
+    id: input.id,
     profile_id: input.profileId,
     work_date: input.workDate,
     original_check_in: input.originalCheckIn || null,
@@ -272,6 +337,12 @@ export async function createTimecardCorrection(input: {
     status: "pending",
     requested_by: input.requestedBy,
     manager_id: input.managerId ?? null,
+    exception_type: input.exceptionType ?? null,
+    other_description: input.otherDescription || null,
+    employee_signature_url: input.employeeSignatureUrl ?? null,
+    employee_signature_name: input.employeeSignatureName ?? null,
+    employee_signed_at: input.employeeSignatureUrl ? new Date().toISOString() : null,
+    pdf_url: input.pdfUrl ?? null,
   });
   if (error) {
     console.error("createTimecardCorrection error:", error.message);
@@ -298,7 +369,18 @@ export async function reviewCorrectionStage(
   decision: "approved" | "rejected",
   reviewerId: string,
   reviewerName: string,
-  corrected?: { checkIn?: string; checkOut?: string; mealStart?: string; mealEnd?: string }
+  corrected?: { checkIn?: string; checkOut?: string; mealStart?: string; mealEnd?: string },
+  /**
+   * Only meaningful when stage === "manager" && decision === "approved" —
+   * the paper form's Manager/SBM Review & Approval signature, captured the
+   * instant the manager clicks Approve (every one of the 5 places that can
+   * approve a correction passes this the same way). `pdfUrl` is the
+   * already-rendered-and-uploaded PDF with this signature stamped on
+   * (built by timecardCorrectionPdf.ts BEFORE this call, same convention
+   * as every other signable-document flow in this app: render/upload in
+   * the caller, persist the URL here).
+   */
+  signature?: { url: string; name: string; comments: string; pdfUrl: string }
 ): Promise<void> {
   const nowIso = new Date().toISOString();
   const stagePayload: Record<string, unknown> =
@@ -307,6 +389,14 @@ export async function reviewCorrectionStage(
       : stage === "hr"
         ? { hr_status: decision, hr_reviewed_by: reviewerId, hr_reviewed_at: nowIso }
         : { accounting_status: decision, accounting_reviewed_by: reviewerId, accounting_reviewed_at: nowIso };
+
+  if (stage === "manager" && decision === "approved" && signature) {
+    stagePayload.manager_signature_url = signature.url;
+    stagePayload.manager_signature_name = signature.name;
+    stagePayload.manager_signed_at = nowIso;
+    stagePayload.manager_comments = signature.comments || null;
+    stagePayload.pdf_url = signature.pdfUrl;
+  }
 
   if (corrected?.checkIn !== undefined) stagePayload.corrected_check_in = corrected.checkIn || null;
   if (corrected?.checkOut !== undefined) stagePayload.corrected_check_out = corrected.checkOut || null;
@@ -409,5 +499,60 @@ export async function reviewCorrectionStage(
     } catch (err) {
       console.error("Failed to notify remaining stages of pending correction:", err);
     }
+  }
+}
+
+/**
+ * The paper form's "5. HR Department Use Only" sign-off. This function
+ * itself only ever touches the hr_paperwork_* columns — it stays
+ * independent of reviewCorrectionStage's hr_status quorum vote at the DB
+ * level, since Accounting can still cast that quorum's second vote and
+ * finalize the correction without an actual HR person ever touching the
+ * paperwork. Callable independently of whether hrStatus/accountingStatus
+ * have already resolved the correction — an HR person can catch up on the
+ * paperwork after the fact.
+ *
+ * CorrectionHrSignModal.tsx (the only caller) additionally calls
+ * reviewCorrectionStage(..., "hr", "approved") right after this, whenever
+ * the action status is "Approved" and hrStatus is still "pending" — signing
+ * as HR is the ONLY way to cast the HR quorum vote on an exception-report
+ * row, since every plain one-click "Approve (HR)" button in the UI is
+ * hidden for those rows precisely so it can't happen without a signature.
+ * "Additional Review Required" never votes.
+ */
+export async function signCorrectionHrPaperwork(
+  correctionId: string,
+  reviewerId: string,
+  reviewerName: string,
+  signature: { url: string; name: string },
+  hrReceivedDate: string,
+  hrActionStatus: Exclude<HrPaperworkStatus, "pending">,
+  pdfUrl: string
+): Promise<void> {
+  const nowIso = new Date().toISOString();
+  const { error } = await supabase
+    .from("timecard_corrections")
+    .update({
+      hr_paperwork_status: hrActionStatus,
+      hr_signature_url: signature.url,
+      hr_signature_name: signature.name,
+      hr_signed_at: nowIso,
+      hr_received_date: hrReceivedDate || null,
+      hr_reviewer_name: reviewerName,
+      pdf_url: pdfUrl,
+    })
+    .eq("id", correctionId);
+  if (error) {
+    console.error("signCorrectionHrPaperwork error:", error.message);
+    throw new Error(error.message);
+  }
+}
+
+/** Swaps in a freshly re-rendered PDF (see timecardCorrectionPdf.ts's regenerateCorrectionPdf) — no signature/status change, just the file. */
+export async function updateCorrectionPdfUrl(correctionId: string, pdfUrl: string): Promise<void> {
+  const { error } = await supabase.from("timecard_corrections").update({ pdf_url: pdfUrl }).eq("id", correctionId);
+  if (error) {
+    console.error("updateCorrectionPdfUrl error:", error.message);
+    throw new Error(error.message);
   }
 }

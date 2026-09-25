@@ -27,6 +27,7 @@ import {
   type PtoStage,
 } from "@/lib/supabase/pto";
 import { logModuleActivity } from "@/lib/supabase/moduleActivityLog";
+import { PtoManagerSignModal, PtoHrSignModal } from "@/components/PtoSignModals";
 
 const PTO_TYPE_LABELS: Record<PtoType, string> = {
   vacation: "Vacation",
@@ -38,7 +39,7 @@ const PTO_TYPE_LABELS: Record<PtoType, string> = {
 };
 
 export function PtoManagementTab() {
-  const { uid, role, extraRoles, displayName } = useAuth();
+  const { uid, role, extraRoles, displayName, companyId } = useAuth();
   const [myProfileId, setMyProfileId] = useState<string | null>(null);
   useEffect(() => {
     if (!uid) return;
@@ -95,6 +96,8 @@ export function PtoManagementTab() {
   );
 
   const [busyPtoId, setBusyPtoId] = useState<string | null>(null);
+  const [signingManagerFor, setSigningManagerFor] = useState<PtoRequestRow | null>(null);
+  const [signingHrFor, setSigningHrFor] = useState<PtoRequestRow | null>(null);
   const [showPtoForm, setShowPtoForm] = useState(false);
   const [ptoForm, setPtoForm] = useState({ profileId: "", ptoType: "vacation" as PtoType, startDate: "", endDate: "", reason: "" });
   const [ptoFormHireDate, setPtoFormHireDate] = useState<string | null>(null);
@@ -241,20 +244,37 @@ export function PtoManagementTab() {
                     {request.managerStatus === "pending" && canReviewPtoStage(request, "manager", myProfileId, role, extraRoles, displayName, requesterManagerName, requesterManagersManagerName) && (
                       <div className="flex gap-1">
                         <span className="text-[10px] text-slate-500 self-center">Mgr:</span>
-                        <button type="button" title="Approve as manager" onClick={() => handlePtoStageAction(request, "manager", "approved")} disabled={busyPtoId === request.id} className="px-2 py-1 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded text-xs transition flex items-center gap-1">
-                          {busyPtoId === request.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle className="h-3 w-3" />}
-                        </button>
+                        {request.exceptionType !== null ? (
+                          <button type="button" title="Approve & sign as manager" onClick={() => setSigningManagerFor(request)} disabled={busyPtoId === request.id} className="px-2 py-1 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded text-xs transition flex items-center gap-1">
+                            <CheckCircle className="h-3 w-3" />
+                          </button>
+                        ) : (
+                          <button type="button" title="Approve as manager" onClick={() => handlePtoStageAction(request, "manager", "approved")} disabled={busyPtoId === request.id} className="px-2 py-1 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded text-xs transition flex items-center gap-1">
+                            {busyPtoId === request.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle className="h-3 w-3" />}
+                          </button>
+                        )}
                         <button type="button" title="Reject as manager" onClick={() => handlePtoStageAction(request, "manager", "rejected")} disabled={busyPtoId === request.id} className="px-2 py-1 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white rounded text-xs transition flex items-center gap-1">
                           {busyPtoId === request.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <XCircle className="h-3 w-3" />}
                         </button>
                       </div>
                     )}
+                    {request.exceptionType !== null && request.hrPaperworkStatus === "pending" && canReviewPtoStage(request, "hr", myProfileId, role, extraRoles, displayName, requesterManagerName, requesterManagersManagerName) && (
+                      request.managerSignatureUrl ? (
+                        <button type="button" onClick={() => setSigningHrFor(request)} className="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded text-[10px] font-semibold transition">
+                          Sign Exception Report (HR)
+                        </button>
+                      ) : (
+                        <span className="text-[10px] text-slate-500">Exception Report: awaiting manager signature</span>
+                      )
+                    )}
                     {request.hrStatus === "pending" && canReviewPtoStage(request, "hr", myProfileId, role, extraRoles, displayName, requesterManagerName, requesterManagersManagerName) && (
                       <div className="flex gap-1">
                         <span className="text-[10px] text-slate-500 self-center">HR:</span>
-                        <button type="button" title="Approve as HR" onClick={() => handlePtoStageAction(request, "hr", "approved")} disabled={busyPtoId === request.id} className="px-2 py-1 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded text-xs transition flex items-center gap-1">
-                          {busyPtoId === request.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle className="h-3 w-3" />}
-                        </button>
+                        {request.exceptionType === null && (
+                          <button type="button" title="Approve as HR" onClick={() => handlePtoStageAction(request, "hr", "approved")} disabled={busyPtoId === request.id} className="px-2 py-1 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded text-xs transition flex items-center gap-1">
+                            {busyPtoId === request.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle className="h-3 w-3" />}
+                          </button>
+                        )}
                         <button type="button" title="Reject as HR" onClick={() => handlePtoStageAction(request, "hr", "rejected")} disabled={busyPtoId === request.id} className="px-2 py-1 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white rounded text-xs transition flex items-center gap-1">
                           {busyPtoId === request.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <XCircle className="h-3 w-3" />}
                         </button>
@@ -379,6 +399,35 @@ export function PtoManagementTab() {
             </div>
           </div>
         </div>
+      )}
+
+      {signingManagerFor && (
+        <PtoManagerSignModal
+          request={signingManagerFor}
+          companyId={companyId}
+          profiles={profiles}
+          reviewerId={myProfileId}
+          reviewerName={displayName || "Manager"}
+          onClose={() => setSigningManagerFor(null)}
+          onSigned={async () => {
+            setSigningManagerFor(null);
+            await load();
+          }}
+        />
+      )}
+      {signingHrFor && (
+        <PtoHrSignModal
+          request={signingHrFor}
+          companyId={companyId}
+          profiles={profiles}
+          reviewerId={myProfileId}
+          reviewerName={displayName || "HR"}
+          onClose={() => setSigningHrFor(null)}
+          onSigned={async () => {
+            setSigningHrFor(null);
+            await load();
+          }}
+        />
       )}
     </div>
   );

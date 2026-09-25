@@ -49,6 +49,7 @@ import { getCompanyHolidaysInRange, type CompanyHolidayRow } from "@/lib/supabas
 import { getPendingCorrectionsInRange, type TimecardCorrectionRow } from "@/lib/supabase/timecardCorrections";
 import { AttachmentPreviewModal } from "@/components/AttachmentPreviewModal";
 import { PendingItemDetailModal, type PendingItem } from "@/components/PendingItemDetailModal";
+import { PtoManagerSignModal, PtoHrSignModal, type MinimalPtoProfile } from "@/components/PtoSignModals";
 
 export interface CalendarEmployee {
   id: string;
@@ -719,6 +720,15 @@ export function HrCalendarTab({ employees, myProfileId, myDisplayName }: Props) 
   // Monitoring's own PTO Management tab uses, so approving here is really
   // just doing it from this calendar instead of that table.
   const [busyStageId, setBusyStageId] = useState<string | null>(null);
+  const [signingPtoManagerFor, setSigningPtoManagerFor] = useState<PtoRequestRow | null>(null);
+  const [signingPtoHrFor, setSigningPtoHrFor] = useState<PtoRequestRow | null>(null);
+  // CalendarEmployee doesn't carry email/technician_id/assigned_branch under
+  // those names — adapt it to the shape PtoManagerSignModal/PtoHrSignModal's
+  // employeeInfoForPto helper expects.
+  const ptoSignModalProfiles: MinimalPtoProfile[] = useMemo(
+    () => employees.map((e) => ({ id: e.id, display_name: e.name, email: "", technician_id: null, assigned_branch: e.branch, role: e.role })),
+    [employees]
+  );
   const handleStageAction = async (request: PtoRequestRow, stage: PtoStage, decision: "approved" | "rejected") => {
     setBusyStageId(request.id);
     setFormError(null);
@@ -1162,18 +1172,27 @@ export function HrCalendarTab({ employees, myProfileId, myDisplayName }: Props) 
                     if (request.status === "cancelled" || request.status === "denied") return null;
                     if (!canReviewPtoStage(request, stage, myProfileId, role, extraRoles, myDisplayName, requesterManagerName, requesterManagersManagerName)) return null;
                     const busy = busyStageId === request.id;
+                    const needsManagerSignature = stage === "manager" && request.exceptionType !== null;
+                    // HR can only approve an exception-report row through the
+                    // signature container (hrExceptionSignAction below) —
+                    // this one-click quorum approve is hidden for those rows
+                    // so "HR: Approved" can never show up with no signature
+                    // on file. Reject still stays a plain click.
+                    const hideApprove = stage === "hr" && request.exceptionType !== null;
                     return (
                       <div className="flex items-center gap-1.5">
                         <span className="text-[10px] text-muted-foreground w-12 shrink-0">{label}:</span>
-                        <button
-                          type="button"
-                          title={`Approve as ${label}`}
-                          onClick={() => void handleStageAction(request, stage, "approved")}
-                          disabled={busy}
-                          className="px-2 py-1 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded text-xs transition flex items-center gap-1"
-                        >
-                          {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle className="h-3 w-3" />} Approve
-                        </button>
+                        {!hideApprove && (
+                          <button
+                            type="button"
+                            title={needsManagerSignature ? "Approve & sign as manager" : `Approve as ${label}`}
+                            onClick={() => needsManagerSignature ? setSigningPtoManagerFor(request) : void handleStageAction(request, stage, "approved")}
+                            disabled={busy}
+                            className="px-2 py-1 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded text-xs transition flex items-center gap-1"
+                          >
+                            {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle className="h-3 w-3" />} Approve
+                          </button>
+                        )}
                         <button
                           type="button"
                           title={`Reject as ${label}`}
@@ -1183,6 +1202,26 @@ export function HrCalendarTab({ employees, myProfileId, myDisplayName }: Props) 
                         >
                           {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <XCircle className="h-3 w-3" />} Reject
                         </button>
+                      </div>
+                    );
+                  };
+                  const hrExceptionSignAction = () => {
+                    if (request.exceptionType === null || request.hrPaperworkStatus !== "pending") return null;
+                    if (!canReviewPtoStage(request, "hr", myProfileId, role, extraRoles, myDisplayName, requesterManagerName, requesterManagersManagerName)) return null;
+                    return (
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[10px] text-muted-foreground w-12 shrink-0">Report:</span>
+                        {request.managerSignatureUrl ? (
+                          <button
+                            type="button"
+                            onClick={() => setSigningPtoHrFor(request)}
+                            className="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded text-[11px] font-semibold transition"
+                          >
+                            Sign Exception Report (HR)
+                          </button>
+                        ) : (
+                          <span className="text-[10px] text-muted-foreground">Exception Report: awaiting manager signature</span>
+                        )}
                       </div>
                     );
                   };
@@ -1201,6 +1240,7 @@ export function HrCalendarTab({ employees, myProfileId, myDisplayName }: Props) 
                       </div>
                       <div className="flex flex-col gap-1.5">
                         {stageAction("Manager", "manager", request.managerStatus)}
+                        {hrExceptionSignAction()}
                         {stageAction("HR", "hr", request.hrStatus)}
                         {stageAction("Accounting", "accounting", request.accountingStatus)}
                         {!anyActionable && notWithdrawn && (request.managerStatus === "pending" || request.hrStatus === "pending" || request.accountingStatus === "pending") && (
@@ -1391,6 +1431,46 @@ export function HrCalendarTab({ employees, myProfileId, myDisplayName }: Props) 
           }}
         />,
         document.body
+      )}
+      {signingPtoManagerFor && (
+        <PtoManagerSignModal
+          request={signingPtoManagerFor}
+          companyId={companyId}
+          profiles={ptoSignModalProfiles}
+          reviewerId={myProfileId}
+          reviewerName={myDisplayName || "Manager"}
+          onClose={() => setSigningPtoManagerFor(null)}
+          onSigned={async () => {
+            const requestId = signingPtoManagerFor.id;
+            setSigningPtoManagerFor(null);
+            const freshRows = await load();
+            setModal((cur) => {
+              if (!cur) return cur;
+              const updated = freshRows.find((r) => r.id === requestId);
+              return updated ? { ...cur, request: updated } : cur;
+            });
+          }}
+        />
+      )}
+      {signingPtoHrFor && (
+        <PtoHrSignModal
+          request={signingPtoHrFor}
+          companyId={companyId}
+          profiles={ptoSignModalProfiles}
+          reviewerId={myProfileId}
+          reviewerName={myDisplayName || "HR"}
+          onClose={() => setSigningPtoHrFor(null)}
+          onSigned={async () => {
+            const requestId = signingPtoHrFor.id;
+            setSigningPtoHrFor(null);
+            const freshRows = await load();
+            setModal((cur) => {
+              if (!cur) return cur;
+              const updated = freshRows.find((r) => r.id === requestId);
+              return updated ? { ...cur, request: updated } : cur;
+            });
+          }}
+        />
       )}
     </div>
   );

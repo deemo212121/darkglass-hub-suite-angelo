@@ -30,9 +30,10 @@ import {
   type CorrectionStatus,
 } from "@/lib/supabase/timecardCorrections";
 import { logModuleActivity } from "@/lib/supabase/moduleActivityLog";
+import { CorrectionManagerSignModal, CorrectionHrSignModal } from "@/components/CorrectionSignModals";
 
 export function CorrectionsTab() {
-  const { uid, role, extraRoles, displayName } = useAuth();
+  const { uid, role, extraRoles, displayName, companyId } = useAuth();
   const [myProfileId, setMyProfileId] = useState<string | null>(null);
   useEffect(() => {
     if (!uid) return;
@@ -83,6 +84,13 @@ export function CorrectionsTab() {
 
   const [correctionSearch, setCorrectionSearch] = useState("");
   const [correctionStatusFilter, setCorrectionStatusFilter] = useState<"all" | CorrectionStatus>("all");
+  // "New" = has the Exception Report fields (exceptionType set at
+  // submission, migration 0304) — every correction submitted from now on.
+  // "Old" = submitted before this feature existed, kept purely as a
+  // read-only archive; never routed through the signature-required approve
+  // flow (see the manager-approve button below), since they were never
+  // asked to sign anything in the first place.
+  const [correctionEraFilter, setCorrectionEraFilter] = useState<"new" | "old">("new");
 
   // A stale managerId snapshot only ever ADDS visibility (the requester's
   // manager at submission time can still act even if team scoping has since
@@ -91,12 +99,13 @@ export function CorrectionsTab() {
   const filteredCorrections = useMemo(() => {
     const q = correctionSearch.trim().toLowerCase();
     return corrections.filter((c) => {
+      if ((c.exceptionType !== null) !== (correctionEraFilter === "new")) return false;
       if (teamScopedIds !== null && !teamScopedIds.has(c.profileId) && c.managerId !== myProfileId) return false;
       if (correctionStatusFilter !== "all" && c.status !== correctionStatusFilter) return false;
       if (q && !profileName(c.profileId).toLowerCase().includes(q)) return false;
       return true;
     });
-  }, [corrections, correctionSearch, correctionStatusFilter, teamScopedIds, myProfileId, profiles]);
+  }, [corrections, correctionSearch, correctionStatusFilter, correctionEraFilter, teamScopedIds, myProfileId, profiles]);
   const correctionPendingCount = useMemo(() => filteredCorrections.filter((c) => c.status === "pending").length, [filteredCorrections]);
 
   const visibleCorrectionHistory = useMemo(() => {
@@ -109,6 +118,8 @@ export function CorrectionsTab() {
   }, [correctionHistory, corrections, teamScopedIds, myProfileId]);
 
   const [busyCorrectionId, setBusyCorrectionId] = useState<string | null>(null);
+  const [signingManagerFor, setSigningManagerFor] = useState<TimecardCorrectionRow | null>(null);
+  const [signingHrFor, setSigningHrFor] = useState<TimecardCorrectionRow | null>(null);
   const managerChainFor = (requesterProfileId: string) => {
     const requesterManagerName = profileById.get(requesterProfileId)?.manager_name ?? null;
     const requesterManagersManagerName = requesterManagerName
@@ -143,7 +154,28 @@ export function CorrectionsTab() {
   return (
     <div className="space-y-6">
       <div className="bg-slate-900/50 border border-white/10 rounded-lg p-6 overflow-x-auto">
-        <h2 className="text-lg font-bold text-white mb-4">Attendance Corrections</h2>
+        <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+          <h2 className="text-lg font-bold text-white">Attendance Corrections</h2>
+          <div className="flex gap-1.5">
+            <button
+              type="button"
+              onClick={() => setCorrectionEraFilter("new")}
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition ${correctionEraFilter === "new" ? "bg-primary/20 text-primary" : "bg-slate-800/50 text-slate-400 hover:text-white"}`}
+            >
+              New Corrections
+            </button>
+            <button
+              type="button"
+              onClick={() => setCorrectionEraFilter("old")}
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition ${correctionEraFilter === "old" ? "bg-primary/20 text-primary" : "bg-slate-800/50 text-slate-400 hover:text-white"}`}
+            >
+              Old Corrections (Archive)
+            </button>
+          </div>
+        </div>
+        {correctionEraFilter === "old" && (
+          <p className="text-xs text-slate-500 mb-3">Submitted before the Exception Report requirement — kept here for the record only.</p>
+        )}
         <div className="grid gap-3 md:grid-cols-4 mb-4">
           <div>
             <label className="block text-xs text-slate-400 uppercase mb-2">Search Employee</label>
@@ -238,9 +270,16 @@ export function CorrectionsTab() {
                     {c.managerStatus === "pending" && canReviewCorrectionStage(c, "manager", myProfileId, role, extraRoles, displayName, requesterManagerName, requesterManagersManagerName) && (
                       <div className="flex gap-1">
                         <span className="text-[10px] text-slate-500 self-center">Mgr:</span>
-                        <button type="button" title="Approve as manager" onClick={() => handleCorrectionStageAction(c, "manager", "approved")} disabled={busyCorrectionId === c.id} className="px-2 py-1 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded text-xs transition flex items-center gap-1">
-                          {busyCorrectionId === c.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle className="h-3 w-3" />}
-                        </button>
+                        {c.exceptionType !== null ? (
+                          <button type="button" title="Approve & sign as manager" onClick={() => setSigningManagerFor(c)} disabled={busyCorrectionId === c.id} className="px-2 py-1 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded text-xs transition flex items-center gap-1">
+                            <CheckCircle className="h-3 w-3" />
+                          </button>
+                        ) : (
+                          // Pre-Exception-Report correction — plain approve, no signature (never asked of them at submission).
+                          <button type="button" title="Approve as manager" onClick={() => handleCorrectionStageAction(c, "manager", "approved")} disabled={busyCorrectionId === c.id} className="px-2 py-1 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded text-xs transition flex items-center gap-1">
+                            {busyCorrectionId === c.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle className="h-3 w-3" />}
+                          </button>
+                        )}
                         <button type="button" title="Reject as manager" onClick={() => handleCorrectionStageAction(c, "manager", "rejected")} disabled={busyCorrectionId === c.id} className="px-2 py-1 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white rounded text-xs transition flex items-center gap-1">
                           {busyCorrectionId === c.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <XCircle className="h-3 w-3" />}
                         </button>
@@ -249,13 +288,25 @@ export function CorrectionsTab() {
                     {c.hrStatus === "pending" && canReviewCorrectionStage(c, "hr", myProfileId, role, extraRoles) && (
                       <div className="flex gap-1">
                         <span className="text-[10px] text-slate-500 self-center">HR:</span>
-                        <button type="button" title="Approve as HR" onClick={() => handleCorrectionStageAction(c, "hr", "approved")} disabled={busyCorrectionId === c.id} className="px-2 py-1 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded text-xs transition flex items-center gap-1">
-                          {busyCorrectionId === c.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle className="h-3 w-3" />}
-                        </button>
+                        {c.exceptionType === null && (
+                          // Pre-Exception-Report correction — plain approve, no signature (never asked of them at submission).
+                          <button type="button" title="Approve as HR" onClick={() => handleCorrectionStageAction(c, "hr", "approved")} disabled={busyCorrectionId === c.id} className="px-2 py-1 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded text-xs transition flex items-center gap-1">
+                            {busyCorrectionId === c.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle className="h-3 w-3" />}
+                          </button>
+                        )}
                         <button type="button" title="Reject as HR" onClick={() => handleCorrectionStageAction(c, "hr", "rejected")} disabled={busyCorrectionId === c.id} className="px-2 py-1 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white rounded text-xs transition flex items-center gap-1">
                           {busyCorrectionId === c.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <XCircle className="h-3 w-3" />}
                         </button>
                       </div>
+                    )}
+                    {c.exceptionType !== null && c.hrPaperworkStatus === "pending" && canReviewCorrectionStage(c, "hr", myProfileId, role, extraRoles) && (
+                      c.managerSignatureUrl ? (
+                        <button type="button" onClick={() => setSigningHrFor(c)} className="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded text-[10px] font-semibold transition">
+                          Sign Exception Report (HR)
+                        </button>
+                      ) : (
+                        <span className="text-[10px] text-slate-500">Exception Report: awaiting manager signature</span>
+                      )
                     )}
                     {c.accountingStatus === "pending" && canReviewCorrectionStage(c, "accounting", myProfileId, role, extraRoles) && (
                       <div className="flex gap-1">
@@ -320,6 +371,35 @@ export function CorrectionsTab() {
           )}
         </div>
       </div>
+
+      {signingManagerFor && (
+        <CorrectionManagerSignModal
+          correction={signingManagerFor}
+          companyId={companyId}
+          profiles={profiles}
+          reviewerId={myProfileId}
+          reviewerName={displayName || "Manager"}
+          onClose={() => setSigningManagerFor(null)}
+          onSigned={async () => {
+            setSigningManagerFor(null);
+            await load();
+          }}
+        />
+      )}
+      {signingHrFor && (
+        <CorrectionHrSignModal
+          correction={signingHrFor}
+          companyId={companyId}
+          profiles={profiles}
+          reviewerId={myProfileId}
+          reviewerName={displayName || "HR"}
+          onClose={() => setSigningHrFor(null)}
+          onSigned={async () => {
+            setSigningHrFor(null);
+            await load();
+          }}
+        />
+      )}
     </div>
   );
 }

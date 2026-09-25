@@ -7,7 +7,20 @@
  */
 import { SIGNATURE_FONTS, type SignaturePadHandle } from "@/hooks/useSignaturePad";
 
-export function SignaturePadControls({ pad }: { pad: SignaturePadHandle }) {
+export function SignaturePadControls({
+  pad,
+  lockedName,
+}: {
+  pad: SignaturePadHandle;
+  /** When set, the typed-name field shows this name and can't be edited —
+   *  for a caller filing on someone's behalf (e.g. Attendance Monitoring's
+   *  "New Correction Request", where HR picks the employee from a
+   *  dropdown), so the signature can't drift from the account it's
+   *  actually attesting for. The caller is responsible for keeping
+   *  pad.typedName in sync with this value (e.g. via useEffect) — this
+   *  prop only locks the input's editability, not the underlying state. */
+  lockedName?: string;
+}) {
   // Shown as soon as there's an actual signature but the box isn't checked
   // yet — catches it right where the problem is, before the person even
   // gets to Submit, instead of only a generic "please sign" error later.
@@ -52,10 +65,11 @@ export function SignaturePadControls({ pad }: { pad: SignaturePadHandle }) {
         <div className="flex flex-col items-center gap-1.5">
           <input
             type="text"
-            value={pad.typedName}
+            value={lockedName !== undefined ? lockedName : pad.typedName}
             onChange={(e) => pad.setTypedName(e.target.value)}
+            readOnly={lockedName !== undefined}
             placeholder="Type your full name"
-            className="glass-input text-sm py-1.5 px-3 rounded-md text-center"
+            className={`glass-input text-sm py-1.5 px-3 rounded-md text-center ${lockedName !== undefined ? "opacity-70 cursor-not-allowed" : ""}`}
           />
           <div className="flex items-center gap-1.5">
             {SIGNATURE_FONTS.map((f) => (

@@ -251,6 +251,7 @@ export function FillVisitExceptionReportPage({ docId }: Props) {
           const myProfile = companyProfiles.find((p) => p.id === myProfileId) ?? null;
           const managerProfile = myProfile ? await resolveTeamLeadOrManager(myProfile, companyProfiles) : null;
           await createTimecardCorrection({
+            id: crypto.randomUUID(),
             profileId: myProfileId,
             workDate: form.dateOfIncident,
             originalCheckIn: originalEntry?.checkIn || "",

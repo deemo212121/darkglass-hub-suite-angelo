@@ -1662,7 +1662,7 @@ export async function getHiringReportSections(periodType: HiringReportPeriodType
 
 // =====================================================================
 // Manual entries (Budget/Sponsored/Others) for the report above --
-// migration 0278.
+// migration 0273/0278.
 // =====================================================================
 
 export interface HiringReportManualEntry {

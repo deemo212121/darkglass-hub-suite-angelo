@@ -510,6 +510,67 @@ export async function uploadPromotionForm(companyId: string, employeeName: strin
 }
 
 /**
+ * Upload a generated Employee Attendance & Visit Exception Report PDF —
+ * same pattern as uploadWarningForm above.
+ */
+/**
+ * Uploads the "Employee Attendance & Visit Exception Report" PDF generated
+ * from a Time Correction Request's own exception-type/reason/signature
+ * fields (see timecardCorrectionPdf.ts) — folded directly into the existing
+ * correction flow rather than a separate document type, so this still
+ * covers every stamp of that PDF (employee submit, manager sign, HR sign).
+ */
+export async function uploadExceptionVisitReport(companyId: string, employeeName: string, pdfBlob: Blob): Promise<string> {
+  if (!isFirebaseReady() || !storage) {
+    throw new Error("Firebase Storage not configured");
+  }
+  const folder = `companies/${companyId}/exception-visit-reports`;
+  const objectName = `${Date.now()}-${sanitizeFileName(employeeName || "exception-visit-report")}.pdf`;
+  const objectRef = ref(storage, `${folder}/${objectName}`);
+  const snapshot = await uploadBytes(objectRef, pdfBlob, { contentType: "application/pdf" });
+  return getDownloadURL(snapshot.ref);
+}
+
+/** Upload a drawn/typed signature (PNG data URL) for a Time Correction Request's Exception Report — same capture pattern as uploadSignableDocumentSignature. */
+export async function uploadTimecardCorrectionSignature(companyId: string, correctionId: string, slot: "employee" | "manager" | "hr_staff", dataUrl: string): Promise<string> {
+  if (!isFirebaseReady() || !storage) {
+    throw new Error("Firebase Storage not configured");
+  }
+  const res = await fetch(dataUrl);
+  const blob = await res.blob();
+  const folder = `companies/${companyId}/timecard-corrections/${correctionId}`;
+  const objectRef = ref(storage, `${folder}/${slot}-${Date.now()}.png`);
+  const snapshot = await uploadBytes(objectRef, blob, { contentType: "image/png" });
+  return getDownloadURL(snapshot.ref);
+}
+
+/** Same as uploadTimecardCorrectionSignature, for a Ticket Time Dispute's Exception Report (employee_requests row) instead of a timecard_corrections row. */
+export async function uploadEmployeeRequestSignature(companyId: string, requestId: string, slot: "employee" | "manager" | "hr_staff", dataUrl: string): Promise<string> {
+  if (!isFirebaseReady() || !storage) {
+    throw new Error("Firebase Storage not configured");
+  }
+  const res = await fetch(dataUrl);
+  const blob = await res.blob();
+  const folder = `companies/${companyId}/employee-requests/${requestId}`;
+  const objectRef = ref(storage, `${folder}/${slot}-${Date.now()}.png`);
+  const snapshot = await uploadBytes(objectRef, blob, { contentType: "image/png" });
+  return getDownloadURL(snapshot.ref);
+}
+
+/** Same as uploadTimecardCorrectionSignature, for a Sick Leave / Unpaid Leave request's Exception Report (pto_requests row) instead of a timecard_corrections row. */
+export async function uploadPtoRequestSignature(companyId: string, requestId: string, slot: "employee" | "manager" | "hr_staff", dataUrl: string): Promise<string> {
+  if (!isFirebaseReady() || !storage) {
+    throw new Error("Firebase Storage not configured");
+  }
+  const res = await fetch(dataUrl);
+  const blob = await res.blob();
+  const folder = `companies/${companyId}/pto-requests/${requestId}`;
+  const objectRef = ref(storage, `${folder}/${slot}-${Date.now()}.png`);
+  const snapshot = await uploadBytes(objectRef, blob, { contentType: "image/png" });
+  return getDownloadURL(snapshot.ref);
+}
+
+/**
  * Upload a generated 4th Warning — Manager's Action Plan Form PDF — same
  * pattern as uploadWarningForm above.
  */

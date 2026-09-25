@@ -21,6 +21,8 @@ export type PtoType = "vacation" | "sick" | "personal" | "holiday" | "unpaid" | 
 export type PtoStatus = "pending" | "approved" | "denied" | "cancelled";
 export type PtoStageStatus = "pending" | "approved" | "rejected";
 export type PtoStage = "manager" | "hr" | "accounting";
+export type PtoExceptionReportType = "missed_workday" | "late_early" | "missed_visit" | "other";
+export type PtoHrPaperworkStatus = "pending" | "approved" | "additional_review_required";
 
 /** Sick Leave is always unpaid and never credited to payroll — separate from every other leave type, which defaults to paid unless explicitly `unpaid`. */
 export function isPaidPtoType(ptoType: PtoType): boolean {
@@ -237,10 +239,31 @@ export interface PtoRequestRow {
    *  attachmentPath goes back to null so "Removed by X" can still show. */
   attachmentRemovedBy: string | null;
   attachmentRemovedAt: string | null;
+  // "Employee Attendance & Visit Exception Report" fields — Sick Leave and
+  // Unpaid Leave only (migration 0306), folded directly into this same
+  // request instead of a separate document type, same treatment migrations
+  // 0304/0305 gave Time Correction / Ticket Time Dispute. See
+  // ptoExceptionReportPdf.ts.
+  exceptionType: PtoExceptionReportType | null;
+  otherDescription: string;
+  employeeSignatureUrl: string | null;
+  employeeSignatureName: string | null;
+  employeeSignedAt: string | null;
+  managerComments: string;
+  managerSignatureUrl: string | null;
+  managerSignatureName: string | null;
+  managerSignedAt: string | null;
+  hrPaperworkStatus: PtoHrPaperworkStatus;
+  hrSignatureUrl: string | null;
+  hrSignatureName: string | null;
+  hrSignedAt: string | null;
+  hrReceivedDate: string | null;
+  hrReviewerName: string | null;
+  pdfUrl: string | null;
 }
 
 const SELECT_COLUMNS =
-  "id, profile_id, pto_type, start_date, end_date, hours_requested, reason, status, requested_by, manager_id, manager_status, manager_reviewed_by, manager_reviewed_at, hr_status, hr_reviewed_by, hr_reviewed_at, accounting_status, accounting_reviewed_by, accounting_reviewed_at, reviewed_by, reviewed_at, review_note, created_at, attachment_path, attachment_added_by, attachment_added_at, attachment_removed_by, attachment_removed_at";
+  "id, profile_id, pto_type, start_date, end_date, hours_requested, reason, status, requested_by, manager_id, manager_status, manager_reviewed_by, manager_reviewed_at, hr_status, hr_reviewed_by, hr_reviewed_at, accounting_status, accounting_reviewed_by, accounting_reviewed_at, reviewed_by, reviewed_at, review_note, created_at, attachment_path, attachment_added_by, attachment_added_at, attachment_removed_by, attachment_removed_at, exception_type, other_description, employee_signature_url, employee_signature_name, employee_signed_at, manager_comments, manager_signature_url, manager_signature_name, manager_signed_at, hr_paperwork_status, hr_signature_url, hr_signature_name, hr_signed_at, hr_received_date, hr_reviewer_name, pdf_url";
 
 // Falls back to this if attachment_added_by/etc. don't exist yet — i.e.
 // 0246_attachment_added_removed_by.sql hasn't been run against this database.
@@ -287,6 +310,22 @@ function mapRow(row: any): PtoRequestRow {
     attachmentAddedAt: row.attachment_added_at ?? null,
     attachmentRemovedBy: row.attachment_removed_by ?? null,
     attachmentRemovedAt: row.attachment_removed_at ?? null,
+    exceptionType: row.exception_type ?? null,
+    otherDescription: row.other_description ?? "",
+    employeeSignatureUrl: row.employee_signature_url ?? null,
+    employeeSignatureName: row.employee_signature_name ?? null,
+    employeeSignedAt: row.employee_signed_at ?? null,
+    managerComments: row.manager_comments ?? "",
+    managerSignatureUrl: row.manager_signature_url ?? null,
+    managerSignatureName: row.manager_signature_name ?? null,
+    managerSignedAt: row.manager_signed_at ?? null,
+    hrPaperworkStatus: row.hr_paperwork_status ?? "pending",
+    hrSignatureUrl: row.hr_signature_url ?? null,
+    hrSignatureName: row.hr_signature_name ?? null,
+    hrSignedAt: row.hr_signed_at ?? null,
+    hrReceivedDate: row.hr_received_date ?? null,
+    hrReviewerName: row.hr_reviewer_name ?? null,
+    pdfUrl: row.pdf_url ?? null,
   };
 }
 
@@ -458,6 +497,14 @@ export function weekdayCount(startDate: string, endDate: string): number {
 /** Submit a new PTO request on behalf of an employee (profileId). */
 /** Returns the created row (its `id` is what a caller needs right after, e.g. to attach a photo via uploadPtoAttachment) — callers that don't need it can just ignore the return value, as every existing caller already does. */
 export async function createPtoRequest(input: {
+  /**
+   * Only Sick Leave / Unpaid Leave submissions (EmployeeSelfServicePage.tsx)
+   * pre-generate this — same pre-generated-key pattern createTimecardCorrection
+   * uses, so the signature/PDF storage paths can be keyed by the row's id
+   * before the row exists. Every other caller leaves it out and gets the
+   * DB-generated default.
+   */
+  id?: string;
   profileId: string;
   ptoType: PtoType;
   startDate: string;
@@ -476,9 +523,16 @@ export async function createPtoRequest(input: {
    * is enough — no separate reviewPtoStage calls needed.
    */
   autoApprovedBy?: string | null;
+  // Exception Report fields — Sick Leave / Unpaid Leave only (migration 0306).
+  exceptionType?: PtoExceptionReportType;
+  otherDescription?: string;
+  employeeSignatureUrl?: string;
+  employeeSignatureName?: string;
+  pdfUrl?: string;
 }): Promise<PtoRequestRow> {
   const hoursRequested = weekdayCount(input.startDate, input.endDate) * 8;
   const insertPayload: Record<string, unknown> = {
+    ...(input.id ? { id: input.id } : {}),
     profile_id: input.profileId,
     pto_type: input.ptoType,
     start_date: input.startDate,
@@ -488,6 +542,12 @@ export async function createPtoRequest(input: {
     status: "pending",
     requested_by: input.requestedBy,
     manager_id: input.managerId ?? null,
+    exception_type: input.exceptionType ?? null,
+    other_description: input.otherDescription || null,
+    employee_signature_url: input.employeeSignatureUrl ?? null,
+    employee_signature_name: input.employeeSignatureName ?? null,
+    employee_signed_at: input.employeeSignatureUrl ? new Date().toISOString() : null,
+    pdf_url: input.pdfUrl ?? null,
   };
   if (input.autoApprovedBy) {
     const nowIso = new Date().toISOString();
@@ -579,15 +639,31 @@ export async function reviewPtoStage(
   stage: PtoStage,
   decision: "approved" | "rejected",
   reviewerId: string,
-  reviewerName: string
+  reviewerName: string,
+  /**
+   * Only meaningful when stage === "manager" && decision === "approved" —
+   * the Exception Report's Manager/SBM signature, captured the instant the
+   * manager clicks Approve (mirrors reviewCorrectionStage's identical
+   * param for Time Correction, migration 0304). `pdfUrl` is the already-
+   * rendered-and-uploaded PDF with this signature stamped on.
+   */
+  signature?: { url: string; name: string; comments: string; pdfUrl: string }
 ): Promise<void> {
   const nowIso = new Date().toISOString();
-  const payload =
+  const payload: Record<string, unknown> =
     stage === "manager"
       ? { manager_status: decision, manager_reviewed_by: reviewerId, manager_reviewed_at: nowIso }
       : stage === "hr"
         ? { hr_status: decision, hr_reviewed_by: reviewerId, hr_reviewed_at: nowIso }
         : { accounting_status: decision, accounting_reviewed_by: reviewerId, accounting_reviewed_at: nowIso };
+
+  if (stage === "manager" && decision === "approved" && signature) {
+    payload.manager_signature_url = signature.url;
+    payload.manager_signature_name = signature.name;
+    payload.manager_signed_at = nowIso;
+    payload.manager_comments = signature.comments || null;
+    payload.pdf_url = signature.pdfUrl;
+  }
 
   let { data, error } = await supabase
     .from("pto_requests")
@@ -659,5 +735,55 @@ export async function reviewPtoStage(
     } catch (err) {
       console.error("Failed to notify HR/Accounting of pending PTO request:", err);
     }
+  }
+}
+
+/**
+ * The paper form's "5. HR Department Use Only" sign-off. This function
+ * itself only ever touches the hr_paperwork_* columns — it stays
+ * independent of hrStatus/accountingStatus (the manager-then-HR-OR-
+ * Accounting quorum) at the DB level, same reasoning as
+ * signCorrectionHrPaperwork/signTicketDisputeHrPaperwork.
+ *
+ * PtoHrSignModal.tsx (the only caller) additionally calls
+ * reviewPtoStage(..., "hr", "approved") right after this, whenever the
+ * action status is "Approved" and hrStatus is still "pending" — signing as
+ * HR is the ONLY way to cast the HR quorum vote on an exception-report row,
+ * since every plain one-click "Approve (HR)" button in the UI is hidden for
+ * those rows precisely so it can't happen without a signature.
+ * "Additional Review Required" never votes.
+ */
+export async function signPtoHrPaperwork(
+  id: string,
+  reviewerName: string,
+  signature: { url: string; name: string },
+  hrReceivedDate: string,
+  hrActionStatus: Exclude<PtoHrPaperworkStatus, "pending">,
+  pdfUrl: string
+): Promise<void> {
+  const { error } = await supabase
+    .from("pto_requests")
+    .update({
+      hr_paperwork_status: hrActionStatus,
+      hr_signature_url: signature.url,
+      hr_signature_name: signature.name,
+      hr_signed_at: new Date().toISOString(),
+      hr_received_date: hrReceivedDate || null,
+      hr_reviewer_name: reviewerName,
+      pdf_url: pdfUrl,
+    })
+    .eq("id", id);
+  if (error) {
+    console.error("signPtoHrPaperwork error:", error.message);
+    throw new Error(error.message);
+  }
+}
+
+/** Swaps in a freshly re-rendered PDF — no signature/status change, just the file (see ptoExceptionReportPdf.ts's regeneratePtoExceptionReportPdf). */
+export async function updatePtoPdfUrl(id: string, pdfUrl: string): Promise<void> {
+  const { error } = await supabase.from("pto_requests").update({ pdf_url: pdfUrl }).eq("id", id);
+  if (error) {
+    console.error("updatePtoPdfUrl error:", error.message);
+    throw new Error(error.message);
   }
 }

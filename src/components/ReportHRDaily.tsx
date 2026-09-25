@@ -35,7 +35,9 @@ import { useAuth } from "@/lib/auth";
 import { nowInTimezone, DEFAULT_ATTENDANCE_TIMEZONE } from "@/lib/attendanceGrace";
 import { normalizeRole, ROLE_LABELS, isJotformHrRole, getRoleDepartmentBreakdown } from "@/lib/roleLabels";
 import { useAllRoleOptions } from "@/lib/customRoles";
-import { getCompanyUsers, getProfileEmployeeInfo, getEmployeeInfoByProfileIds, saveProfileEmployeeInfo, updateCompanyUser, getMyProfileId, getAccountCreatorsByEmail, getProfileCredentialsPreview, setTraineeAccessGranted, type EmployeeInfo } from "@/lib/supabase/users";
+import { getCompanyUsers, getProfileEmployeeInfo, getEmployeeInfoByProfileIds, saveProfileEmployeeInfo, updateCompanyUser, getMyProfileId, getAccountCreatorsByEmail, getProfileCredentialsPreview, setTraineeAccessGranted, type EmployeeInfo, type ProfileRow } from "@/lib/supabase/users";
+import { CorrectionManagerSignModal, CorrectionHrSignModal } from "@/components/CorrectionSignModals";
+import { PtoManagerSignModal, PtoHrSignModal } from "@/components/PtoSignModals";
 import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
 import { subscribeNotifications, markNotificationRead, deleteNotification, type AppNotification } from "@/lib/firebase/notifications";
 import {
@@ -390,7 +392,7 @@ interface Employee {
   status: EmploymentStatus;
   /** Trainee vs Regular — a separate classification from `status` (Account Status) above. See migration 0152. */
   employmentType: "trainee" | "regular";
-  /** HR override (migration 0271) — a trainee with this set gets full access to their real role despite employmentType still being "trainee". See users.ts's setTraineeAccessGranted. */
+  /** HR override (migration 0268/0271) — a trainee with this set gets full access to their real role despite employmentType still being "trainee". See users.ts's setTraineeAccessGranted. */
   traineeAccessGranted: boolean;
   /** profiles.tier_level (migration 0162) — same field Staff List's own "Tier Level" tab edits; Current Technicians' own column here just narrows the dropdown to Tier 1/2/3. */
   tierLevel: string | null;
@@ -1127,6 +1129,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
   const [error, setError] = useState<string | null>(null);
   const [showActivityLog, setShowActivityLog] = useState(false);
+  const [showAuditLog, setShowAuditLog] = useState(false);
   // One section visible at a time — the page used to stack Hiring, Pending
   // Reviews, the Approved log, the department trend chart, and the full
   // Employee Directory all on top of each other, forcing a long scroll to
@@ -1736,15 +1739,26 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [employeeRequests, setEmployeeRequests] = useState<EmployeeRequestRow[]>([]);
   const [requestManagerLoading, setRequestManagerLoading] = useState(true);
   const [requestResponseNote, setRequestResponseNote] = useState<Record<string, string>>({});
+  // Only for CorrectionManagerSignModal/CorrectionHrSignModal below, which
+  // need real ProfileRow fields (technician_id, assigned_branch, role) to
+  // render the Exception Report PDF — `employees` above is a different,
+  // page-local shape that doesn't carry those.
+  const [correctionProfiles, setCorrectionProfiles] = useState<ProfileRow[]>([]);
+  const [signingManagerCorrection, setSigningManagerCorrection] = useState<TimecardCorrectionRow | null>(null);
+  const [signingHrCorrection, setSigningHrCorrection] = useState<TimecardCorrectionRow | null>(null);
+  const [signingPtoManagerFor, setSigningPtoManagerFor] = useState<PtoRequestRow | null>(null);
+  const [signingPtoHrFor, setSigningPtoHrFor] = useState<PtoRequestRow | null>(null);
   const loadRequestManagerData = async () => {
     setRequestManagerLoading(true);
     try {
-      const [correctionsData, employeeRequestsData] = await Promise.all([
+      const [correctionsData, employeeRequestsData, profilesData] = await Promise.all([
         getCompanyTimecardCorrections(),
         getCompanyEmployeeRequests(),
+        getCompanyUsers(),
       ]);
       setCorrections(correctionsData);
       setEmployeeRequests(employeeRequestsData);
+      setCorrectionProfiles(profilesData);
     } catch (err) {
       console.error("Failed to load employee requests:", err);
     } finally {
@@ -15817,7 +15831,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   };
 
   // Grant (or revoke) a trainee's full access to their real role, WITHOUT
-  // touching Employment Status — see migration 0271, users.ts's
+  // touching Employment Status — see migration 0268/0271, users.ts's
   // setTraineeAccessGranted. Takes effect the trainee's next login/reload,
   // same as the Frozen toggle just above.
   const handleToggleTraineeAccessGranted = async (id: string, currentlyGranted: boolean) => {
@@ -17617,8 +17631,15 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         </div>
         <button
           type="button"
-          onClick={() => setShowActivityLog(true)}
+          onClick={() => setShowAuditLog(true)}
           className="ml-auto flex items-center gap-2 px-4 py-2.5 rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 transition-colors text-sm text-muted-foreground hover:text-foreground"
+        >
+          <ShieldCheck className="h-4 w-4" /> Audit Log
+        </button>
+        <button
+          type="button"
+          onClick={() => setShowActivityLog(true)}
+          className="flex items-center gap-2 px-4 py-2.5 rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 transition-colors text-sm text-muted-foreground hover:text-foreground"
         >
           <History className="h-4 w-4" /> Activity Log
         </button>
@@ -17630,17 +17651,42 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           onClick={() => setShowActivityLog(false)}
         >
           <div
-            className="bg-slate-950 border border-white/10 rounded-lg max-w-4xl w-full max-h-[85vh] overflow-hidden flex flex-col"
+            className="relative bg-slate-950 border border-white/10 rounded-lg max-w-[1500px] w-full max-h-[92vh] overflow-hidden flex flex-col shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-center justify-end px-3 pt-3">
-              <button onClick={() => setShowActivityLog(false)} className="text-slate-400 hover:text-white transition p-1">
-                ✕
-              </button>
-            </div>
-            <div className="px-3 pb-3 overflow-y-auto">
-              <HrActivityLogPanel />
-            </div>
+            <button
+              onClick={() => setShowActivityLog(false)}
+              aria-label="Close"
+              className="absolute top-3 right-3 z-10 h-8 w-8 flex items-center justify-center rounded-full bg-white/5 border border-white/10 text-slate-400 hover:bg-white/10 hover:text-white transition"
+            >
+              <X className="h-4 w-4" />
+            </button>
+            <HrActivityLogPanel />
+          </div>
+        </div>
+      )}
+
+      {showAuditLog && (
+        <div
+          className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+          onClick={() => setShowAuditLog(false)}
+        >
+          <div
+            className="relative bg-slate-950 border border-white/10 rounded-lg max-w-[1500px] w-full max-h-[92vh] overflow-hidden flex flex-col shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              onClick={() => setShowAuditLog(false)}
+              aria-label="Close"
+              className="absolute top-3 right-3 z-10 h-8 w-8 flex items-center justify-center rounded-full bg-white/5 border border-white/10 text-slate-400 hover:bg-white/10 hover:text-white transition"
+            >
+              <X className="h-4 w-4" />
+            </button>
+            <HrActivityLogPanel
+              mode="audit"
+              title="Audit Log"
+              description="Account creation, hire dates, training windows, and active/inactive status changes."
+            />
           </div>
         </div>
       )}
@@ -20949,6 +20995,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                 const canManagerAct = r.managerStatus === "pending" && canReviewPtoStage(r, "manager", myProfileId, myRole, myExtraRoles);
                 const canHrAct = r.hrStatus === "pending" && canReviewPtoStage(r, "hr", myProfileId, myRole, myExtraRoles);
                 const canAccountingAct = r.accountingStatus === "pending" && canReviewPtoStage(r, "accounting", myProfileId, myRole, myExtraRoles);
+                const canHrSignExceptionReport = r.exceptionType !== null && r.hrPaperworkStatus === "pending" && canReviewPtoStage(r, "hr", myProfileId, myRole, myExtraRoles);
                 return (
                   <div key={r.id} className="border border-white/10 rounded-lg p-3">
                     <div className="flex items-start justify-between gap-3">
@@ -20986,13 +21033,26 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                       <div className="flex flex-col gap-2 shrink-0">
                         {canManagerAct && (
                           <div className="flex gap-1">
-                            <button type="button" onClick={() => handlePtoStageAction(r, "manager", "approved")} className="px-2 py-1 bg-green-600 hover:bg-green-700 text-white rounded text-xs font-semibold transition">Approve (Mgr)</button>
+                            {r.exceptionType !== null ? (
+                              <button type="button" onClick={() => setSigningPtoManagerFor(r)} className="px-2 py-1 bg-green-600 hover:bg-green-700 text-white rounded text-xs font-semibold transition">Approve & Sign (Mgr)</button>
+                            ) : (
+                              <button type="button" onClick={() => handlePtoStageAction(r, "manager", "approved")} className="px-2 py-1 bg-green-600 hover:bg-green-700 text-white rounded text-xs font-semibold transition">Approve (Mgr)</button>
+                            )}
                             <button type="button" onClick={() => handlePtoStageAction(r, "manager", "rejected")} className="px-2 py-1 bg-red-600 hover:bg-red-700 text-white rounded text-xs font-semibold transition">Reject</button>
                           </div>
                         )}
+                        {canHrSignExceptionReport && (
+                          r.managerSignatureUrl ? (
+                            <button type="button" onClick={() => setSigningPtoHrFor(r)} className="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs font-semibold transition">Sign Exception Report (HR)</button>
+                          ) : (
+                            <span className="text-[11px] text-muted-foreground">Exception Report: awaiting manager signature</span>
+                          )
+                        )}
                         {canHrAct && (
                           <div className="flex gap-1">
-                            <button type="button" onClick={() => handlePtoStageAction(r, "hr", "approved")} className="px-2 py-1 bg-green-600 hover:bg-green-700 text-white rounded text-xs font-semibold transition">Approve (HR)</button>
+                            {r.exceptionType === null && (
+                              <button type="button" onClick={() => handlePtoStageAction(r, "hr", "approved")} className="px-2 py-1 bg-green-600 hover:bg-green-700 text-white rounded text-xs font-semibold transition">Approve (HR)</button>
+                            )}
                             <button type="button" onClick={() => handlePtoStageAction(r, "hr", "rejected")} className="px-2 py-1 bg-red-600 hover:bg-red-700 text-white rounded text-xs font-semibold transition">Reject</button>
                           </div>
                         )}
@@ -21024,7 +21084,18 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           ) : (
             <div className="space-y-3">
               {pendingCorrections.map((r) => {
-                const canCorrManagerAct = r.managerStatus === "pending" && canReviewCorrectionStage(r, "manager", myProfileId, myRole, myExtraRoles);
+                // Same "requester's current manager, and that manager's own
+                // manager" fallback every other corrections surface already
+                // applies (CorrectionsTab.tsx, AttendanceMonitoringPage.tsx,
+                // PendingItemDetailModal.tsx, mobile Team Approvals) — this
+                // one was missing it, so a senior manager standing in for an
+                // unavailable direct manager couldn't act on a correction
+                // from here even though they could everywhere else.
+                const corrRequesterManagerName = correctionProfiles.find((p) => p.id === r.profileId)?.manager_name ?? null;
+                const corrRequesterManagersManagerName = corrRequesterManagerName
+                  ? correctionProfiles.find((p) => (p.display_name || "").trim().toLowerCase() === corrRequesterManagerName.trim().toLowerCase())?.manager_name ?? null
+                  : null;
+                const canCorrManagerAct = r.managerStatus === "pending" && canReviewCorrectionStage(r, "manager", myProfileId, myRole, myExtraRoles, displayName, corrRequesterManagerName, corrRequesterManagersManagerName);
                 const canCorrHrAct = r.hrStatus === "pending" && canReviewCorrectionStage(r, "hr", myProfileId, myRole, myExtraRoles);
                 const canCorrAccountingAct = r.accountingStatus === "pending" && canReviewCorrectionStage(r, "accounting", myProfileId, myRole, myExtraRoles);
                 return (
@@ -21068,15 +21139,28 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                   <div className="flex flex-col gap-2 shrink-0">
                     {canCorrManagerAct && (
                       <div className="flex gap-1">
-                        <button type="button" onClick={() => handleCorrectionStageAction(r, "manager", "approved")} className="px-2 py-1 bg-green-600 hover:bg-green-700 text-white rounded text-xs font-semibold transition">Approve (Mgr)</button>
+                        {r.exceptionType !== null ? (
+                          <button type="button" onClick={() => setSigningManagerCorrection(r)} className="px-2 py-1 bg-green-600 hover:bg-green-700 text-white rounded text-xs font-semibold transition">Approve & Sign (Mgr)</button>
+                        ) : (
+                          <button type="button" onClick={() => handleCorrectionStageAction(r, "manager", "approved")} className="px-2 py-1 bg-green-600 hover:bg-green-700 text-white rounded text-xs font-semibold transition">Approve (Mgr)</button>
+                        )}
                         <button type="button" onClick={() => handleCorrectionStageAction(r, "manager", "rejected")} className="px-2 py-1 bg-red-600 hover:bg-red-700 text-white rounded text-xs font-semibold transition">Reject</button>
                       </div>
                     )}
                     {canCorrHrAct && (
                       <div className="flex gap-1">
-                        <button type="button" onClick={() => handleCorrectionStageAction(r, "hr", "approved")} className="px-2 py-1 bg-green-600 hover:bg-green-700 text-white rounded text-xs font-semibold transition">Approve (HR)</button>
+                        {r.exceptionType === null && (
+                          <button type="button" onClick={() => handleCorrectionStageAction(r, "hr", "approved")} className="px-2 py-1 bg-green-600 hover:bg-green-700 text-white rounded text-xs font-semibold transition">Approve (HR)</button>
+                        )}
                         <button type="button" onClick={() => handleCorrectionStageAction(r, "hr", "rejected")} className="px-2 py-1 bg-red-600 hover:bg-red-700 text-white rounded text-xs font-semibold transition">Reject</button>
                       </div>
+                    )}
+                    {r.exceptionType !== null && r.hrPaperworkStatus === "pending" && canReviewCorrectionStage(r, "hr", myProfileId, myRole, myExtraRoles) && (
+                      r.managerSignatureUrl ? (
+                        <button type="button" onClick={() => setSigningHrCorrection(r)} className="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs font-semibold transition">Sign Exception Report (HR)</button>
+                      ) : (
+                        <span className="text-[10px] text-muted-foreground">Exception Report: awaiting manager signature</span>
+                      )
                     )}
                     {canCorrAccountingAct && (
                       <div className="flex gap-1">
@@ -21095,6 +21179,63 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             </div>
           )}
         </div>
+        )}
+
+        {signingManagerCorrection && (
+          <CorrectionManagerSignModal
+            correction={signingManagerCorrection}
+            companyId={companyId}
+            profiles={correctionProfiles}
+            reviewerId={myProfileId}
+            reviewerName={displayName || "Manager"}
+            onClose={() => setSigningManagerCorrection(null)}
+            onSigned={async () => {
+              setSigningManagerCorrection(null);
+              await loadRequestManagerData();
+            }}
+          />
+        )}
+        {signingHrCorrection && (
+          <CorrectionHrSignModal
+            correction={signingHrCorrection}
+            companyId={companyId}
+            profiles={correctionProfiles}
+            reviewerId={myProfileId}
+            reviewerName={displayName || "HR"}
+            onClose={() => setSigningHrCorrection(null)}
+            onSigned={async () => {
+              setSigningHrCorrection(null);
+              await loadRequestManagerData();
+            }}
+          />
+        )}
+        {signingPtoManagerFor && (
+          <PtoManagerSignModal
+            request={signingPtoManagerFor}
+            companyId={companyId}
+            profiles={correctionProfiles}
+            reviewerId={myProfileId}
+            reviewerName={displayName || "Manager"}
+            onClose={() => setSigningPtoManagerFor(null)}
+            onSigned={async () => {
+              setSigningPtoManagerFor(null);
+              await loadPtoRequests();
+            }}
+          />
+        )}
+        {signingPtoHrFor && (
+          <PtoHrSignModal
+            request={signingPtoHrFor}
+            companyId={companyId}
+            profiles={correctionProfiles}
+            reviewerId={myProfileId}
+            reviewerName={displayName || "HR"}
+            onClose={() => setSigningPtoHrFor(null)}
+            onSigned={async () => {
+              setSigningPtoHrFor(null);
+              await loadPtoRequests();
+            }}
+          />
         )}
 
         {/* Pending Attendance Disputes & Payroll Inquiries */}
