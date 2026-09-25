@@ -32,6 +32,12 @@ import {
   createTimecardCorrection,
   type TimecardCorrectionRow,
 } from "@/lib/supabase/timecardCorrections";
+import { buildCorrectionSubmissionPdf } from "@/lib/timecardCorrectionPdf";
+import { buildPtoSubmissionPdf } from "@/lib/ptoExceptionReportPdf";
+import { EXCEPTION_TYPE_LABELS, type ExceptionType } from "@/lib/exceptionVisitReportTemplate";
+import { getRoleDepartmentBreakdown } from "@/lib/roleLabels";
+import { useSignaturePad } from "@/hooks/useSignaturePad";
+import { SignaturePadControls } from "@/components/SignaturePad";
 import {
   getCompanyEmployeeRequests,
   createEmployeeRequest,
@@ -108,7 +114,7 @@ const LOGIN_LOGOUT_HISTORY: LoginLogoutRecord[] = [
 export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef; }) {
   const navigate = useNavigate();
   const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
-  const { email, uid, role, extraRoles, displayName } = useAuth();
+  const { email, uid, role, extraRoles, displayName, companyId } = useAuth();
   const search = (useSearch({ strict: false }) as { tab?: string }) ?? {};
 
   const [activeTab, setActiveTab] = usePersistedTab<"dashboard" | "payroll" | "attendance" | "requests">(
@@ -121,7 +127,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
   const [selectedPayslipId, setSelectedPayslipId] = useState<string | null>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [showModal, setShowModal] = useState(false);
-  const [modalType, setModalType] = useState<"pto" | "sick" | "dispute" | "correction" | "inquiry">("pto");
+  const [modalType, setModalType] = useState<"pto" | "sick" | "correction" | "unpaidLeave">("pto");
   const [attendanceView, setAttendanceView] = useState<"daily" | "monthly">("daily");
   // Real Supabase-backed attendance for the My Attendance tab.
   const [liveAttendance, setLiveAttendance] = useState<AttendanceRow[]>([]);
@@ -160,8 +166,20 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
     details: "",
     branch: (LOCATIONS[0] as string) || "",
     position: "",
+    // Employee Attendance & Visit Exception Report fields, folded directly
+    // into Time Correction (migration 0304), Sick Leave, and Unpaid Leave
+    // (migration 0306) requests — shared here since only one modal is ever
+    // open at a time. See timecardCorrectionPdf.ts / ptoExceptionReportPdf.ts.
+    exceptionType: "missed_workday" as ExceptionType,
+    otherDescription: "",
+    // Only shown/used when the employee's own profile has no technician_id
+    // on file — "let them type it in when it's blank" per the original ask.
+    employeeIdOverride: "",
   });
   const [submitSuccess, setSubmitSuccess] = useState(false);
+  const correctionSigPad = useSignaturePad({ width: 400, height: 110, defaultName: displayName || "" });
+  // Reused for both Sick Leave and Unpaid Leave (mutually exclusive modal states).
+  const leaveSigPad = useSignaturePad({ width: 400, height: 110, defaultName: displayName || "" });
 
   // Load the caller's real attendance for the last 30 days from Supabase, and
   // flag days where they're missing a clock-in or clock-out so we can surface
@@ -382,31 +400,6 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search.tab]);
 
-  // Ping every HR/Finance/Admin in the company when a new request comes in
-  // — they now review it on Attendance Monitoring (PTO Management /
-  // Corrections / Disputes & Inquiries tabs) rather than here. Uses the
-  // dedicated notifications table (not the messenger) — see
-  // src/lib/supabase/notifications.ts.
-  const notifyManagers = async (body: string, linkTo = "/m/dashboard/attendance-monitoring") => {
-    const recipients = companyProfiles.filter((p) => {
-      if (p.id === myProfileId || !p.is_active) return false;
-      const primary = (p.role || "").toUpperCase();
-      if (["ADMIN", "SUPERADMIN", "HR", "FINANCE"].includes(primary)) return true;
-      return (p.extra_roles || []).some((r) => ["ADMIN", "SUPERADMIN", "HR", "FINANCE"].includes((r || "").toUpperCase()));
-    });
-    await Promise.all(
-      recipients.map((r) =>
-        createNotification({
-          recipientId: r.id,
-          senderId: myProfileId,
-          senderName: displayName || "Employee",
-          body,
-          linkTo,
-        }).catch((err) => console.error("Failed to notify", r.id, err))
-      )
-    );
-  };
-
   const tabs = [
     { id: "dashboard", label: "My Dashboard", icon: TrendingUp },
     { id: "payroll", label: "My Payroll", icon: DollarSign },
@@ -466,7 +459,6 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
           }
           const ptoTypeMap: Record<string, PtoType> = {
             Vacation: "vacation",
-            Personal: "personal",
           };
           const myProfile = companyProfiles.find((p) => p.id === myProfileId) ?? null;
           const managerProfile = myProfile ? await resolveTeamLeadOrManager(myProfile, companyProfiles) : null;
@@ -518,17 +510,64 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
             setSubmitting(false);
             return;
           }
+          if (!formData.details.trim()) {
+            alert("Please describe the reason for this exception.");
+            setSubmitting(false);
+            return;
+          }
+          if (!leaveSigPad.hasContent()) {
+            alert("Please sign to acknowledge the information above is accurate before submitting.");
+            setSubmitting(false);
+            return;
+          }
+          const sickSignatureDataUrl = leaveSigPad.toDataURL();
+          if (!sickSignatureDataUrl) {
+            alert("Please sign to acknowledge the information above is accurate before submitting.");
+            setSubmitting(false);
+            return;
+          }
+          if (!companyId) {
+            alert("Your company couldn't be resolved yet — try again in a moment.");
+            setSubmitting(false);
+            return;
+          }
           const myProfile = companyProfiles.find((p) => p.id === myProfileId) ?? null;
           const managerProfile = myProfile ? await resolveTeamLeadOrManager(myProfile, companyProfiles) : null;
-          await createPtoRequest({
-            profileId: myProfileId,
-            ptoType: "sick",
-            startDate: formData.startDate,
-            endDate: formData.endDate,
-            reason: `Branch: ${formData.branch} | Position: ${ROLE_LABELS[formData.position] || formData.position || "N/A"} - ${formData.details}`,
-            requestedBy: myProfileId,
-            managerId: managerProfile?.id ?? null,
-          });
+          const sickRequestId = crypto.randomUUID();
+          {
+            const { roleLabel: jobTitle } = getRoleDepartmentBreakdown(myProfile?.role ?? role);
+            const { pdfUrl, employeeSignatureUrl } = await buildPtoSubmissionPdf({
+              requestId: sickRequestId,
+              companyId,
+              employeeInfo: {
+                employeeName: displayName || "",
+                technicianId: myProfile?.technician_id || formData.employeeIdOverride,
+                jobTitle,
+                department: myProfile?.assigned_branch || "",
+                directManagerName: managerProfile?.display_name || managerProfile?.email || "",
+              },
+              dateOfIncident: formData.startDate,
+              exceptionType: formData.exceptionType,
+              otherDescription: formData.otherDescription,
+              detailedReason: formData.details,
+              employeeSignatureDataUrl: sickSignatureDataUrl,
+            });
+            await createPtoRequest({
+              id: sickRequestId,
+              profileId: myProfileId,
+              ptoType: "sick",
+              startDate: formData.startDate,
+              endDate: formData.endDate,
+              reason: `Branch: ${formData.branch} | Position: ${ROLE_LABELS[formData.position] || formData.position || "N/A"} - ${formData.details}`,
+              requestedBy: myProfileId,
+              managerId: managerProfile?.id ?? null,
+              exceptionType: formData.exceptionType,
+              otherDescription: formData.otherDescription,
+              employeeSignatureUrl,
+              employeeSignatureName: displayName || "",
+              pdfUrl,
+            });
+          }
           // Same manager + HR (or fallback Admin) notification pattern as
           // vacation PTO — Sick Leave goes through the same approval pipeline,
           // it just doesn't draw against the same allowance or get paid.
@@ -554,15 +593,95 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
           }
           break;
         }
-        case "dispute":
-          await createEmployeeRequest({
-            profileId: myProfileId,
-            requestType: "attendance_dispute",
-            details: formData.details,
-            requestedBy: myProfileId,
-          });
-          await notifyManagers(`⚠️ New Attendance Dispute from ${displayName || "an employee"}.`, "/m/dashboard/attendance-monitoring?tab=disputes-inquiries");
+        case "unpaidLeave": {
+          if (!formData.startDate || !formData.endDate) {
+            alert("Please select start and end dates");
+            setSubmitting(false);
+            return;
+          }
+          // No eligibility gate and no allowance check — unpaid leave
+          // doesn't draw against any balance, unlike vacation PTO/Sick Leave
+          // above.
+          if (!formData.details.trim()) {
+            alert("Please describe the reason for this exception.");
+            setSubmitting(false);
+            return;
+          }
+          if (!leaveSigPad.hasContent()) {
+            alert("Please sign to acknowledge the information above is accurate before submitting.");
+            setSubmitting(false);
+            return;
+          }
+          const unpaidSignatureDataUrl = leaveSigPad.toDataURL();
+          if (!unpaidSignatureDataUrl) {
+            alert("Please sign to acknowledge the information above is accurate before submitting.");
+            setSubmitting(false);
+            return;
+          }
+          if (!companyId) {
+            alert("Your company couldn't be resolved yet — try again in a moment.");
+            setSubmitting(false);
+            return;
+          }
+          const myProfile = companyProfiles.find((p) => p.id === myProfileId) ?? null;
+          const managerProfile = myProfile ? await resolveTeamLeadOrManager(myProfile, companyProfiles) : null;
+          const unpaidRequestId = crypto.randomUUID();
+          {
+            const { roleLabel: jobTitle } = getRoleDepartmentBreakdown(myProfile?.role ?? role);
+            const { pdfUrl, employeeSignatureUrl } = await buildPtoSubmissionPdf({
+              requestId: unpaidRequestId,
+              companyId,
+              employeeInfo: {
+                employeeName: displayName || "",
+                technicianId: myProfile?.technician_id || formData.employeeIdOverride,
+                jobTitle,
+                department: myProfile?.assigned_branch || "",
+                directManagerName: managerProfile?.display_name || managerProfile?.email || "",
+              },
+              dateOfIncident: formData.startDate,
+              exceptionType: formData.exceptionType,
+              otherDescription: formData.otherDescription,
+              detailedReason: formData.details,
+              employeeSignatureDataUrl: unpaidSignatureDataUrl,
+            });
+            await createPtoRequest({
+              id: unpaidRequestId,
+              profileId: myProfileId,
+              ptoType: "unpaid",
+              startDate: formData.startDate,
+              endDate: formData.endDate,
+              reason: `Branch: ${formData.branch} | Position: ${ROLE_LABELS[formData.position] || formData.position || "N/A"} - ${formData.details}`,
+              requestedBy: myProfileId,
+              managerId: managerProfile?.id ?? null,
+              exceptionType: formData.exceptionType,
+              otherDescription: formData.otherDescription,
+              employeeSignatureUrl,
+              employeeSignatureName: displayName || "",
+              pdfUrl,
+            });
+          }
+          {
+            const recipients = new Map<string, ProfileRow>();
+            if (managerProfile && managerProfile.id !== myProfileId) recipients.set(managerProfile.id, managerProfile);
+            for (const p of companyProfiles) {
+              if (p.id === myProfileId || !p.is_active) continue;
+              const primary = (p.role || "").toUpperCase();
+              if (primary === "HR" || (!managerProfile && (primary === "ADMIN" || primary === "SUPERADMIN"))) recipients.set(p.id, p);
+            }
+            await Promise.all(
+              Array.from(recipients.values()).map((r) =>
+                createNotification({
+                  recipientId: r.id,
+                  senderId: myProfileId,
+                  senderName: displayName || "Employee",
+                  body: `🗓️ New Unpaid Leave Request from ${displayName || "an employee"} needs your approval: ${formData.startDate} to ${formData.endDate}.`,
+                  linkTo: "/m/dashboard/attendance-monitoring?tab=pto-management",
+                }).catch((err) => console.error("Failed to notify", r.id, err))
+              )
+            );
+          }
           break;
+        }
         case "correction": {
           if (!formData.correctionDate) {
             alert("Please select a date");
@@ -594,11 +713,51 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
             setSubmitting(false);
             return;
           }
+          if (!formData.details.trim()) {
+            alert("Please describe the reason for this exception.");
+            setSubmitting(false);
+            return;
+          }
+          if (!correctionSigPad.hasContent()) {
+            alert("Please sign to acknowledge the information above is accurate before submitting.");
+            setSubmitting(false);
+            return;
+          }
+          const signatureDataUrl = correctionSigPad.toDataURL();
+          if (!signatureDataUrl) {
+            alert("Please sign to acknowledge the information above is accurate before submitting.");
+            setSubmitting(false);
+            return;
+          }
           const correctionRequesterProfile = companyProfiles.find((p) => p.id === myProfileId) ?? null;
           const correctionManagerProfile = correctionRequesterProfile
             ? await resolveTeamLeadOrManager(correctionRequesterProfile, companyProfiles)
             : null;
+          if (!companyId) {
+            alert("Your company couldn't be resolved yet — try again in a moment.");
+            setSubmitting(false);
+            return;
+          }
+          const correctionId = crypto.randomUUID();
+          const { roleLabel: jobTitle } = getRoleDepartmentBreakdown(correctionRequesterProfile?.role ?? role);
+          const { pdfUrl, employeeSignatureUrl } = await buildCorrectionSubmissionPdf({
+            correctionId,
+            companyId,
+            employeeInfo: {
+              employeeName: displayName || "",
+              technicianId: correctionRequesterProfile?.technician_id || formData.employeeIdOverride,
+              jobTitle,
+              department: correctionRequesterProfile?.assigned_branch || "",
+              directManagerName: correctionManagerProfile?.display_name || correctionManagerProfile?.email || "",
+            },
+            workDate: formData.correctionDate,
+            exceptionType: formData.exceptionType,
+            otherDescription: formData.otherDescription,
+            reason: formData.details,
+            employeeSignatureDataUrl: signatureDataUrl,
+          });
           await createTimecardCorrection({
+            id: correctionId,
             profileId: myProfileId,
             workDate: formData.correctionDate,
             originalCheckIn: existing?.clockIn || "",
@@ -611,6 +770,11 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
             correctedMealEnd: formData.correctedMealEnd,
             reason: formData.details,
             requestedBy: myProfileId,
+            exceptionType: formData.exceptionType,
+            otherDescription: formData.otherDescription,
+            employeeSignatureUrl,
+            employeeSignatureName: displayName || "",
+            pdfUrl,
             managerId: correctionManagerProfile?.id ?? null,
           });
           // The manager reviews first; HR/Finance only act once the manager
@@ -645,15 +809,6 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
           }
           break;
         }
-        case "inquiry":
-          await createEmployeeRequest({
-            profileId: myProfileId,
-            requestType: "payroll_inquiry",
-            details: formData.details,
-            requestedBy: myProfileId,
-          });
-          await notifyManagers(`💰 New Payroll Inquiry from ${displayName || "an employee"}.`, "/m/dashboard/attendance-monitoring?tab=disputes-inquiries");
-          break;
       }
 
       await refreshRequests();
@@ -674,7 +829,12 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
           details: "",
           branch: LOCATIONS[0] || "",
           position: "",
+          exceptionType: "missed_workday",
+          otherDescription: "",
+          employeeIdOverride: "",
         });
+        correctionSigPad.clear();
+        leaveSigPad.clear();
       }, 1500);
     } catch (err) {
       alert(`Failed to submit request: ${err instanceof Error ? err.message : "Unknown error"}`);
@@ -1337,6 +1497,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                   }));
                   setModalType("sick");
                   setShowModal(true);
+                  leaveSigPad.clear();
                 }}
                 className="px-4 py-3 bg-teal-600 hover:bg-teal-700 text-white rounded-lg text-sm font-semibold transition flex items-center justify-center gap-2"
               >
@@ -1344,25 +1505,29 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                 Sick Leave Request
               </button>
               <button
-                onClick={() => { setModalType("dispute"); setShowModal(true); }}
-                className="px-4 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-semibold transition flex items-center justify-center gap-2"
-              >
-                <Plus className="h-4 w-4" />
-                Attendance Dispute
-              </button>
-              <button
-                onClick={() => { setModalType("correction"); setShowModal(true); }}
+                onClick={() => { setModalType("correction"); setShowModal(true); correctionSigPad.clear(); }}
                 className="px-4 py-3 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-sm font-semibold transition flex items-center justify-center gap-2"
               >
                 <Plus className="h-4 w-4" />
                 Time Correction Request
               </button>
               <button
-                onClick={() => { setModalType("inquiry"); setShowModal(true); }}
-                className="px-4 py-3 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-sm font-semibold transition flex items-center justify-center gap-2"
+                type="button"
+                onClick={() => {
+                  const myProfile = companyProfiles.find((p) => p.id === myProfileId);
+                  setFormData((prev) => ({
+                    ...prev,
+                    position: myProfile?.role || prev.position,
+                    branch: myProfile?.assigned_branch || prev.branch,
+                  }));
+                  setModalType("unpaidLeave");
+                  setShowModal(true);
+                  leaveSigPad.clear();
+                }}
+                className="px-4 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-semibold transition flex items-center justify-center gap-2"
               >
                 <Plus className="h-4 w-4" />
-                Payroll Inquiry
+                Unpaid Leave Request
               </button>
             </div>
 
@@ -1414,16 +1579,15 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
       {/* Request Modal */}
       {showModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => !submitSuccess && setShowModal(false)}>
-          <div className="bg-slate-900 border border-white/10 rounded-lg p-6 max-w-md w-full mx-4" onClick={(e) => e.stopPropagation()}>
+          <div className="bg-slate-900 border border-white/10 rounded-lg p-6 max-w-md w-full mx-4 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             {!submitSuccess ? (
               <>
                 <div className="flex items-center justify-between mb-4">
                   <h2 className="text-lg font-bold text-white">
                     {modalType === "pto" && "Submit PTO Request"}
                     {modalType === "sick" && "Submit Sick Leave Request"}
-                    {modalType === "dispute" && "Submit Attendance Dispute"}
                     {modalType === "correction" && "Submit Time Correction Request"}
-                    {modalType === "inquiry" && "Submit Payroll Inquiry"}
+                    {modalType === "unpaidLeave" && "Submit Unpaid Leave Request"}
                   </h2>
                   <button
                     onClick={() => setShowModal(false)}
@@ -1434,7 +1598,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                 </div>
 
                 <div className="space-y-3">
-                  {(modalType === "pto" || modalType === "sick") && (
+                  {(modalType === "pto" || modalType === "sick" || modalType === "unpaidLeave") && (
                     <>
                       {modalType === "pto" && (
                         <div>
@@ -1445,7 +1609,6 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                             className="w-full px-3 py-2 bg-slate-800 border border-white/10 rounded text-white text-sm focus:outline-none focus:border-blue-500"
                           >
                             <option>Vacation</option>
-                            <option>Personal</option>
                           </select>
                         </div>
                       )}
@@ -1572,6 +1735,50 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                       <p className="text-[10px] text-slate-500">Leave meal fields blank if only the check-in/check-out time was wrong.</p>
                     </>
                   )}
+                  {(modalType === "correction" || modalType === "sick" || modalType === "unpaidLeave") && (
+                    <>
+                      {(() => {
+                        const myProfile = companyProfiles.find((p) => p.id === myProfileId) ?? null;
+                        return !myProfile?.technician_id ? (
+                          <div>
+                            <label className="text-xs font-semibold text-white block mb-1">Employee ID</label>
+                            <input
+                              type="text"
+                              placeholder="Not on file — type it in"
+                              value={formData.employeeIdOverride}
+                              onChange={(e) => setFormData({ ...formData, employeeIdOverride: e.target.value })}
+                              className="w-full px-3 py-2 bg-slate-800 border border-white/10 rounded text-white text-sm focus:outline-none focus:border-blue-500 placeholder-slate-500"
+                            />
+                          </div>
+                        ) : null;
+                      })()}
+                      <div>
+                        <label className="text-xs font-semibold text-white block mb-1">Exception Type</label>
+                        <div className="flex flex-col gap-1.5">
+                          {(Object.keys(EXCEPTION_TYPE_LABELS) as ExceptionType[]).map((t) => (
+                            <label key={t} className="flex items-center gap-2 text-sm text-white">
+                              <input
+                                type="radio"
+                                name="correctionExceptionType"
+                                checked={formData.exceptionType === t}
+                                onChange={() => setFormData({ ...formData, exceptionType: t })}
+                              />
+                              {EXCEPTION_TYPE_LABELS[t]}
+                            </label>
+                          ))}
+                        </div>
+                        {formData.exceptionType === "other" && (
+                          <input
+                            type="text"
+                            placeholder="Describe the exception…"
+                            value={formData.otherDescription}
+                            onChange={(e) => setFormData({ ...formData, otherDescription: e.target.value })}
+                            className="w-full mt-2 px-3 py-2 bg-slate-800 border border-white/10 rounded text-white text-sm focus:outline-none focus:border-blue-500 placeholder-slate-500"
+                          />
+                        )}
+                      </div>
+                    </>
+                  )}
                   <div>
                     <label className="text-xs font-semibold text-white block mb-1">Details / Reason</label>
                     <textarea
@@ -1582,6 +1789,34 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                       className="w-full px-3 py-2 bg-slate-800 border border-white/10 rounded text-white text-sm focus:outline-none focus:border-blue-500 placeholder-slate-500"
                     />
                   </div>
+                  {modalType === "correction" && (
+                    <div>
+                      <label className="text-xs font-semibold text-white block mb-2">
+                        Employee Signature — I confirm the information above is accurate and truthful.
+                      </label>
+                      <canvas
+                        {...correctionSigPad.canvasProps}
+                        className={`bg-white rounded-md border border-white/15 block mx-auto w-full max-w-sm ${correctionSigPad.canvasProps.className}`}
+                      />
+                      <div className="mt-2">
+                        <SignaturePadControls pad={correctionSigPad} />
+                      </div>
+                    </div>
+                  )}
+                  {(modalType === "sick" || modalType === "unpaidLeave") && (
+                    <div>
+                      <label className="text-xs font-semibold text-white block mb-2">
+                        Employee Signature — I confirm the information above is accurate and truthful.
+                      </label>
+                      <canvas
+                        {...leaveSigPad.canvasProps}
+                        className={`bg-white rounded-md border border-white/15 block mx-auto w-full max-w-sm ${leaveSigPad.canvasProps.className}`}
+                      />
+                      <div className="mt-2">
+                        <SignaturePadControls pad={leaveSigPad} />
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <div className="flex gap-3 mt-4">

@@ -7,10 +7,10 @@ import { useAuth } from "@/lib/auth";
 import { usePersistedTab } from "@/lib/usePersistedTab";
 import { getCompanyUsers, getProfileEmployeeInfo, type ProfileRow } from "@/lib/supabase/users";
 import { resolvePresenceStatus, PRESENCE_DOT_CLASS, PRESENCE_LABEL } from "@/lib/presence";
-import { getRoleDepartmentBreakdown, canSubmitConductNote, normalizeRole, isAttendanceManagerTierRole, TECHNICIAN_PAY_ROLES, isCompanySuperAdminRole, isFinanceRole } from "@/lib/roleLabels";
+import { getRoleDepartmentBreakdown, normalizeRole, isAttendanceManagerTierRole, TECHNICIAN_PAY_ROLES, isCompanySuperAdminRole, isFinanceRole } from "@/lib/roleLabels";
 import { getPendingCheckoutProposals, approveCheckoutProposal, type CheckoutProposal } from "@/lib/supabase/technicianCheckoutProposals";
-import { addAgentNote, getAllAgentNotes, type CsrAgentNote } from "@/lib/supabase/csrAgentNotes";
 import { TicketAttendanceTab } from "@/components/TicketAttendanceTab";
+import { TicketTimeDisputesTab } from "@/components/TicketTimeDisputesTab";
 import { TraineeAttendanceTab } from "@/components/TraineeAttendanceTab";
 import { AttendanceWarningSettingsTab } from "@/components/AttendanceWarningSettingsTab";
 import {
@@ -45,10 +45,10 @@ import {
   type PtoType,
   type PtoStage,
 } from "@/lib/supabase/pto";
+import { PtoManagerSignModal, PtoHrSignModal } from "@/components/PtoSignModals";
 import {
   getCompanyTimecardCorrections,
   getCompanyTimecardCorrectionHistory,
-  createTimecardCorrection,
   reviewCorrectionStage,
   canReviewCorrectionStage,
   type TimecardCorrectionRow,
@@ -56,12 +56,7 @@ import {
   type CorrectionStage,
   type CorrectionStatus,
 } from "@/lib/supabase/timecardCorrections";
-import {
-  getCompanyEmployeeRequests,
-  updateEmployeeRequestStatus,
-  type EmployeeRequestRow,
-  type EmployeeRequestStatus,
-} from "@/lib/supabase/employeeRequests";
+import { CorrectionManagerSignModal, CorrectionHrSignModal } from "@/components/CorrectionSignModals";
 
 interface DailyRecord {
   profileId: string;
@@ -307,17 +302,6 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   // per row. normalizeRole() so legacy space-separated role values (e.g.
   // "CSR Manager") still match, same fix as hasDashboardAccess.
   const canManageNotes = [role, ...extraRoles].some((r) => ["ADMIN", "SUPERADMIN", "HR", "FINANCE"].includes(normalizeRole(r))) || isAttendanceManagerTierRole(role, extraRoles);
-  // Attendance Disputes/Payroll Inquiries have no manager stage at all —
-  // unlike PTO/Corrections above, these go straight to HR/Finance/Admin,
-  // so manager-tier roles never see this tab (moved here from Employee
-  // Self-Service's old "Manage Requests" tab, which had the same rule).
-  const isFullRequestsAdmin = [role, ...extraRoles].some((r) => ["ADMIN", "SUPERADMIN", "HR", "FINANCE"].includes(normalizeRole(r)));
-  // Warnings tab reuses the same conduct-note workflow as CsrAgentDetailPage
-  // (employee_conduct_notes, reviewed on the HR Warnings & Mistakes tab) —
-  // any manager-flavored role can submit one here for a tardy employee, but
-  // unlike CsrAgentDetailPage it never fast-tracks to approved: every
-  // submission from this tab always waits on HR review.
-  const canWarn = ready && canSubmitConductNote(role, extraRoles);
   // Settings tab (grace-warning emails) — company-scoped SUPERADMIN only,
   // same role migration 0217's RLS restricts attendance_warning_subscriptions
   // to. Not is_superadmin() (that means the platform-level SUPERSUPERADMIN,
@@ -347,9 +331,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   const [ptoRequests, setPtoRequests] = useState<PtoRequestRow[]>([]);
   const [corrections, setCorrections] = useState<TimecardCorrectionRow[]>([]);
   const [correctionHistory, setCorrectionHistory] = useState<TimecardCorrectionHistoryRow[]>([]);
-  const [employeeRequests, setEmployeeRequests] = useState<EmployeeRequestRow[]>([]);
-  const [employeeRequestNote, setEmployeeRequestNote] = useState<Record<string, string>>({});
-  const ATTENDANCE_TABS = ["daily-attendance", "pto-management", "corrections", "disputes-inquiries", "ticket-attendance", "trainee-attendance", "warnings", "settings"] as const;
+  const ATTENDANCE_TABS = ["daily-attendance", "pto-management", "corrections", "ticket-attendance", "ticket-dispute", "trainee-attendance", "settings"] as const;
   const [activeTab, setActiveTab] = usePersistedTab<typeof ATTENDANCE_TABS[number]>(
     "ahs:attendance-monitoring-active-tab",
     ATTENDANCE_TABS,
@@ -434,6 +416,11 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   // shift two weeks ago should show up under that shift's date, not today's.
   const [correctionWorkDateFrom, setCorrectionWorkDateFrom] = useState("");
   const [correctionWorkDateTo, setCorrectionWorkDateTo] = useState("");
+  // "New" = has the Exception Report fields (exceptionType set at
+  // submission, migration 0304); "Old" = submitted before this feature, kept
+  // as a read-only archive — see CorrectionsTab.tsx's own state for the full
+  // reasoning (this page mirrors that same split).
+  const [correctionEraFilter, setCorrectionEraFilter] = useState<"new" | "old">("new");
   const [correctionTimecardData, setCorrectionTimecardData] = useState<{ checkIn: string; checkOut: string; mealStart: string; mealEnd: string }>({ checkIn: "", checkOut: "", mealStart: "", mealEnd: "" });
   const [notesData, setNotesData] = useState<Record<string, { content: string; notifyIndividual: boolean; notifyTeamLead: boolean; createdBy: string | null }>>({});
   const [branchRoles, setBranchRoles] = useState<BranchRoles[]>([]);
@@ -450,19 +437,15 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   const [showPtoForm, setShowPtoForm] = useState(false);
   const [ptoForm, setPtoForm] = useState({ profileId: "", ptoType: "vacation" as PtoType, startDate: "", endDate: "", reason: "" });
   const [ptoFormHireDate, setPtoFormHireDate] = useState<string | null>(null);
-  const [showCorrectionForm, setShowCorrectionForm] = useState(false);
-  const [correctionForm, setCorrectionForm] = useState({ profileId: "", workDate: "", correctedCheckIn: "", correctedCheckOut: "", correctedMealStart: "", correctedMealEnd: "", reason: "" });
-  const [conductNotes, setConductNotes] = useState<CsrAgentNote[]>([]);
-  const [warnSearch, setWarnSearch] = useState("");
-  const [warnTarget, setWarnTarget] = useState<{ profileId: string; name: string } | null>(null);
-  const [warnText, setWarnText] = useState("");
-  const [warnSaving, setWarnSaving] = useState(false);
   const [savingNote, setSavingNote] = useState(false);
   const [submittingPto, setSubmittingPto] = useState(false);
   // Keyed by request/correction id so only the row actually being reviewed shows as busy.
   const [busyPtoId, setBusyPtoId] = useState<string | null>(null);
-  const [submittingCorrection, setSubmittingCorrection] = useState(false);
+  const [signingPtoManagerFor, setSigningPtoManagerFor] = useState<PtoRequestRow | null>(null);
+  const [signingPtoHrFor, setSigningPtoHrFor] = useState<PtoRequestRow | null>(null);
   const [correctionStageBusy, setCorrectionStageBusy] = useState(false);
+  const [signingManagerCorrection, setSigningManagerCorrection] = useState(false);
+  const [signingHrCorrection, setSigningHrCorrection] = useState(false);
 
   // "Today" is anchored to the default policy timezone (Central), not the
   // viewer's own browser locale — otherwise an HR/Admin user physically in
@@ -484,7 +467,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     }
     setLoading(true);
     try {
-      const [profileId, profileRows, csrCompositionResult, entryRows, traineeEntryRows, noteRows, ptoRows, correctionRows, historyRows, conductNoteRows, employeeRequestRows, checkoutProposalRows, branchRoleRows, holidayRows] = await Promise.all([
+      const [profileId, profileRows, csrCompositionResult, entryRows, traineeEntryRows, noteRows, ptoRows, correctionRows, historyRows, checkoutProposalRows, branchRoleRows, holidayRows] = await Promise.all([
         getProfileIdByFirebaseUid(uid),
         getCompanyUsers(),
         getCsrTeamComposition().catch(() => null),
@@ -494,8 +477,6 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
         getCompanyPtoRequests(),
         getCompanyTimecardCorrections(),
         getCompanyTimecardCorrectionHistory(),
-        getAllAgentNotes().catch(() => []),
-        getCompanyEmployeeRequests().catch(() => []),
         getPendingCheckoutProposals().catch(() => []),
         getBranchRoles().catch(() => []),
         getCompanyHolidaysInRange(rangeStart, rangeEnd).catch(() => []),
@@ -516,8 +497,6 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
       setPtoRequests(ptoRows);
       setCorrections(correctionRows);
       setCorrectionHistory(historyRows);
-      setConductNotes(conductNoteRows);
-      setEmployeeRequests(employeeRequestRows);
     } catch (error) {
       console.error("Failed to load attendance data:", error);
     } finally {
@@ -1144,49 +1123,6 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     return days;
   };
 
-  // ---- Warnings tab: month-to-date late counts, tardiest first ----
-  const warnEmployees = useMemo(() => {
-    const q = warnSearch.trim().toLowerCase();
-    return monthlySummary
-      .filter((row) => !q || row.name.toLowerCase().includes(q))
-      .slice()
-      .sort((a, b) => b.late - a.late || a.name.localeCompare(b.name));
-  }, [monthlySummary, warnSearch]);
-
-  const handleSubmitWarning = async () => {
-    if (!warnTarget) return;
-    if (!warnText.trim()) {
-      alert("Please enter a warning note.");
-      return;
-    }
-    setWarnSaving(true);
-    try {
-      // Always routes through HR review, even for HR/Admin/Superadmin
-      // submitters — unlike CsrAgentDetailPage, tardiness warnings issued
-      // here should never auto-approve themselves.
-      await addAgentNote({
-        agentProfileId: warnTarget.profileId,
-        type: "warning",
-        note: warnText.trim(),
-      });
-      setConductNotes(await getAllAgentNotes().catch(() => conductNotes));
-      void logModuleActivity({
-        module: "attendance-monitoring",
-        actorName: displayName || "Admin",
-        action: "conduct_warning_submitted",
-        targetType: "profile",
-        targetId: warnTarget.profileId,
-        targetLabel: warnTarget.name,
-        details: { note: warnText.trim() },
-      });
-      setWarnTarget(null);
-      setWarnText("");
-    } catch (error) {
-      alert(`Failed to submit warning: ${error instanceof Error ? error.message : "Unknown error"}`);
-    } finally {
-      setWarnSaving(false);
-    }
-  };
 
   const handleDownloadSummary = () => {
     // Absent — never clocked in at all, so excluded from the main table
@@ -1439,69 +1375,9 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     }
   };
 
-  const handleSubmitCorrection = async () => {
-    if (!correctionForm.profileId || !correctionForm.workDate) {
-      alert("Please select an employee and work date.");
-      return;
-    }
-    const existing = entriesByKey.get(`${correctionForm.profileId}|${correctionForm.workDate}`);
-    setSubmittingCorrection(true);
-    try {
-      const requester = profiles.find((p) => p.id === correctionForm.profileId) ?? null;
-      const manager = requester ? await resolveTeamLeadOrManager(requester, profiles) : null;
-      await createTimecardCorrection({
-        profileId: correctionForm.profileId,
-        workDate: correctionForm.workDate,
-        originalCheckIn: existing?.checkIn || "",
-        originalCheckOut: existing?.checkOut || "",
-        correctedCheckIn: correctionForm.correctedCheckIn,
-        correctedCheckOut: correctionForm.correctedCheckOut,
-        originalMealStart: existing?.mealStart || "",
-        originalMealEnd: existing?.mealEnd || "",
-        correctedMealStart: correctionForm.correctedMealStart,
-        correctedMealEnd: correctionForm.correctedMealEnd,
-        reason: correctionForm.reason,
-        requestedBy: myProfileId,
-        managerId: manager?.id ?? null,
-      });
-      setCorrections(await getCompanyTimecardCorrections());
-      setCorrectionHistory(await getCompanyTimecardCorrectionHistory());
-      setShowCorrectionForm(false);
-      setCorrectionForm({ profileId: "", workDate: "", correctedCheckIn: "", correctedCheckOut: "", correctedMealStart: "", correctedMealEnd: "", reason: "" });
-    } catch (error) {
-      alert(`Failed to submit correction: ${error instanceof Error ? error.message : "Unknown error"}`);
-    } finally {
-      setSubmittingCorrection(false);
-    }
-  };
-
   const refreshCorrections = async () => {
     setCorrections(await getCompanyTimecardCorrections());
     setCorrectionHistory(await getCompanyTimecardCorrectionHistory());
-  };
-
-  // payroll_dispute (0182) is reviewed on Accounting Dashboard's own
-  // "Payroll Disputes" tab instead, and ticket_time_dispute (0207) on this
-  // page's own separate "Ticket Time Disputes" tab below — both excluded
-  // here so neither gets reviewed (and potentially double-actioned) from
-  // two different places. attendance_dispute rows are legacy (that mobile
-  // screen was replaced by Ticket Time Dispute) but still show here until
-  // any already-pending ones are cleared.
-  const pendingEmployeeRequests = isFullRequestsAdmin
-    ? employeeRequests.filter((r) => r.status === "pending" && r.requestType !== "payroll_dispute" && r.requestType !== "ticket_time_dispute")
-    : [];
-  const handleEmployeeRequestAction = async (id: string, status: EmployeeRequestStatus) => {
-    try {
-      await updateEmployeeRequestStatus(id, status, myProfileId, employeeRequestNote[id]);
-      setEmployeeRequests(await getCompanyEmployeeRequests());
-      setEmployeeRequestNote((prev) => {
-        const next = { ...prev };
-        delete next[id];
-        return next;
-      });
-    } catch (error) {
-      alert(`Failed to update request: ${error instanceof Error ? error.message : "Unknown error"}`);
-    }
   };
 
   const handleCorrectionStageAction = async (stage: CorrectionStage, decision: "approved" | "rejected") => {
@@ -1568,6 +1444,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   const filteredCorrections = useMemo(() => {
     const q = correctionSearch.trim().toLowerCase();
     return corrections.filter((c) => {
+      if ((c.exceptionType !== null) !== (correctionEraFilter === "new")) return false;
       if (teamScopedIds !== null && !teamScopedIds.has(c.profileId) && c.managerId !== myProfileId) return false;
       if (correctionStatusFilter !== "all" && c.status !== correctionStatusFilter) return false;
       if (correctionDepartmentFilter !== "all") {
@@ -1585,6 +1462,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     });
   }, [
     corrections,
+    correctionEraFilter,
     correctionSearch,
     correctionStatusFilter,
     correctionDepartmentFilter,
@@ -1620,11 +1498,10 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   const tabConfig = [
     { id: "corrections", label: "Corrections", Icon: FileText },
     { id: "daily-attendance", label: "Daily Attendance", Icon: Clock },
-    ...(isFullRequestsAdmin ? [{ id: "disputes-inquiries", label: "Disputes & Inquiries", Icon: MessageSquare }] : []),
     { id: "pto-management", label: "PTO Management", Icon: Calendar },
     { id: "ticket-attendance", label: "Ticket Attendance", Icon: FileText },
+    { id: "ticket-dispute", label: "Ticket Dispute", Icon: AlertTriangle },
     { id: "trainee-attendance", label: "Trainee Attendance", Icon: Clock },
-    { id: "warnings", label: "Warnings", Icon: AlertTriangle },
     ...(isSuperAdmin ? [{ id: "settings", label: "Settings", Icon: Settings }] : []),
   ];
 
@@ -2491,20 +2368,37 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                             {request.managerStatus === "pending" && canReviewPtoStage(request, "manager", myProfileId, role, extraRoles, displayName, requesterManagerName, requesterManagersManagerName) && (
                               <div className="flex gap-1">
                                 <span className="text-[10px] text-slate-500 self-center">Mgr:</span>
-                                <button type="button" title="Approve as manager" onClick={() => handlePtoStageAction(request, "manager", "approved")} disabled={busyPtoId === request.id} className="px-2 py-1 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded text-xs transition flex items-center gap-1">
-                                  {busyPtoId === request.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle className="h-3 w-3" />}
-                                </button>
+                                {request.exceptionType !== null ? (
+                                  <button type="button" title="Approve & sign as manager" onClick={() => setSigningPtoManagerFor(request)} disabled={busyPtoId === request.id} className="px-2 py-1 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded text-xs transition flex items-center gap-1">
+                                    <CheckCircle className="h-3 w-3" />
+                                  </button>
+                                ) : (
+                                  <button type="button" title="Approve as manager" onClick={() => handlePtoStageAction(request, "manager", "approved")} disabled={busyPtoId === request.id} className="px-2 py-1 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded text-xs transition flex items-center gap-1">
+                                    {busyPtoId === request.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle className="h-3 w-3" />}
+                                  </button>
+                                )}
                                 <button type="button" title="Reject as manager" onClick={() => handlePtoStageAction(request, "manager", "rejected")} disabled={busyPtoId === request.id} className="px-2 py-1 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white rounded text-xs transition flex items-center gap-1">
                                   {busyPtoId === request.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <XCircle className="h-3 w-3" />}
                                 </button>
                               </div>
                             )}
+                            {request.exceptionType !== null && request.hrPaperworkStatus === "pending" && canReviewPtoStage(request, "hr", myProfileId, role, extraRoles, displayName, requesterManagerName, requesterManagersManagerName) && (
+                              request.managerSignatureUrl ? (
+                                <button type="button" onClick={() => setSigningPtoHrFor(request)} className="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded text-[10px] font-semibold transition">
+                                  Sign Exception Report (HR)
+                                </button>
+                              ) : (
+                                <span className="text-[10px] text-slate-500">Exception Report: awaiting manager signature</span>
+                              )
+                            )}
                             {request.hrStatus === "pending" && canReviewPtoStage(request, "hr", myProfileId, role, extraRoles, displayName, requesterManagerName, requesterManagersManagerName) && (
                               <div className="flex gap-1">
                                 <span className="text-[10px] text-slate-500 self-center">HR:</span>
-                                <button type="button" title="Approve as HR" onClick={() => handlePtoStageAction(request, "hr", "approved")} disabled={busyPtoId === request.id} className="px-2 py-1 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded text-xs transition flex items-center gap-1">
-                                  {busyPtoId === request.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle className="h-3 w-3" />}
-                                </button>
+                                {request.exceptionType === null && (
+                                  <button type="button" title="Approve as HR" onClick={() => handlePtoStageAction(request, "hr", "approved")} disabled={busyPtoId === request.id} className="px-2 py-1 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded text-xs transition flex items-center gap-1">
+                                    {busyPtoId === request.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle className="h-3 w-3" />}
+                                  </button>
+                                )}
                                 <button type="button" title="Reject as HR" onClick={() => handlePtoStageAction(request, "hr", "rejected")} disabled={busyPtoId === request.id} className="px-2 py-1 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white rounded text-xs transition flex items-center gap-1">
                                   {busyPtoId === request.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <XCircle className="h-3 w-3" />}
                                 </button>
@@ -2576,14 +2470,29 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
 
           {activeTab === "corrections" && (
             <div className="space-y-6">
-              <div className="flex justify-end">
-                <button onClick={() => setShowCorrectionForm(true)} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-semibold transition">
-                  + New Correction Request
-                </button>
-              </div>
-
               <div className="bg-slate-900/50 border border-white/10 rounded-lg p-6 overflow-x-auto">
-                <h2 className="text-lg font-bold text-white mb-4">Attendance Corrections</h2>
+                <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+                  <h2 className="text-lg font-bold text-white">Attendance Corrections</h2>
+                  <div className="flex gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setCorrectionEraFilter("new")}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition ${correctionEraFilter === "new" ? "bg-primary/20 text-primary" : "bg-slate-800/50 text-slate-400 hover:text-white"}`}
+                    >
+                      New Corrections
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCorrectionEraFilter("old")}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition ${correctionEraFilter === "old" ? "bg-primary/20 text-primary" : "bg-slate-800/50 text-slate-400 hover:text-white"}`}
+                    >
+                      Old Corrections (Archive)
+                    </button>
+                  </div>
+                </div>
+                {correctionEraFilter === "old" && (
+                  <p className="text-xs text-slate-500 mb-3">Submitted before the Exception Report requirement — kept here for the record only.</p>
+                )}
                 <div className="grid gap-3 md:grid-cols-4 mb-4">
                   <div>
                     <label className="block text-xs text-slate-400 uppercase mb-2">Search Employee</label>
@@ -2784,69 +2693,9 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
             </div>
           )}
 
-          {activeTab === "disputes-inquiries" && isFullRequestsAdmin && (
-            <div className="space-y-6">
-              <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
-                <p className="text-xs text-slate-400 mb-1">Pending Disputes / Inquiries</p>
-                <p className="text-2xl font-bold text-yellow-300">{pendingEmployeeRequests.length}</p>
-              </div>
-              <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
-                <h3 className="text-sm font-bold text-white mb-4">Attendance Disputes &amp; Payroll Inquiries — Pending</h3>
-                {pendingEmployeeRequests.length === 0 ? (
-                  <p className="text-sm text-slate-400">No pending disputes or inquiries.</p>
-                ) : (
-                  <div className="space-y-3">
-                    {pendingEmployeeRequests.map((r) => (
-                      <div key={r.id} className="border border-white/10 rounded-lg p-3">
-                        <p className="text-sm font-semibold text-white">
-                          {profileName(r.profileId)} — {r.requestType === "attendance_dispute" ? "Attendance Dispute" : "Payroll Inquiry"}
-                        </p>
-                        <p className="text-xs text-slate-400 mt-1">Submitted: {r.createdAt.slice(0, 10)}</p>
-                        <p className="text-sm text-slate-300 mt-2">{r.details}</p>
-                        <textarea
-                          placeholder="Optional response note (visible to the employee)..."
-                          value={employeeRequestNote[r.id] || ""}
-                          onChange={(e) => setEmployeeRequestNote({ ...employeeRequestNote, [r.id]: e.target.value })}
-                          rows={2}
-                          className="w-full mt-2 px-3 py-2 bg-slate-800 border border-white/10 rounded text-white text-sm focus:outline-none focus:border-blue-500 placeholder-slate-500"
-                        />
-                        <div className="flex gap-2 mt-2">
-                          {r.requestType === "attendance_dispute" ? (
-                            <>
-                              <button
-                                type="button"
-                                onClick={() => handleEmployeeRequestAction(r.id, "approved")}
-                                className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded text-xs font-semibold transition"
-                              >
-                                Approve
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleEmployeeRequestAction(r.id, "rejected")}
-                                className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded text-xs font-semibold transition"
-                              >
-                                Reject
-                              </button>
-                            </>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() => handleEmployeeRequestAction(r.id, "closed")}
-                              className="px-3 py-1.5 bg-slate-600 hover:bg-slate-500 text-white rounded text-xs font-semibold transition"
-                            >
-                              Respond &amp; Close
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
           {activeTab === "ticket-attendance" && <TicketAttendanceTab />}
+
+          {activeTab === "ticket-dispute" && <TicketTimeDisputesTab />}
 
           {activeTab === "trainee-attendance" && (
             <TraineeAttendanceTab
@@ -2858,161 +2707,12 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
             />
           )}
 
-          {activeTab === "warnings" && (
-            <div className="space-y-6">
-              <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
-                <div className="flex items-center justify-between gap-3 flex-wrap">
-                  <div>
-                    <h2 className="text-sm font-bold text-white flex items-center gap-2">
-                      <AlertTriangle className="h-4 w-4 text-yellow-400" />
-                      Tardy Employees — Month to Date
-                    </h2>
-                    <p className="text-xs text-slate-400 mt-1">Issue a warning for repeated tardiness — it goes to the same review queue as HR's Warnings &amp; Mistakes tab.</p>
-                  </div>
-                  <input
-                    type="text"
-                    placeholder="Search employee..."
-                    value={warnSearch}
-                    onChange={(e) => setWarnSearch(e.target.value)}
-                    className="bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm placeholder-slate-500 focus:border-blue-500 focus:outline-none w-56"
-                  />
-                </div>
-              </div>
-
-              <div className="bg-slate-900/50 border border-white/10 rounded-lg p-6 overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-white/10">
-                      <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Employee</th>
-                      <th className="px-3 py-3 text-center text-xs font-semibold text-slate-400 uppercase">Late (MTD)</th>
-                      <th className="px-3 py-3 text-center text-xs font-semibold text-slate-400 uppercase">Attendance %</th>
-                      <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Status</th>
-                      <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {loading ? (
-                      <tr><td colSpan={5} className="px-3 py-8 text-center text-slate-400">Loading…</td></tr>
-                    ) : warnEmployees.length === 0 ? (
-                      <tr><td colSpan={5} className="px-3 py-8 text-center text-slate-400">No employees match this search.</td></tr>
-                    ) : warnEmployees.map((row) => (
-                      <tr key={row.profileId} className="border-b border-white/5 hover:bg-white/5 transition">
-                        <td className="px-3 py-3 text-white font-medium">
-                          <a href={`/employee/${row.profileId}`} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 hover:underline cursor-pointer">
-                            {row.name}
-                          </a>
-                        </td>
-                        <td className="px-3 py-3 text-center">
-                          <span className={`inline-block px-2 py-1 rounded text-xs font-semibold ${row.late === 0 ? "text-slate-500" : row.late <= 2 ? "bg-yellow-500/20 text-yellow-300 border border-yellow-500/30" : "bg-red-500/20 text-red-300 border border-red-500/30"}`}>
-                            {row.late}
-                          </span>
-                        </td>
-                        <td className="px-3 py-3 text-center text-white font-semibold">{row.pct}%</td>
-                        <td className="px-3 py-3">
-                          <span className={`inline-block px-2 py-1 rounded text-xs font-semibold border ${row.status === "Good" ? "bg-green-500/20 text-green-300 border-green-500/30" : row.status === "Warning" ? "bg-yellow-500/20 text-yellow-300 border-yellow-500/30" : "bg-red-500/20 text-red-300 border-red-500/30"}`}>{row.status}</span>
-                        </td>
-                        <td className="px-3 py-3">
-                          {canWarn ? (
-                            <button
-                              type="button"
-                              onClick={() => { setWarnTarget({ profileId: row.profileId, name: row.name }); setWarnText(row.late > 0 ? `Repeated tardiness — ${row.late} late arrival${row.late === 1 ? "" : "s"} this month.` : ""); }}
-                              className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-yellow-500/20 hover:bg-yellow-500/30 text-yellow-300 transition"
-                            >
-                              <AlertTriangle className="h-3.5 w-3.5" />
-                              <span className="text-xs">Warn</span>
-                            </button>
-                          ) : (
-                            <span className="text-slate-500 text-xs">—</span>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
-              {/* Recent Warnings & Mistakes — same employee_conduct_notes table HR reviews */}
-              <div className="bg-slate-900/50 border border-white/10 rounded-lg p-6 overflow-x-auto">
-                <h2 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
-                  <AlertTriangle className="h-4 w-4 text-yellow-400" /> Recent Warnings &amp; Mistakes
-                </h2>
-                {conductNotes.length === 0 ? (
-                  <p className="text-sm text-slate-400 py-4 text-center">No warnings or mistakes on file yet.</p>
-                ) : (
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b border-white/10">
-                        <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Employee</th>
-                        <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Type</th>
-                        <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Note</th>
-                        <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Submitted</th>
-                        <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Status</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {conductNotes.slice(0, 15).map((n) => (
-                        <tr key={n.id} className="border-b border-white/5 hover:bg-white/5 transition">
-                          <td className="px-3 py-3 text-white font-medium">
-                            <a href={`/employee/${n.agentProfileId}`} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 hover:underline cursor-pointer">
-                              {profileName(n.agentProfileId)}
-                            </a>
-                          </td>
-                          <td className="px-3 py-3">
-                            <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${n.type === "warning" ? "bg-yellow-500/20 text-yellow-300 border border-yellow-500/30" : "bg-orange-500/20 text-orange-300 border border-orange-500/30"}`}>
-                              {n.type === "warning" ? "Warning" : "Mistake"}
-                            </span>
-                          </td>
-                          <td className="px-3 py-3 text-slate-300 max-w-xs truncate" title={n.note}>{n.note}</td>
-                          <td className="px-3 py-3 text-slate-400 text-xs">{new Date(n.createdAt).toLocaleString()}</td>
-                          <td className="px-3 py-3">
-                            <span className={`inline-block px-2 py-1 rounded text-xs font-semibold border ${n.status === "approved" ? "bg-green-500/20 text-green-300 border-green-500/30" : n.status === "rejected" ? "bg-red-500/20 text-red-300 border-red-500/30" : "bg-slate-500/20 text-slate-300 border-slate-500/30"}`}>
-                              {n.status === "approved" ? "Approved" : n.status === "rejected" ? "Rejected" : n.status === "manager_approved" ? "Awaiting HR" : "Pending"}
-                            </span>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                )}
-              </div>
-            </div>
-          )}
 
           {activeTab === "settings" && isSuperAdmin && (
             <AttendanceWarningSettingsTab myProfileId={myProfileId} myDisplayName={displayName} />
           )}
 
         </div>
-
-        {/* Warning Modal */}
-        {warnTarget && (
-          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
-            <div className="bg-slate-900 border border-white/10 rounded-lg p-6 max-w-md w-full mx-4">
-              <div className="flex items-start justify-between mb-4">
-                <div>
-                  <h3 className="text-lg font-bold text-white flex items-center gap-2">
-                    <AlertTriangle className="h-4 w-4 text-yellow-400" /> Issue Warning
-                  </h3>
-                  <p className="text-sm text-slate-400">{warnTarget.name}</p>
-                </div>
-                <button type="button" onClick={() => { setWarnTarget(null); setWarnText(""); }} className="text-slate-400 hover:text-white transition p-1">✕</button>
-              </div>
-              <div className="mb-4">
-                <label className="block text-sm font-semibold text-slate-300 mb-2">Warning Note</label>
-                <textarea value={warnText} onChange={(e) => setWarnText(e.target.value)} placeholder="Describe the tardiness / conduct issue..." rows={4} className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-3 text-white text-sm placeholder-slate-500 focus:border-blue-500 focus:outline-none resize-none" />
-              </div>
-              <p className="text-xs text-slate-500 mb-4">
-                This always goes to the HR Warnings &amp; Mistakes dashboard for review before it's issued — the employee is only notified once it's approved there.
-              </p>
-              <div className="flex gap-3">
-                <button type="button" onClick={handleSubmitWarning} disabled={warnSaving} className="flex-1 px-4 py-2 bg-yellow-600 hover:bg-yellow-700 disabled:opacity-50 text-white rounded-lg transition font-semibold text-sm">
-                  {warnSaving ? "Submitting…" : "Submit for Review"}
-                </button>
-                <button type="button" onClick={() => { setWarnTarget(null); setWarnText(""); }} className="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition font-semibold text-sm">Cancel</button>
-              </div>
-            </div>
-          </div>
-        )}
 
         {/* Notes Modal — z-[60], above the Alert Details Modal's z-50: this
             can now be opened from a tile inside that modal (still open
@@ -3121,71 +2821,6 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
           </div>
         )}
 
-        {/* New Correction Request Modal */}
-        {showCorrectionForm && (
-          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
-            <div className="bg-slate-900 border border-white/10 rounded-lg p-6 max-w-md w-full mx-4">
-              <div className="flex items-start justify-between mb-4">
-                <h3 className="text-lg font-bold text-white">New Correction Request</h3>
-                <button onClick={() => setShowCorrectionForm(false)} className="text-slate-400 hover:text-white transition p-1">✕</button>
-              </div>
-              <div className="space-y-3 mb-6">
-                <div>
-                  <label className="block text-xs text-slate-400 uppercase mb-1">Employee</label>
-                  <select value={correctionForm.profileId} onChange={(e) => setCorrectionForm({ ...correctionForm, profileId: e.target.value })} className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none">
-                    <option value="">Select employee</option>
-                    {visibleProfiles.map((p) => (
-                      <option key={p.id} value={p.id}>{p.display_name || p.email}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs text-slate-400 uppercase mb-1">Work Date</label>
-                  <input type="date" value={correctionForm.workDate} onChange={(e) => setCorrectionForm({ ...correctionForm, workDate: e.target.value })} className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none" />
-                  {correctionForm.profileId && correctionForm.workDate && (
-                    <p className="text-xs text-slate-500 mt-1">
-                      {(() => {
-                        const existing = entriesByKey.get(`${correctionForm.profileId}|${correctionForm.workDate}`);
-                        return existing
-                          ? `Current record: ${existing.checkIn || "—"} → ${existing.checkOut || "—"} (meal: ${existing.mealStart || "—"} → ${existing.mealEnd || "—"})`
-                          : "No existing record found for this date.";
-                      })()}
-                    </p>
-                  )}
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs text-slate-400 uppercase mb-1">Corrected Check In</label>
-                    <input type="time" step="1" title="Corrected Check In" value={correctionForm.correctedCheckIn} onChange={(e) => setCorrectionForm({ ...correctionForm, correctedCheckIn: e.target.value })} className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none" />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-slate-400 uppercase mb-1">Corrected Check Out</label>
-                    <input type="time" step="1" title="Corrected Check Out" value={correctionForm.correctedCheckOut} onChange={(e) => setCorrectionForm({ ...correctionForm, correctedCheckOut: e.target.value })} className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none" />
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs text-slate-400 uppercase mb-1">Corrected Meal Start</label>
-                    <input type="time" step="1" title="Corrected Meal Start" value={correctionForm.correctedMealStart} onChange={(e) => setCorrectionForm({ ...correctionForm, correctedMealStart: e.target.value })} className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none" />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-slate-400 uppercase mb-1">Corrected Meal End</label>
-                    <input type="time" step="1" title="Corrected Meal End" value={correctionForm.correctedMealEnd} onChange={(e) => setCorrectionForm({ ...correctionForm, correctedMealEnd: e.target.value })} className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none" />
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-xs text-slate-400 uppercase mb-1">Reason</label>
-                  <textarea value={correctionForm.reason} onChange={(e) => setCorrectionForm({ ...correctionForm, reason: e.target.value })} rows={3} className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none resize-none" />
-                </div>
-              </div>
-              <div className="flex gap-3">
-                <button onClick={handleSubmitCorrection} disabled={submittingCorrection} className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg transition font-semibold text-sm">{submittingCorrection ? "Submitting…" : "Submit"}</button>
-                <button onClick={() => setShowCorrectionForm(false)} className="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition font-semibold text-sm">Cancel</button>
-              </div>
-            </div>
-          </div>
-        )}
-
         {/* Timecard Correction Modal */}
         {selectedCorrection && (
           <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
@@ -3266,10 +2901,18 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
               <div className="space-y-2 mb-6">
                 {selectedCorrection.managerStatus === "pending" && canReviewCorrectionStage(selectedCorrection, "manager", myProfileId, role, extraRoles, displayName, correctionRequesterManagerName, correctionRequesterManagersManagerName) && (
                   <div className="grid gap-3 md:grid-cols-2">
-                    <button onClick={() => handleCorrectionStageAction("manager", "approved")} disabled={correctionStageBusy} className="px-4 py-2 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded-lg transition font-semibold text-sm flex items-center justify-center gap-2">
-                      {correctionStageBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle className="h-4 w-4" />}
-                      Approve as Manager
-                    </button>
+                    {selectedCorrection.exceptionType !== null ? (
+                      <button onClick={() => setSigningManagerCorrection(true)} disabled={correctionStageBusy} className="px-4 py-2 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded-lg transition font-semibold text-sm flex items-center justify-center gap-2">
+                        <CheckCircle className="h-4 w-4" />
+                        Approve & Sign as Manager
+                      </button>
+                    ) : (
+                      // Pre-Exception-Report correction — plain approve, no signature (never asked of them at submission).
+                      <button onClick={() => handleCorrectionStageAction("manager", "approved")} disabled={correctionStageBusy} className="px-4 py-2 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded-lg transition font-semibold text-sm flex items-center justify-center gap-2">
+                        {correctionStageBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle className="h-4 w-4" />}
+                        Approve as Manager
+                      </button>
+                    )}
                     <button onClick={() => handleCorrectionStageAction("manager", "rejected")} disabled={correctionStageBusy} className="px-4 py-2 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white rounded-lg transition font-semibold text-sm flex items-center justify-center gap-2">
                       {correctionStageBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <XCircle className="h-4 w-4" />}
                       Reject as Manager
@@ -3277,16 +2920,27 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                   </div>
                 )}
                 {selectedCorrection.hrStatus === "pending" && canReviewCorrectionStage(selectedCorrection, "hr", myProfileId, role, extraRoles) && (
-                  <div className="grid gap-3 md:grid-cols-2">
-                    <button onClick={() => handleCorrectionStageAction("hr", "approved")} disabled={correctionStageBusy} className="px-4 py-2 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded-lg transition font-semibold text-sm flex items-center justify-center gap-2">
-                      {correctionStageBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle className="h-4 w-4" />}
-                      Approve as HR
-                    </button>
+                  <div className={`grid gap-3 ${selectedCorrection.exceptionType === null ? "md:grid-cols-2" : ""}`}>
+                    {selectedCorrection.exceptionType === null && (
+                      <button onClick={() => handleCorrectionStageAction("hr", "approved")} disabled={correctionStageBusy} className="px-4 py-2 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded-lg transition font-semibold text-sm flex items-center justify-center gap-2">
+                        {correctionStageBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle className="h-4 w-4" />}
+                        Approve as HR
+                      </button>
+                    )}
                     <button onClick={() => handleCorrectionStageAction("hr", "rejected")} disabled={correctionStageBusy} className="px-4 py-2 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white rounded-lg transition font-semibold text-sm flex items-center justify-center gap-2">
                       {correctionStageBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <XCircle className="h-4 w-4" />}
                       Reject as HR
                     </button>
                   </div>
+                )}
+                {selectedCorrection.exceptionType !== null && selectedCorrection.hrPaperworkStatus === "pending" && canReviewCorrectionStage(selectedCorrection, "hr", myProfileId, role, extraRoles) && (
+                  selectedCorrection.managerSignatureUrl ? (
+                    <button onClick={() => setSigningHrCorrection(true)} className="w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition font-semibold text-sm">
+                      Sign Exception Report (HR)
+                    </button>
+                  ) : (
+                    <p className="text-xs text-slate-500">Exception Report: awaiting manager signature before HR can sign.</p>
+                  )
                 )}
                 {selectedCorrection.accountingStatus === "pending" && canReviewCorrectionStage(selectedCorrection, "accounting", myProfileId, role, extraRoles) && (
                   <div className="grid gap-3 md:grid-cols-2">
@@ -3337,6 +2991,73 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
               </div>
             </div>
           </div>
+        )}
+
+        {selectedCorrection && signingManagerCorrection && (
+          <CorrectionManagerSignModal
+            correction={selectedCorrection}
+            companyId={companyId}
+            profiles={profiles}
+            reviewerId={myProfileId}
+            reviewerName={displayName || "Manager"}
+            correctedOverride={{
+              checkIn: correctionTimecardData.checkIn,
+              checkOut: correctionTimecardData.checkOut,
+              mealStart: correctionTimecardData.mealStart,
+              mealEnd: correctionTimecardData.mealEnd,
+            }}
+            onClose={() => setSigningManagerCorrection(false)}
+            onSigned={async () => {
+              setSigningManagerCorrection(false);
+              await refreshCorrections();
+              setEntries(await getCompanyTimecardEntries(rangeStart, rangeEnd));
+              setSelectedCorrection(null);
+            }}
+          />
+        )}
+        {selectedCorrection && signingHrCorrection && (
+          <CorrectionHrSignModal
+            correction={selectedCorrection}
+            companyId={companyId}
+            profiles={profiles}
+            reviewerId={myProfileId}
+            reviewerName={displayName || "HR"}
+            onClose={() => setSigningHrCorrection(false)}
+            onSigned={async () => {
+              setSigningHrCorrection(false);
+              await refreshCorrections();
+              setSelectedCorrection(null);
+            }}
+          />
+        )}
+
+        {signingPtoManagerFor && (
+          <PtoManagerSignModal
+            request={signingPtoManagerFor}
+            companyId={companyId}
+            profiles={profiles}
+            reviewerId={myProfileId}
+            reviewerName={displayName || "Manager"}
+            onClose={() => setSigningPtoManagerFor(null)}
+            onSigned={async () => {
+              setSigningPtoManagerFor(null);
+              await loadAll();
+            }}
+          />
+        )}
+        {signingPtoHrFor && (
+          <PtoHrSignModal
+            request={signingPtoHrFor}
+            companyId={companyId}
+            profiles={profiles}
+            reviewerId={myProfileId}
+            reviewerName={displayName || "HR"}
+            onClose={() => setSigningPtoHrFor(null)}
+            onSigned={async () => {
+              setSigningPtoHrFor(null);
+              await loadAll();
+            }}
+          />
         )}
 
         {/* Alert Details Modal */}

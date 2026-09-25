@@ -79,7 +79,15 @@ import {
 import { resolveTeamLeadOrManager } from "@/lib/notifyRouting";
 import { visibleAttendanceProfileIds } from "@/lib/notifyRouting";
 import { getCsrTeamComposition, type CsrTeamComposition } from "@/lib/supabase/csrTeams";
-import { isAttendanceFullAccessRole, isAttendanceManagerTierRole, normalizeRole, ROLE_LABELS, TECHNICIAN_PAY_ROLES } from "@/lib/roleLabels";
+import { isAttendanceFullAccessRole, isAttendanceManagerTierRole, normalizeRole, ROLE_LABELS, TECHNICIAN_PAY_ROLES, getRoleDepartmentBreakdown } from "@/lib/roleLabels";
+import { buildCorrectionSubmissionPdf } from "@/lib/timecardCorrectionPdf";
+import { EXCEPTION_TYPE_LABELS, type ExceptionType } from "@/lib/exceptionVisitReportTemplate";
+import { buildTicketDisputeSubmissionPdf } from "@/lib/ticketDisputeReportPdf";
+import { TICKET_DISPUTE_EXCEPTION_TYPE_LABELS, type TicketDisputeExceptionType } from "@/lib/ticketDisputeReportTemplate";
+import { useSignaturePad } from "@/hooks/useSignaturePad";
+import { SignaturePadControls } from "@/components/SignaturePad";
+import { CorrectionManagerSignModal } from "@/components/CorrectionSignModals";
+import { PtoManagerSignModal } from "@/components/PtoSignModals";
 import { LOCATIONS, ACTIVE_LOCATIONS } from "@/lib/locations";
 import { timezoneForBranch, nowInTimezone } from "@/lib/attendanceGrace";
 import { getServerNow, zonedDateKey, zonedTimeString, zonedWallClockToUtcIso, TIME_ZONES, type ScheduleTimezone } from "@/lib/serverTime";
@@ -1559,7 +1567,7 @@ export function MobileTechApp() {
         )}
 
         {effectiveView === "teamapprovals" && (
-          <MobileTeamApprovalsView profileId={profileId} role={role} extraRoles={extraRoles} userName={headerName} />
+          <MobileTeamApprovalsView profileId={profileId} role={role} extraRoles={extraRoles} userName={headerName} companyId={companyId} />
         )}
 
         {effectiveView === "viewasteam" && (
@@ -1593,6 +1601,7 @@ export function MobileTechApp() {
             userName={headerName}
             profileId={profileId}
             companyId={companyId}
+            role={role}
             technicianName={headerName}
             scheduleTimezone={myScheduleTimezone}
             prefillTicketNo={ticketTimeDisputePrefillTicketNo}
@@ -1600,7 +1609,7 @@ export function MobileTechApp() {
         )}
 
         {effectiveView === "correction" && (
-          <MobileTimeCorrectionView userName={headerName} profileId={profileId} prefillDate={correctionPrefillDate} />
+          <MobileTimeCorrectionView userName={headerName} profileId={profileId} companyId={companyId} role={role} prefillDate={correctionPrefillDate} />
         )}
 
         {effectiveView === "notifications" && (
@@ -6325,7 +6334,7 @@ function MobileHomeView({
     },
     {
       key: "tickettimedispute", label: "Ticket Time Dispute",
-      description: "Report a failed on-site check-in for a ticket",
+      description: "Report a failed check-in, or a ticket that got rescheduled",
       onClick: onOpenTicketTimeDispute, show: true,
     },
     {
@@ -7177,12 +7186,17 @@ function MobileTeamApprovalsView({
   role,
   extraRoles,
   userName,
+  companyId,
   readOnly,
 }: {
   profileId: string | null;
   role: string | null;
   extraRoles: string[] | null;
   userName: string;
+  /** Omitted from the read-only "View as Manager" preview — the manager-sign
+   *  modal this powers is never reachable there anyway (readOnly hides the
+   *  Approve button entirely), so there's nothing to thread it through for. */
+  companyId?: string | null;
   /** View as Manager preview — browsing is fine, but nothing gets approved/rejected under a false identity, per the user's explicit call. */
   readOnly?: boolean;
 }) {
@@ -7335,6 +7349,8 @@ function MobileTeamApprovalsView({
       setSubmitting(false);
     }
   };
+  const [signingCorrection, setSigningCorrection] = useState<TimecardCorrectionRow | null>(null);
+  const [signingPtoManager, setSigningPtoManager] = useState<PtoRequestRow | null>(null);
 
   const handlePtoDecision = async (r: PtoRequestRow, decision: "approved" | "rejected") => {
     if (readOnly || !profileId || submitting) return;
@@ -7483,9 +7499,15 @@ function MobileTeamApprovalsView({
                 <div className="mtech-clockin-row-status">Preview only</div>
               ) : (
                 <div className="mtech-approvals-actions">
-                  <button type="button" className="mtech-clockin-btn" disabled={submitting} onClick={() => void handleCorrectionDecision(c, "approved")}>
-                    Approve
-                  </button>
+                  {c.exceptionType !== null ? (
+                    <button type="button" className="mtech-clockin-btn" disabled={submitting} onClick={() => setSigningCorrection(c)}>
+                      Approve &amp; Sign
+                    </button>
+                  ) : (
+                    <button type="button" className="mtech-clockin-btn" disabled={submitting} onClick={() => void handleCorrectionDecision(c, "approved")}>
+                      Approve
+                    </button>
+                  )}
                   <button type="button" className="mtech-clockin-btn mtech-approvals-reject-btn" disabled={submitting} onClick={() => void handleCorrectionDecision(c, "rejected")}>
                     Reject
                   </button>
@@ -7510,9 +7532,15 @@ function MobileTeamApprovalsView({
                 <div className="mtech-clockin-row-status">Preview only</div>
               ) : (
                 <div className="mtech-approvals-actions">
-                  <button type="button" className="mtech-clockin-btn" disabled={submitting} onClick={() => void handlePtoDecision(r, "approved")}>
-                    Approve
-                  </button>
+                  {r.exceptionType !== null ? (
+                    <button type="button" className="mtech-clockin-btn" disabled={submitting} onClick={() => setSigningPtoManager(r)}>
+                      Approve &amp; Sign
+                    </button>
+                  ) : (
+                    <button type="button" className="mtech-clockin-btn" disabled={submitting} onClick={() => void handlePtoDecision(r, "approved")}>
+                      Approve
+                    </button>
+                  )}
                   <button type="button" className="mtech-clockin-btn mtech-approvals-reject-btn" disabled={submitting} onClick={() => void handlePtoDecision(r, "rejected")}>
                     Reject
                   </button>
@@ -7521,6 +7549,35 @@ function MobileTeamApprovalsView({
             </div>
           ))}
         </div>
+      )}
+
+      {signingCorrection && (
+        <CorrectionManagerSignModal
+          correction={signingCorrection}
+          companyId={companyId ?? null}
+          profiles={profiles}
+          reviewerId={profileId}
+          reviewerName={userName}
+          onClose={() => setSigningCorrection(null)}
+          onSigned={() => {
+            setCorrections((prev) => prev.filter((x) => x.id !== signingCorrection.id));
+            setSigningCorrection(null);
+          }}
+        />
+      )}
+      {signingPtoManager && (
+        <PtoManagerSignModal
+          request={signingPtoManager}
+          companyId={companyId ?? null}
+          profiles={profiles}
+          reviewerId={profileId}
+          reviewerName={userName}
+          onClose={() => setSigningPtoManager(null)}
+          onSigned={() => {
+            setPtoRequests((prev) => prev.filter((x) => x.id !== signingPtoManager.id));
+            setSigningPtoManager(null);
+          }}
+        />
       )}
     </div>
   );
@@ -8534,11 +8591,24 @@ function MobileTimeOffView({ userName, profileId }: { userName: string; profileI
 // Disputes & Inquiries tab, which still handles any already-pending legacy
 // attendance_dispute rows). Approving writes these times straight onto the
 // ticket's own onsite_arrived_at/onsite_done_at — not just a paper trail.
-function MobileTicketTimeDisputeView({ userName, profileId, companyId, technicianName, scheduleTimezone, prefillTicketNo }: { userName: string; profileId: string | null; companyId: string | null; technicianName: string; scheduleTimezone: ScheduleTimezone; prefillTicketNo?: string | null }) {
+function MobileTicketTimeDisputeView({ userName, profileId, companyId, role, technicianName, scheduleTimezone, prefillTicketNo }: { userName: string; profileId: string | null; companyId: string | null; role: string | null; technicianName: string; scheduleTimezone: ScheduleTimezone; prefillTicketNo?: string | null }) {
   const [requests, setRequests] = useState<EmployeeRequestRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [todaysStops, setTodaysStops] = useState<TechnicianRouteStop[]>([]);
   const [ticketNo, setTicketNo] = useState("");
+  const [companyProfiles, setCompanyProfiles] = useState<ProfileRow[]>([]);
+  useEffect(() => {
+    getCompanyUsers().then(setCompanyProfiles).catch((e) => console.error("ticket time dispute: load users failed", e));
+  }, []);
+  // Employee Attendance & Visit Exception Report fields, folded directly
+  // into this same submission (migration 0305) — see ticketDisputeReportPdf.ts.
+  const [exceptionType, setExceptionType] = useState<TicketDisputeExceptionType>("missed_visit");
+  const [otherDescription, setOtherDescription] = useState("");
+  const [employeeIdOverride, setEmployeeIdOverride] = useState("");
+  const [customerName, setCustomerName] = useState("");
+  const [scheduledTime, setScheduledTime] = useState("");
+  const [actionTaken, setActionTaken] = useState("");
+  const sigPad = useSignaturePad({ width: 400, height: 110, defaultName: userName || "" });
   // Arriving from the Tickets tab's "Dispute" button (a missing-timestamp
   // card) — pre-select that ticket instead of leaving the dropdown blank.
   useEffect(() => {
@@ -8548,12 +8618,21 @@ function MobileTicketTimeDisputeView({ userName, profileId, companyId, technicia
   const [endTime, setEndTime] = useState("");
   const [details, setDetails] = useState("");
   const [files, setFiles] = useState<File[]>([]);
+  // "time_dispute" (original flow — was there, app failed to log the
+  // check-in, disputes the same-day start/end time) vs "reschedule" (the
+  // ticket couldn't be done on its scheduled day at all and moved to a
+  // different day — no start/end time, just which day it actually
+  // happened). See migration 0307.
+  const [disputeMode, setDisputeMode] = useState<"time_dispute" | "reschedule">("time_dispute");
+  const [rescheduleActualDay, setRescheduleActualDay] = useState("");
+  const [rescheduleDate, setRescheduleDate] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [msg, setMsg] = useState("");
   // .mtech-save-msg is styled green by default (a "saved" confirmation) —
   // this flips it red for a validation/submit failure instead of showing
   // an error in success-green.
   const [msgIsError, setMsgIsError] = useState(false);
+  const [submitSuccess, setSubmitSuccess] = useState(false);
 
   // This technician's own existing dispute status per ticket — shown right
   // in the dropdown, with the actual claimed time, so they can see at a
@@ -8633,14 +8712,19 @@ function MobileTicketTimeDisputeView({ userName, profileId, companyId, technicia
       setMsg("Pick which ticket this is about.");
       return;
     }
-    if (!startTime || !endTime) {
+    if (disputeMode === "time_dispute" && (!startTime || !endTime)) {
       setMsgIsError(true);
       setMsg("Enter the time you actually started and finished.");
       return;
     }
+    if (disputeMode === "reschedule" && (!rescheduleActualDay || !rescheduleDate)) {
+      setMsgIsError(true);
+      setMsg("Enter the actual day and the day it was rescheduled to.");
+      return;
+    }
     if (!details.trim()) {
       setMsgIsError(true);
-      setMsg("Describe what went wrong with the check-in.");
+      setMsg(disputeMode === "reschedule" ? "Describe why it was rescheduled." : "Describe what went wrong with the check-in.");
       return;
     }
     if (files.length === 0) {
@@ -8648,13 +8732,29 @@ function MobileTicketTimeDisputeView({ userName, profileId, companyId, technicia
       setMsg("Attach proof (a photo or screenshot) before submitting.");
       return;
     }
+    if (!sigPad.hasContent()) {
+      setMsgIsError(true);
+      setMsg("Please sign to acknowledge the information above is accurate before submitting.");
+      return;
+    }
+    const signatureDataUrl = sigPad.toDataURL();
+    if (!signatureDataUrl) {
+      setMsgIsError(true);
+      setMsg("Please sign to acknowledge the information above is accurate before submitting.");
+      return;
+    }
+    if (!companyId) {
+      setMsgIsError(true);
+      setMsg("Your company couldn't be resolved yet — try again in a moment.");
+      return;
+    }
     setSubmitting(true);
     setMsgIsError(false);
     setMsg("");
     try {
       let attachments: { url: string; name: string }[] = [];
-      if (files.length > 0 && companyId) {
-        const disputeKey = crypto.randomUUID();
+      const disputeKey = crypto.randomUUID();
+      if (files.length > 0) {
         attachments = await Promise.all(
           files.map(async (f) => {
             const { url } = await uploadTicketTimeDisputeAttachment(companyId, disputeKey, f);
@@ -8670,12 +8770,46 @@ function MobileTicketTimeDisputeView({ userName, profileId, companyId, technicia
       // back as 5:00 AM, since the earlier fix used the browser's own local
       // time instead of the technician's actual scheduled zone.
       const todayKey = zonedDateKey(new Date(), scheduleTimezone);
-      const [y, mo, d] = todayKey.split("-").map(Number);
-      const [startHour, startMin] = startTime.split(":").map(Number);
-      const [endHour, endMin] = endTime.split(":").map(Number);
-      const disputedStart = zonedWallClockToUtcIso(y, mo, d, startHour, startMin, scheduleTimezone);
-      const disputedEnd = zonedWallClockToUtcIso(y, mo, d, endHour, endMin, scheduleTimezone);
+      // Reschedule mode has no start/end time to claim — disputedStart/End
+      // stay null, which is exactly what setTicketOnsiteCheckIn's null-guard
+      // at both approval call sites already relies on to skip writing onsite
+      // times for a reschedule row (see migration 0307's header comment).
+      let disputedStart: string | undefined;
+      let disputedEnd: string | undefined;
+      if (disputeMode === "time_dispute") {
+        const [y, mo, d] = todayKey.split("-").map(Number);
+        const [startHour, startMin] = startTime.split(":").map(Number);
+        const [endHour, endMin] = endTime.split(":").map(Number);
+        disputedStart = zonedWallClockToUtcIso(y, mo, d, startHour, startMin, scheduleTimezone);
+        disputedEnd = zonedWallClockToUtcIso(y, mo, d, endHour, endMin, scheduleTimezone);
+      }
+
+      const myProfile = companyProfiles.find((p) => p.id === profileId) ?? null;
+      const managerProfile = myProfile ? await resolveTeamLeadOrManager(myProfile, companyProfiles) : null;
+      const { roleLabel: jobTitle } = getRoleDepartmentBreakdown(myProfile?.role ?? role);
+      const { pdfUrl, employeeSignatureUrl } = await buildTicketDisputeSubmissionPdf({
+        requestId: disputeKey,
+        companyId,
+        employeeInfo: {
+          employeeName: userName || "",
+          technicianId: myProfile?.technician_id || employeeIdOverride,
+          jobTitle,
+          department: myProfile?.assigned_branch || "",
+          directManagerName: managerProfile?.display_name || managerProfile?.email || "",
+        },
+        dateOfIncident: disputeMode === "reschedule" ? (rescheduleActualDay || todayKey) : todayKey,
+        exceptionType,
+        otherDescription,
+        detailedReason: details.trim(),
+        ticketNo,
+        customerName,
+        scheduledTime,
+        actionTaken,
+        employeeSignatureDataUrl: signatureDataUrl,
+      });
+
       await createEmployeeRequest({
+        id: disputeKey,
         profileId,
         requestType: "ticket_time_dispute",
         details: details.trim(),
@@ -8683,7 +8817,18 @@ function MobileTicketTimeDisputeView({ userName, profileId, companyId, technicia
         ticketNo,
         disputedStartTime: disputedStart,
         disputedEndTime: disputedEnd,
+        disputeMode,
+        rescheduleActualDay: disputeMode === "reschedule" ? rescheduleActualDay : undefined,
+        rescheduleDate: disputeMode === "reschedule" ? rescheduleDate : undefined,
         attachments,
+        exceptionType,
+        otherDescription,
+        exceptionCustomerName: customerName,
+        exceptionScheduledTime: scheduledTime,
+        exceptionActionTaken: actionTaken,
+        employeeSignatureUrl,
+        employeeSignatureName: userName || "",
+        pdfUrl,
       });
       void notifyRequestReviewers({
         body: `⚠️ New Ticket Time Dispute from ${userName} (Ticket ${ticketNo}).`,
@@ -8694,10 +8839,22 @@ function MobileTicketTimeDisputeView({ userName, profileId, companyId, technicia
       setTicketNo("");
       setStartTime("");
       setEndTime("");
+      setDisputeMode("time_dispute");
+      setRescheduleActualDay("");
+      setRescheduleDate("");
       setDetails("");
       setFiles([]);
+      setExceptionType("missed_visit");
+      setOtherDescription("");
+      setEmployeeIdOverride("");
+      setCustomerName("");
+      setScheduledTime("");
+      setActionTaken("");
+      sigPad.clear();
       setMsg("Dispute submitted.");
+      setSubmitSuccess(true);
       await load();
+      setTimeout(() => setSubmitSuccess(false), 4000);
     } catch (e) {
       setMsgIsError(true);
       setMsg(e instanceof Error ? e.message : "Failed to submit dispute.");
@@ -8711,7 +8868,7 @@ function MobileTicketTimeDisputeView({ userName, profileId, companyId, technicia
     <div className="mtech-scroll">
       <div className="mtech-payroll-heading">
         <div className="mtech-payroll-name">Ticket Time Dispute</div>
-        <div className="mtech-payroll-sub">Report a failed on-site check-in for a ticket</div>
+        <div className="mtech-payroll-sub">Report a failed check-in, or a ticket that got rescheduled</div>
       </div>
 
       <div className="mtech-panel" style={{ marginTop: 0 }}>
@@ -8744,30 +8901,71 @@ function MobileTicketTimeDisputeView({ userName, profileId, companyId, technicia
           <p className="mtech-muted" style={{ padding: "0.15rem 0 0.25rem" }}>No tickets found for today yet.</p>
         )}
 
-        <div className="mtech-section-title">Start Time ({scheduleTimezone})</div>
-        <input
-          className="mtech-bill-input full"
-          type="time"
-          value={startTime}
-          onChange={(e) => setStartTime(e.target.value)}
-        />
+        <div className="mtech-section-title">Reschedule / Time Dispute</div>
+        <label style={{ display: "flex", alignItems: "center", gap: "0.4rem", padding: "0.25rem 0", color: "#f1f5f9", fontSize: "0.85rem" }}>
+          <input type="radio" name="mobileDisputeMode" checked={disputeMode === "time_dispute"} onChange={() => setDisputeMode("time_dispute")} />
+          Time Dispute — I was there, the check-in just didn't log
+        </label>
+        <label style={{ display: "flex", alignItems: "center", gap: "0.4rem", padding: "0.25rem 0", color: "#f1f5f9", fontSize: "0.85rem" }}>
+          <input type="radio" name="mobileDisputeMode" checked={disputeMode === "reschedule"} onChange={() => setDisputeMode("reschedule")} />
+          Reschedule — this ticket moved to a different day
+        </label>
 
-        <div className="mtech-section-title">End Time ({scheduleTimezone})</div>
-        <input
-          className="mtech-bill-input full"
-          type="time"
-          value={endTime}
-          onChange={(e) => setEndTime(e.target.value)}
-        />
+        {disputeMode === "time_dispute" ? (
+          <>
+            <div className="mtech-section-title">Start Time ({scheduleTimezone})</div>
+            <input
+              className="mtech-bill-input full"
+              type="time"
+              value={startTime}
+              onChange={(e) => setStartTime(e.target.value)}
+            />
 
-        <div className="mtech-section-title">What's wrong?</div>
-        <textarea
-          className="mtech-bill-input full"
-          rows={4}
-          value={details}
-          onChange={(e) => setDetails(e.target.value)}
-          placeholder="Describe the issue — e.g. GPS wouldn't register, signal was down, etc."
-        />
+            <div className="mtech-section-title">End Time ({scheduleTimezone})</div>
+            <input
+              className="mtech-bill-input full"
+              type="time"
+              value={endTime}
+              onChange={(e) => setEndTime(e.target.value)}
+            />
+
+            <div className="mtech-section-title">Reason</div>
+            <textarea
+              className="mtech-bill-input full"
+              rows={4}
+              value={details}
+              onChange={(e) => setDetails(e.target.value)}
+              placeholder="Describe the issue — e.g. GPS wouldn't register, signal was down, etc."
+            />
+          </>
+        ) : (
+          <>
+            <div className="mtech-section-title">Actual Day</div>
+            <input
+              className="mtech-bill-input full"
+              type="date"
+              value={rescheduleActualDay}
+              onChange={(e) => setRescheduleActualDay(e.target.value)}
+            />
+
+            <div className="mtech-section-title">Reschedule Date</div>
+            <input
+              className="mtech-bill-input full"
+              type="date"
+              value={rescheduleDate}
+              onChange={(e) => setRescheduleDate(e.target.value)}
+            />
+
+            <div className="mtech-section-title">Reason</div>
+            <textarea
+              className="mtech-bill-input full"
+              rows={4}
+              value={details}
+              onChange={(e) => setDetails(e.target.value)}
+              placeholder="Why did this ticket need to be rescheduled?"
+            />
+          </>
+        )}
 
         <div className="mtech-section-title">Proof</div>
         <input
@@ -8781,10 +8979,57 @@ function MobileTicketTimeDisputeView({ userName, profileId, companyId, technicia
           <p className="mtech-muted" style={{ padding: "0.25rem 0" }}>{files.length} file{files.length === 1 ? "" : "s"} selected</p>
         )}
 
+        {!companyProfiles.find((p) => p.id === profileId)?.technician_id && (
+          <>
+            <div className="mtech-section-title">Employee ID</div>
+            <input className="mtech-bill-input full" type="text" value={employeeIdOverride} onChange={(e) => setEmployeeIdOverride(e.target.value)} placeholder="Not on file — type it in" />
+          </>
+        )}
+
+        <div className="mtech-section-title">Exception Type</div>
+        {(Object.keys(TICKET_DISPUTE_EXCEPTION_TYPE_LABELS) as TicketDisputeExceptionType[]).map((t) => (
+          <label key={t} style={{ display: "flex", alignItems: "center", gap: "0.4rem", padding: "0.25rem 0", color: "#f1f5f9", fontSize: "0.85rem" }}>
+            <input type="radio" name="mobileTicketDisputeExceptionType" checked={exceptionType === t} onChange={() => setExceptionType(t)} />
+            {TICKET_DISPUTE_EXCEPTION_TYPE_LABELS[t]}
+          </label>
+        ))}
+        {exceptionType === "other" && (
+          <input className="mtech-bill-input full" type="text" value={otherDescription} onChange={(e) => setOtherDescription(e.target.value)} placeholder="Describe the exception…" />
+        )}
+
+        <div className="mtech-section-title">Customer / Job Details (If applicable)</div>
+        <input className="mtech-bill-input full" type="text" value={customerName} onChange={(e) => setCustomerName(e.target.value)} placeholder="Customer Name" />
+        <input className="mtech-bill-input full" style={{ marginTop: "0.4rem" }} type="text" value={scheduledTime} onChange={(e) => setScheduledTime(e.target.value)} placeholder="Scheduled Time" />
+        <input className="mtech-bill-input full" style={{ marginTop: "0.4rem" }} type="text" value={actionTaken} onChange={(e) => setActionTaken(e.target.value)} placeholder="Action Taken / Rescheduled Status" />
+
+        <div className="mtech-section-title">Employee Signature — I confirm the information above is accurate and truthful.</div>
+        <canvas {...sigPad.canvasProps} className={`bg-white rounded-md block mx-auto w-full ${sigPad.canvasProps.className}`} style={{ maxWidth: "340px" }} />
+        <div style={{ marginTop: "0.5rem" }}>
+          <SignaturePadControls pad={sigPad} />
+        </div>
+
         <button type="button" className="mtech-save-btn" onClick={submit} disabled={submitting}>
           {submitting ? "Submitting…" : "Submit Dispute"}
         </button>
-        {msg && <div className="mtech-save-msg" style={msgIsError ? { color: "#f87171" } : undefined}>{msg}</div>}
+        {submitSuccess ? (
+          <div
+            style={{
+              background: "rgba(34,197,94,0.15)",
+              border: "1px solid rgba(34,197,94,0.4)",
+              borderRadius: "10px",
+              padding: "0.85rem",
+              marginTop: "0.6rem",
+              textAlign: "center",
+              color: "#4ade80",
+              fontWeight: 700,
+              fontSize: "0.95rem",
+            }}
+          >
+            ✅ Dispute Submitted
+          </div>
+        ) : (
+          msg && <div className="mtech-save-msg" style={msgIsError ? { color: "#f87171" } : undefined}>{msg}</div>
+        )}
       </div>
 
       <div style={{ fontWeight: 800, fontSize: "0.95rem", color: "#f1f5f9", margin: "0.4rem 0 0.1rem" }}>My Disputes</div>
@@ -8837,11 +9082,17 @@ function MobileTicketTimeDisputeView({ userName, profileId, companyId, technicia
 // today's entry) so the review queue can show what's being corrected FROM,
 // not just what it's being corrected TO. Same two-stage manager-then-(HR OR
 // Accounting) approval as Time Off, via timecardCorrections.ts.
-function MobileTimeCorrectionView({ userName, profileId, prefillDate }: { userName: string; profileId: string | null; prefillDate?: string | null }) {
+function MobileTimeCorrectionView({ userName, profileId, companyId, role, prefillDate }: { userName: string; profileId: string | null; companyId: string | null; role: string | null; prefillDate?: string | null }) {
   const [requests, setRequests] = useState<TimecardCorrectionRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [companyProfiles, setCompanyProfiles] = useState<ProfileRow[]>([]);
   const [correctionDate, setCorrectionDate] = useState("");
+  // Employee Attendance & Visit Exception Report fields, folded directly
+  // into this same request (migration 0304) — see timecardCorrectionPdf.ts.
+  const [exceptionType, setExceptionType] = useState<ExceptionType>("missed_workday");
+  const [otherDescription, setOtherDescription] = useState("");
+  const [employeeIdOverride, setEmployeeIdOverride] = useState("");
+  const sigPad = useSignaturePad({ width: 400, height: 110, defaultName: userName || "" });
 
   // Arriving via My Timecard's "Dispute This Time Card" button (a specific
   // day already selected there) — same idea as Payroll/Ticket Time
@@ -8857,6 +9108,12 @@ function MobileTimeCorrectionView({ userName, profileId, prefillDate }: { userNa
   const [details, setDetails] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [msg, setMsg] = useState("");
+  const [msgIsError, setMsgIsError] = useState(false);
+  // The form fields all clear the instant submission succeeds, which reads
+  // as "did anything happen?" if the only feedback is a plain line of text
+  // below a now-blank form — this banner is the actual answer, impossible
+  // to miss since it renders right where the button/eyes already are.
+  const [submitSuccess, setSubmitSuccess] = useState(false);
 
   useEffect(() => {
     getCompanyUsers().then(setCompanyProfiles).catch((e) => console.error("time correction: load users failed", e));
@@ -8894,6 +9151,19 @@ function MobileTimeCorrectionView({ userName, profileId, prefillDate }: { userNa
       setMsg("Add a reason for the correction.");
       return;
     }
+    if (!sigPad.hasContent()) {
+      setMsg("Please sign to acknowledge the information above is accurate before submitting.");
+      return;
+    }
+    const signatureDataUrl = sigPad.toDataURL();
+    if (!signatureDataUrl) {
+      setMsg("Please sign to acknowledge the information above is accurate before submitting.");
+      return;
+    }
+    if (!companyId) {
+      setMsg("Your company couldn't be resolved yet — try again in a moment.");
+      return;
+    }
     setSubmitting(true);
     setMsg("");
     try {
@@ -8918,8 +9188,27 @@ function MobileTimeCorrectionView({ userName, profileId, prefillDate }: { userNa
 
       const myProfile = companyProfiles.find((p) => p.id === profileId) ?? null;
       const managerProfile = myProfile ? await resolveTeamLeadOrManager(myProfile, companyProfiles) : null;
+      const correctionId = crypto.randomUUID();
+      const { roleLabel: jobTitle } = getRoleDepartmentBreakdown(myProfile?.role ?? role);
+      const { pdfUrl, employeeSignatureUrl } = await buildCorrectionSubmissionPdf({
+        correctionId,
+        companyId,
+        employeeInfo: {
+          employeeName: userName || "",
+          technicianId: myProfile?.technician_id || employeeIdOverride,
+          jobTitle,
+          department: myProfile?.assigned_branch || "",
+          directManagerName: managerProfile?.display_name || managerProfile?.email || "",
+        },
+        workDate: correctionDate,
+        exceptionType,
+        otherDescription,
+        reason: details.trim(),
+        employeeSignatureDataUrl: signatureDataUrl,
+      });
 
       await createTimecardCorrection({
+        id: correctionId,
         profileId,
         workDate: correctionDate,
         originalCheckIn: existing?.checkIn || "",
@@ -8933,6 +9222,11 @@ function MobileTimeCorrectionView({ userName, profileId, prefillDate }: { userNa
         reason: details.trim(),
         requestedBy: profileId,
         managerId: managerProfile?.id ?? null,
+        exceptionType,
+        otherDescription,
+        employeeSignatureUrl,
+        employeeSignatureName: userName || "",
+        pdfUrl,
       });
 
       // Manager + every HR/Finance user + the requester themselves — same
@@ -8967,9 +9261,17 @@ function MobileTimeCorrectionView({ userName, profileId, prefillDate }: { userNa
       setCorrectedMealStart("");
       setCorrectedMealEnd("");
       setDetails("");
+      setExceptionType("missed_workday");
+      setOtherDescription("");
+      setEmployeeIdOverride("");
+      sigPad.clear();
+      setMsgIsError(false);
       setMsg("Correction submitted.");
+      setSubmitSuccess(true);
       await load();
+      setTimeout(() => setSubmitSuccess(false), 4000);
     } catch (e) {
+      setMsgIsError(true);
       setMsg(e instanceof Error ? e.message : "Failed to submit correction.");
     } finally {
       setSubmitting(false);
@@ -9002,6 +9304,24 @@ function MobileTimeCorrectionView({ userName, profileId, prefillDate }: { userNa
 
         <p className="mtech-muted" style={{ padding: "0.25rem 0" }}>Fill in only the field(s) that were wrong — the rest is left as recorded.</p>
 
+        {!companyProfiles.find((p) => p.id === profileId)?.technician_id && (
+          <>
+            <div className="mtech-section-title">Employee ID</div>
+            <input className="mtech-bill-input full" type="text" value={employeeIdOverride} onChange={(e) => setEmployeeIdOverride(e.target.value)} placeholder="Not on file — type it in" />
+          </>
+        )}
+
+        <div className="mtech-section-title">Exception Type</div>
+        {(Object.keys(EXCEPTION_TYPE_LABELS) as ExceptionType[]).map((t) => (
+          <label key={t} style={{ display: "flex", alignItems: "center", gap: "0.4rem", padding: "0.25rem 0", color: "#f1f5f9", fontSize: "0.85rem" }}>
+            <input type="radio" name="mobileCorrectionExceptionType" checked={exceptionType === t} onChange={() => setExceptionType(t)} />
+            {EXCEPTION_TYPE_LABELS[t]}
+          </label>
+        ))}
+        {exceptionType === "other" && (
+          <input className="mtech-bill-input full" type="text" value={otherDescription} onChange={(e) => setOtherDescription(e.target.value)} placeholder="Describe the exception…" />
+        )}
+
         <div className="mtech-section-title">Reason</div>
         <textarea
           className="mtech-bill-input full"
@@ -9011,10 +9331,34 @@ function MobileTimeCorrectionView({ userName, profileId, prefillDate }: { userNa
           placeholder="What happened?"
         />
 
+        <div className="mtech-section-title">Employee Signature — I confirm the information above is accurate and truthful.</div>
+        <canvas {...sigPad.canvasProps} className={`bg-white rounded-md block mx-auto w-full ${sigPad.canvasProps.className}`} style={{ maxWidth: "340px" }} />
+        <div style={{ marginTop: "0.5rem" }}>
+          <SignaturePadControls pad={sigPad} />
+        </div>
+
         <button type="button" className="mtech-save-btn" onClick={submit} disabled={submitting}>
           {submitting ? "Submitting…" : "Submit Correction"}
         </button>
-        {msg && <div className="mtech-save-msg">{msg}</div>}
+        {submitSuccess ? (
+          <div
+            style={{
+              background: "rgba(34,197,94,0.15)",
+              border: "1px solid rgba(34,197,94,0.4)",
+              borderRadius: "10px",
+              padding: "0.85rem",
+              marginTop: "0.6rem",
+              textAlign: "center",
+              color: "#4ade80",
+              fontWeight: 700,
+              fontSize: "0.95rem",
+            }}
+          >
+            ✅ Correction Submitted
+          </div>
+        ) : (
+          msg && <div className="mtech-save-msg" style={msgIsError ? { color: "#f87171" } : undefined}>{msg}</div>
+        )}
       </div>
 
       <div style={{ fontWeight: 800, fontSize: "0.95rem", color: "#f1f5f9", margin: "0.4rem 0 0.1rem" }}>My Corrections</div>

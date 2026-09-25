@@ -20,6 +20,9 @@ import { useState } from "react";
 import { Check, Loader2 } from "lucide-react";
 import { canReviewCorrectionStage, reviewCorrectionStage, type TimecardCorrectionRow, type CorrectionStage } from "@/lib/supabase/timecardCorrections";
 import { canReviewPtoStage, reviewPtoStage, type PtoRequestRow, type PtoStage } from "@/lib/supabase/pto";
+import { CorrectionManagerSignModal, CorrectionHrSignModal } from "@/components/CorrectionSignModals";
+import { PtoManagerSignModal, PtoHrSignModal } from "@/components/PtoSignModals";
+import { useAuth } from "@/lib/auth";
 
 export type PendingItem = { type: "correction"; data: TimecardCorrectionRow } | { type: "pto"; data: PtoRequestRow };
 
@@ -80,9 +83,18 @@ export function PendingItemDetailModal({
   onClose: () => void;
   onReviewed: () => void;
 }) {
+  const { companyId } = useAuth();
   const isCorrection = item.type === "correction";
+  // Pre-Exception-Report corrections/PTO (submitted before migration
+  // 0304/0306, or filed on someone's behalf without paperwork) never asked
+  // the employee to sign anything — don't force the manager into the new
+  // signature popup for those; plain approve/reject still applies, same as
+  // before this feature.
+  const hasExceptionReport = item.data.exceptionType !== null;
   const [busyStage, setBusyStage] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [signingManager, setSigningManager] = useState(false);
+  const [signingHr, setSigningHr] = useState(false);
 
   // Manager-stage fallback chain (same as Attendance Monitoring/Time Off
   // Calendar): the requester's CURRENT manager, and that manager's own
@@ -216,14 +228,19 @@ export function PendingItemDetailModal({
                   <span className={`inline-block rounded px-1.5 py-0.5 text-[11px] font-semibold ${badge.className}`}>{badge.label}</span>
                   {actionable && (
                     <div className="flex items-center gap-1.5 ml-auto">
-                      <button
-                        type="button"
-                        disabled={busyStage !== null}
-                        onClick={() => handleAction(stage, "approved")}
-                        className="px-2 py-1 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded text-xs font-semibold transition flex items-center gap-1"
-                      >
-                        {busyStage === `${stage}:approved` ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />} Approve
-                      </button>
+                      {/* HR's plain quorum approve is hidden on an exception-report row — it must
+                          go through the "Sign Report (HR)" button below instead, so "HR: Approved"
+                          never shows up with no signature on file. */}
+                      {!(hasExceptionReport && stage === "hr") && (
+                        <button
+                          type="button"
+                          disabled={busyStage !== null}
+                          onClick={() => (hasExceptionReport && stage === "manager" ? setSigningManager(true) : handleAction(stage, "approved"))}
+                          className="px-2 py-1 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded text-xs font-semibold transition flex items-center gap-1"
+                        >
+                          {busyStage === `${stage}:approved` ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />} {hasExceptionReport && stage === "manager" ? "Approve & Sign" : "Approve"}
+                        </button>
+                      )}
                       <button
                         type="button"
                         disabled={busyStage !== null}
@@ -237,10 +254,79 @@ export function PendingItemDetailModal({
                 </div>
               );
             })}
+            {hasExceptionReport && item.data.hrPaperworkStatus === "pending" && canReviewStage("hr") && (
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[11px] text-slate-400 w-20 shrink-0">Exception</span>
+                {item.data.managerSignatureUrl ? (
+                  <button type="button" onClick={() => setSigningHr(true)} className="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs font-semibold transition ml-auto">
+                    Sign Report (HR)
+                  </button>
+                ) : (
+                  <span className="text-[11px] text-slate-500 ml-auto">Awaiting manager signature</span>
+                )}
+              </div>
+            )}
             {actionError && <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{actionError}</p>}
           </div>
         </div>
       </div>
+
+      {isCorrection && signingManager && (
+        <CorrectionManagerSignModal
+          correction={item.data as TimecardCorrectionRow}
+          companyId={companyId}
+          profiles={profiles}
+          reviewerId={myProfileId}
+          reviewerName={myDisplayName || "Manager"}
+          onClose={() => setSigningManager(false)}
+          onSigned={() => {
+            setSigningManager(false);
+            onReviewed();
+          }}
+        />
+      )}
+      {isCorrection && signingHr && (
+        <CorrectionHrSignModal
+          correction={item.data as TimecardCorrectionRow}
+          companyId={companyId}
+          profiles={profiles}
+          reviewerId={myProfileId}
+          reviewerName={myDisplayName || "HR"}
+          onClose={() => setSigningHr(false)}
+          onSigned={() => {
+            setSigningHr(false);
+            onReviewed();
+          }}
+        />
+      )}
+      {!isCorrection && signingManager && (
+        <PtoManagerSignModal
+          request={item.data as PtoRequestRow}
+          companyId={companyId}
+          profiles={profiles}
+          reviewerId={myProfileId}
+          reviewerName={myDisplayName || "Manager"}
+          onClose={() => setSigningManager(false)}
+          onSigned={() => {
+            setSigningManager(false);
+            onReviewed();
+          }}
+        />
+      )}
+      {!isCorrection && signingHr && (
+        <PtoHrSignModal
+          request={item.data as PtoRequestRow}
+          companyId={companyId}
+          profiles={profiles}
+          reviewerId={myProfileId}
+          reviewerName={myDisplayName || "HR"}
+          onClose={() => setSigningHr(false)}
+          onSigned={() => {
+            setSigningHr(false);
+            onReviewed();
+          }}
+        />
+      )}
     </div>
   );
 }

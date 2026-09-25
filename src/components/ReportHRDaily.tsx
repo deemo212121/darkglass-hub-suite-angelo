@@ -34,7 +34,9 @@ import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { normalizeRole, ROLE_LABELS, isJotformHrRole, getRoleDepartmentBreakdown } from "@/lib/roleLabels";
 import { useAllRoleOptions } from "@/lib/customRoles";
-import { getCompanyUsers, getProfileEmployeeInfo, getEmployeeInfoByProfileIds, saveProfileEmployeeInfo, updateCompanyUser, getMyProfileId, getAccountCreatorsByEmail, getProfileCredentialsPreview, setTraineeAccessGranted, type EmployeeInfo } from "@/lib/supabase/users";
+import { getCompanyUsers, getProfileEmployeeInfo, getEmployeeInfoByProfileIds, saveProfileEmployeeInfo, updateCompanyUser, getMyProfileId, getAccountCreatorsByEmail, getProfileCredentialsPreview, setTraineeAccessGranted, type EmployeeInfo, type ProfileRow } from "@/lib/supabase/users";
+import { CorrectionManagerSignModal, CorrectionHrSignModal } from "@/components/CorrectionSignModals";
+import { PtoManagerSignModal, PtoHrSignModal } from "@/components/PtoSignModals";
 import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
 import { subscribeNotifications, markNotificationRead, deleteNotification, type AppNotification } from "@/lib/firebase/notifications";
 import {
@@ -1722,15 +1724,26 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [employeeRequests, setEmployeeRequests] = useState<EmployeeRequestRow[]>([]);
   const [requestManagerLoading, setRequestManagerLoading] = useState(true);
   const [requestResponseNote, setRequestResponseNote] = useState<Record<string, string>>({});
+  // Only for CorrectionManagerSignModal/CorrectionHrSignModal below, which
+  // need real ProfileRow fields (technician_id, assigned_branch, role) to
+  // render the Exception Report PDF — `employees` above is a different,
+  // page-local shape that doesn't carry those.
+  const [correctionProfiles, setCorrectionProfiles] = useState<ProfileRow[]>([]);
+  const [signingManagerCorrection, setSigningManagerCorrection] = useState<TimecardCorrectionRow | null>(null);
+  const [signingHrCorrection, setSigningHrCorrection] = useState<TimecardCorrectionRow | null>(null);
+  const [signingPtoManagerFor, setSigningPtoManagerFor] = useState<PtoRequestRow | null>(null);
+  const [signingPtoHrFor, setSigningPtoHrFor] = useState<PtoRequestRow | null>(null);
   const loadRequestManagerData = async () => {
     setRequestManagerLoading(true);
     try {
-      const [correctionsData, employeeRequestsData] = await Promise.all([
+      const [correctionsData, employeeRequestsData, profilesData] = await Promise.all([
         getCompanyTimecardCorrections(),
         getCompanyEmployeeRequests(),
+        getCompanyUsers(),
       ]);
       setCorrections(correctionsData);
       setEmployeeRequests(employeeRequestsData);
+      setCorrectionProfiles(profilesData);
     } catch (err) {
       console.error("Failed to load employee requests:", err);
     } finally {
@@ -20834,6 +20847,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                 const canManagerAct = r.managerStatus === "pending" && canReviewPtoStage(r, "manager", myProfileId, myRole, myExtraRoles);
                 const canHrAct = r.hrStatus === "pending" && canReviewPtoStage(r, "hr", myProfileId, myRole, myExtraRoles);
                 const canAccountingAct = r.accountingStatus === "pending" && canReviewPtoStage(r, "accounting", myProfileId, myRole, myExtraRoles);
+                const canHrSignExceptionReport = r.exceptionType !== null && r.hrPaperworkStatus === "pending" && canReviewPtoStage(r, "hr", myProfileId, myRole, myExtraRoles);
                 return (
                   <div key={r.id} className="border border-white/10 rounded-lg p-3">
                     <div className="flex items-start justify-between gap-3">
@@ -20871,13 +20885,26 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                       <div className="flex flex-col gap-2 shrink-0">
                         {canManagerAct && (
                           <div className="flex gap-1">
-                            <button type="button" onClick={() => handlePtoStageAction(r, "manager", "approved")} className="px-2 py-1 bg-green-600 hover:bg-green-700 text-white rounded text-xs font-semibold transition">Approve (Mgr)</button>
+                            {r.exceptionType !== null ? (
+                              <button type="button" onClick={() => setSigningPtoManagerFor(r)} className="px-2 py-1 bg-green-600 hover:bg-green-700 text-white rounded text-xs font-semibold transition">Approve & Sign (Mgr)</button>
+                            ) : (
+                              <button type="button" onClick={() => handlePtoStageAction(r, "manager", "approved")} className="px-2 py-1 bg-green-600 hover:bg-green-700 text-white rounded text-xs font-semibold transition">Approve (Mgr)</button>
+                            )}
                             <button type="button" onClick={() => handlePtoStageAction(r, "manager", "rejected")} className="px-2 py-1 bg-red-600 hover:bg-red-700 text-white rounded text-xs font-semibold transition">Reject</button>
                           </div>
                         )}
+                        {canHrSignExceptionReport && (
+                          r.managerSignatureUrl ? (
+                            <button type="button" onClick={() => setSigningPtoHrFor(r)} className="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs font-semibold transition">Sign Exception Report (HR)</button>
+                          ) : (
+                            <span className="text-[11px] text-muted-foreground">Exception Report: awaiting manager signature</span>
+                          )
+                        )}
                         {canHrAct && (
                           <div className="flex gap-1">
-                            <button type="button" onClick={() => handlePtoStageAction(r, "hr", "approved")} className="px-2 py-1 bg-green-600 hover:bg-green-700 text-white rounded text-xs font-semibold transition">Approve (HR)</button>
+                            {r.exceptionType === null && (
+                              <button type="button" onClick={() => handlePtoStageAction(r, "hr", "approved")} className="px-2 py-1 bg-green-600 hover:bg-green-700 text-white rounded text-xs font-semibold transition">Approve (HR)</button>
+                            )}
                             <button type="button" onClick={() => handlePtoStageAction(r, "hr", "rejected")} className="px-2 py-1 bg-red-600 hover:bg-red-700 text-white rounded text-xs font-semibold transition">Reject</button>
                           </div>
                         )}
@@ -20909,7 +20936,18 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           ) : (
             <div className="space-y-3">
               {pendingCorrections.map((r) => {
-                const canCorrManagerAct = r.managerStatus === "pending" && canReviewCorrectionStage(r, "manager", myProfileId, myRole, myExtraRoles);
+                // Same "requester's current manager, and that manager's own
+                // manager" fallback every other corrections surface already
+                // applies (CorrectionsTab.tsx, AttendanceMonitoringPage.tsx,
+                // PendingItemDetailModal.tsx, mobile Team Approvals) — this
+                // one was missing it, so a senior manager standing in for an
+                // unavailable direct manager couldn't act on a correction
+                // from here even though they could everywhere else.
+                const corrRequesterManagerName = correctionProfiles.find((p) => p.id === r.profileId)?.manager_name ?? null;
+                const corrRequesterManagersManagerName = corrRequesterManagerName
+                  ? correctionProfiles.find((p) => (p.display_name || "").trim().toLowerCase() === corrRequesterManagerName.trim().toLowerCase())?.manager_name ?? null
+                  : null;
+                const canCorrManagerAct = r.managerStatus === "pending" && canReviewCorrectionStage(r, "manager", myProfileId, myRole, myExtraRoles, displayName, corrRequesterManagerName, corrRequesterManagersManagerName);
                 const canCorrHrAct = r.hrStatus === "pending" && canReviewCorrectionStage(r, "hr", myProfileId, myRole, myExtraRoles);
                 const canCorrAccountingAct = r.accountingStatus === "pending" && canReviewCorrectionStage(r, "accounting", myProfileId, myRole, myExtraRoles);
                 return (
@@ -20953,15 +20991,28 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                   <div className="flex flex-col gap-2 shrink-0">
                     {canCorrManagerAct && (
                       <div className="flex gap-1">
-                        <button type="button" onClick={() => handleCorrectionStageAction(r, "manager", "approved")} className="px-2 py-1 bg-green-600 hover:bg-green-700 text-white rounded text-xs font-semibold transition">Approve (Mgr)</button>
+                        {r.exceptionType !== null ? (
+                          <button type="button" onClick={() => setSigningManagerCorrection(r)} className="px-2 py-1 bg-green-600 hover:bg-green-700 text-white rounded text-xs font-semibold transition">Approve & Sign (Mgr)</button>
+                        ) : (
+                          <button type="button" onClick={() => handleCorrectionStageAction(r, "manager", "approved")} className="px-2 py-1 bg-green-600 hover:bg-green-700 text-white rounded text-xs font-semibold transition">Approve (Mgr)</button>
+                        )}
                         <button type="button" onClick={() => handleCorrectionStageAction(r, "manager", "rejected")} className="px-2 py-1 bg-red-600 hover:bg-red-700 text-white rounded text-xs font-semibold transition">Reject</button>
                       </div>
                     )}
                     {canCorrHrAct && (
                       <div className="flex gap-1">
-                        <button type="button" onClick={() => handleCorrectionStageAction(r, "hr", "approved")} className="px-2 py-1 bg-green-600 hover:bg-green-700 text-white rounded text-xs font-semibold transition">Approve (HR)</button>
+                        {r.exceptionType === null && (
+                          <button type="button" onClick={() => handleCorrectionStageAction(r, "hr", "approved")} className="px-2 py-1 bg-green-600 hover:bg-green-700 text-white rounded text-xs font-semibold transition">Approve (HR)</button>
+                        )}
                         <button type="button" onClick={() => handleCorrectionStageAction(r, "hr", "rejected")} className="px-2 py-1 bg-red-600 hover:bg-red-700 text-white rounded text-xs font-semibold transition">Reject</button>
                       </div>
+                    )}
+                    {r.exceptionType !== null && r.hrPaperworkStatus === "pending" && canReviewCorrectionStage(r, "hr", myProfileId, myRole, myExtraRoles) && (
+                      r.managerSignatureUrl ? (
+                        <button type="button" onClick={() => setSigningHrCorrection(r)} className="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs font-semibold transition">Sign Exception Report (HR)</button>
+                      ) : (
+                        <span className="text-[10px] text-muted-foreground">Exception Report: awaiting manager signature</span>
+                      )
                     )}
                     {canCorrAccountingAct && (
                       <div className="flex gap-1">
@@ -20980,6 +21031,63 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             </div>
           )}
         </div>
+        )}
+
+        {signingManagerCorrection && (
+          <CorrectionManagerSignModal
+            correction={signingManagerCorrection}
+            companyId={companyId}
+            profiles={correctionProfiles}
+            reviewerId={myProfileId}
+            reviewerName={displayName || "Manager"}
+            onClose={() => setSigningManagerCorrection(null)}
+            onSigned={async () => {
+              setSigningManagerCorrection(null);
+              await loadRequestManagerData();
+            }}
+          />
+        )}
+        {signingHrCorrection && (
+          <CorrectionHrSignModal
+            correction={signingHrCorrection}
+            companyId={companyId}
+            profiles={correctionProfiles}
+            reviewerId={myProfileId}
+            reviewerName={displayName || "HR"}
+            onClose={() => setSigningHrCorrection(null)}
+            onSigned={async () => {
+              setSigningHrCorrection(null);
+              await loadRequestManagerData();
+            }}
+          />
+        )}
+        {signingPtoManagerFor && (
+          <PtoManagerSignModal
+            request={signingPtoManagerFor}
+            companyId={companyId}
+            profiles={correctionProfiles}
+            reviewerId={myProfileId}
+            reviewerName={displayName || "Manager"}
+            onClose={() => setSigningPtoManagerFor(null)}
+            onSigned={async () => {
+              setSigningPtoManagerFor(null);
+              await loadPtoRequests();
+            }}
+          />
+        )}
+        {signingPtoHrFor && (
+          <PtoHrSignModal
+            request={signingPtoHrFor}
+            companyId={companyId}
+            profiles={correctionProfiles}
+            reviewerId={myProfileId}
+            reviewerName={displayName || "HR"}
+            onClose={() => setSigningPtoHrFor(null)}
+            onSigned={async () => {
+              setSigningPtoHrFor(null);
+              await loadPtoRequests();
+            }}
+          />
         )}
 
         {/* Pending Attendance Disputes & Payroll Inquiries */}
